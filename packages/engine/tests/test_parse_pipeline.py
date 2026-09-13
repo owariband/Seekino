@@ -259,3 +259,54 @@ def test_fallback_marker_is_backward_compatible_and_round_trips() -> None:
     )
     assert restored_checkpoint.segment.is_fallback is True
     assert "needs_regeneration" not in restored_checkpoint.model_dump_json()
+
+
+def test_video_parse_result_model_metadata_round_trips_and_remains_optional() -> None:
+    legacy_result = ParsePipeline(FakeFallbackParser()).run(
+        source_video="episode.mp4",
+        duration_ms=30_000,
+        segment_duration_ms=10_000,
+        context_overlap_ms=2_000,
+        windows=_windows(),
+    )
+    payload = legacy_result.model_dump(mode="json")
+    payload["models"] = {
+        "transcript": None,
+        "transcript_mode": "none",
+        "video_parser": "doubao-pro",
+        "fallback": {
+            "enabled": True,
+            "transcript_model": "doubao-lite",
+            "provider": "deepseek",
+            "visual_model": "deepseek-flash",
+            "refiner_model": "deepseek-flash",
+            "input_mode": "ordered_frames",
+            "frame_fps": 0.5,
+            "group_duration_ms": 30_000,
+            "max_frames_per_group": 15,
+            "max_height": 720,
+        },
+    }
+
+    restored = VideoParseResult.model_validate(payload)
+    round_tripped = VideoParseResult.model_validate_json(restored.model_dump_json())
+
+    assert round_tripped.models is not None
+    assert round_tripped.models.transcript is None
+    assert round_tripped.models.transcript_mode == "none"
+    assert round_tripped.models.video_parser == "doubao-pro"
+    assert round_tripped.models.fallback.enabled is True
+    assert round_tripped.models.fallback.transcript_model == "doubao-lite"
+    assert round_tripped.models.fallback.provider == "deepseek"
+    assert round_tripped.models.fallback.visual_model == "deepseek-flash"
+    assert round_tripped.models.fallback.refiner_model == "deepseek-flash"
+    assert round_tripped.models.fallback.input_mode == "ordered_frames"
+    assert round_tripped.models.fallback.frame_fps == 0.5
+    assert round_tripped.models.fallback.group_duration_ms == 30_000
+    assert round_tripped.models.fallback.max_frames_per_group == 15
+    assert round_tripped.models.fallback.max_height == 720
+
+    restored_legacy = VideoParseResult.model_validate(
+        legacy_result.model_dump(mode="json", exclude={"models"})
+    )
+    assert restored_legacy.models is None

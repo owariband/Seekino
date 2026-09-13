@@ -31,6 +31,8 @@ from .schemas import (
     SegmentParseResult,
     TranscriptAnalysis,
     TranscriptCheckpoint,
+    VideoFallbackModels,
+    VideoParseModels,
 )
 from .video_parse import ParsePipeline
 
@@ -484,30 +486,24 @@ def main() -> None:
         on_segment_complete=checkpoint,
     )
     final_output = output_dir / "pipeline.parse.json"
-    _write_json(
-        {
-            "models": {
-                "transcript": transcript_model if args.asr_mode == "lite" else None,
-                "transcript_mode": args.asr_mode,
-                "video_parser": video_model,
-                "fallback": {
-                    "enabled": fallback_enabled,
-                    "transcript_model": transcript_model,
-                    "provider": deepseek_config.provider,
-                    "visual_model": deepseek_config.model,
-                    "refiner_model": deepseek_config.model,
-                    "input_mode": "ordered_frames",
-                    "frame_fps": fallback_config.frame_fps,
-                    "group_duration_ms": fallback_config.group_duration_ms,
-                    "max_frames_per_group": (
-                        fallback_config.max_frames_per_group
-                    ),
-                },
-            },
-            **result.model_dump(mode="json"),
-        },
-        final_output,
+    models = VideoParseModels(
+        transcript=transcript_model if args.asr_mode == "lite" else None,
+        transcript_mode=args.asr_mode,
+        video_parser=video_model,
+        fallback=VideoFallbackModels(
+            enabled=fallback_enabled,
+            transcript_model=transcript_model,
+            provider=deepseek_config.provider,
+            visual_model=deepseek_config.model,
+            refiner_model=deepseek_config.model,
+            input_mode="ordered_frames",
+            frame_fps=fallback_config.frame_fps,
+            group_duration_ms=fallback_config.group_duration_ms,
+            max_frames_per_group=fallback_config.max_frames_per_group,
+            max_height=fallback_config.max_height,
+        ),
     )
+    _write_json(result.model_copy(update={"models": models}), final_output)
     print(f"wrote {final_output}", flush=True)
 
 

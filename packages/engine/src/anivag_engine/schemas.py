@@ -280,9 +280,34 @@ class SegmentParseResult(BaseModel):
         return self
 
 
+class VideoFallbackModels(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    transcript_model: str = Field(min_length=1)
+    provider: Literal["deepseek"]
+    visual_model: str = Field(min_length=1)
+    refiner_model: str = Field(min_length=1)
+    input_mode: Literal["ordered_frames"]
+    frame_fps: float = Field(gt=0)
+    group_duration_ms: int = Field(gt=0)
+    max_frames_per_group: int = Field(gt=0)
+    max_height: int = Field(gt=0)
+
+
+class VideoParseModels(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transcript: str | None
+    transcript_mode: Literal["lite", "none"]
+    video_parser: str = Field(min_length=1)
+    fallback: VideoFallbackModels
+
+
 class VideoParseResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    models: VideoParseModels | None = None
     source_video: Path
     duration_ms: int = Field(gt=0)
     segment_duration_ms: int = Field(gt=0)
