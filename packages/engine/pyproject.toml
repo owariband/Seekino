@@ -1,0 +1,28 @@
+[project]
+name = "anivag-engine"
+version = "0.1.0"
+description = "AniVAG video parsing and retrieval pipelines"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "gateway",
+    "pydantic>=2.0,<3",
+]
+
+[project.scripts]
+anivag-engine = "anivag_engine.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0,<10",
+]
+
+[tool.uv.sources]
+gateway = { path = "../gateway", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

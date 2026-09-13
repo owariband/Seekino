@@ -1,0 +1,3 @@
+[submodule "engines/VideoRAG"]
+	path = engines/VideoRAG
+	url = https://github.com/Slimzeo/VideoRAG.git

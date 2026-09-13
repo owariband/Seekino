@@ -1,0 +1,27 @@
+# ByteDance-internal coding telemetry (never commit)
+.motor-code/
+
+# Local design notes and generated architecture artifacts
+docs/design/
+docs/notes/
+/transfer.md
+
+# Local development state
+.DS_Store
+**/.DS_Store
+.env
+.env.*
+!.env.example
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local model experiments and copyrighted fixtures
+/assets/example_video_mygo/
+/assets/mygo_background_referrence/images/
+packages/gateway/outputs/
+packages/engine/outputs/
+packages/gateway/tests/fixtures/*.mp4
+packages/gateway/tests/fixtures/*.mov
+packages/gateway/tests/fixtures/*.avi

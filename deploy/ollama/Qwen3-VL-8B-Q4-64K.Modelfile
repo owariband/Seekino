@@ -1,0 +1,7 @@
+FROM hf.co/Qwen/Qwen3-VL-8B-Instruct-GGUF:Q4_K_M
+
+# Ollama's OpenAI-compatible endpoint cannot change context length per request.
+# 33 independent 720p frames use about 36K prompt tokens, so keep enough room
+# for the validated VideoTimeline JSON without loading the full 262K context.
+PARAMETER num_ctx 65536
+PARAMETER temperature 0

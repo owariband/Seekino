@@ -1,0 +1,35 @@
+video_parser:
+  transcript_model: doubao-seed-2-0-lite-260428
+  video_model: doubao-seed-2-1-pro-260628
+  transcript_fps: 1.0
+  video_fps: 1.0
+  local_fallback:
+    enabled: true
+    provider: ollama
+    model: anivag-qwen3-vl:8b-q4-64k
+    base_url: http://127.0.0.1:11434
+    frame_fps: 0.5
+    max_frames: 33
+    max_height: 720
+    max_output_tokens: 8192
+    request_timeout_seconds: 1200
+  deepseek_vision:
+    provider: deepseek
+    model: deepseek-flash
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    reasoning_effort: none
+    max_output_tokens: 8192
+    request_timeout_seconds: 1200
+  fallback_refiner:
+    provider: ark
+    model: deepseek-v4-flash-ga-260731
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    api_key_env: ARK_API_KEY
+    max_output_tokens: 8192
+    request_timeout_seconds: 1200
+
+multimodal_embedding:
+  model: doubao-embedding-vision-251215
+  dimensions: 1024
+  fps: 1.0
