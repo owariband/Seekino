@@ -64,18 +64,25 @@ class DoubaoMultimodalEmbedder:
         )
         return self._to_result(response, modality="video")
 
-    def embed_query(self, query: str) -> EmbeddingResult:
-        normalized_query = query.strip()
-        if not normalized_query:
-            raise ValueError("query must not be empty")
+    def embed_text(self, text: str) -> EmbeddingResult:
+        normalized_text = text.strip()
+        if not normalized_text:
+            raise ValueError("text must not be empty")
 
         response = self._client.multimodal_embeddings.create(
             model=self.model_name,
-            input=[{"type": "text", "text": normalized_query}],
+            input=[{"type": "text", "text": normalized_text}],
             dimensions=self.output_dimensionality,
             encoding_format="float",
         )
         return self._to_result(response, modality="text")
+
+    def embed_query(self, query: str) -> EmbeddingResult:
+        """Backward-compatible query-specific alias for text embedding."""
+
+        if not query.strip():
+            raise ValueError("query must not be empty")
+        return self.embed_text(query)
 
     def _to_result(self, response: object, *, modality: str) -> EmbeddingResult:
         data = getattr(response, "data", None)

@@ -103,3 +103,29 @@ video_parser:
 `video_parse` provenance 中保存 Lite、视觉与整理模型以及抽帧时间，并写入
 `is_fallback: true`，供后续重生成和质量修复筛选；普通 Pro Segment 保持
 `is_fallback: false`。
+
+## 整集 raw recall 评测
+
+`anivag-recall-eval` 是独立的本地评测入口，不参与 Segment 解析。它要求完整且连续的
+`VideoParseResult`，把每个 canonical Segment 作为候选单元：
+
+- Text 只索引当前段的 `self_compact` 与 owned events，不读取 `window_summary` 或相邻
+  Context；
+- Vision 从原片物化零 overlap 的 canonical 视频，仅供本地评测；
+- 分别计算 Text/Vision 余弦排名与 RRF，输出 Hit@1/3/5/10 和 MRR；
+- embedding 按模型、维度、FPS、源文件指纹和输入哈希原子缓存，可安全续跑。
+
+```bash
+uv run --project packages/engine --env-file .env.local \
+  anivag-recall-eval \
+  --parse-result packages/engine/outputs/episode/pipeline.parse.json \
+  --fixture packages/engine/evals/ep07.recall-smoke.json \
+  --output-dir packages/engine/outputs/episode-recall \
+  --channel-top-k 20 \
+  --rrf-k 60 \
+  --concurrency 1
+```
+
+该入口只评估 raw candidate recall，尚不包含 CandidateVerifier，不能把 TopK 命中率当成
+最终回答正确率。第七集 12 条人工 smoke 的标签来源、限制和首轮结果记录在
+`packages/engine/evals/ep07.recall-smoke.md`。
