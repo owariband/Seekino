@@ -7,6 +7,7 @@ from .analysis_windows import (
 )
 from .segment_parse import (
     ContentFilterFallbackSegmentParser,
+    DeepSeekFallbackSegmentParser,
     OrderedFrameSegmentParser,
     SegmentEvidenceParser,
     SegmentParser,
@@ -32,6 +33,7 @@ __all__ = [
     "AnalysisWindow",
     "ContentFilterFallbackSegmentParser",
     "ContextSnapshot",
+    "DeepSeekFallbackSegmentParser",
     "OrderedFrameSegmentParser",
     "OwnedTimelineEvent",
     "ParsePipeline",

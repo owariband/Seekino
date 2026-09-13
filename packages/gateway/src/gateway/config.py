@@ -10,32 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[4] / "config.yaml"
 
 
-class LocalVideoFallbackConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool
-    provider: Literal["ollama", "llama_cpp"] = "ollama"
-    model: str = Field(min_length=1)
-    base_url: str = Field(min_length=1)
-    frame_fps: float = Field(ge=0.2, le=5.0)
-    max_frames: int = Field(ge=1, le=128)
-    max_height: int = Field(ge=64, le=2160)
-    max_output_tokens: int = Field(ge=256, le=32_768)
-    request_timeout_seconds: float = Field(gt=0)
-
-
-class FallbackRefinerConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    provider: Literal["ark"] = "ark"
-    model: str = Field(min_length=1)
-    base_url: str = Field(min_length=1)
-    api_key_env: str = Field(min_length=1)
-    max_output_tokens: int = Field(ge=256, le=32_768)
-    request_timeout_seconds: float = Field(gt=0)
-
-
-class DeepSeekVisionConfig(BaseModel):
+class DeepSeekModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: Literal["deepseek"] = "deepseek"
@@ -47,6 +22,17 @@ class DeepSeekVisionConfig(BaseModel):
     request_timeout_seconds: float = Field(gt=0)
 
 
+class VideoFallbackConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    frame_fps: float = Field(ge=0.2, le=5.0)
+    group_duration_ms: int = Field(ge=1_000, le=120_000)
+    max_frames_per_group: int = Field(ge=1, le=128)
+    max_height: int = Field(ge=64, le=2160)
+    deepseek: DeepSeekModelConfig
+
+
 class VideoParseConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -54,9 +40,7 @@ class VideoParseConfig(BaseModel):
     video_model: str = Field(min_length=1)
     transcript_fps: float = Field(ge=0.2, le=5.0)
     video_fps: float = Field(ge=0.2, le=5.0)
-    local_fallback: LocalVideoFallbackConfig
-    deepseek_vision: DeepSeekVisionConfig | None = None
-    fallback_refiner: FallbackRefinerConfig
+    fallback: VideoFallbackConfig
 
 
 class MultimodalEmbeddingConfig(BaseModel):

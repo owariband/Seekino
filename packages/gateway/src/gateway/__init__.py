@@ -1,10 +1,9 @@
 """AniVAG model capabilities."""
 
 from .config import (
-    DeepSeekVisionConfig,
-    FallbackRefinerConfig,
+    DeepSeekModelConfig,
     GatewayConfig,
-    LocalVideoFallbackConfig,
+    VideoFallbackConfig,
     load_config,
 )
 from .models import (
@@ -29,21 +28,20 @@ __all__ = [
     "ContentFilterError",
     "DeepSeekModelError",
     "DeepSeekMultimodalModel",
-    "DeepSeekVisionConfig",
+    "DeepSeekModelConfig",
     "DoubaoMultimodalEmbedder",
     "EmbeddingResult",
-    "FallbackRefinerConfig",
     "GatewayConfig",
     "ImageInput",
     "LlamaCppModelError",
     "LlamaCppMultimodalModel",
-    "LocalVideoFallbackConfig",
     "MultimodalModel",
     "OllamaModelError",
     "OllamaMultimodalModel",
     "SSEProxyError",
     "TextInput",
     "VideoInput",
+    "VideoFallbackConfig",
     "load_config",
     "request_sse_json",
 ]

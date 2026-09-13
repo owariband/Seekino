@@ -56,15 +56,39 @@ class VideoTimeline(BaseModel):
     events: list[TimelineEvent]
 
 
+class NeutralVisualObservation(BaseModel):
+    """Anonymous, frame-addressable evidence produced by the vision stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_frames: list[int] = Field(min_length=1)
+    subjects: list[str]
+    visual_fact: str = Field(min_length=1)
+    hard_subtitle: str | None
+    visible_speaker: str | None
+
+
+class NeutralVisualEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    observations: list[NeutralVisualObservation]
+
+
 class VideoParseProvenance(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Keep persisted values compatible with the existing episode checkpoints.
-    provider: Literal["doubao", "ollama", "llama_cpp"]
+    provider: Literal["doubao", "deepseek", "ollama", "llama_cpp"]
     model: str = Field(min_length=1)
     input_mode: Literal["video", "ordered_frames"]
     frame_fps: float | None = Field(default=None, gt=0)
     frame_timestamps_ms: list[int] = Field(default_factory=list)
+    group_frame_counts: list[int] = Field(default_factory=list)
+    group_duration_ms: int | None = Field(default=None, gt=0)
+    max_frames_per_group: int | None = Field(default=None, gt=0)
+    fallback_transcript_model: str | None = None
+    visual_model: str | None = None
+    refiner_model: str | None = None
     fallback_reason: Literal["content_filter"] | None = None
     primary_model: str | None = None
     primary_error_code: str | None = None

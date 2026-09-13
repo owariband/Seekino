@@ -8,7 +8,7 @@ AniVAG 是一个面向事件级视频检索与时间证据定位的多模态视�
 
 - Anime-first：课程视频只作为未来迁移验证，不改变产品定位。
 - Video-only：用户不需要上传外挂字幕文件。
-- 语音、镜头与关键帧进入查询前的异步建库链路；主路径调用在线模型，内容审核失败时默认降级到本地有序帧模型，也可选择尚待 A/B 的 llama.cpp direct-video 路径。烧录字幕 OCR 暂不阻塞第一版。
+- 语音、镜头与关键帧进入查询前的异步建库链路；主路径调用 Doubao Pro，明确触发内容审核时降级为按需 Lite ASR、分组抽帧、官方 DeepSeek Flash 视觉取证与文本整理。烧录字幕 OCR 暂不阻塞第一版。
 - 在线查询融合语音文本、视觉与角色事件候选，返回时间证据。
 - V1 使用持久化 Job Store + Worker；RocketMQ 不是单用户 MVP 的前置依赖。
 
@@ -39,7 +39,7 @@ AniVAG/
 ├── engines/
 │   └── VideoRAG/                     # 上游算法底座（Git submodule）
 └── packages/
-    ├── gateway/                      # Ark/Ollama/llama.cpp 模型调用与 Embedding
+    ├── gateway/                      # Ark/DeepSeek 等模型调用与 Embedding
     └── engine/                       # Segment 解析与整集领域编排
 ```
 

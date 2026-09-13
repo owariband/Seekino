@@ -1,7 +1,8 @@
 # llama.cpp direct-video runtime
 
-该 runtime 是 AniVAG 本地 Qwen3-VL 的可选直接视频入口。它与 Ollama 并列运行，
-Gateway 只通过 HTTP 调用，不负责启动或停止进程。
+该 runtime 保留为 AniVAG 本地 Qwen3-VL 的直接视频 A/B 实验入口。Gateway 仍保留
+HTTP adapter，但当前正式 `parse-video` fallback 已改为官方 DeepSeek Flash 的分组抽帧
+链路，不会读取本目录配置，也不负责启动或停止本进程。
 
 “直接视频”表示 llama.cpp 在 Server 内部调用 FFmpeg 解码、采样并构造视频时序输入；
 Qwen3-VL 不会读取音轨。Engine 仍会提供候选 Transcript。
@@ -34,8 +35,8 @@ Q8_0 projector。首次验证可从 Ollama manifest 解析真实 blob；验证�
   --port 8080
 ```
 
-`--video-fps 0.5` 是 Server 全局参数，必须与 `config.yaml` 的
-`local_fallback.frame_fps` 一致。不要使用默认 4 FPS：66 秒窗口会从约 33 帧上升到
+`--video-fps 0.5` 是 Server 全局参数。进行历史 A/B 复现时，必须与实验调用侧声明的
+FPS 一致。不要使用默认 4 FPS：66 秒窗口会从约 33 帧上升到
 约 264 帧，既无法和现有基线公平比较，也可能显著扩大视觉 token 和内存占用。
 Gateway 只能核对调用侧声明，无法从 Server 反查真实启动参数，因此应把上述启动命令
 作为部署契约固定下来；修改任一侧时必须同步修改另一侧。
@@ -46,24 +47,11 @@ Gateway 只能核对调用侧声明，无法从 Server 反查真实启动参数�
 curl -sS http://127.0.0.1:8080/health
 ```
 
-## AniVAG 配置
+## 与正式链路的关系
 
-```yaml
-video_parser:
-  local_fallback:
-    enabled: true
-    provider: llama_cpp
-    model: anivag-qwen3-vl-direct
-    base_url: http://127.0.0.1:8080
-    frame_fps: 0.5
-    max_frames: 33
-    max_height: 720
-    max_output_tokens: 8192
-    request_timeout_seconds: 1200
-```
-
-`max_frames` 与 `max_height` 只供默认 Ollama 有序帧模式使用，llama.cpp direct-video
-模式忽略这两个值。为避免混用 checkpoint，切换 provider 时使用新的 output directory。
+当前 `config.yaml` 不再提供 `local_fallback`，Engine CLI 也不再选择 llama.cpp。若要继续
+做 direct-video A/B，应在独立诊断脚本中显式构造 `LlamaCppMultimodalModel`，并使用新的
+output directory，不能把实验结果混入正式 checkpoint。
 
 ## 验证顺序
 

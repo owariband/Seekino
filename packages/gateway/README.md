@@ -11,9 +11,11 @@ Provider 请求，并把严格 JSON Schema 输出校验成调用方指定的 Pyd
 - `ImageInput(path, detail="high")`：本地 JPEG、PNG 或 WebP 图片；
 - `VideoInput(path, fps)`：本地 MP4、MOV 或 AVI 视频。
 
-三个实现共享 `MultimodalModel.generate(...)` 接口：
+四个实现共享 `MultimodalModel.generate(...)` 接口：
 
 - `ArkMultimodalModel` 支持文本、图片和视频，通过 Ark Responses SSE 返回结构化结果；
+- `DeepSeekMultimodalModel` 支持文本和按输入顺序排列的图片，通过 DeepSeek 官方
+  Responses API 返回结构化结果。它不接受 `VideoInput`，调用方应先抽帧；
 - `OllamaMultimodalModel` 支持文本和按输入顺序排列的图片，通过 Ollama 的
   OpenAI-compatible API 返回结构化结果。它不接受 `VideoInput`，调用方应先抽帧；
 - `LlamaCppMultimodalModel` 支持文本、图片和视频，通过 upstream llama.cpp Server
@@ -25,21 +27,25 @@ payload、网络请求和结果 Schema 校验。Prompt、视频时长探测、�
 降级策略和 checkpoint 都由上层负责。
 
 ```python
+import os
+
 from pydantic import BaseModel
 
-from gateway import ImageInput, OllamaMultimodalModel, TextInput, load_config
+from gateway import DeepSeekMultimodalModel, ImageInput, TextInput, load_config
 
 
 class Description(BaseModel):
     description: str
 
 
-local = load_config().video_parser.local_fallback
-model = OllamaMultimodalModel(
-    local.model,
-    base_url=local.base_url,
-    max_output_tokens=local.max_output_tokens,
-    request_timeout_seconds=local.request_timeout_seconds,
+deepseek = load_config().video_parser.fallback.deepseek
+model = DeepSeekMultimodalModel(
+    deepseek.model,
+    base_url=deepseek.base_url,
+    api_key=os.environ[deepseek.api_key_env],
+    reasoning_effort=deepseek.reasoning_effort,
+    max_output_tokens=deepseek.max_output_tokens,
+    request_timeout_seconds=deepseek.request_timeout_seconds,
 )
 result = model.generate(
     [
@@ -81,8 +87,9 @@ result = model.generate(
 
 这里的“直接视频”仍是 llama.cpp 在服务内调用 FFmpeg 解码和抽帧，不是 Qwen
 直接读取 MP4/H.264 字节流，也不包含音轨理解。llama.cpp 官方仍将多模态 Server
-标记为 experimental，因此当前配置默认继续使用 Ollama 有序帧；direct-video 先用于
-同 Segment A/B。协议与启动参数见
+标记为 experimental；direct-video 先用于同 Segment A/B。生产降级配置使用
+DeepSeek Flash：Engine 按 30 秒分组抽帧，先生成中性画面证据，再用同一模型结合
+Lite ASR、compact 和背景资料整理最终 Schema。协议与启动参数见
 [llama.cpp Server 文档](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)。
 
 模型名、服务地址和采样参数由仓库根目录 [`config.yaml`](../../config.yaml) 提供；

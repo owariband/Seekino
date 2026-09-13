@@ -9,8 +9,7 @@ from typing import Any
 
 from gateway import (
     ArkMultimodalModel,
-    LlamaCppMultimodalModel,
-    OllamaMultimodalModel,
+    DeepSeekMultimodalModel,
     load_config,
 )
 from pydantic import BaseModel
@@ -22,7 +21,7 @@ from .analysis_windows import (
 )
 from .segment_parse import (
     ContentFilterFallbackSegmentParser,
-    OrderedFrameSegmentParser,
+    DeepSeekFallbackSegmentParser,
     SegmentEvidenceParser,
     SegmentParser,
 )
@@ -78,26 +77,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parse_video.add_argument("--transcript-fps", type=float)
     parse_video.add_argument("--video-fps", type=float)
     parse_video.add_argument(
-        "--local-fallback",
+        "--fallback",
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Use the configured local parser once when Doubao explicitly rejects "
-            "generated output via content policy."
+            "Use the configured evidence fallback once when Doubao explicitly "
+            "rejects generated output via content policy."
         ),
     )
-    parse_video.add_argument("--local-fallback-model")
-    parse_video.add_argument(
-        "--local-fallback-provider",
-        choices=("ollama", "llama_cpp"),
-    )
-    parse_video.add_argument(
-        "--local-fallback-base-url",
-        "--ollama-base-url",
-        dest="local_fallback_base_url",
-    )
-    parse_video.add_argument("--local-fallback-fps", type=float)
-    parse_video.add_argument("--local-fallback-max-frames", type=int)
     return parser
 
 
@@ -136,8 +123,12 @@ def _load_completed_segments(
     transcript_model: str,
     transcript_source: str,
     video_model: str,
-    local_fallback_provider: str,
-    local_fallback_model: str,
+    fallback_provider: str,
+    fallback_model: str,
+    fallback_transcript_model: str,
+    fallback_frame_fps: float,
+    fallback_group_duration_ms: int,
+    fallback_max_frames_per_group: int,
 ) -> list[SegmentParseResult]:
     completed: list[SegmentParseResult] = []
     gap_found = False
@@ -164,16 +155,12 @@ def _load_completed_segments(
                 expected_model = video_model
                 expected_input_mode = "video"
             else:
-                if provenance.provider != local_fallback_provider:
+                if provenance.provider != fallback_provider:
                     raise RuntimeError(
                         f"actual video parser provider changed for checkpoint: {path}"
                     )
-                expected_model = local_fallback_model
-                expected_input_mode = (
-                    "ordered_frames"
-                    if local_fallback_provider == "ollama"
-                    else "video"
-                )
+                expected_model = fallback_model
+                expected_input_mode = "ordered_frames"
             if provenance.model != expected_model:
                 raise RuntimeError(
                     f"actual video parser changed for checkpoint: {path}"
@@ -182,6 +169,22 @@ def _load_completed_segments(
                 raise RuntimeError(
                     f"video parser input mode changed for checkpoint: {path}"
                 )
+            if provenance.provider != "doubao":
+                expected_fallback = {
+                    "frame_fps": fallback_frame_fps,
+                    "group_duration_ms": fallback_group_duration_ms,
+                    "max_frames_per_group": fallback_max_frames_per_group,
+                    "fallback_transcript_model": fallback_transcript_model,
+                    "visual_model": fallback_model,
+                    "refiner_model": fallback_model,
+                }
+                actual_fallback = {
+                    key: getattr(provenance, key) for key in expected_fallback
+                }
+                if actual_fallback != expected_fallback:
+                    raise RuntimeError(
+                        f"fallback strategy changed for checkpoint: {path}"
+                    )
         if checkpoint.segment.window != window:
             raise RuntimeError(f"analysis window changed for checkpoint: {path}")
         completed.append(checkpoint.segment)
@@ -320,39 +323,22 @@ def main() -> None:
             os.getenv("ANIVAG_VIDEO_FPS") or parser_config.video_fps
         )
 
-    fallback_config = parser_config.local_fallback
-    local_fallback_enabled = args.local_fallback
-    if local_fallback_enabled is None:
-        local_fallback_enabled = _environment_bool(
-            "ANIVAG_LOCAL_FALLBACK_ENABLED",
+    fallback_config = parser_config.fallback
+    fallback_enabled = args.fallback
+    if fallback_enabled is None:
+        fallback_enabled = _environment_bool(
+            "ANIVAG_FALLBACK_ENABLED",
             fallback_config.enabled,
         )
-    local_fallback_model = (
-        args.local_fallback_model
-        or os.getenv("ANIVAG_LOCAL_FALLBACK_MODEL")
-        or fallback_config.model
-    )
-    local_fallback_provider = (
-        args.local_fallback_provider
-        or os.getenv("ANIVAG_LOCAL_FALLBACK_PROVIDER")
-        or fallback_config.provider
-    )
-    if local_fallback_provider not in {"ollama", "llama_cpp"}:
-        raise ValueError(
-            "ANIVAG_LOCAL_FALLBACK_PROVIDER must be ollama or llama_cpp"
-        )
-    local_fallback_base_url = (
-        args.local_fallback_base_url
-        or os.getenv("ANIVAG_LOCAL_FALLBACK_BASE_URL")
-        or os.getenv("ANIVAG_OLLAMA_BASE_URL")
-        or fallback_config.base_url
-    )
-    local_fallback_fps = args.local_fallback_fps
-    if local_fallback_fps is None:
-        local_fallback_fps = fallback_config.frame_fps
-    local_fallback_max_frames = args.local_fallback_max_frames
-    if local_fallback_max_frames is None:
-        local_fallback_max_frames = fallback_config.max_frames
+    deepseek_config = fallback_config.deepseek
+    deepseek_api_key: str | None = None
+    if fallback_enabled:
+        deepseek_api_key = os.getenv(deepseek_config.api_key_env)
+        if not deepseek_api_key:
+            raise RuntimeError(
+                "missing DeepSeek fallback credential in environment variable "
+                f"{deepseek_config.api_key_env}"
+            )
 
     video_path = args.video.expanduser().resolve()
     output_dir = args.output_dir.expanduser().resolve()
@@ -386,62 +372,49 @@ def main() -> None:
         video_fps=video_fps,
     )
     semantic_parser: SegmentEvidenceParser = model_parser
-    if local_fallback_enabled:
-        if local_fallback_provider == "ollama":
-            local_model = OllamaMultimodalModel(
-                local_fallback_model,
-                base_url=local_fallback_base_url,
-                max_output_tokens=fallback_config.max_output_tokens,
-                request_timeout_seconds=fallback_config.request_timeout_seconds,
-            )
-            local_parser: SegmentEvidenceParser = OrderedFrameSegmentParser(
-                local_model,
-                frame_fps=local_fallback_fps,
-                max_frames=local_fallback_max_frames,
-                max_height=fallback_config.max_height,
-            )
-            local_input_mode = "ordered_frames"
-            local_input_description = (
-                f"up to {local_fallback_max_frames} ordered frames"
-            )
-        else:
-            local_model = LlamaCppMultimodalModel(
-                local_fallback_model,
-                base_url=local_fallback_base_url,
-                max_output_tokens=fallback_config.max_output_tokens,
-                request_timeout_seconds=fallback_config.request_timeout_seconds,
-                expected_server_video_fps=local_fallback_fps,
-            )
-            local_parser = SegmentParser(
-                transcript_model_client,
-                local_model,
-                transcript_fps=transcript_fps,
-                video_fps=local_fallback_fps,
-                video_audio_available=False,
-            )
-            local_input_mode = "video"
-            local_input_description = "the segment MP4 directly"
+    if fallback_enabled:
+        assert deepseek_api_key is not None
+        deepseek_model = DeepSeekMultimodalModel(
+            deepseek_config.model,
+            base_url=deepseek_config.base_url,
+            api_key=deepseek_api_key,
+            max_output_tokens=deepseek_config.max_output_tokens,
+            request_timeout_seconds=deepseek_config.request_timeout_seconds,
+            reasoning_effort=deepseek_config.reasoning_effort,
+        )
+        fallback_parser: SegmentEvidenceParser = DeepSeekFallbackSegmentParser(
+            transcript_model_client,
+            deepseek_model,
+            deepseek_model,
+            transcript_fps=transcript_fps,
+            frame_fps=fallback_config.frame_fps,
+            group_duration_ms=fallback_config.group_duration_ms,
+            max_frames_per_group=fallback_config.max_frames_per_group,
+            max_height=fallback_config.max_height,
+        )
 
-        def report_local_fallback(error) -> None:
+        def report_fallback(error) -> None:
             print(
                 "Doubao output content filter triggered; "
                 f"code={error.code or 'content_filter'}; "
                 f"partial_output_chars={error.partial_output_chars}; "
-                f"falling back once to local {local_fallback_model} with "
-                f"{local_input_description}",
+                f"running Lite ASR and grouped {deepseek_config.model} "
+                "visual/refiner fallback once",
                 flush=True,
             )
 
         semantic_parser = ContentFilterFallbackSegmentParser(
             model_parser,
-            local_parser,
+            fallback_parser,
             primary_model=video_model,
-            on_fallback=report_local_fallback,
+            on_fallback=report_fallback,
         )
         print(
-            "local content-filter fallback enabled; "
-            f"provider={local_fallback_provider}; model={local_fallback_model}; "
-            f"input_mode={local_input_mode}; fps={local_fallback_fps}",
+            "content-filter fallback enabled; "
+            f"provider={deepseek_config.provider}; model={deepseek_config.model}; "
+            f"input_mode=ordered_frames; fps={fallback_config.frame_fps}; "
+            f"group_duration_ms={fallback_config.group_duration_ms}; "
+            f"max_frames_per_group={fallback_config.max_frames_per_group}",
             flush=True,
         )
     completed_segments = _load_completed_segments(
@@ -450,8 +423,12 @@ def main() -> None:
         transcript_model=transcript_model,
         transcript_source=args.asr_mode,
         video_model=video_model,
-        local_fallback_provider=local_fallback_provider,
-        local_fallback_model=local_fallback_model,
+        fallback_provider=deepseek_config.provider,
+        fallback_model=deepseek_config.model,
+        fallback_transcript_model=transcript_model,
+        fallback_frame_fps=fallback_config.frame_fps,
+        fallback_group_duration_ms=fallback_config.group_duration_ms,
+        fallback_max_frames_per_group=fallback_config.max_frames_per_group,
     )
     if completed_segments:
         print(
@@ -513,20 +490,17 @@ def main() -> None:
                 "transcript": transcript_model if args.asr_mode == "lite" else None,
                 "transcript_mode": args.asr_mode,
                 "video_parser": video_model,
-                "local_fallback": {
-                    "enabled": local_fallback_enabled,
-                    "model": local_fallback_model,
-                    "provider": local_fallback_provider,
-                    "input_mode": (
-                        "ordered_frames"
-                        if local_fallback_provider == "ollama"
-                        else "video"
-                    ),
-                    "frame_fps": local_fallback_fps,
-                    "max_frames": (
-                        local_fallback_max_frames
-                        if local_fallback_provider == "ollama"
-                        else None
+                "fallback": {
+                    "enabled": fallback_enabled,
+                    "transcript_model": transcript_model,
+                    "provider": deepseek_config.provider,
+                    "visual_model": deepseek_config.model,
+                    "refiner_model": deepseek_config.model,
+                    "input_mode": "ordered_frames",
+                    "frame_fps": fallback_config.frame_fps,
+                    "group_duration_ms": fallback_config.group_duration_ms,
+                    "max_frames_per_group": (
+                        fallback_config.max_frames_per_group
                     ),
                 },
             },

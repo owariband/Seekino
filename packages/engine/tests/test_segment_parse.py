@@ -6,12 +6,15 @@ from typing import Any
 import pytest
 from gateway import ContentFilterError, ImageInput, TextInput, VideoInput
 
+import anivag_engine.segment_parse as segment_parse_module
 from anivag_engine.segment_parse import (
     ContentFilterFallbackSegmentParser,
+    DeepSeekFallbackSegmentParser,
     OrderedFrameSegmentParser,
     SegmentParser,
 )
 from anivag_engine.schemas import (
+    NeutralVisualEvidence,
     TimelineEvent,
     TranscriptAnalysis,
     TranscriptCue,
@@ -51,6 +54,40 @@ class FakeModel:
         return self.results[schema_name]
 
 
+class SequencedVisionModel(FakeModel):
+    def __init__(self) -> None:
+        super().__init__("deepseek-flash", {}, provider_name="deepseek")
+
+    def generate(
+        self,
+        inputs,
+        *,
+        schema_name: str,
+        result_type,
+    ):
+        call_index = len(self.calls) + 1
+        self.calls.append(
+            {
+                "inputs": list(inputs),
+                "schema_name": schema_name,
+                "result_type": result_type,
+            }
+        )
+        return NeutralVisualEvidence.model_validate(
+            {
+                "observations": [
+                    {
+                        "evidence_frames": [1],
+                        "subjects": [f"GROUP_{call_index}_SUBJECT"],
+                        "visual_fact": f"GROUP_{call_index}_VISUAL_FACT",
+                        "hard_subtitle": f"GROUP_{call_index}_HARD_SUBTITLE",
+                        "visible_speaker": f"GROUP_{call_index}_SPEAKER",
+                    }
+                ]
+            }
+        )
+
+
 def _transcript() -> TranscriptAnalysis:
     return TranscriptAnalysis(
         transcript=[
@@ -83,6 +120,104 @@ def _timeline() -> VideoTimeline:
             ),
         ],
     )
+
+
+def _call_text(call: dict[str, Any]) -> str:
+    return "\n".join(
+        item.text for item in call["inputs"] if isinstance(item, TextInput)
+    )
+
+
+def _run_deepseek_fallback(
+    tmp_path,
+    monkeypatch,
+    *,
+    refiner_timeline: VideoTimeline | None = None,
+):
+    video_path = tmp_path / "segment.mp4"
+    video_path.write_bytes(b"fake-video")
+    transcript = TranscriptAnalysis(
+        transcript=[
+            TranscriptCue(
+                start_ms=30_400,
+                end_ms=31_100,
+                text="ASR_SECRET_LITE_TRANSCRIPT",
+            )
+        ]
+    )
+    transcript_model = FakeModel(
+        "test-lite",
+        {"candidate_transcript": transcript},
+    )
+    vision_model = SequencedVisionModel()
+    if refiner_timeline is None:
+        refiner_timeline = VideoTimeline(
+            summary="一名人物在室内说话。",
+            events=[
+                TimelineEvent(
+                    start_ms=30_400,
+                    end_ms=31_100,
+                    event_type="DIALOGUE",
+                    description="一名人物说话",
+                    text="ASR_SECRET_LITE_TRANSCRIPT",
+                )
+            ],
+        )
+    refiner_model = FakeModel(
+        "deepseek-flash",
+        {"fallback_video_timeline": refiner_timeline},
+        provider_name="deepseek",
+    )
+
+    def fake_extract_video_frames(
+        video_path,
+        timestamps_ms,
+        *,
+        output_dir,
+        max_height,
+    ):
+        del video_path
+        assert max_height == 720
+        timestamps = list(timestamps_ms)
+        directory = Path(output_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        frames = []
+        for index, timestamp_ms in enumerate(timestamps):
+            frame_path = directory / f"frame-{index:03d}.jpg"
+            frame_path.write_bytes(b"fake-frame")
+            frames.append((timestamp_ms, frame_path))
+        return frames
+
+    monkeypatch.setattr(
+        segment_parse_module,
+        "extract_video_frames",
+        fake_extract_video_frames,
+    )
+    context = (
+        "SeriesBible:\nSERIES_BIBLE_SECRET\n\n"
+        "contextBeforeCompact:\nCOMPACT_SECRET"
+    )
+    result = DeepSeekFallbackSegmentParser(
+        transcript_model,
+        vision_model,
+        refiner_model,
+        transcript_fps=1.0,
+        frame_fps=0.5,
+        group_duration_ms=30_000,
+        max_frames_per_group=15,
+        max_height=720,
+    ).analyze(
+        video_path,
+        duration_ms=66_000,
+        candidate_transcript=TranscriptAnalysis(transcript=[]),
+        context=context,
+    )
+    return {
+        "result": result,
+        "transcript_model": transcript_model,
+        "vision_model": vision_model,
+        "refiner_model": refiner_model,
+    }
 
 
 def test_segment_parser_fuses_candidate_transcript_with_video(tmp_path) -> None:
@@ -282,6 +417,121 @@ def test_ordered_frame_segment_parser_records_local_sampling(tmp_path) -> None:
     assert result.provenance.input_mode == "ordered_frames"
     assert result.provenance.frame_fps == 0.5
     assert result.provenance.frame_timestamps_ms == [1000]
+
+
+def test_deepseek_fallback_groups_frames_and_isolates_visual_stage(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    run = _run_deepseek_fallback(tmp_path, monkeypatch)
+    vision_model = run["vision_model"]
+
+    assert [
+        sum(isinstance(item, ImageInput) for item in call["inputs"])
+        for call in vision_model.calls
+    ] == [15, 15, 3]
+    assert [call["schema_name"] for call in vision_model.calls] == [
+        "neutral_visual_evidence",
+        "neutral_visual_evidence",
+        "neutral_visual_evidence",
+    ]
+    for call in vision_model.calls:
+        visual_prompt = _call_text(call)
+        assert "SERIES_BIBLE_SECRET" not in visual_prompt
+        assert "COMPACT_SECRET" not in visual_prompt
+        assert "ASR_SECRET_LITE_TRANSCRIPT" not in visual_prompt
+
+
+def test_deepseek_fallback_refines_lite_asr_context_and_mapped_evidence(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    run = _run_deepseek_fallback(tmp_path, monkeypatch)
+    result = run["result"]
+    transcript_model = run["transcript_model"]
+    refiner_model = run["refiner_model"]
+
+    # Even an explicitly supplied empty primary transcript must not suppress the
+    # on-demand Lite stage of the selected fallback chain.
+    assert len(transcript_model.calls) == 1
+    assert transcript_model.calls[0]["schema_name"] == "candidate_transcript"
+
+    assert len(refiner_model.calls) == 1
+    assert refiner_model.calls[0]["schema_name"] == "fallback_video_timeline"
+    refiner_prompt = _call_text(refiner_model.calls[0])
+    assert "ASR_SECRET_LITE_TRANSCRIPT" in refiner_prompt
+    assert "SERIES_BIBLE_SECRET" in refiner_prompt
+    assert "COMPACT_SECRET" in refiner_prompt
+    assert "GROUP_1_VISUAL_FACT" in refiner_prompt
+    assert "GROUP_2_VISUAL_FACT" in refiner_prompt
+    assert "GROUP_3_VISUAL_FACT" in refiner_prompt
+    assert "evidence_timestamps_ms" in refiner_prompt
+    assert "support_intervals_ms" in refiner_prompt
+    assert "31000" in refiner_prompt
+
+    assert [cue.text for cue in result.candidate_transcript] == [
+        "ASR_SECRET_LITE_TRANSCRIPT"
+    ]
+    assert result.provenance is not None
+    assert result.provenance.provider == "deepseek"
+    assert result.provenance.model == "deepseek-flash"
+    assert result.provenance.input_mode == "ordered_frames"
+    assert result.provenance.frame_fps == 0.5
+    assert result.provenance.frame_timestamps_ms == list(range(1000, 66_000, 2000))
+    assert result.provenance.fallback_transcript_model == "test-lite"
+    assert result.provenance.visual_model == "deepseek-flash"
+    assert result.provenance.refiner_model == "deepseek-flash"
+    assert result.provenance.group_frame_counts == [15, 15, 3]
+
+
+def test_deepseek_fallback_rejects_unsupported_dialogue_text(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    unsupported_timeline = VideoTimeline(
+        summary="一名人物说出证据中不存在的话。",
+        events=[
+            TimelineEvent(
+                start_ms=30_400,
+                end_ms=31_100,
+                event_type="DIALOGUE",
+                description="一名人物说话",
+                text="MODEL_HALLUCINATED_DIALOGUE",
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError):
+        _run_deepseek_fallback(
+            tmp_path,
+            monkeypatch,
+            refiner_timeline=unsupported_timeline,
+        )
+
+
+def test_deepseek_fallback_rejects_event_outside_segment_duration(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    out_of_bounds_timeline = VideoTimeline(
+        summary="片段末尾的动作越过了真实时长。",
+        events=[
+            TimelineEvent(
+                start_ms=65_000,
+                end_ms=70_000,
+                event_type="ACTION",
+                description="一名人物移动",
+                text=None,
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError):
+        _run_deepseek_fallback(
+            tmp_path,
+            monkeypatch,
+            refiner_timeline=out_of_bounds_timeline,
+        )
 
 
 class RaisingParser:

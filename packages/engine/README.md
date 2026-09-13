@@ -7,7 +7,7 @@ Engine 承载 AniVAG 自有的领域算法编排；外部模型请求仍由
 
 - `video_parse.py`：整集/整批 Segment 的顺序编排、Context、ownership、去重与恢复；
 - `segment_parse.py`：单个已有 Segment 的 Prompt、候选 ASR 融合、模型选择与审核降级；
-- `frame_sampler.py`：本地降级所需的帧时间规划与 FFmpeg 抽帧；
+- `frame_sampler.py`：审核 fallback 所需的帧时间规划与 FFmpeg 抽帧；
 - `prompts.py`：Transcript 与事件时间线的证据约束；
 - `analysis_windows.py`：仅供当前本地整集实验物化临时 AnalysisWindow，不是生产上传切段。
 
@@ -39,7 +39,9 @@ uv run --project packages/engine --env-file .env.local \
   --segment-duration-ms 60000 \
   --context-overlap-ms 3000 \
   --max-height 720 \
+  --asr-mode none \
   --asr-concurrency 4 \
+  --fallback \
   --series-bible-file /absolute/path/to/characters.md \
   --output-dir packages/engine/outputs/episode
 ```
@@ -51,35 +53,53 @@ Pipeline 会验证模型、窗口和上下文链，然后从第一个未完成 S
 `context_before_compact → self_compact → context_after_compact`，便于直接检查
 上下文是否真的逐段传递。
 
-如果候选 ASR 暂时不可用，可显式传入 `--asr-mode none`。该模式会为每段保存
-带 `transcript_source=none` 的空候选检查点，再由 Pro 读取视频音频、画面与硬字幕；
-最终产物不会把这一降级路径伪装成 Lite 结果。
+如果主路径不需要提前生成候选 ASR，可显式传入 `--asr-mode none`。该模式会为每段
+保存带 `transcript_source=none` 的空候选检查点，再由 Pro 直接读取视频音频、画面与
+硬字幕。它与 fallback 兼容：只有 Pro 明确触发输出内容审核时，fallback 才为当前段
+按需调用 Lite ASR；没有触发的段不会额外调用 Lite。若使用 `--asr-mode lite`，
+fallback 会复用已经生成的非空 Lite 结果。
 
-当 Ark 明确返回输出内容审核错误且本地降级已启用时，Engine 只降级一次：按配置
-抽取有序帧，再通过 Gateway 的 Ollama 多模态模型接口调用本地 Qwen。网络错误、
-Schema 错误或本地模型错误都不会触发循环重试。
+## 内容审核 fallback
 
-`local_fallback.provider` 也可以显式切为 `llama_cpp`。此时 Engine 不再自行抽帧，
-而是把同一个 AnalysisWindow MP4 作为 `VideoInput` 交给 Gateway；llama.cpp Server
-在进程内解码并按 `frame_fps` 对应的 `--video-fps` 采样。Qwen3-VL 仍不能读取音轨，
-所以 Engine 会继续传入候选 Transcript，并使用仅允许画面/硬字幕作为视觉证据的
-Prompt。当前 direct-video 路径只用于 A/B，默认配置仍是 `ollama`：
+fallback 只响应 Ark/Doubao Pro 明确返回的 `ContentFilterError`，每个 Segment 最多
+执行一次。网络错误、Schema 错误和 DeepSeek 错误不会误触发或形成循环重试。当前
+正式链路为：
+
+1. Doubao Pro 直接解析 AnalysisWindow；
+2. Pro 被内容审核拒绝后，为当前窗口按需运行 Doubao Lite ASR；
+3. Engine 把窗口细分为不超过 30 秒的组，以 0.5 fps 抽帧，每组最多 15 帧；
+4. Gateway 调用官方 DeepSeek Flash，只根据该组图片生成匿名、可定位到帧的视觉证据；
+   这一阶段不接收 ASR、SeriesBible 或 `contextBeforeCompact`；
+5. Engine 将帧编号映射回窗口内毫秒时间并去重；
+6. 同一个 DeepSeek Flash 再结合 Lite ASR、映射后的视觉证据、SeriesBible 与
+   `contextBeforeCompact`，整理为最终 `VideoTimeline`。
+
+默认参数由 `config.yaml` 管理：
 
 ```yaml
 video_parser:
-  local_fallback:
+  fallback:
     enabled: true
-    provider: llama_cpp
-    model: anivag-qwen3-vl-direct
-    base_url: http://127.0.0.1:8080
     frame_fps: 0.5
-    max_frames: 33       # Ollama 模式使用；direct-video 模式忽略
-    max_height: 720      # Ollama 模式使用；direct-video 模式忽略
-    max_output_tokens: 8192
-    request_timeout_seconds: 1200
+    group_duration_ms: 30000
+    max_frames_per_group: 15
+    max_height: 720
+    deepseek:
+      provider: deepseek
+      model: deepseek-flash
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY
+      reasoning_effort: none
+      max_output_tokens: 8192
+      request_timeout_seconds: 1200
 ```
 
-恢复检查会核对实际 provider、model 与 input mode。切换 `ollama/ordered_frames` 和
-`llama_cpp/video` 做实验时应使用新的 output directory，不能混用已有 checkpoint。
-独立 Server 的启动参数与 A/B 顺序见
-[`deploy/llama_cpp/README.md`](../../deploy/llama_cpp/README.md)。
+运行前需在 `.env.local` 中提供 `DEEPSEEK_API_KEY`；fallback 使用官方 API，不要求
+启动 Ollama 或 llama.cpp。`--fallback` 强制启用配置链路，`--no-fallback` 强制关闭，
+两者都不传时使用 `video_parser.fallback.enabled`（也可由
+`ANIVAG_FALLBACK_ENABLED` 覆盖）。
+
+恢复检查会核对实际 provider、model 与 input mode。fallback 成功的 Segment 会在
+`video_parse` provenance 中保存 Lite、视觉与整理模型以及抽帧时间，并写入
+`is_fallback: true`，供后续重生成和质量修复筛选；普通 Pro Segment 保持
+`is_fallback: false`。
