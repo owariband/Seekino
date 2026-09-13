@@ -18,11 +18,24 @@ from typing import Callable, Literal, Protocol
 from gateway import EmbeddingResult
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .analysis_windows import materialize_analysis_windows, plan_analysis_windows
-from .schemas import AnalysisWindow, VideoParseResult
+from ..parse.analysis_windows import (
+    materialize_analysis_windows,
+    plan_analysis_windows,
+)
+from ..parse.schemas import AnalysisWindow, VideoParseResult
+from .qdrant_index import QdrantVideoSegmentIndex
+from .video_retrieval import (
+    RankedVideoSegment,
+    SegmentRetrievalChunk,
+    build_segment_retrieval_chunks,
+    weighted_reciprocal_rank_fusion,
+)
 
 _CACHE_VERSION = 1
 _METRIC_CUTOFFS = (1, 3, 5, 10)
+
+# Compatibility name for the existing evaluation API.
+RankedSegment = RankedVideoSegment
 
 
 class TextVideoEmbedder(Protocol):
@@ -84,23 +97,6 @@ class RecallEvalFixture(BaseModel):
         return self
 
 
-class SegmentRetrievalChunk(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    sequence_no: int = Field(ge=0)
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
-    text: str = Field(min_length=1)
-
-
-class RankedSegment(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    rank: int = Field(gt=0)
-    segment_sequence_no: int = Field(ge=0)
-    score: float
-
-
 class ChannelQueryMetrics(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -139,6 +135,12 @@ class RecallEvalResult(BaseModel):
     embedding_fps: float = Field(gt=0)
     channel_top_k: int = Field(gt=0)
     rrf_k: int = Field(gt=0)
+    text_weight: float = Field(ge=0)
+    vision_weight: float = Field(ge=0)
+    retrieval_backend: Literal["local", "qdrant"]
+    qdrant_exact: bool | None = None
+    qdrant_collection: str | None = None
+    dataset_id: str | None = None
     query_count: int = Field(gt=0)
     segment_count: int = Field(gt=0)
     text_metrics: AggregateChannelMetrics
@@ -210,25 +212,7 @@ def build_segment_chunks(parse_result: VideoParseResult) -> list[SegmentRetrieva
     absent from this function.
     """
 
-    _validate_canonical_segments(parse_result)
-    chunks: list[SegmentRetrievalChunk] = []
-    for segment in parse_result.segments:
-        parts = [segment.self_compact.strip()]
-        parts.extend(_render_owned_event(event) for event in segment.events)
-        text = "\n".join(part for part in parts if part).strip()
-        if not text:
-            raise ValueError(
-                f"segment {segment.window.sequence_no} has no self-owned retrieval text"
-            )
-        chunks.append(
-            SegmentRetrievalChunk(
-                sequence_no=segment.window.sequence_no,
-                start_ms=segment.window.segment_start_ms,
-                end_ms=segment.window.segment_end_ms,
-                text=text,
-            )
-        )
-    return chunks
+    return build_segment_retrieval_chunks(parse_result)
 
 
 def materialize_eval_only_canonical_media(
@@ -274,6 +258,10 @@ class RecallEvaluator:
         max_height: int = 720,
         channel_top_k: int = 20,
         rrf_k: int = 60,
+        text_weight: float = 1.0,
+        vision_weight: float = 1.0,
+        qdrant_index: QdrantVideoSegmentIndex | None = None,
+        qdrant_exact: bool = True,
         concurrency: int = 1,
     ) -> None:
         if max_height <= 0:
@@ -282,6 +270,14 @@ class RecallEvaluator:
             raise ValueError("channel_top_k must be greater than zero")
         if rrf_k <= 0:
             raise ValueError("rrf_k must be greater than zero")
+        for name, weight in (
+            ("text_weight", text_weight),
+            ("vision_weight", vision_weight),
+        ):
+            if not math.isfinite(weight) or weight < 0:
+                raise ValueError(f"{name} must be a finite nonnegative number")
+        if text_weight == 0 and vision_weight == 0:
+            raise ValueError("at least one channel weight must be greater than zero")
         if not 1 <= concurrency <= 4:
             raise ValueError("concurrency must be between 1 and 4")
         self._embedder = embedder
@@ -289,6 +285,10 @@ class RecallEvaluator:
         self._max_height = max_height
         self._channel_top_k = channel_top_k
         self._rrf_k = rrf_k
+        self._text_weight = text_weight
+        self._vision_weight = vision_weight
+        self._qdrant_index = qdrant_index
+        self._qdrant_exact = qdrant_exact
         self._concurrency = concurrency
 
     def evaluate(
@@ -301,6 +301,16 @@ class RecallEvaluator:
         parse_result_path: str | Path | None = None,
     ) -> RecallEvalResult:
         chunks = build_segment_chunks(parse_result)
+        if self._qdrant_index is not None:
+            self._qdrant_index.ensure_collection(
+                text_dimensions=self._embedder.output_dimensionality,
+                vision_dimensions=self._embedder.output_dimensionality,
+            )
+            self._qdrant_index.assert_dataset_size(
+                len(chunks),
+                allow_empty=True,
+            )
+
         source = _source_fingerprint(source_video)
         expected_sequences = {chunk.sequence_no for chunk in chunks}
         if set(media_by_sequence) != expected_sequences:
@@ -319,6 +329,17 @@ class RecallEvaluator:
             media_by_sequence=media_by_sequence,
             source=source,
         )
+        if self._qdrant_index is not None:
+            self._qdrant_index.upsert_segments(
+                chunks,
+                text_vectors=text_vectors,
+                vision_vectors=video_vectors,
+            )
+            self._qdrant_index.assert_dataset_size(
+                len(chunks),
+                allow_empty=False,
+            )
+
         query_results: list[RecallQueryResult] = []
         for query_fixture in fixture.queries:
             relevant = _resolve_relevant_segments(
@@ -327,11 +348,25 @@ class RecallEvaluator:
                 duration_ms=parse_result.duration_ms,
             )
             query_vector = self._cached_query_embedding(query_fixture.query, source)
-            text_rankings = cosine_rankings(query_vector, text_vectors)
-            vision_rankings = cosine_rankings(query_vector, video_vectors)
-            fused_rankings = reciprocal_rank_fusion(
+            if self._qdrant_index is None:
+                text_rankings = cosine_rankings(query_vector, text_vectors)
+                vision_rankings = cosine_rankings(query_vector, video_vectors)
+            else:
+                text_rankings = self._qdrant_index.search_text(
+                    query_vector,
+                    limit=len(chunks),
+                    exact=self._qdrant_exact,
+                )
+                vision_rankings = self._qdrant_index.search_vision(
+                    query_vector,
+                    limit=len(chunks),
+                    exact=self._qdrant_exact,
+                )
+            fused_rankings = weighted_reciprocal_rank_fusion(
                 text_rankings,
                 vision_rankings,
+                text_weight=self._text_weight,
+                vision_weight=self._vision_weight,
                 channel_top_k=self._channel_top_k,
                 rrf_k=self._rrf_k,
             )
@@ -361,6 +396,24 @@ class RecallEvaluator:
             embedding_fps=self._embedder.fps,
             channel_top_k=self._channel_top_k,
             rrf_k=self._rrf_k,
+            text_weight=self._text_weight,
+            vision_weight=self._vision_weight,
+            retrieval_backend=(
+                "qdrant" if self._qdrant_index is not None else "local"
+            ),
+            qdrant_exact=(
+                self._qdrant_exact if self._qdrant_index is not None else None
+            ),
+            qdrant_collection=(
+                self._qdrant_index.collection_name
+                if self._qdrant_index is not None
+                else None
+            ),
+            dataset_id=(
+                self._qdrant_index.dataset_id
+                if self._qdrant_index is not None
+                else None
+            ),
             query_count=len(query_results),
             segment_count=len(chunks),
             text_metrics=_aggregate_metrics(query_results, "text_metrics"),
@@ -522,21 +575,14 @@ def reciprocal_rank_fusion(
     channel_top_k: int,
     rrf_k: int,
 ) -> list[RankedSegment]:
-    if channel_top_k <= 0:
-        raise ValueError("channel_top_k must be greater than zero")
-    if rrf_k <= 0:
-        raise ValueError("rrf_k must be greater than zero")
-    scores: dict[int, float] = {}
-    for rankings in (text_rankings, vision_rankings):
-        for ranked in rankings[:channel_top_k]:
-            scores[ranked.segment_sequence_no] = scores.get(
-                ranked.segment_sequence_no, 0.0
-            ) + 1.0 / (rrf_k + ranked.rank)
-    ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
-    return [
-        RankedSegment(rank=rank, segment_sequence_no=sequence_no, score=score)
-        for rank, (sequence_no, score) in enumerate(ordered, start=1)
-    ]
+    return weighted_reciprocal_rank_fusion(
+        text_rankings,
+        vision_rankings,
+        text_weight=1.0,
+        vision_weight=1.0,
+        channel_top_k=channel_top_k,
+        rrf_k=rrf_k,
+    )
 
 
 def _validate_canonical_segments(parse_result: VideoParseResult) -> None:
@@ -574,13 +620,6 @@ def _validate_planned_media(
             or planned.analysis_end_ms != parsed_window.segment_end_ms
         ):
             raise ValueError("planned media is not the canonical zero-overlap segment")
-
-
-def _render_owned_event(event) -> str:
-    text = event.description.strip()
-    if event.text:
-        text = f"{text}\n{event.text.strip()}"
-    return text
 
 
 def _source_fingerprint(source_video: str | Path) -> _SourceFingerprint:

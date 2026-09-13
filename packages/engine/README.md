@@ -3,13 +3,22 @@
 Engine 承载 AniVAG 自有的领域算法编排；外部模型请求仍由
 `packages/gateway` 负责。
 
-当前解析代码按业务层级拆分：
+算法代码按职责分为 `parse/` 和 `retrieval/` 两个目录。
 
-- `video_parse.py`：整集/整批 Segment 的顺序编排、Context、ownership、去重与恢复；
-- `segment_parse.py`：单个已有 Segment 的 Prompt、候选 ASR 融合、模型选择与审核降级；
-- `frame_sampler.py`：审核 fallback 所需的帧时间规划与 FFmpeg 抽帧；
-- `prompts.py`：Transcript 与事件时间线的证据约束；
-- `analysis_windows.py`：仅供当前本地整集实验物化临时 AnalysisWindow，不是生产上传切段。
+解析目录按业务层级拆分：
+
+- `parse/video_parse.py`：整集/整批 Segment 的顺序编排、Context、ownership、去重与恢复；
+- `parse/segment_parse.py`：单个已有 Segment 的 Prompt、候选 ASR 融合、模型选择与审核降级；
+- `parse/frame_sampler.py`：审核 fallback 所需的帧时间规划与 FFmpeg 抽帧；
+- `parse/prompts.py`：Transcript 与事件时间线的证据约束；
+- `parse/analysis_windows.py`：仅供当前本地整集实验物化临时 AnalysisWindow，不是生产上传切段。
+
+召回目录包含：
+
+- `retrieval/video_retrieval.py`：Segment 检索文本构造与 Text/Vision RRF；
+- `retrieval/qdrant_index.py`：Qdrant 双命名向量的写入和查询；
+- `retrieval/recall_eval.py`：召回评测流程；
+- `retrieval/cli.py`：独立的召回评测入口。
 
 `ParsePipeline` 会：
 
@@ -106,25 +115,62 @@ video_parser:
 
 ## 整集 raw recall 评测
 
-`anivag-recall-eval` 是独立的本地评测入口，不参与 Segment 解析。它要求完整且连续的
+`anivag-recall-eval` 是独立的召回评测入口，不参与 Segment 解析。它要求完整且连续的
 `VideoParseResult`，把每个 canonical Segment 作为候选单元：
 
 - Text 只索引当前段的 `self_compact` 与 owned events，不读取 `window_summary` 或相邻
   Context；
 - Vision 从原片物化零 overlap 的 canonical 视频，仅供本地评测；
-- 分别计算 Text/Vision 余弦排名与 RRF，输出 Hit@1/3/5/10 和 MRR；
+- 分别计算 Text/Vision 排名与可调权重 RRF，输出 Hit@1/3/5/10 和 MRR；
 - embedding 按模型、维度、FPS、源文件指纹和输入哈希原子缓存，可安全续跑。
+
+不传 Qdrant 参数时，命令继续使用进程内精确余弦排名，适合作为对照组：
 
 ```bash
 uv run --project packages/engine --env-file .env.local \
   anivag-recall-eval \
   --parse-result packages/engine/outputs/episode/pipeline.parse.json \
   --fixture packages/engine/evals/ep07.recall-smoke.json \
-  --output-dir packages/engine/outputs/episode-recall \
+  --output-dir packages/engine/outputs/episode-recall-local \
   --channel-top-k 20 \
   --rrf-k 60 \
   --concurrency 1
 ```
+
+Qdrant 是可选实验后端，不依赖 MySQL。仓库提供了固定版本的本地服务：
+
+```bash
+docker compose -f deploy/qdrant/compose.yaml up -d
+```
+
+使用不同的 Collection 隔离测试与正式环境；同一 Collection 内再以必填的
+`dataset-id` 隔离每一套解析结果。当前只建立测试数据，建议让 ID 同时包含环境、视频、
+切段方案和版本；解析结果或切段边界改变时应换新 ID，不复用旧实验数据。
+
+```bash
+ANIVAG_QDRANT_URL=http://127.0.0.1:6333 \
+ANIVAG_QDRANT_COLLECTION=anivag_video_segments_test \
+uv run --project packages/engine --env-file .env.local \
+  anivag-recall-eval \
+  --parse-result packages/engine/outputs/episode/pipeline.parse.json \
+  --fixture packages/engine/evals/ep07.recall-smoke.json \
+  --output-dir packages/engine/outputs/episode-recall-qdrant \
+  --retrieval-backend qdrant \
+  --dataset-id test:mygo:ep07:60s:v1 \
+  --qdrant-search-mode exact \
+  --text-weight 3 \
+  --vision-weight 1 \
+  --channel-top-k 20 \
+  --rrf-k 60 \
+  --concurrency 1
+```
+
+Collection 使用 `text`、`vision` 两个命名向量。每个点只保存定位和后续筛选需要的
+payload：`dataset_id`、`video_segment_id`、时间范围、`video_compact` 与
+`is_fallback`；前后 Context 不会落入召回文本。`exact` 会要求使用原始向量精确扫描，
+用于小数据集基线；`approximate` 则允许 Qdrant 按 Collection 配置选择 ANN 或全扫描，
+因此不能仅凭参数名断言实际走了 HNSW。评测结果会记录后端、Collection、dataset、
+搜索模式和 Text/Vision 权重，做 A/B 时应使用不同输出目录，避免覆盖结果。
 
 该入口只评估 raw candidate recall，尚不包含 CandidateVerifier，不能把 TopK 命中率当成
 最终回答正确率。第七集 12 条人工 smoke 的标签来源、限制和首轮结果记录在

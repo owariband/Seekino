@@ -7,11 +7,12 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "gateway",
     "pydantic>=2.0,<3",
+    "qdrant-client>=1.19,<2",
 ]
 
 [project.scripts]
-anivag-engine = "anivag_engine.cli:main"
-anivag-recall-eval = "anivag_engine.recall_eval_cli:main"
+anivag-engine = "anivag_engine.parse.cli:main"
+anivag-recall-eval = "anivag_engine.retrieval.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]

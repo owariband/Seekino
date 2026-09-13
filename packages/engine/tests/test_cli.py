@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from anivag_engine.cli import _load_completed_segments
-from anivag_engine.schemas import (
+from anivag_engine.parse.cli import _load_completed_segments
+from anivag_engine.parse.schemas import (
     AnalysisWindow,
     ContextSnapshot,
     SegmentCheckpoint,

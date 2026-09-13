@@ -5,8 +5,13 @@ from pathlib import Path
 
 import pytest
 from gateway import EmbeddingResult
+from qdrant_client import QdrantClient
 
-from anivag_engine.recall_eval import (
+from anivag_engine.retrieval.qdrant_index import (
+    QdrantDatasetConflictError,
+    QdrantVideoSegmentIndex,
+)
+from anivag_engine.retrieval.recall_eval import (
     RecallEvalFixture,
     RecallEvaluator,
     RecallQueryFixture,
@@ -15,7 +20,7 @@ from anivag_engine.recall_eval import (
     materialize_eval_only_canonical_media,
     reciprocal_rank_fusion,
 )
-from anivag_engine.schemas import (
+from anivag_engine.parse.schemas import (
     AnalysisWindow,
     ContextSnapshot,
     OwnedTimelineEvent,
@@ -251,6 +256,102 @@ def test_evaluator_caches_both_channels_and_scores_time_range_fixture(
     assert cached_embedder.video_calls == []
 
 
+def test_evaluator_can_persist_and_query_both_channels_through_qdrant(
+    tmp_path,
+) -> None:
+    source_video = tmp_path / "episode.mp4"
+    source_video.write_bytes(b"source-video")
+    parse_result = _parse_result(source_video)
+    fixture = RecallEvalFixture(
+        queries=[
+            RecallQueryFixture(
+                query_id="q-beta",
+                query="find beta",
+                relevant_segment_sequence_nos=[1],
+            )
+        ]
+    )
+    client = QdrantClient(":memory:")
+    index = QdrantVideoSegmentIndex(
+        client,
+        collection_name="video_segments_test",
+        dataset_id="test:mygo:ep07",
+    )
+    evaluator = RecallEvaluator(
+        FakeEmbedder(),
+        cache_dir=tmp_path / "cache",
+        channel_top_k=3,
+        rrf_k=60,
+        text_weight=3.0,
+        vision_weight=1.0,
+        qdrant_index=index,
+        qdrant_exact=True,
+    )
+
+    result = evaluator.evaluate(
+        parse_result,
+        fixture,
+        source_video=source_video,
+        media_by_sequence=_media(tmp_path / "media"),
+    )
+
+    assert result.retrieval_backend == "qdrant"
+    assert result.qdrant_exact is True
+    assert result.qdrant_collection == "video_segments_test"
+    assert result.dataset_id == "test:mygo:ep07"
+    assert result.text_weight == 3.0
+    assert result.vision_weight == 1.0
+    assert index.count_segments() == 3
+    assert result.queries[0].text_rankings[0].segment_sequence_no == 1
+    assert result.queries[0].vision_rankings[0].segment_sequence_no == 1
+    assert result.queries[0].fused_rankings[0].segment_sequence_no == 1
+
+
+def test_qdrant_dataset_conflict_fails_before_embedding(tmp_path) -> None:
+    source_video = tmp_path / "episode.mp4"
+    source_video.write_bytes(b"source-video")
+    parse_result = _parse_result(source_video)
+    client = QdrantClient(":memory:")
+    index = QdrantVideoSegmentIndex(
+        client,
+        collection_name="video_segments_test",
+        dataset_id="test:mygo:ep07:wrong-snapshot",
+    )
+    index.ensure_collection(text_dimensions=2, vision_dimensions=2)
+    first_chunk = build_segment_chunks(parse_result)[0]
+    index.upsert_segments(
+        [first_chunk],
+        text_vectors={0: [1.0, 0.0]},
+        vision_vectors={0: [1.0, 0.0]},
+    )
+    embedder = FakeEmbedder()
+    evaluator = RecallEvaluator(
+        embedder,
+        cache_dir=tmp_path / "cache",
+        qdrant_index=index,
+    )
+    fixture = RecallEvalFixture(
+        queries=[
+            RecallQueryFixture(
+                query_id="q-beta",
+                query="find beta",
+                relevant_segment_sequence_nos=[1],
+            )
+        ]
+    )
+
+    with pytest.raises(QdrantDatasetConflictError, match="Use a new dataset ID"):
+        evaluator.evaluate(
+            parse_result,
+            fixture,
+            source_video=source_video,
+            media_by_sequence=_media(tmp_path / "media"),
+        )
+
+    assert embedder.text_calls == []
+    assert embedder.video_calls == []
+
+
 def test_changed_embedding_metadata_invalidates_cache(tmp_path) -> None:
     source_video = tmp_path / "episode.mp4"
     source_video.write_bytes(b"source-video")
@@ -299,7 +400,7 @@ def test_eval_media_uses_canonical_zero_overlap_windows(tmp_path, monkeypatch) -
             window.media_path.write_bytes(b"eval")
 
     monkeypatch.setattr(
-        "anivag_engine.recall_eval.materialize_analysis_windows",
+        "anivag_engine.retrieval.recall_eval.materialize_analysis_windows",
         fake_materialize,
     )
 
@@ -320,7 +421,7 @@ def test_eval_media_uses_canonical_zero_overlap_windows(tmp_path, monkeypatch) -
 
 
 def test_rrf_uses_only_configured_channel_top_k() -> None:
-    from anivag_engine.recall_eval import RankedSegment
+    from anivag_engine.retrieval.recall_eval import RankedSegment
 
     text = [
         RankedSegment(rank=1, segment_sequence_no=0, score=0.9),

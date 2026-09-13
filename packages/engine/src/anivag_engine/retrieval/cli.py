@@ -5,8 +5,10 @@ import os
 from pathlib import Path
 
 from gateway import DoubaoMultimodalEmbedder, load_config
+from qdrant_client import QdrantClient
 
-from .analysis_windows import probe_video_duration_ms
+from ..parse.analysis_windows import probe_video_duration_ms
+from .qdrant_index import QdrantVideoSegmentIndex
 from .recall_eval import (
     RecallEvaluator,
     load_parse_result,
@@ -46,6 +48,38 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-height", type=int, default=720)
     parser.add_argument("--channel-top-k", type=int, default=20)
     parser.add_argument("--rrf-k", type=int, default=60)
+    parser.add_argument("--text-weight", type=float, default=1.0)
+    parser.add_argument("--vision-weight", type=float, default=1.0)
+    parser.add_argument(
+        "--retrieval-backend",
+        choices=("local", "qdrant"),
+        default="local",
+        help="Ranking backend; defaults to the in-process exact cosine baseline.",
+    )
+    parser.add_argument(
+        "--qdrant-url",
+        help=(
+            "Qdrant server URL; defaults to ANIVAG_QDRANT_URL when the Qdrant "
+            "backend is selected."
+        ),
+    )
+    parser.add_argument(
+        "--qdrant-collection",
+        help="Qdrant Collection; defaults to ANIVAG_QDRANT_COLLECTION.",
+    )
+    parser.add_argument(
+        "--dataset-id",
+        help="Dataset isolation key required for Qdrant evaluation.",
+    )
+    parser.add_argument(
+        "--qdrant-search-mode",
+        choices=("exact", "approximate"),
+        default="exact",
+        help=(
+            "Exact requests a full-precision exact scan; approximate allows "
+            "the server to use its configured ANN path."
+        ),
+    )
     parser.add_argument(
         "--concurrency",
         type=int,
@@ -57,6 +91,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _build_parser().parse_args()
+    qdrant_options = _resolve_qdrant_options(args)
     parse_result_path = args.parse_result.expanduser().resolve()
     parse_result = load_parse_result(parse_result_path)
     fixture = load_recall_fixture(args.fixture)
@@ -90,6 +125,32 @@ def main() -> None:
             os.getenv("ANIVAG_VIDEO_EMBEDDING_FPS") or embedding_config.fps
         )
 
+    embedder = DoubaoMultimodalEmbedder(
+        model,
+        output_dimensionality=dimensions,
+        fps=fps,
+    )
+    qdrant_index = None
+    if qdrant_options is not None:
+        qdrant_url, qdrant_collection, dataset_id = qdrant_options
+        qdrant_index = QdrantVideoSegmentIndex(
+            QdrantClient(
+                url=qdrant_url,
+                api_key=os.getenv("ANIVAG_QDRANT_API_KEY"),
+                timeout=30,
+            ),
+            collection_name=qdrant_collection,
+            dataset_id=dataset_id,
+        )
+        qdrant_index.ensure_collection(
+            text_dimensions=dimensions,
+            vision_dimensions=dimensions,
+        )
+        qdrant_index.assert_dataset_size(
+            len(parse_result.segments),
+            allow_empty=True,
+        )
+
     output_dir = args.output_dir.expanduser().resolve()
     media_by_sequence = materialize_eval_only_canonical_media(
         parse_result,
@@ -97,17 +158,16 @@ def main() -> None:
         output_dir=output_dir,
         max_height=args.max_height,
     )
-    embedder = DoubaoMultimodalEmbedder(
-        model,
-        output_dimensionality=dimensions,
-        fps=fps,
-    )
     evaluator = RecallEvaluator(
         embedder,
         cache_dir=output_dir / "embedding-cache",
         max_height=args.max_height,
         channel_top_k=args.channel_top_k,
         rrf_k=args.rrf_k,
+        text_weight=args.text_weight,
+        vision_weight=args.vision_weight,
+        qdrant_index=qdrant_index,
+        qdrant_exact=args.qdrant_search_mode == "exact",
         concurrency=args.concurrency,
     )
     result = evaluator.evaluate(
@@ -122,10 +182,36 @@ def main() -> None:
     print(
         f"recall evaluation complete; queries={result.query_count}; "
         f"segments={result.segment_count}; "
+        f"backend={result.retrieval_backend}; "
         f"fused_hit@1={result.fused_metrics.hit_at[1]:.3f}; "
         f"fused_mrr={result.fused_metrics.mrr:.3f}; output={result_path}",
         flush=True,
     )
+
+
+def _resolve_qdrant_options(
+    args: argparse.Namespace,
+) -> tuple[str, str, str] | None:
+    if args.retrieval_backend == "local":
+        if args.qdrant_url or args.qdrant_collection or args.dataset_id:
+            raise ValueError(
+                "Qdrant connection arguments require --retrieval-backend qdrant"
+            )
+        if args.qdrant_search_mode != "exact":
+            raise ValueError(
+                "Qdrant search mode requires --retrieval-backend qdrant"
+            )
+        return None
+
+    qdrant_url = args.qdrant_url or os.getenv("ANIVAG_QDRANT_URL")
+    qdrant_collection = args.qdrant_collection or os.getenv(
+        "ANIVAG_QDRANT_COLLECTION"
+    )
+    if not qdrant_url or not qdrant_collection or not args.dataset_id:
+        raise ValueError(
+            "Qdrant evaluation requires URL, Collection, and dataset ID"
+        )
+    return qdrant_url, qdrant_collection, args.dataset_id
 
 
 def _resolve_source_video(

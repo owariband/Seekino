@@ -1,18 +1,18 @@
 """AniVAG domain pipelines."""
 
-from .analysis_windows import (
+from .parse.analysis_windows import (
     materialize_analysis_windows,
     plan_analysis_windows,
     probe_video_duration_ms,
 )
-from .segment_parse import (
+from .parse.segment_parse import (
     ContentFilterFallbackSegmentParser,
     DeepSeekFallbackSegmentParser,
     OrderedFrameSegmentParser,
     SegmentEvidenceParser,
     SegmentParser,
 )
-from .schemas import (
+from .parse.schemas import (
     AnalysisWindow,
     ContextSnapshot,
     OwnedTimelineEvent,
@@ -29,7 +29,7 @@ from .schemas import (
     VideoParseResult,
     VideoTimeline,
 )
-from .video_parse import ParsePipeline
+from .parse.video_parse import ParsePipeline
 
 __all__ = [
     "AnalysisWindow",

@@ -6,14 +6,14 @@ from typing import Any
 import pytest
 from gateway import ContentFilterError, ImageInput, TextInput, VideoInput
 
-import anivag_engine.segment_parse as segment_parse_module
-from anivag_engine.segment_parse import (
+import anivag_engine.parse.segment_parse as segment_parse_module
+from anivag_engine.parse.segment_parse import (
     ContentFilterFallbackSegmentParser,
     DeepSeekFallbackSegmentParser,
     OrderedFrameSegmentParser,
     SegmentParser,
 )
-from anivag_engine.schemas import (
+from anivag_engine.parse.schemas import (
     NeutralVisualEvidence,
     TimelineEvent,
     TranscriptAnalysis,

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from anivag_engine.schemas import (
+from anivag_engine.parse.schemas import (
     AnalysisWindow,
     SegmentCheckpoint,
     SegmentParseResult,
@@ -10,7 +10,7 @@ from anivag_engine.schemas import (
     VideoParseProvenance,
     VideoParseResult,
 )
-from anivag_engine.video_parse import ParsePipeline
+from anivag_engine.parse.video_parse import ParsePipeline
 
 
 def _event(

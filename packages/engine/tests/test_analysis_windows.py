@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from anivag_engine.analysis_windows import plan_analysis_windows
-from anivag_engine.frame_sampler import plan_frame_timestamps
+from anivag_engine.parse.analysis_windows import plan_analysis_windows
+from anivag_engine.parse.frame_sampler import plan_frame_timestamps
 
 
 def test_plan_analysis_windows_uses_non_overlapping_canonical_segments() -> None:

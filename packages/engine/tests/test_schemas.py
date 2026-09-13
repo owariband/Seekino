@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from anivag_engine.schemas import TimelineEvent
+from anivag_engine.parse.schemas import TimelineEvent
 
 
 def test_timeline_event_rejects_reversed_time_range() -> None:
