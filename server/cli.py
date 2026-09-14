@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from gateway.config import load_config
+from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
 from qdrant_client import QdrantClient
 
 from .database import (
@@ -18,13 +20,14 @@ from .repository.index_sync import IndexSyncRepository
 from .repository.video import VideoRepository
 from .service.index_sync import IndexSyncService
 from .service.parse_import import prepare_video_parse_import
+from .service.video_retrieval import VideoRetrievalService
 from .storage.qdrant import QdrantVideoChunkStore
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="anivag-server",
-        description="Manage the AniVAG MySQL fact source.",
+        description="Manage AniVAG persistence and formal video retrieval.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -102,6 +105,40 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_database_arguments(rebuild_index)
     _add_qdrant_arguments(rebuild_index)
+
+    search = subparsers.add_parser(
+        "search",
+        help="Run scoped Text/Vision retrieval and batch-hydrate its evidence.",
+    )
+    _add_database_arguments(search)
+    _add_qdrant_arguments(search)
+    search.add_argument("--query", required=True)
+    search.add_argument(
+        "--series-id",
+        dest="series_ids",
+        action="append",
+        required=True,
+        help="Formal Series UUID; repeat to search more than one Series.",
+    )
+    search.add_argument("--top-k", type=_positive_int, default=10)
+    search.add_argument("--channel-top-k", type=_positive_int, default=20)
+    search.add_argument("--rrf-k", type=_positive_int, default=60)
+    search.add_argument("--text-weight", type=float, default=1.0)
+    search.add_argument("--vision-weight", type=float, default=1.0)
+    search.add_argument(
+        "--exact",
+        action="store_true",
+        help="Use exact Qdrant search; intended for deterministic diagnostics.",
+    )
+    search.add_argument(
+        "--config",
+        type=Path,
+        help="Gateway model config; defaults to ANIVAG_MODEL_CONFIG/config.yaml.",
+    )
+    search.add_argument(
+        "--embedding-model",
+        help="Query embedding model; defaults to environment/model config.",
+    )
     return parser
 
 
@@ -199,7 +236,12 @@ def main() -> None:
         )
         return
 
-    if args.command in {"sync-index", "reconcile-index", "rebuild-index"}:
+    if args.command in {
+        "sync-index",
+        "reconcile-index",
+        "rebuild-index",
+        "search",
+    }:
         if not args.qdrant_url:
             raise ValueError(
                 "Qdrant URL is required via --qdrant-url or ANIVAG_QDRANT_URL"
@@ -221,23 +263,48 @@ def main() -> None:
                 text_dimensions=args.text_vector_dimensions,
                 vision_dimensions=args.vision_vector_dimensions,
             )
-            service = IndexSyncService(
-                IndexSyncRepository(create_session_factory(engine)),
-                store,
-            )
-            if args.command == "sync-index":
-                report = service.sync_due(limit=args.limit)
-            elif args.command == "reconcile-index":
-                report = service.reconcile(
-                    inspection_batch_size=args.inspection_batch_size
+            session_factory = create_session_factory(engine)
+            if args.command == "search":
+                embedding_config = load_config(args.config).multimodal_embedding
+                embedder = DoubaoMultimodalEmbedder(
+                    args.embedding_model
+                    or os.getenv("ANIVAG_VIDEO_EMBEDDING_MODEL")
+                    or embedding_config.model,
+                    output_dimensionality=args.text_vector_dimensions,
+                    fps=embedding_config.fps,
+                )
+                result = VideoRetrievalService(
+                    VideoRepository(session_factory),
+                    store,
+                    embedder,
+                    channel_top_k=args.channel_top_k,
+                    rrf_k=args.rrf_k,
+                    text_weight=args.text_weight,
+                    vision_weight=args.vision_weight,
+                    exact=args.exact,
+                ).search(
+                    args.query,
+                    series_ids=args.series_ids,
+                    top_k=args.top_k,
                 )
             else:
-                report = service.rebuild()
+                service = IndexSyncService(
+                    IndexSyncRepository(session_factory),
+                    store,
+                )
+                if args.command == "sync-index":
+                    result = service.sync_due(limit=args.limit)
+                elif args.command == "reconcile-index":
+                    result = service.reconcile(
+                        inspection_batch_size=args.inspection_batch_size
+                    )
+                else:
+                    result = service.rebuild()
         finally:
             client.close()
         print(
             json.dumps(
-                report.model_dump(mode="json", by_alias=True),
+                result.model_dump(mode="json", by_alias=True),
                 ensure_ascii=False,
             )
         )

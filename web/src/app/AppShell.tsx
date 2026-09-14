@@ -1,0 +1,110 @@
+import clsx from "clsx";
+import {
+  Activity,
+  ArrowUpFromLine,
+  LibraryBig,
+  Moon,
+  Search,
+  Settings,
+  Sun,
+} from "lucide-react";
+import { NavLink, Outlet } from "react-router";
+
+import { taskProgress } from "../features/uploads/upload-types";
+import { useUploads } from "../features/uploads/UploadProvider";
+import { useTheme } from "./theme";
+import { useWorkspace } from "./workspace";
+import styles from "./app-shell.module.css";
+
+const navigation = [
+  { to: "/search", label: "问画面", caption: "Agent", icon: Search },
+  { to: "/library", label: "资料库", caption: "Library", icon: LibraryBig },
+  { to: "/tasks", label: "解析任务", caption: "Tasks", icon: Activity },
+  { to: "/settings", label: "设置", caption: "Settings", icon: Settings },
+];
+
+export function AppShell() {
+  const { theme, toggleTheme } = useTheme();
+  const { mode } = useWorkspace();
+  const { visibleTasks, activeCount, overallProgress, openDialog } = useUploads();
+  const previewTasks = visibleTasks
+    .filter((task) => !["completed", "cancelled"].includes(task.status))
+    .slice(0, 3);
+
+  return (
+    <div className={styles.shell}>
+      <aside className={styles.sidebar}>
+        <NavLink className={styles.brand} to="/search" aria-label="AniVAG 首页">
+          <img src="/anivag-mark.svg" alt="" />
+          <div><strong>AniVAG</strong><span>影像札记</span></div>
+        </NavLink>
+
+        <nav className={styles.navigation} aria-label="主导航">
+          {navigation.map(({ to, label, caption, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) => clsx(styles.navItem, isActive && styles.navActive)}
+            >
+              <Icon size={17} strokeWidth={1.8} />
+              <div><span>{label}</span><small>{caption}</small></div>
+            </NavLink>
+          ))}
+        </nav>
+
+        <button className={styles.uploadDock} type="button" onClick={openDialog}>
+          <div className={styles.uploadDockHeading}>
+            <span><ArrowUpFromLine size={15} /> 并行传输</span>
+            <b>{overallProgress}%</b>
+          </div>
+          {previewTasks.length > 0 ? (
+            <div className={styles.microTasks}>
+              {previewTasks.map((task) => (
+                <div key={task.taskId}>
+                  <span>EP {String(task.episodeOrder).padStart(2, "0")}</span>
+                  <i><em style={{ width: `${taskProgress(task)}%` }} /></i>
+                  <small>{taskProgress(task)}%</small>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p>可同时放入 3 个视频</p>
+          )}
+          <div className={styles.uploadDockFooter}>
+            <span>{activeCount > 0 ? `${activeCount} 项进行中` : "打开上传案台"}</span>
+            <ArrowUpFromLine size={13} />
+          </div>
+        </button>
+
+        <footer className={styles.sidebarFooter}>
+          <div className={clsx(styles.runtime, styles[`runtime${mode}`])}>
+            <i />
+            <span>{mode === "live" ? "API 已连接" : mode === "offline" ? "API 不可用" : "检查服务"}</span>
+          </div>
+          <button type="button" onClick={toggleTheme} aria-label={theme === "light" ? "切换至黑夜模式" : "切换至白天模式"}>
+            {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+          </button>
+        </footer>
+      </aside>
+
+      <div className={styles.content}>
+        <header className={styles.mobileHeader}>
+          <NavLink className={styles.mobileBrand} to="/search"><img src="/anivag-mark.svg" alt="" /><strong>AniVAG</strong></NavLink>
+          <div>
+            <button type="button" onClick={openDialog} aria-label="打开上传面板"><ArrowUpFromLine size={17} /><span>{activeCount || "上传"}</span></button>
+            <button type="button" onClick={toggleTheme} aria-label="切换明暗主题">{theme === "light" ? <Moon size={17} /> : <Sun size={17} />}</button>
+          </div>
+        </header>
+        <Outlet />
+      </div>
+
+      <nav className={styles.mobileNav} aria-label="移动端主导航">
+        {navigation.map(({ to, label, icon: Icon }) => (
+          <NavLink key={to} to={to} className={({ isActive }) => isActive ? styles.mobileActive : undefined}>
+            <Icon size={18} /><span>{label}</span>
+          </NavLink>
+        ))}
+      </nav>
+    </div>
+  );
+}

@@ -1,0 +1,422 @@
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.headerActions {
+  display: flex;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.shelf {
+  margin-top: 48px;
+}
+
+.shelfHeading,
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  color: var(--ink-faint);
+  font: 600 .65rem/1 var(--mono);
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+
+.shelfHeading button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: var(--ink-faint);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--surface-raised);
+}
+
+.seriesList {
+  display: grid;
+  grid-auto-columns: minmax(245px, 1fr);
+  grid-auto-flow: column;
+  gap: 11px;
+  overflow-x: auto;
+  padding-bottom: 7px;
+}
+
+.seriesCard,
+.seriesActive,
+.addSeriesCard {
+  display: grid;
+  min-height: 112px;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-content: center;
+  align-items: center;
+  padding: 17px;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  cursor: pointer;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-small);
+  text-align: left;
+}
+
+.seriesActive {
+  border-color: var(--line-strong);
+  background: var(--teal-wash);
+}
+
+.seriesNumber {
+  color: var(--teal);
+  font: 400 1.55rem/1 var(--display);
+}
+
+.seriesCard > div,
+.seriesActive > div {
+  display: grid;
+  min-width: 0;
+}
+
+.seriesCard strong,
+.seriesActive strong {
+  overflow: hidden;
+  font: 500 .9rem/1.3 var(--display);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seriesCard small,
+.seriesActive small {
+  color: var(--ink-faint);
+  font-size: .64rem;
+}
+
+.seriesStatus {
+  grid-column: 2;
+  justify-self: start;
+  padding: 4px 7px;
+  color: var(--ink-faint);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font: 600 .55rem/1 var(--mono);
+}
+
+.seriesStatus[data-status="READY"] {
+  color: var(--teal-deep);
+  border-color: var(--line-strong);
+}
+
+.addSeriesCard {
+  grid-template-columns: auto 1fr;
+  color: var(--ink-faint);
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+  font-size: .74rem;
+}
+
+.feature {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(300px, 1fr) minmax(220px, 290px);
+  gap: clamp(26px, 4vw, 64px);
+  align-items: center;
+  margin-top: 44px;
+  padding: clamp(24px, 4vw, 48px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-large);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.cover {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 3px 18px 18px 3px;
+  background: #0c211b;
+  box-shadow: 14px 16px 0 color-mix(in srgb, var(--teal) 10%, transparent);
+}
+
+.cover::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0 auto 0 12px;
+  width: 1px;
+  background: rgba(255,255,255,.18);
+}
+
+.cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cover > span {
+  position: absolute;
+  z-index: 2;
+  right: 17px;
+  bottom: 12px;
+  color: rgba(238,255,248,.78);
+  font: 400 2.3rem/1 var(--display);
+}
+
+.featureCopy h2 {
+  max-width: 620px;
+  margin: 11px 0 15px;
+  font: 400 clamp(1.8rem, 3.2vw, 3.15rem)/1.04 var(--display);
+  letter-spacing: -.03em;
+}
+
+.featureCopy > p {
+  max-width: 600px;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: .8rem;
+}
+
+.featureCopy dl {
+  display: flex;
+  gap: clamp(20px, 4vw, 50px);
+  margin: 28px 0 0;
+}
+
+.featureCopy dl div {
+  display: grid;
+  gap: 5px;
+}
+
+.featureCopy dt {
+  color: var(--ink-faint);
+  font-size: .62rem;
+}
+
+.featureCopy dd {
+  margin: 0;
+  color: var(--teal-deep);
+  font: 500 .86rem/1 var(--mono);
+}
+
+.featureAside {
+  display: grid;
+  gap: 9px;
+  padding: 21px 0 21px 24px;
+  border-left: 1px solid var(--line);
+}
+
+.featureAside p {
+  margin: 0;
+  color: var(--teal-deep);
+  font: 600 .58rem/1 var(--mono);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.featureAside strong {
+  font: 400 1.15rem/1.3 var(--display);
+}
+
+.featureAside span {
+  color: var(--ink-faint);
+  font-size: .69rem;
+}
+
+.featureAside button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 0;
+  color: var(--teal-deep);
+  cursor: pointer;
+  background: transparent;
+  font-size: .68rem;
+}
+
+.episodes {
+  margin-top: 46px;
+}
+
+.sectionHeader h2 {
+  margin: 6px 0 0;
+  color: var(--ink);
+  font: 400 1.55rem/1 var(--display);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.episodeList {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: var(--surface-raised);
+}
+
+.episode {
+  display: grid;
+  grid-template-columns: 70px minmax(210px, 1.4fr) minmax(170px, .8fr) minmax(170px, .8fr) 86px;
+  gap: 20px;
+  align-items: center;
+  min-height: 82px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.episode:last-child { border-bottom: 0; }
+
+.episodeOrder {
+  color: var(--teal-deep);
+  font: 600 .67rem/1 var(--mono);
+}
+
+.episodeName {
+  display: flex;
+  min-width: 0;
+  gap: 10px;
+  align-items: center;
+  color: var(--teal-deep);
+}
+
+.episodeName > div {
+  display: grid;
+  min-width: 0;
+}
+
+.episodeName strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: .75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.episodeName span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-faint);
+  font-size: .61rem;
+}
+
+.progressCell {
+  display: grid;
+  grid-template-columns: 33px 1fr 33px;
+  gap: 7px;
+  align-items: center;
+  color: var(--ink-faint);
+  font-size: .58rem;
+}
+
+.progressCell i {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.progressCell em {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--teal);
+}
+
+.progressCell b {
+  font: 500 .55rem/1 var(--mono);
+  text-align: right;
+}
+
+.episodeReady {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--ink-faint);
+  font-size: .63rem;
+}
+
+.episodeReady[data-ready="true"] { color: var(--teal-deep); }
+
+.emptyEpisodes {
+  display: grid;
+  justify-items: center;
+  padding: 55px 20px;
+  color: var(--ink-faint);
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: var(--surface-raised);
+  text-align: center;
+}
+
+.emptyEpisodes h3 { margin: 13px 0 4px; color: var(--ink); font: 400 1.25rem/1.2 var(--display); }
+.emptyEpisodes p { margin: 0 0 20px; font-size: .72rem; }
+
+.modalBackdrop {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, #06100d 58%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.createDialog {
+  position: relative;
+  display: grid;
+  width: min(520px, 100%);
+  gap: 20px;
+  padding: 35px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.createDialog h2 { margin: -9px 0 4px; font: 400 2rem/1.1 var(--display); }
+.createDialog label { display: grid; gap: 7px; color: var(--ink-soft); font-size: .7rem; }
+.createDialog textarea { resize: vertical; }
+
+.modalClose {
+  position: absolute;
+  top: 17px;
+  right: 17px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--surface-raised);
+}
+
+.modalActions { display: flex; justify-content: flex-end; gap: 8px; }
+.error { margin: 8px 0; color: var(--red); font-size: .72rem; }
+
+@media (max-width: 1120px) {
+  .feature { grid-template-columns: minmax(190px, 260px) 1fr; }
+  .featureAside { grid-column: 1 / -1; border-top: 1px solid var(--line); border-left: 0; padding: 20px 0 0; }
+  .episode { grid-template-columns: 60px 1fr 180px 80px; }
+  .episode .progressCell:nth-of-type(4) { display: none; }
+}
+
+@media (max-width: 760px) {
+  .header { align-items: stretch; flex-direction: column; }
+  .headerActions { display: grid; grid-template-columns: 1fr 1fr; }
+  .seriesList { grid-auto-columns: minmax(220px, 84vw); }
+  .feature { grid-template-columns: 1fr; }
+  .cover { max-width: 310px; }
+  .featureCopy dl { justify-content: space-between; }
+  .episode { grid-template-columns: 48px 1fr auto; gap: 10px; }
+  .episode .progressCell { grid-column: 2 / -1; }
+  .episode .progressCell:nth-of-type(4) { display: grid; }
+  .episodeReady { grid-column: 3; grid-row: 1; }
+}

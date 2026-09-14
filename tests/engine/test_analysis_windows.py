@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from engine.parse.analysis_windows import plan_analysis_windows
+from engine.parse.analysis_windows import (
+    materialize_canonical_chunks,
+    plan_analysis_windows,
+)
 from engine.parse.frame_sampler import plan_frame_timestamps
 
 
@@ -35,3 +38,40 @@ def test_plan_frame_timestamps_preserves_66_second_fallback_density() -> None:
     assert len(timestamps) == 33
     assert timestamps[0] == 1000
     assert timestamps[-1] == 65_000
+
+
+def test_canonical_media_uses_chunk_boundaries_without_context_overlap(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "episode.mp4"
+    source.write_bytes(b"source")
+    windows = plan_analysis_windows(
+        source,
+        duration_ms=40_000,
+        output_dir=tmp_path / "windows",
+        chunk_duration_ms=20_000,
+        context_overlap_ms=3_000,
+    )
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"canonical")
+
+    monkeypatch.setattr("engine.parse.analysis_windows.subprocess.run", run)
+
+    paths = materialize_canonical_chunks(
+        windows,
+        output_dir=tmp_path / "canonical",
+    )
+
+    assert [path.name for path in paths] == ["chunk-0000.mp4", "chunk-0001.mp4"]
+    assert [command[command.index("-ss") + 1] for command in commands] == [
+        "0.000",
+        "20.000",
+    ]
+    assert [command[command.index("-t") + 1] for command in commands] == [
+        "20.000",
+        "20.000",
+    ]

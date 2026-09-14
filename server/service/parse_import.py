@@ -4,11 +4,11 @@ import hashlib
 import json
 import math
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import NAMESPACE_URL, UUID, uuid5
 
 from engine.parse.schemas import VideoChunkParseResult, VideoParseResult
 from engine.retrieval.video_retrieval import (
@@ -16,9 +16,13 @@ from engine.retrieval.video_retrieval import (
     build_video_chunk_retrieval_documents,
 )
 
-# UUID seeds are persistent data, not display terminology. Keep the pre-rename
-# seed so changing VideoSegment to VideoChunk does not re-key MySQL or Qdrant.
-_VIDEO_CHUNK_ID_SEED = "anivag:video-segment"
+from ..identity import (
+    canonical_uuid,
+    derive_context_snapshot_id,
+    derive_series_id,
+    derive_video_chunk_id,
+    derive_video_id,
+)
 
 
 @dataclass(frozen=True)
@@ -58,6 +62,109 @@ class PreparedVideoParseImport:
     parsed_at: datetime
     parse_result: VideoParseResult
     chunks: tuple[PreparedVideoChunk, ...]
+
+
+def prepare_completed_video_parse_import(
+    parse_result: VideoParseResult,
+    *,
+    workspace_id: str,
+    series_id: str,
+    series_name: str,
+    series_description: str | None,
+    important_extra_data: dict[str, Any] | None,
+    character_bible: list[dict[str, Any]],
+    video_id: str,
+    episode_order: int,
+    upload_sequence: int,
+    original_filename: str,
+    original_source_uri: str,
+    content_hash: str,
+    total_bytes: int,
+    pipeline_version: str,
+    chunk_media_refs: Mapping[int, str],
+    analysis_window_media_refs: Mapping[int, str],
+    text_embeddings: Mapping[int, PreparedEmbedding],
+    vision_embeddings: Mapping[int, PreparedEmbedding],
+    parsed_at: datetime | None = None,
+) -> PreparedVideoParseImport:
+    """Prepare already-verified Worker outputs without transitional file caches."""
+
+    canonical_series_id = canonical_uuid(series_id, "series_id")
+    canonical_video_id = canonical_uuid(video_id, "video_id")
+    if derive_video_id(canonical_series_id, content_hash) != canonical_video_id:
+        raise ValueError("video_id does not match Series and source content hash")
+    if not workspace_id.strip() or not series_name.strip():
+        raise ValueError("workspace_id and series_name must not be empty")
+    if not pipeline_version.strip():
+        raise ValueError("pipeline_version must not be empty")
+    if episode_order <= 0 or upload_sequence <= 0:
+        raise ValueError("episode_order and upload_sequence must be positive")
+    if total_bytes <= 0:
+        raise ValueError("total_bytes must be greater than zero")
+    if len(content_hash) != 64:
+        raise ValueError("content_hash must be a SHA-256 hex digest")
+    if not original_filename or not original_source_uri:
+        raise ValueError("original media metadata must not be empty")
+
+    retrieval_documents = {
+        document.sequence_no: document
+        for document in build_video_chunk_retrieval_documents(parse_result)
+    }
+    expected_sequences = set(retrieval_documents)
+    for name, values in (
+        ("chunk_media_refs", chunk_media_refs),
+        ("analysis_window_media_refs", analysis_window_media_refs),
+        ("text_embeddings", text_embeddings),
+        ("vision_embeddings", vision_embeddings),
+    ):
+        if set(values) != expected_sequences:
+            raise ValueError(f"{name} must contain every parsed VideoChunk exactly once")
+
+    prepared_chunks: list[PreparedVideoChunk] = []
+    for chunk in parse_result.chunks:
+        sequence_no = chunk.window.sequence_no
+        chunk_media_ref = chunk_media_refs[sequence_no]
+        analysis_media_ref = analysis_window_media_refs[sequence_no]
+        if not chunk_media_ref or not analysis_media_ref:
+            raise ValueError("VideoChunk media references must not be empty")
+        prepared_chunks.append(
+            PreparedVideoChunk(
+                video_chunk_id=derive_video_chunk_id(
+                    canonical_video_id,
+                    sequence_no,
+                ),
+                snapshot_id=derive_context_snapshot_id(
+                    canonical_video_id,
+                    sequence_no,
+                ),
+                parse_result=chunk,
+                retrieval_document=retrieval_documents[sequence_no],
+                chunk_media_ref=chunk_media_ref,
+                analysis_window_media_ref=analysis_media_ref,
+                text_embedding=text_embeddings[sequence_no],
+                vision_embedding=vision_embeddings[sequence_no],
+            )
+        )
+
+    return PreparedVideoParseImport(
+        series_id=canonical_series_id,
+        workspace_id=workspace_id.strip(),
+        series_name=series_name.strip(),
+        series_description=series_description,
+        important_extra_data=important_extra_data,
+        character_bible=character_bible,
+        video_id=canonical_video_id,
+        episode_order=episode_order,
+        upload_sequence=upload_sequence,
+        original_filename=original_filename,
+        original_source_uri=original_source_uri,
+        content_hash=content_hash,
+        total_bytes=total_bytes,
+        pipeline_version=pipeline_version.strip(),
+        parsed_at=parsed_at or datetime.now(UTC).replace(tzinfo=None),
+        parse_result=parse_result,
+        chunks=tuple(prepared_chunks),
+    )
 
 
 def prepare_video_parse_import(
@@ -108,17 +215,15 @@ def prepare_video_parse_import(
         raise FileNotFoundError(source_video)
 
     content_hash = _sha256_file(source_video)
-    resolved_series_id = _resolve_id(
-        series_id,
-        namespace_value=(
-            f"anivag:series:{workspace_id.strip()}:{series_name.strip().casefold()}"
-        ),
-        field_name="series_id",
+    resolved_series_id = (
+        derive_series_id(workspace_id, series_name)
+        if series_id is None
+        else canonical_uuid(series_id, "series_id")
     )
-    resolved_video_id = _resolve_id(
-        video_id,
-        namespace_value=f"anivag:video:{resolved_series_id}:{content_hash}",
-        field_name="video_id",
+    resolved_video_id = (
+        derive_video_id(resolved_series_id, content_hash)
+        if video_id is None
+        else canonical_uuid(video_id, "video_id")
     )
 
     retrieval_documents = {
@@ -175,18 +280,8 @@ def prepare_video_parse_import(
                 f"AnalysisWindow is not a file: {analysis_window_media}"
             )
 
-        video_chunk_id = str(
-            uuid5(
-                NAMESPACE_URL,
-                f"{_VIDEO_CHUNK_ID_SEED}:{resolved_video_id}:{sequence_no}",
-            )
-        )
-        snapshot_id = str(
-            uuid5(
-                NAMESPACE_URL,
-                f"anivag:context-snapshot:{resolved_video_id}:{sequence_no}",
-            )
-        )
+        video_chunk_id = derive_video_chunk_id(resolved_video_id, sequence_no)
+        snapshot_id = derive_context_snapshot_id(resolved_video_id, sequence_no)
         text_embedding = None
         vision_embedding = None
         if cache_directory is not None:
@@ -248,20 +343,6 @@ def prepare_video_parse_import(
         parse_result=parse_result,
         chunks=tuple(chunks),
     )
-
-
-def _resolve_id(
-    explicit_id: str | None,
-    *,
-    namespace_value: str,
-    field_name: str,
-) -> str:
-    if explicit_id is None:
-        return str(uuid5(NAMESPACE_URL, namespace_value))
-    try:
-        return str(UUID(explicit_id))
-    except ValueError as exc:
-        raise ValueError(f"{field_name} must be a UUID") from exc
 
 
 def _sha256_file(path: Path) -> str:

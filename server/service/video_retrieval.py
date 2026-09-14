@@ -1,0 +1,368 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Protocol
+
+from engine.retrieval.video_retrieval import (
+    RankedVideoChunkMatch,
+    fuse_video_chunk_rankings,
+)
+from gateway.schemas import EmbeddingResult
+
+from ..model.index_sync import IndexSyncOperation, IndexSyncStatus
+from ..repository.video import (
+    HydratedVideoChunkState,
+    VideoChunkNotFoundError,
+    VideoRepository,
+)
+from ..schema import (
+    AgentReply,
+    MatchedEvidence,
+    SelectionReason,
+    VideoChunkCandidate,
+    VideoChunkEvidence,
+    VideoChunkSearchHit,
+    VideoChunkSearchResult,
+)
+from ..storage.qdrant import (
+    QdrantPointConsistencyError,
+    QdrantVideoChunkStore,
+    VideoChunkIndexMatch,
+)
+
+
+class QueryEmbedder(Protocol):
+    def embed_query(self, query: str) -> EmbeddingResult: ...
+
+
+class RetrievalIndexConsistencyError(RuntimeError):
+    """Qdrant candidates do not match the current MySQL index facts."""
+
+
+class VideoRetrievalService:
+    """Run scoped dual-channel retrieval and hydrate formal video evidence."""
+
+    def __init__(
+        self,
+        repository: VideoRepository,
+        store: QdrantVideoChunkStore,
+        embedder: QueryEmbedder,
+        *,
+        channel_top_k: int = 20,
+        rrf_k: int = 60,
+        text_weight: float = 1.0,
+        vision_weight: float = 1.0,
+        exact: bool = False,
+    ) -> None:
+        if store.text_dimensions != store.vision_dimensions:
+            raise ValueError(
+                "text and vision dimensions must match for shared query embedding"
+            )
+        if not isinstance(exact, bool):
+            raise ValueError("exact must be a bool")
+        # The pure Engine function owns validation of the RRF configuration.
+        fuse_video_chunk_rankings(
+            [],
+            [],
+            text_weight=text_weight,
+            vision_weight=vision_weight,
+            channel_top_k=channel_top_k,
+            rrf_k=rrf_k,
+        )
+        self._repository = repository
+        self._store = store
+        self._embedder = embedder
+        self._channel_top_k = channel_top_k
+        self._rrf_k = rrf_k
+        self._text_weight = text_weight
+        self._vision_weight = vision_weight
+        self._exact = exact
+
+    def search(
+        self,
+        query: str,
+        *,
+        series_ids: Sequence[str],
+        top_k: int = 10,
+    ) -> VideoChunkSearchResult:
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("query must not be empty")
+        if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
+            raise ValueError("top_k must be a positive integer")
+
+        normalized_query = query.strip()
+        scope = self._repository.require_ready_series(series_ids)
+        embedding = self._embedder.embed_query(normalized_query)
+        if embedding.modality != "text":
+            raise RuntimeError("query embedder returned a non-text embedding")
+
+        try:
+            text_matches = self._store.search_text(
+                embedding.vector,
+                series_ids=scope,
+                limit=self._channel_top_k,
+                exact=self._exact,
+            )
+            vision_matches = self._store.search_vision(
+                embedding.vector,
+                series_ids=scope,
+                limit=self._channel_top_k,
+                exact=self._exact,
+            )
+        except QdrantPointConsistencyError as exc:
+            raise RetrievalIndexConsistencyError(str(exc)) from exc
+
+        if not text_matches or not vision_matches:
+            raise RetrievalIndexConsistencyError(
+                "a READY Series scope returned no candidate in one or more "
+                "Qdrant channels"
+            )
+        index_state = _merge_index_state(text_matches, vision_matches)
+        fused = fuse_video_chunk_rankings(
+            _engine_rankings(text_matches),
+            _engine_rankings(vision_matches),
+            text_weight=self._text_weight,
+            vision_weight=self._vision_weight,
+            channel_top_k=self._channel_top_k,
+            rrf_k=self._rrf_k,
+        )[:top_k]
+        if not fused:
+            raise RetrievalIndexConsistencyError(
+                "Qdrant candidates could not produce an enabled RRF result"
+            )
+
+        candidate_ids = [item.video_chunk_id for item in fused]
+        try:
+            hydrated = self._repository.hydrate_video_chunk_states(candidate_ids)
+        except VideoChunkNotFoundError as exc:
+            raise RetrievalIndexConsistencyError(
+                "Qdrant returned VideoChunk IDs missing from MySQL"
+            ) from exc
+        if len(hydrated) != len(fused):
+            raise RetrievalIndexConsistencyError(
+                "MySQL hydrate returned a different number of VideoChunks"
+            )
+
+        hits: list[VideoChunkSearchHit] = []
+        for ranking, state in zip(fused, hydrated, strict=True):
+            match = index_state[ranking.video_chunk_id]
+            _validate_hydrated_state(match, state, scope)
+            candidate = VideoChunkCandidate.model_validate(ranking.model_dump())
+            hits.append(
+                VideoChunkSearchHit(
+                    candidate=candidate,
+                    selection_reason=_selection_reason(candidate, state.evidence),
+                    evidence=state.evidence,
+                )
+            )
+        return VideoChunkSearchResult(
+            query=normalized_query,
+            series_ids=scope,
+            agent_reply=_agent_reply(hits),
+            hits=hits,
+        )
+
+
+def _engine_rankings(
+    matches: Sequence[VideoChunkIndexMatch],
+) -> list[RankedVideoChunkMatch]:
+    return [
+        RankedVideoChunkMatch(
+            rank=match.rank,
+            video_chunk_id=match.video_chunk_id,
+            score=match.score,
+        )
+        for match in matches
+    ]
+
+
+def _merge_index_state(
+    text_matches: Sequence[VideoChunkIndexMatch],
+    vision_matches: Sequence[VideoChunkIndexMatch],
+) -> dict[str, VideoChunkIndexMatch]:
+    by_id: dict[str, VideoChunkIndexMatch] = {}
+    for match in (*text_matches, *vision_matches):
+        current = by_id.get(match.video_chunk_id)
+        if current is not None and _point_identity(current) != _point_identity(match):
+            raise RetrievalIndexConsistencyError(
+                "Qdrant point identity changed between retrieval channels: "
+                f"{match.video_chunk_id}"
+            )
+        by_id[match.video_chunk_id] = match
+    return by_id
+
+
+def _point_identity(match: VideoChunkIndexMatch) -> tuple[str, str, str, str, bool]:
+    return (
+        match.video_chunk_id,
+        match.series_id,
+        match.video_id,
+        match.source_revision,
+        match.is_fallback,
+    )
+
+
+def _validate_hydrated_state(
+    match: VideoChunkIndexMatch,
+    state: HydratedVideoChunkState,
+    scope: Sequence[str],
+) -> None:
+    evidence = state.evidence
+    mismatches: list[str] = []
+    if evidence.video_chunk_id != match.video_chunk_id:
+        mismatches.append("videoChunkId")
+    if evidence.series_id != match.series_id or evidence.series_id not in scope:
+        mismatches.append("seriesId")
+    if evidence.video_id != match.video_id:
+        mismatches.append("videoId")
+    if evidence.is_fallback != match.is_fallback:
+        mismatches.append("isFallback")
+    if state.source_revision != match.source_revision:
+        mismatches.append("sourceRevision")
+    if state.index_operation != IndexSyncOperation.UPSERT.value:
+        mismatches.append("indexOperation")
+    if state.index_status != IndexSyncStatus.SYNCED.value:
+        mismatches.append("indexStatus")
+    if mismatches:
+        raise RetrievalIndexConsistencyError(
+            f"Qdrant point {match.video_chunk_id} disagrees with MySQL fields: "
+            + ", ".join(mismatches)
+        )
+
+
+def _selection_reason(
+    candidate: VideoChunkCandidate,
+    evidence: VideoChunkEvidence,
+) -> SelectionReason:
+    has_text = candidate.text_rank is not None
+    has_vision = candidate.vision_rank is not None
+    matched: list[MatchedEvidence] = []
+
+    if has_text:
+        if evidence.transcript:
+            cue = evidence.transcript[0]
+            matched.append(
+                MatchedEvidence(
+                    kind="TRANSCRIPT",
+                    text=cue.text,
+                    start_ms=cue.start_ms,
+                    end_ms=cue.end_ms,
+                )
+            )
+        elif evidence.video_compact.strip():
+            matched.append(
+                MatchedEvidence(
+                    kind="CONTEXT",
+                    text=evidence.video_compact.strip(),
+                    start_ms=evidence.start_ms,
+                    end_ms=evidence.end_ms,
+                )
+            )
+
+    if has_vision:
+        visual = _first_visual_evidence(evidence)
+        if visual is not None:
+            matched.append(visual)
+
+    if not matched:
+        matched.append(
+            MatchedEvidence(
+                kind="CONTEXT",
+                text=evidence.window_summary.strip() or evidence.retrieval_text.strip(),
+                start_ms=evidence.analysis_window_start_ms,
+                end_ms=evidence.analysis_window_end_ms,
+            )
+        )
+
+    fact_summary = "、".join(
+        (
+            f"“{item.text[:57].rstrip()}…”"
+            if len(item.text) > 60
+            else f"“{item.text}”"
+        )
+        for item in matched[:2]
+    )
+    if has_text and has_vision:
+        summary = (
+            "该片段同时进入文本与视觉召回，并在融合排序中位列第 "
+            f"{candidate.fused_rank}；返回证据包含 {fact_summary}，"
+            "因此保留它用于联合核验。"
+        )
+    elif has_text:
+        summary = (
+            f"该片段由文本通道召回，融合排序第 {candidate.fused_rank}；"
+            f"返回证据包含 {fact_summary}，保留它用于核验对白和事件语义。"
+        )
+    else:
+        summary = (
+            f"该片段由视觉通道召回，融合排序第 {candidate.fused_rank}；"
+            f"返回证据包含 {fact_summary}，保留它用于核验画面和相邻语境。"
+        )
+
+    limitations = [
+        message
+        for condition, message in (
+            (not has_text, "文本通道未召回，需要重点核验对白与语义。"),
+            (not has_vision, "视觉通道未召回，需要重点核验实际画面。"),
+            (
+                has_text and not evidence.transcript,
+                "当前片段没有可展示的对白，文本证据来自事件与上下文摘要。",
+            ),
+            (evidence.is_fallback, "该片段来自降级解析，证据粒度可能较粗。"),
+        )
+        if condition
+    ]
+    return SelectionReason(
+        summary=summary,
+        matched_evidence=matched,
+        limitations=limitations,
+    )
+
+
+def _first_visual_evidence(
+    evidence: VideoChunkEvidence,
+) -> MatchedEvidence | None:
+    for event in evidence.all_time_events:
+        text = event.get("description")
+        start_ms = event.get("start_ms")
+        end_ms = event.get("end_ms")
+        if (
+            isinstance(text, str)
+            and text.strip()
+            and isinstance(start_ms, int)
+            and not isinstance(start_ms, bool)
+            and isinstance(end_ms, int)
+            and not isinstance(end_ms, bool)
+            and end_ms > start_ms
+        ):
+            return MatchedEvidence(
+                kind="VISUAL_EVENT",
+                text=text.strip(),
+                start_ms=start_ms,
+                end_ms=end_ms,
+            )
+    text = evidence.baseline_visual_caption or evidence.all_time_event_text
+    if text.strip():
+        return MatchedEvidence(
+            kind="VISUAL_EVENT",
+            text=text.strip(),
+            start_ms=evidence.start_ms,
+            end_ms=evidence.end_ms,
+        )
+    return None
+
+
+def _agent_reply(hits: Sequence[VideoChunkSearchHit]) -> AgentReply:
+    count = len(hits)
+    if count == 0:
+        return AgentReply(
+            message="这次没有找到符合当前检索范围的候选片段。",
+            result_count=0,
+        )
+    return AgentReply(
+        message=(
+            f"我保留了 {count} 段备选。第一段的选择依据是："
+            f"{hits[0].selection_reason.summary}"
+        ),
+        result_count=count,
+    )

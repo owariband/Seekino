@@ -1,7 +1,8 @@
-"""Local CLI helpers for materializing temporary analysis media.
+"""Plan and materialize analysis windows and canonical VideoChunk media.
 
-Production parsing consumes video chunks persisted by the media pipeline. These
-helpers only keep the current whole-video experiment and resume workflow usable.
+The CLI and durable Worker share these deterministic helpers. Analysis windows
+may overlap for model context; canonical chunks never overlap and are the media
+units persisted for playback and vision embeddings.
 """
 
 from __future__ import annotations
@@ -179,3 +180,92 @@ def materialize_analysis_windows(
                 f"ffmpeg could not create analysis window {window.sequence_no}"
                 f"{detail}"
             ) from exc
+
+
+def materialize_canonical_chunks(
+    windows: list[AnalysisWindow],
+    *,
+    output_dir: str | Path,
+    ffmpeg_bin: str = "ffmpeg",
+    max_height: int | None = 720,
+) -> list[Path]:
+    """Create the non-overlapping media units used by the vision index."""
+
+    if not windows:
+        raise ValueError("at least one analysis window is required")
+    if max_height is not None and max_height <= 0:
+        raise ValueError("max_height must be greater than zero")
+    target_directory = Path(output_dir).expanduser().resolve()
+    outputs: list[Path] = []
+    for expected_sequence_no, window in enumerate(windows):
+        if window.sequence_no != expected_sequence_no:
+            raise ValueError("analysis windows must have contiguous sequence numbers")
+        if not window.source_video.is_file():
+            raise FileNotFoundError(
+                f"video file does not exist: {window.source_video}"
+            )
+        target = target_directory / f"chunk-{window.sequence_no:04d}.mp4"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            if target.is_file() and target.stat().st_size > 0:
+                outputs.append(target)
+                continue
+            raise RuntimeError(
+                f"canonical VideoChunk path is not a usable file: {target}"
+            )
+
+        command = [
+            ffmpeg_bin,
+            "-nostdin",
+            "-v",
+            "error",
+            "-ss",
+            f"{window.chunk_start_ms / 1000:.3f}",
+            "-i",
+            str(window.source_video),
+            "-t",
+            f"{(window.chunk_end_ms - window.chunk_start_ms) / 1000:.3f}",
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-sn",
+        ]
+        if max_height is not None:
+            command.extend(["-vf", f"scale=-2:min({max_height}\\,ih)"])
+        command.extend(
+            [
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "25",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
+                "-n",
+                str(target),
+            ]
+        )
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "ffmpeg is required to create canonical VideoChunks"
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or "").strip()
+            if detail:
+                detail = f": {detail[-1000:]}"
+            raise RuntimeError(
+                f"ffmpeg could not create canonical VideoChunk "
+                f"{window.sequence_no}{detail}"
+            ) from exc
+        outputs.append(target)
+    return outputs

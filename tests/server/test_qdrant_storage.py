@@ -9,7 +9,9 @@ from qdrant_client import QdrantClient, models
 
 from server.database import DatabaseEnvironment
 from server.storage.qdrant import (
+    QdrantCollectionNotFoundError,
     QdrantCollectionSchemaError,
+    QdrantPointConsistencyError,
     QdrantVideoChunkStore,
     VideoChunkIndexPoint,
 )
@@ -18,16 +20,23 @@ from server.storage.qdrant import (
 def _point(
     video_chunk_id: str | None = None,
     *,
+    series_id: str | None = None,
+    video_id: str | None = None,
     source_revision: str = "revision-1",
+    is_fallback: bool = False,
+    text_vector: list[float] | None = None,
+    vision_vector: list[float] | None = None,
 ) -> VideoChunkIndexPoint:
     return VideoChunkIndexPoint(
-        series_id=str(uuid4()),
-        video_id=str(uuid4()),
+        series_id=series_id or str(uuid4()),
+        video_id=video_id or str(uuid4()),
         video_chunk_id=video_chunk_id or str(uuid4()),
         source_revision=source_revision,
-        is_fallback=False,
-        text_vector=[1.0, 0.0],
-        vision_vector=[0.0, 1.0, 0.0],
+        is_fallback=is_fallback,
+        text_vector=text_vector if text_vector is not None else [1.0, 0.0],
+        vision_vector=(
+            vision_vector if vision_vector is not None else [0.0, 1.0, 0.0]
+        ),
     )
 
 
@@ -149,6 +158,89 @@ def test_inspect_reports_present_missing_and_stale_revision() -> None:
     assert states[present.video_chunk_id].source_revision == "old-revision"
     assert states[missing_id].present is False
     assert states[missing_id].source_revision is None
+
+
+def test_search_filters_multi_series_scope_before_each_channel_top_k() -> None:
+    client = QdrantClient(":memory:")
+    store = _store(client, text_dimensions=2, vision_dimensions=2)
+    first_series_id = str(uuid4())
+    second_series_id = str(uuid4())
+    excluded_series_id = str(uuid4())
+    text_winner = _point(
+        series_id=first_series_id,
+        text_vector=[0.8, 0.6],
+        vision_vector=[0.0, 1.0],
+    )
+    vision_winner = _point(
+        series_id=second_series_id,
+        text_vector=[0.6, 0.8],
+        vision_vector=[1.0, 0.0],
+    )
+    excluded_global_winner = _point(
+        series_id=excluded_series_id,
+        text_vector=[1.0, 0.0],
+        vision_vector=[1.0, 0.0],
+    )
+    for point in (text_winner, vision_winner, excluded_global_winner):
+        store.upsert(point)
+
+    scope = [first_series_id, second_series_id]
+    text = store.search_text([1.0, 0.0], series_ids=scope, limit=1)
+    vision = store.search_vision([1.0, 0.0], series_ids=scope, limit=1)
+
+    assert [item.video_chunk_id for item in text] == [text_winner.video_chunk_id]
+    assert [item.video_chunk_id for item in vision] == [vision_winner.video_chunk_id]
+    assert text[0].rank == vision[0].rank == 1
+    assert {text[0].series_id, vision[0].series_id} == set(scope)
+    assert excluded_global_winner.video_chunk_id not in {
+        text[0].video_chunk_id,
+        vision[0].video_chunk_id,
+    }
+
+
+def test_search_rejects_a_payload_id_that_disagrees_with_point_id() -> None:
+    client = QdrantClient(":memory:")
+    store = _store(client, text_dimensions=2, vision_dimensions=2)
+    store.ensure_collection()
+    point_id = str(uuid4())
+    series_id = str(uuid4())
+    client.upsert(
+        collection_name=store.collection_name,
+        points=[
+            models.PointStruct(
+                id=point_id,
+                vector={"text": [1.0, 0.0], "vision": [1.0, 0.0]},
+                payload={
+                    "seriesId": series_id,
+                    "videoId": str(uuid4()),
+                    "videoChunkId": str(uuid4()),
+                    "sourceRevision": "revision-1",
+                    "isFallback": False,
+                },
+            )
+        ],
+        wait=True,
+    )
+
+    with pytest.raises(QdrantPointConsistencyError, match="does not match point ID"):
+        store.search_text(
+            [1.0, 0.0],
+            series_ids=[series_id],
+            limit=1,
+        )
+
+
+def test_search_rejects_empty_scope_and_missing_collection() -> None:
+    store = _store(
+        QdrantClient(":memory:"),
+        text_dimensions=2,
+        vision_dimensions=2,
+    )
+
+    with pytest.raises(ValueError, match="series_ids must not be empty"):
+        store.search_text([1.0, 0.0], series_ids=[], limit=1)
+    with pytest.raises(QdrantCollectionNotFoundError, match="does not exist"):
+        store.search_text([1.0, 0.0], series_ids=[str(uuid4())], limit=1)
 
 
 def test_delete_is_idempotent_and_waits_for_completion() -> None:

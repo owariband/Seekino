@@ -47,8 +47,10 @@ class IndexSyncService:
     ) -> IndexSyncRunReport:
         """Synchronize currently due intents without coupling fact commits to Qdrant."""
 
-        due_at = now or self._clock()
         materialized_count = self._repository.materialize_all()
+        # Materialization can create PENDING intents at the current instant.
+        # Read the default cutoff afterwards so a single sync run can consume them.
+        due_at = now or self._clock()
         items = self._repository.list_due(limit, now=due_at)
         synced, failed, stale = self._apply_items(items)
         return IndexSyncRunReport(
@@ -57,6 +59,42 @@ class IndexSyncService:
             synced_count=synced,
             failed_count=failed,
             stale_result_count=stale,
+        )
+
+    def sync_video_chunks(
+        self,
+        video_chunk_ids: Sequence[str],
+    ) -> IndexSyncRunReport:
+        """Synchronize one completed ParseJob's exact VideoChunk set."""
+
+        chunk_ids = list(dict.fromkeys(video_chunk_ids))
+        if not chunk_ids:
+            raise ValueError("video_chunk_ids must not be empty")
+        materialized_count = self._repository.materialize(chunk_ids)
+        items = self._repository.list_by_video_chunk_ids(chunk_ids)
+        present = {item.video_chunk_id for item in items}
+        missing = [item for item in chunk_ids if item not in present]
+        if missing:
+            raise IndexSyncInvariantError(
+                "missing index intents for VideoChunks: " + ", ".join(missing)
+            )
+        selected = [
+            item for item in items if item.status is not IndexSyncStatus.SYNCED
+        ]
+        synced, failed, stale = self._apply_items(selected)
+        current = self._repository.list_by_video_chunk_ids(chunk_ids)
+        if failed or stale or any(
+            item.status is not IndexSyncStatus.SYNCED for item in current
+        ):
+            raise IndexSyncInvariantError(
+                "the ParseJob's Qdrant index did not converge to SYNCED"
+            )
+        return IndexSyncRunReport(
+            materialized_count=materialized_count,
+            selected_count=len(selected),
+            synced_count=synced,
+            failed_count=0,
+            stale_result_count=0,
         )
 
     def reconcile(

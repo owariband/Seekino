@@ -52,6 +52,35 @@ def _series_status(engine, series_id: str) -> str:
         ).scalar_one()
 
 
+def test_sync_captures_default_due_cutoff_after_materialization() -> None:
+    calls: list[str] = []
+    run_at = datetime.now(UTC)
+
+    class OrderingRepository:
+        def materialize_all(self) -> int:
+            calls.append("materialize")
+            return 0
+
+        def list_due(self, limit: int, *, now: datetime):
+            assert limit == 100
+            assert now == run_at
+            calls.append("list_due")
+            return []
+
+    def clock() -> datetime:
+        calls.append("clock")
+        return run_at
+
+    report = IndexSyncService(
+        OrderingRepository(),
+        object(),
+        clock=clock,
+    ).sync_due()
+
+    assert calls == ["materialize", "clock", "list_due"]
+    assert report.selected_count == 0
+
+
 def test_sync_is_idempotent_and_reconcile_repairs_a_deleted_point(
     prepared_import,
     repository,

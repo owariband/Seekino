@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">本地视频预览占位</title>
+  <desc id="desc">连接 AniVAG 服务后，这里会显示候选片段对应的原视频。</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#183E35"/>
+      <stop offset=".58" stop-color="#10231E"/>
+      <stop offset="1" stop-color="#09120F"/>
+    </linearGradient>
+    <linearGradient id="light" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#8BD6C5" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#8BD6C5" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#sky)"/>
+  <path d="M0 520 262 385l170 79 215-178 206 136 164-98 263 157v239H0Z" fill="#0B1814"/>
+  <path d="m648 180 134 430H514Z" fill="url(#light)"/>
+  <circle cx="648" cy="328" r="38" fill="#D9EEE8" fill-opacity=".72"/>
+  <path d="M614 376c18-31 50-31 68 0l42 103H572Z" fill="#D9EEE8" fill-opacity=".5"/>
+  <g fill="#62C5AF" fill-opacity=".38">
+    <circle cx="257" cy="233" r="5"/><circle cx="948" cy="205" r="4"/><circle cx="1050" cy="309" r="6"/><circle cx="362" cy="294" r="3"/>
+  </g>
+  <path d="M80 84h112M1088 84h112M80 636h112M1088 636h112" stroke="#8BD6C5" stroke-opacity=".36"/>
+</svg>

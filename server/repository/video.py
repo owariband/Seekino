@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from ..identity import canonical_uuid
+from ..model.index_sync import IndexSyncIntentRecord
+from ..model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
 from ..model.video import (
     ContextSnapshotRecord,
     SeriesRecord,
@@ -17,6 +22,7 @@ from ..model.video import (
 from ..schema import ParseImportReport, VideoChunkEvidence
 from ..service.parse_import import PreparedVideoParseImport
 from .index_sync import materialize_index_sync_intents
+from .job import ParseJobLease, ParseJobLeaseLostError
 
 
 class ParseImportConflictError(RuntimeError):
@@ -25,6 +31,22 @@ class ParseImportConflictError(RuntimeError):
 
 class VideoChunkNotFoundError(LookupError):
     """One or more candidate IDs cannot be hydrated from the fact source."""
+
+
+class SeriesScopeNotFoundError(LookupError):
+    """One or more requested Series do not exist in the fact source."""
+
+
+class SeriesNotReadyError(RuntimeError):
+    """One or more requested Series have not reached the searchable state."""
+
+
+@dataclass(frozen=True, slots=True)
+class HydratedVideoChunkState:
+    evidence: VideoChunkEvidence
+    source_revision: str | None
+    index_operation: str | None
+    index_status: str | None
 
 
 class VideoRepository:
@@ -62,11 +84,74 @@ class VideoRepository:
                 return report
         raise AssertionError("unreachable")
 
+    def import_video_parse_for_job(
+        self,
+        prepared: PreparedVideoParseImport,
+        lease: ParseJobLease,
+    ) -> ParseImportReport:
+        """Persist Worker output only while its lease is current."""
+
+        if (
+            prepared.series_id != lease.series_id
+            or prepared.video_id != lease.video_id
+            or prepared.pipeline_version != lease.pipeline_version
+            or prepared.original_source_uri != lease.original_source_uri
+            or prepared.content_hash != lease.content_hash
+        ):
+            raise ParseImportConflictError(
+                "prepared parse output does not match the claimed ParseJob"
+            )
+        if not prepared.chunks or any(
+            item.text_embedding is None or item.vision_embedding is None
+            for item in prepared.chunks
+        ):
+            raise ValueError(
+                "a Worker import requires text and vision vectors for every VideoChunk"
+            )
+        report = ParseImportReport(
+            series_id=prepared.series_id,
+            video_id=prepared.video_id,
+            video_chunk_ids=[item.video_chunk_id for item in prepared.chunks],
+            chunk_count=len(prepared.chunks),
+            vectors_imported=True,
+        )
+        for attempt in range(2):
+            try:
+                self._import_video_parse_once(prepared, lease=lease)
+            except IntegrityError:
+                if attempt == 1:
+                    raise
+            else:
+                return report
+        raise AssertionError("unreachable")
+
     def _import_video_parse_once(
         self,
         prepared: PreparedVideoParseImport,
+        *,
+        lease: ParseJobLease | None = None,
     ) -> None:
         with self._session_factory.begin() as session:
+            job: SeriesParseJobRecord | None = None
+            if lease is not None:
+                checked_at = _utc_now()
+                job = session.scalar(
+                    select(SeriesParseJobRecord)
+                    .where(
+                        SeriesParseJobRecord.job_id == lease.job_id,
+                        SeriesParseJobRecord.status
+                        == ParseJobStatus.RUNNING.value,
+                        SeriesParseJobRecord.lease_owner == lease.worker_id,
+                        SeriesParseJobRecord.lease_version
+                        == lease.lease_version,
+                        SeriesParseJobRecord.lease_expires_at > checked_at,
+                    )
+                    .with_for_update()
+                )
+                if job is None:
+                    raise ParseJobLeaseLostError(
+                        "parse job lease is no longer current"
+                    )
             existing_series = session.get(SeriesRecord, prepared.series_id)
             if existing_series is not None and (
                 existing_series.workspace_id != prepared.workspace_id
@@ -123,27 +208,38 @@ class VideoRepository:
                     raise ParseImportConflictError(
                         "episode order or source content already uses another video_id"
                     )
-                session.add(
-                    VideoRecord(
-                        video_id=prepared.video_id,
-                        series_id=prepared.series_id,
-                        episode_order=prepared.episode_order,
-                        upload_sequence=prepared.upload_sequence,
-                        original_filename=prepared.original_filename,
-                        original_source_uri=prepared.original_source_uri,
-                        inference_proxy_uri=None,
-                        content_hash=prepared.content_hash,
-                        total_bytes=prepared.total_bytes,
-                        duration_ms=prepared.parse_result.duration_ms,
-                        upload_status="COMPLETED",
-                        parse_status="COMPLETED",
-                        upload_progress=100,
-                        parse_progress=100,
-                    )
+                existing_video = VideoRecord(
+                    video_id=prepared.video_id,
+                    series_id=prepared.series_id,
+                    episode_order=prepared.episode_order,
+                    upload_sequence=prepared.upload_sequence,
+                    original_filename=prepared.original_filename,
+                    original_source_uri=prepared.original_source_uri,
+                    inference_proxy_uri=None,
+                    content_hash=prepared.content_hash,
+                    total_bytes=prepared.total_bytes,
+                    duration_ms=prepared.parse_result.duration_ms,
+                    upload_status="COMPLETED",
+                    parse_status=(
+                        ParseJobStatus.RUNNING.value
+                        if lease is not None
+                        else "COMPLETED"
+                    ),
+                    upload_progress=100,
+                    parse_progress=100 if lease is None else 90,
                 )
+                session.add(existing_video)
             else:
-                existing_video.parse_status = "COMPLETED"
-                existing_video.parse_progress = 100
+                existing_video.parse_status = (
+                    ParseJobStatus.RUNNING.value
+                    if lease is not None
+                    else "COMPLETED"
+                )
+                existing_video.parse_progress = (
+                    max(existing_video.parse_progress, 90)
+                    if lease is not None
+                    else 100
+                )
 
             existing_chunks = session.scalars(
                 select(VideoChunkRecord).where(
@@ -336,6 +432,18 @@ class VideoRepository:
             # The desired Qdrant state is committed with the source facts. The
             # external write is deliberately handled after this transaction.
             materialize_index_sync_intents(session, chunk_ids)
+            if job is not None:
+                if job.lease_expires_at is None or job.lease_expires_at <= _utc_now():
+                    raise ParseJobLeaseLostError(
+                        "parse job lease expired while facts were being persisted"
+                    )
+                job.stage = ParseJobStage.INDEXING.value
+                job.progress = max(job.progress, 95)
+                existing_video.parse_status = ParseJobStatus.RUNNING.value
+                existing_video.parse_progress = max(
+                    existing_video.parse_progress,
+                    95,
+                )
 
     def hydrate_video_chunks(
         self,
@@ -343,7 +451,69 @@ class VideoRepository:
     ) -> list[VideoChunkEvidence]:
         """Hydrate candidate IDs with one joined fact-source query."""
 
-        ordered_ids = list(dict.fromkeys(video_chunk_ids))
+        return [
+            item.evidence
+            for item in self.hydrate_video_chunk_states(video_chunk_ids)
+        ]
+
+    def require_ready_series(self, series_ids: Sequence[str]) -> list[str]:
+        """Resolve a complete, READY Series scope without silently narrowing it."""
+
+        if isinstance(series_ids, (str, bytes)):
+            raise ValueError("series_ids must be a sequence of IDs")
+        try:
+            ordered_ids = list(
+                dict.fromkeys(
+                    canonical_uuid(item, "series_id") for item in series_ids
+                )
+            )
+        except TypeError as exc:
+            raise ValueError("series_ids must be a sequence of IDs") from exc
+        if not ordered_ids:
+            raise ValueError("series_ids must not be empty")
+
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(SeriesRecord.series_id, SeriesRecord.status).where(
+                    SeriesRecord.series_id.in_(ordered_ids)
+                )
+            ).all()
+        statuses = {series_id: status for series_id, status in rows}
+        missing = [series_id for series_id in ordered_ids if series_id not in statuses]
+        if missing:
+            raise SeriesScopeNotFoundError(
+                "seriesId values are missing from MySQL: " + ", ".join(missing)
+            )
+        not_ready = [
+            f"{series_id} ({statuses[series_id]})"
+            for series_id in ordered_ids
+            if statuses[series_id] != "READY"
+        ]
+        if not_ready:
+            raise SeriesNotReadyError(
+                "Series are not READY for retrieval: " + ", ".join(not_ready)
+            )
+        return ordered_ids
+
+    def hydrate_video_chunk_states(
+        self,
+        video_chunk_ids: Sequence[str],
+    ) -> list[HydratedVideoChunkState]:
+        """Hydrate Evidence and current index state with one joined query."""
+
+        if isinstance(video_chunk_ids, (str, bytes)):
+            raise ValueError("video_chunk_ids must be a sequence of IDs")
+        try:
+            ordered_ids = list(
+                dict.fromkeys(
+                    canonical_uuid(item, "video_chunk_id")
+                    for item in video_chunk_ids
+                )
+            )
+        except TypeError as exc:
+            raise ValueError(
+                "video_chunk_ids must be a sequence of IDs"
+            ) from exc
         if not ordered_ids:
             return []
 
@@ -353,6 +523,8 @@ class VideoRepository:
                 VideoRecord,
                 VideoChunkRecord,
                 VideoChunkInfoRecord,
+                VideoChunkEmbeddingRecord,
+                IndexSyncIntentRecord,
             )
             .join(VideoRecord, VideoRecord.series_id == SeriesRecord.series_id)
             .join(
@@ -364,14 +536,24 @@ class VideoRepository:
                 VideoChunkInfoRecord.video_chunk_id
                 == VideoChunkRecord.video_chunk_id,
             )
+            .join(
+                VideoChunkEmbeddingRecord,
+                VideoChunkEmbeddingRecord.video_chunk_id
+                == VideoChunkRecord.video_chunk_id,
+            )
+            .outerjoin(
+                IndexSyncIntentRecord,
+                IndexSyncIntentRecord.video_chunk_id
+                == VideoChunkRecord.video_chunk_id,
+            )
             .where(VideoChunkRecord.video_chunk_id.in_(ordered_ids))
         )
         with self._session_factory() as session:
             rows = session.execute(statement).all()
 
-        evidence_by_id: dict[str, VideoChunkEvidence] = {}
-        for series, video, chunk, info in rows:
-            evidence_by_id[chunk.video_chunk_id] = VideoChunkEvidence(
+        states_by_id: dict[str, HydratedVideoChunkState] = {}
+        for series, video, chunk, info, embedding, intent in rows:
+            evidence = VideoChunkEvidence(
                 series_id=series.series_id,
                 workspace_id=series.workspace_id,
                 series_name=series.name,
@@ -396,11 +578,22 @@ class VideoRepository:
                 analysis_window_end_ms=chunk.analysis_window_end_ms,
                 chunk_media_ref=chunk.chunk_media_ref,
                 analysis_window_media_ref=chunk.analysis_window_media_ref,
-                transcript=chunk.transcript,
+                transcript=[
+                    {
+                        "speaker": cue.get("speaker"),
+                        "text": cue["text"],
+                        "start_ms": (
+                            chunk.analysis_window_start_ms + cue["start_ms"]
+                        ),
+                        "end_ms": chunk.analysis_window_start_ms + cue["end_ms"],
+                    }
+                    for cue in chunk.transcript
+                ],
                 baseline_visual_caption=chunk.baseline_visual_caption,
                 keyframe_uris=chunk.keyframe_uris,
                 all_time_events=info.all_time_events,
                 all_time_event_text=info.all_time_event_text,
+                retrieval_text=embedding.text_input,
                 video_compact=info.video_compact,
                 context_before_compact=info.context_before_compact,
                 context_after_compact=info.context_after_compact,
@@ -412,10 +605,21 @@ class VideoRepository:
                 parse_provenance=info.parse_provenance,
                 parsed_at=info.parsed_at,
             )
+            states_by_id[chunk.video_chunk_id] = HydratedVideoChunkState(
+                evidence=evidence,
+                source_revision=(
+                    intent.source_revision if intent is not None else None
+                ),
+                index_operation=(intent.operation if intent is not None else None),
+                index_status=(intent.status if intent is not None else None),
+            )
 
-        missing = [item for item in ordered_ids if item not in evidence_by_id]
+        missing = [item for item in ordered_ids if item not in states_by_id]
         if missing:
             raise VideoChunkNotFoundError(
                 "videoChunkId values are missing from MySQL: " + ", ".join(missing)
             )
-        return [evidence_by_id[item] for item in ordered_ids]
+        return [states_by_id[item] for item in ordered_ids]
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)

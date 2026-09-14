@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,6 +27,30 @@ class RankedVideoChunk(BaseModel):
     rank: int = Field(gt=0)
     chunk_sequence_no: int = Field(ge=0)
     score: float
+
+
+class RankedVideoChunkMatch(BaseModel):
+    """One formal VideoChunk result from a single retrieval channel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rank: int = Field(gt=0)
+    video_chunk_id: str = Field(min_length=1)
+    score: float = Field(allow_inf_nan=False)
+
+
+class FusedVideoChunkRanking(BaseModel):
+    """RRF output with the original channel evidence preserved."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    video_chunk_id: str = Field(min_length=1)
+    fused_rank: int = Field(gt=0)
+    fused_score: float = Field(gt=0, allow_inf_nan=False)
+    text_rank: int | None = Field(default=None, gt=0)
+    text_score: float | None = Field(default=None, allow_inf_nan=False)
+    vision_rank: int | None = Field(default=None, gt=0)
+    vision_score: float | None = Field(default=None, allow_inf_nan=False)
 
 
 def build_video_chunk_retrieval_documents(
@@ -73,16 +98,12 @@ def weighted_reciprocal_rank_fusion(
 ) -> list[RankedVideoChunk]:
     """Fuse text and vision rankings with configurable channel weights."""
 
-    if channel_top_k <= 0:
-        raise ValueError("channel_top_k must be greater than zero")
-    if rrf_k <= 0:
-        raise ValueError("rrf_k must be greater than zero")
-    weights = (("text_weight", text_weight), ("vision_weight", vision_weight))
-    for name, weight in weights:
-        if not math.isfinite(weight) or weight < 0:
-            raise ValueError(f"{name} must be a finite nonnegative number")
-    if text_weight == 0 and vision_weight == 0:
-        raise ValueError("at least one channel weight must be greater than zero")
+    _validate_rrf_parameters(
+        text_weight=text_weight,
+        vision_weight=vision_weight,
+        channel_top_k=channel_top_k,
+        rrf_k=rrf_k,
+    )
 
     scores: dict[int, float] = {}
     for rankings, weight in (
@@ -105,6 +126,98 @@ def weighted_reciprocal_rank_fusion(
         )
         for rank, (sequence_no, score) in enumerate(ordered, start=1)
     ]
+
+
+def fuse_video_chunk_rankings(
+    text_rankings: Sequence[RankedVideoChunkMatch],
+    vision_rankings: Sequence[RankedVideoChunkMatch],
+    *,
+    text_weight: float,
+    vision_weight: float,
+    channel_top_k: int,
+    rrf_k: int,
+) -> list[FusedVideoChunkRanking]:
+    """Fuse formal VideoChunk IDs while retaining both channels' rank and score."""
+
+    _validate_rrf_parameters(
+        text_weight=text_weight,
+        vision_weight=vision_weight,
+        channel_top_k=channel_top_k,
+        rrf_k=rrf_k,
+    )
+    text_by_id = _rankings_by_video_chunk_id(
+        text_rankings[:channel_top_k],
+        channel_name="text",
+    )
+    vision_by_id = _rankings_by_video_chunk_id(
+        vision_rankings[:channel_top_k],
+        channel_name="vision",
+    )
+
+    scores: dict[str, float] = {}
+    for rankings, weight in (
+        (text_by_id, text_weight),
+        (vision_by_id, vision_weight),
+    ):
+        if weight == 0:
+            continue
+        for video_chunk_id, ranked in rankings.items():
+            scores[video_chunk_id] = scores.get(video_chunk_id, 0.0) + (
+                weight / (rrf_k + ranked.rank)
+            )
+
+    ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+    candidates: list[FusedVideoChunkRanking] = []
+    for fused_rank, (video_chunk_id, fused_score) in enumerate(ordered, start=1):
+        text = text_by_id.get(video_chunk_id)
+        vision = vision_by_id.get(video_chunk_id)
+        candidates.append(
+            FusedVideoChunkRanking(
+                video_chunk_id=video_chunk_id,
+                fused_rank=fused_rank,
+                fused_score=fused_score,
+                text_rank=text.rank if text is not None else None,
+                text_score=text.score if text is not None else None,
+                vision_rank=vision.rank if vision is not None else None,
+                vision_score=vision.score if vision is not None else None,
+            )
+        )
+    return candidates
+
+
+def _rankings_by_video_chunk_id(
+    rankings: Sequence[RankedVideoChunkMatch],
+    *,
+    channel_name: str,
+) -> dict[str, RankedVideoChunkMatch]:
+    by_id: dict[str, RankedVideoChunkMatch] = {}
+    for ranked in rankings:
+        if ranked.video_chunk_id in by_id:
+            raise ValueError(
+                f"{channel_name} rankings contain duplicate video_chunk_id "
+                f"{ranked.video_chunk_id!r}"
+            )
+        by_id[ranked.video_chunk_id] = ranked
+    return by_id
+
+
+def _validate_rrf_parameters(
+    *,
+    text_weight: float,
+    vision_weight: float,
+    channel_top_k: int,
+    rrf_k: int,
+) -> None:
+    if channel_top_k <= 0:
+        raise ValueError("channel_top_k must be greater than zero")
+    if rrf_k <= 0:
+        raise ValueError("rrf_k must be greater than zero")
+    weights = (("text_weight", text_weight), ("vision_weight", vision_weight))
+    for name, weight in weights:
+        if not math.isfinite(weight) or weight < 0:
+            raise ValueError(f"{name} must be a finite nonnegative number")
+    if text_weight == 0 and vision_weight == 0:
+        raise ValueError("at least one channel weight must be greater than zero")
 
 
 def _validate_canonical_chunks(parse_result: VideoParseResult) -> None:

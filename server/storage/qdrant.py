@@ -17,10 +17,27 @@ VIDEO_ID_PAYLOAD_KEY = "videoId"
 VIDEO_CHUNK_ID_PAYLOAD_KEY = "videoChunkId"
 SOURCE_REVISION_PAYLOAD_KEY = "sourceRevision"
 IS_FALLBACK_PAYLOAD_KEY = "isFallback"
+_POINT_PAYLOAD_KEYS = frozenset(
+    {
+        SERIES_ID_PAYLOAD_KEY,
+        VIDEO_ID_PAYLOAD_KEY,
+        VIDEO_CHUNK_ID_PAYLOAD_KEY,
+        SOURCE_REVISION_PAYLOAD_KEY,
+        IS_FALLBACK_PAYLOAD_KEY,
+    }
+)
 
 
 class QdrantCollectionSchemaError(RuntimeError):
     """The configured collection cannot store AniVAG VideoChunk vectors."""
+
+
+class QdrantCollectionNotFoundError(RuntimeError):
+    """The configured derived index does not exist."""
+
+
+class QdrantPointConsistencyError(RuntimeError):
+    """A Qdrant result violates the formal VideoChunk index contract."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +55,17 @@ class VideoChunkIndexPoint:
 class StoredPointState:
     present: bool
     source_revision: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class VideoChunkIndexMatch:
+    rank: int
+    score: float
+    series_id: str
+    video_id: str
+    video_chunk_id: str
+    source_revision: str
+    is_fallback: bool
 
 
 class QdrantVideoChunkStore:
@@ -192,6 +220,177 @@ class QdrantVideoChunkStore:
             )
         return states
 
+    def search_text(
+        self,
+        query_vector: Sequence[float],
+        *,
+        series_ids: Sequence[str],
+        limit: int,
+        exact: bool = False,
+    ) -> list[VideoChunkIndexMatch]:
+        return self._search(
+            query_vector,
+            vector_name=TEXT_VECTOR_NAME,
+            expected_dimensions=self.text_dimensions,
+            series_ids=series_ids,
+            limit=limit,
+            exact=exact,
+        )
+
+    def search_vision(
+        self,
+        query_vector: Sequence[float],
+        *,
+        series_ids: Sequence[str],
+        limit: int,
+        exact: bool = False,
+    ) -> list[VideoChunkIndexMatch]:
+        return self._search(
+            query_vector,
+            vector_name=VISION_VECTOR_NAME,
+            expected_dimensions=self.vision_dimensions,
+            series_ids=series_ids,
+            limit=limit,
+            exact=exact,
+        )
+
+    def _search(
+        self,
+        query_vector: Sequence[float],
+        *,
+        vector_name: str,
+        expected_dimensions: int,
+        series_ids: Sequence[str],
+        limit: int,
+        exact: bool,
+    ) -> list[VideoChunkIndexMatch]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        if not isinstance(exact, bool):
+            raise ValueError("exact must be a bool")
+        vector = _validated_vector(query_vector, "query_vector")
+        if len(vector) != expected_dimensions:
+            raise ValueError(
+                f"query_vector must have exactly {expected_dimensions} dimensions "
+                f"for the {vector_name!r} channel"
+            )
+        scope = _validated_series_scope(series_ids)
+        if not self._client.collection_exists(self.collection_name):
+            raise QdrantCollectionNotFoundError(
+                f"Qdrant collection {self.collection_name!r} does not exist"
+            )
+
+        search_params = models.SearchParams(
+            exact=exact,
+            quantization=(
+                models.QuantizationSearchParams(ignore=True) if exact else None
+            ),
+        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=(
+                    r"Local mode performs exact \(brute-force\) search, so "
+                    r"`search_params` has no effect.*"
+                ),
+                category=UserWarning,
+            )
+            response = self._client.query_points(
+                collection_name=self.collection_name,
+                query=vector,
+                using=vector_name,
+                query_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key=SERIES_ID_PAYLOAD_KEY,
+                            match=models.MatchAny(any=scope),
+                        )
+                    ]
+                ),
+                search_params=search_params,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+        parsed: list[tuple[str, float, str, str, str, bool]] = []
+        seen_ids: set[str] = set()
+        for point in response.points:
+            try:
+                point_id = _canonical_video_chunk_id(str(point.id))
+                payload = point.payload
+                if not isinstance(payload, Mapping):
+                    raise ValueError("payload must be a mapping")
+                if set(payload) != _POINT_PAYLOAD_KEYS:
+                    raise ValueError(
+                        "payload keys must exactly match the formal index contract"
+                    )
+                payload_chunk_id = _canonical_video_chunk_id(
+                    payload[VIDEO_CHUNK_ID_PAYLOAD_KEY]
+                )
+                if payload_chunk_id != point_id:
+                    raise ValueError("payload videoChunkId does not match point ID")
+                series_id = _required_text(
+                    payload[SERIES_ID_PAYLOAD_KEY],
+                    "payload seriesId",
+                )
+                if series_id not in scope:
+                    raise ValueError("payload seriesId is outside the requested scope")
+                video_id = _required_text(
+                    payload[VIDEO_ID_PAYLOAD_KEY],
+                    "payload videoId",
+                )
+                source_revision = _required_text(
+                    payload[SOURCE_REVISION_PAYLOAD_KEY],
+                    "payload sourceRevision",
+                )
+                is_fallback = payload[IS_FALLBACK_PAYLOAD_KEY]
+                if not isinstance(is_fallback, bool):
+                    raise ValueError("payload isFallback must be a bool")
+                if isinstance(point.score, bool):
+                    raise ValueError("score must be a finite number")
+                score = float(point.score)
+                if not math.isfinite(score):
+                    raise ValueError("score must be a finite number")
+                if point_id in seen_ids:
+                    raise ValueError("query returned the same point more than once")
+            except (KeyError, TypeError, ValueError) as exc:
+                raise QdrantPointConsistencyError(
+                    f"Qdrant returned an invalid {vector_name} VideoChunk point: {exc}"
+                ) from exc
+            seen_ids.add(point_id)
+            parsed.append(
+                (
+                    point_id,
+                    score,
+                    series_id,
+                    video_id,
+                    source_revision,
+                    is_fallback,
+                )
+            )
+
+        parsed.sort(key=lambda item: (-item[1], item[0]))
+        return [
+            VideoChunkIndexMatch(
+                rank=rank,
+                video_chunk_id=point_id,
+                score=score,
+                series_id=series_id,
+                video_id=video_id,
+                source_revision=source_revision,
+                is_fallback=is_fallback,
+            )
+            for rank, (
+                point_id,
+                score,
+                series_id,
+                video_id,
+                source_revision,
+                is_fallback,
+            ) in enumerate(parsed, start=1)
+        ]
+
     def _validate_collection_environment(self) -> None:
         normalized = self.collection_name.casefold()
         is_test = normalized.endswith("_test")
@@ -254,6 +453,20 @@ def _required_text(value: str, field_name: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{field_name} must be a non-empty string")
     return value
+
+
+def _validated_series_scope(series_ids: Sequence[str]) -> list[str]:
+    if isinstance(series_ids, (str, bytes)):
+        raise ValueError("series_ids must be a sequence of IDs")
+    try:
+        scope = list(
+            dict.fromkeys(_required_text(item, "series_id") for item in series_ids)
+        )
+    except TypeError as exc:
+        raise ValueError("series_ids must be a sequence of IDs") from exc
+    if not scope:
+        raise ValueError("series_ids must not be empty")
+    return scope
 
 
 def _validated_vector(values: Sequence[float], field_name: str) -> list[float]:

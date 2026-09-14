@@ -11,7 +11,9 @@ from engine.parse.schemas import (
 )
 from engine.retrieval.video_retrieval import (
     RankedVideoChunk,
+    RankedVideoChunkMatch,
     build_video_chunk_retrieval_documents,
+    fuse_video_chunk_rankings,
     weighted_reciprocal_rank_fusion,
 )
 
@@ -168,5 +170,64 @@ def test_weighted_rrf_requires_one_enabled_channel() -> None:
             text_weight=0.0,
             vision_weight=0.0,
             channel_top_k=1,
+            rrf_k=60,
+        )
+
+
+def test_formal_rrf_preserves_each_channel_rank_and_score() -> None:
+    fused = fuse_video_chunk_rankings(
+        [
+            RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-a", score=0.9),
+            RankedVideoChunkMatch(rank=2, video_chunk_id="chunk-b", score=0.8),
+        ],
+        [
+            RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-b", score=0.95),
+            RankedVideoChunkMatch(rank=2, video_chunk_id="chunk-a", score=0.7),
+        ],
+        text_weight=2.0,
+        vision_weight=1.0,
+        channel_top_k=2,
+        rrf_k=60,
+    )
+
+    assert [item.video_chunk_id for item in fused] == ["chunk-a", "chunk-b"]
+    assert fused[0].model_dump() == {
+        "video_chunk_id": "chunk-a",
+        "fused_rank": 1,
+        "fused_score": (2 / 61) + (1 / 62),
+        "text_rank": 1,
+        "text_score": 0.9,
+        "vision_rank": 2,
+        "vision_score": 0.7,
+    }
+
+
+def test_formal_rrf_breaks_cross_channel_ties_by_video_chunk_id() -> None:
+    fused = fuse_video_chunk_rankings(
+        [RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-c", score=0.9)],
+        [RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-b", score=0.9)],
+        text_weight=1.0,
+        vision_weight=1.0,
+        channel_top_k=1,
+        rrf_k=60,
+    )
+
+    assert [item.video_chunk_id for item in fused] == ["chunk-b", "chunk-c"]
+
+
+def test_formal_rrf_rejects_duplicate_ids_within_one_channel() -> None:
+    duplicate = RankedVideoChunkMatch(
+        rank=1,
+        video_chunk_id="chunk-a",
+        score=0.9,
+    )
+
+    with pytest.raises(ValueError, match="duplicate video_chunk_id"):
+        fuse_video_chunk_rankings(
+            [duplicate, duplicate.model_copy(update={"rank": 2})],
+            [],
+            text_weight=1.0,
+            vision_weight=1.0,
+            channel_top_k=2,
             rrf_k=60,
         )

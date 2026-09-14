@@ -20,7 +20,11 @@ from server.model.video import (
     VideoChunkEmbeddingRecord,
     VideoChunkRecord,
 )
-from server.repository.video import VideoChunkNotFoundError
+from server.repository.video import (
+    SeriesNotReadyError,
+    SeriesScopeNotFoundError,
+    VideoChunkNotFoundError,
+)
 from server.service.parse_import import (
     PreparedEmbedding,
     _load_embedding,
@@ -474,6 +478,16 @@ def test_hydrate_preserves_candidate_order_with_one_select(
 ) -> None:
     engine, video_repository = repository
     report = video_repository.import_video_parse(prepared_import)
+    with engine.begin() as connection:
+        connection.execute(
+            update(VideoChunkRecord)
+            .where(VideoChunkRecord.video_chunk_id == report.video_chunk_ids[1])
+            .values(
+                transcript=[
+                    {"text": "第二段对白", "start_ms": 1_000, "end_ms": 2_000}
+                ]
+            )
+        )
     select_count = 0
 
     def count_selects(_connection, _cursor, statement, *_args) -> None:
@@ -496,8 +510,19 @@ def test_hydrate_preserves_candidate_order_with_one_select(
     assert [item.sequence_no for item in evidence] == [1, 0]
     assert evidence[0].series_name == "Test Series"
     assert evidence[0].episode_order == 7
+    assert evidence[0].transcript[0].speaker is None
+    assert evidence[0].transcript[0].text == "第二段对白"
+    assert evidence[0].transcript[0].start_ms == 11_000
+    assert evidence[0].transcript[0].end_ms == 12_000
+    assert evidence[0].retrieval_text == (
+        prepared_import.chunks[1].retrieval_document.text
+    )
     assert evidence[0].model_dump(by_alias=True)["videoCompact"]
-    assert "textVector" not in evidence[0].model_dump(by_alias=True)
+    payload = evidence[0].model_dump(by_alias=True)
+    assert payload["retrievalText"] == (
+        prepared_import.chunks[1].retrieval_document.text
+    )
+    assert "textVector" not in payload
 
 
 def test_hydrate_rejects_a_stale_candidate_id(
@@ -511,6 +536,48 @@ def test_hydrate_rejects_a_stale_candidate_id(
         video_repository.hydrate_video_chunks(
             ["00000000-0000-0000-0000-000000000000"]
         )
+
+
+def test_ready_series_scope_is_complete_ordered_and_deduplicated(
+    prepared_import,
+    repository,
+) -> None:
+    engine, video_repository = repository
+    video_repository.import_video_parse(prepared_import)
+
+    with pytest.raises(SeriesNotReadyError, match="INDEXING"):
+        video_repository.require_ready_series([prepared_import.series_id])
+
+    with engine.begin() as connection:
+        connection.execute(
+            update(SeriesRecord)
+            .where(SeriesRecord.series_id == prepared_import.series_id)
+            .values(status="READY")
+        )
+    assert video_repository.require_ready_series(
+        [prepared_import.series_id, prepared_import.series_id]
+    ) == [prepared_import.series_id]
+
+    missing_id = "00000000-0000-0000-0000-000000000000"
+    with pytest.raises(SeriesScopeNotFoundError, match=missing_id):
+        video_repository.require_ready_series(
+            [prepared_import.series_id, missing_id]
+        )
+
+
+def test_hydrate_state_includes_current_index_revision_in_the_same_result(
+    prepared_import,
+    repository,
+) -> None:
+    _engine, video_repository = repository
+    report = video_repository.import_video_parse(prepared_import)
+
+    states = video_repository.hydrate_video_chunk_states(report.video_chunk_ids)
+
+    assert [item.evidence.video_chunk_id for item in states] == report.video_chunk_ids
+    assert all(item.source_revision for item in states)
+    assert all(item.index_operation == "DELETE" for item in states)
+    assert all(item.index_status == "PENDING" for item in states)
 
 
 def test_import_rolls_back_the_whole_video_when_a_late_write_fails(

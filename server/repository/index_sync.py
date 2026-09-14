@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, select, update
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..model.index_sync import (
@@ -14,6 +14,7 @@ from ..model.index_sync import (
     IndexSyncOperation,
     IndexSyncStatus,
 )
+from ..model.job import ParseJobStatus
 from ..model.video import (
     SeriesRecord,
     VideoRecord,
@@ -61,6 +62,13 @@ class IndexSyncRepository:
         with self._session_factory.begin() as session:
             return materialize_index_sync_intents(session)
 
+    def materialize(self, video_chunk_ids: Sequence[str]) -> int:
+        chunk_ids = list(dict.fromkeys(video_chunk_ids))
+        if not chunk_ids:
+            raise ValueError("video_chunk_ids must not be empty")
+        with self._session_factory.begin() as session:
+            return materialize_index_sync_intents(session, chunk_ids)
+
     def list_due(
         self,
         limit: int,
@@ -86,6 +94,21 @@ class IndexSyncRepository:
     def list_all(self) -> list[IndexSyncItem]:
         statement = _item_statement().order_by(
             IndexSyncIntentRecord.video_chunk_id
+        )
+        with self._session_factory() as session:
+            return _items_from_rows(session.execute(statement).all())
+
+    def list_by_video_chunk_ids(
+        self,
+        video_chunk_ids: Sequence[str],
+    ) -> list[IndexSyncItem]:
+        chunk_ids = list(dict.fromkeys(video_chunk_ids))
+        if not chunk_ids:
+            return []
+        statement = (
+            _item_statement()
+            .where(IndexSyncIntentRecord.video_chunk_id.in_(chunk_ids))
+            .order_by(IndexSyncIntentRecord.video_chunk_id)
         )
         with self._session_factory() as session:
             return _items_from_rows(session.execute(statement).all())
@@ -339,7 +362,7 @@ def materialize_index_sync_intents(
         changed_count += 1
 
     session.flush()
-    _refresh_series_statuses(session, affected_series_ids)
+    refresh_series_statuses(session, affected_series_ids)
     return changed_count
 
 
@@ -448,14 +471,35 @@ def _refresh_chunk_series_status(
         .where(VideoChunkRecord.video_chunk_id == video_chunk_id)
     )
     if series_id is not None:
-        _refresh_series_statuses(session, {series_id})
+        refresh_series_statuses(session, {series_id})
 
 
-def _refresh_series_statuses(
+def refresh_series_statuses(
     session: Session,
     series_ids: set[str],
 ) -> None:
+    """Recompute READY under a per-Series lock using current committed facts."""
+
     for series_id in series_ids:
+        series = session.scalar(
+            select(SeriesRecord)
+            .where(SeriesRecord.series_id == series_id)
+            .with_for_update()
+        )
+        if series is None:
+            continue
+        videos = session.execute(
+            select(
+                VideoRecord.parse_status,
+                func.count(VideoChunkRecord.video_chunk_id).label("chunk_count"),
+            )
+            .outerjoin(
+                VideoChunkRecord,
+                VideoChunkRecord.video_id == VideoRecord.video_id,
+            )
+            .where(VideoRecord.series_id == series_id)
+            .group_by(VideoRecord.video_id, VideoRecord.parse_status)
+        ).all()
         rows = session.execute(
             select(
                 VideoChunkEmbeddingRecord.text_vector,
@@ -480,16 +524,27 @@ def _refresh_series_statuses(
             )
             .where(VideoRecord.series_id == series_id)
         ).all()
-        is_ready = bool(rows) and all(
-            bool(row.text_vector)
-            and bool(row.vision_vector)
-            and row.operation == IndexSyncOperation.UPSERT.value
-            and row.status == IndexSyncStatus.SYNCED.value
-            for row in rows
+        all_videos_completed = bool(videos) and all(
+            row.parse_status
+            in {
+                "COMPLETED",  # Transitional direct-import compatibility.
+                ParseJobStatus.SUCCEEDED.value,
+            }
+            and row.chunk_count > 0
+            for row in videos
         )
-        series = session.get(SeriesRecord, series_id)
-        if series is not None:
-            series.status = "READY" if is_ready else "INDEXING"
+        is_ready = (
+            all_videos_completed
+            and bool(rows)
+            and all(
+                bool(row.text_vector)
+                and bool(row.vision_vector)
+                and row.operation == IndexSyncOperation.UPSERT.value
+                and row.status == IndexSyncStatus.SYNCED.value
+                for row in rows
+            )
+        )
+        series.status = "READY" if is_ready else "INDEXING"
 
 
 def _copy_vector(vector) -> list[float] | None:

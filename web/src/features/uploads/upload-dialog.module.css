@@ -1,0 +1,395 @@
+.backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, #07110e 58%, transparent);
+  backdrop-filter: blur(12px);
+  animation: veil 180ms ease both;
+}
+
+.dialog {
+  width: min(940px, 100%);
+  max-height: min(850px, calc(100vh - 40px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: var(--surface);
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.28);
+  animation: arrive 220ms cubic-bezier(.2,.75,.3,1) both;
+}
+
+.header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 30px 34px 23px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.header h2 {
+  margin: 0;
+  font: 400 clamp(1.55rem, 3vw, 2.35rem)/1.05 var(--display);
+  letter-spacing: -.025em;
+}
+
+.close,
+.iconButton,
+.taskActions button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--surface-raised);
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: 180px minmax(100px, 1fr) 48px;
+  gap: 22px;
+  align-items: center;
+  padding: 20px 34px;
+  background: var(--teal-wash);
+}
+
+.summary > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.summary > div:first-child strong {
+  font: 500 .82rem/1.4 var(--sans);
+}
+
+.summary > b,
+.taskHeading b {
+  color: var(--teal-deep);
+  font: 600 .78rem/1 var(--mono);
+  text-align: right;
+}
+
+.summaryProgress,
+.progressTrack {
+  position: relative;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--teal) 16%, var(--surface));
+}
+
+.summaryProgress span,
+.progressTrack span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--teal);
+  transition: width 240ms ease;
+}
+
+.summaryProgress span::after,
+.progressTrack span::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 15%, transparent);
+  transform: translateY(-50%);
+}
+
+.dropzone {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 17px;
+  align-items: center;
+  margin: 26px 34px 0;
+  padding: 22px;
+  color: var(--teal-deep);
+  border: 1px dashed var(--line-strong);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--teal-wash) 58%, transparent);
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.dropzoneActive {
+  background: var(--teal-soft);
+  transform: scale(1.006);
+}
+
+.dropzone > div {
+  display: grid;
+  gap: 3px;
+}
+
+.dropzone strong {
+  color: var(--ink);
+  font-size: .88rem;
+}
+
+.dropzone span {
+  color: var(--ink-soft);
+  font-size: .76rem;
+}
+
+.pending,
+.queue {
+  margin: 25px 34px 0;
+}
+
+.sectionTitle {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--ink-soft);
+  font: 620 .69rem/1.3 var(--mono);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.sectionTitle small,
+.sectionTitle button {
+  color: var(--ink-faint);
+  font: 500 .68rem/1.3 var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.sectionTitle button {
+  cursor: pointer;
+  background: transparent;
+}
+
+.pending {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface-raised);
+}
+
+.pendingRow {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 13px;
+  align-items: center;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+}
+
+.pendingRow > div {
+  display: grid;
+  min-width: 0;
+}
+
+.pendingRow strong {
+  overflow: hidden;
+  font-size: .82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pendingRow span {
+  color: var(--ink-faint);
+  font-size: .7rem;
+}
+
+.pendingRow label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-faint);
+  font: 600 .65rem/1 var(--mono);
+}
+
+.pendingRow input {
+  width: 60px;
+  padding: 7px 5px;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.pendingActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.pendingActions > span {
+  color: var(--ink-faint);
+  font-size: .72rem;
+}
+
+.taskList {
+  display: grid;
+  gap: 10px;
+}
+
+.task {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 15px;
+  align-items: center;
+  padding: 16px 16px 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--surface-raised);
+}
+
+.task[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--red) 42%, var(--line));
+}
+
+.taskIndex {
+  display: grid;
+  width: 38px;
+  height: 46px;
+  place-items: center;
+  color: var(--teal-deep);
+  border-right: 2px solid var(--teal);
+  font: 600 .74rem/1 var(--mono);
+}
+
+.taskBody {
+  min-width: 0;
+}
+
+.taskHeading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  margin-bottom: 11px;
+}
+
+.taskHeading > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.taskHeading strong {
+  overflow: hidden;
+  font-size: .8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskHeading span {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-size: .68rem;
+}
+
+.taskActions {
+  display: flex;
+  gap: 7px;
+  color: var(--teal-deep);
+}
+
+.taskActions button:hover,
+.close:hover,
+.iconButton:hover {
+  color: var(--teal-deep);
+  border-color: var(--line-strong);
+  background: var(--teal-wash);
+}
+
+.stageLine {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 7px;
+  color: var(--ink-faint);
+  font-size: .66rem;
+}
+
+.error {
+  margin: 9px 0 0;
+  color: var(--red);
+  font-size: .7rem;
+}
+
+.empty {
+  margin: 0;
+  padding: 25px;
+  color: var(--ink-faint);
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  font-size: .78rem;
+  text-align: center;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 28px 34px 0;
+  padding: 18px 0 25px;
+  color: var(--ink-faint);
+  border-top: 1px solid var(--line);
+  font-size: .7rem;
+}
+
+.footer span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--teal);
+}
+
+.footer mark {
+  color: var(--teal-deep);
+  background: transparent;
+  font: 650 .62rem/1 var(--mono);
+  letter-spacing: .12em;
+}
+
+@keyframes veil {
+  from { opacity: 0; }
+}
+
+@keyframes arrive {
+  from { opacity: 0; transform: translateY(16px) scale(.99); }
+}
+
+@media (max-width: 680px) {
+  .backdrop { padding: 0; align-items: end; }
+  .dialog { max-height: 94vh; border-radius: 24px 24px 0 0; }
+  .header { padding: 24px 20px 18px; }
+  .summary { grid-template-columns: 1fr auto; padding: 17px 20px; }
+  .summaryProgress { grid-column: 1 / -1; grid-row: 2; }
+  .dropzone { grid-template-columns: auto 1fr; margin: 20px 20px 0; }
+  .dropzone button { grid-column: 1 / -1; }
+  .pending, .queue { margin: 20px 20px 0; }
+  .pendingActions { align-items: stretch; flex-direction: column; }
+  .task { grid-template-columns: 34px minmax(0, 1fr); }
+  .taskActions { grid-column: 2; }
+  .taskHeading > div { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .footer { margin-inline: 20px; }
+  .footer > span { display: none; }
+}

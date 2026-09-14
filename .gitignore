@@ -2,8 +2,10 @@
 .motor-code/
 
 # Local design notes and generated architecture artifacts
-docs/design/
+docs/design/*
+!docs/design/frontend-api.md
 docs/notes/
+docs/ui-design/
 /transfer.md
 
 # Local development state
@@ -16,6 +18,11 @@ docs/notes/
 **/__pycache__/
 *.py[cod]
 .pytest_cache/
+web/node_modules/
+web/dist/
+web/coverage/
+web/playwright-report/
+web/test-results/
 
 # Local model experiments and copyrighted fixtures
 /assets/example_video_mygo/

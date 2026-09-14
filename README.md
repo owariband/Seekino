@@ -50,11 +50,10 @@ AniVAG/
 └── docs/                             # 方案、决策与开发记录
 ```
 
-这里列的是当前已经存在的目录，不代表最终系统只有这些文件。未来的 API、
-异步 Worker、Artifact Store 和 Web 层会在进入相应阶段时落到各自工程边界；其中
-Artifact Store 只负责媒体与其他二进制产物，Embedding 的 durable source 另行决策，不
-因引入 Artifact Store 自动外置。各目录不提前
-创建没有实现的空目录。完整目标结构与阶段记录维护在
+这里列的是当前已经存在的目录，不代表最终系统只有这些文件。Server 已包含 HTTP API、
+MySQL DB Queue Worker 和环境隔离的本地 Artifact Store；Web 层独立推进。Artifact Store
+只负责媒体与其他二进制产物，Embedding 的 durable source 仍是 MySQL，不因引入
+Artifact Store 自动外置。完整目标结构与阶段记录维护在
 `docs/design/technical_solution copy.mdv.document.working.md`。
 
 ## 运行入口
@@ -67,6 +66,8 @@ uv run python -m engine.parse.cli --help
 uv run python -m evals.recall.cli --help
 uv run python -m gateway.cli --help
 uv run python -m server.cli --help
+uv run python -m server.api
+uv run python -m server.worker --once
 ```
 
 ## 上游归属

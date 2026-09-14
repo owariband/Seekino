@@ -1,8 +1,10 @@
 # AniVAG Server
 
-Server 当前实现 M1 的事实源与 Vector Index Manager：MySQL 业务数据、正式业务 ID、
-`pipeline.parse.json` 过渡导入、持久化 Index Sync Intent、Qdrant 派生索引，以及按
-`videoChunkId[]` 批量回源。它尚不启动 Web API 或常驻 Worker，也不负责模型推理。
+Server 当前实现 M1 的 Upload-to-Search 纵向闭环：分片上传与断点续传、环境隔离的
+Artifact Store、MySQL 事实与 DB Queue、带 Lease/Heartbeat/Retry/Reaper 的解析 Worker、
+VideoChunk checkpoint、持久化 Index Sync Intent、Qdrant 派生索引，以及按 `seriesIds`
+限定的双路召回、RRF 和 `videoChunkId[]` 批量回源。模型协议仍由 Gateway 实现，Worker
+直接复用 Engine 的解析链路。
 
 Qdrant 的连接、写入和恢复属于产品持久化逻辑，因此放在 `server/storage/`；Engine
 只负责生成解析结果、向量与检索算法。Qdrant payload 不保存业务正文；当前
@@ -46,14 +48,66 @@ uv run python -m server.cli init-db
 术语重构没有自动修改现有 MySQL；旧开发库必须先受控重命名表、列、外键和约束并核对
 原有 24 行数据，再运行新代码。
 
-当前 Schema 包含六个领域模型：`Series`、`Video`、
+当前 Schema 包含六个视频领域模型：`Series`、`Video`、
 `VideoChunk`、`VideoChunkInfo`、`ContextSnapshot`、
-`VideoChunkEmbedding`，以及一个工程一致性模型 `IndexSyncIntent`，没有 `Episode`
-表。所有 MySQL 表使用 InnoDB。
+`VideoChunkEmbedding`；另有 `UploadSession/UploadSegment`、
+`SeriesParseJob/VideoChunkCheckpoint` 和 `IndexSyncIntent`，没有 `Episode` 表。所有
+MySQL 表使用 InnoDB。
+
+## Upload-to-Search API 与 Worker
+
+前端对接所需的完整请求、响应、分片续传、任务 SSE 与检索契约见
+[前端 API 对接文档](../docs/design/frontend-api.md)。
+
+先初始化 MySQL，再分别启动 API 与 Worker：
+
+```bash
+uv run python -m server.cli init-db
+uv run python -m server.api
+uv run python -m server.worker
+```
+
+API 默认监听 `127.0.0.1:9621`，OpenAPI 位于 `/docs`。API 与 Worker 是两个进程；API
+写入 MySQL 中的事实和任务，Worker 从 MySQL Claim，不依赖进程内队列。主要接口：
+
+```text
+POST /api/series/create
+GET  /api/series/list?workspaceId=local-default
+GET  /api/series/get?seriesId={seriesId}&workspaceId=local-default
+POST /api/uploads/create?seriesId={seriesId}       Idempotency-Key
+GET  /api/uploads/get?uploadSessionId={uploadSessionId}
+PUT  /api/uploads/segments/upload?uploadSessionId={uploadSessionId}&segmentNumber={segmentNo}
+      Content-Range: bytes START-END/TOTAL
+      X-Content-SHA256: <64 hex chars>
+POST /api/uploads/complete?uploadSessionId={uploadSessionId}
+GET  /api/jobs/list?workspaceId=local-default
+GET  /api/jobs/get?jobId={jobId}
+GET  /api/jobs/events?jobId={jobId}             text/event-stream
+GET  /api/videos/content?videoId={videoId}      支持 Range
+POST /api/search
+```
+
+`Complete` 会在校验所有分片后流式合并、计算整文件 SHA-256、发布 Original Video、探测
+时长，并在同一个 MySQL 事务中创建 `Video + SeriesParseJob`。重复请求复用相同结果。
+Artifact URI 形如 `artifact://development/...`，test/development/production 使用独立目录；
+API/Worker 依赖 `ArtifactStore` 边界，当前 M1 adapter 是 `LocalArtifactStore`。
+
+Worker 为每个 Job 保存单调 checkpoint：
+
+```text
+PREPARED → SPLIT_READY → PARSED → TEXT_EMBEDDED → VISION_EMBEDDED → INDEXED
+```
+
+AnalysisWindow 带上下文重叠，仅供模型解析；Vision vector 始终读取无重叠的 canonical
+VideoChunk MP4。Text vector 读取同一 VideoChunk 的完整 retrieval document；两路向量以
+同一个稳定 `videoChunkId` 入库与建索引。Worker 崩溃后复用本地持久化产物续跑，旧
+`leaseVersion` 不能提交 checkpoint 或最终 MySQL 事实。SSE 只发送 MySQL 中对 UI 有意义
+的状态、阶段、进度或 checkpoint 变化，不把纯 Heartbeat 当成进度事件；断线后仍以 Job
+查询结果为准。
 
 ## 导入第七集已有产物
 
-`import-parse` 是上传系统完成前的过渡入口。原视频、AnalysisWindow 和规范 VideoChunk
+`import-parse` 是保留给已有离线产物的过渡入口。原视频、AnalysisWindow 和规范 VideoChunk
 必须真实存在；导入器会把媒体保存为稳定的 `file:` URI。省略显式 ID 时，
 Series ID 由 workspace 与规范化名称生成，Video ID 由 Series ID 与视频内容哈希生成，
 VideoChunk ID 再由 Video ID 与序号生成稳定、不可反解关系的 UUID。`episodeOrder` 不参与
@@ -80,9 +134,9 @@ uv run python -m server.cli import-parse \
 上例的 `embedding-cache/segments` 是现有第七集历史缓存目录；导入器只把其中的
 `segment-NNNN.*.json` 当兼容输入读取，新领域模型与新产物统一使用 VideoChunk/chunk。
 
-这里的 Artifact Store 规划只负责原视频、Proxy、VideoChunk、AnalysisWindow、关键帧和
-Clip 等媒体或二进制产物；它尚未实现，也不与 Embedding 外置绑定。当前 text/vision
-向量持久化在 MySQL `VideoChunkEmbedding`，未来是否外置及外置到哪类存储是独立决策。
+Artifact Store 负责原视频、Proxy、VideoChunk、AnalysisWindow、关键帧和 Clip 等媒体或
+二进制产物；当前实现是按环境隔离的本地文件 adapter。Text/Vision 向量仍持久化在
+MySQL `VideoChunkEmbedding`，未来是否外置及外置到哪类存储是独立决策。
 
 事实与对应的 `IndexSyncIntent` 在同一个 MySQL 事务中提交。双向量完整时意图为
 `UPSERT`；向量不完整或新事实要求清除旧索引时为 `DELETE`。导入不直接访问 Qdrant，
@@ -118,11 +172,34 @@ uv run python -m server.cli reconcile-index
 uv run python -m server.cli rebuild-index
 ```
 
-只有一个 Series 的全部 VideoChunk 都具备 text/vision 向量，并且最新 UPSERT Intent 均已
-确认同步，Series 才进入 `READY`；其他情况保持 `INDEXING`。
+只有一个 Series 下的全部 Video 都解析成功且产生 VideoChunk，并且所有 VideoChunk 都
+具备 text/vision 向量、最新 UPSERT Intent 均已确认同步，Series 才进入 `READY`；其他
+情况保持 `INDEXING`。
+
+## 正式检索闭环
+
+`search` 只接受完整、已进入 `READY` 的 Series Scope。每个 named vector 都把
+`seriesId` 的 Qdrant filter 放在 TopK 查询内执行；随后由 Engine 做确定性 RRF，并保留
+Text/Vision 各自的 rank 与 score。最终 `videoChunkId[]` 通过一条联表 SQL 同时 Hydrate
+Evidence 和当前 Index Sync revision，若发现 Qdrant 孤儿 Point、旧 revision、跨 Series/
+Video 或 payload 契约不一致，会明确抛出一致性错误，不会静默丢弃。
+
+```bash
+uv run python -m server.cli search \
+  --query '爽世为什么哭着质问大家要演奏春日影' \
+  --series-id 77285f16-3e5b-592e-ba15-8b224b619806 \
+  --top-k 5
+```
+
+多 Series 检索时重复传入 `--series-id`。默认使用 Text/Vision `1:1` 权重、每路 Top 20、
+`rrfK=60`；`--exact` 只用于确定性诊断。输出的每个 `hit` 包含一个
+`VideoChunkCandidate`（融合与双路分数）和一个同 ID 的 `VideoChunkEvidence`（Series、
+集数、时间范围、媒体引用、解析正文，以及生成 Text 向量时使用的完整
+`retrievalText`），不包含只供 ANN 计算使用的原始浮点向量。
 
 批量回源接受一个或多个正式 ID，并通过一条联表 SQL 返回 Series、Video、VideoChunk 和
-解析信息。返回字段使用工程 API 风格的 `videoCompact` 与 `isFallback`，不返回原始向量：
+解析信息。返回字段使用工程 API 风格的 `retrievalText`、`videoCompact` 与
+`isFallback`，不返回原始向量：
 
 ```bash
 uv run python -m server.cli hydrate \

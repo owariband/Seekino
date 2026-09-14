@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import delete, event, func, select, update
@@ -16,6 +17,7 @@ from server.model.index_sync import (
 )
 from server.model.video import (
     SeriesRecord,
+    VideoRecord,
     VideoChunkInfoRecord,
     VideoChunkEmbeddingRecord,
 )
@@ -163,6 +165,49 @@ def test_same_desired_state_stays_synced_and_all_chunks_gate_ready(
     ]
     assert all(item.status is IndexSyncStatus.SYNCED for item in repeated)
     assert _series_status(engine, prepared_import.series_id) == "READY"
+
+
+def test_unparsed_video_keeps_series_out_of_ready(
+    prepared_import,
+    repository,
+) -> None:
+    engine, video_repository = repository
+    prepared_with_vectors = _with_vectors(prepared_import)
+    video_repository.import_video_parse(prepared_with_vectors)
+    session_factory = create_session_factory(engine)
+    index_repository = IndexSyncRepository(session_factory)
+    for item in index_repository.list_all():
+        assert index_repository.mark_synced(
+            item.video_chunk_id,
+            item.source_revision,
+            item.operation,
+            item.generation,
+        )
+    assert _series_status(engine, prepared_import.series_id) == "READY"
+
+    queued_video_id = str(uuid4())
+    with session_factory.begin() as session:
+        session.add(
+            VideoRecord(
+                video_id=queued_video_id,
+                series_id=prepared_import.series_id,
+                episode_order=prepared_import.episode_order + 1,
+                upload_sequence=prepared_import.upload_sequence + 1,
+                original_filename="next-episode.mp4",
+                original_source_uri="artifact://test/media/next-episode.mp4",
+                inference_proxy_uri=None,
+                content_hash="f" * 64,
+                total_bytes=100,
+                duration_ms=60_000,
+                upload_status="COMPLETED",
+                parse_status="QUEUED",
+                upload_progress=100,
+                parse_progress=0,
+            )
+        )
+
+    assert index_repository.materialize_all() == 0
+    assert _series_status(engine, prepared_import.series_id) == "INDEXING"
 
 
 def test_changed_vector_resets_only_current_intent_and_series(
