@@ -10,11 +10,11 @@ from ..model.video import (
     ContextSnapshotRecord,
     SeriesRecord,
     VideoRecord,
-    VideoSegmentInfoRecord,
-    VideoSegmentParseChunkRecord,
-    VideoSegmentRecord,
+    VideoChunkInfoRecord,
+    VideoChunkEmbeddingRecord,
+    VideoChunkRecord,
 )
-from ..schema import ParseImportReport, VideoSegmentEvidence
+from ..schema import ParseImportReport, VideoChunkEvidence
 from ..service.parse_import import PreparedVideoParseImport
 from .index_sync import materialize_index_sync_intents
 
@@ -23,7 +23,7 @@ class ParseImportConflictError(RuntimeError):
     """A stable business ID already refers to another source snapshot."""
 
 
-class VideoSegmentNotFoundError(LookupError):
+class VideoChunkNotFoundError(LookupError):
     """One or more candidate IDs cannot be hydrated from the fact source."""
 
 
@@ -37,16 +37,18 @@ class VideoRepository:
     ) -> ParseImportReport:
         """Persist one complete Video parse atomically and idempotently."""
 
-        if not prepared.segments:
-            raise ValueError("a Video parse import must contain at least one Segment")
+        if not prepared.chunks:
+            raise ValueError(
+                "a Video parse import must contain at least one VideoChunk"
+            )
         report = ParseImportReport(
             series_id=prepared.series_id,
             video_id=prepared.video_id,
-            video_segment_ids=[item.video_segment_id for item in prepared.segments],
-            segment_count=len(prepared.segments),
+            video_chunk_ids=[item.video_chunk_id for item in prepared.chunks],
+            chunk_count=len(prepared.chunks),
             vectors_imported=all(
                 item.text_embedding is not None and item.vision_embedding is not None
-                for item in prepared.segments
+                for item in prepared.chunks
             ),
         )
 
@@ -143,76 +145,76 @@ class VideoRepository:
                 existing_video.parse_status = "COMPLETED"
                 existing_video.parse_progress = 100
 
-            existing_segments = session.scalars(
-                select(VideoSegmentRecord).where(
-                    VideoSegmentRecord.video_id == prepared.video_id
+            existing_chunks = session.scalars(
+                select(VideoChunkRecord).where(
+                    VideoChunkRecord.video_id == prepared.video_id
                 )
             ).all()
-            if existing_segments:
+            if existing_chunks:
                 actual = {
                     (
-                        item.video_segment_id,
+                        item.video_chunk_id,
                         item.sequence_no,
                         item.start_ms,
                         item.end_ms,
                     )
-                    for item in existing_segments
+                    for item in existing_chunks
                 }
                 expected = {
                     (
-                        item.video_segment_id,
+                        item.video_chunk_id,
                         item.parse_result.window.sequence_no,
-                        item.parse_result.window.segment_start_ms,
-                        item.parse_result.window.segment_end_ms,
+                        item.parse_result.window.chunk_start_ms,
+                        item.parse_result.window.chunk_end_ms,
                     )
-                    for item in prepared.segments
+                    for item in prepared.chunks
                 }
                 if actual != expected:
                     raise ParseImportConflictError(
                         "the persisted Video uses a different canonical "
-                        "Segment snapshot"
+                        "VideoChunk snapshot"
                     )
 
             session.flush()
 
-            existing_segments_by_id = {
-                item.video_segment_id: item for item in existing_segments
+            existing_chunks_by_id = {
+                item.video_chunk_id: item for item in existing_chunks
             }
-            for item in prepared.segments:
-                segment = item.parse_result
-                window = segment.window
-                existing_segment = existing_segments_by_id.get(
-                    item.video_segment_id
+            for item in prepared.chunks:
+                chunk = item.parse_result
+                window = chunk.window
+                existing_chunk = existing_chunks_by_id.get(
+                    item.video_chunk_id
                 )
-                if existing_segment is not None:
+                if existing_chunk is not None:
                     # Canonical media may already have been promoted from the
                     # transitional file URI into the Artifact Store.
-                    existing_segment.analysis_window_start_ms = (
+                    existing_chunk.analysis_window_start_ms = (
                         window.analysis_start_ms
                     )
-                    existing_segment.analysis_window_end_ms = window.analysis_end_ms
-                    existing_segment.analysis_window_media_ref = (
+                    existing_chunk.analysis_window_end_ms = window.analysis_end_ms
+                    existing_chunk.analysis_window_media_ref = (
                         item.analysis_window_media_ref
                     )
-                    existing_segment.transcript = [
+                    existing_chunk.transcript = [
                         cue.model_dump(mode="json")
-                        for cue in segment.candidate_transcript
+                        for cue in chunk.candidate_transcript
                     ]
                     continue
                 session.add(
-                    VideoSegmentRecord(
-                        video_segment_id=item.video_segment_id,
+                    VideoChunkRecord(
+                        video_chunk_id=item.video_chunk_id,
                         video_id=prepared.video_id,
                         sequence_no=window.sequence_no,
-                        start_ms=window.segment_start_ms,
-                        end_ms=window.segment_end_ms,
+                        start_ms=window.chunk_start_ms,
+                        end_ms=window.chunk_end_ms,
                         analysis_window_start_ms=window.analysis_start_ms,
                         analysis_window_end_ms=window.analysis_end_ms,
-                        segment_media_ref=item.segment_media_ref,
+                        chunk_media_ref=item.chunk_media_ref,
                         analysis_window_media_ref=item.analysis_window_media_ref,
                         transcript=[
                             cue.model_dump(mode="json")
-                            for cue in segment.candidate_transcript
+                            for cue in chunk.candidate_transcript
                         ],
                         baseline_visual_caption=None,
                         keyframe_uris=[],
@@ -220,27 +222,27 @@ class VideoRepository:
                 )
             session.flush()
 
-            segment_ids = [item.video_segment_id for item in prepared.segments]
-            chunks_by_segment_id = {
-                chunk.video_segment_id: chunk
-                for chunk in session.scalars(
-                    select(VideoSegmentParseChunkRecord).where(
-                        VideoSegmentParseChunkRecord.video_segment_id.in_(
-                            segment_ids
+            chunk_ids = [item.video_chunk_id for item in prepared.chunks]
+            embeddings_by_chunk_id = {
+                embedding.video_chunk_id: embedding
+                for embedding in session.scalars(
+                    select(VideoChunkEmbeddingRecord).where(
+                        VideoChunkEmbeddingRecord.video_chunk_id.in_(
+                            chunk_ids
                         )
                     )
                 ).all()
             }
-            for item in prepared.segments:
-                segment = item.parse_result
+            for item in prepared.chunks:
+                chunk = item.parse_result
                 provenance = (
-                    segment.video_parse.model_dump(mode="json")
-                    if segment.video_parse is not None
+                    chunk.video_parse.model_dump(mode="json")
+                    if chunk.video_parse is not None
                     else None
                 )
-                if segment.video_parse is not None:
-                    model_provider = segment.video_parse.provider
-                    model_name = segment.video_parse.model
+                if chunk.video_parse is not None:
+                    model_provider = chunk.video_parse.provider
+                    model_name = chunk.video_parse.model
                 elif prepared.parse_result.models is not None:
                     model_provider = "doubao"
                     model_name = prepared.parse_result.models.video_parser
@@ -248,20 +250,20 @@ class VideoRepository:
                     model_provider = None
                     model_name = None
                 session.merge(
-                    VideoSegmentInfoRecord(
-                        video_segment_id=item.video_segment_id,
+                    VideoChunkInfoRecord(
+                        video_chunk_id=item.video_chunk_id,
                         all_time_events=[
-                            event.model_dump(mode="json") for event in segment.events
+                            event.model_dump(mode="json") for event in chunk.events
                         ],
-                        all_time_event_text=segment.self_compact,
-                        video_compact=segment.self_compact,
-                        context_before_compact=segment.context_before_compact,
-                        context_after_compact=segment.context_after_compact,
-                        window_summary=segment.window_summary,
+                        all_time_event_text=chunk.self_compact,
+                        video_compact=chunk.self_compact,
+                        context_before_compact=chunk.context_before_compact,
+                        context_after_compact=chunk.context_after_compact,
+                        window_summary=chunk.window_summary,
                         model_provider=model_provider,
                         model_name=model_name,
                         pipeline_version=prepared.pipeline_version,
-                        is_fallback=segment.is_fallback,
+                        is_fallback=chunk.is_fallback,
                         parse_provenance=provenance,
                         parsed_at=prepared.parsed_at,
                     )
@@ -269,34 +271,34 @@ class VideoRepository:
                 session.merge(
                     ContextSnapshotRecord(
                         snapshot_id=item.snapshot_id,
-                        engine_snapshot_id=segment.context_after.snapshot_id,
+                        engine_snapshot_id=chunk.context_after.snapshot_id,
                         series_id=prepared.series_id,
                         video_id=prepared.video_id,
-                        after_segment_sequence_no=(
-                            segment.context_after.after_segment_sequence_no
+                        after_chunk_sequence_no=(
+                            chunk.context_after.after_chunk_sequence_no
                         ),
-                        compact_text=segment.context_after.compact_text,
+                        compact_text=chunk.context_after.compact_text,
                         structured_state={
                             "recent_events": [
                                 event.model_dump(mode="json")
-                                for event in segment.context_after.recent_events
+                                for event in chunk.context_after.recent_events
                             ]
                         },
-                        created_from_video_segment_id=item.video_segment_id,
+                        created_from_video_chunk_id=item.video_chunk_id,
                     )
                 )
-                chunk = chunks_by_segment_id.get(item.video_segment_id)
-                if chunk is None:
+                embedding = embeddings_by_chunk_id.get(item.video_chunk_id)
+                if embedding is None:
                     session.add(
-                        VideoSegmentParseChunkRecord(
-                            video_segment_id=item.video_segment_id,
-                            text_input=item.retrieval_chunk.text,
-                            text_chunk=(
+                        VideoChunkEmbeddingRecord(
+                            video_chunk_id=item.video_chunk_id,
+                            text_input=item.retrieval_document.text,
+                            text_vector=(
                                 item.text_embedding.vector
                                 if item.text_embedding is not None
                                 else None
                             ),
-                            vision_chunk=(
+                            vision_vector=(
                                 item.vision_embedding.vector
                                 if item.vision_embedding is not None
                                 else None
@@ -315,29 +317,33 @@ class VideoRepository:
                     )
                     continue
 
-                text_input_changed = chunk.text_input != item.retrieval_chunk.text
-                chunk.text_input = item.retrieval_chunk.text
+                text_input_changed = (
+                    embedding.text_input != item.retrieval_document.text
+                )
+                embedding.text_input = item.retrieval_document.text
                 if item.text_embedding is not None:
-                    chunk.text_chunk = item.text_embedding.vector
-                    chunk.text_embedding_metadata = item.text_embedding.metadata
+                    embedding.text_vector = item.text_embedding.vector
+                    embedding.text_embedding_metadata = item.text_embedding.metadata
                 elif text_input_changed:
-                    chunk.text_chunk = None
-                    chunk.text_embedding_metadata = None
+                    embedding.text_vector = None
+                    embedding.text_embedding_metadata = None
                 if item.vision_embedding is not None:
-                    chunk.vision_chunk = item.vision_embedding.vector
-                    chunk.vision_embedding_metadata = item.vision_embedding.metadata
+                    embedding.vision_vector = item.vision_embedding.vector
+                    embedding.vision_embedding_metadata = (
+                        item.vision_embedding.metadata
+                    )
 
             # The desired Qdrant state is committed with the source facts. The
             # external write is deliberately handled after this transaction.
-            materialize_index_sync_intents(session, segment_ids)
+            materialize_index_sync_intents(session, chunk_ids)
 
-    def hydrate_video_segments(
+    def hydrate_video_chunks(
         self,
-        video_segment_ids: Sequence[str],
-    ) -> list[VideoSegmentEvidence]:
+        video_chunk_ids: Sequence[str],
+    ) -> list[VideoChunkEvidence]:
         """Hydrate candidate IDs with one joined fact-source query."""
 
-        ordered_ids = list(dict.fromkeys(video_segment_ids))
+        ordered_ids = list(dict.fromkeys(video_chunk_ids))
         if not ordered_ids:
             return []
 
@@ -345,27 +351,27 @@ class VideoRepository:
             select(
                 SeriesRecord,
                 VideoRecord,
-                VideoSegmentRecord,
-                VideoSegmentInfoRecord,
+                VideoChunkRecord,
+                VideoChunkInfoRecord,
             )
             .join(VideoRecord, VideoRecord.series_id == SeriesRecord.series_id)
             .join(
-                VideoSegmentRecord,
-                VideoSegmentRecord.video_id == VideoRecord.video_id,
+                VideoChunkRecord,
+                VideoChunkRecord.video_id == VideoRecord.video_id,
             )
             .join(
-                VideoSegmentInfoRecord,
-                VideoSegmentInfoRecord.video_segment_id
-                == VideoSegmentRecord.video_segment_id,
+                VideoChunkInfoRecord,
+                VideoChunkInfoRecord.video_chunk_id
+                == VideoChunkRecord.video_chunk_id,
             )
-            .where(VideoSegmentRecord.video_segment_id.in_(ordered_ids))
+            .where(VideoChunkRecord.video_chunk_id.in_(ordered_ids))
         )
         with self._session_factory() as session:
             rows = session.execute(statement).all()
 
-        evidence_by_id: dict[str, VideoSegmentEvidence] = {}
-        for series, video, segment, info in rows:
-            evidence_by_id[segment.video_segment_id] = VideoSegmentEvidence(
+        evidence_by_id: dict[str, VideoChunkEvidence] = {}
+        for series, video, chunk, info in rows:
+            evidence_by_id[chunk.video_chunk_id] = VideoChunkEvidence(
                 series_id=series.series_id,
                 workspace_id=series.workspace_id,
                 series_name=series.name,
@@ -382,17 +388,17 @@ class VideoRepository:
                 duration_ms=video.duration_ms,
                 upload_status=video.upload_status,
                 parse_status=video.parse_status,
-                video_segment_id=segment.video_segment_id,
-                sequence_no=segment.sequence_no,
-                start_ms=segment.start_ms,
-                end_ms=segment.end_ms,
-                analysis_window_start_ms=segment.analysis_window_start_ms,
-                analysis_window_end_ms=segment.analysis_window_end_ms,
-                segment_media_ref=segment.segment_media_ref,
-                analysis_window_media_ref=segment.analysis_window_media_ref,
-                transcript=segment.transcript,
-                baseline_visual_caption=segment.baseline_visual_caption,
-                keyframe_uris=segment.keyframe_uris,
+                video_chunk_id=chunk.video_chunk_id,
+                sequence_no=chunk.sequence_no,
+                start_ms=chunk.start_ms,
+                end_ms=chunk.end_ms,
+                analysis_window_start_ms=chunk.analysis_window_start_ms,
+                analysis_window_end_ms=chunk.analysis_window_end_ms,
+                chunk_media_ref=chunk.chunk_media_ref,
+                analysis_window_media_ref=chunk.analysis_window_media_ref,
+                transcript=chunk.transcript,
+                baseline_visual_caption=chunk.baseline_visual_caption,
+                keyframe_uris=chunk.keyframe_uris,
                 all_time_events=info.all_time_events,
                 all_time_event_text=info.all_time_event_text,
                 video_compact=info.video_compact,
@@ -409,7 +415,7 @@ class VideoRepository:
 
         missing = [item for item in ordered_ids if item not in evidence_by_id]
         if missing:
-            raise VideoSegmentNotFoundError(
-                "videoSegmentId values are missing from MySQL: " + ", ".join(missing)
+            raise VideoChunkNotFoundError(
+                "videoChunkId values are missing from MySQL: " + ", ".join(missing)
             )
         return [evidence_by_id[item] for item in ordered_ids]

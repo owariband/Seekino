@@ -9,14 +9,14 @@ from qdrant_client import QdrantClient
 
 from evals.recall.qdrant_index import (
     QdrantDatasetConflictError,
-    QdrantVideoSegmentIndex,
+    QdrantVideoChunkIndex,
 )
 from evals.recall.recall_eval import (
     RecallEvalFixture,
     RecallEvaluator,
     RecallQueryFixture,
     RelevantTimeRange,
-    build_segment_chunks,
+    build_video_chunk_retrieval_documents,
     materialize_eval_only_canonical_media,
     reciprocal_rank_fusion,
 )
@@ -24,7 +24,7 @@ from engine.parse.schemas import (
     AnalysisWindow,
     ContextSnapshot,
     OwnedTimelineEvent,
-    SegmentParseResult,
+    VideoChunkParseResult,
     VideoParseResult,
 )
 
@@ -69,8 +69,8 @@ class FakeEmbedder:
 
 
 def _parse_result(source_video: Path) -> VideoParseResult:
-    segments = [
-        _segment(
+    chunks = [
+        _chunk(
             source_video,
             sequence_no=0,
             start_ms=0,
@@ -79,7 +79,7 @@ def _parse_result(source_video: Path) -> VideoParseResult:
             analysis_end_ms=63_000,
             compact="alpha compact",
         ),
-        _segment(
+        _chunk(
             source_video,
             sequence_no=1,
             start_ms=60_000,
@@ -88,7 +88,7 @@ def _parse_result(source_video: Path) -> VideoParseResult:
             analysis_end_ms=123_000,
             compact="beta compact",
         ),
-        _segment(
+        _chunk(
             source_video,
             sequence_no=2,
             start_ms=120_000,
@@ -101,14 +101,14 @@ def _parse_result(source_video: Path) -> VideoParseResult:
     return VideoParseResult(
         source_video=source_video,
         duration_ms=180_000,
-        segment_duration_ms=60_000,
+        chunk_duration_ms=60_000,
         context_overlap_ms=3_000,
-        segments=segments,
-        events=[event for segment in segments for event in segment.events],
+        chunks=chunks,
+        events=[event for chunk in chunks for event in chunk.events],
     )
 
 
-def _segment(
+def _chunk(
     source_video: Path,
     *,
     sequence_no: int,
@@ -117,34 +117,34 @@ def _segment(
     analysis_start_ms: int,
     analysis_end_ms: int,
     compact: str,
-) -> SegmentParseResult:
+) -> VideoChunkParseResult:
     event = OwnedTimelineEvent(
         start_ms=start_ms + 1000,
         end_ms=start_ms + 2000,
         event_type="DIALOGUE",
         description=f"{compact} owned event",
         text=f"{compact} owned dialogue",
-        source_segment_sequence_no=sequence_no,
+        source_chunk_sequence_no=sequence_no,
     )
     before = ContextSnapshot(
         snapshot_id=f"before-{sequence_no}",
-        after_segment_sequence_no=sequence_no - 1,
+        after_chunk_sequence_no=sequence_no - 1,
         compact_text=f"LEAK_CONTEXT_BEFORE_{sequence_no}",
         recent_events=[],
     )
     after = ContextSnapshot(
         snapshot_id=f"after-{sequence_no}",
-        after_segment_sequence_no=sequence_no,
+        after_chunk_sequence_no=sequence_no,
         compact_text=f"LEAK_CONTEXT_AFTER_{sequence_no}",
         recent_events=[],
     )
-    return SegmentParseResult(
+    return VideoChunkParseResult(
         window=AnalysisWindow(
             sequence_no=sequence_no,
             source_video=source_video,
             media_path=source_video.parent / f"analysis-{sequence_no}.mp4",
-            segment_start_ms=start_ms,
-            segment_end_ms=end_ms,
+            chunk_start_ms=start_ms,
+            chunk_end_ms=end_ms,
             analysis_start_ms=analysis_start_ms,
             analysis_end_ms=analysis_end_ms,
         ),
@@ -164,21 +164,21 @@ def _media(tmp_path: Path) -> dict[int, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     result: dict[int, Path] = {}
     for sequence_no in range(3):
-        path = tmp_path / f"segment-{sequence_no:04d}.mp4"
+        path = tmp_path / f"chunk-{sequence_no:04d}.mp4"
         path.write_bytes(f"video-{sequence_no}".encode())
         result[sequence_no] = path
     return result
 
 
-def test_text_chunks_hard_exclude_window_and_context_leakage(tmp_path) -> None:
+def test_retrieval_documents_exclude_window_and_context_leakage(tmp_path) -> None:
     parse_result = _parse_result(tmp_path / "episode.mp4")
 
-    chunks = build_segment_chunks(parse_result)
+    documents = build_video_chunk_retrieval_documents(parse_result)
 
-    assert chunks[0].text == (
+    assert documents[0].text == (
         "alpha compact\nalpha compact owned event\nalpha compact owned dialogue"
     )
-    rendered = "\n".join(chunk.text for chunk in chunks)
+    rendered = "\n".join(document.text for document in documents)
     assert "LEAK_WINDOW_SUMMARY" not in rendered
     assert "LEAK_CONTEXT_BEFORE" not in rendered
     assert "LEAK_CONTEXT_AFTER" not in rendered
@@ -217,27 +217,38 @@ def test_evaluator_caches_both_channels_and_scores_time_range_fixture(
         media_by_sequence=media_by_sequence,
     )
 
-    assert len(embedder.text_calls) == 4  # three chunks plus one query
+    assert len(embedder.text_calls) == 4  # three VideoChunks plus one query
     assert len(embedder.video_calls) == 3
-    assert result.queries[0].relevant_segment_sequence_nos == [1]
+    assert result.queries[0].relevant_chunk_sequence_nos == [1]
     assert result.text_metrics.hit_at == {1: 1.0, 3: 1.0, 5: 1.0, 10: 1.0}
     assert result.vision_metrics.hit_at[1] == 1.0
     assert result.fused_metrics.mrr == 1.0
 
     cache_payload = json.loads(
-        (tmp_path / "cache/segments/segment-0001.video.json").read_text()
+        (tmp_path / "cache/chunks/chunk-0001.video.json").read_text()
     )
     assert cache_payload["model"] == "fake-shared-embedding"
     assert cache_payload["dimensions"] == 2
     assert cache_payload["fps"] == 1.0
     assert cache_payload["source"]["size_bytes"] == len(b"source-video")
-    assert cache_payload["segment"] == {
+    assert cache_payload["chunk"] == {
         "sequence_no": 1,
         "start_ms": 60_000,
         "end_ms": 120_000,
         "max_height": 720,
     }
     assert not list((tmp_path / "cache").rglob("*.tmp"))
+
+    legacy_cache_dir = tmp_path / "cache/segments"
+    legacy_cache_dir.mkdir(parents=True)
+    for cache_path in (tmp_path / "cache/chunks").glob("*.json"):
+        legacy_payload = json.loads(cache_path.read_text())
+        legacy_payload["segment"] = legacy_payload.pop("chunk")
+        legacy_path = legacy_cache_dir / cache_path.name.replace(
+            "chunk-", "segment-", 1
+        )
+        legacy_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
+        cache_path.unlink()
 
     cached_embedder = FakeEmbedder()
     cached_evaluator = RecallEvaluator(
@@ -267,14 +278,14 @@ def test_evaluator_can_persist_and_query_both_channels_through_qdrant(
             RecallQueryFixture(
                 query_id="q-beta",
                 query="find beta",
-                relevant_segment_sequence_nos=[1],
+                relevant_chunk_sequence_nos=[1],
             )
         ]
     )
     client = QdrantClient(":memory:")
-    index = QdrantVideoSegmentIndex(
+    index = QdrantVideoChunkIndex(
         client,
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         dataset_id="test:mygo:ep07",
     )
     evaluator = RecallEvaluator(
@@ -297,14 +308,14 @@ def test_evaluator_can_persist_and_query_both_channels_through_qdrant(
 
     assert result.retrieval_backend == "qdrant"
     assert result.qdrant_exact is True
-    assert result.qdrant_collection == "video_segments_test"
+    assert result.qdrant_collection == "video_chunks_test"
     assert result.dataset_id == "test:mygo:ep07"
     assert result.text_weight == 3.0
     assert result.vision_weight == 1.0
-    assert index.count_segments() == 3
-    assert result.queries[0].text_rankings[0].segment_sequence_no == 1
-    assert result.queries[0].vision_rankings[0].segment_sequence_no == 1
-    assert result.queries[0].fused_rankings[0].segment_sequence_no == 1
+    assert index.count_chunks() == 3
+    assert result.queries[0].text_rankings[0].chunk_sequence_no == 1
+    assert result.queries[0].vision_rankings[0].chunk_sequence_no == 1
+    assert result.queries[0].fused_rankings[0].chunk_sequence_no == 1
 
 
 def test_qdrant_dataset_conflict_fails_before_embedding(tmp_path) -> None:
@@ -312,15 +323,15 @@ def test_qdrant_dataset_conflict_fails_before_embedding(tmp_path) -> None:
     source_video.write_bytes(b"source-video")
     parse_result = _parse_result(source_video)
     client = QdrantClient(":memory:")
-    index = QdrantVideoSegmentIndex(
+    index = QdrantVideoChunkIndex(
         client,
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         dataset_id="test:mygo:ep07:wrong-snapshot",
     )
     index.ensure_collection(text_dimensions=2, vision_dimensions=2)
-    first_chunk = build_segment_chunks(parse_result)[0]
-    index.upsert_segments(
-        [first_chunk],
+    first_document = build_video_chunk_retrieval_documents(parse_result)[0]
+    index.upsert_chunks(
+        [first_document],
         text_vectors={0: [1.0, 0.0]},
         vision_vectors={0: [1.0, 0.0]},
     )
@@ -335,7 +346,7 @@ def test_qdrant_dataset_conflict_fails_before_embedding(tmp_path) -> None:
             RecallQueryFixture(
                 query_id="q-beta",
                 query="find beta",
-                relevant_segment_sequence_nos=[1],
+                relevant_chunk_sequence_nos=[1],
             )
         ]
     )
@@ -361,7 +372,7 @@ def test_changed_embedding_metadata_invalidates_cache(tmp_path) -> None:
             RecallQueryFixture(
                 query_id="q-beta",
                 query="find beta",
-                relevant_segment_sequence_nos=[1],
+                relevant_chunk_sequence_nos=[1],
             )
         ]
     )
@@ -414,35 +425,35 @@ def test_eval_media_uses_canonical_zero_overlap_windows(tmp_path, monkeypatch) -
     assert set(media) == {0, 1, 2}
     assert all("eval-only-canonical-media" in str(path) for path in media.values())
     assert all(
-        window.analysis_start_ms == window.segment_start_ms
-        and window.analysis_end_ms == window.segment_end_ms
+        window.analysis_start_ms == window.chunk_start_ms
+        and window.analysis_end_ms == window.chunk_end_ms
         for window in captured_windows
     )
 
 
 def test_rrf_uses_only_configured_channel_top_k() -> None:
-    from evals.recall.recall_eval import RankedSegment
+    from evals.recall.recall_eval import RankedVideoChunk
 
     text = [
-        RankedSegment(rank=1, segment_sequence_no=0, score=0.9),
-        RankedSegment(rank=2, segment_sequence_no=1, score=0.8),
-        RankedSegment(rank=3, segment_sequence_no=2, score=0.7),
+        RankedVideoChunk(rank=1, chunk_sequence_no=0, score=0.9),
+        RankedVideoChunk(rank=2, chunk_sequence_no=1, score=0.8),
+        RankedVideoChunk(rank=3, chunk_sequence_no=2, score=0.7),
     ]
     vision = [
-        RankedSegment(rank=1, segment_sequence_no=1, score=0.95),
-        RankedSegment(rank=2, segment_sequence_no=0, score=0.85),
-        RankedSegment(rank=3, segment_sequence_no=2, score=0.75),
+        RankedVideoChunk(rank=1, chunk_sequence_no=1, score=0.95),
+        RankedVideoChunk(rank=2, chunk_sequence_no=0, score=0.85),
+        RankedVideoChunk(rank=3, chunk_sequence_no=2, score=0.75),
     ]
 
     fused = reciprocal_rank_fusion(text, vision, channel_top_k=2, rrf_k=60)
 
-    assert [ranked.segment_sequence_no for ranked in fused] == [0, 1]
-    assert 2 not in {ranked.segment_sequence_no for ranked in fused}
+    assert [ranked.chunk_sequence_no for ranked in fused] == [0, 1]
+    assert 2 not in {ranked.chunk_sequence_no for ranked in fused}
 
 
 def test_parse_result_must_cover_complete_episode(tmp_path) -> None:
     parse_result = _parse_result(tmp_path / "episode.mp4")
-    parse_result.segments.pop()
+    parse_result.chunks.pop()
 
     with pytest.raises(ValueError, match="complete video duration"):
-        build_segment_chunks(parse_result)
+        build_video_chunk_retrieval_documents(parse_result)

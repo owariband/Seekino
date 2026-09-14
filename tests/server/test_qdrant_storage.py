@@ -10,20 +10,20 @@ from qdrant_client import QdrantClient, models
 from server.database import DatabaseEnvironment
 from server.storage.qdrant import (
     QdrantCollectionSchemaError,
-    QdrantVideoSegmentStore,
-    VideoSegmentIndexPoint,
+    QdrantVideoChunkStore,
+    VideoChunkIndexPoint,
 )
 
 
 def _point(
-    video_segment_id: str | None = None,
+    video_chunk_id: str | None = None,
     *,
     source_revision: str = "revision-1",
-) -> VideoSegmentIndexPoint:
-    return VideoSegmentIndexPoint(
+) -> VideoChunkIndexPoint:
+    return VideoChunkIndexPoint(
         series_id=str(uuid4()),
         video_id=str(uuid4()),
-        video_segment_id=video_segment_id or str(uuid4()),
+        video_chunk_id=video_chunk_id or str(uuid4()),
         source_revision=source_revision,
         is_fallback=False,
         text_vector=[1.0, 0.0],
@@ -36,17 +36,17 @@ def _store(
     *,
     text_dimensions: int = 2,
     vision_dimensions: int = 3,
-) -> QdrantVideoSegmentStore:
-    return QdrantVideoSegmentStore(
+) -> QdrantVideoChunkStore:
+    return QdrantVideoChunkStore(
         client,
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         environment=DatabaseEnvironment.TEST,
         text_dimensions=text_dimensions,
         vision_dimensions=vision_dimensions,
     )
 
 
-def test_upsert_uses_formal_segment_id_and_exact_payload() -> None:
+def test_upsert_uses_formal_chunk_id_and_exact_payload() -> None:
     client = QdrantClient(":memory:")
     store = _store(client)
     point = _point()
@@ -59,19 +59,19 @@ def test_upsert_uses_formal_segment_id_and_exact_payload() -> None:
 
     records = client.retrieve(
         collection_name=store.collection_name,
-        ids=[point.video_segment_id],
+        ids=[point.video_chunk_id],
         with_payload=True,
         with_vectors=True,
     )
     assert len(records) == 1
     stored = records[0]
-    assert stored.id == point.video_segment_id
-    assert UUID(str(stored.id)) == UUID(point.video_segment_id)
+    assert stored.id == point.video_chunk_id
+    assert UUID(str(stored.id)) == UUID(point.video_chunk_id)
     assert set(stored.vector) == {"text", "vision"}
     assert stored.payload == {
         "seriesId": point.series_id,
         "videoId": point.video_id,
-        "videoSegmentId": point.video_segment_id,
+        "videoChunkId": point.video_chunk_id,
         "sourceRevision": point.source_revision,
         "isFallback": False,
     }
@@ -102,14 +102,14 @@ def test_repeated_upsert_replaces_one_stable_point() -> None:
     client.set_payload(
         collection_name=store.collection_name,
         payload={"unexpected": "stale"},
-        points=[point.video_segment_id],
+        points=[point.video_chunk_id],
         wait=True,
     )
     store.upsert(
-        VideoSegmentIndexPoint(
+        VideoChunkIndexPoint(
             series_id=point.series_id,
             video_id=point.video_id,
-            video_segment_id=point.video_segment_id,
+            video_chunk_id=point.video_chunk_id,
             source_revision="revision-2",
             is_fallback=True,
             text_vector=[0.0, 1.0],
@@ -118,19 +118,19 @@ def test_repeated_upsert_replaces_one_stable_point() -> None:
     )
 
     assert client.count(collection_name=store.collection_name, exact=True).count == 1
-    state = store.inspect([point.video_segment_id])[point.video_segment_id]
+    state = store.inspect([point.video_chunk_id])[point.video_chunk_id]
     assert state.present is True
     assert state.source_revision == "revision-2"
     records = client.retrieve(
         collection_name=store.collection_name,
-        ids=[point.video_segment_id],
+        ids=[point.video_chunk_id],
         with_payload=True,
         with_vectors=False,
     )
     assert set(records[0].payload) == {
         "seriesId",
         "videoId",
-        "videoSegmentId",
+        "videoChunkId",
         "sourceRevision",
         "isFallback",
     }
@@ -143,10 +143,10 @@ def test_inspect_reports_present_missing_and_stale_revision() -> None:
     missing_id = str(uuid4())
     store.upsert(present)
 
-    states = store.inspect([present.video_segment_id, missing_id])
+    states = store.inspect([present.video_chunk_id, missing_id])
 
-    assert states[present.video_segment_id].present is True
-    assert states[present.video_segment_id].source_revision == "old-revision"
+    assert states[present.video_chunk_id].present is True
+    assert states[present.video_chunk_id].source_revision == "old-revision"
     assert states[missing_id].present is False
     assert states[missing_id].source_revision is None
 
@@ -159,10 +159,10 @@ def test_delete_is_idempotent_and_waits_for_completion() -> None:
     original_delete = client.delete
     client.delete = Mock(wraps=original_delete)
 
-    store.delete(point.video_segment_id)
-    store.delete(point.video_segment_id)
+    store.delete(point.video_chunk_id)
+    store.delete(point.video_chunk_id)
 
-    state = store.inspect([point.video_segment_id])[point.video_segment_id]
+    state = store.inspect([point.video_chunk_id])[point.video_chunk_id]
     assert state.present is False
     assert client.delete.call_count == 2
     assert all(call.kwargs["wait"] is True for call in client.delete.call_args_list)
@@ -171,10 +171,10 @@ def test_delete_is_idempotent_and_waits_for_completion() -> None:
 @pytest.mark.parametrize(
     ("environment", "collection_name"),
     [
-        (DatabaseEnvironment.TEST, "segments"),
-        (DatabaseEnvironment.DEVELOPMENT, "segments_test"),
-        (DatabaseEnvironment.PRODUCTION, "segments_test"),
-        (DatabaseEnvironment.PRODUCTION, "segments_development"),
+        (DatabaseEnvironment.TEST, "chunks"),
+        (DatabaseEnvironment.DEVELOPMENT, "chunks_test"),
+        (DatabaseEnvironment.PRODUCTION, "chunks_test"),
+        (DatabaseEnvironment.PRODUCTION, "chunks_development"),
     ],
 )
 def test_collection_name_must_match_environment(
@@ -182,7 +182,7 @@ def test_collection_name_must_match_environment(
     collection_name: str,
 ) -> None:
     with pytest.raises(ValueError, match="collection"):
-        QdrantVideoSegmentStore(
+        QdrantVideoChunkStore(
             QdrantClient(":memory:"),
             collection_name=collection_name,
             environment=environment,
@@ -192,28 +192,28 @@ def test_collection_name_must_match_environment(
 
 
 def test_production_accepts_a_name_without_nonproduction_suffix() -> None:
-    store = QdrantVideoSegmentStore(
+    store = QdrantVideoChunkStore(
         QdrantClient(":memory:"),
-        collection_name="video_segments",
+        collection_name="video_chunks",
         environment=DatabaseEnvironment.PRODUCTION,
         text_dimensions=2,
         vision_dimensions=3,
     )
 
-    assert store.collection_name == "video_segments"
+    assert store.collection_name == "video_chunks"
 
 
 @pytest.mark.parametrize(
-    "video_segment_id",
+    "video_chunk_id",
     [
         "not-a-uuid",
         "00000000-0000-0000-0000-00000000000A",
         "{00000000-0000-0000-0000-00000000000a}",
     ],
 )
-def test_point_id_requires_a_canonical_uuid(video_segment_id: str) -> None:
+def test_point_id_requires_a_canonical_uuid(video_chunk_id: str) -> None:
     with pytest.raises(ValueError, match="canonical UUID"):
-        _store(QdrantClient(":memory:")).upsert(_point(video_segment_id))
+        _store(QdrantClient(":memory:")).upsert(_point(video_chunk_id))
 
 
 @pytest.mark.parametrize(
@@ -273,7 +273,7 @@ def test_existing_collection_schema_must_match_dimensions_and_distance(
 ) -> None:
     client = QdrantClient(":memory:")
     client.create_collection(
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         vectors_config={
             "text": text_config,
             "vision": models.VectorParams(
@@ -291,7 +291,7 @@ def test_existing_collection_schema_must_match_dimensions_and_distance(
 def test_existing_collection_rejects_unnamed_or_reduced_precision_vectors() -> None:
     unnamed_client = QdrantClient(":memory:")
     unnamed_client.create_collection(
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         vectors_config=models.VectorParams(
             size=2,
             distance=models.Distance.COSINE,
@@ -303,7 +303,7 @@ def test_existing_collection_rejects_unnamed_or_reduced_precision_vectors() -> N
 
     reduced_client = QdrantClient(":memory:")
     reduced_client.create_collection(
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         vectors_config={
             "text": models.VectorParams(
                 size=2,
@@ -330,9 +330,9 @@ def test_vector_dimensions_must_be_positive_integers(
     vision_dimensions,
 ) -> None:
     with pytest.raises(ValueError, match="positive integers"):
-        QdrantVideoSegmentStore(
+        QdrantVideoChunkStore(
             QdrantClient(":memory:"),
-            collection_name="video_segments_test",
+            collection_name="video_chunks_test",
             environment=DatabaseEnvironment.TEST,
             text_dimensions=text_dimensions,
             vision_dimensions=vision_dimensions,

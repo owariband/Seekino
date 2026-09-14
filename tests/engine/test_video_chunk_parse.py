@@ -7,12 +7,12 @@ import pytest
 from gateway.models import ImageInput, TextInput, VideoInput
 from gateway.sse_proxy import ContentFilterError
 
-import engine.parse.segment_parse as segment_parse_module
-from engine.parse.segment_parse import (
-    ContentFilterFallbackSegmentParser,
-    DeepSeekFallbackSegmentParser,
-    OrderedFrameSegmentParser,
-    SegmentParser,
+import engine.parse.video_chunk_parse as video_chunk_parse_module
+from engine.parse.video_chunk_parse import (
+    ContentFilterFallbackVideoChunkParser,
+    DeepSeekFallbackVideoChunkParser,
+    OrderedFrameVideoChunkParser,
+    VideoChunkParser,
 )
 from engine.parse.schemas import (
     NeutralVisualEvidence,
@@ -135,7 +135,7 @@ def _run_deepseek_fallback(
     *,
     refiner_timeline: VideoTimeline | None = None,
 ):
-    video_path = tmp_path / "segment.mp4"
+    video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
     transcript = TranscriptAnalysis(
         transcript=[
@@ -190,7 +190,7 @@ def _run_deepseek_fallback(
         return frames
 
     monkeypatch.setattr(
-        segment_parse_module,
+        video_chunk_parse_module,
         "extract_video_frames",
         fake_extract_video_frames,
     )
@@ -198,7 +198,7 @@ def _run_deepseek_fallback(
         "SeriesBible:\nSERIES_BIBLE_SECRET\n\n"
         "contextBeforeCompact:\nCOMPACT_SECRET"
     )
-    result = DeepSeekFallbackSegmentParser(
+    result = DeepSeekFallbackVideoChunkParser(
         transcript_model,
         vision_model,
         refiner_model,
@@ -221,16 +221,16 @@ def _run_deepseek_fallback(
     }
 
 
-def test_segment_parser_fuses_candidate_transcript_with_video(tmp_path) -> None:
+def test_video_chunk_parser_fuses_candidate_transcript_with_video(tmp_path) -> None:
     transcript_model = FakeModel(
         "test-lite",
         {"candidate_transcript": _transcript()},
     )
     video_model = FakeModel("test-pro", {"video_timeline": _timeline()})
-    video_path = tmp_path / "segment.mp4"
+    video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
 
-    result = SegmentParser(
+    result = VideoChunkParser(
         transcript_model,
         video_model,
         transcript_fps=0.5,
@@ -273,13 +273,13 @@ def test_segment_parser_fuses_candidate_transcript_with_video(tmp_path) -> None:
     assert "text 写 null" in instruction
 
 
-def test_segment_parser_reuses_precomputed_candidate_transcript(tmp_path) -> None:
+def test_video_chunk_parser_reuses_precomputed_candidate_transcript(tmp_path) -> None:
     transcript_model = FakeModel("test-lite", {})
     video_model = FakeModel("test-pro", {"video_timeline": _timeline()})
-    video_path = tmp_path / "segment.mp4"
+    video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
 
-    result = SegmentParser(
+    result = VideoChunkParser(
         transcript_model,
         video_model,
         transcript_fps=1.0,
@@ -295,16 +295,16 @@ def test_segment_parser_reuses_precomputed_candidate_transcript(tmp_path) -> Non
     assert result.candidate_transcript == _transcript().transcript
 
 
-def test_segment_parser_supports_silent_local_direct_video(tmp_path) -> None:
+def test_video_chunk_parser_supports_silent_local_direct_video(tmp_path) -> None:
     video_model = FakeModel(
         "qwen-local",
         {"video_timeline": _timeline()},
         provider_name="llama_cpp",
     )
-    video_path = tmp_path / "segment.mp4"
+    video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
 
-    result = SegmentParser(
+    result = VideoChunkParser(
         FakeModel("unused-transcript", {}),
         video_model,
         transcript_fps=1.0,
@@ -329,9 +329,9 @@ def test_segment_parser_supports_silent_local_direct_video(tmp_path) -> None:
     )
 
 
-def test_segment_parser_preserves_ordered_frame_evidence(tmp_path) -> None:
+def test_video_chunk_parser_preserves_ordered_frame_evidence(tmp_path) -> None:
     video_model = FakeModel("test-pro", {"video_timeline": _timeline()})
-    parser = SegmentParser(
+    parser = VideoChunkParser(
         FakeModel("test-lite", {}),
         video_model,
         transcript_fps=1.0,
@@ -371,10 +371,10 @@ def test_segment_parser_preserves_ordered_frame_evidence(tmp_path) -> None:
     assert result.provenance.frame_timestamps_ms == [1000, 5000]
 
 
-def test_segment_parser_rejects_non_increasing_frame_timestamps(tmp_path) -> None:
+def test_video_chunk_parser_rejects_non_increasing_frame_timestamps(tmp_path) -> None:
     frame = tmp_path / "frame.jpg"
     frame.write_bytes(b"frame")
-    parser = SegmentParser(
+    parser = VideoChunkParser(
         FakeModel("test-lite", {}),
         FakeModel("test-pro", {"video_timeline": _timeline()}),
         transcript_fps=1.0,
@@ -389,7 +389,7 @@ def test_segment_parser_rejects_non_increasing_frame_timestamps(tmp_path) -> Non
         )
 
 
-def test_ordered_frame_segment_parser_records_local_sampling(tmp_path) -> None:
+def test_ordered_frame_video_chunk_parser_records_local_sampling(tmp_path) -> None:
     frame = tmp_path / "frame.jpg"
     frame.write_bytes(b"frame")
     model = FakeModel(
@@ -397,7 +397,7 @@ def test_ordered_frame_segment_parser_records_local_sampling(tmp_path) -> None:
         {"video_timeline": _timeline()},
         provider_name="ollama",
     )
-    parser = OrderedFrameSegmentParser(
+    parser = OrderedFrameVideoChunkParser(
         model,
         frame_fps=0.5,
         max_frames=33,
@@ -510,7 +510,7 @@ def test_deepseek_fallback_rejects_unsupported_dialogue_text(
         )
 
 
-def test_deepseek_fallback_rejects_event_outside_segment_duration(
+def test_deepseek_fallback_rejects_event_outside_chunk_duration(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -581,11 +581,11 @@ def test_content_filter_falls_back_once_and_preserves_diagnostics() -> None:
         )
     )
 
-    result = ContentFilterFallbackSegmentParser(
+    result = ContentFilterFallbackVideoChunkParser(
         primary,
         fallback,
         primary_model="test-pro",
-    ).analyze("segment.mp4", duration_ms=8000)
+    ).analyze("chunk.mp4", duration_ms=8000)
 
     assert primary.calls == 1
     assert fallback.calls == 1
@@ -608,13 +608,13 @@ def test_non_content_filter_error_does_not_fall_back() -> None:
         )
     )
 
-    parser = ContentFilterFallbackSegmentParser(
+    parser = ContentFilterFallbackVideoChunkParser(
         primary,
         fallback,
         primary_model="test-pro",
     )
     with pytest.raises(RuntimeError, match="network failed"):
-        parser.analyze("segment.mp4", duration_ms=8000)
+        parser.analyze("chunk.mp4", duration_ms=8000)
 
     assert primary.calls == 1
     assert fallback.calls == 0

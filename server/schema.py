@@ -22,8 +22,8 @@ class ApiModel(BaseModel):
 class ParseImportReport(ApiModel):
     series_id: str
     video_id: str
-    video_segment_ids: list[str]
-    segment_count: int = Field(gt=0)
+    video_chunk_ids: list[str]
+    chunk_count: int = Field(gt=0)
     vectors_imported: bool
 
 
@@ -45,7 +45,7 @@ class IndexReconcileReport(ApiModel):
     stale_result_count: int = Field(ge=0)
 
 
-class VideoSegmentEvidence(ApiModel):
+class VideoChunkEvidence(ApiModel):
     series_id: str
     workspace_id: str
     series_name: str
@@ -64,13 +64,13 @@ class VideoSegmentEvidence(ApiModel):
     upload_status: str
     parse_status: str
 
-    video_segment_id: str
+    video_chunk_id: str
     sequence_no: int
     start_ms: int
     end_ms: int
     analysis_window_start_ms: int
     analysis_window_end_ms: int
-    segment_media_ref: str
+    chunk_media_ref: str
     analysis_window_media_ref: str
     transcript: list[dict[str, Any]]
     baseline_visual_caption: str | None

@@ -1,10 +1,16 @@
+from sqlalchemy import inspect, text
 from sqlalchemy.dialects import mysql
 from sqlalchemy.schema import CreateTable
 
 import pytest
 
-from server.database import DatabaseEnvironment, create_database_engine
-from server.model.video import VideoSegmentInfoRecord, VideoSegmentRecord
+from server.database import (
+    DatabaseEnvironment,
+    SchemaUpgradeRequiredError,
+    create_database_engine,
+    create_schema,
+)
+from server.model.video import VideoChunkInfoRecord, VideoChunkRecord
 
 
 def test_database_environment_requires_physically_separate_databases() -> None:
@@ -44,17 +50,40 @@ def test_database_environment_requires_physically_separate_databases() -> None:
 
 
 def test_mysql_schema_uses_innodb_json_and_integer_milliseconds() -> None:
-    segment_ddl = str(
-        CreateTable(VideoSegmentRecord.__table__).compile(dialect=mysql.dialect())
+    chunk_ddl = str(
+        CreateTable(VideoChunkRecord.__table__).compile(dialect=mysql.dialect())
     )
     info_ddl = str(
-        CreateTable(VideoSegmentInfoRecord.__table__).compile(
+        CreateTable(VideoChunkInfoRecord.__table__).compile(
             dialect=mysql.dialect()
         )
     )
 
-    assert "ENGINE=InnoDB" in segment_ddl
-    assert "CHARSET=utf8mb4" in segment_ddl
-    assert "start_ms BIGINT" in segment_ddl
+    assert "ENGINE=InnoDB" in chunk_ddl
+    assert "CHARSET=utf8mb4" in chunk_ddl
+    assert "start_ms BIGINT" in chunk_ddl
     assert "all_time_events JSON" in info_ddl
     assert "video_compact LONGTEXT" in info_ddl
+
+
+def test_create_schema_refuses_to_shadow_a_legacy_video_segment_schema() -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:",
+        environment=DatabaseEnvironment.TEST,
+    )
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE video_segment (id INTEGER)"))
+        connection.execute(
+            text(
+                "CREATE TABLE context_snapshot "
+                "(after_segment_sequence_no INTEGER)"
+            )
+        )
+
+    with pytest.raises(
+        SchemaUpgradeRequiredError,
+        match="controlled VideoChunk upgrade",
+    ):
+        create_schema(engine)
+
+    assert "video_chunk" not in inspect(engine).get_table_names()

@@ -52,9 +52,9 @@ class IndexSyncIntentRecord(TimestampedRecord, Base):
         MYSQL_TABLE_OPTIONS,
     )
 
-    video_segment_id: Mapped[str] = mapped_column(
+    video_chunk_id: Mapped[str] = mapped_column(
         String(ID_LENGTH),
-        ForeignKey("video_segment.video_segment_id", ondelete="CASCADE"),
+        ForeignKey("video_chunk.video_chunk_id", ondelete="CASCADE"),
         primary_key=True,
     )
     operation: Mapped[str] = mapped_column(String(16), nullable=False)

@@ -6,13 +6,14 @@ from uuid import NAMESPACE_URL, uuid5
 from qdrant_client import QdrantClient, models
 
 from engine.retrieval.video_retrieval import (
-    RankedVideoSegment,
-    SegmentRetrievalChunk,
+    RankedVideoChunk,
+    VideoChunkRetrievalDocument,
 )
 
 TEXT_VECTOR_NAME = "text"
 VISION_VECTOR_NAME = "vision"
 DATASET_ID_PAYLOAD_KEY = "dataset_id"
+_POINT_ID_SEED_KIND = "segment"
 
 
 class QdrantCollectionSchemaError(RuntimeError):
@@ -20,11 +21,11 @@ class QdrantCollectionSchemaError(RuntimeError):
 
 
 class QdrantDatasetConflictError(RuntimeError):
-    """A dataset ID already refers to a different Segment snapshot."""
+    """A dataset ID already refers to a different VideoChunk snapshot."""
 
 
-class QdrantVideoSegmentIndex:
-    """Store and query one isolated VideoSegment dataset in Qdrant."""
+class QdrantVideoChunkIndex:
+    """Store and query one isolated VideoChunk dataset in Qdrant."""
 
     def __init__(
         self,
@@ -99,39 +100,41 @@ class QdrantVideoSegmentIndex:
             wait=True,
         )
 
-    def upsert_segments(
+    def upsert_chunks(
         self,
-        chunks: Sequence[SegmentRetrievalChunk],
+        documents: Sequence[VideoChunkRetrievalDocument],
         *,
         text_vectors: Mapping[int, list[float]],
         vision_vectors: Mapping[int, list[float]],
     ) -> None:
-        sequences = {chunk.sequence_no for chunk in chunks}
-        if not chunks:
-            raise ValueError("at least one VideoSegment chunk is required")
+        sequences = {document.sequence_no for document in documents}
+        if not documents:
+            raise ValueError("at least one VideoChunk retrieval document is required")
         if sequences != set(text_vectors):
-            raise ValueError("text vectors must contain exactly one vector per Segment")
+            raise ValueError("text vectors must contain exactly one vector per VideoChunk")
         if sequences != set(vision_vectors):
-            raise ValueError("vision vectors must contain exactly one vector per Segment")
+            raise ValueError(
+                "vision vectors must contain exactly one vector per VideoChunk"
+            )
 
         points = [
             models.PointStruct(
-                id=self._point_id(chunk.sequence_no),
+                id=self._point_id(document.sequence_no),
                 vector={
-                    TEXT_VECTOR_NAME: text_vectors[chunk.sequence_no],
-                    VISION_VECTOR_NAME: vision_vectors[chunk.sequence_no],
+                    TEXT_VECTOR_NAME: text_vectors[document.sequence_no],
+                    VISION_VECTOR_NAME: vision_vectors[document.sequence_no],
                 },
                 payload={
                     DATASET_ID_PAYLOAD_KEY: self.dataset_id,
-                    "video_segment_id": self._video_segment_id(chunk.sequence_no),
-                    "segment_sequence_no": chunk.sequence_no,
-                    "start_ms": chunk.start_ms,
-                    "end_ms": chunk.end_ms,
-                    "video_compact": chunk.video_compact,
-                    "is_fallback": chunk.is_fallback,
+                    "video_chunk_id": self._video_chunk_id(document.sequence_no),
+                    "chunk_sequence_no": document.sequence_no,
+                    "start_ms": document.start_ms,
+                    "end_ms": document.end_ms,
+                    "video_compact": document.video_compact,
+                    "is_fallback": document.is_fallback,
                 },
             )
-            for chunk in chunks
+            for document in documents
         ]
         self._client.upsert(
             collection_name=self.collection_name,
@@ -145,7 +148,7 @@ class QdrantVideoSegmentIndex:
         *,
         limit: int,
         exact: bool,
-    ) -> list[RankedVideoSegment]:
+    ) -> list[RankedVideoChunk]:
         return self._search(
             query_vector,
             vector_name=TEXT_VECTOR_NAME,
@@ -159,7 +162,7 @@ class QdrantVideoSegmentIndex:
         *,
         limit: int,
         exact: bool,
-    ) -> list[RankedVideoSegment]:
+    ) -> list[RankedVideoChunk]:
         return self._search(
             query_vector,
             vector_name=VISION_VECTOR_NAME,
@@ -167,7 +170,7 @@ class QdrantVideoSegmentIndex:
             exact=exact,
         )
 
-    def count_segments(self) -> int:
+    def count_chunks(self) -> int:
         return self._client.count(
             collection_name=self.collection_name,
             count_filter=self._dataset_filter(),
@@ -176,19 +179,19 @@ class QdrantVideoSegmentIndex:
 
     def assert_dataset_size(
         self,
-        expected_segment_count: int,
+        expected_chunk_count: int,
         *,
         allow_empty: bool,
     ) -> None:
-        if expected_segment_count <= 0:
-            raise ValueError("expected_segment_count must be greater than zero")
-        actual = self.count_segments()
-        if actual == expected_segment_count or (allow_empty and actual == 0):
+        if expected_chunk_count <= 0:
+            raise ValueError("expected_chunk_count must be greater than zero")
+        actual = self.count_chunks()
+        if actual == expected_chunk_count or (allow_empty and actual == 0):
             return
         raise QdrantDatasetConflictError(
-            f"Qdrant dataset {self.dataset_id!r} contains {actual} Segments; "
-            f"expected {expected_segment_count}. Use a new dataset ID for a "
-            "different parse or segmentation snapshot."
+            f"Qdrant dataset {self.dataset_id!r} contains {actual} VideoChunks; "
+            f"expected {expected_chunk_count}. Use a new dataset ID for a "
+            "different parse or chunking snapshot."
         )
 
     def _search(
@@ -198,7 +201,7 @@ class QdrantVideoSegmentIndex:
         vector_name: str,
         limit: int,
         exact: bool,
-    ) -> list[RankedVideoSegment]:
+    ) -> list[RankedVideoChunk]:
         if not query_vector:
             raise ValueError("query_vector must not be empty")
         if limit <= 0:
@@ -224,19 +227,19 @@ class QdrantVideoSegmentIndex:
         for point in response.points:
             payload = point.payload or {}
             if payload.get(DATASET_ID_PAYLOAD_KEY) != self.dataset_id:
-                raise RuntimeError("Qdrant returned a Segment from another dataset")
-            sequence_no = payload.get("segment_sequence_no")
+                raise RuntimeError("Qdrant returned a VideoChunk from another dataset")
+            sequence_no = payload.get("chunk_sequence_no")
             if not isinstance(sequence_no, int) or sequence_no < 0:
                 raise RuntimeError(
-                    "Qdrant Segment payload has an invalid segment_sequence_no"
+                    "Qdrant VideoChunk payload has an invalid chunk_sequence_no"
                 )
             scored.append((sequence_no, float(point.score)))
 
         scored.sort(key=lambda item: (-item[1], item[0]))
         return [
-            RankedVideoSegment(
+            RankedVideoChunk(
                 rank=rank,
-                segment_sequence_no=sequence_no,
+                chunk_sequence_no=sequence_no,
                 score=score,
             )
             for rank, (sequence_no, score) in enumerate(scored, start=1)
@@ -253,12 +256,14 @@ class QdrantVideoSegmentIndex:
         )
 
     def _point_id(self, sequence_no: int) -> str:
+        # Keep the published seed stable while the payload terminology moves to
+        # VideoChunk; otherwise an existing dataset would receive duplicate IDs.
         return str(
             uuid5(
                 NAMESPACE_URL,
-                f"anivag:{self.dataset_id}:segment:{sequence_no}",
+                f"anivag:{self.dataset_id}:{_POINT_ID_SEED_KIND}:{sequence_no}",
             )
         )
 
-    def _video_segment_id(self, sequence_no: int) -> str:
-        return f"{self.dataset_id}:segment-{sequence_no:04d}"
+    def _video_chunk_id(self, sequence_no: int) -> str:
+        return f"{self.dataset_id}:chunk-{sequence_no:04d}"

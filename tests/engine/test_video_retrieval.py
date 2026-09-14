@@ -6,12 +6,12 @@ from engine.parse.schemas import (
     AnalysisWindow,
     ContextSnapshot,
     OwnedTimelineEvent,
-    SegmentParseResult,
+    VideoChunkParseResult,
     VideoParseResult,
 )
 from engine.retrieval.video_retrieval import (
-    RankedVideoSegment,
-    build_segment_retrieval_chunks,
+    RankedVideoChunk,
+    build_video_chunk_retrieval_documents,
     weighted_reciprocal_rank_fusion,
 )
 
@@ -20,13 +20,13 @@ def _parse_result() -> VideoParseResult:
     source_video = Path("video.mp4")
     before = ContextSnapshot(
         snapshot_id="before-0",
-        after_segment_sequence_no=-1,
+        after_chunk_sequence_no=-1,
         compact_text="LEAK_CONTEXT_BEFORE",
         recent_events=[],
     )
     after = ContextSnapshot(
         snapshot_id="after-0",
-        after_segment_sequence_no=0,
+        after_chunk_sequence_no=0,
         compact_text="LEAK_CONTEXT_AFTER",
         recent_events=[],
     )
@@ -36,15 +36,15 @@ def _parse_result() -> VideoParseResult:
         event_type="DIALOGUE",
         description="当前片段发生的事件",
         text="当前片段的台词",
-        source_segment_sequence_no=0,
+        source_chunk_sequence_no=0,
     )
-    segment = SegmentParseResult(
+    chunk = VideoChunkParseResult(
         window=AnalysisWindow(
             sequence_no=0,
             source_video=source_video,
-            media_path=Path("segment-0000.mp4"),
-            segment_start_ms=0,
-            segment_end_ms=60_000,
+            media_path=Path("chunk-0000.mp4"),
+            chunk_start_ms=0,
+            chunk_end_ms=60_000,
             analysis_start_ms=0,
             analysis_end_ms=60_000,
         ),
@@ -62,36 +62,36 @@ def _parse_result() -> VideoParseResult:
     return VideoParseResult(
         source_video=source_video,
         duration_ms=60_000,
-        segment_duration_ms=60_000,
+        chunk_duration_ms=60_000,
         context_overlap_ms=0,
-        segments=[segment],
+        chunks=[chunk],
         events=[event],
     )
 
 
-def _ranked(*sequence_nos: int) -> list[RankedVideoSegment]:
+def _ranked(*sequence_nos: int) -> list[RankedVideoChunk]:
     return [
-        RankedVideoSegment(
+        RankedVideoChunk(
             rank=rank,
-            segment_sequence_no=sequence_no,
+            chunk_sequence_no=sequence_no,
             score=1.0 / rank,
         )
         for rank, sequence_no in enumerate(sequence_nos, start=1)
     ]
 
 
-def test_chunks_expose_video_compact_without_window_or_context() -> None:
-    chunks = build_segment_retrieval_chunks(_parse_result())
+def test_retrieval_documents_expose_video_compact_without_context() -> None:
+    documents = build_video_chunk_retrieval_documents(_parse_result())
 
-    assert chunks[0].video_compact == "当前片段摘要"
-    assert chunks[0].text == (
+    assert documents[0].video_compact == "当前片段摘要"
+    assert documents[0].text == (
         "当前片段摘要\n当前片段发生的事件\n当前片段的台词"
     )
-    assert "LEAK_WINDOW_SUMMARY" not in chunks[0].text
-    assert "LEAK_CONTEXT_BEFORE" not in chunks[0].text
-    assert "LEAK_CONTEXT_AFTER" not in chunks[0].text
-    assert "self_compact" not in chunks[0].model_dump()
-    assert chunks[0].is_fallback is True
+    assert "LEAK_WINDOW_SUMMARY" not in documents[0].text
+    assert "LEAK_CONTEXT_BEFORE" not in documents[0].text
+    assert "LEAK_CONTEXT_AFTER" not in documents[0].text
+    assert "self_compact" not in documents[0].model_dump()
+    assert documents[0].is_fallback is True
 
 
 def test_weighted_rrf_changes_channel_priority() -> None:
@@ -104,7 +104,7 @@ def test_weighted_rrf_changes_channel_priority() -> None:
         rrf_k=60,
     )
 
-    assert [ranked.segment_sequence_no for ranked in fused] == [0, 1]
+    assert [ranked.chunk_sequence_no for ranked in fused] == [0, 1]
 
 
 def test_weighted_rrf_uses_only_channel_top_k() -> None:
@@ -117,7 +117,7 @@ def test_weighted_rrf_uses_only_channel_top_k() -> None:
         rrf_k=60,
     )
 
-    assert [ranked.segment_sequence_no for ranked in fused] == [0, 1]
+    assert [ranked.chunk_sequence_no for ranked in fused] == [0, 1]
 
 
 def test_weighted_rrf_breaks_score_ties_by_sequence_number() -> None:
@@ -130,7 +130,7 @@ def test_weighted_rrf_breaks_score_ties_by_sequence_number() -> None:
         rrf_k=60,
     )
 
-    assert [ranked.segment_sequence_no for ranked in fused] == [2, 4]
+    assert [ranked.chunk_sequence_no for ranked in fused] == [2, 4]
     assert [ranked.rank for ranked in fused] == [1, 2]
 
 
@@ -144,7 +144,7 @@ def test_zero_weight_excludes_that_channel() -> None:
         rrf_k=60,
     )
 
-    assert [ranked.segment_sequence_no for ranked in fused] == [0]
+    assert [ranked.chunk_sequence_no for ranked in fused] == [0]
 
 
 @pytest.mark.parametrize("weight", [-1.0, float("inf"), float("nan")])

@@ -1,12 +1,14 @@
+from uuid import NAMESPACE_URL, uuid5
+
 import pytest
 from qdrant_client import QdrantClient, models
 
 from evals.recall.qdrant_index import (
     QdrantCollectionSchemaError,
     QdrantDatasetConflictError,
-    QdrantVideoSegmentIndex,
+    QdrantVideoChunkIndex,
 )
-from engine.retrieval.video_retrieval import SegmentRetrievalChunk
+from engine.retrieval.video_retrieval import VideoChunkRetrievalDocument
 
 
 def _chunk(
@@ -14,8 +16,8 @@ def _chunk(
     *,
     video_compact: str,
     is_fallback: bool = False,
-) -> SegmentRetrievalChunk:
-    return SegmentRetrievalChunk(
+) -> VideoChunkRetrievalDocument:
+    return VideoChunkRetrievalDocument(
         sequence_no=sequence_no,
         start_ms=sequence_no * 60_000,
         end_ms=(sequence_no + 1) * 60_000,
@@ -27,14 +29,14 @@ def _chunk(
 
 def test_named_vectors_are_stored_and_queried_per_dataset() -> None:
     client = QdrantClient(":memory:")
-    first = QdrantVideoSegmentIndex(
+    first = QdrantVideoChunkIndex(
         client,
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         dataset_id="mygo-ep07",
     )
-    second = QdrantVideoSegmentIndex(
+    second = QdrantVideoChunkIndex(
         client,
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         dataset_id="other-video",
     )
     first.ensure_collection(text_dimensions=2, vision_dimensions=2)
@@ -44,12 +46,12 @@ def test_named_vectors_are_stored_and_queried_per_dataset() -> None:
         _chunk(0, video_compact="text winner"),
         _chunk(1, video_compact="vision winner", is_fallback=True),
     ]
-    first.upsert_segments(
+    first.upsert_chunks(
         chunks,
         text_vectors={0: [1.0, 0.0], 1: [0.0, 1.0]},
         vision_vectors={0: [0.0, 1.0], 1: [1.0, 0.0]},
     )
-    second.upsert_segments(
+    second.upsert_chunks(
         [_chunk(0, video_compact="must stay isolated")],
         text_vectors={0: [1.0, 0.0]},
         vision_vectors={0: [1.0, 0.0]},
@@ -58,13 +60,13 @@ def test_named_vectors_are_stored_and_queried_per_dataset() -> None:
     text = first.search_text([1.0, 0.0], limit=2, exact=False)
     vision = first.search_vision([1.0, 0.0], limit=2, exact=False)
 
-    assert [item.segment_sequence_no for item in text] == [0, 1]
-    assert [item.segment_sequence_no for item in vision] == [1, 0]
-    assert first.count_segments() == 2
-    assert second.count_segments() == 1
+    assert [item.chunk_sequence_no for item in text] == [0, 1]
+    assert [item.chunk_sequence_no for item in vision] == [1, 0]
+    assert first.count_chunks() == 2
+    assert second.count_chunks() == 1
 
     stored, _ = client.scroll(
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         scroll_filter=models.Filter(
             must=[
                 models.FieldCondition(
@@ -72,7 +74,7 @@ def test_named_vectors_are_stored_and_queried_per_dataset() -> None:
                     match=models.MatchValue(value="mygo-ep07"),
                 ),
                 models.FieldCondition(
-                    key="segment_sequence_no",
+                    key="chunk_sequence_no",
                     match=models.MatchValue(value=1),
                 ),
             ]
@@ -83,11 +85,12 @@ def test_named_vectors_are_stored_and_queried_per_dataset() -> None:
     )
     assert len(stored) == 1
     point = stored[0]
+    assert point.id == str(uuid5(NAMESPACE_URL, "anivag:mygo-ep07:segment:1"))
     assert set(point.vector) == {"text", "vision"}
     assert point.payload == {
         "dataset_id": "mygo-ep07",
-        "video_segment_id": "mygo-ep07:segment-0001",
-        "segment_sequence_no": 1,
+        "video_chunk_id": "mygo-ep07:chunk-0001",
+        "chunk_sequence_no": 1,
         "start_ms": 60_000,
         "end_ms": 120_000,
         "video_compact": "vision winner",
@@ -97,42 +100,42 @@ def test_named_vectors_are_stored_and_queried_per_dataset() -> None:
 
 def test_upsert_is_idempotent_for_the_same_dataset_and_sequence() -> None:
     client = QdrantClient(":memory:")
-    index = QdrantVideoSegmentIndex(
+    index = QdrantVideoChunkIndex(
         client,
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         dataset_id="mygo-ep07",
     )
     index.ensure_collection(text_dimensions=2, vision_dimensions=2)
     chunks = [_chunk(0, video_compact="first")]
-    index.upsert_segments(
+    index.upsert_chunks(
         chunks,
         text_vectors={0: [1.0, 0.0]},
         vision_vectors={0: [1.0, 0.0]},
     )
     updated = [_chunk(0, video_compact="updated")]
-    index.upsert_segments(
+    index.upsert_chunks(
         updated,
         text_vectors={0: [0.0, 1.0]},
         vision_vectors={0: [0.0, 1.0]},
     )
 
-    assert index.count_segments() == 1
+    assert index.count_chunks() == 1
     result = index.search_text([0.0, 1.0], limit=1, exact=False)
-    assert result[0].segment_sequence_no == 0
+    assert result[0].chunk_sequence_no == 0
 
 
 def test_existing_collection_schema_must_match() -> None:
     client = QdrantClient(":memory:")
     client.create_collection(
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         vectors_config={
             "text": models.VectorParams(size=3, distance=models.Distance.COSINE),
             "vision": models.VectorParams(size=2, distance=models.Distance.COSINE),
         },
     )
-    index = QdrantVideoSegmentIndex(
+    index = QdrantVideoChunkIndex(
         client,
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         dataset_id="mygo-ep07",
     )
 
@@ -144,7 +147,7 @@ def test_existing_collection_schema_must_match() -> None:
 def test_existing_collection_rejects_reduced_precision_vectors() -> None:
     client = QdrantClient(":memory:")
     client.create_collection(
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         vectors_config={
             "text": models.VectorParams(
                 size=2,
@@ -154,9 +157,9 @@ def test_existing_collection_rejects_reduced_precision_vectors() -> None:
             "vision": models.VectorParams(size=2, distance=models.Distance.COSINE),
         },
     )
-    index = QdrantVideoSegmentIndex(
+    index = QdrantVideoChunkIndex(
         client,
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         dataset_id="mygo-ep07",
     )
 
@@ -164,16 +167,16 @@ def test_existing_collection_rejects_reduced_precision_vectors() -> None:
         index.ensure_collection(text_dimensions=2, vision_dimensions=2)
 
 
-def test_upsert_requires_both_vectors_for_every_segment() -> None:
-    index = QdrantVideoSegmentIndex(
+def test_upsert_requires_both_vectors_for_every_chunk() -> None:
+    index = QdrantVideoChunkIndex(
         QdrantClient(":memory:"),
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         dataset_id="mygo-ep07",
     )
-    chunks = [_chunk(0, video_compact="segment")]
+    chunks = [_chunk(0, video_compact="chunk")]
 
     with pytest.raises(ValueError) as exc_info:
-        index.upsert_segments(
+        index.upsert_chunks(
             chunks,
             text_vectors={0: [1.0, 0.0]},
             vision_vectors={},
@@ -181,15 +184,15 @@ def test_upsert_requires_both_vectors_for_every_segment() -> None:
     assert "vision vectors" in str(exc_info.value)
 
 
-def test_reusing_dataset_id_with_another_segment_count_is_rejected() -> None:
+def test_reusing_dataset_id_with_another_chunk_count_is_rejected() -> None:
     client = QdrantClient(":memory:")
-    index = QdrantVideoSegmentIndex(
+    index = QdrantVideoChunkIndex(
         client,
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         dataset_id="test:mygo:ep07:60s:v1",
     )
     index.ensure_collection(text_dimensions=2, vision_dimensions=2)
-    index.upsert_segments(
+    index.upsert_chunks(
         [_chunk(0, video_compact="first"), _chunk(1, video_compact="second")],
         text_vectors={0: [1.0, 0.0], 1: [0.0, 1.0]},
         vision_vectors={0: [1.0, 0.0], 1: [0.0, 1.0]},
@@ -198,4 +201,4 @@ def test_reusing_dataset_id_with_another_segment_count_is_rejected() -> None:
     with pytest.raises(QdrantDatasetConflictError, match="Use a new dataset ID"):
         index.assert_dataset_size(1, allow_empty=True)
 
-    assert index.count_segments() == 2
+    assert index.count_chunks() == 2

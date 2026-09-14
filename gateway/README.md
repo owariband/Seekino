@@ -73,7 +73,7 @@ model = LlamaCppMultimodalModel(
 )
 result = model.generate(
     [
-        VideoInput("/absolute/path/to/segment.mp4", fps=0.5),
+        VideoInput("/absolute/path/to/video-chunk.mp4", fps=0.5),
         TextInput("只依据视频画面返回结构化描述"),
     ],
     schema_name="description",
@@ -88,7 +88,7 @@ result = model.generate(
 
 这里的“直接视频”仍是 llama.cpp 在服务内调用 FFmpeg 解码和抽帧，不是 Qwen
 直接读取 MP4/H.264 字节流，也不包含音轨理解。llama.cpp 官方仍将多模态 Server
-标记为 experimental；direct-video 先用于同 Segment A/B。生产降级配置使用
+标记为 experimental；direct-video 先用于同一 VideoChunk A/B。生产降级配置使用
 DeepSeek Flash：Engine 按 30 秒分组抽帧，先生成中性画面证据，再用同一模型结合
 Lite ASR、compact 和背景资料整理最终 Schema。协议与启动参数见
 [llama.cpp Server 文档](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)。
@@ -98,8 +98,8 @@ Lite ASR、compact 和背景资料整理最终 Schema。协议与启动参数见
 
 ## 多模态 Embedding
 
-`DoubaoMultimodalEmbedder` 保留文本与视频向量能力。文本查询和视频片段使用同一模型，
-进入同一向量空间。Embedding 不返回片段内部时间戳，也不替代上层的视频理解流程。
+`DoubaoMultimodalEmbedder` 保留文本与视频向量能力。文本查询和 VideoChunk 使用同一模型，
+进入同一向量空间。Embedding 不返回 VideoChunk 内部时间戳，也不替代上层的视频理解流程。
 
 ## 依赖与验证
 
@@ -115,12 +115,12 @@ Gateway CLI 只保留 Embedding 冒烟命令：
 ```bash
 uv run --env-file .env.local python -m gateway.cli \
   --config config.yaml embed-video \
-  --video /absolute/path/to/segment.mp4 \
-  --output outputs/gateway/segment.embedding.json
+  --video /absolute/path/to/video-chunk.mp4 \
+  --output outputs/gateway/video-chunk.embedding.json
 
 uv run --env-file .env.local python -m gateway.cli \
   --config config.yaml embed-query \
-  --query "惊世一跪发生在哪一段？" \
+  --query "惊世一跪发生在哪里？" \
   --output outputs/gateway/query.embedding.json
 ```
 

@@ -56,7 +56,7 @@ output directory，不能把实验结果混入正式 checkpoint。
 ## 验证顺序
 
 1. 先用短视频确认 Server 的 `input_video` 与 JSON Schema 输出正常；
-2. 再用 episode 7 的完整 66 秒 `segment-0010` 验证超时、内存与 Schema；
+2. 再用 episode 7 的完整 66 秒 VideoChunk 验证超时、内存与 Schema；历史产物文件名仍为 `segment-0010`；
 3. 固定同一 0.5 FPS、候选 Transcript、Context、Prompt 和 Schema，与 Ollama 33 帧
    路径比较事件召回、时间误差、人物/字幕质量与延迟；
 4. A/B 通过前，不把该 provider 设为整集默认降级。

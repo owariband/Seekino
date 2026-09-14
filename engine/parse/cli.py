@@ -16,18 +16,18 @@ from .analysis_windows import (
     plan_analysis_windows,
     probe_video_duration_ms,
 )
-from .segment_parse import (
-    ContentFilterFallbackSegmentParser,
-    DeepSeekFallbackSegmentParser,
-    SegmentEvidenceParser,
-    SegmentParser,
+from .video_chunk_parse import (
+    ContentFilterFallbackVideoChunkParser,
+    DeepSeekFallbackVideoChunkParser,
+    VideoChunkEvidenceParser,
+    VideoChunkParser,
 )
 from .schemas import (
     AnalysisWindow,
-    SegmentCheckpoint,
-    SegmentParseResult,
     TranscriptAnalysis,
     TranscriptCheckpoint,
+    VideoChunkCheckpoint,
+    VideoChunkParseResult,
     VideoFallbackModels,
     VideoParseModels,
 )
@@ -51,11 +51,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parse_video = subparsers.add_parser(
         "parse-video",
-        help="Parse one video as an ordered multi-segment timeline.",
+        help="Parse one video as an ordered multi-chunk timeline.",
     )
     parse_video.add_argument("--video", type=Path, required=True)
     parse_video.add_argument("--output-dir", type=Path, required=True)
-    parse_video.add_argument("--segment-duration-ms", type=int, default=60_000)
+    parse_video.add_argument("--chunk-duration-ms", type=int, default=60_000)
     parse_video.add_argument("--context-overlap-ms", type=int, default=3_000)
     parse_video.add_argument("--max-height", type=int, default=720)
     parse_video.add_argument("--asr-concurrency", type=int, default=4)
@@ -99,6 +99,20 @@ def _write_json(payload: BaseModel | dict[str, Any], output: Path) -> None:
     temporary.replace(output)
 
 
+def _analysis_windows_match(
+    checkpoint_window: AnalysisWindow,
+    current_window: AnalysisWindow,
+) -> bool:
+    if checkpoint_window == current_window:
+        return True
+
+    checkpoint_data = checkpoint_window.model_dump()
+    current_data = current_window.model_dump()
+    checkpoint_data.pop("media_path")
+    current_data.pop("media_path")
+    return checkpoint_data == current_data
+
+
 def _read_series_bible(args: argparse.Namespace) -> str | None:
     if args.series_bible:
         return args.series_bible.strip()
@@ -115,7 +129,7 @@ def _read_series_bible(args: argparse.Namespace) -> str | None:
     return text.strip()
 
 
-def _load_completed_segments(
+def _load_completed_chunks(
     windows: list[AnalysisWindow],
     *,
     output_dir: Path,
@@ -128,18 +142,26 @@ def _load_completed_segments(
     fallback_frame_fps: float,
     fallback_group_duration_ms: int,
     fallback_max_frames_per_group: int,
-) -> list[SegmentParseResult]:
-    completed: list[SegmentParseResult] = []
+) -> list[VideoChunkParseResult]:
+    completed: list[VideoChunkParseResult] = []
     gap_found = False
     for window in windows:
-        path = output_dir / "segments" / f"segment-{window.sequence_no:04d}.json"
+        path = output_dir / "chunks" / f"chunk-{window.sequence_no:04d}.json"
         if not path.is_file():
-            gap_found = True
-            continue
+            legacy_path = (
+                output_dir
+                / "segments"
+                / f"segment-{window.sequence_no:04d}.json"
+            )
+            if legacy_path.is_file():
+                path = legacy_path
+            else:
+                gap_found = True
+                continue
         if gap_found:
-            raise RuntimeError(f"segment checkpoints contain a gap before {path}")
+            raise RuntimeError(f"chunk checkpoints contain a gap before {path}")
 
-        checkpoint = SegmentCheckpoint.model_validate_json(
+        checkpoint = VideoChunkCheckpoint.model_validate_json(
             path.read_text(encoding="utf-8")
         )
         if checkpoint.transcript_model != transcript_model:
@@ -148,7 +170,7 @@ def _load_completed_segments(
             raise RuntimeError(f"transcript source changed for checkpoint: {path}")
         if checkpoint.video_model != video_model:
             raise RuntimeError(f"video model changed for checkpoint: {path}")
-        provenance = checkpoint.segment.video_parse
+        provenance = checkpoint.chunk.video_parse
         if provenance is not None:
             if provenance.provider == "doubao":
                 expected_model = video_model
@@ -184,14 +206,14 @@ def _load_completed_segments(
                     raise RuntimeError(
                         f"fallback strategy changed for checkpoint: {path}"
                     )
-        if checkpoint.segment.window != window:
+        if not _analysis_windows_match(checkpoint.chunk.window, window):
             raise RuntimeError(f"analysis window changed for checkpoint: {path}")
-        completed.append(checkpoint.segment)
+        completed.append(checkpoint.chunk.model_copy(update={"window": window}))
     return completed
 
 
 def _prepare_candidate_transcripts(
-    parser: SegmentParser,
+    parser: VideoChunkParser,
     windows: list[AnalysisWindow],
     *,
     output_dir: Path,
@@ -205,14 +227,18 @@ def _prepare_candidate_transcripts(
     transcripts: dict[int, TranscriptAnalysis] = {}
     pending: list[AnalysisWindow] = []
     for window in windows:
-        path = (
-            output_dir
-            / "transcripts"
-            / f"segment-{window.sequence_no:04d}.json"
-        )
+        path = output_dir / "transcripts" / f"chunk-{window.sequence_no:04d}.json"
         if not path.is_file():
-            pending.append(window)
-            continue
+            legacy_path = (
+                output_dir
+                / "transcripts"
+                / f"segment-{window.sequence_no:04d}.json"
+            )
+            if legacy_path.is_file():
+                path = legacy_path
+            else:
+                pending.append(window)
+                continue
         checkpoint = TranscriptCheckpoint.model_validate_json(
             path.read_text(encoding="utf-8")
         )
@@ -220,7 +246,7 @@ def _prepare_candidate_transcripts(
             raise RuntimeError(f"transcript model changed for checkpoint: {path}")
         if checkpoint.transcript_source != transcript_source:
             raise RuntimeError(f"transcript source changed for checkpoint: {path}")
-        if checkpoint.window != window:
+        if not _analysis_windows_match(checkpoint.window, window):
             raise RuntimeError(f"analysis window changed for checkpoint: {path}")
         transcripts[window.sequence_no] = checkpoint.analysis
 
@@ -239,12 +265,12 @@ def _prepare_candidate_transcripts(
             path = (
                 output_dir
                 / "transcripts"
-                / f"segment-{window.sequence_no:04d}.json"
+                / f"chunk-{window.sequence_no:04d}.json"
             )
             _write_json(checkpoint, path)
             transcripts[window.sequence_no] = analysis
         print(
-            f"candidate ASR disabled for {len(pending)} pending segments; "
+            f"candidate ASR disabled for {len(pending)} pending chunks; "
             "Pro will use video audio and hard subtitles",
             flush=True,
         )
@@ -276,20 +302,20 @@ def _prepare_candidate_transcripts(
             path = (
                 output_dir
                 / "transcripts"
-                / f"segment-{window.sequence_no:04d}.json"
+                / f"chunk-{window.sequence_no:04d}.json"
             )
             _write_json(checkpoint, path)
             transcripts[window.sequence_no] = analysis
             print(
                 f"ASR ready {len(transcripts)}/{len(windows)}; "
-                f"segment={window.sequence_no}; cues={len(analysis.transcript)}",
+                f"chunk={window.sequence_no}; cues={len(analysis.transcript)}",
                 flush=True,
             )
     if errors:
         window, error = errors[0]
         raise RuntimeError(
-            f"candidate ASR failed for segment {window.sequence_no}; "
-            f"{len(errors)} segment(s) failed"
+            f"candidate ASR failed for chunk {window.sequence_no}; "
+            f"{len(errors)} chunk(s) failed"
         ) from error
     return transcripts
 
@@ -346,7 +372,7 @@ def main() -> None:
         video_path,
         duration_ms=duration_ms,
         output_dir=output_dir / "windows",
-        segment_duration_ms=args.segment_duration_ms,
+        chunk_duration_ms=args.chunk_duration_ms,
         context_overlap_ms=args.context_overlap_ms,
     )
     materialize_analysis_windows(windows, max_height=args.max_height)
@@ -364,13 +390,13 @@ def main() -> None:
         video_model,
         request_timeout_seconds=args.request_timeout_seconds,
     )
-    model_parser = SegmentParser(
+    model_parser = VideoChunkParser(
         transcript_model_client,
         video_model_client,
         transcript_fps=transcript_fps,
         video_fps=video_fps,
     )
-    semantic_parser: SegmentEvidenceParser = model_parser
+    semantic_parser: VideoChunkEvidenceParser = model_parser
     if fallback_enabled:
         assert deepseek_api_key is not None
         deepseek_model = DeepSeekMultimodalModel(
@@ -381,7 +407,7 @@ def main() -> None:
             request_timeout_seconds=deepseek_config.request_timeout_seconds,
             reasoning_effort=deepseek_config.reasoning_effort,
         )
-        fallback_parser: SegmentEvidenceParser = DeepSeekFallbackSegmentParser(
+        fallback_parser: VideoChunkEvidenceParser = DeepSeekFallbackVideoChunkParser(
             transcript_model_client,
             deepseek_model,
             deepseek_model,
@@ -402,7 +428,7 @@ def main() -> None:
                 flush=True,
             )
 
-        semantic_parser = ContentFilterFallbackSegmentParser(
+        semantic_parser = ContentFilterFallbackVideoChunkParser(
             model_parser,
             fallback_parser,
             primary_model=video_model,
@@ -416,7 +442,7 @@ def main() -> None:
             f"max_frames_per_group={fallback_config.max_frames_per_group}",
             flush=True,
         )
-    completed_segments = _load_completed_segments(
+    completed_chunks = _load_completed_chunks(
         windows,
         output_dir=output_dir,
         transcript_model=transcript_model,
@@ -429,15 +455,15 @@ def main() -> None:
         fallback_group_duration_ms=fallback_config.group_duration_ms,
         fallback_max_frames_per_group=fallback_config.max_frames_per_group,
     )
-    if completed_segments:
+    if completed_chunks:
         print(
-            f"resuming after {len(completed_segments)}/{len(windows)} "
-            "completed segments",
+            f"resuming after {len(completed_chunks)}/{len(windows)} "
+            "completed chunks",
             flush=True,
         )
     candidate_transcripts = _prepare_candidate_transcripts(
         model_parser,
-        windows[len(completed_segments) :],
+        windows[len(completed_chunks) :],
         output_dir=output_dir,
         transcript_model=transcript_model,
         transcript_source=args.asr_mode,
@@ -449,38 +475,38 @@ def main() -> None:
         max_context_chars=args.max_context_chars,
     )
 
-    def checkpoint(segment: SegmentParseResult) -> None:
+    def checkpoint(chunk: VideoChunkParseResult) -> None:
         path = (
             output_dir
-            / "segments"
-            / f"segment-{segment.window.sequence_no:04d}.json"
+            / "chunks"
+            / f"chunk-{chunk.window.sequence_no:04d}.json"
         )
         _write_json(
-            SegmentCheckpoint(
+            VideoChunkCheckpoint(
                 transcript_model=transcript_model,
                 transcript_source=args.asr_mode,
                 video_model=video_model,
-                segment=segment,
+                chunk=chunk,
             ),
             path,
         )
         print(
-            f"completed segment {segment.window.sequence_no + 1}/{len(windows)}; "
-            f"owned_events={len(segment.events)}; "
-            f"context={segment.context_after.snapshot_id}",
+            f"completed chunk {chunk.window.sequence_no + 1}/{len(windows)}; "
+            f"owned_events={len(chunk.events)}; "
+            f"context={chunk.context_after.snapshot_id}",
             flush=True,
         )
 
     result = pipeline.run(
         source_video=str(video_path),
         duration_ms=duration_ms,
-        segment_duration_ms=args.segment_duration_ms,
+        chunk_duration_ms=args.chunk_duration_ms,
         context_overlap_ms=args.context_overlap_ms,
         windows=windows,
         series_bible=_read_series_bible(args),
         candidate_transcripts=candidate_transcripts,
-        completed_segments=completed_segments,
-        on_segment_complete=checkpoint,
+        completed_chunks=completed_chunks,
+        on_chunk_complete=checkpoint,
     )
     final_output = output_dir / "pipeline.parse.json"
     models = VideoParseModels(

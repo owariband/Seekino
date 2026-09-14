@@ -22,14 +22,14 @@ def _args(*extra: str):
 
 def test_local_backend_does_not_activate_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("ANIVAG_QDRANT_URL", "http://127.0.0.1:6333")
-    monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "video_segments_test")
+    monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "video_chunks_test")
 
     assert _resolve_qdrant_options(_args()) is None
 
 
 def test_qdrant_backend_uses_explicit_dataset_and_environment(monkeypatch) -> None:
     monkeypatch.setenv("ANIVAG_QDRANT_URL", "http://127.0.0.1:6333")
-    monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "video_segments_test")
+    monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "video_chunks_test")
 
     options = _resolve_qdrant_options(
         _args(
@@ -42,7 +42,7 @@ def test_qdrant_backend_uses_explicit_dataset_and_environment(monkeypatch) -> No
 
     assert options == (
         "http://127.0.0.1:6333",
-        "video_segments_test",
+        "video_chunks_test",
         "test:mygo:ep07:60s:v1",
     )
 

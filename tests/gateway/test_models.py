@@ -89,7 +89,7 @@ class FakeResponses:
 def test_ark_maps_text_image_and_video_to_responses_sse(tmp_path) -> None:
     image_path = tmp_path / "frame.jpg"
     image_path.write_bytes(b"image-bytes")
-    video_path = tmp_path / "segment.mp4"
+    video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"video-bytes")
     responses = FakeResponses(_result())
     model = ArkMultimodalModel(
@@ -223,7 +223,7 @@ def test_deepseek_uses_official_responses_api_and_preserves_ordered_images(
 
 
 def test_deepseek_rejects_video_without_sending_a_request(tmp_path) -> None:
-    video_path = tmp_path / "segment.mp4"
+    video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"video")
     responses = FakeDeepSeekResponses(_result().model_dump_json())
     model = DeepSeekMultimodalModel(
@@ -361,7 +361,7 @@ def test_ollama_uses_configured_url_and_preserves_ordered_images(tmp_path) -> No
 
 
 def test_ollama_rejects_video_without_sending_a_request(tmp_path) -> None:
-    video_path = tmp_path / "segment.mp4"
+    video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"video")
 
     def fail_if_called(request: httpx.Request) -> httpx.Response:
@@ -457,7 +457,7 @@ def test_ollama_rejects_invalid_structured_responses(
 def test_llama_cpp_maps_text_image_and_video_in_input_order(tmp_path) -> None:
     image_path = tmp_path / "frame.jpg"
     image_path.write_bytes(b"image-bytes")
-    video_path = tmp_path / "segment.mp4"
+    video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"video-bytes")
     requests: list[tuple[str, dict[str, object]]] = []
 
@@ -540,7 +540,7 @@ def test_llama_cpp_maps_text_image_and_video_in_input_order(tmp_path) -> None:
 def test_llama_cpp_rejects_video_fps_mismatch_without_sending_request(
     tmp_path,
 ) -> None:
-    video_path = tmp_path / "segment.mp4"
+    video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"video")
 
     def fail_if_called(request: httpx.Request) -> httpx.Response:

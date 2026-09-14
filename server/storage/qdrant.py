@@ -14,20 +14,20 @@ TEXT_VECTOR_NAME = "text"
 VISION_VECTOR_NAME = "vision"
 SERIES_ID_PAYLOAD_KEY = "seriesId"
 VIDEO_ID_PAYLOAD_KEY = "videoId"
-VIDEO_SEGMENT_ID_PAYLOAD_KEY = "videoSegmentId"
+VIDEO_CHUNK_ID_PAYLOAD_KEY = "videoChunkId"
 SOURCE_REVISION_PAYLOAD_KEY = "sourceRevision"
 IS_FALLBACK_PAYLOAD_KEY = "isFallback"
 
 
 class QdrantCollectionSchemaError(RuntimeError):
-    """The configured collection cannot store AniVAG Segment vectors."""
+    """The configured collection cannot store AniVAG VideoChunk vectors."""
 
 
 @dataclass(frozen=True, slots=True)
-class VideoSegmentIndexPoint:
+class VideoChunkIndexPoint:
     series_id: str
     video_id: str
-    video_segment_id: str
+    video_chunk_id: str
     source_revision: str
     is_fallback: bool
     text_vector: Sequence[float]
@@ -40,8 +40,8 @@ class StoredPointState:
     source_revision: str | None
 
 
-class QdrantVideoSegmentStore:
-    """Persist the rebuildable Segment index owned by the Server layer."""
+class QdrantVideoChunkStore:
+    """Persist the rebuildable VideoChunk index owned by the Server layer."""
 
     def __init__(
         self,
@@ -104,8 +104,8 @@ class QdrantVideoSegmentStore:
                 wait=True,
             )
 
-    def upsert(self, point: VideoSegmentIndexPoint) -> None:
-        point_id = _canonical_video_segment_id(point.video_segment_id)
+    def upsert(self, point: VideoChunkIndexPoint) -> None:
+        point_id = _canonical_video_chunk_id(point.video_chunk_id)
         series_id = _required_text(point.series_id, "series_id")
         video_id = _required_text(point.video_id, "video_id")
         source_revision = _required_text(point.source_revision, "source_revision")
@@ -135,7 +135,7 @@ class QdrantVideoSegmentStore:
                     payload={
                         SERIES_ID_PAYLOAD_KEY: series_id,
                         VIDEO_ID_PAYLOAD_KEY: video_id,
-                        VIDEO_SEGMENT_ID_PAYLOAD_KEY: point_id,
+                        VIDEO_CHUNK_ID_PAYLOAD_KEY: point_id,
                         SOURCE_REVISION_PAYLOAD_KEY: source_revision,
                         IS_FALLBACK_PAYLOAD_KEY: point.is_fallback,
                     },
@@ -144,8 +144,8 @@ class QdrantVideoSegmentStore:
             wait=True,
         )
 
-    def delete(self, video_segment_id: str) -> None:
-        point_id = _canonical_video_segment_id(video_segment_id)
+    def delete(self, video_chunk_id: str) -> None:
+        point_id = _canonical_video_chunk_id(video_chunk_id)
         if not self._client.collection_exists(self.collection_name):
             return
         self._client.delete(
@@ -156,11 +156,11 @@ class QdrantVideoSegmentStore:
 
     def inspect(
         self,
-        video_segment_ids: Sequence[str],
+        video_chunk_ids: Sequence[str],
     ) -> dict[str, StoredPointState]:
         point_ids = list(
             dict.fromkeys(
-                _canonical_video_segment_id(item) for item in video_segment_ids
+                _canonical_video_chunk_id(item) for item in video_chunk_ids
             )
         )
         states = {
@@ -238,15 +238,15 @@ class QdrantVideoSegmentStore:
                 )
 
 
-def _canonical_video_segment_id(value: str) -> str:
+def _canonical_video_chunk_id(value: str) -> str:
     if not isinstance(value, str):
-        raise ValueError("video_segment_id must be a canonical UUID string")
+        raise ValueError("video_chunk_id must be a canonical UUID string")
     try:
         parsed = UUID(value)
     except (ValueError, AttributeError) as exc:
-        raise ValueError("video_segment_id must be a canonical UUID string") from exc
+        raise ValueError("video_chunk_id must be a canonical UUID string") from exc
     if str(parsed) != value:
-        raise ValueError("video_segment_id must be a canonical UUID string")
+        raise ValueError("video_chunk_id must be a canonical UUID string")
     return value
 
 

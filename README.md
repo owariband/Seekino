@@ -38,7 +38,7 @@ AniVAG/
 ├── uv.lock                           # 全仓唯一依赖锁
 ├── config.yaml                       # 可提交的模型默认配置
 ├── server/                           # 工程编排、事实源、持久化与外部接口
-├── engine/                           # Segment 解析与检索算法
+├── engine/                           # VideoChunk 解析与检索算法
 ├── gateway/                          # 模型供应商调用与数据归一化
 ├── tests/                            # 按 server/engine/gateway/evals 分区的测试
 ├── evals/                            # 算法评测工具、数据集与报告
@@ -51,7 +51,9 @@ AniVAG/
 ```
 
 这里列的是当前已经存在的目录，不代表最终系统只有这些文件。未来的 API、
-异步 Worker、Artifact Store 和 Web 层会在进入相应阶段时落到各自工程边界；不提前
+异步 Worker、Artifact Store 和 Web 层会在进入相应阶段时落到各自工程边界；其中
+Artifact Store 只负责媒体与其他二进制产物，Embedding 的 durable source 另行决策，不
+因引入 Artifact Store 自动外置。各目录不提前
 创建没有实现的空目录。完整目标结构与阶段记录维护在
 `docs/design/technical_solution copy.mdv.document.working.md`。
 

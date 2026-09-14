@@ -10,29 +10,33 @@ from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from engine.parse.schemas import SegmentParseResult, VideoParseResult
+from engine.parse.schemas import VideoChunkParseResult, VideoParseResult
 from engine.retrieval.video_retrieval import (
-    SegmentRetrievalChunk,
-    build_segment_retrieval_chunks,
+    VideoChunkRetrievalDocument,
+    build_video_chunk_retrieval_documents,
 )
+
+# UUID seeds are persistent data, not display terminology. Keep the pre-rename
+# seed so changing VideoSegment to VideoChunk does not re-key MySQL or Qdrant.
+_VIDEO_CHUNK_ID_SEED = "anivag:video-segment"
 
 
 @dataclass(frozen=True)
-class EmbeddingArtifact:
+class PreparedEmbedding:
     vector: list[float]
     metadata: dict[str, Any]
 
 
 @dataclass(frozen=True)
-class PreparedSegment:
-    video_segment_id: str
+class PreparedVideoChunk:
+    video_chunk_id: str
     snapshot_id: str
-    parse_result: SegmentParseResult
-    retrieval_chunk: SegmentRetrievalChunk
-    segment_media_ref: str
+    parse_result: VideoChunkParseResult
+    retrieval_document: VideoChunkRetrievalDocument
+    chunk_media_ref: str
     analysis_window_media_ref: str
-    text_embedding: EmbeddingArtifact | None
-    vision_embedding: EmbeddingArtifact | None
+    text_embedding: PreparedEmbedding | None
+    vision_embedding: PreparedEmbedding | None
 
 
 @dataclass(frozen=True)
@@ -53,12 +57,12 @@ class PreparedVideoParseImport:
     pipeline_version: str
     parsed_at: datetime
     parse_result: VideoParseResult
-    segments: tuple[PreparedSegment, ...]
+    chunks: tuple[PreparedVideoChunk, ...]
 
 
 def prepare_video_parse_import(
     parse_result_path: str | Path,
-    canonical_segment_directory: str | Path,
+    canonical_chunk_directory: str | Path,
     *,
     series_name: str,
     episode_order: int,
@@ -73,7 +77,7 @@ def prepare_video_parse_import(
     embedding_cache_directory: str | Path | None = None,
 ) -> PreparedVideoParseImport:
     parse_path = Path(parse_result_path).expanduser().resolve(strict=True)
-    canonical_directory = Path(canonical_segment_directory).expanduser().resolve(
+    canonical_directory = Path(canonical_chunk_directory).expanduser().resolve(
         strict=True
     )
     if not canonical_directory.is_dir():
@@ -117,9 +121,9 @@ def prepare_video_parse_import(
         field_name="video_id",
     )
 
-    retrieval_chunks = {
-        chunk.sequence_no: chunk
-        for chunk in build_segment_retrieval_chunks(parse_result)
+    retrieval_documents = {
+        document.sequence_no: document
+        for document in build_video_chunk_retrieval_documents(parse_result)
     }
     cache_directory = (
         Path(embedding_cache_directory).expanduser().resolve(strict=True)
@@ -130,32 +134,51 @@ def prepare_video_parse_import(
         raise NotADirectoryError(cache_directory)
 
     source_stat = source_video.stat()
-    segments: list[PreparedSegment] = []
-    for segment in parse_result.segments:
-        window = segment.window
+    chunks: list[PreparedVideoChunk] = []
+    for chunk in parse_result.chunks:
+        window = chunk.window
         sequence_no = window.sequence_no
-        segment_media = canonical_directory / (
-            f"segment-{sequence_no:04d}.analysis-"
-            f"{window.segment_start_ms:010d}-{window.segment_end_ms:010d}.mp4"
+        chunk_media = _first_existing_file(
+            canonical_directory / f"chunk-{sequence_no:04d}.mp4",
+            canonical_directory
+            / (
+                f"chunk-{sequence_no:04d}.analysis-"
+                f"{window.chunk_start_ms:010d}-{window.chunk_end_ms:010d}.mp4"
+            ),
+            canonical_directory
+            / (
+                f"segment-{sequence_no:04d}.analysis-"
+                f"{window.chunk_start_ms:010d}-{window.chunk_end_ms:010d}.mp4"
+            ),
+            canonical_directory / f"segment-{sequence_no:04d}.mp4",
         )
-        segment_media = segment_media.resolve(strict=True)
-        if not segment_media.is_file():
+        if not chunk_media.is_file():
             raise FileNotFoundError(
-                f"canonical Segment is not a file: {segment_media}"
+                f"canonical VideoChunk is not a file: {chunk_media}"
             )
-        analysis_window_media = Path(window.media_path).expanduser()
-        if not analysis_window_media.is_absolute():
-            analysis_window_media = parse_path.parent / analysis_window_media
-        analysis_window_media = analysis_window_media.resolve(strict=True)
+        declared_analysis_window = Path(window.media_path).expanduser()
+        if declared_analysis_window.is_absolute():
+            analysis_window_media = declared_analysis_window
+        else:
+            analysis_window_media = parse_path.parent / declared_analysis_window
+        relocated_window = parse_path.parent / "windows" / declared_analysis_window.name
+        renamed_window = relocated_window.with_name(
+            relocated_window.name.replace("segment-", "chunk-", 1)
+        )
+        analysis_window_media = _first_existing_file(
+            analysis_window_media,
+            relocated_window,
+            renamed_window,
+        )
         if not analysis_window_media.is_file():
             raise FileNotFoundError(
                 f"AnalysisWindow is not a file: {analysis_window_media}"
             )
 
-        video_segment_id = str(
+        video_chunk_id = str(
             uuid5(
                 NAMESPACE_URL,
-                f"anivag:video-segment:{resolved_video_id}:{sequence_no}",
+                f"{_VIDEO_CHUNK_ID_SEED}:{resolved_video_id}:{sequence_no}",
             )
         )
         snapshot_id = str(
@@ -168,29 +191,35 @@ def prepare_video_parse_import(
         vision_embedding = None
         if cache_directory is not None:
             text_embedding = _load_embedding(
-                cache_directory / f"segment-{sequence_no:04d}.text.json",
+                _first_existing_file(
+                    cache_directory / f"chunk-{sequence_no:04d}.text.json",
+                    cache_directory / f"segment-{sequence_no:04d}.text.json",
+                ),
                 expected_modality="text",
-                expected_chunk=retrieval_chunks[sequence_no],
+                expected_document=retrieval_documents[sequence_no],
                 source_video=source_video,
                 source_stat=source_stat,
-                segment_media=segment_media,
+                chunk_media=chunk_media,
             )
             vision_embedding = _load_embedding(
-                cache_directory / f"segment-{sequence_no:04d}.video.json",
+                _first_existing_file(
+                    cache_directory / f"chunk-{sequence_no:04d}.video.json",
+                    cache_directory / f"segment-{sequence_no:04d}.video.json",
+                ),
                 expected_modality="video",
-                expected_chunk=retrieval_chunks[sequence_no],
+                expected_document=retrieval_documents[sequence_no],
                 source_video=source_video,
                 source_stat=source_stat,
-                segment_media=segment_media,
+                chunk_media=chunk_media,
             )
 
-        segments.append(
-            PreparedSegment(
-                video_segment_id=video_segment_id,
+        chunks.append(
+            PreparedVideoChunk(
+                video_chunk_id=video_chunk_id,
                 snapshot_id=snapshot_id,
-                parse_result=segment,
-                retrieval_chunk=retrieval_chunks[sequence_no],
-                segment_media_ref=segment_media.as_uri(),
+                parse_result=chunk,
+                retrieval_document=retrieval_documents[sequence_no],
+                chunk_media_ref=chunk_media.as_uri(),
                 analysis_window_media_ref=analysis_window_media.as_uri(),
                 text_embedding=text_embedding,
                 vision_embedding=vision_embedding,
@@ -217,7 +246,7 @@ def prepare_video_parse_import(
         pipeline_version=pipeline_version.strip(),
         parsed_at=parsed_at,
         parse_result=parse_result,
-        segments=tuple(segments),
+        chunks=tuple(chunks),
     )
 
 
@@ -247,11 +276,11 @@ def _load_embedding(
     path: Path,
     *,
     expected_modality: str,
-    expected_chunk: SegmentRetrievalChunk,
+    expected_document: VideoChunkRetrievalDocument,
     source_video: Path,
     source_stat: os.stat_result,
-    segment_media: Path,
-) -> EmbeddingArtifact:
+    chunk_media: Path,
+) -> PreparedEmbedding:
     payload = json.loads(path.resolve(strict=True).read_text())
     vector = payload.pop("vector", None)
     if not isinstance(vector, list) or not vector:
@@ -269,16 +298,22 @@ def _load_embedding(
     if payload.get("modality") != expected_modality:
         raise ValueError(f"embedding cache modality does not match: {path}")
 
-    segment = payload.get("segment")
-    expected_segment = {
-        "sequence_no": expected_chunk.sequence_no,
-        "start_ms": expected_chunk.start_ms,
-        "end_ms": expected_chunk.end_ms,
+    chunk = payload.pop("chunk", None)
+    if chunk is None:
+        chunk = payload.pop("segment", None)
+    else:
+        payload.pop("segment", None)
+    expected_chunk = {
+        "sequence_no": expected_document.sequence_no,
+        "start_ms": expected_document.start_ms,
+        "end_ms": expected_document.end_ms,
     }
-    if not isinstance(segment, dict) or any(
-        segment.get(key) != value for key, value in expected_segment.items()
+    if not isinstance(chunk, dict) or any(
+        chunk.get(key) != value for key, value in expected_chunk.items()
     ):
-        raise ValueError(f"embedding cache Segment does not match parse result: {path}")
+        raise ValueError(
+            f"embedding cache VideoChunk does not match parse result: {path}"
+        )
 
     source = payload.get("source")
     if not isinstance(source, dict) or (
@@ -290,23 +325,57 @@ def _load_embedding(
 
     if expected_modality == "text":
         expected_input_hash = hashlib.sha256(
-            expected_chunk.text.encode("utf-8")
+            expected_document.text.encode("utf-8")
         ).hexdigest()
+        valid_input_hashes = {expected_input_hash}
     else:
-        max_height = segment.get("max_height")
+        max_height = chunk.get("max_height")
         if not isinstance(max_height, int) or max_height <= 0:
             raise ValueError(f"embedding cache has invalid max_height: {path}")
-        media_stat = segment_media.stat()
-        media_identity = (
-            f"{source_video}\0{source_stat.st_size}\0{source_stat.st_mtime_ns}"
-            f"\0{expected_chunk.start_ms}\0{expected_chunk.end_ms}\0{max_height}"
-            f"\0{segment_media}\0{media_stat.st_size}\0{media_stat.st_mtime_ns}"
-        )
-        expected_input_hash = hashlib.sha256(media_identity.encode("utf-8")).hexdigest()
-    if payload.get("input_sha256") != expected_input_hash:
+        media_stat = chunk_media.stat()
+        media_paths = [chunk_media]
+        current_path = str(chunk_media)
+        output_marker = f"{os.sep}outputs{os.sep}engine{os.sep}"
+        if output_marker in current_path:
+            legacy_path = Path(
+                current_path.replace(
+                    output_marker,
+                    f"{os.sep}packages{os.sep}engine{os.sep}outputs{os.sep}",
+                    1,
+                )
+            )
+            legacy_path = legacy_path.with_name(
+                legacy_path.name.replace("chunk-", "segment-", 1)
+            )
+            media_paths.append(legacy_path)
+
+        input_hashes = [
+            hashlib.sha256(
+                (
+                    f"{source_video}\0{source_stat.st_size}\0{source_stat.st_mtime_ns}"
+                    f"\0{expected_document.start_ms}\0{expected_document.end_ms}"
+                    f"\0{max_height}\0{media_path}\0{media_stat.st_size}"
+                    f"\0{media_stat.st_mtime_ns}"
+                ).encode("utf-8")
+            ).hexdigest()
+            for media_path in media_paths
+        ]
+        expected_input_hash = input_hashes[0]
+        valid_input_hashes = set(input_hashes)
+    if payload.get("input_sha256") not in valid_input_hashes:
         raise ValueError(f"embedding cache input hash does not match: {path}")
 
-    return EmbeddingArtifact(
+    payload["input_sha256"] = expected_input_hash
+    payload["chunk"] = chunk
+
+    return PreparedEmbedding(
         vector=[float(value) for value in vector],
         metadata=payload,
     )
+
+
+def _first_existing_file(*paths: Path) -> Path:
+    for path in paths:
+        if path.is_file():
+            return path.resolve(strict=True)
+    return paths[0].resolve(strict=True)

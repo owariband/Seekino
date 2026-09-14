@@ -18,7 +18,7 @@ from .repository.index_sync import IndexSyncRepository
 from .repository.video import VideoRepository
 from .service.index_sync import IndexSyncService
 from .service.parse_import import prepare_video_parse_import
-from .storage.qdrant import QdrantVideoSegmentStore
+from .storage.qdrant import QdrantVideoChunkStore
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -41,15 +41,18 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_database_arguments(import_parse)
     import_parse.add_argument("--parse-result", type=Path, required=True)
     import_parse.add_argument(
-        "--canonical-segment-dir",
+        "--canonical-chunk-dir",
         type=Path,
         required=True,
-        help="Directory containing one non-overlapping canonical MP4 per Segment.",
+        help="Directory containing one non-overlapping canonical MP4 per VideoChunk.",
     )
     import_parse.add_argument(
         "--embedding-cache-dir",
         type=Path,
-        help="Optional directory containing segment-NNNN.text/video.json files.",
+        help=(
+            "Optional directory containing chunk-NNNN.text/video.json files; "
+            "legacy segment-NNNN files are also accepted."
+        ),
     )
     import_parse.add_argument("--series-name", required=True)
     import_parse.add_argument("--series-description")
@@ -68,10 +71,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     hydrate = subparsers.add_parser(
         "hydrate",
-        help="Batch hydrate formal videoSegmentId values from MySQL.",
+        help="Batch hydrate formal videoChunkId values from MySQL.",
     )
     _add_database_arguments(hydrate)
-    hydrate.add_argument("video_segment_ids", nargs="+")
+    hydrate.add_argument("video_chunk_ids", nargs="+")
 
     sync_index = subparsers.add_parser(
         "sync-index",
@@ -174,7 +177,7 @@ def main() -> None:
         important_extra_data = _load_series_bible(args.series_bible_file)
         prepared = prepare_video_parse_import(
             args.parse_result,
-            args.canonical_segment_dir,
+            args.canonical_chunk_dir,
             series_name=args.series_name,
             series_description=args.series_description,
             series_id=args.series_id,
@@ -211,7 +214,7 @@ def main() -> None:
             api_key=args.qdrant_api_key,
         )
         try:
-            store = QdrantVideoSegmentStore(
+            store = QdrantVideoChunkStore(
                 client,
                 collection_name=args.qdrant_collection,
                 environment=environment,
@@ -241,7 +244,7 @@ def main() -> None:
         return
 
     repository = VideoRepository(create_session_factory(engine))
-    evidence = repository.hydrate_video_segments(args.video_segment_ids)
+    evidence = repository.hydrate_video_chunks(args.video_chunk_ids)
     print(
         json.dumps(
             [item.model_dump(mode="json", by_alias=True) for item in evidence],

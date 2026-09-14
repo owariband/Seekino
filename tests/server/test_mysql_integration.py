@@ -19,12 +19,12 @@ from server.model.video import (
     ContextSnapshotRecord,
     SeriesRecord,
     VideoRecord,
-    VideoSegmentInfoRecord,
-    VideoSegmentParseChunkRecord,
-    VideoSegmentRecord,
+    VideoChunkInfoRecord,
+    VideoChunkEmbeddingRecord,
+    VideoChunkRecord,
 )
 from server.repository.video import VideoRepository
-from server.service.parse_import import EmbeddingArtifact
+from server.service.parse_import import PreparedEmbedding
 
 TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
 
@@ -42,36 +42,36 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
     repository = VideoRepository(create_session_factory(engine))
     failed_series_id = str(uuid4())
     failed_video_id = str(uuid4())
-    failed_segments = tuple(
+    failed_chunks = tuple(
         replace(
             item,
-            video_segment_id=str(uuid4()),
+            video_chunk_id=str(uuid4()),
             snapshot_id=str(uuid4()),
         )
-        for item in prepared_import.segments
+        for item in prepared_import.chunks
     )
     failed_import = replace(
         prepared_import,
         series_id=failed_series_id,
         series_name=f"Failed Test Series {failed_series_id}",
         video_id=failed_video_id,
-        segments=failed_segments,
+        chunks=failed_chunks,
     )
     prepared_with_vectors = replace(
         prepared_import,
-        segments=tuple(
+        chunks=tuple(
             replace(
                 item,
-                text_embedding=EmbeddingArtifact(
+                text_embedding=PreparedEmbedding(
                     vector=[0.1, 0.2],
                     metadata={"model": "text-v1"},
                 ),
-                vision_embedding=EmbeddingArtifact(
+                vision_embedding=PreparedEmbedding(
                     vector=[0.3, 0.4],
                     metadata={"model": "vision-v1"},
                 ),
             )
-            for item in prepared_import.segments
+            for item in prepared_import.chunks
         ),
     )
 
@@ -99,7 +99,7 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
         assert first == second
         assert first.vectors_imported is True
 
-        segment_ids = first.video_segment_ids
+        chunk_ids = first.video_chunk_ids
         with engine.connect() as connection:
             counts = (
                 connection.execute(
@@ -113,15 +113,15 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
                     )
                 ).scalar_one(),
                 connection.execute(
-                    select(func.count()).select_from(VideoSegmentRecord).where(
-                        VideoSegmentRecord.video_id == prepared_import.video_id
+                    select(func.count()).select_from(VideoChunkRecord).where(
+                        VideoChunkRecord.video_id == prepared_import.video_id
                     )
                 ).scalar_one(),
                 connection.execute(
                     select(func.count())
-                    .select_from(VideoSegmentInfoRecord)
+                    .select_from(VideoChunkInfoRecord)
                     .where(
-                        VideoSegmentInfoRecord.video_segment_id.in_(segment_ids)
+                        VideoChunkInfoRecord.video_chunk_id.in_(chunk_ids)
                     )
                 ).scalar_one(),
                 connection.execute(
@@ -131,31 +131,31 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
                 ).scalar_one(),
                 connection.execute(
                     select(func.count())
-                    .select_from(VideoSegmentParseChunkRecord)
+                    .select_from(VideoChunkEmbeddingRecord)
                     .where(
-                        VideoSegmentParseChunkRecord.video_segment_id.in_(
-                            segment_ids
+                        VideoChunkEmbeddingRecord.video_chunk_id.in_(
+                            chunk_ids
                         )
                     )
                 ).scalar_one(),
             )
-            compact, text_chunk, vision_chunk = connection.execute(
+            compact, text_vector, vision_vector = connection.execute(
                 select(
-                    VideoSegmentInfoRecord.video_compact,
-                    VideoSegmentParseChunkRecord.text_chunk,
-                    VideoSegmentParseChunkRecord.vision_chunk,
+                    VideoChunkInfoRecord.video_compact,
+                    VideoChunkEmbeddingRecord.text_vector,
+                    VideoChunkEmbeddingRecord.vision_vector,
                 ).join(
-                    VideoSegmentParseChunkRecord,
-                    VideoSegmentParseChunkRecord.video_segment_id
-                    == VideoSegmentInfoRecord.video_segment_id,
+                    VideoChunkEmbeddingRecord,
+                    VideoChunkEmbeddingRecord.video_chunk_id
+                    == VideoChunkInfoRecord.video_chunk_id,
                 ).where(
-                    VideoSegmentInfoRecord.video_segment_id == segment_ids[0]
+                    VideoChunkInfoRecord.video_chunk_id == chunk_ids[0]
                 )
             ).one()
         assert counts == (1, 1, 2, 2, 2, 2)
         assert "动作" in compact
-        assert text_chunk == [0.1, 0.2]
-        assert vision_chunk == [0.3, 0.4]
+        assert text_vector == [0.1, 0.2]
+        assert vision_vector == [0.3, 0.4]
 
         select_count = 0
 
@@ -166,8 +166,8 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
 
         event.listen(engine, "before_cursor_execute", count_selects)
         try:
-            evidence = repository.hydrate_video_segments(
-                list(reversed(first.video_segment_ids))
+            evidence = repository.hydrate_video_chunks(
+                list(reversed(first.video_chunk_ids))
             )
         finally:
             event.remove(engine, "before_cursor_execute", count_selects)
@@ -175,7 +175,7 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
         assert [item.sequence_no for item in evidence] == [1, 0]
 
         def fail_second_snapshot(_mapper, _connection, target) -> None:
-            if target.after_segment_sequence_no == 1:
+            if target.after_chunk_sequence_no == 1:
                 raise RuntimeError("injected MySQL persistence failure")
 
         event.listen(ContextSnapshotRecord, "before_insert", fail_second_snapshot)
@@ -205,16 +205,16 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
                     )
                 ).scalar_one(),
                 connection.execute(
-                    select(func.count()).select_from(VideoSegmentRecord).where(
-                        VideoSegmentRecord.video_id == failed_video_id
+                    select(func.count()).select_from(VideoChunkRecord).where(
+                        VideoChunkRecord.video_id == failed_video_id
                     )
                 ).scalar_one(),
                 connection.execute(
                     select(func.count())
-                    .select_from(VideoSegmentInfoRecord)
+                    .select_from(VideoChunkInfoRecord)
                     .where(
-                        VideoSegmentInfoRecord.video_segment_id.in_(
-                            [item.video_segment_id for item in failed_segments]
+                        VideoChunkInfoRecord.video_chunk_id.in_(
+                            [item.video_chunk_id for item in failed_chunks]
                         )
                     )
                 ).scalar_one(),
@@ -225,10 +225,10 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
                 ).scalar_one(),
                 connection.execute(
                     select(func.count())
-                    .select_from(VideoSegmentParseChunkRecord)
+                    .select_from(VideoChunkEmbeddingRecord)
                     .where(
-                        VideoSegmentParseChunkRecord.video_segment_id.in_(
-                            [item.video_segment_id for item in failed_segments]
+                        VideoChunkEmbeddingRecord.video_chunk_id.in_(
+                            [item.video_chunk_id for item in failed_chunks]
                         )
                     )
                 ).scalar_one(),

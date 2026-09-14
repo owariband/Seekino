@@ -4,14 +4,14 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 
-from .segment_parse import SegmentEvidenceParser
+from .video_chunk_parse import VideoChunkEvidenceParser
 from .schemas import (
     AnalysisWindow,
     ContextEvent,
     ContextSnapshot,
     ObservedTimelineEvent,
     OwnedTimelineEvent,
-    SegmentParseResult,
+    VideoChunkParseResult,
     TimelineEvent,
     TranscriptAnalysis,
     VideoParseResult,
@@ -21,7 +21,7 @@ from .schemas import (
 class ParsePipeline:
     def __init__(
         self,
-        parser: SegmentEvidenceParser,
+        parser: VideoChunkEvidenceParser,
         *,
         max_context_events: int = 8,
         max_context_chars: int = 2000,
@@ -39,39 +39,39 @@ class ParsePipeline:
         *,
         source_video: str,
         duration_ms: int,
-        segment_duration_ms: int,
+        chunk_duration_ms: int,
         context_overlap_ms: int,
         windows: Sequence[AnalysisWindow],
         series_bible: str | None = None,
         candidate_transcripts: Mapping[int, TranscriptAnalysis] | None = None,
-        completed_segments: Sequence[SegmentParseResult] = (),
-        on_segment_complete: Callable[[SegmentParseResult], None] | None = None,
+        completed_chunks: Sequence[VideoChunkParseResult] = (),
+        on_chunk_complete: Callable[[VideoChunkParseResult], None] | None = None,
     ) -> VideoParseResult:
         self._validate_windows(windows, duration_ms)
-        if len(completed_segments) > len(windows):
-            raise ValueError("completed segments cannot outnumber analysis windows")
+        if len(completed_chunks) > len(windows):
+            raise ValueError("completed chunks cannot outnumber analysis windows")
         context_before = ContextSnapshot(
             snapshot_id="context-initial",
-            after_segment_sequence_no=-1,
+            after_chunk_sequence_no=-1,
             compact_text="",
             recent_events=[],
         )
-        segment_results: list[SegmentParseResult] = []
+        chunk_results: list[VideoChunkParseResult] = []
         all_events: list[OwnedTimelineEvent] = []
 
         for window in windows:
-            if window.sequence_no < len(completed_segments):
-                completed = completed_segments[window.sequence_no]
+            if window.sequence_no < len(completed_chunks):
+                completed = completed_chunks[window.sequence_no]
                 if completed.window != window:
                     raise ValueError(
-                        f"completed segment {window.sequence_no} "
+                        f"completed chunk {window.sequence_no} "
                         "uses a different window"
                     )
                 if completed.context_before != context_before:
                     raise ValueError(
-                        f"completed segment {window.sequence_no} breaks context chain"
+                        f"completed chunk {window.sequence_no} breaks context chain"
                     )
-                segment_results.append(completed)
+                chunk_results.append(completed)
                 all_events.extend(completed.events)
                 all_events.sort(key=lambda event: (event.start_ms, event.end_ms))
                 context_before = completed.context_after
@@ -83,7 +83,7 @@ class ParsePipeline:
                     candidate_transcript = candidate_transcripts[window.sequence_no]
                 except KeyError as exc:
                     raise ValueError(
-                        f"candidate transcript missing for segment {window.sequence_no}"
+                        f"candidate transcript missing for chunk {window.sequence_no}"
                     ) from exc
             model_context = self._build_model_context(
                 window,
@@ -108,9 +108,9 @@ class ParsePipeline:
             context_after = self._advance_context(
                 context_before,
                 owned_events,
-                after_segment_sequence_no=window.sequence_no,
+                after_chunk_sequence_no=window.sequence_no,
             )
-            segment_result = SegmentParseResult(
+            chunk_result = VideoChunkParseResult(
                 window=window,
                 context_before=context_before,
                 candidate_transcript=evidence.candidate_transcript,
@@ -125,17 +125,17 @@ class ParsePipeline:
                 self_compact=self_compact,
                 context_after=context_after,
             )
-            segment_results.append(segment_result)
-            if on_segment_complete is not None:
-                on_segment_complete(segment_result)
+            chunk_results.append(chunk_result)
+            if on_chunk_complete is not None:
+                on_chunk_complete(chunk_result)
             context_before = context_after
 
         return VideoParseResult(
             source_video=source_video,
             duration_ms=duration_ms,
-            segment_duration_ms=segment_duration_ms,
+            chunk_duration_ms=chunk_duration_ms,
             context_overlap_ms=context_overlap_ms,
-            segments=segment_results,
+            chunks=chunk_results,
             events=all_events,
         )
 
@@ -155,13 +155,13 @@ class ParsePipeline:
                 raise ValueError(
                     "analysis windows must have contiguous sequence numbers"
                 )
-            if window.segment_start_ms != expected_start_ms:
+            if window.chunk_start_ms != expected_start_ms:
                 raise ValueError(
-                    "canonical segments must be contiguous and non-overlapping"
+                    "canonical chunks must be contiguous and non-overlapping"
                 )
-            expected_start_ms = window.segment_end_ms
+            expected_start_ms = window.chunk_end_ms
         if expected_start_ms != duration_ms:
-            raise ValueError("canonical segments must cover the complete video")
+            raise ValueError("canonical chunks must cover the complete video")
 
     @staticmethod
     def _build_model_context(
@@ -178,9 +178,9 @@ class ParsePipeline:
                 "模型输出时间仍须相对当前 AnalysisWindow 起点。"
             ),
             (
-                "- 当前规范 Segment 对应窗口内相对时间 "
-                f"[{window.relative_segment_start_ms}, "
-                f"{window.relative_segment_end_ms}) ms。"
+                "- 当前规范 VideoChunk 对应窗口内相对时间 "
+                f"[{window.relative_chunk_start_ms}, "
+                f"{window.relative_chunk_end_ms}) ms。"
             ),
             (
                 "- AnalysisWindow 两侧内容仅用于看清跨边界事件；"
@@ -200,7 +200,7 @@ class ParsePipeline:
             [
                 "",
                 (
-                    "contextBeforeCompact（此前规范 Segment 已确认的"
+                    "contextBeforeCompact（此前规范 VideoChunk 已确认的"
                     "有界历史；不得据此虚构当前事件）："
                 ),
                 context_before.compact_text or "（首段，无历史事件）",
@@ -233,16 +233,16 @@ class ParsePipeline:
 
             midpoint_twice = absolute_start_ms + absolute_end_ms
             owned = (
-                2 * window.segment_start_ms
+                2 * window.chunk_start_ms
                 <= midpoint_twice
-                < 2 * window.segment_end_ms
+                < 2 * window.chunk_end_ms
             )
             candidate_payload = event.model_dump()
             candidate_payload.update(
                 {
                     "start_ms": absolute_start_ms,
                     "end_ms": absolute_end_ms,
-                    "source_segment_sequence_no": window.sequence_no,
+                    "source_chunk_sequence_no": window.sequence_no,
                 }
             )
             candidate = OwnedTimelineEvent.model_validate(candidate_payload)
@@ -257,7 +257,7 @@ class ParsePipeline:
                     relative_event=event,
                     absolute_start_ms=absolute_start_ms,
                     absolute_end_ms=absolute_end_ms,
-                    owned_by_current_segment=owned,
+                    owned_by_current_chunk=owned,
                     kept_after_deduplication=kept,
                 )
             )
@@ -273,7 +273,7 @@ class ParsePipeline:
         context_before: ContextSnapshot,
         owned_events: Sequence[OwnedTimelineEvent],
         *,
-        after_segment_sequence_no: int,
+        after_chunk_sequence_no: int,
     ) -> ContextSnapshot:
         recent_events = [
             *context_before.recent_events,
@@ -284,7 +284,7 @@ class ParsePipeline:
             max_chars=self._max_context_chars,
         )
         snapshot_payload = {
-            "after_segment_sequence_no": after_segment_sequence_no,
+            "after_chunk_sequence_no": after_chunk_sequence_no,
             "recent_events": [
                 event.model_dump(mode="json") for event in recent_events
             ],
@@ -298,8 +298,8 @@ class ParsePipeline:
             ).encode("utf-8")
         ).hexdigest()[:16]
         return ContextSnapshot(
-            snapshot_id=f"context-{after_segment_sequence_no:04d}-{digest}",
-            after_segment_sequence_no=after_segment_sequence_no,
+            snapshot_id=f"context-{after_chunk_sequence_no:04d}-{digest}",
+            after_chunk_sequence_no=after_chunk_sequence_no,
             compact_text=compact_text,
             recent_events=recent_events,
         )
@@ -307,7 +307,7 @@ class ParsePipeline:
 
 def _to_context_event(event: OwnedTimelineEvent) -> ContextEvent:
     return ContextEvent(
-        segment_sequence_no=event.source_segment_sequence_no,
+        chunk_sequence_no=event.source_chunk_sequence_no,
         start_ms=event.start_ms,
         end_ms=event.end_ms,
         event_type=event.event_type,
@@ -350,7 +350,7 @@ def _render_events(
     max_chars: int,
 ) -> str:
     if not events:
-        return "当前规范 Segment 未归属可确认事件。"
+        return "当前规范 VideoChunk 未归属可确认事件。"
     rendered = "\n".join(
         _render_event_line(
             start_ms=event.start_ms,

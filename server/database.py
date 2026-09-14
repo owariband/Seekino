@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -14,6 +14,10 @@ class DatabaseEnvironment(StrEnum):
 
 
 class Base(DeclarativeBase):
+    pass
+
+
+class SchemaUpgradeRequiredError(RuntimeError):
     pass
 
 
@@ -43,6 +47,38 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def create_schema(engine: Engine) -> None:
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    legacy_schema = existing_tables.intersection(
+        {
+            "video_segment",
+            "video_segment_info",
+            "video_segment_parse_chunk",
+        }
+    )
+    for table_name, column_names in {
+        "context_snapshot": {
+            "after_segment_sequence_no",
+            "created_from_video_segment_id",
+        },
+        "index_sync_intent": {"video_segment_id"},
+    }.items():
+        if table_name not in existing_tables:
+            continue
+        existing_columns = {
+            column["name"] for column in inspector.get_columns(table_name)
+        }
+        legacy_schema.update(
+            f"{table_name}.{column_name}"
+            for column_name in column_names.intersection(existing_columns)
+        )
+    if legacy_schema:
+        found = ", ".join(sorted(legacy_schema))
+        raise SchemaUpgradeRequiredError(
+            "legacy VideoSegment schema requires a controlled VideoChunk "
+            f"upgrade before init-db; found: {found}"
+        )
+
     # Importing registers every table on Base.metadata without making the
     # connection module depend on concrete repositories.
     from .model import index_sync as _index_sync_models  # noqa: F401

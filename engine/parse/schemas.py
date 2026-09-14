@@ -6,6 +6,19 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+def _rename_legacy_fields(data: Any, fields: dict[str, str]) -> Any:
+    """Consume old persisted field names without exposing them in new output."""
+
+    if not isinstance(data, dict):
+        return data
+    populated = dict(data)
+    for legacy_name, current_name in fields.items():
+        if legacy_name in populated:
+            populated.setdefault(current_name, populated[legacy_name])
+            populated.pop(legacy_name)
+    return populated
+
+
 class TranscriptCue(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -114,85 +127,109 @@ class AnalysisWindow(BaseModel):
     sequence_no: int = Field(ge=0)
     source_video: Path
     media_path: Path
-    segment_start_ms: int = Field(ge=0)
-    segment_end_ms: int = Field(gt=0)
+    chunk_start_ms: int = Field(ge=0)
+    chunk_end_ms: int = Field(gt=0)
     analysis_start_ms: int = Field(ge=0)
     analysis_end_ms: int = Field(gt=0)
     analysis_duration_ms: int = Field(gt=0)
-    relative_segment_start_ms: int = Field(ge=0)
-    relative_segment_end_ms: int = Field(gt=0)
+    relative_chunk_start_ms: int = Field(ge=0)
+    relative_chunk_end_ms: int = Field(gt=0)
 
     @model_validator(mode="before")
     @classmethod
     def populate_derived_ranges(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
+        populated = _rename_legacy_fields(
+            data,
+            {
+                "segment_start_ms": "chunk_start_ms",
+                "segment_end_ms": "chunk_end_ms",
+                "relative_segment_start_ms": "relative_chunk_start_ms",
+                "relative_segment_end_ms": "relative_chunk_end_ms",
+            },
+        )
+        if not isinstance(populated, dict):
+            return populated
         required = {
-            "segment_start_ms",
-            "segment_end_ms",
+            "chunk_start_ms",
+            "chunk_end_ms",
             "analysis_start_ms",
             "analysis_end_ms",
         }
-        if not required.issubset(data):
-            return data
+        if not required.issubset(populated):
+            return populated
 
-        populated = dict(data)
         populated.setdefault(
             "analysis_duration_ms",
-            data["analysis_end_ms"] - data["analysis_start_ms"],
+            populated["analysis_end_ms"] - populated["analysis_start_ms"],
         )
         populated.setdefault(
-            "relative_segment_start_ms",
-            data["segment_start_ms"] - data["analysis_start_ms"],
+            "relative_chunk_start_ms",
+            populated["chunk_start_ms"] - populated["analysis_start_ms"],
         )
         populated.setdefault(
-            "relative_segment_end_ms",
-            data["segment_end_ms"] - data["analysis_start_ms"],
+            "relative_chunk_end_ms",
+            populated["chunk_end_ms"] - populated["analysis_start_ms"],
         )
         return populated
 
     @model_validator(mode="after")
     def validate_ranges(self) -> "AnalysisWindow":
-        if self.segment_end_ms <= self.segment_start_ms:
-            raise ValueError("segment_end_ms must be greater than segment_start_ms")
+        if self.chunk_end_ms <= self.chunk_start_ms:
+            raise ValueError("chunk_end_ms must be greater than chunk_start_ms")
         if self.analysis_end_ms <= self.analysis_start_ms:
             raise ValueError("analysis_end_ms must be greater than analysis_start_ms")
-        if self.analysis_start_ms > self.segment_start_ms:
-            raise ValueError("analysis window must include the canonical segment start")
-        if self.analysis_end_ms < self.segment_end_ms:
-            raise ValueError("analysis window must include the canonical segment end")
+        if self.analysis_start_ms > self.chunk_start_ms:
+            raise ValueError("analysis window must include the canonical chunk start")
+        if self.analysis_end_ms < self.chunk_end_ms:
+            raise ValueError("analysis window must include the canonical chunk end")
         if self.analysis_duration_ms != self.analysis_end_ms - self.analysis_start_ms:
             raise ValueError("analysis_duration_ms is inconsistent with the window")
         if (
-            self.relative_segment_start_ms
-            != self.segment_start_ms - self.analysis_start_ms
+            self.relative_chunk_start_ms
+            != self.chunk_start_ms - self.analysis_start_ms
         ):
             raise ValueError(
-                "relative_segment_start_ms is inconsistent with the window"
+                "relative_chunk_start_ms is inconsistent with the window"
             )
         if (
-            self.relative_segment_end_ms
-            != self.segment_end_ms - self.analysis_start_ms
+            self.relative_chunk_end_ms
+            != self.chunk_end_ms - self.analysis_start_ms
         ):
             raise ValueError(
-                "relative_segment_end_ms is inconsistent with the window"
+                "relative_chunk_end_ms is inconsistent with the window"
             )
         return self
 
 
 class OwnedTimelineEvent(TimelineEvent):
-    source_segment_sequence_no: int = Field(ge=0)
+    source_chunk_sequence_no: int = Field(ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_sequence_name(cls, data: Any) -> Any:
+        return _rename_legacy_fields(
+            data,
+            {"source_segment_sequence_no": "source_chunk_sequence_no"},
+        )
 
 
 class ContextEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    segment_sequence_no: int = Field(ge=0)
+    chunk_sequence_no: int = Field(ge=0)
     start_ms: int = Field(ge=0)
     end_ms: int = Field(gt=0)
     event_type: str = Field(min_length=1, max_length=32)
     description: str = Field(min_length=1, max_length=400)
     text: str | None = Field(default=None, max_length=240)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_sequence_name(cls, data: Any) -> Any:
+        return _rename_legacy_fields(
+            data,
+            {"segment_sequence_no": "chunk_sequence_no"},
+        )
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "ContextEvent":
@@ -205,9 +242,17 @@ class ContextSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     snapshot_id: str = Field(min_length=1)
-    after_segment_sequence_no: int = Field(ge=-1)
+    after_chunk_sequence_no: int = Field(ge=-1)
     compact_text: str
     recent_events: list[ContextEvent]
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_sequence_name(cls, data: Any) -> Any:
+        return _rename_legacy_fields(
+            data,
+            {"after_segment_sequence_no": "after_chunk_sequence_no"},
+        )
 
 
 class ObservedTimelineEvent(BaseModel):
@@ -216,19 +261,27 @@ class ObservedTimelineEvent(BaseModel):
     relative_event: TimelineEvent
     absolute_start_ms: int = Field(ge=0)
     absolute_end_ms: int = Field(gt=0)
-    owned_by_current_segment: bool
+    owned_by_current_chunk: bool
     kept_after_deduplication: bool
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_owner_name(cls, data: Any) -> Any:
+        return _rename_legacy_fields(
+            data,
+            {"owned_by_current_segment": "owned_by_current_chunk"},
+        )
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "ObservedTimelineEvent":
         if self.absolute_end_ms <= self.absolute_start_ms:
             raise ValueError("absolute_end_ms must be greater than absolute_start_ms")
-        if self.kept_after_deduplication and not self.owned_by_current_segment:
+        if self.kept_after_deduplication and not self.owned_by_current_chunk:
             raise ValueError("an unowned event cannot be kept")
         return self
 
 
-class SegmentParseResult(BaseModel):
+class VideoChunkParseResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     window: AnalysisWindow
@@ -272,7 +325,7 @@ class SegmentParseResult(BaseModel):
         return populated
 
     @model_validator(mode="after")
-    def validate_compact_text(self) -> "SegmentParseResult":
+    def validate_compact_text(self) -> "VideoChunkParseResult":
         if self.context_before_compact != self.context_before.compact_text:
             raise ValueError("context_before_compact is inconsistent with snapshot")
         if self.context_after_compact != self.context_after.compact_text:
@@ -310,10 +363,21 @@ class VideoParseResult(BaseModel):
     models: VideoParseModels | None = None
     source_video: Path
     duration_ms: int = Field(gt=0)
-    segment_duration_ms: int = Field(gt=0)
+    chunk_duration_ms: int = Field(gt=0)
     context_overlap_ms: int = Field(ge=0)
-    segments: list[SegmentParseResult]
+    chunks: list[VideoChunkParseResult]
     events: list[OwnedTimelineEvent]
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_chunk_names(cls, data: Any) -> Any:
+        return _rename_legacy_fields(
+            data,
+            {
+                "segment_duration_ms": "chunk_duration_ms",
+                "segments": "chunks",
+            },
+        )
 
 
 class TranscriptCheckpoint(BaseModel):
@@ -325,10 +389,15 @@ class TranscriptCheckpoint(BaseModel):
     analysis: TranscriptAnalysis
 
 
-class SegmentCheckpoint(BaseModel):
+class VideoChunkCheckpoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     transcript_model: str = Field(min_length=1)
     transcript_source: Literal["lite", "none"] = "lite"
     video_model: str = Field(min_length=1)
-    segment: SegmentParseResult
+    chunk: VideoChunkParseResult
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_chunk_name(cls, data: Any) -> Any:
+        return _rename_legacy_fields(data, {"segment": "chunk"})

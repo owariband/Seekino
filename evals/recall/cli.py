@@ -9,7 +9,7 @@ from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
 from qdrant_client import QdrantClient
 
 from engine.parse.analysis_windows import probe_video_duration_ms
-from .qdrant_index import QdrantVideoSegmentIndex
+from .qdrant_index import QdrantVideoChunkIndex
 from .recall_eval import (
     RecallEvaluator,
     load_parse_result,
@@ -134,7 +134,7 @@ def main() -> None:
     qdrant_index = None
     if qdrant_options is not None:
         qdrant_url, qdrant_collection, dataset_id = qdrant_options
-        qdrant_index = QdrantVideoSegmentIndex(
+        qdrant_index = QdrantVideoChunkIndex(
             QdrantClient(
                 url=qdrant_url,
                 api_key=os.getenv("ANIVAG_QDRANT_API_KEY"),
@@ -148,7 +148,7 @@ def main() -> None:
             vision_dimensions=dimensions,
         )
         qdrant_index.assert_dataset_size(
-            len(parse_result.segments),
+            len(parse_result.chunks),
             allow_empty=True,
         )
 
@@ -182,7 +182,7 @@ def main() -> None:
     write_recall_result(result, result_path)
     print(
         f"recall evaluation complete; queries={result.query_count}; "
-        f"segments={result.segment_count}; "
+        f"chunks={result.chunk_count}; "
         f"backend={result.retrieval_backend}; "
         f"fused_hit@1={result.fused_metrics.hit_at[1]:.3f}; "
         f"fused_mrr={result.fused_metrics.mrr:.3f}; output={result_path}",

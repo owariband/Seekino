@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from ..model.index_sync import IndexSyncOperation, IndexSyncStatus
 from ..repository.index_sync import IndexSyncItem, IndexSyncRepository
 from ..schema import IndexReconcileReport, IndexSyncRunReport
-from ..storage.qdrant import QdrantVideoSegmentStore, VideoSegmentIndexPoint
+from ..storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
 
 
 class IndexSyncInvariantError(RuntimeError):
@@ -20,7 +20,7 @@ class IndexSyncService:
     def __init__(
         self,
         repository: IndexSyncRepository,
-        store: QdrantVideoSegmentStore,
+        store: QdrantVideoChunkStore,
         *,
         retry_base_seconds: int = 5,
         retry_max_seconds: int = 300,
@@ -79,12 +79,12 @@ class IndexSyncService:
         for batch in _batches(items, inspection_batch_size):
             try:
                 states = self._store.inspect(
-                    [item.video_segment_id for item in batch]
+                    [item.video_chunk_id for item in batch]
                 )
             except Exception as exc:
                 for item in batch:
                     if self._repository.mark_failed(
-                        item.video_segment_id,
+                        item.video_chunk_id,
                         item.source_revision,
                         item.operation,
                         item.generation,
@@ -99,7 +99,7 @@ class IndexSyncService:
                         stale_result_count += 1
                 continue
             for item in batch:
-                state = states[item.video_segment_id]
+                state = states[item.video_chunk_id]
                 is_consistent = (
                     item.operation is IndexSyncOperation.UPSERT
                     and state.present
@@ -112,7 +112,7 @@ class IndexSyncService:
                     consistent_count += 1
                     if item.status is not IndexSyncStatus.SYNCED:
                         if self._repository.mark_synced(
-                            item.video_segment_id,
+                            item.video_chunk_id,
                             item.source_revision,
                             item.operation,
                             item.generation,
@@ -123,7 +123,7 @@ class IndexSyncService:
                     continue
 
                 next_generation = self._repository.mark_pending_if_current(
-                    item.video_segment_id,
+                    item.video_chunk_id,
                     item.source_revision,
                     item.operation,
                     item.generation,
@@ -164,7 +164,7 @@ class IndexSyncService:
         stale_result_count = 0
         for item in current_items:
             next_generation = self._repository.mark_pending_if_current(
-                item.video_segment_id,
+                item.video_chunk_id,
                 item.source_revision,
                 item.operation,
                 item.generation,
@@ -205,7 +205,7 @@ class IndexSyncService:
             except Exception as exc:
                 retry_at = self._clock() + self._retry_delay(item.attempt_count)
                 recorded = self._repository.mark_failed(
-                    item.video_segment_id,
+                    item.video_chunk_id,
                     item.source_revision,
                     item.operation,
                     item.generation,
@@ -217,13 +217,13 @@ class IndexSyncService:
                 else:
                     stale_result_count += 1
                     self._repository.invalidate_after_stale_result(
-                        item.video_segment_id,
+                        item.video_chunk_id,
                         item.generation,
                     )
                 continue
 
             if self._repository.mark_synced(
-                item.video_segment_id,
+                item.video_chunk_id,
                 item.source_revision,
                 item.operation,
                 item.generation,
@@ -232,24 +232,24 @@ class IndexSyncService:
             else:
                 stale_result_count += 1
                 self._repository.invalidate_after_stale_result(
-                    item.video_segment_id,
+                    item.video_chunk_id,
                     item.generation,
                 )
         return synced_count, failed_count, stale_result_count
 
     def _apply_item(self, item: IndexSyncItem) -> None:
         if item.operation is IndexSyncOperation.DELETE:
-            self._store.delete(item.video_segment_id)
+            self._store.delete(item.video_chunk_id)
             return
         if not item.text_vector or not item.vision_vector:
             raise IndexSyncInvariantError(
                 "an UPSERT intent requires non-empty text and vision vectors"
             )
         self._store.upsert(
-            VideoSegmentIndexPoint(
+            VideoChunkIndexPoint(
                 series_id=item.series_id,
                 video_id=item.video_id,
-                video_segment_id=item.video_segment_id,
+                video_chunk_id=item.video_chunk_id,
                 source_revision=item.source_revision,
                 is_fallback=item.is_fallback,
                 text_vector=item.text_vector,

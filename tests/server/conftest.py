@@ -8,7 +8,7 @@ from engine.parse.schemas import (
     ContextEvent,
     ContextSnapshot,
     OwnedTimelineEvent,
-    SegmentParseResult,
+    VideoChunkParseResult,
     VideoParseModels,
     VideoParseResult,
 )
@@ -37,11 +37,11 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
 
     initial = ContextSnapshot(
         snapshot_id="context-initial",
-        after_segment_sequence_no=-1,
+        after_chunk_sequence_no=-1,
         compact_text="",
         recent_events=[],
     )
-    segments: list[SegmentParseResult] = []
+    chunks: list[VideoChunkParseResult] = []
     all_events: list[OwnedTimelineEvent] = []
     context_before = initial
     for sequence_no in range(2):
@@ -49,10 +49,7 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
         end_ms = (sequence_no + 1) * 10_000
         analysis_path = analysis_directory / f"window-{sequence_no}.mp4"
         analysis_path.write_bytes(f"analysis-{sequence_no}".encode())
-        canonical_path = canonical_directory / (
-            f"segment-{sequence_no:04d}.analysis-"
-            f"{start_ms:010d}-{end_ms:010d}.mp4"
-        )
+        canonical_path = canonical_directory / f"chunk-{sequence_no:04d}.mp4"
         canonical_path.write_bytes(f"canonical-{sequence_no}".encode())
 
         event = OwnedTimelineEvent(
@@ -61,7 +58,7 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
             event_type="ACTION",
             description=f"第 {sequence_no + 1} 段动作",
             text=None,
-            source_segment_sequence_no=sequence_no,
+            source_chunk_sequence_no=sequence_no,
         )
         compact = (
             f"[{start_ms + 1000}-{start_ms + 3000}] "
@@ -69,11 +66,11 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
         )
         context_after = ContextSnapshot(
             snapshot_id=f"engine-context-{sequence_no}",
-            after_segment_sequence_no=sequence_no,
+            after_chunk_sequence_no=sequence_no,
             compact_text=compact,
             recent_events=[
                 ContextEvent(
-                    segment_sequence_no=sequence_no,
+                    chunk_sequence_no=sequence_no,
                     start_ms=event.start_ms,
                     end_ms=event.end_ms,
                     event_type=event.event_type,
@@ -82,13 +79,13 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
                 )
             ],
         )
-        segment = SegmentParseResult(
+        chunk = VideoChunkParseResult(
             window=AnalysisWindow(
                 sequence_no=sequence_no,
                 source_video=source_video,
                 media_path=analysis_path,
-                segment_start_ms=start_ms,
-                segment_end_ms=end_ms,
+                chunk_start_ms=start_ms,
+                chunk_end_ms=end_ms,
                 analysis_start_ms=start_ms,
                 analysis_end_ms=end_ms,
             ),
@@ -101,7 +98,7 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
             self_compact=compact,
             context_after=context_after,
         )
-        segments.append(segment)
+        chunks.append(chunk)
         all_events.append(event)
         context_before = context_after
 
@@ -125,9 +122,9 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
         ),
         source_video=source_video,
         duration_ms=20_000,
-        segment_duration_ms=10_000,
+        chunk_duration_ms=10_000,
         context_overlap_ms=0,
-        segments=segments,
+        chunks=chunks,
         events=all_events,
     )
     parse_path = tmp_path / "pipeline.parse.json"

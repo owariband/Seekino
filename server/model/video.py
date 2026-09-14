@@ -102,28 +102,28 @@ class VideoRecord(TimestampedRecord, Base):
     parse_progress: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
-class VideoSegmentRecord(TimestampedRecord, Base):
-    __tablename__ = "video_segment"
+class VideoChunkRecord(TimestampedRecord, Base):
+    __tablename__ = "video_chunk"
     __table_args__ = (
         UniqueConstraint(
             "video_id",
             "sequence_no",
-            name="uq_video_segment_video_sequence",
+            name="uq_video_chunk_video_sequence",
         ),
-        CheckConstraint("sequence_no >= 0", name="ck_video_segment_sequence"),
+        CheckConstraint("sequence_no >= 0", name="ck_video_chunk_sequence"),
         CheckConstraint(
             "start_ms >= 0 AND end_ms > start_ms",
-            name="ck_video_segment_range",
+            name="ck_video_chunk_range",
         ),
         CheckConstraint(
             "analysis_window_start_ms <= start_ms "
             "AND analysis_window_end_ms >= end_ms",
-            name="ck_video_segment_analysis_range",
+            name="ck_video_chunk_analysis_range",
         ),
         MYSQL_TABLE_OPTIONS,
     )
 
-    video_segment_id: Mapped[str] = mapped_column(
+    video_chunk_id: Mapped[str] = mapped_column(
         String(ID_LENGTH),
         primary_key=True,
     )
@@ -137,7 +137,7 @@ class VideoSegmentRecord(TimestampedRecord, Base):
     end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
     analysis_window_start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
     analysis_window_end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    segment_media_ref: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
+    chunk_media_ref: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
     analysis_window_media_ref: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
     transcript: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON,
@@ -148,12 +148,12 @@ class VideoSegmentRecord(TimestampedRecord, Base):
     keyframe_uris: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
 
-class VideoSegmentInfoRecord(Base):
-    __tablename__ = "video_segment_info"
+class VideoChunkInfoRecord(Base):
+    __tablename__ = "video_chunk_info"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
-    video_segment_id: Mapped[str] = mapped_column(
-        ForeignKey("video_segment.video_segment_id", ondelete="CASCADE"),
+    video_chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("video_chunk.video_chunk_id", ondelete="CASCADE"),
         primary_key=True,
     )
     all_time_events: Mapped[list[dict[str, Any]]] = mapped_column(
@@ -181,11 +181,11 @@ class ContextSnapshotRecord(Base):
     __table_args__ = (
         UniqueConstraint(
             "video_id",
-            "after_segment_sequence_no",
+            "after_chunk_sequence_no",
             name="uq_context_snapshot_video_sequence",
         ),
         CheckConstraint(
-            "after_segment_sequence_no >= 0",
+            "after_chunk_sequence_no >= 0",
             name="ck_context_snapshot_sequence",
         ),
         MYSQL_TABLE_OPTIONS,
@@ -203,11 +203,11 @@ class ContextSnapshotRecord(Base):
         nullable=False,
         index=True,
     )
-    after_segment_sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    after_chunk_sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
     compact_text: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
     structured_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    created_from_video_segment_id: Mapped[str] = mapped_column(
-        ForeignKey("video_segment.video_segment_id", ondelete="CASCADE"),
+    created_from_video_chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("video_chunk.video_chunk_id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
     )
@@ -218,16 +218,16 @@ class ContextSnapshotRecord(Base):
     )
 
 
-class VideoSegmentParseChunkRecord(TimestampedRecord, Base):
-    __tablename__ = "video_segment_parse_chunk"
+class VideoChunkEmbeddingRecord(TimestampedRecord, Base):
+    __tablename__ = "video_chunk_embedding"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
-    video_segment_id: Mapped[str] = mapped_column(
-        ForeignKey("video_segment.video_segment_id", ondelete="CASCADE"),
+    video_chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("video_chunk.video_chunk_id", ondelete="CASCADE"),
         primary_key=True,
     )
     text_input: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
-    text_chunk: Mapped[list[float] | None] = mapped_column(JSON)
-    vision_chunk: Mapped[list[float] | None] = mapped_column(JSON)
+    text_vector: Mapped[list[float] | None] = mapped_column(JSON)
+    vision_vector: Mapped[list[float] | None] = mapped_column(JSON)
     text_embedding_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     vision_embedding_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)

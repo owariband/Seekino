@@ -3,7 +3,7 @@
     {
       "query_id": "ep07-r01-rana-leaves-soundcheck",
       "query": "乐奈在试音中途放下红色吉他离开舞台",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         0
       ],
       "relevant_time_ranges_ms": [
@@ -16,7 +16,7 @@
     {
       "query_id": "ep07-r02-taki-reassures-tomori",
       "query": "立希安慰燈说你的Live是最好的",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         5
       ],
       "relevant_time_ranges_ms": [
@@ -29,7 +29,7 @@
     {
       "query_id": "ep07-r03-anon-hugs-rana",
       "query": "爱音抱住回来的乐奈，乐奈说闻到了面包香味",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         5,
         6
       ],
@@ -43,7 +43,7 @@
     {
       "query_id": "ep07-r04-keep-band-together",
       "query": "上台前大家说今后也要继续组乐队",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         8
       ],
       "relevant_time_ranges_ms": [
@@ -56,7 +56,7 @@
     {
       "query_id": "ep07-r05-failed-stage-introduction",
       "query": "爱音开场报幕后乐曲没有响起，她道歉请求重来",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         9,
         10
       ],
@@ -70,7 +70,7 @@
     {
       "query_id": "ep07-r06-rana-playing-answer",
       "query": "乐奈说自己在很多地方弹当时想弹的曲子",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         10
       ],
       "relevant_time_ranges_ms": [
@@ -83,7 +83,7 @@
     {
       "query_id": "ep07-r07-green-penlights",
       "query": "观众挥舞绿色荧光棒给台上的乐队应援",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         14
       ],
       "relevant_time_ranges_ms": [
@@ -96,7 +96,7 @@
     {
       "query_id": "ep07-r08-tomori-continuous-monologue",
       "query": "燈说自己曾以为已经讨厌乐队，能做的只有拼命唱歌",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         14,
         15
       ],
@@ -110,7 +110,7 @@
     {
       "query_id": "ep07-r09-tomori-asks-them-to-stay",
       "query": "燈哭着请求大家不要离开她，要一直在一起",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         19
       ],
       "relevant_time_ranges_ms": [
@@ -123,7 +123,7 @@
     {
       "query_id": "ep07-r10-soyo-haruhikage-outburst",
       "query": "爽世为什么哭着质问大家要演奏春日影",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         20
       ],
       "relevant_time_ranges_ms": [
@@ -136,7 +136,7 @@
     {
       "query_id": "ep07-r11-pink-phone-call",
       "query": "金发少女拿起粉色手机说拜托了，初华",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         23
       ],
       "relevant_time_ranges_ms": [
@@ -149,7 +149,7 @@
     {
       "query_id": "ep07-r12-next-episode-title",
       "query": "片尾后的第八集预告标题为什么",
-      "relevant_segment_sequence_nos": [
+      "relevant_chunk_sequence_nos": [
         23
       ],
       "relevant_time_ranges_ms": [

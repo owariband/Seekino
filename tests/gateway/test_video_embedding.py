@@ -25,7 +25,7 @@ def test_video_text_and_query_use_the_same_embedding_model(tmp_path) -> None:
         fps=2.0,
         client=client,
     )
-    video_path = tmp_path / "segment.mp4"
+    video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
 
     video_result = embedder.embed_video(video_path)

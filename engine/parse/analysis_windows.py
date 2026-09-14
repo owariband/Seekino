@@ -1,6 +1,6 @@
 """Local CLI helpers for materializing temporary analysis media.
 
-Production parsing consumes segments persisted by the upload pipeline. These
+Production parsing consumes video chunks persisted by the media pipeline. These
 helpers only keep the current whole-video experiment and resume workflow usable.
 """
 
@@ -57,32 +57,32 @@ def plan_analysis_windows(
     *,
     duration_ms: int,
     output_dir: str | Path,
-    segment_duration_ms: int = 60_000,
+    chunk_duration_ms: int = 60_000,
     context_overlap_ms: int = 3_000,
 ) -> list[AnalysisWindow]:
     if duration_ms <= 0:
         raise ValueError("duration_ms must be greater than zero")
-    if segment_duration_ms <= 0:
-        raise ValueError("segment_duration_ms must be greater than zero")
+    if chunk_duration_ms <= 0:
+        raise ValueError("chunk_duration_ms must be greater than zero")
     if context_overlap_ms < 0:
         raise ValueError("context_overlap_ms cannot be negative")
 
     source_video = Path(video_path).expanduser().resolve()
     target_dir = Path(output_dir).expanduser().resolve()
     windows: list[AnalysisWindow] = []
-    segment_start_ms = 0
+    chunk_start_ms = 0
 
-    while segment_start_ms < duration_ms:
-        segment_end_ms = min(segment_start_ms + segment_duration_ms, duration_ms)
-        min_tail_ms = min(_MIN_TAIL_MS, max(1, segment_duration_ms // 4))
-        if 0 < duration_ms - segment_end_ms < min_tail_ms:
-            segment_end_ms = duration_ms
+    while chunk_start_ms < duration_ms:
+        chunk_end_ms = min(chunk_start_ms + chunk_duration_ms, duration_ms)
+        min_tail_ms = min(_MIN_TAIL_MS, max(1, chunk_duration_ms // 4))
+        if 0 < duration_ms - chunk_end_ms < min_tail_ms:
+            chunk_end_ms = duration_ms
 
-        analysis_start_ms = max(0, segment_start_ms - context_overlap_ms)
-        analysis_end_ms = min(duration_ms, segment_end_ms + context_overlap_ms)
+        analysis_start_ms = max(0, chunk_start_ms - context_overlap_ms)
+        analysis_end_ms = min(duration_ms, chunk_end_ms + context_overlap_ms)
         sequence_no = len(windows)
         filename = (
-            f"segment-{sequence_no:04d}.analysis-"
+            f"chunk-{sequence_no:04d}.analysis-"
             f"{analysis_start_ms:010d}-{analysis_end_ms:010d}.mp4"
         )
         windows.append(
@@ -90,13 +90,13 @@ def plan_analysis_windows(
                 sequence_no=sequence_no,
                 source_video=source_video,
                 media_path=target_dir / filename,
-                segment_start_ms=segment_start_ms,
-                segment_end_ms=segment_end_ms,
+                chunk_start_ms=chunk_start_ms,
+                chunk_end_ms=chunk_end_ms,
                 analysis_start_ms=analysis_start_ms,
                 analysis_end_ms=analysis_end_ms,
             )
         )
-        segment_start_ms = segment_end_ms
+        chunk_start_ms = chunk_end_ms
 
     return windows
 

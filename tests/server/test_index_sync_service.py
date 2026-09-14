@@ -8,37 +8,37 @@ from sqlalchemy import func, select
 
 from server.database import DatabaseEnvironment, create_session_factory
 from server.model.index_sync import IndexSyncStatus
-from server.model.video import SeriesRecord, VideoSegmentRecord
+from server.model.video import SeriesRecord, VideoChunkRecord
 from server.repository.index_sync import IndexSyncRepository
 from server.service.index_sync import IndexSyncService
-from server.service.parse_import import EmbeddingArtifact
-from server.storage.qdrant import QdrantVideoSegmentStore, VideoSegmentIndexPoint
+from server.service.parse_import import PreparedEmbedding
+from server.storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
 
 
 def _with_vectors(prepared_import):
     return replace(
         prepared_import,
-        segments=tuple(
+        chunks=tuple(
             replace(
                 item,
-                text_embedding=EmbeddingArtifact(
+                text_embedding=PreparedEmbedding(
                     vector=[0.1 + index, 0.2 + index],
                     metadata={"model": "text-v1"},
                 ),
-                vision_embedding=EmbeddingArtifact(
+                vision_embedding=PreparedEmbedding(
                     vector=[0.3 + index, 0.4 + index],
                     metadata={"model": "vision-v1"},
                 ),
             )
-            for index, item in enumerate(prepared_import.segments)
+            for index, item in enumerate(prepared_import.chunks)
         ),
     )
 
 
-def _store(client: QdrantClient) -> QdrantVideoSegmentStore:
-    return QdrantVideoSegmentStore(
+def _store(client: QdrantClient) -> QdrantVideoChunkStore:
+    return QdrantVideoChunkStore(
         client,
-        collection_name="video_segments_test",
+        collection_name="video_chunks_test",
         environment=DatabaseEnvironment.TEST,
         text_dimensions=2,
         vision_dimensions=2,
@@ -74,7 +74,7 @@ def test_sync_is_idempotent_and_reconcile_repairs_a_deleted_point(
     assert client.count(collection_name=store.collection_name, exact=True).count == 2
     assert _series_status(engine, prepared.series_id) == "READY"
 
-    missing_id = prepared.segments[0].video_segment_id
+    missing_id = prepared.chunks[0].video_chunk_id
     store.delete(missing_id)
     repaired = service.reconcile()
 
@@ -117,7 +117,7 @@ def test_qdrant_outage_keeps_facts_and_retries_to_convergence(
     )
     with engine.connect() as connection:
         assert connection.execute(
-            select(func.count()).select_from(VideoSegmentRecord)
+            select(func.count()).select_from(VideoChunkRecord)
         ).scalar_one() == 2
 
     client = QdrantClient(":memory:")
@@ -172,10 +172,10 @@ def test_reconcile_replaces_a_point_with_a_stale_revision(
     service.sync_due()
     current = index_repository.list_all()[0]
     store.upsert(
-        VideoSegmentIndexPoint(
+        VideoChunkIndexPoint(
             series_id=current.series_id,
             video_id=current.video_id,
-            video_segment_id=current.video_segment_id,
+            video_chunk_id=current.video_chunk_id,
             source_revision="stale-revision",
             is_fallback=current.is_fallback,
             text_vector=current.text_vector or [],
@@ -188,8 +188,8 @@ def test_reconcile_replaces_a_point_with_a_stale_revision(
     assert report.repair_attempted_count == 1
     assert report.synced_count == 1
     assert store.inspect(
-        [current.video_segment_id]
-    )[current.video_segment_id].source_revision == current.source_revision
+        [current.video_chunk_id]
+    )[current.video_chunk_id].source_revision == current.source_revision
 
 
 def test_sync_delete_removes_stale_point_when_a_vector_becomes_invalid(
@@ -204,18 +204,18 @@ def test_sync_delete_removes_stale_point_when_a_vector_becomes_invalid(
     store = _store(client)
     service = IndexSyncService(index_repository, store)
     service.sync_due()
-    first = prepared_import.segments[0]
+    first = prepared_import.chunks[0]
     video_repository.import_video_parse(
         replace(
             prepared_import,
-            segments=(
+            chunks=(
                 replace(
                     first,
-                    retrieval_chunk=first.retrieval_chunk.model_copy(
-                        update={"text": first.retrieval_chunk.text + " changed"}
+                    retrieval_document=first.retrieval_document.model_copy(
+                        update={"text": first.retrieval_document.text + " changed"}
                     ),
                 ),
-                prepared_import.segments[1],
+                prepared_import.chunks[1],
             ),
         )
     )
@@ -225,8 +225,8 @@ def test_sync_delete_removes_stale_point_when_a_vector_becomes_invalid(
     assert report.selected_count == 1
     assert report.synced_count == 1
     assert store.inspect(
-        [first.video_segment_id]
-    )[first.video_segment_id].present is False
+        [first.video_chunk_id]
+    )[first.video_chunk_id].present is False
     assert _series_status(engine, prepared.series_id) == "INDEXING"
 
 
@@ -242,18 +242,18 @@ def test_reconcile_deletes_a_point_that_is_no_longer_desired(
     store = _store(client)
     service = IndexSyncService(index_repository, store)
     service.sync_due()
-    first = prepared_import.segments[0]
+    first = prepared_import.chunks[0]
     video_repository.import_video_parse(
         replace(
             prepared_import,
-            segments=(
+            chunks=(
                 replace(
                     first,
-                    retrieval_chunk=first.retrieval_chunk.model_copy(
-                        update={"text": first.retrieval_chunk.text + " changed"}
+                    retrieval_document=first.retrieval_document.model_copy(
+                        update={"text": first.retrieval_document.text + " changed"}
                     ),
                 ),
-                prepared_import.segments[1],
+                prepared_import.chunks[1],
             ),
         )
     )
@@ -263,8 +263,8 @@ def test_reconcile_deletes_a_point_that_is_no_longer_desired(
     assert report.repair_attempted_count == 1
     assert report.synced_count == 1
     assert store.inspect(
-        [first.video_segment_id]
-    )[first.video_segment_id].present is False
+        [first.video_chunk_id]
+    )[first.video_chunk_id].present is False
 
 
 def test_reconcile_outage_is_persisted_for_retry(
@@ -309,17 +309,17 @@ def test_late_old_write_invalidates_a_newer_synced_generation(
     )[0]
     updated = replace(
         prepared,
-        segments=tuple(
+        chunks=tuple(
             replace(
-                segment,
-                text_embedding=EmbeddingArtifact(
+                chunk,
+                text_embedding=PreparedEmbedding(
                     vector=[9.1, 9.2],
                     metadata={"model": "text-v2"},
                 ),
             )
-            if segment.video_segment_id == old_item.video_segment_id
-            else segment
-            for segment in prepared.segments
+            if chunk.video_chunk_id == old_item.video_chunk_id
+            else chunk
+            for chunk in prepared.chunks
         ),
     )
     client = QdrantClient(":memory:")
@@ -328,11 +328,11 @@ def test_late_old_write_invalidates_a_newer_synced_generation(
     def sync_new_before_old_write() -> None:
         video_repository.import_video_parse(updated)
         current = {
-            item.video_segment_id: item for item in index_repository.list_all()
-        }[old_item.video_segment_id]
+            item.video_chunk_id: item for item in index_repository.list_all()
+        }[old_item.video_chunk_id]
         actual_store.upsert(_point_from_item(current))
         assert index_repository.mark_synced(
-            current.video_segment_id,
+            current.video_chunk_id,
             current.source_revision,
             current.operation,
             current.generation,
@@ -341,35 +341,35 @@ def test_late_old_write_invalidates_a_newer_synced_generation(
     late_store = _LateWriteStore(actual_store, sync_new_before_old_write)
     stale_run = IndexSyncService(index_repository, late_store).sync_due(limit=1)
     invalidated = {
-        item.video_segment_id: item for item in index_repository.list_all()
-    }[old_item.video_segment_id]
+        item.video_chunk_id: item for item in index_repository.list_all()
+    }[old_item.video_chunk_id]
 
     assert stale_run.stale_result_count == 1
     assert invalidated.status is IndexSyncStatus.PENDING
     assert invalidated.generation > old_item.generation
     assert actual_store.inspect(
-        [old_item.video_segment_id]
-    )[old_item.video_segment_id].source_revision == old_item.source_revision
+        [old_item.video_chunk_id]
+    )[old_item.video_chunk_id].source_revision == old_item.source_revision
 
     recovered = IndexSyncService(index_repository, actual_store).sync_due(limit=10)
     current = {
-        item.video_segment_id: item for item in index_repository.list_all()
-    }[old_item.video_segment_id]
+        item.video_chunk_id: item for item in index_repository.list_all()
+    }[old_item.video_chunk_id]
     assert recovered.synced_count >= 1
     assert current.status is IndexSyncStatus.SYNCED
     assert actual_store.inspect(
-        [current.video_segment_id]
-    )[current.video_segment_id].source_revision == current.source_revision
+        [current.video_chunk_id]
+    )[current.video_chunk_id].source_revision == current.source_revision
 
 
 class _UnavailableStore:
     def upsert(self, _point) -> None:
         raise ConnectionError("Qdrant is unavailable")
 
-    def delete(self, _video_segment_id: str) -> None:
+    def delete(self, _video_chunk_id: str) -> None:
         raise ConnectionError("Qdrant is unavailable")
 
-    def inspect(self, _video_segment_ids):
+    def inspect(self, _video_chunk_ids):
         raise ConnectionError("Qdrant is unavailable")
 
 
@@ -385,15 +385,15 @@ class _LateWriteStore:
             self._before_first_upsert()
         self._store.upsert(point)
 
-    def delete(self, video_segment_id: str) -> None:
-        self._store.delete(video_segment_id)
+    def delete(self, video_chunk_id: str) -> None:
+        self._store.delete(video_chunk_id)
 
 
-def _point_from_item(item) -> VideoSegmentIndexPoint:
-    return VideoSegmentIndexPoint(
+def _point_from_item(item) -> VideoChunkIndexPoint:
+    return VideoChunkIndexPoint(
         series_id=item.series_id,
         video_id=item.video_id,
-        video_segment_id=item.video_segment_id,
+        video_chunk_id=item.video_chunk_id,
         source_revision=item.source_revision,
         is_fallback=item.is_fallback,
         text_vector=item.text_vector or [],

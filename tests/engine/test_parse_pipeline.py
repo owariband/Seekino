@@ -2,11 +2,11 @@ from pathlib import Path
 
 from engine.parse.schemas import (
     AnalysisWindow,
-    SegmentCheckpoint,
-    SegmentParseResult,
     TimelineEvent,
     TranscriptAnalysis,
     VideoEvidence,
+    VideoChunkCheckpoint,
+    VideoChunkParseResult,
     VideoParseProvenance,
     VideoParseResult,
 )
@@ -100,8 +100,8 @@ def _windows() -> list[AnalysisWindow]:
             sequence_no=0,
             source_video=source,
             media_path=Path("window-0.mp4"),
-            segment_start_ms=0,
-            segment_end_ms=10_000,
+            chunk_start_ms=0,
+            chunk_end_ms=10_000,
             analysis_start_ms=0,
             analysis_end_ms=12_000,
         ),
@@ -109,8 +109,8 @@ def _windows() -> list[AnalysisWindow]:
             sequence_no=1,
             source_video=source,
             media_path=Path("window-1.mp4"),
-            segment_start_ms=10_000,
-            segment_end_ms=20_000,
+            chunk_start_ms=10_000,
+            chunk_end_ms=20_000,
             analysis_start_ms=8_000,
             analysis_end_ms=22_000,
         ),
@@ -118,25 +118,25 @@ def _windows() -> list[AnalysisWindow]:
             sequence_no=2,
             source_video=source,
             media_path=Path("window-2.mp4"),
-            segment_start_ms=20_000,
-            segment_end_ms=30_000,
+            chunk_start_ms=20_000,
+            chunk_end_ms=30_000,
             analysis_start_ms=18_000,
             analysis_end_ms=30_000,
         ),
     ]
 
 
-def test_pipeline_passes_only_owned_past_events_to_the_next_segment() -> None:
+def test_pipeline_passes_only_owned_past_events_to_the_next_chunk() -> None:
     parser = FakeParser()
     checkpoints = []
     result = ParsePipeline(parser).run(
         source_video="episode.mp4",
         duration_ms=30_000,
-        segment_duration_ms=10_000,
+        chunk_duration_ms=10_000,
         context_overlap_ms=2_000,
         windows=_windows(),
         series_bible="角色术语表",
-        on_segment_complete=checkpoints.append,
+        on_chunk_complete=checkpoints.append,
     )
 
     assert len(checkpoints) == 3
@@ -160,11 +160,11 @@ def test_pipeline_passes_only_owned_past_events_to_the_next_segment() -> None:
         (23_000, 24_000),
     ]
     assert (
-        result.segments[1].context_before.snapshot_id
-        == result.segments[0].context_after.snapshot_id
+        result.chunks[1].context_before.snapshot_id
+        == result.chunks[0].context_after.snapshot_id
     )
-    assert result.segments[0].observed_events[1].owned_by_current_segment is False
-    assert result.segments[1].observed_events[0].owned_by_current_segment is True
+    assert result.chunks[0].observed_events[1].owned_by_current_chunk is False
+    assert result.chunks[1].observed_events[0].owned_by_current_chunk is True
     restored = VideoParseResult.model_validate_json(result.model_dump_json())
     assert restored == result
 
@@ -178,22 +178,22 @@ def test_context_snapshot_is_bounded_to_recent_events() -> None:
     ).run(
         source_video="episode.mp4",
         duration_ms=30_000,
-        segment_duration_ms=10_000,
+        chunk_duration_ms=10_000,
         context_overlap_ms=2_000,
         windows=_windows(),
     )
 
-    final_context = result.segments[-1].context_after
+    final_context = result.chunks[-1].context_after
     assert len(final_context.recent_events) == 2
     assert len(final_context.compact_text) <= 256
     assert "第一段已确认动作" not in final_context.compact_text
 
 
-def test_pipeline_resumes_after_the_last_completed_segment() -> None:
+def test_pipeline_resumes_after_the_last_completed_chunk() -> None:
     initial = ParsePipeline(FakeParser()).run(
         source_video="episode.mp4",
         duration_ms=30_000,
-        segment_duration_ms=10_000,
+        chunk_duration_ms=10_000,
         context_overlap_ms=2_000,
         windows=_windows(),
     )
@@ -201,10 +201,10 @@ def test_pipeline_resumes_after_the_last_completed_segment() -> None:
     resumed = ParsePipeline(resumed_parser).run(
         source_video="episode.mp4",
         duration_ms=30_000,
-        segment_duration_ms=10_000,
+        chunk_duration_ms=10_000,
         context_overlap_ms=2_000,
         windows=_windows(),
-        completed_segments=initial.segments[:1],
+        completed_chunks=initial.chunks[:1],
     )
 
     assert resumed == initial
@@ -213,51 +213,51 @@ def test_pipeline_resumes_after_the_last_completed_segment() -> None:
 
 
 def test_pipeline_marks_content_filter_result_as_fallback() -> None:
-    checkpoints: list[SegmentParseResult] = []
+    checkpoints: list[VideoChunkParseResult] = []
     result = ParsePipeline(FakeFallbackParser()).run(
         source_video="episode.mp4",
         duration_ms=30_000,
-        segment_duration_ms=10_000,
+        chunk_duration_ms=10_000,
         context_overlap_ms=2_000,
         windows=_windows(),
-        on_segment_complete=checkpoints.append,
+        on_chunk_complete=checkpoints.append,
     )
 
-    assert all(segment.is_fallback for segment in result.segments)
-    assert all(segment.is_fallback for segment in checkpoints)
+    assert all(chunk.is_fallback for chunk in result.chunks)
+    assert all(chunk.is_fallback for chunk in checkpoints)
 
 
 def test_fallback_marker_is_backward_compatible_and_round_trips() -> None:
     result = ParsePipeline(FakeFallbackParser()).run(
         source_video="episode.mp4",
         duration_ms=30_000,
-        segment_duration_ms=10_000,
+        chunk_duration_ms=10_000,
         context_overlap_ms=2_000,
         windows=_windows(),
     )
-    segment = result.segments[0]
-    legacy_payload = segment.model_dump()
+    chunk = result.chunks[0]
+    legacy_payload = chunk.model_dump()
     legacy_payload["needs_regeneration"] = legacy_payload.pop("is_fallback")
 
-    restored_legacy = SegmentParseResult.model_validate(legacy_payload)
+    restored_legacy = VideoChunkParseResult.model_validate(legacy_payload)
     assert restored_legacy.is_fallback is True
 
-    missing_marker_payload = segment.model_dump()
+    missing_marker_payload = chunk.model_dump()
     missing_marker_payload.pop("is_fallback")
-    restored_without_marker = SegmentParseResult.model_validate(
+    restored_without_marker = VideoChunkParseResult.model_validate(
         missing_marker_payload
     )
     assert restored_without_marker.is_fallback is False
 
-    checkpoint = SegmentCheckpoint(
+    checkpoint = VideoChunkCheckpoint(
         transcript_model="transcript-model",
         video_model="video-model",
-        segment=segment,
+        chunk=chunk,
     )
-    restored_checkpoint = SegmentCheckpoint.model_validate_json(
+    restored_checkpoint = VideoChunkCheckpoint.model_validate_json(
         checkpoint.model_dump_json()
     )
-    assert restored_checkpoint.segment.is_fallback is True
+    assert restored_checkpoint.chunk.is_fallback is True
     assert "needs_regeneration" not in restored_checkpoint.model_dump_json()
 
 
@@ -265,7 +265,7 @@ def test_video_parse_result_model_metadata_round_trips_and_remains_optional() ->
     legacy_result = ParsePipeline(FakeFallbackParser()).run(
         source_video="episode.mp4",
         duration_ms=30_000,
-        segment_duration_ms=10_000,
+        chunk_duration_ms=10_000,
         context_overlap_ms=2_000,
         windows=_windows(),
     )

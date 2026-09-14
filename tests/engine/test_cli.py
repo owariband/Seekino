@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from engine.parse.cli import _load_completed_segments
+from engine.parse.cli import _load_completed_chunks
 from engine.parse.schemas import (
     AnalysisWindow,
     ContextSnapshot,
-    SegmentCheckpoint,
-    SegmentParseResult,
+    VideoChunkCheckpoint,
+    VideoChunkParseResult,
     VideoParseProvenance,
 )
 
@@ -16,9 +16,11 @@ def _window() -> AnalysisWindow:
     return AnalysisWindow(
         sequence_no=0,
         source_video=Path("episode.mp4"),
-        media_path=Path("window-0.mp4"),
-        segment_start_ms=0,
-        segment_end_ms=60_000,
+        media_path=Path(
+            "windows/chunk-0000.analysis-0000000000-0000063000.mp4"
+        ),
+        chunk_start_ms=0,
+        chunk_end_ms=60_000,
         analysis_start_ms=0,
         analysis_end_ms=63_000,
     )
@@ -30,6 +32,14 @@ def _write_fallback_checkpoint(
     provenance_updates: dict[str, object] | None = None,
 ) -> AnalysisWindow:
     window = _window()
+    checkpoint_window = window.model_copy(
+        update={
+            "media_path": Path(
+                "packages/engine/outputs/legacy/windows/"
+                "segment-0000.analysis-0000000000-0000063000.mp4"
+            )
+        }
+    )
     provenance_values: dict[str, object] = {
         "provider": "deepseek",
         "model": "deepseek-flash",
@@ -48,22 +58,22 @@ def _write_fallback_checkpoint(
     provenance_values.update(provenance_updates or {})
     before = ContextSnapshot(
         snapshot_id="context-before",
-        after_segment_sequence_no=-1,
+        after_chunk_sequence_no=-1,
         compact_text="",
         recent_events=[],
     )
     after = ContextSnapshot(
         snapshot_id="context-after",
-        after_segment_sequence_no=0,
+        after_chunk_sequence_no=0,
         compact_text="fallback summary",
         recent_events=[],
     )
-    checkpoint = SegmentCheckpoint(
+    checkpoint = VideoChunkCheckpoint(
         transcript_model="doubao-lite",
         transcript_source="none",
         video_model="doubao-pro",
-        segment=SegmentParseResult(
-            window=window,
+        chunk=VideoChunkParseResult(
+            window=checkpoint_window,
             context_before=before,
             candidate_transcript=[],
             video_parse=VideoParseProvenance.model_validate(provenance_values),
@@ -83,8 +93,8 @@ def _write_fallback_checkpoint(
     return window
 
 
-def _resume(output_dir: Path, window: AnalysisWindow) -> list[SegmentParseResult]:
-    return _load_completed_segments(
+def _resume(output_dir: Path, window: AnalysisWindow) -> list[VideoChunkParseResult]:
+    return _load_completed_chunks(
         [window],
         output_dir=output_dir,
         transcript_model="doubao-lite",
@@ -99,12 +109,15 @@ def _resume(output_dir: Path, window: AnalysisWindow) -> list[SegmentParseResult
     )
 
 
-def test_load_completed_segments_accepts_matching_fallback_strategy(tmp_path) -> None:
+def test_load_completed_chunks_accepts_legacy_path_and_matching_strategy(
+    tmp_path,
+) -> None:
     window = _write_fallback_checkpoint(tmp_path)
 
     completed = _resume(tmp_path, window)
 
     assert len(completed) == 1
+    assert completed[0].window == window
     assert completed[0].video_parse is not None
     assert completed[0].video_parse.provider == "deepseek"
 
@@ -120,7 +133,7 @@ def test_load_completed_segments_accepts_matching_fallback_strategy(tmp_path) ->
         ("refiner_model", "other-refiner-model"),
     ],
 )
-def test_load_completed_segments_rejects_changed_fallback_strategy(
+def test_load_completed_chunks_rejects_changed_fallback_strategy(
     tmp_path,
     field,
     changed_value,

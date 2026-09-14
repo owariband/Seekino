@@ -34,7 +34,7 @@ from .schemas import (
 ProvenanceProvider = Literal["doubao", "deepseek", "ollama", "llama_cpp"]
 
 
-class SegmentEvidenceParser(Protocol):
+class VideoChunkEvidenceParser(Protocol):
     def analyze(
         self,
         video_path: str | Path,
@@ -45,8 +45,8 @@ class SegmentEvidenceParser(Protocol):
     ) -> VideoEvidence: ...
 
 
-class SegmentParser:
-    """Parse one existing segment with direct video model input."""
+class VideoChunkParser:
+    """Parse one existing video chunk with direct video model input."""
 
     def __init__(
         self,
@@ -73,8 +73,8 @@ class SegmentParser:
         *,
         duration_ms: int | None = None,
     ) -> TranscriptAnalysis:
-        path, resolved_duration_ms = _resolve_segment(video_path, duration_ms)
-        return _transcribe_segment(
+        path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
+        return _transcribe_video_chunk(
             self._transcript_model,
             path,
             duration_ms=resolved_duration_ms,
@@ -89,7 +89,7 @@ class SegmentParser:
         duration_ms: int | None = None,
         candidate_transcript: TranscriptAnalysis | None = None,
     ) -> VideoEvidence:
-        path, resolved_duration_ms = _resolve_segment(video_path, duration_ms)
+        path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
         transcript = candidate_transcript
         if transcript is None:
             transcript = self.transcribe(path, duration_ms=resolved_duration_ms)
@@ -141,8 +141,8 @@ class SegmentParser:
         )
 
 
-class OrderedFrameSegmentParser:
-    """Parse one segment after Engine samples an ordered frame sequence."""
+class OrderedFrameVideoChunkParser:
+    """Parse one video chunk after Engine samples an ordered frame sequence."""
 
     def __init__(
         self,
@@ -171,7 +171,7 @@ class OrderedFrameSegmentParser:
         duration_ms: int | None = None,
         candidate_transcript: TranscriptAnalysis | None = None,
     ) -> VideoEvidence:
-        path, resolved_duration_ms = _resolve_segment(video_path, duration_ms)
+        path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
         transcript = candidate_transcript or TranscriptAnalysis(transcript=[])
         timestamps_ms = plan_frame_timestamps(
             resolved_duration_ms,
@@ -211,7 +211,7 @@ class OrderedFrameSegmentParser:
         )
 
 
-class DeepSeekFallbackSegmentParser:
+class DeepSeekFallbackVideoChunkParser:
     """Run Lite ASR, grouped neutral vision, then evidence-only refinement."""
 
     def __init__(
@@ -259,12 +259,12 @@ class DeepSeekFallbackSegmentParser:
         duration_ms: int | None = None,
         candidate_transcript: TranscriptAnalysis | None = None,
     ) -> VideoEvidence:
-        path, resolved_duration_ms = _resolve_segment(video_path, duration_ms)
+        path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
         # The primary path may deliberately use an empty candidate transcript.
         # A fallback still needs the dedicated Lite audio pass selected for this
         # chain. Reuse a non-empty precomputed Lite result when one exists.
         if candidate_transcript is None or not candidate_transcript.transcript:
-            transcript = _transcribe_segment(
+            transcript = _transcribe_video_chunk(
                 self._transcript_model,
                 path,
                 duration_ms=resolved_duration_ms,
@@ -368,13 +368,13 @@ class DeepSeekFallbackSegmentParser:
         )
 
 
-class ContentFilterFallbackSegmentParser:
-    """Use one configured segment fallback only for an explicit content filter."""
+class ContentFilterFallbackVideoChunkParser:
+    """Use one configured video-chunk fallback for an explicit content filter."""
 
     def __init__(
         self,
-        primary: SegmentEvidenceParser,
-        fallback: SegmentEvidenceParser,
+        primary: VideoChunkEvidenceParser,
+        fallback: VideoChunkEvidenceParser,
         *,
         primary_model: str,
         on_fallback: Callable[[ContentFilterError], None] | None = None,
@@ -692,7 +692,7 @@ def _validate_fallback_timeline(
             )
 
 
-def _resolve_segment(
+def _resolve_video_chunk(
     video_path: str | Path,
     duration_ms: int | None,
 ) -> tuple[Path, int]:
@@ -706,7 +706,7 @@ def _resolve_segment(
     return path, duration_ms
 
 
-def _transcribe_segment(
+def _transcribe_video_chunk(
     model: MultimodalModel,
     video_path: Path,
     *,

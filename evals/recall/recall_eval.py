@@ -3,7 +3,7 @@
 This module deliberately stops at dual-channel embedding retrieval plus RRF.
 It does not implement semantic reranking or a CandidateVerifier.  Local video
 materialization is evaluation-only; production retrieval is expected to consume
-the canonical media persisted by the upload pipeline.
+the canonical media persisted by the media-processing pipeline.
 """
 
 from __future__ import annotations
@@ -24,19 +24,16 @@ from engine.parse.analysis_windows import (
 )
 from engine.parse.schemas import AnalysisWindow, VideoParseResult
 from engine.retrieval.video_retrieval import (
-    RankedVideoSegment,
-    SegmentRetrievalChunk,
-    build_segment_retrieval_chunks,
+    RankedVideoChunk,
+    VideoChunkRetrievalDocument,
+    build_video_chunk_retrieval_documents,
     weighted_reciprocal_rank_fusion,
 )
 
-from .qdrant_index import QdrantVideoSegmentIndex
+from .qdrant_index import QdrantVideoChunkIndex
 
 _CACHE_VERSION = 1
 _METRIC_CUTOFFS = (1, 3, 5, 10)
-
-# Compatibility name for the existing evaluation API.
-RankedSegment = RankedVideoSegment
 
 
 class TextVideoEmbedder(Protocol):
@@ -69,19 +66,32 @@ class RecallQueryFixture(BaseModel):
 
     query_id: str = Field(min_length=1)
     query: str = Field(min_length=1)
-    relevant_segment_sequence_nos: list[int] = Field(default_factory=list)
+    relevant_chunk_sequence_nos: list[int] = Field(default_factory=list)
     relevant_time_ranges_ms: list[RelevantTimeRange] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_relevance_name(cls, data: object) -> object:
+        if not isinstance(data, dict) or "relevant_segment_sequence_nos" not in data:
+            return data
+        populated = dict(data)
+        populated.setdefault(
+            "relevant_chunk_sequence_nos",
+            populated["relevant_segment_sequence_nos"],
+        )
+        populated.pop("relevant_segment_sequence_nos")
+        return populated
 
     @model_validator(mode="after")
     def require_relevance(self) -> "RecallQueryFixture":
-        if not self.relevant_segment_sequence_nos and not self.relevant_time_ranges_ms:
+        if not self.relevant_chunk_sequence_nos and not self.relevant_time_ranges_ms:
             raise ValueError(
-                "at least one relevant segment or relevant time range is required"
+                "at least one relevant video chunk or relevant time range is required"
             )
-        if len(set(self.relevant_segment_sequence_nos)) != len(
-            self.relevant_segment_sequence_nos
+        if len(set(self.relevant_chunk_sequence_nos)) != len(
+            self.relevant_chunk_sequence_nos
         ):
-            raise ValueError("relevant segment sequence numbers must be unique")
+            raise ValueError("relevant chunk sequence numbers must be unique")
         return self
 
 
@@ -110,10 +120,10 @@ class RecallQueryResult(BaseModel):
 
     query_id: str
     query: str
-    relevant_segment_sequence_nos: list[int]
-    text_rankings: list[RankedSegment]
-    vision_rankings: list[RankedSegment]
-    fused_rankings: list[RankedSegment]
+    relevant_chunk_sequence_nos: list[int]
+    text_rankings: list[RankedVideoChunk]
+    vision_rankings: list[RankedVideoChunk]
+    fused_rankings: list[RankedVideoChunk]
     text_metrics: ChannelQueryMetrics
     vision_metrics: ChannelQueryMetrics
     fused_metrics: ChannelQueryMetrics
@@ -143,7 +153,7 @@ class RecallEvalResult(BaseModel):
     qdrant_collection: str | None = None
     dataset_id: str | None = None
     query_count: int = Field(gt=0)
-    segment_count: int = Field(gt=0)
+    chunk_count: int = Field(gt=0)
     text_metrics: AggregateChannelMetrics
     vision_metrics: AggregateChannelMetrics
     fused_metrics: AggregateChannelMetrics
@@ -158,7 +168,7 @@ class _SourceFingerprint(BaseModel):
     mtime_ns: int = Field(ge=0)
 
 
-class _SegmentFingerprint(BaseModel):
+class _VideoChunkFingerprint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sequence_no: int = Field(ge=0)
@@ -177,8 +187,18 @@ class _EmbeddingCacheRecord(BaseModel):
     source: _SourceFingerprint
     modality: Literal["text", "video", "query"]
     input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    segment: _SegmentFingerprint | None
+    chunk: _VideoChunkFingerprint | None
     vector: list[float] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_chunk_name(cls, data: object) -> object:
+        if not isinstance(data, dict) or "segment" not in data:
+            return data
+        populated = dict(data)
+        populated.setdefault("chunk", populated["segment"])
+        populated.pop("segment")
+        return populated
 
     @model_validator(mode="after")
     def validate_vector(self) -> "_EmbeddingCacheRecord":
@@ -186,10 +206,10 @@ class _EmbeddingCacheRecord(BaseModel):
             raise ValueError("cached embedding dimension does not match metadata")
         if not all(math.isfinite(value) for value in self.vector):
             raise ValueError("cached embedding contains a non-finite value")
-        if self.modality == "query" and self.segment is not None:
-            raise ValueError("query cache records cannot contain segment metadata")
-        if self.modality != "query" and self.segment is None:
-            raise ValueError("segment cache records require segment metadata")
+        if self.modality == "query" and self.chunk is not None:
+            raise ValueError("query cache records cannot contain chunk metadata")
+        if self.modality != "query" and self.chunk is None:
+            raise ValueError("video cache records require chunk metadata")
         return self
 
 
@@ -205,17 +225,6 @@ def load_recall_fixture(path: str | Path) -> RecallEvalFixture:
     )
 
 
-def build_segment_chunks(parse_result: VideoParseResult) -> list[SegmentRetrievalChunk]:
-    """Build retrieval text without leaking neighboring-window context.
-
-    Only ``self_compact`` and events owned by the canonical segment are read.
-    In particular, ``window_summary`` and all context snapshots are intentionally
-    absent from this function.
-    """
-
-    return build_segment_retrieval_chunks(parse_result)
-
-
 def materialize_eval_only_canonical_media(
     parse_result: VideoParseResult,
     *,
@@ -227,7 +236,7 @@ def materialize_eval_only_canonical_media(
 
     if max_height <= 0:
         raise ValueError("max_height must be greater than zero")
-    _validate_canonical_segments(parse_result)
+    _validate_canonical_chunks(parse_result)
     source_path = Path(source_video).expanduser().resolve()
     source = _source_fingerprint(source_path)
     source_key = _sha256_text(
@@ -242,12 +251,27 @@ def materialize_eval_only_canonical_media(
         source_path,
         duration_ms=parse_result.duration_ms,
         output_dir=media_dir,
-        segment_duration_ms=parse_result.segment_duration_ms,
+        chunk_duration_ms=parse_result.chunk_duration_ms,
         context_overlap_ms=0,
     )
     _validate_planned_media(parse_result, windows)
-    materialize_analysis_windows(windows, max_height=max_height)
-    return {window.sequence_no: window.media_path for window in windows}
+    media_by_sequence: dict[int, Path] = {}
+    pending_windows: list[AnalysisWindow] = []
+    for window in windows:
+        legacy_path = window.media_path.with_name(
+            window.media_path.name.replace("chunk-", "segment-", 1)
+        )
+        if window.media_path.is_file() and window.media_path.stat().st_size > 0:
+            media_by_sequence[window.sequence_no] = window.media_path
+        elif legacy_path.is_file() and legacy_path.stat().st_size > 0:
+            media_by_sequence[window.sequence_no] = legacy_path
+        else:
+            pending_windows.append(window)
+
+    materialize_analysis_windows(pending_windows, max_height=max_height)
+    for window in pending_windows:
+        media_by_sequence[window.sequence_no] = window.media_path
+    return media_by_sequence
 
 
 class RecallEvaluator:
@@ -261,7 +285,7 @@ class RecallEvaluator:
         rrf_k: int = 60,
         text_weight: float = 1.0,
         vision_weight: float = 1.0,
-        qdrant_index: QdrantVideoSegmentIndex | None = None,
+        qdrant_index: QdrantVideoChunkIndex | None = None,
         qdrant_exact: bool = True,
         concurrency: int = 1,
     ) -> None:
@@ -301,51 +325,51 @@ class RecallEvaluator:
         media_by_sequence: dict[int, Path],
         parse_result_path: str | Path | None = None,
     ) -> RecallEvalResult:
-        chunks = build_segment_chunks(parse_result)
+        documents = build_video_chunk_retrieval_documents(parse_result)
         if self._qdrant_index is not None:
             self._qdrant_index.ensure_collection(
                 text_dimensions=self._embedder.output_dimensionality,
                 vision_dimensions=self._embedder.output_dimensionality,
             )
             self._qdrant_index.assert_dataset_size(
-                len(chunks),
+                len(documents),
                 allow_empty=True,
             )
 
         source = _source_fingerprint(source_video)
-        expected_sequences = {chunk.sequence_no for chunk in chunks}
+        expected_sequences = {document.sequence_no for document in documents}
         if set(media_by_sequence) != expected_sequences:
             raise ValueError(
-                "canonical media must contain exactly one file for every segment"
+                "canonical media must contain exactly one file for every video chunk"
             )
         for sequence_no, media_path in media_by_sequence.items():
             if not Path(media_path).is_file():
                 raise FileNotFoundError(
-                    f"canonical media for segment {sequence_no} does not exist: "
+                    f"canonical media for chunk {sequence_no} does not exist: "
                     f"{media_path}"
                 )
 
-        text_vectors, video_vectors = self._embed_segments(
-            chunks,
+        text_vectors, video_vectors = self._embed_video_chunks(
+            documents,
             media_by_sequence=media_by_sequence,
             source=source,
         )
         if self._qdrant_index is not None:
-            self._qdrant_index.upsert_segments(
-                chunks,
+            self._qdrant_index.upsert_chunks(
+                documents,
                 text_vectors=text_vectors,
                 vision_vectors=video_vectors,
             )
             self._qdrant_index.assert_dataset_size(
-                len(chunks),
+                len(documents),
                 allow_empty=False,
             )
 
         query_results: list[RecallQueryResult] = []
         for query_fixture in fixture.queries:
-            relevant = _resolve_relevant_segments(
+            relevant = _resolve_relevant_chunks(
                 query_fixture,
-                chunks,
+                documents,
                 duration_ms=parse_result.duration_ms,
             )
             query_vector = self._cached_query_embedding(query_fixture.query, source)
@@ -355,12 +379,12 @@ class RecallEvaluator:
             else:
                 text_rankings = self._qdrant_index.search_text(
                     query_vector,
-                    limit=len(chunks),
+                    limit=len(documents),
                     exact=self._qdrant_exact,
                 )
                 vision_rankings = self._qdrant_index.search_vision(
                     query_vector,
-                    limit=len(chunks),
+                    limit=len(documents),
                     exact=self._qdrant_exact,
                 )
             fused_rankings = weighted_reciprocal_rank_fusion(
@@ -375,7 +399,7 @@ class RecallEvaluator:
                 RecallQueryResult(
                     query_id=query_fixture.query_id,
                     query=query_fixture.query,
-                    relevant_segment_sequence_nos=sorted(relevant),
+                    relevant_chunk_sequence_nos=sorted(relevant),
                     text_rankings=text_rankings,
                     vision_rankings=vision_rankings,
                     fused_rankings=fused_rankings,
@@ -416,16 +440,16 @@ class RecallEvaluator:
                 else None
             ),
             query_count=len(query_results),
-            segment_count=len(chunks),
+            chunk_count=len(documents),
             text_metrics=_aggregate_metrics(query_results, "text_metrics"),
             vision_metrics=_aggregate_metrics(query_results, "vision_metrics"),
             fused_metrics=_aggregate_metrics(query_results, "fused_metrics"),
             queries=query_results,
         )
 
-    def _embed_segments(
+    def _embed_video_chunks(
         self,
-        chunks: list[SegmentRetrievalChunk],
+        documents: list[VideoChunkRetrievalDocument],
         *,
         media_by_sequence: dict[int, Path],
         source: _SourceFingerprint,
@@ -435,62 +459,77 @@ class RecallEvaluator:
 
         def embed_one(
             modality: Literal["text", "video"],
-            chunk: SegmentRetrievalChunk,
+            document: VideoChunkRetrievalDocument,
         ) -> tuple[Literal["text", "video"], int, list[float]]:
-            segment = _SegmentFingerprint(
-                sequence_no=chunk.sequence_no,
-                start_ms=chunk.start_ms,
-                end_ms=chunk.end_ms,
+            chunk = _VideoChunkFingerprint(
+                sequence_no=document.sequence_no,
+                start_ms=document.start_ms,
+                end_ms=document.end_ms,
                 max_height=self._max_height,
             )
             if modality == "text":
                 vector = self._cached_embedding(
                     cache_path=(
                         self._cache_dir
+                        / "chunks"
+                        / f"chunk-{document.sequence_no:04d}.text.json"
+                    ),
+                    legacy_cache_path=(
+                        self._cache_dir
                         / "segments"
-                        / f"segment-{chunk.sequence_no:04d}.text.json"
+                        / f"segment-{document.sequence_no:04d}.text.json"
                     ),
                     modality="text",
-                    input_sha256=_sha256_text(chunk.text),
+                    input_sha256=_sha256_text(document.text),
                     source=source,
-                    segment=segment,
-                    embed=lambda: self._embedder.embed_text(chunk.text),
+                    chunk=chunk,
+                    embed=lambda: self._embedder.embed_text(document.text),
                 )
             else:
-                media_path = Path(media_by_sequence[chunk.sequence_no]).resolve()
+                media_path = Path(media_by_sequence[document.sequence_no]).resolve()
                 media_stat = media_path.stat()
                 media_identity = (
                     f"{source.resolved_path}\0{source.size_bytes}\0{source.mtime_ns}"
-                    f"\0{chunk.start_ms}\0{chunk.end_ms}\0{self._max_height}"
+                    f"\0{document.start_ms}\0{document.end_ms}\0{self._max_height}"
                     f"\0{media_path}\0{media_stat.st_size}\0{media_stat.st_mtime_ns}"
                 )
                 vector = self._cached_embedding(
                     cache_path=(
                         self._cache_dir
+                        / "chunks"
+                        / f"chunk-{document.sequence_no:04d}.video.json"
+                    ),
+                    legacy_cache_path=(
+                        self._cache_dir
                         / "segments"
-                        / f"segment-{chunk.sequence_no:04d}.video.json"
+                        / f"segment-{document.sequence_no:04d}.video.json"
                     ),
                     modality="video",
                     input_sha256=_sha256_text(media_identity),
                     source=source,
-                    segment=segment,
+                    chunk=chunk,
                     embed=lambda: self._embedder.embed_video(media_path),
                 )
-            return modality, chunk.sequence_no, vector
+            return modality, document.sequence_no, vector
 
         jobs = [
-            (modality, chunk)
-            for chunk in chunks
+            (modality, document)
+            for document in documents
             for modality in ("text", "video")
         ]
         if self._concurrency == 1:
-            completed = [embed_one(modality, chunk) for modality, chunk in jobs]
+            completed = [
+                embed_one(modality, document) for modality, document in jobs
+            ]
         else:
             completed = []
             with ThreadPoolExecutor(max_workers=self._concurrency) as executor:
                 futures = {
-                    executor.submit(embed_one, modality, chunk): (modality, chunk)
-                    for modality, chunk in jobs
+                    executor.submit(embed_one, modality, document): (
+                        modality,
+                        document,
+                    )
+                    for modality, document in jobs
                 }
                 for future in as_completed(futures):
                     completed.append(future.result())
@@ -512,7 +551,7 @@ class RecallEvaluator:
             modality="query",
             input_sha256=input_sha256,
             source=source,
-            segment=None,
+            chunk=None,
             embed=lambda: self._embedder.embed_text(normalized_query),
         )
 
@@ -520,10 +559,11 @@ class RecallEvaluator:
         self,
         *,
         cache_path: Path,
+        legacy_cache_path: Path | None = None,
         modality: Literal["text", "video", "query"],
         input_sha256: str,
         source: _SourceFingerprint,
-        segment: _SegmentFingerprint | None,
+        chunk: _VideoChunkFingerprint | None,
         embed: Callable[[], EmbeddingResult],
     ) -> list[float]:
         expected = {
@@ -534,9 +574,11 @@ class RecallEvaluator:
             "source": source,
             "modality": modality,
             "input_sha256": input_sha256,
-            "segment": segment,
+            "chunk": chunk,
         }
         cached = _read_matching_cache(cache_path, expected)
+        if cached is None and legacy_cache_path is not None:
+            cached = _read_matching_cache(legacy_cache_path, expected)
         if cached is not None:
             return cached.vector
 
@@ -556,26 +598,26 @@ class RecallEvaluator:
 
 def cosine_rankings(
     query_vector: list[float],
-    segment_vectors: dict[int, list[float]],
-) -> list[RankedSegment]:
+    chunk_vectors: dict[int, list[float]],
+) -> list[RankedVideoChunk]:
     scored = [
         (sequence_no, _cosine_similarity(query_vector, vector))
-        for sequence_no, vector in segment_vectors.items()
+        for sequence_no, vector in chunk_vectors.items()
     ]
     scored.sort(key=lambda item: (-item[1], item[0]))
     return [
-        RankedSegment(rank=rank, segment_sequence_no=sequence_no, score=score)
+        RankedVideoChunk(rank=rank, chunk_sequence_no=sequence_no, score=score)
         for rank, (sequence_no, score) in enumerate(scored, start=1)
     ]
 
 
 def reciprocal_rank_fusion(
-    text_rankings: list[RankedSegment],
-    vision_rankings: list[RankedSegment],
+    text_rankings: list[RankedVideoChunk],
+    vision_rankings: list[RankedVideoChunk],
     *,
     channel_top_k: int,
     rrf_k: int,
-) -> list[RankedSegment]:
+) -> list[RankedVideoChunk]:
     return weighted_reciprocal_rank_fusion(
         text_rankings,
         vision_rankings,
@@ -586,21 +628,21 @@ def reciprocal_rank_fusion(
     )
 
 
-def _validate_canonical_segments(parse_result: VideoParseResult) -> None:
-    if not parse_result.segments:
-        raise ValueError("parse result contains no segments")
+def _validate_canonical_chunks(parse_result: VideoParseResult) -> None:
+    if not parse_result.chunks:
+        raise ValueError("parse result contains no chunks")
     expected_start = 0
     seen_sequences: set[int] = set()
-    for expected_sequence, segment in enumerate(parse_result.segments):
-        window = segment.window
+    for expected_sequence, chunk in enumerate(parse_result.chunks):
+        window = chunk.window
         if window.sequence_no != expected_sequence:
-            raise ValueError("parse result segments must use contiguous sequence numbers")
+            raise ValueError("parse result chunks must use contiguous sequence numbers")
         if window.sequence_no in seen_sequences:
-            raise ValueError("parse result contains a duplicate segment")
+            raise ValueError("parse result contains a duplicate chunk")
         seen_sequences.add(window.sequence_no)
-        if window.segment_start_ms != expected_start:
-            raise ValueError("parse result canonical segments must be contiguous")
-        expected_start = window.segment_end_ms
+        if window.chunk_start_ms != expected_start:
+            raise ValueError("parse result canonical chunks must be contiguous")
+        expected_start = window.chunk_end_ms
     if expected_start != parse_result.duration_ms:
         raise ValueError("parse result does not cover the complete video duration")
 
@@ -609,18 +651,18 @@ def _validate_planned_media(
     parse_result: VideoParseResult,
     windows: list[AnalysisWindow],
 ) -> None:
-    if len(windows) != len(parse_result.segments):
-        raise ValueError("planned canonical media does not match parsed segments")
-    for planned, parsed in zip(windows, parse_result.segments, strict=True):
+    if len(windows) != len(parse_result.chunks):
+        raise ValueError("planned canonical media does not match parsed chunks")
+    for planned, parsed in zip(windows, parse_result.chunks, strict=True):
         parsed_window = parsed.window
         if (
             planned.sequence_no != parsed_window.sequence_no
-            or planned.segment_start_ms != parsed_window.segment_start_ms
-            or planned.segment_end_ms != parsed_window.segment_end_ms
-            or planned.analysis_start_ms != parsed_window.segment_start_ms
-            or planned.analysis_end_ms != parsed_window.segment_end_ms
+            or planned.chunk_start_ms != parsed_window.chunk_start_ms
+            or planned.chunk_end_ms != parsed_window.chunk_end_ms
+            or planned.analysis_start_ms != parsed_window.chunk_start_ms
+            or planned.analysis_end_ms != parsed_window.chunk_end_ms
         ):
-            raise ValueError("planned media is not the canonical zero-overlap segment")
+            raise ValueError("planned media is not the canonical zero-overlap chunk")
 
 
 def _source_fingerprint(source_video: str | Path) -> _SourceFingerprint:
@@ -635,18 +677,18 @@ def _source_fingerprint(source_video: str | Path) -> _SourceFingerprint:
     )
 
 
-def _resolve_relevant_segments(
+def _resolve_relevant_chunks(
     fixture: RecallQueryFixture,
-    chunks: list[SegmentRetrievalChunk],
+    documents: list[VideoChunkRetrievalDocument],
     *,
     duration_ms: int,
 ) -> set[int]:
-    valid_sequences = {chunk.sequence_no for chunk in chunks}
-    relevant = set(fixture.relevant_segment_sequence_nos)
+    valid_sequences = {document.sequence_no for document in documents}
+    relevant = set(fixture.relevant_chunk_sequence_nos)
     unknown = relevant - valid_sequences
     if unknown:
         raise ValueError(
-            f"query {fixture.query_id} references unknown segments: {sorted(unknown)}"
+            f"query {fixture.query_id} references unknown chunks: {sorted(unknown)}"
         )
     for time_range in fixture.relevant_time_ranges_ms:
         if time_range.end_ms > duration_ms:
@@ -654,27 +696,27 @@ def _resolve_relevant_segments(
                 f"query {fixture.query_id} has a time range beyond video duration"
             )
         relevant.update(
-            chunk.sequence_no
-            for chunk in chunks
-            if chunk.start_ms < time_range.end_ms
-            and chunk.end_ms > time_range.start_ms
+            document.sequence_no
+            for document in documents
+            if document.start_ms < time_range.end_ms
+            and document.end_ms > time_range.start_ms
         )
     if not relevant:
         raise ValueError(
-            f"query {fixture.query_id} relevance does not overlap any segment"
+            f"query {fixture.query_id} relevance does not overlap any video chunk"
         )
     return relevant
 
 
 def _query_metrics(
-    rankings: list[RankedSegment],
+    rankings: list[RankedVideoChunk],
     relevant: set[int],
 ) -> ChannelQueryMetrics:
     first_rank = next(
         (
             ranked.rank
             for ranked in rankings
-            if ranked.segment_sequence_no in relevant
+            if ranked.chunk_sequence_no in relevant
         ),
         None,
     )
@@ -682,7 +724,7 @@ def _query_metrics(
         reciprocal_rank=0.0 if first_rank is None else 1.0 / first_rank,
         hit_at={
             cutoff: any(
-                ranked.segment_sequence_no in relevant
+                ranked.chunk_sequence_no in relevant
                 for ranked in rankings[:cutoff]
             )
             for cutoff in _METRIC_CUTOFFS

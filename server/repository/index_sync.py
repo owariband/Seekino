@@ -17,15 +17,15 @@ from ..model.index_sync import (
 from ..model.video import (
     SeriesRecord,
     VideoRecord,
-    VideoSegmentInfoRecord,
-    VideoSegmentParseChunkRecord,
-    VideoSegmentRecord,
+    VideoChunkInfoRecord,
+    VideoChunkEmbeddingRecord,
+    VideoChunkRecord,
 )
 
 
 @dataclass(frozen=True)
 class IndexSyncItem:
-    video_segment_id: str
+    video_chunk_id: str
     series_id: str
     video_id: str
     operation: IndexSyncOperation
@@ -45,7 +45,7 @@ class IndexSyncItem:
         return {
             "seriesId": self.series_id,
             "videoId": self.video_id,
-            "videoSegmentId": self.video_segment_id,
+            "videoChunkId": self.video_chunk_id,
             "sourceRevision": self.source_revision,
             "isFallback": self.is_fallback,
         }
@@ -78,21 +78,21 @@ class IndexSyncRepository:
         ).order_by(
             IndexSyncIntentRecord.available_at,
             IndexSyncIntentRecord.updated_at,
-            IndexSyncIntentRecord.video_segment_id,
+            IndexSyncIntentRecord.video_chunk_id,
         ).limit(limit)
         with self._session_factory() as session:
             return _items_from_rows(session.execute(statement).all())
 
     def list_all(self) -> list[IndexSyncItem]:
         statement = _item_statement().order_by(
-            IndexSyncIntentRecord.video_segment_id
+            IndexSyncIntentRecord.video_chunk_id
         )
         with self._session_factory() as session:
             return _items_from_rows(session.execute(statement).all())
 
     def mark_synced(
         self,
-        video_segment_id: str,
+        video_chunk_id: str,
         source_revision: str,
         operation: IndexSyncOperation | str,
         generation: int,
@@ -104,7 +104,7 @@ class IndexSyncRepository:
             changed = session.execute(
                 update(IndexSyncIntentRecord)
                 .where(
-                    IndexSyncIntentRecord.video_segment_id == video_segment_id,
+                    IndexSyncIntentRecord.video_chunk_id == video_chunk_id,
                     IndexSyncIntentRecord.source_revision == source_revision,
                     IndexSyncIntentRecord.operation == operation_value,
                     IndexSyncIntentRecord.generation == current_generation,
@@ -119,12 +119,12 @@ class IndexSyncRepository:
             ).rowcount
             if changed != 1:
                 return False
-            _refresh_segment_series_status(session, video_segment_id)
+            _refresh_chunk_series_status(session, video_chunk_id)
             return True
 
     def mark_failed(
         self,
-        video_segment_id: str,
+        video_chunk_id: str,
         source_revision: str,
         operation: IndexSyncOperation | str,
         generation: int,
@@ -140,7 +140,7 @@ class IndexSyncRepository:
             changed = session.execute(
                 update(IndexSyncIntentRecord)
                 .where(
-                    IndexSyncIntentRecord.video_segment_id == video_segment_id,
+                    IndexSyncIntentRecord.video_chunk_id == video_chunk_id,
                     IndexSyncIntentRecord.source_revision == source_revision,
                     IndexSyncIntentRecord.operation == operation_value,
                     IndexSyncIntentRecord.generation == current_generation,
@@ -156,12 +156,12 @@ class IndexSyncRepository:
             ).rowcount
             if changed != 1:
                 return False
-            _refresh_segment_series_status(session, video_segment_id)
+            _refresh_chunk_series_status(session, video_chunk_id)
             return True
 
     def mark_pending_if_current(
         self,
-        video_segment_id: str,
+        video_chunk_id: str,
         source_revision: str,
         operation: IndexSyncOperation | str,
         generation: int,
@@ -173,7 +173,7 @@ class IndexSyncRepository:
             changed = session.execute(
                 update(IndexSyncIntentRecord)
                 .where(
-                    IndexSyncIntentRecord.video_segment_id == video_segment_id,
+                    IndexSyncIntentRecord.video_chunk_id == video_chunk_id,
                     IndexSyncIntentRecord.source_revision == source_revision,
                     IndexSyncIntentRecord.operation == operation_value,
                     IndexSyncIntentRecord.generation == current_generation,
@@ -190,12 +190,12 @@ class IndexSyncRepository:
             ).rowcount
             if changed != 1:
                 return None
-            _refresh_segment_series_status(session, video_segment_id)
+            _refresh_chunk_series_status(session, video_chunk_id)
             return current_generation + 1
 
     def invalidate_after_stale_result(
         self,
-        video_segment_id: str,
+        video_chunk_id: str,
         completed_generation: int,
     ) -> int | None:
         """Requeue current state after an older external write may have won."""
@@ -206,7 +206,7 @@ class IndexSyncRepository:
             intent = session.scalar(
                 select(IndexSyncIntentRecord)
                 .where(
-                    IndexSyncIntentRecord.video_segment_id == video_segment_id
+                    IndexSyncIntentRecord.video_chunk_id == video_chunk_id
                 )
                 .with_for_update()
             )
@@ -221,60 +221,60 @@ class IndexSyncRepository:
             intent.synced_at = None
             intent.updated_at = now
             session.flush()
-            _refresh_segment_series_status(session, video_segment_id)
+            _refresh_chunk_series_status(session, video_chunk_id)
             return intent.generation
 
 
 def materialize_index_sync_intents(
     session: Session,
-    video_segment_ids: Sequence[str] | None = None,
+    video_chunk_ids: Sequence[str] | None = None,
 ) -> int:
     """Materialize current Qdrant intent inside the caller's transaction."""
 
     statement = select(
-        VideoSegmentRecord.video_segment_id,
+        VideoChunkRecord.video_chunk_id,
         VideoRecord.series_id,
-        VideoSegmentRecord.video_id,
-        VideoSegmentInfoRecord.video_segment_id.label("info_video_segment_id"),
-        VideoSegmentInfoRecord.is_fallback,
-        VideoSegmentParseChunkRecord.text_chunk,
-        VideoSegmentParseChunkRecord.vision_chunk,
+        VideoChunkRecord.video_id,
+        VideoChunkInfoRecord.video_chunk_id.label("info_video_chunk_id"),
+        VideoChunkInfoRecord.is_fallback,
+        VideoChunkEmbeddingRecord.text_vector,
+        VideoChunkEmbeddingRecord.vision_vector,
     ).join(
         VideoRecord,
-        VideoRecord.video_id == VideoSegmentRecord.video_id,
+        VideoRecord.video_id == VideoChunkRecord.video_id,
     ).outerjoin(
-        VideoSegmentInfoRecord,
-        VideoSegmentInfoRecord.video_segment_id
-        == VideoSegmentRecord.video_segment_id,
+        VideoChunkInfoRecord,
+        VideoChunkInfoRecord.video_chunk_id
+        == VideoChunkRecord.video_chunk_id,
     ).outerjoin(
-        VideoSegmentParseChunkRecord,
-        VideoSegmentParseChunkRecord.video_segment_id
-        == VideoSegmentRecord.video_segment_id,
+        VideoChunkEmbeddingRecord,
+        VideoChunkEmbeddingRecord.video_chunk_id
+        == VideoChunkRecord.video_chunk_id,
     )
-    if video_segment_ids is not None:
-        segment_ids = list(dict.fromkeys(video_segment_ids))
-        if not segment_ids:
+    if video_chunk_ids is not None:
+        chunk_ids = list(dict.fromkeys(video_chunk_ids))
+        if not chunk_ids:
             return 0
         statement = statement.where(
-            VideoSegmentRecord.video_segment_id.in_(segment_ids)
+            VideoChunkRecord.video_chunk_id.in_(chunk_ids)
         )
     # This must be a MySQL current/locking read. A plain consistent read under
     # REPEATABLE READ can observe older facts and then overwrite a newer intent
     # after waiting for that intent's row lock.
     statement = statement.order_by(
-        VideoSegmentRecord.video_segment_id
+        VideoChunkRecord.video_chunk_id
     ).with_for_update()
 
     rows = session.execute(statement).all()
-    row_segment_ids = [row.video_segment_id for row in rows]
-    intents_by_segment_id: dict[str, IndexSyncIntentRecord] = {}
-    if row_segment_ids:
-        intents_by_segment_id = {
-            intent.video_segment_id: intent
+    row_chunk_ids = [row.video_chunk_id for row in rows]
+    intents_by_chunk_id: dict[str, IndexSyncIntentRecord] = {}
+    if row_chunk_ids:
+        intents_by_chunk_id = {
+            intent.video_chunk_id: intent
             for intent in session.scalars(
                 select(IndexSyncIntentRecord)
-                .where(IndexSyncIntentRecord.video_segment_id.in_(row_segment_ids))
-                .order_by(IndexSyncIntentRecord.video_segment_id)
+                .where(IndexSyncIntentRecord.video_chunk_id.in_(row_chunk_ids))
+                .order_by(IndexSyncIntentRecord.video_chunk_id)
                 .with_for_update()
             ).all()
         }
@@ -283,10 +283,10 @@ def materialize_index_sync_intents(
     now = _utc_now()
     affected_series_ids: set[str] = set()
     for row in rows:
-        text_vector = _copy_vector(row.text_chunk)
-        vision_vector = _copy_vector(row.vision_chunk)
+        text_vector = _copy_vector(row.text_vector)
+        vision_vector = _copy_vector(row.vision_vector)
         has_both_vectors = (
-            row.info_video_segment_id is not None
+            row.info_video_chunk_id is not None
             and bool(text_vector)
             and bool(vision_vector)
         )
@@ -299,7 +299,7 @@ def materialize_index_sync_intents(
         source_revision = _compute_index_source_revision(
             series_id=row.series_id,
             video_id=row.video_id,
-            video_segment_id=row.video_segment_id,
+            video_chunk_id=row.video_chunk_id,
             operation=operation,
             is_fallback=is_fallback,
             text_vector=text_vector,
@@ -307,11 +307,11 @@ def materialize_index_sync_intents(
         )
         affected_series_ids.add(row.series_id)
 
-        intent = intents_by_segment_id.get(row.video_segment_id)
+        intent = intents_by_chunk_id.get(row.video_chunk_id)
         if intent is None:
             session.add(
                 IndexSyncIntentRecord(
-                    video_segment_id=row.video_segment_id,
+                    video_chunk_id=row.video_chunk_id,
                     operation=operation.value,
                     source_revision=source_revision,
                     generation=1,
@@ -347,7 +347,7 @@ def _compute_index_source_revision(
     *,
     series_id: str,
     video_id: str,
-    video_segment_id: str,
+    video_chunk_id: str,
     operation: IndexSyncOperation | str,
     is_fallback: bool,
     text_vector: list[float] | None,
@@ -357,11 +357,11 @@ def _compute_index_source_revision(
 
     source = {
         "operation": IndexSyncOperation(operation).value,
-        "pointId": video_segment_id,
+        "pointId": video_chunk_id,
         "payload": {
             "seriesId": series_id,
             "videoId": video_id,
-            "videoSegmentId": video_segment_id,
+            "videoChunkId": video_chunk_id,
             "isFallback": is_fallback,
         },
         "vectors": {
@@ -381,9 +381,9 @@ def _compute_index_source_revision(
 
 def _item_statement() -> Select:
     return select(
-        IndexSyncIntentRecord.video_segment_id,
+        IndexSyncIntentRecord.video_chunk_id,
         VideoRecord.series_id,
-        VideoSegmentRecord.video_id,
+        VideoChunkRecord.video_id,
         IndexSyncIntentRecord.operation,
         IndexSyncIntentRecord.source_revision,
         IndexSyncIntentRecord.generation,
@@ -392,31 +392,31 @@ def _item_statement() -> Select:
         IndexSyncIntentRecord.available_at,
         IndexSyncIntentRecord.last_error,
         IndexSyncIntentRecord.synced_at,
-        VideoSegmentInfoRecord.is_fallback,
-        VideoSegmentParseChunkRecord.text_chunk,
-        VideoSegmentParseChunkRecord.vision_chunk,
+        VideoChunkInfoRecord.is_fallback,
+        VideoChunkEmbeddingRecord.text_vector,
+        VideoChunkEmbeddingRecord.vision_vector,
     ).join(
-        VideoSegmentRecord,
-        VideoSegmentRecord.video_segment_id
-        == IndexSyncIntentRecord.video_segment_id,
+        VideoChunkRecord,
+        VideoChunkRecord.video_chunk_id
+        == IndexSyncIntentRecord.video_chunk_id,
     ).join(
         VideoRecord,
-        VideoRecord.video_id == VideoSegmentRecord.video_id,
+        VideoRecord.video_id == VideoChunkRecord.video_id,
     ).outerjoin(
-        VideoSegmentInfoRecord,
-        VideoSegmentInfoRecord.video_segment_id
-        == VideoSegmentRecord.video_segment_id,
+        VideoChunkInfoRecord,
+        VideoChunkInfoRecord.video_chunk_id
+        == VideoChunkRecord.video_chunk_id,
     ).outerjoin(
-        VideoSegmentParseChunkRecord,
-        VideoSegmentParseChunkRecord.video_segment_id
-        == VideoSegmentRecord.video_segment_id,
+        VideoChunkEmbeddingRecord,
+        VideoChunkEmbeddingRecord.video_chunk_id
+        == VideoChunkRecord.video_chunk_id,
     )
 
 
 def _items_from_rows(rows) -> list[IndexSyncItem]:
     return [
         IndexSyncItem(
-            video_segment_id=row.video_segment_id,
+            video_chunk_id=row.video_chunk_id,
             series_id=row.series_id,
             video_id=row.video_id,
             operation=IndexSyncOperation(row.operation),
@@ -428,24 +428,24 @@ def _items_from_rows(rows) -> list[IndexSyncItem]:
             last_error=row.last_error,
             synced_at=row.synced_at,
             is_fallback=bool(row.is_fallback),
-            text_vector=_copy_vector(row.text_chunk),
-            vision_vector=_copy_vector(row.vision_chunk),
+            text_vector=_copy_vector(row.text_vector),
+            vision_vector=_copy_vector(row.vision_vector),
         )
         for row in rows
     ]
 
 
-def _refresh_segment_series_status(
+def _refresh_chunk_series_status(
     session: Session,
-    video_segment_id: str,
+    video_chunk_id: str,
 ) -> None:
     series_id = session.scalar(
         select(VideoRecord.series_id)
         .join(
-            VideoSegmentRecord,
-            VideoSegmentRecord.video_id == VideoRecord.video_id,
+            VideoChunkRecord,
+            VideoChunkRecord.video_id == VideoRecord.video_id,
         )
-        .where(VideoSegmentRecord.video_segment_id == video_segment_id)
+        .where(VideoChunkRecord.video_chunk_id == video_chunk_id)
     )
     if series_id is not None:
         _refresh_series_statuses(session, {series_id})
@@ -458,31 +458,31 @@ def _refresh_series_statuses(
     for series_id in series_ids:
         rows = session.execute(
             select(
-                VideoSegmentParseChunkRecord.text_chunk,
-                VideoSegmentParseChunkRecord.vision_chunk,
+                VideoChunkEmbeddingRecord.text_vector,
+                VideoChunkEmbeddingRecord.vision_vector,
                 IndexSyncIntentRecord.operation,
                 IndexSyncIntentRecord.status,
             )
-            .select_from(VideoSegmentRecord)
+            .select_from(VideoChunkRecord)
             .join(
                 VideoRecord,
-                VideoRecord.video_id == VideoSegmentRecord.video_id,
+                VideoRecord.video_id == VideoChunkRecord.video_id,
             )
             .outerjoin(
-                VideoSegmentParseChunkRecord,
-                VideoSegmentParseChunkRecord.video_segment_id
-                == VideoSegmentRecord.video_segment_id,
+                VideoChunkEmbeddingRecord,
+                VideoChunkEmbeddingRecord.video_chunk_id
+                == VideoChunkRecord.video_chunk_id,
             )
             .outerjoin(
                 IndexSyncIntentRecord,
-                IndexSyncIntentRecord.video_segment_id
-                == VideoSegmentRecord.video_segment_id,
+                IndexSyncIntentRecord.video_chunk_id
+                == VideoChunkRecord.video_chunk_id,
             )
             .where(VideoRecord.series_id == series_id)
         ).all()
         is_ready = bool(rows) and all(
-            bool(row.text_chunk)
-            and bool(row.vision_chunk)
+            bool(row.text_vector)
+            and bool(row.vision_vector)
             and row.operation == IndexSyncOperation.UPSERT.value
             and row.status == IndexSyncStatus.SYNCED.value
             for row in rows
