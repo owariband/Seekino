@@ -138,6 +138,103 @@ def test_ark_maps_text_image_and_video_to_responses_sse(tmp_path) -> None:
     }
 
 
+def test_ark_text_stream_preserves_original_deltas_and_output_budget() -> None:
+    responses = FakeResponses(_result())
+    responses.stream = FakeStream(
+        [
+            SimpleNamespace(
+                type="response.output_text.delta",
+                sequence_number=0,
+                delta="找到",
+            ),
+            SimpleNamespace(
+                type="response.output_text.delta",
+                sequence_number=1,
+                delta="这个视频片段",
+            ),
+            SimpleNamespace(
+                type="response.completed",
+                sequence_number=2,
+                response=SimpleNamespace(
+                    id="response-text",
+                    status="completed",
+                    output=[
+                        SimpleNamespace(
+                            type="message",
+                            content=[
+                                SimpleNamespace(
+                                    type="output_text", text="找到这个视频片段"
+                                )
+                            ],
+                        )
+                    ],
+                ),
+            ),
+        ]
+    )
+    model = ArkMultimodalModel(
+        "ark-chat",
+        max_output_tokens=500,
+        client=SimpleNamespace(responses=responses),
+    )
+    deltas = model.stream_text([TextInput("基于批准的材料回答")])
+    assert next(deltas) == "找到"
+    assert responses.stream.closed is False
+    assert list(deltas) == ["这个视频片段"]
+    assert responses.stream.closed is True
+    call = responses.calls[0]
+    assert call["max_output_tokens"] == 500
+    assert "text" not in call
+    assert call["input"] == [
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "基于批准的材料回答"}],
+        }
+    ]
+
+
+@pytest.mark.parametrize("provider", ["ollama", "llama_cpp"])
+@pytest.mark.parametrize("finish_reason", ["stop", "length"])
+def test_local_models_stream_original_chat_deltas(provider, finish_reason) -> None:
+    calls = []
+    chunks = [
+        {"choices": [{"delta": {"content": "第一段"}, "finish_reason": None}]},
+        {"choices": [{"delta": {"content": "第二段"}, "finish_reason": None}]},
+        {"choices": [{"delta": {}, "finish_reason": finish_reason}]},
+    ]
+    body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
+    body += "data: [DONE]\n\n"
+
+    def respond(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    options = {
+        "base_url": "http://localhost:9000",
+        "max_output_tokens": 500,
+        "request_timeout_seconds": 3,
+        "client": httpx.Client(transport=httpx.MockTransport(respond)),
+    }
+    if provider == "ollama":
+        model = OllamaMultimodalModel("test-local", **options)
+        error_type = OllamaModelError
+    else:
+        model = LlamaCppMultimodalModel(
+            "test-local", expected_server_video_fps=0.5, **options
+        )
+        error_type = LlamaCppModelError
+    deltas = model.stream_text([TextInput("回答")])
+    assert next(deltas) == "第一段"
+    assert next(deltas) == "第二段"
+    if finish_reason == "stop":
+        assert list(deltas) == []
+    else:
+        with pytest.raises(error_type, match="length"):
+            next(deltas)
+    assert calls[0]["stream"] is True
+    assert calls[0]["max_tokens"] == 500
+
+
 class FakeDeepSeekResponses:
     def __init__(self, output_text: str, *, status: str = "completed") -> None:
         self.calls: list[dict[str, object]] = []
@@ -150,6 +247,37 @@ class FakeDeepSeekResponses:
             status=self.status,
             output_text=self.output_text,
         )
+
+
+def test_deepseek_streams_text_without_structured_output_format() -> None:
+    responses = FakeResponses(_result())
+    responses.stream = FakeStream(
+        [
+            SimpleNamespace(
+                type="response.output_text.delta", sequence_number=0, delta="回答"
+            ),
+            SimpleNamespace(
+                type="response.completed",
+                sequence_number=1,
+                response=SimpleNamespace(
+                    id="deepseek-text", status="completed", output_text="回答"
+                ),
+            ),
+        ]
+    )
+    model = DeepSeekMultimodalModel(
+        "deepseek-test",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=500,
+        request_timeout_seconds=3,
+        client=SimpleNamespace(responses=responses),
+    )
+    assert list(model.stream_text([TextInput("回答")])) == ["回答"]
+    assert responses.calls[0]["stream"] is True
+    assert responses.calls[0]["max_output_tokens"] == 500
+    assert "text" not in responses.calls[0]
+    assert responses.stream.closed is True
 
 
 def test_deepseek_uses_official_responses_api_and_preserves_ordered_images(

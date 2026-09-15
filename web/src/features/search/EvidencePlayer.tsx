@@ -1,7 +1,7 @@
 import { Captions, CircleAlert, Clock3, Play, ScanSearch } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { videoContentUrl } from "../../api/client";
+import { errorMessage, videoContentUrl } from "../../api/client";
 import type { VideoChunkSearchHit } from "../../api/contracts";
 import { episodeLabel, formatTimeRange, formatTimecode } from "../../shared/format";
 import { explainHit, readableTranscript } from "./explain";
@@ -15,14 +15,57 @@ interface EvidencePlayerProps {
 
 export function EvidencePlayer({ hit }: EvidencePlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const playRef = useRef<(() => void) | null>(null);
   const [tab, setTab] = useState<EvidenceTab>("reason");
+  const [playError, setPlayError] = useState<string | null>(null);
 
   useEffect(() => {
     setTab("reason");
-    if (videoRef.current && hit) {
-      videoRef.current.currentTime = hit.evidence.startMs / 1000;
-    }
-  }, [hit]);
+    setPlayError(null);
+    const video = videoRef.current;
+    if (!video || !hit) return;
+    const start = hit.evidence.startMs / 1000;
+    const end = hit.evidence.endMs / 1000;
+    let active = true;
+    let requested = false;
+    video.pause();
+    const position = () => {
+      video.currentTime = start;
+      if (requested) {
+        requested = false;
+        void video.play().catch((error: unknown) => {
+          if (active) setPlayError(errorMessage(error));
+        });
+      }
+    };
+    const stopAtEnd = () => {
+      if (video.currentTime >= end) {
+        video.pause();
+        video.currentTime = end;
+      }
+    };
+    const keepInRange = () => {
+      if (video.currentTime < start || video.currentTime >= end) video.currentTime = start;
+    };
+    playRef.current = () => {
+      setPlayError(null);
+      requested = true;
+      if (video.readyState >= HTMLMediaElement.HAVE_METADATA) position();
+    };
+    video.addEventListener("loadedmetadata", position);
+    video.addEventListener("timeupdate", stopAtEnd);
+    video.addEventListener("play", keepInRange);
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) position();
+    return () => {
+      active = false;
+      requested = false;
+      playRef.current = null;
+      video.removeEventListener("loadedmetadata", position);
+      video.removeEventListener("timeupdate", stopAtEnd);
+      video.removeEventListener("play", keepInRange);
+      video.pause();
+    };
+  }, [hit?.evidence.workspaceId, hit?.evidence.videoId, hit?.evidence.videoChunkId, hit?.evidence.startMs, hit?.evidence.endMs]);
 
   if (!hit) {
     return (
@@ -38,16 +81,11 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
 
   const { evidence } = hit;
   const explanation = explainHit(hit);
-  const playFromHit = async () => {
-    if (!videoRef.current) return;
-    videoRef.current.currentTime = evidence.analysisWindowStartMs / 1000;
-    await videoRef.current.play();
-  };
 
   return (
     <aside className={styles.evidencePanel}>
       <div className={styles.viewer}>
-        <video ref={videoRef} controls preload="metadata" src={videoContentUrl(evidence.videoId)} />
+        <video key={`${evidence.workspaceId}:${evidence.videoId}`} ref={videoRef} controls preload="metadata" src={videoContentUrl(evidence.videoId, evidence.workspaceId)} aria-label="视频证据" />
         <div className={styles.frameMeta}>
           <span>{episodeLabel(evidence.episodeOrder)}</span>
           <strong>{formatTimeRange(evidence.startMs, evidence.endMs)}</strong>
@@ -59,11 +97,13 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
           <span className="eyebrow">Evidence window · 证据窗口</span>
           <h2>{evidence.seriesName}</h2>
         </div>
-        <button className="button-secondary" type="button" onClick={playFromHit}>
+        <button className="button-secondary" type="button" onClick={() => playRef.current?.()}>
           <Play size={15} fill="currentColor" />
-          从 {formatTimecode(evidence.analysisWindowStartMs)} 播放
+          从 {formatTimecode(evidence.startMs)} 播放
         </button>
       </div>
+
+      {playError ? <p className={styles.messageError} role="alert">{playError}</p> : null}
 
       <nav className={styles.evidenceTabs} aria-label="证据详情">
         {([

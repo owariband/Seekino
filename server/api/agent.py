@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import time
 from dataclasses import asdict
+from queue import Empty
 from typing import AsyncIterator
 
 from fastapi import Header, Query, Request
@@ -13,11 +14,16 @@ from starlette.concurrency import run_in_threadpool
 from ..config.sse import SSEConfig
 from ..constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
 from ..repository.agent import AgentMessageState
-from ..service.agent import AgentConversationService
+from ..service.agent_chat import AgentChatService, AgentMessageExecution
 from .context import get_services, get_sse_config
 from .schema import (
     AgentConversationCreateRequest,
     AgentConversationView,
+    AgentAnswerStartedView,
+    AgentAnswerEvidenceView,
+    AgentAnswerDeltaView,
+    AgentAnswerCompletedView,
+    AgentAnswerFailedView,
     AgentMessageEventView,
     AgentMessageSendRequest,
     AgentMessageSendView,
@@ -128,13 +134,49 @@ def list_agent_messages(
     ]
 
 
-def send_agent_message(
+async def send_agent_message(
     request: Request,
     body: AgentMessageSendRequest,
     conversation_id: str = Query(alias="conversationId"),
     idempotency_key: str = Header(alias="Idempotency-Key"),
-) -> AgentMessageSendView:
-    result = get_services(request).agent.send_message(
+) -> AgentMessageSendView | StreamingResponse:
+    service = get_services(request).agent
+    accepted = []
+    for item in request.headers.get("accept", "").split(","):
+        media_type, *parameters = item.lower().split(";")
+        media_type = media_type.strip()
+        if media_type not in {"application/json", "text/event-stream"}:
+            continue
+        quality = 1.0
+        for parameter in parameters:
+            name, _, value = parameter.strip().partition("=")
+            if name == "q":
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0
+        if 0 < quality <= 1:
+            accepted.append((quality, media_type))
+    wants_stream = max(
+        accepted, key=lambda item: item[0], default=(0, "application/json"),
+    )[1] == "text/event-stream"
+    if wants_stream:
+        execution = await run_in_threadpool(
+            service.start_message,
+            conversation_id,
+            workspace_id=body.workspace_id,
+            content=body.content,
+            idempotency_key=idempotency_key,
+            top_k=body.top_k,
+            stream=True,
+        )
+        return StreamingResponse(
+            _answer_events(request, execution, get_sse_config(request)),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    result = await run_in_threadpool(
+        service.send_message,
         conversation_id,
         workspace_id=body.workspace_id,
         content=body.content,
@@ -176,7 +218,7 @@ async def stream_agent_messages(
 
 async def _agent_message_events(
     request: Request,
-    service: AgentConversationService,
+    service: AgentChatService,
     conversation_id: str,
     workspace_id: str,
     config: SSEConfig,
@@ -209,3 +251,47 @@ async def _agent_message_events(
 
 def _agent_message_view(state: AgentMessageState) -> AgentMessageView:
     return AgentMessageView.model_validate(asdict(state))
+
+
+_ANSWER_EVENT_MODELS = {
+    "answer.started": AgentAnswerStartedView,
+    "answer.evidence": AgentAnswerEvidenceView,
+    "answer.delta": AgentAnswerDeltaView,
+    "answer.completed": AgentAnswerCompletedView,
+    "answer.failed": AgentAnswerFailedView,
+}
+
+
+async def _answer_events(
+    request: Request,
+    execution: AgentMessageExecution,
+    config: SSEConfig,
+) -> AsyncIterator[str]:
+    last_event_at = time.monotonic()
+    try:
+        while not await request.is_disconnected():
+            try:
+                event = await run_in_threadpool(
+                    execution.next_event,
+                    min(1, config.keepalive_interval_seconds),
+                )
+            except Empty:
+                if time.monotonic() - last_event_at >= config.keepalive_interval_seconds:
+                    last_event_at = time.monotonic()
+                    yield ": keep-alive\n\n"
+                continue
+            if event is None:
+                return
+            event_type = event.get("type")
+            model = _ANSWER_EVENT_MODELS.get(event_type)
+            if model is None:
+                continue
+            view = model.model_validate(event)
+            last_event_at = time.monotonic()
+            payload = view.model_dump_json(
+                by_alias=True,
+                exclude={name for name, value in view if value is None},
+            )
+            yield f"event: {view.type}\nid: {view.message_id}:{view.sequence}\ndata: {payload}\n\n"
+    finally:
+        execution.detach()

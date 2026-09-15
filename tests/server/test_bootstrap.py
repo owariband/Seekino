@@ -10,6 +10,7 @@ from server import bootstrap
 from server.api.app import create_app
 from server.config import ServerSettings
 from server.config.retrieval import RetrievalConfig
+from server.config.agent import AgentServiceConfig
 from server.config.sse import SSEConfig
 from server.mq import __main__ as worker_main
 
@@ -43,6 +44,15 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path, 
         database_pool_recycle_seconds=1200,
         video_embedding_model="configured-embedding-model",
         video_embedding_fps=2.0,
+        agent_query_model="configured-query-model",
+        agent_evaluator_model="configured-review-model",
+        agent_chat_model="configured-chat-model",
+        agent_request_timeout_seconds=120,
+        agent=AgentServiceConfig(
+            max_loop_turns=2, max_model_calls_per_turn=4,
+            max_tool_calls_per_turn=2, max_output_tokens=2048,
+            execution_timeout_seconds=90, maximum_concurrent_kicks=2,
+        ),
     )
     # Change the environment after loading Settings to prove assembly uses it.
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "unexpected-env-model")
@@ -77,6 +87,19 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path, 
             embedder = received["embedder"]
             assert embedder._model == settings.video_embedding_model
             assert embedder._fps == settings.video_embedding_fps
+            assert embedder._request_timeout_seconds == 90
+            runtime = services.agent._runtime
+            assert runtime._query_model.model_name == "configured-query-model"
+            assert runtime._evaluator_model.model_name == "configured-review-model"
+            assert runtime._chat_model.model_name == "configured-chat-model"
+            assert runtime._query_model.max_output_tokens == 2048
+            assert runtime._chat_model.max_output_tokens == 2048
+            assert runtime._evaluator_model.max_output_tokens == 2048
+            assert runtime._max_loop_turns == 2
+            assert runtime._max_model_calls == 4
+            assert runtime._max_tool_calls == 2
+            assert runtime._execution_timeout == 90
+            assert services.agent._executor._max_workers == 2
             app = create_app(services, settings=settings)
             assert app.state.sse_config == settings.sse
         finally:
@@ -110,3 +133,60 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path, 
         assert received["worker"]["lease_duration"] == settings.worker_lease_duration
         assert received["ran_once"]
     assert received["pool_recycle_seconds"] == settings.database_pool_recycle_seconds
+
+
+def test_application_closes_agent_tasks_before_database_and_vector_store():
+    from server.bootstrap import ApplicationServices
+    from types import SimpleNamespace
+    order = []
+    services = ApplicationServices(
+        library=None, uploads=None, jobs=None, media=None, retrieval=None,
+        agent=SimpleNamespace(close=lambda: order.append("agent")), index_sync=None,
+        qdrant_client=SimpleNamespace(close=lambda: order.append("vectors")),
+        engine=SimpleNamespace(dispose=lambda: order.append("database")),
+    )
+    services.close()
+    assert order == ["agent", "vectors", "database"]
+
+
+def test_query_embedder_uses_a_client_per_call_and_always_closes(monkeypatch):
+    from types import SimpleNamespace
+    clients = []
+    def create_client(**kwargs):
+        client = SimpleNamespace(options=kwargs, closed=False)
+        def close():
+            client.closed = True
+        client.close = close
+        clients.append(client)
+        return client
+    class Embedder:
+        def __init__(self, _model, **kwargs):
+            self.client = kwargs["client"]
+        def embed_query(self, query):
+            if query == "fail":
+                raise RuntimeError("embedding failed")
+            return self.client
+    monkeypatch.setattr(bootstrap, "Ark", SimpleNamespace(volc=create_client))
+    monkeypatch.setattr(bootstrap, "DoubaoMultimodalEmbedder", Embedder)
+    embedder = bootstrap._LazyQueryEmbedder(model="embedding", dimensions=1024, fps=1, request_timeout_seconds=30)
+    assert clients == []
+    assert embedder.embed_query("first") is not embedder.embed_query("second")
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        embedder.embed_query("fail")
+    assert len(clients) == 3 and all(client.closed for client in clients)
+    assert all(client.options == {"timeout": 30, "max_retries": 0} for client in clients)
+
+
+@pytest.mark.parametrize("injected", [False, True])
+def test_app_lifespan_closes_only_services_it_owns(monkeypatch, injected):
+    from fastapi.testclient import TestClient
+    from types import SimpleNamespace
+    import server.api.app as app_module
+    closed = []
+    services = SimpleNamespace(close=lambda: closed.append("services"))
+    settings = SimpleNamespace(sse=SSEConfig(), allowed_origins=())
+    monkeypatch.setattr(app_module, "build_application_services", lambda _settings: services)
+    app = create_app(services if injected else None, settings=settings)
+    with TestClient(app):
+        pass
+    assert closed == ([] if injected else ["services"])

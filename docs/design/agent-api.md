@@ -22,43 +22,35 @@ AgentSession
 
 - `AgentSession`：Workspace 中的一次 Agent 使用上下文，可以包含多个对话。
 - `AgentConversation`：连续对话线程，创建时固定 `seriesIds`，追问不会静默扩大范围。
-- `AgentMessage`：MySQL 中的消息事实。SSE 只通知消息变化，列表接口仍是恢复真源。
+- `AgentMessage`：MySQL 中的消息事实。POST SSE 交付实时正文；GET 快照和列表接口恢复持久化状态。
 - LangGraph checkpoint 不是产品聊天记录；本轮产品状态全部由上述 MySQL 表持久化。
 
 ## 2. Multi-Agent 协作图
 
 ```text
-Chat Agent：结合历史消息解析 Retrieval Intent
-    ↓
-Scene Retrieval Tool：Text + Vision → RRF → MySQL Hydrate
-    ↓
-Chat Agent：只基于完整 VideoChunkEvidence 生成待审核回答与候选 ID
-    ↓
-Evaluator Agent：审核回答、候选 ID 与 Evidence 是否忠实且可核验
-    ├── 通过 → 放行
-    └── 不通过 → 将 feedback 注入 Chat Agent
-         ├── correctedQuery → 重新召回后重写
-         └── 无 correctedQuery → 复用当前 Evidence 重写
-              ↓
-         最多两次 Chat Agent 回答；仍未通过则标记 FAILED
-    ↓
-Assistant Message：内容、modelName、retrievalQuery、searchResult 原子落库
+一次 AgentRuntime.kick()：
+    Query Agent：SDK 内部模型 / 工具循环，给出计划、草稿和选中片段 ID
+        ↓
+    Evaluator Agent：complete / continue + advice
+        ├── continue 且尚未满 3 轮 → 下一轮 Query，读取原计划和全部工作记录
+        ├── 第 3 轮仍 continue → FAILED，最终 Chat 不调用
+        └── complete → 最终 Chat 只根据获批材料实时整理正文
+                            ↓
+                     确定性 Output Node：正文 + 相同获批 Evidence
+                            ↓
+                     Service 原子保存 Assistant Message
+                            ↓
+                     answer.completed
 ```
 
-检索 Tool 是进程内 typed Tool，直接调用 `VideoRetrievalService`，不是 Server 对自己的
-HTTP 请求。Evaluator 只返回是否放行、给 Chat Agent 的公开修改建议和可选的 corrected
-query，不保存或返回模型私有思维链。只有审核通过的回答才会成为 `COMPLETED` Assistant
-Message；第一次不通过最多触发一次重写，第二次仍不通过不会放行未审核答案。
+Retrieve Tool 是进程内工具，直接调用注入的 `VideoRetrievalService.search`。模型参数只有
+`query` / `top_k`；Workspace / Series Scope 由当前 Kick 固定。完整实际召回、公开计划、
+草稿、审核意见和复用来源保存在各 `LoopTurn`，下一轮显式获得这些信息。
 
-这里的技术分工是明确的：
-
-- `langchain-core` 负责 `StructuredTool` 及其参数 Schema，约束 Agent 与检索能力的边界。
-- `langgraph` 负责 `StateGraph`、条件分支和“一次纠错后停止”的协作编排。
-- 现有 Gateway `ArkMultimodalModel` 继续通过火山方舟官方 SDK 调模型；它是模型适配层，
-  不需要让 Server 通过 HTTP 调用自己的工具接口。
-
-因此当前没有安装未使用的 `langchain` 聚合包；使用的是实际需要的 LangChain Core 与
-LangGraph。以后新增更多工具或更换模型适配器时，图和产品持久化协议不需要跟着推倒重写。
+代码职责：`server/service/agent_chat.py` 管会话与消息事务；`server/agent/` 是独立于 HTTP 的
+Harness；`gateway/agent_model.py` 使用 LangChain `create_agent` / `ToolStrategy` 管内层
+工具循环，`langgraph` 管外层审核循环。最终 Chat 使用 Gateway 的 `stream_text` 读取
+原始 Provider delta。审核通过只代表允许进入 Chat，消息完成还要求正文正常结束并成功落库。
 
 ## 3. 接口总览
 
@@ -176,9 +168,10 @@ Content-Type: application/json
 }
 ```
 
-`topK` 可省略，默认 `8`；当前服务端上限默认 `20`。一次发送先提交 USER Message 和
-`PROCESSING` ASSISTANT Message，再运行 LangGraph。Chat Agent 草稿通过 Evaluator 审核后，
-才会更新同一个 ASSISTANT Message 为 `COMPLETED`。同一 Conversation 同时只允许一个
+`topK` 可省略，默认 `8`；当前服务端上限默认 `20`，同时限制每次召回和最终选中的不同片段数量。
+多次召回可以累积更多内部证据，交付结果仍遵守本次 TopK。一次发送先提交 USER Message 和
+`PROCESSING` ASSISTANT Message，再由 Service 拥有的执行任务运行 Harness。Query 草稿通过审核后，
+最终 Chat 整理正文；Provider 正常结束且数据库事务成功，才更新同一个 ASSISTANT 为 `COMPLETED`。同一 Conversation 同时只允许一个
 ASSISTANT Message 处于 `PROCESSING`。
 
 响应 `200`：
@@ -253,7 +246,7 @@ GET /api/agent/messages/list
 不要从本地常量或当前环境配置推测。Evaluator 可以使用另一模型，但不会冒充回答模型；
 Message 上显示的是最终回答所属 Chat Agent 的模型。
 
-### 6.3 SSE
+### 6.3 GET 消息快照 SSE
 
 ```http
 GET /api/agent/messages/events
@@ -277,14 +270,47 @@ Message 新增，或同一 ASSISTANT Message 从 `PROCESSING` 变成 `COMPLETED/
 轮询与保活间隔由 `ANIVAG_SSE_POLL_SECONDS`（默认 1 秒）和
 `ANIVAG_SSE_KEEPALIVE_SECONDS`（默认 15 秒）配置，保活按经过时间计算。
 
-当前 SSE 是持久化 Message 状态流，不是 token delta 流。LangGraph node/token 的细粒度
-透传需要独立增加 run/event 序号和断线游标，不能把进程内 token 直接当成可靠聊天记录。
+GET SSE 只恢复数据库快照，不再次启动 Kick，也不回放未持久化的正文增量。刷新或断线后，
+正在执行的消息仍显示 PROCESSING，任务正常完成后从快照得到完整结果。
+
+### 6.4 POST 正文增量 SSE
+
+在同一发送接口增加 `Accept: text/event-stream`，Body 和 `Idempotency-Key` 与 JSON 调用一致：
+
+```http
+POST /api/agent/messages/send?conversationId={conversationId}
+Accept: text/event-stream
+Idempotency-Key: 99946c6f-...
+Content-Type: application/json
+
+{"workspaceId":"local-default","content":"找摔杯子的片段","topK":8}
+```
+
+每帧有 `event`、`id: {messageId}:{sequence}` 和 JSON `data`；所有事件包含
+`conversationId`、助手 `messageId`、本次流内递增的整数 `sequence`。
+
+| event | 时机 | 附加字段 |
+| --- | --- | --- |
+| `answer.started` | USER / PROCESSING ASSISTANT 已提交 | `userMessage`、`assistantMessage` |
+| `answer.evidence` | 审核 complete 后、正文生成前 | `hits`：获批完整 VideoChunkSearchHit |
+| `answer.delta` | Provider 仍在生成时 | `delta`：收到的原始正文增量 |
+| `answer.completed` | 正常收流且最终结果成功提交后 | `userMessage`、`assistantMessage`：持久化快照 |
+| `answer.failed` | 执行或提交失败 | `code`、`message`，以及可取得的消息快照 |
+
+已失败的任务没有 completed。SSE 已开始后，模型 / 提交错误通过 failed 帧报告；开始之前的
+参数、归属、幂等冲突仍按 HTTP 错误返回。相同 Key 重放已完成消息只返回 started 和 completed；
+相同 Key 对 PROCESSING 请求返回 409，不重复启动执行。
+
+连接断开仅关闭订阅，Service 的任务继续执行。慢消费者导致缓冲溢出时返回
+`STREAM_INTERRUPTED` 并停止该订阅；这表示传输中断，不能据此将消息改为 FAILED。
+前端继续用 GET 快照等待真正终态。事件序号不是持久化重放游标；本阶段没有跨 Worker
+增量回放或进程崩溃后的 PROCESSING 执行恢复。
 
 ## 7. 状态与错误
 
 Message 状态：
 
-- `PROCESSING`：LangGraph 正在解析检索意图、召回、生成草稿或执行审核。
+- `PROCESSING`：执行任务正在进行 Query 工具循环、审核、最终 Chat 生成或结果提交。
 - `COMPLETED`：`content`、`retrievalQuery`、`searchResult` 已保存。
 - `FAILED`：失败事实和 `lastError` 已保存；使用新 Idempotency-Key 重试。
 
@@ -293,18 +319,28 @@ Message 状态：
 | `400` | `INVALID_REQUEST` | ID、正文、Scope 或参数格式错误 |
 | `404` | `NOT_FOUND` | Session、Conversation 或 Series 不属于 Workspace |
 | `409` | `CONFLICT` | 幂等冲突、同一对话已有消息执行中、Series 未 READY 或检索事实不一致 |
-| `502` | `AGENT_MODEL_ERROR` | Chat/Evaluator 模型调用、结构化输出失败，或两次回答均未通过审核 |
+| `502` | `AGENT_MODEL_ERROR` | Query/Evaluator/Chat 调用、输出或执行预算失败，或最多三轮仍未通过审核 |
 
 ## 8. 模型配置
 
 ```text
-ANIVAG_AGENT_CHAT_MODEL
+ANIVAG_AGENT_QUERY_MODEL
 ANIVAG_AGENT_EVALUATOR_MODEL
+ANIVAG_AGENT_CHAT_MODEL
 ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS=180
 ANIVAG_AGENT_HISTORY_MESSAGE_LIMIT=12
 ANIVAG_AGENT_DEFAULT_TOP_K=8
 ANIVAG_AGENT_MAX_TOP_K=20
+ANIVAG_AGENT_MAX_LOOP_TURNS=3
+ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN=6
+ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN=4
+ANIVAG_AGENT_MAX_OUTPUT_TOKENS=4096
+ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS=180
+ANIVAG_AGENT_MAX_CONCURRENT_KICKS=4
 ```
 
-两个模型名省略时都使用 `config.yaml` 的 `video_parser.transcript_model`。生产中建议显式设置，
-这样 `modelName`、成本归属和模型行为都更容易核对。
+Chat 模型名省略时使用 `config.yaml` 的 `video_parser.transcript_model`；Query 和 Evaluator
+省略时各自继承 Chat 模型名。三个角色可以单独配置，消息 `modelName` 仍记录最终 Chat 模型。
+模型和检索调用在执行边界检查总 deadline / 取消，SDK 每次模型调用前后也检查；正在阻塞的同步
+Provider 请求需要等待其网络超时，执行 deadline 不代表线程会被硬终止。生产装配保持 Ark Provider，
+Query / Evaluator / Chat 以及召回 Embedding 的 SDK Client 按调用隔离并关闭。

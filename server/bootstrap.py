@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
-from threading import Lock
-from typing import Any, TypeVar
+from typing import Any
 
+from arkruntime import Ark
 from gateway.config import load_config
-from gateway.models import ArkMultimodalModel, MultimodalInput
+from gateway.agent_model import SDKQueryAgentModel
+from gateway.models import ArkMultimodalModel
 from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
 from gateway.schemas import EmbeddingResult
-from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from sqlalchemy import Engine
 
 from .config import ServerSettings
+from .agent.runtime import AgentRuntime
 from .database import create_database_engine, create_session_factory
 from .repository.agent import AgentRepository
 from .repository.index_sync import IndexSyncRepository
@@ -21,7 +21,7 @@ from .repository.job import ParseJobRepository
 from .repository.library import LibraryRepository
 from .repository.upload import UploadRepository
 from .repository.video import VideoRepository
-from .service.agent import AgentConversationService
+from .service.agent_chat import AgentChatService
 from .service.index_sync import IndexSyncService
 from .service.job import ParseJobService
 from .service.library import LibraryService
@@ -39,18 +39,21 @@ class ApplicationServices:
     jobs: ParseJobService
     media: MediaService
     retrieval: VideoRetrievalService
-    agent: AgentConversationService
+    agent: AgentChatService
     index_sync: IndexSyncService
     engine: Engine | None = None
     qdrant_client: Any | None = None
 
     def close(self) -> None:
         try:
-            if self.qdrant_client is not None:
-                self.qdrant_client.close()
+            self.agent.close()
         finally:
-            if self.engine is not None:
-                self.engine.dispose()
+            try:
+                if self.qdrant_client is not None:
+                    self.qdrant_client.close()
+            finally:
+                if self.engine is not None:
+                    self.engine.dispose()
 
 
 def build_application_services(settings: ServerSettings) -> ApplicationServices:
@@ -94,6 +97,9 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             if settings.video_embedding_fps is not None
             else embedding_config.fps
         ),
+        request_timeout_seconds=min(
+            settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
+        ),
     )
     video_repository = VideoRepository(session_factory)
     retrieval = VideoRetrievalService(
@@ -109,18 +115,35 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         settings.agent_chat_model or gateway_config.video_parser.transcript_model
     )
     evaluator_model_name = settings.agent_evaluator_model or chat_model_name
-    agent = AgentConversationService(
-        AgentRepository(session_factory),
-        library,
-        retrieval,
-        _LazyStructuredAgentModel(
-            model=chat_model_name,
-            request_timeout_seconds=settings.agent_request_timeout_seconds,
+    query_model_name = settings.agent_query_model or chat_model_name
+    request_timeout = min(
+        settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
+    )
+    runtime = AgentRuntime(
+        SDKQueryAgentModel(
+            model=query_model_name,
+            request_timeout_seconds=request_timeout,
+            max_output_tokens=settings.agent.max_output_tokens,
         ),
-        _LazyStructuredAgentModel(
+        ArkMultimodalModel(
             model=evaluator_model_name,
-            request_timeout_seconds=settings.agent_request_timeout_seconds,
+            request_timeout_seconds=request_timeout,
+            max_output_tokens=settings.agent.max_output_tokens,
         ),
+        ArkMultimodalModel(
+            model=chat_model_name,
+            request_timeout_seconds=request_timeout,
+            max_output_tokens=settings.agent.max_output_tokens,
+        ),
+        retrieval.search,
+        max_loop_turns=settings.agent.max_loop_turns,
+        max_model_calls_per_turn=settings.agent.max_model_calls_per_turn,
+        max_tool_calls_per_turn=settings.agent.max_tool_calls_per_turn,
+        maximum_top_k=settings.agent.maximum_top_k,
+        execution_timeout_seconds=settings.agent.execution_timeout_seconds,
+    )
+    agent = AgentChatService(
+        AgentRepository(session_factory), library, runtime,
         config=settings.agent,
     )
     index_sync = IndexSyncService(
@@ -145,61 +168,22 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
 class _LazyQueryEmbedder:
     """Keep upload/library APIs usable when only the Worker has model secrets."""
 
-    def __init__(self, *, model: str, dimensions: int, fps: float) -> None:
+    def __init__(
+        self, *, model: str, dimensions: int, fps: float,
+        request_timeout_seconds: float,
+    ) -> None:
         self._model = model
         self._dimensions = dimensions
         self._fps = fps
-        self._delegate: DoubaoMultimodalEmbedder | None = None
-        self._lock = Lock()
+        self._request_timeout_seconds = request_timeout_seconds
 
     def embed_query(self, query: str) -> EmbeddingResult:
-        delegate = self._delegate
-        if delegate is None:
-            with self._lock:
-                delegate = self._delegate
-                if delegate is None:
-                    delegate = DoubaoMultimodalEmbedder(
-                        self._model,
-                        output_dimensionality=self._dimensions,
-                        fps=self._fps,
-                    )
-                    self._delegate = delegate
-        return delegate.embed_query(query)
-
-
-_ResultModel = TypeVar("_ResultModel", bound=BaseModel)
-
-
-class _LazyStructuredAgentModel:
-    """Keep non-Agent APIs available until the first real Agent message."""
-
-    provider_name = "ark"
-
-    def __init__(self, *, model: str, request_timeout_seconds: float) -> None:
-        self.model_name = model
-        self._request_timeout_seconds = request_timeout_seconds
-        self._delegate: ArkMultimodalModel | None = None
-        self._lock = Lock()
-
-    def generate(
-        self,
-        inputs: Sequence[MultimodalInput],
-        *,
-        schema_name: str,
-        result_type: type[_ResultModel],
-    ) -> _ResultModel:
-        delegate = self._delegate
-        if delegate is None:
-            with self._lock:
-                delegate = self._delegate
-                if delegate is None:
-                    delegate = ArkMultimodalModel(
-                        self.model_name,
-                        request_timeout_seconds=self._request_timeout_seconds,
-                    )
-                    self._delegate = delegate
-        return delegate.generate(
-            inputs,
-            schema_name=schema_name,
-            result_type=result_type,
-        )
+        client = Ark.volc(timeout=self._request_timeout_seconds, max_retries=0)
+        try:
+            delegate = DoubaoMultimodalEmbedder(
+                self._model, output_dimensionality=self._dimensions,
+                fps=self._fps, client=client,
+            )
+            return delegate.embed_query(query)
+        finally:
+            client.close()

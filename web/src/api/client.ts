@@ -1,4 +1,10 @@
 import type {
+  AgentAnswerEvent,
+  AgentConversationView,
+  AgentMessageEventView,
+  AgentMessageSendView,
+  AgentMessageView,
+  AgentSessionView,
   ApiErrorPayload,
   ParseJobView,
   SeriesCreateRequest,
@@ -152,10 +158,169 @@ export function searchVideos(
   });
 }
 
-export function videoContentUrl(videoId: string): string {
+export function createAgentSession(idempotencyKey: string): Promise<AgentSessionView> {
+  return requestJson("/api/agent/sessions/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, name: "画面札记" }),
+  });
+}
+
+export function listAgentSessions(): Promise<AgentSessionView[]> {
+  return requestJson(`/api/agent/sessions/list?workspaceId=${WORKSPACE_QUERY}`);
+}
+
+export function getAgentSession(sessionId: string): Promise<AgentSessionView> {
+  return requestJson(`/api/agent/sessions/get?sessionId=${encodeURIComponent(sessionId)}&workspaceId=${WORKSPACE_QUERY}`);
+}
+
+export function createAgentConversation(
+  sessionId: string,
+  seriesId: string,
+  idempotencyKey: string,
+): Promise<AgentConversationView> {
+  return requestJson(`/api/agent/conversations/create?sessionId=${encodeURIComponent(sessionId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, title: "画面问询", seriesIds: [seriesId] }),
+  });
+}
+
+export function listAgentConversations(sessionId: string): Promise<AgentConversationView[]> {
+  return requestJson(`/api/agent/conversations/list?sessionId=${encodeURIComponent(sessionId)}&workspaceId=${WORKSPACE_QUERY}`);
+}
+
+export function getAgentConversation(conversationId: string): Promise<AgentConversationView> {
+  return requestJson(`/api/agent/conversations/get?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}`);
+}
+
+export function listAgentMessages(conversationId: string, afterSequenceNo = -1): Promise<AgentMessageView[]> {
+  return requestJson(`/api/agent/messages/list?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}&afterSequenceNo=${afterSequenceNo}&limit=500`);
+}
+
+export function agentMessagesEventsUrl(conversationId: string): string {
+  return apiUrl(`/api/agent/messages/events?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}`);
+}
+
+export function subscribeAgentMessages(
+  conversationId: string,
+  onSnapshot: (snapshot: AgentMessageEventView) => void,
+): () => void {
+  const source = new EventSource(agentMessagesEventsUrl(conversationId));
+  source.addEventListener("messages", (event) => {
+    let snapshot: AgentMessageEventView;
+    try { snapshot = JSON.parse((event as MessageEvent<string>).data) as AgentMessageEventView; }
+    catch { return; }
+    if (snapshot?.conversationId === conversationId && Array.isArray(snapshot.messages)) onSnapshot(snapshot);
+  });
+  return () => source.close();
+}
+
+export function sendAgentMessage(
+  conversationId: string,
+  content: string,
+  idempotencyKey: string,
+  topK = 10,
+): Promise<AgentMessageSendView> {
+  return requestJson(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, topK }),
+  });
+}
+
+export async function streamAgentMessage(
+  conversationId: string,
+  content: string,
+  idempotencyKey: string,
+  onEvent: (event: AgentAnswerEvent) => void,
+  signal: AbortSignal,
+  topK = 10,
+): Promise<void> {
+  const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`), {
+    method: "POST",
+    headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, topK }),
+    signal,
+  });
+  if (!response.ok) throw new ApiClientError(response.status, await readError(response));
+  if (!response.body || !response.headers.get("Content-Type")?.includes("text/event-stream")) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("服务未返回回答事件流");
+  }
+  await consumeEventStream(response.body, (type, data) => {
+    if (!type.startsWith("answer.")) return;
+    const event = { ...JSON.parse(data), type } as AgentAnswerEvent;
+    if (!Number.isInteger(event.sequence) || event.sequence <= 0) return;
+    if (event.conversationId === conversationId) onEvent(event);
+  }, signal);
+}
+
+async function consumeEventStream(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (type: string, data: string) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  signal.throwIfAborted();
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let pending = "";
+  let type = "message";
+  let data: string[] = [];
+  let ended = false;
+  const dispatch = () => {
+    if (data.length) onEvent(type, data.join("\n"));
+    type = "message";
+    data = [];
+  };
+  const line = (value: string) => {
+    if (!value) { dispatch(); return; }
+    if (value.startsWith(":")) return;
+    const colon = value.indexOf(":");
+    const field = colon < 0 ? value : value.slice(0, colon);
+    let content = colon < 0 ? "" : value.slice(colon + 1);
+    if (content.startsWith(" ")) content = content.slice(1);
+    if (field === "event") type = content;
+    if (field === "data") data.push(content);
+  };
+  const drain = (final: boolean) => {
+    let start = 0;
+    for (let index = 0; index < pending.length; index++) {
+      const char = pending[index];
+      if (char !== "\r" && char !== "\n") continue;
+      if (char === "\r" && index === pending.length - 1 && !final) break;
+      line(pending.slice(start, index));
+      if (char === "\r" && pending[index + 1] === "\n") index++;
+      start = index + 1;
+    }
+    pending = pending.slice(start);
+    if (final) {
+      if (pending) line(pending);
+      dispatch();
+    }
+  };
+  const abort = () => { void reader.cancel().catch(() => undefined); };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    while (true) {
+      signal.throwIfAborted();
+      const { value, done } = await reader.read();
+      signal.throwIfAborted();
+      pending += decoder.decode(value, { stream: !done });
+      drain(done);
+      if (done) { ended = true; break; }
+    }
+  } finally {
+    signal.removeEventListener("abort", abort);
+    if (!ended) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+export function videoContentUrl(videoId: string, workspaceId = WORKSPACE_ID): string {
   return apiUrl(
     `/api/videos/content?videoId=${encodeURIComponent(videoId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}`,
+      `&workspaceId=${encodeURIComponent(workspaceId)}`,
   );
 }
 

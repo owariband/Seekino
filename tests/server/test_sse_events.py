@@ -316,3 +316,50 @@ def test_job_sse_emits_terminal_snapshot_then_closes(
         [] if already_terminal else [(terminal.job.job_id, _WORKSPACE_ID)]
     )
     assert clock.sleeps == ([] if already_terminal else [1.0])
+
+
+class _AnswerExecution:
+    def __init__(self, events, clock):
+        self.events = list(events)
+        self.clock = clock
+        self.detached = False
+
+    def next_event(self, timeout):
+        from queue import Empty
+        self.clock.now += timeout
+        event = self.events.pop(0) if self.events else None
+        if event == "idle":
+            raise Empty
+        return event
+
+    def detach(self):
+        self.detached = True
+
+
+def test_answer_stream_whitelists_events_keeps_alive_and_detaches(monkeypatch):
+    clock = _Clock()
+    _patch_runtime(monkeypatch, agent_api, clock)
+    execution = _AnswerExecution([
+        {"type": "internal.plan", "private": "hidden"},
+        "idle", "idle",
+        {"type": "answer.delta", "conversationId": _CONVERSATION_ID,
+         "messageId": "message-1", "sequence": 1, "delta": "用户正文"},
+        None,
+    ], clock)
+    events = asyncio.run(_collect(agent_api._answer_events(
+        _Request(100), execution,
+        SSEConfig(poll_interval_seconds=0.1, keepalive_interval_seconds=2),
+    )))
+    assert execution.detached
+    assert events[0] == ": keep-alive\n\n"
+    assert len(events) == 2 and events[1].startswith("event: answer.delta\nid: message-1:1\n")
+    assert _payload(events[1])["delta"] == "用户正文"
+    assert "hidden" not in "".join(events)
+
+
+def test_answer_stream_disconnect_only_detaches_consumer(monkeypatch):
+    clock = _Clock()
+    _patch_runtime(monkeypatch, agent_api, clock)
+    execution = _AnswerExecution([], clock)
+    events = asyncio.run(_collect(agent_api._answer_events(_Request(1), execution, SSEConfig())))
+    assert events == [] and execution.detached

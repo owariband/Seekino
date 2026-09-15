@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any
 
 _OUTPUT_CONTENT_FILTER_CODES = frozenset(
@@ -42,6 +43,41 @@ class ContentFilterError(SSEProxyError):
 
 
 def request_sse_json(responses: Any, **request: Any) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for _ in _request_sse_text(
+        responses, allow_terminal_text=True, metadata=metadata, **request
+    ):
+        pass
+    output_text = metadata["output_text"]
+    try:
+        payload = json.loads(output_text)
+    except json.JSONDecodeError as error:
+        raise SSEProxyError(
+            f"Ark Responses SSE returned invalid JSON at char {error.pos}",
+            response_id=metadata.get("response_id"),
+            partial_output_chars=len(output_text),
+        ) from error
+    if not isinstance(payload, dict):
+        raise SSEProxyError(
+            "Ark Responses SSE JSON root must be an object",
+            response_id=metadata.get("response_id"),
+            partial_output_chars=len(output_text),
+        )
+    return payload
+
+
+def request_sse_text(responses: Any, **request: Any) -> Iterator[str]:
+    """Yield original provider deltas; exhaustion means completion was verified."""
+    yield from _request_sse_text(responses, allow_terminal_text=False, **request)
+
+
+def _request_sse_text(
+    responses: Any,
+    *,
+    allow_terminal_text: bool,
+    metadata: dict[str, Any] | None = None,
+    **request: Any,
+) -> Iterator[str]:
     try:
         stream = responses.create(stream=True, **request)
     except Exception as error:
@@ -57,6 +93,7 @@ def request_sse_json(responses: Any, **request: Any) -> dict[str, Any]:
             ) from error
         raise
     text_parts: dict[tuple[int, str, int], list[str]] = {}
+    emitted_parts: list[str] = []
     done_texts: dict[tuple[int, str, int], str] = {}
     completed_response: object | None = None
     response_id: str | None = None
@@ -77,6 +114,8 @@ def request_sse_json(responses: Any, **request: Any) -> dict[str, Any]:
 
             response = getattr(event, "response", None)
             response_id = getattr(response, "id", None) or response_id
+            if metadata is not None:
+                metadata["response_id"] = response_id
 
             if event_type == "response.output_text.delta":
                 key = (
@@ -86,7 +125,11 @@ def request_sse_json(responses: Any, **request: Any) -> dict[str, Any]:
                 )
                 delta = getattr(event, "delta", None)
                 if delta:
+                    if not isinstance(delta, str):
+                        raise SSEProxyError("Responses SSE delta must be text")
                     text_parts.setdefault(key, []).append(delta)
+                    emitted_parts.append(delta)
+                    yield delta
                 continue
 
             if event_type == "response.output_text.done":
@@ -101,6 +144,13 @@ def request_sse_json(responses: Any, **request: Any) -> dict[str, Any]:
                 continue
 
             if event_type == "response.completed":
+                status = getattr(response, "status", None)
+                if status not in {None, "completed"}:
+                    raise SSEProxyError(
+                        f"Responses SSE completed event has status {status}",
+                        response_id=response_id,
+                        partial_output_chars=_output_length(text_parts),
+                    )
                 completed_response = response
                 break
 
@@ -179,21 +229,22 @@ def request_sse_json(responses: Any, **request: Any) -> dict[str, Any]:
             response_id=response_id,
         )
 
-    try:
-        payload = json.loads(output_text)
-    except json.JSONDecodeError as error:
+    if metadata is not None:
+        metadata["output_text"] = output_text
+    if not text_parts:
+        if allow_terminal_text:
+            yield output_text
+            return
         raise SSEProxyError(
-            f"Ark Responses SSE returned invalid JSON at char {error.pos}",
+            "Responses SSE returned no text deltas",
             response_id=response_id,
-            partial_output_chars=len(output_text),
-        ) from error
-    if not isinstance(payload, dict):
-        raise SSEProxyError(
-            "Ark Responses SSE JSON root must be an object",
-            response_id=response_id,
-            partial_output_chars=len(output_text),
         )
-    return payload
+    if not allow_terminal_text and output_text != "".join(emitted_parts):
+        raise SSEProxyError(
+            "Responses SSE output differs from emitted text deltas",
+            response_id=response_id,
+            partial_output_chars=_output_length(text_parts),
+        )
 
 
 def _output_length(
@@ -232,4 +283,7 @@ def _extract_response_text(response: object) -> str:
             text = getattr(content, "text", None)
             if text:
                 texts.append(text)
-    return "".join(texts)
+    if texts:
+        return "".join(texts)
+    output_text = getattr(response, "output_text", None)
+    return output_text if isinstance(output_text, str) else ""

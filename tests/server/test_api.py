@@ -10,6 +10,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from server.api.app import create_app
+from server.agent.runtime import AgentRuntime
 from server.api.jobs import _job_event_fingerprint, _job_view
 from server.bootstrap import ApplicationServices
 from server.database import (
@@ -24,7 +25,7 @@ from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
 from server.repository.upload import UploadRepository
 from server.schema import AgentReply, VideoChunkSearchResult
-from server.service.agent import AgentConversationService
+from server.service.agent_chat import AgentChatService
 from server.service.job import ParseJobService
 from server.service.library import LibraryService
 from server.service.media import MediaService
@@ -55,23 +56,23 @@ class _AgentModelStub:
     model_name: str
     provider_name: str = "test"
 
+    def run_query(self, _prompt, *, tools, result_type, max_model_calls, **_kwargs):
+        tools[0].invoke({"query": "她为什么哭", "top_k": 5})
+        return result_type.model_validate({
+            "plan_context": "召回哭泣的片段并检查画面和对白。",
+            "message": "没有找到可以核验的候选画面。",
+            "selected_video_chunk_ids": [],
+        })
+
+    def stream_text(self, _inputs):
+        yield "没有找到"
+        yield "可以核验的候选画面。"
+
     def generate(self, _inputs, *, schema_name: str, result_type):
-        payloads = {
-            "anivag_retrieval_intent": {
-                "retrieval_query": "她为什么哭",
-                "top_k": 5,
-            },
-            "anivag_answer_evaluation": {
-                "approved": True,
-                "feedback": "回答与证据一致，可以交付。",
-                "corrected_query": None,
-            },
-            "anivag_chat_answer": {
-                "message": "没有找到可以核验的候选画面。",
-                "selected_video_chunk_ids": [],
-            },
-        }
-        return result_type.model_validate(payloads[schema_name])
+        assert schema_name == "anivag_answer_evaluation"
+        return result_type.model_validate({
+            "action": "complete", "advice": "回答与证据一致，可以交付。",
+        })
 
 
 def _client(tmp_path: Path):
@@ -88,12 +89,15 @@ def _client(tmp_path: Path):
     library = LibraryService(LibraryRepository(session_factory))
     job_repository = ParseJobRepository(session_factory)
     retrieval = _RetrievalStub([])
-    agent = AgentConversationService(
+    agent = AgentChatService(
         AgentRepository(session_factory),
         library,
-        retrieval,  # type: ignore[arg-type]
-        _AgentModelStub("chat-model-v1"),
-        _AgentModelStub("evaluator-model-v1"),
+        AgentRuntime(
+            _AgentModelStub("query-model-v1"),
+            _AgentModelStub("evaluator-model-v1"),
+            _AgentModelStub("chat-model-v1"),
+            retrieval.search,
+        ),
     )
     services = ApplicationServices(
         library=library,
@@ -555,3 +559,218 @@ def test_upload_protocol_errors_do_not_require_business_data(
         content=data,
     )
     assert response.status_code == expected_status
+
+
+def _create_agent_conversation(client, series_id):
+    session = client.post(
+        "/api/agent/sessions/create", headers={"Idempotency-Key": "session-stream"},
+        json={"name": "流式会话"},
+    ).json()
+    response = client.post(
+        "/api/agent/conversations/create", params={"sessionId": session["sessionId"]},
+        headers={"Idempotency-Key": "conversation-stream"},
+        json={"seriesIds": [series_id]},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["conversationId"]
+
+
+def _answer_payloads(text):
+    import json
+    return [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: ")]
+
+
+def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
+    client, retrieval, _ = _client(tmp_path)
+    conversation_id = _create_agent_conversation(client, _create_series(client))
+    kwargs = {
+        "params": {"conversationId": conversation_id},
+        "headers": {"Accept": "text/event-stream", "Idempotency-Key": "stream-message"},
+        "json": {"content": "找哭泣的画面", "topK": 5},
+    }
+    response = client.post("/api/agent/messages/send", **kwargs)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _answer_payloads(response.text)
+    assert [event["type"] for event in events] == [
+        "answer.started", "answer.evidence", "answer.delta", "answer.delta", "answer.completed",
+    ]
+    assert [event["sequence"] for event in events] == [1, 2, 3, 4, 5]
+    assert all(event["conversationId"] == conversation_id for event in events)
+    assert len({event["messageId"] for event in events}) == 1
+    assert events[0]["assistantMessage"]["status"] == "PROCESSING"
+    assert events[0]["assistantMessage"]["content"] is None
+    assert events[0]["userMessage"]["modelName"] is None
+    final = events[-1]["assistantMessage"]
+    assert final["status"] == "COMPLETED"
+    assert final["content"] == "".join(event["delta"] for event in events if event["type"] == "answer.delta")
+    persisted = client.get("/api/agent/messages/list", params={"conversationId": conversation_id}).json()
+    assert final == persisted[-1]
+    replay = _answer_payloads(client.post("/api/agent/messages/send", **kwargs).text)
+    assert [event["type"] for event in replay] == ["answer.started", "answer.completed"]
+    assert replay[-1]["messageId"] == final["messageId"]
+    assert len(retrieval.calls) == 1
+    content = client.get("/openapi.json").json()["paths"]["/api/agent/messages/send"]["post"]["responses"]["200"]["content"]
+    assert {"application/json", "text/event-stream"}.issubset(content)
+    client.app.state.services.agent.close()
+
+
+def test_rejected_loop_sends_failed_event_and_json_maps_harness_error(tmp_path):
+    client, _, _ = _client(tmp_path)
+    conversation_id = _create_agent_conversation(client, _create_series(client))
+    runtime = client.app.state.services.agent._runtime
+
+    class RejectModel:
+        model_name = "reject-model"
+        def generate(self, _inputs, *, schema_name, result_type):
+            return result_type.model_validate({"action": "continue", "advice": "需要重新找摔杯子的片段。"})
+
+    runtime._evaluator_model = RejectModel()
+    def forbidden_chat(_inputs):
+        raise AssertionError("rejected draft reached final Chat")
+    runtime._chat_model.stream_text = forbidden_chat
+    response = client.post(
+        "/api/agent/messages/send", params={"conversationId": conversation_id},
+        headers={"Accept": "text/event-stream", "Idempotency-Key": "rejected-stream"},
+        json={"content": "找摔杯子的画面"},
+    )
+    events = _answer_payloads(response.text)
+    assert [event["type"] for event in events] == ["answer.started", "answer.failed"]
+    assert events[-1]["code"] == "AGENT_MODEL_ERROR"
+    assert events[-1]["assistantMessage"]["status"] == "FAILED"
+    assert "after 3 turns" in events[-1]["message"]
+    json_response = client.post(
+        "/api/agent/messages/send", params={"conversationId": conversation_id},
+        headers={"Idempotency-Key": "rejected-json"}, json={"content": "重试"},
+    )
+    assert json_response.status_code == 502
+    assert json_response.json()["code"] == "AGENT_MODEL_ERROR"
+    outside = client.post(
+        "/api/agent/messages/send", params={"conversationId": conversation_id},
+        headers={"Accept": "text/event-stream", "Idempotency-Key": "outside"},
+        json={"content": "隔离", "workspaceId": "other-workspace"},
+    )
+    assert outside.status_code == 404
+    client.app.state.services.agent.close()
+
+
+def test_asgi_delivers_first_delta_before_provider_finishes(tmp_path):
+    import asyncio
+    import json
+    from threading import Event
+
+    client, _, _ = _client(tmp_path)
+    conversation_id = _create_agent_conversation(client, _create_series(client))
+    service = client.app.state.services.agent
+    release = Event()
+
+    def blocked_provider(_inputs):
+        yield "第一段"
+        assert release.wait(5), "test did not release Provider"
+        yield "第二段"
+    service._runtime._chat_model.stream_text = blocked_provider
+    body = json.dumps({"content": "找画面"}).encode()
+
+    async def exercise():
+        first_delta = asyncio.Event()
+        request_done = False
+        never_disconnected = asyncio.Event()
+        output = []
+
+        async def receive():
+            nonlocal request_done
+            if not request_done:
+                request_done = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await never_disconnected.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            output.append(message)
+            if message["type"] == "http.response.body" and b"event: answer.delta" in message.get("body", b""):
+                first_delta.set()
+
+        scope = {
+            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "http_version": "1.1", "method": "POST", "scheme": "http",
+            "path": "/api/agent/messages/send", "raw_path": b"/api/agent/messages/send",
+            "root_path": "", "query_string": f"conversationId={conversation_id}".encode(),
+            "headers": [(b"content-type", b"application/json"), (b"accept", b"text/event-stream"), (b"idempotency-key", b"live-asgi")],
+            "client": ("127.0.0.1", 10000), "server": ("testserver", 80),
+        }
+        task = asyncio.create_task(client.app(scope, receive, send))
+        try:
+            await asyncio.wait_for(first_delta.wait(), timeout=3)
+            assert not release.is_set() and not task.done()
+            assert service.list_all_messages(conversation_id, workspace_id="local-default")[-1].status == "PROCESSING"
+        finally:
+            release.set()
+        await asyncio.wait_for(task, timeout=3)
+        events = _answer_payloads(b"".join(message.get("body", b"") for message in output if message["type"] == "http.response.body").decode())
+        assert [event["delta"] for event in events if event["type"] == "answer.delta"] == ["第一段", "第二段"]
+        assert events[-1]["assistantMessage"]["content"] == "第一段第二段"
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        service.close()
+
+
+@pytest.mark.parametrize("accept,expected", [
+    ("text/event-stream;q=0", "application/json"),
+    ("application/json;q=1,text/event-stream;q=0.5", "application/json"),
+    ("application/json;q=0.5,text/event-stream;q=1", "text/event-stream"),
+])
+def test_send_respects_accept_quality(tmp_path, accept, expected):
+    client, _, _ = _client(tmp_path)
+    conversation_id = _create_agent_conversation(client, _create_series(client))
+    response = client.post(
+        "/api/agent/messages/send", params={"conversationId": conversation_id},
+        headers={"Accept": accept, "Idempotency-Key": "accept-message"},
+        json={"content": "找画面"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith(expected)
+    client.app.state.services.agent.close()
+
+
+@pytest.mark.parametrize("failure,expected_status,expected_code", [
+    ("not-ready", 409, "CONFLICT"),
+    ("missing-scope", 404, "NOT_FOUND"),
+    ("index-inconsistent", 409, "CONFLICT"),
+])
+def test_retrieval_domain_errors_keep_http_mapping_through_harness(tmp_path, failure, expected_status, expected_code):
+    from server.repository.video import SeriesNotReadyError, SeriesScopeNotFoundError
+    from server.service.video_retrieval import RetrievalIndexConsistencyError
+    client, _, _ = _client(tmp_path)
+    conversation_id = _create_agent_conversation(client, _create_series(client))
+    error_type = {
+        "not-ready": SeriesNotReadyError,
+        "missing-scope": SeriesScopeNotFoundError,
+        "index-inconsistent": RetrievalIndexConsistencyError,
+    }[failure]
+    def failed_search(*_args, **_kwargs):
+        raise error_type("retrieval source unavailable")
+    service = client.app.state.services.agent
+    service._runtime._retrieve = failed_search
+    try:
+        response = client.post(
+            "/api/agent/messages/send", params={"conversationId": conversation_id},
+            headers={"Idempotency-Key": "retrieval-error"}, json={"content": "找画面"},
+        )
+        assert response.status_code == expected_status
+        assert response.json()["code"] == expected_code
+        failed = service.list_all_messages(conversation_id, workspace_id="local-default")[-1]
+        assert failed.status == "FAILED" and failed.last_error.startswith(error_type.__name__)
+        response = client.post(
+            "/api/agent/messages/send", params={"conversationId": conversation_id},
+            headers={"Accept": "text/event-stream", "Idempotency-Key": "retrieval-stream-error"},
+            json={"content": "再找画面"},
+        )
+        events = _answer_payloads(response.text)
+        assert [event["type"] for event in events] == ["answer.started", "answer.failed"]
+        assert events[-1]["code"] == "AGENT_EXECUTION_ERROR"
+        assert events[-1]["assistantMessage"]["status"] == "FAILED"
+    finally:
+        service.close()

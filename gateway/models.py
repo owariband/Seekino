@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import mimetypes
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar
@@ -12,7 +13,7 @@ from arkruntime import Ark
 from openai import APIError, OpenAI
 from pydantic import BaseModel
 
-from .sse_proxy import request_sse_json
+from .sse_proxy import request_sse_json, request_sse_text
 
 _MAX_ARK_INLINE_MEDIA_BYTES = 45 * 1024 * 1024
 _MAX_DEEPSEEK_INLINE_IMAGE_BYTES = 32 * 1024 * 1024
@@ -68,6 +69,17 @@ class MultimodalModel(Protocol):
     ) -> _ResultModel: ...
 
 
+class StructuredAgentModel(MultimodalModel, Protocol):
+    """Structured model calls shared by the agent harness and parser."""
+
+
+class StreamingChatModel(Protocol):
+    provider_name: str
+    model_name: str
+
+    def stream_text(self, inputs: Sequence[MultimodalInput]) -> Iterator[str]: ...
+
+
 class ArkMultimodalModel:
     """Send typed multimodal inputs through Ark Responses SSE."""
 
@@ -78,20 +90,20 @@ class ArkMultimodalModel:
         model: str,
         *,
         request_timeout_seconds: float | None = None,
+        max_output_tokens: int | None = None,
         client: Ark | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
         if request_timeout_seconds is not None and request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be greater than zero")
+        if max_output_tokens is not None and max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be greater than zero")
 
         self.model_name = model
-        if client is not None:
-            self._client = client
-        elif request_timeout_seconds is not None:
-            self._client = Ark.volc(timeout=request_timeout_seconds)
-        else:
-            self._client = Ark.volc()
+        self.max_output_tokens = max_output_tokens
+        self._request_timeout_seconds = request_timeout_seconds
+        self._client = client
 
     def generate(
         self,
@@ -134,8 +146,7 @@ class ArkMultimodalModel:
                     }
                 )
 
-        payload = request_sse_json(
-            self._client.responses,
+        request: dict[str, Any] = dict(
             model=self.model_name,
             input=[{"role": "user", "content": content}],
             text={
@@ -147,7 +158,37 @@ class ArkMultimodalModel:
                 }
             },
         )
+        if self.max_output_tokens is not None:
+            request["max_output_tokens"] = self.max_output_tokens
+        client = self._client or self._new_client()
+        try:
+            payload = request_sse_json(client.responses, **request)
+        finally:
+            if self._client is None:
+                client.close()
         return result_type.model_validate(payload)
+
+    def _new_client(self) -> Ark:
+        # Ark documents its client as thread unsafe: never share one across Kicks.
+        options: dict[str, Any] = {"max_retries": 0}
+        if self._request_timeout_seconds is not None:
+            options["timeout"] = self._request_timeout_seconds
+        return Ark.volc(**options)
+
+    def stream_text(self, inputs: Sequence[MultimodalInput]) -> Iterator[str]:
+        content = _text_only_inputs(inputs, input_type="input_text")
+        request: dict[str, Any] = {
+            "model": self.model_name,
+            "input": [{"role": "user", "content": content}],
+        }
+        if self.max_output_tokens is not None:
+            request["max_output_tokens"] = self.max_output_tokens
+        client = self._client or self._new_client()
+        try:
+            yield from request_sse_text(client.responses, **request)
+        finally:
+            if self._client is None:
+                client.close()
 
 
 class DeepSeekModelError(RuntimeError):
@@ -271,6 +312,22 @@ class DeepSeekMultimodalModel:
                 f"DeepSeek output does not match schema {schema_name}"
             ) from error
 
+    def stream_text(self, inputs: Sequence[MultimodalInput]) -> Iterator[str]:
+        content = _text_only_inputs(inputs, input_type="input_text")
+        try:
+            yield from request_sse_text(
+                self._client.responses,
+                model=self.model_name,
+                input=[{"role": "user", "content": content}],
+                reasoning={"effort": self.reasoning_effort},
+                temperature=0,
+                max_output_tokens=self.max_output_tokens,
+            )
+        except APIError as error:
+            raise DeepSeekModelError(
+                f"DeepSeek request failed for model {self.model_name}: {error}"
+            ) from error
+
 
 class OllamaModelError(RuntimeError):
     """The Ollama request failed or returned invalid structured output."""
@@ -381,6 +438,16 @@ class OllamaMultimodalModel:
             raise OllamaModelError(
                 f"Ollama output does not match schema {schema_name}"
             ) from error
+
+    def stream_text(self, inputs: Sequence[MultimodalInput]) -> Iterator[str]:
+        yield from _stream_chat_completion(
+            self._client,
+            base_url=self.base_url,
+            model=self.model_name,
+            max_output_tokens=self.max_output_tokens,
+            inputs=inputs,
+            error_type=OllamaModelError,
+        )
 
 
 class LlamaCppModelError(RuntimeError):
@@ -515,6 +582,82 @@ class LlamaCppMultimodalModel:
             raise LlamaCppModelError(
                 f"llama.cpp output does not match schema {schema_name}"
             ) from error
+
+    def stream_text(self, inputs: Sequence[MultimodalInput]) -> Iterator[str]:
+        yield from _stream_chat_completion(
+            self._client,
+            base_url=self.base_url,
+            model=self.model_name,
+            max_output_tokens=self.max_output_tokens,
+            inputs=inputs,
+            error_type=LlamaCppModelError,
+        )
+
+
+def _text_only_inputs(
+    inputs: Sequence[MultimodalInput], *, input_type: str
+) -> list[dict[str, object]]:
+    if not inputs or any(not isinstance(item, TextInput) for item in inputs):
+        raise ValueError("agent text calls require non-empty TextInput values")
+    return [{"type": input_type, "text": item.text} for item in inputs]
+
+
+def _stream_chat_completion(
+    client: httpx.Client,
+    *,
+    base_url: str,
+    model: str,
+    max_output_tokens: int,
+    inputs: Sequence[MultimodalInput],
+    error_type: type[RuntimeError],
+) -> Iterator[str]:
+    content = _text_only_inputs(inputs, input_type="text")
+    finished = False
+    output_chars = 0
+    try:
+        with client.stream(
+            "POST",
+            f"{base_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": content}],
+                "max_tokens": max_output_tokens,
+                "temperature": 0,
+                "stream": True,
+            },
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    if not finished or output_chars == 0:
+                        raise error_type("chat stream ended without completed text")
+                    return
+                payload = json.loads(data)
+                if payload.get("error"):
+                    raise error_type("chat stream returned a provider error")
+                choices = payload.get("choices", [])
+                if not choices:
+                    continue  # optional usage-only envelope
+                choice = choices[0]
+                finish_reason = choice.get("finish_reason")
+                if finish_reason is not None and finish_reason != "stop":
+                    raise error_type(f"chat stream did not complete: {finish_reason}")
+                delta = choice.get("delta", {}).get("content")
+                if delta:
+                    if finished or not isinstance(delta, str):
+                        raise error_type("chat stream returned an invalid text delta")
+                    output_chars += len(delta)
+                    yield delta
+                if finish_reason == "stop":
+                    finished = True
+    except httpx.HTTPError as error:
+        raise error_type(f"chat stream request failed for model {model}") from error
+    except (ValueError, TypeError, AttributeError, IndexError) as error:
+        raise error_type("chat stream returned an invalid envelope") from error
+    raise error_type("chat stream ended without a terminal event")
 
 
 def _validate_generate_request(

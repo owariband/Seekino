@@ -35,6 +35,13 @@ def test_server_settings_load_upload_parse_agent_and_worker_defaults(monkeypatch
     assert settings.agent.history_message_limit == 12
     assert settings.agent.default_top_k == 8
     assert settings.agent.maximum_top_k == 20
+    assert settings.agent.max_loop_turns == 3
+    assert settings.agent.max_model_calls_per_turn == 6
+    assert settings.agent.max_tool_calls_per_turn == 4
+    assert settings.agent.max_output_tokens == 4096
+    assert settings.agent.execution_timeout_seconds == 180
+    assert settings.agent.maximum_concurrent_kicks == 4
+    assert settings.agent_query_model is None
     assert settings.agent_chat_model is None
     assert settings.agent_evaluator_model is None
     assert settings.worker_heartbeat_interval < settings.worker_lease_duration
@@ -124,4 +131,45 @@ def test_server_settings_reject_agent_default_above_maximum(monkeypatch) -> None
     monkeypatch.setenv("ANIVAG_AGENT_MAX_TOP_K", "20")
 
     with pytest.raises(ValueError, match="must be at least"):
+        ServerSettings.from_environment()
+
+
+def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
+    _clean_anivag_environment(monkeypatch)
+    overrides = {
+        "ANIVAG_AGENT_QUERY_MODEL": "query-model",
+        "ANIVAG_AGENT_EVALUATOR_MODEL": "review-model",
+        "ANIVAG_AGENT_CHAT_MODEL": "output-model",
+        "ANIVAG_AGENT_MAX_LOOP_TURNS": "2",
+        "ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN": "5",
+        "ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN": "3",
+        "ANIVAG_AGENT_MAX_OUTPUT_TOKENS": "2048",
+        "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS": "90",
+        "ANIVAG_AGENT_MAX_CONCURRENT_KICKS": "2",
+    }
+    for name, value in overrides.items():
+        monkeypatch.setenv(name, value)
+    settings = ServerSettings.from_environment()
+    assert (settings.agent_query_model, settings.agent_evaluator_model, settings.agent_chat_model) == ("query-model", "review-model", "output-model")
+    assert settings.agent.max_loop_turns == 2
+    assert settings.agent.max_model_calls_per_turn == 5
+    assert settings.agent.max_tool_calls_per_turn == 3
+    assert settings.agent.max_output_tokens == 2048
+    assert settings.agent.execution_timeout_seconds == 90
+    assert settings.agent.maximum_concurrent_kicks == 2
+
+
+@pytest.mark.parametrize("name,value", [
+    ("ANIVAG_AGENT_MAX_LOOP_TURNS", "4"),
+    ("ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN", "0"),
+    ("ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN", "0"),
+    ("ANIVAG_AGENT_MAX_OUTPUT_TOKENS", "0"),
+    ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "nan"),
+    ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "0"),
+    ("ANIVAG_AGENT_MAX_CONCURRENT_KICKS", "0"),
+])
+def test_invalid_agent_execution_budget_is_rejected(monkeypatch, name, value):
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError):
         ServerSettings.from_environment()

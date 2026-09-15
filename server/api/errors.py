@@ -24,7 +24,7 @@ from ..repository.video import (
     SeriesScopeNotFoundError,
     VideoChunkNotFoundError,
 )
-from ..service.agent import AgentModelInvocationError
+from ..agent.state import AgentModelInvocationError
 from ..service.upload import UploadChecksumMismatchError
 from ..service.video_retrieval import RetrievalIndexConsistencyError
 from ..storage.artifact import ArtifactIntegrityError

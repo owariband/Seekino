@@ -45,6 +45,7 @@ class ServerSettings:
     database_pool_recycle_seconds: int = 3600
     video_embedding_model: str | None = None
     video_embedding_fps: float | None = None
+    agent_query_model: str | None = None
 
     @classmethod
     def from_environment(cls) -> "ServerSettings":
@@ -194,7 +195,30 @@ class ServerSettings:
                 ),
                 default_top_k=agent_default_top_k,
                 maximum_top_k=agent_maximum_top_k,
+                max_loop_turns=_environment_int(
+                    "ANIVAG_AGENT_MAX_LOOP_TURNS", agent_defaults.max_loop_turns,
+                ),
+                max_model_calls_per_turn=_environment_int(
+                    "ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN",
+                    agent_defaults.max_model_calls_per_turn,
+                ),
+                max_tool_calls_per_turn=_environment_int(
+                    "ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN",
+                    agent_defaults.max_tool_calls_per_turn,
+                ),
+                max_output_tokens=_environment_int(
+                    "ANIVAG_AGENT_MAX_OUTPUT_TOKENS", agent_defaults.max_output_tokens,
+                ),
+                execution_timeout_seconds=_environment_float(
+                    "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS",
+                    agent_defaults.execution_timeout_seconds,
+                ),
+                maximum_concurrent_kicks=_environment_int(
+                    "ANIVAG_AGENT_MAX_CONCURRENT_KICKS",
+                    agent_defaults.maximum_concurrent_kicks,
+                ),
             ),
+            agent_query_model=_optional_environment("ANIVAG_AGENT_QUERY_MODEL"),
             agent_chat_model=_optional_environment("ANIVAG_AGENT_CHAT_MODEL"),
             agent_evaluator_model=_optional_environment(
                 "ANIVAG_AGENT_EVALUATOR_MODEL"

@@ -224,3 +224,73 @@ export interface VideoSearchRequest {
   seriesIds: string[];
   topK: number;
 }
+
+export interface AgentSessionView {
+  sessionId: string;
+  workspaceId: string;
+  name: string;
+  conversationCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentConversationView {
+  conversationId: string;
+  sessionId: string;
+  workspaceId: string;
+  title: string;
+  seriesIds: string[];
+  messageCount: number;
+  lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentMessageView {
+  messageId: string;
+  conversationId: string;
+  sequenceNo: number;
+  role: "USER" | "ASSISTANT";
+  status: "PROCESSING" | "COMPLETED" | "FAILED";
+  content: string | null;
+  modelName: string | null;
+  replyToMessageId: string | null;
+  retrievalQuery: string | null;
+  searchResult: VideoChunkSearchResult | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentMessageSendView {
+  userMessage: AgentMessageView;
+  assistantMessage: AgentMessageView;
+}
+
+export interface AgentMessageEventView {
+  conversationId: string;
+  messages: AgentMessageView[];
+}
+
+interface AgentAnswerEventBase {
+  conversationId: string;
+  messageId: string;
+  sequence: number;
+}
+
+export type AgentAnswerEvent =
+  | (AgentAnswerEventBase & AgentMessageSendView & {
+      type: "answer.started" | "answer.completed";
+    })
+  | (AgentAnswerEventBase & {
+      type: "answer.evidence";
+      hits: VideoChunkSearchHit[];
+    })
+  | (AgentAnswerEventBase & { type: "answer.delta"; delta: string })
+  | (AgentAnswerEventBase & {
+      type: "answer.failed";
+      code: string;
+      message: string;
+      userMessage?: AgentMessageView;
+      assistantMessage?: AgentMessageView;
+    });

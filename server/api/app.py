@@ -5,6 +5,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 from ..bootstrap import ApplicationServices, build_application_services
 from ..config import ServerSettings
@@ -27,9 +28,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        yield
-        if owns_services:
-            services.close()
+        try:
+            yield
+        finally:
+            if owns_services:
+                await run_in_threadpool(services.close)
 
     app = FastAPI(
         title="AniVAG Server",

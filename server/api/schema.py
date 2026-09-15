@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from ..constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
-from ..schema import ContractModel, VideoChunkSearchResult
+from ..schema import ContractModel, VideoChunkSearchHit, VideoChunkSearchResult
 
 
 class SeriesCreateRequest(ContractModel):
@@ -197,3 +197,39 @@ class AgentMessageSendView(ContractModel):
 class AgentMessageEventView(ContractModel):
     conversation_id: str
     messages: list[AgentMessageView]
+
+
+class AgentAnswerEventView(ContractModel):
+    conversation_id: str
+    message_id: str
+    sequence: int = Field(gt=0)
+
+
+class AgentAnswerStartedView(AgentAnswerEventView):
+    type: Literal["answer.started"] = "answer.started"
+    user_message: AgentMessageView
+    assistant_message: AgentMessageView
+
+
+class AgentAnswerEvidenceView(AgentAnswerEventView):
+    type: Literal["answer.evidence"] = "answer.evidence"
+    hits: list[VideoChunkSearchHit]
+
+
+class AgentAnswerDeltaView(AgentAnswerEventView):
+    type: Literal["answer.delta"] = "answer.delta"
+    delta: str
+
+
+class AgentAnswerCompletedView(AgentAnswerEventView):
+    type: Literal["answer.completed"] = "answer.completed"
+    user_message: AgentMessageView
+    assistant_message: AgentMessageView
+
+
+class AgentAnswerFailedView(AgentAnswerEventView):
+    type: Literal["answer.failed"] = "answer.failed"
+    code: str
+    message: str
+    user_message: AgentMessageView | None = None
+    assistant_message: AgentMessageView | None = None

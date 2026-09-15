@@ -1,85 +1,30 @@
 import { ArrowUp, Bot, Check, MessageCircleMore, Sparkles } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import { errorMessage, searchVideos, WORKSPACE_ID } from "../../api/client";
-import type { VideoChunkSearchHit, VideoChunkSearchResult } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import { clipText, episodeLabel, formatTimeRange } from "../../shared/format";
 import { EvidencePlayer } from "./EvidencePlayer";
 import { explainHit, readableTranscript } from "./explain";
+import { useAgentConversation } from "./useAgentConversation";
 import styles from "./search.module.css";
-
-interface ChatMessage {
-  id: string;
-  role: "agent" | "user";
-  text: string;
-  resultCount?: number;
-  error?: boolean;
-}
 
 export function SearchPage() {
   const { mode, series, selectedSeries, selectedSeriesId, selectSeries } = useWorkspace();
   const [query, setQuery] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "agent",
-      text: "告诉我你记得的人物、对白、动作或氛围。我会召回几段备选画面，并说明每一段为什么值得核验。",
-    },
-  ]);
-  const [result, setResult] = useState<VideoChunkSearchResult | null>(null);
-  const [selectedHit, setSelectedHit] = useState<VideoChunkSearchHit | null>(null);
-  const [searching, setSearching] = useState(false);
+  const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string | null } | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
+  const searchSeriesId = selectedSeries?.status === "READY" ? selectedSeries.seriesId : null;
+  const { conversationId, messages, loading, searching, error, send } = useAgentConversation(searchSeriesId);
+  const latestEvidence = messages.toReversed().find((message) => message.searchResult);
+  const evidenceMessage = selection?.conversationId === conversationId
+    ? messages.find((message) => message.messageId === selection.messageId) ?? latestEvidence
+    : latestEvidence;
+  const result = evidenceMessage?.searchResult ?? null;
+  const selectedHit = (selection?.conversationId === conversationId
+    ? result?.hits.find((hit) => hit.evidence.videoChunkId === selection.chunkId)
+    : null) ?? result?.hits[0] ?? null;
 
-  const searchSeriesId =
-    selectedSeries?.status === "READY" ? selectedSeries.seriesId : null;
-
-  const runSearch = useCallback(async (searchQuery: string) => {
-    const cleanQuery = searchQuery.trim();
-    if (!cleanQuery || searching) return;
-    if (!searchSeriesId) {
-      setMessages((current) => [
-        ...current,
-        { id: crypto.randomUUID(), role: "user", text: cleanQuery },
-        { id: crypto.randomUUID(), role: "agent", text: "当前没有已完成解析的系列。请先上传视频并等待索引完成。", error: true },
-      ]);
-      return;
-    }
-
-    setSearching(true);
-    setQuery("");
-    setMessages((current) => [
-      ...current,
-      { id: crypto.randomUUID(), role: "user", text: cleanQuery },
-    ]);
-    try {
-      const response = await searchVideos({
-        workspaceId: WORKSPACE_ID,
-        query: cleanQuery,
-        seriesIds: [searchSeriesId],
-        topK: 10,
-      });
-      setResult(response);
-      setSelectedHit(response.hits[0] ?? null);
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "agent",
-          text: response.agentReply.message,
-          resultCount: response.agentReply.resultCount,
-        },
-      ]);
-    } catch (error) {
-      setMessages((current) => [
-        ...current,
-        { id: crypto.randomUUID(), role: "agent", text: errorMessage(error), error: true },
-      ]);
-    } finally {
-      setSearching(false);
-    }
-  }, [searchSeriesId, searching]);
+  useEffect(() => { setQuery(""); setSelection(null); }, [searchSeriesId]);
 
   useEffect(() => {
     threadEnd.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
@@ -87,7 +32,9 @@ export function SearchPage() {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    void runSearch(query);
+    if (!query.trim() || !conversationId || searching) return;
+    void send(query);
+    setQuery("");
   };
 
   return (
@@ -120,22 +67,36 @@ export function SearchPage() {
             </div>
           </div>
           <div className={styles.thread} aria-live="polite">
+            {!messages.length ? (
+              <article className={styles.agentMessage}>
+                <Bot size={14} />
+                <div><span>AGENT</span><p>告诉我你记得的人物、对白、动作或氛围。我会召回几段备选画面，并说明每一段为什么值得核验。</p></div>
+              </article>
+            ) : null}
             {messages.map((message) => (
-              <article key={message.id} className={message.role === "user" ? styles.userMessage : styles.agentMessage}>
-                {message.role === "agent" ? <Bot size={14} /> : null}
+              <article key={message.messageId} className={message.role === "USER" ? styles.userMessage : styles.agentMessage}>
+                {message.role === "ASSISTANT" ? <Bot size={14} /> : null}
                 <div>
-                  <span>{message.role === "agent" ? "AGENT" : "YOU"}</span>
-                  <p className={message.error ? styles.messageError : undefined}>{message.text}</p>
-                  {message.resultCount ? <small><Check size={12} /> 已附上 {message.resultCount} 份选择说明</small> : null}
+                  <span>{message.role === "ASSISTANT" ? "AGENT" : "YOU"}</span>
+                  <p className={message.status === "FAILED" ? styles.messageError : !message.content && message.status === "PROCESSING" ? styles.thinking : undefined} style={{ whiteSpace: "pre-wrap" }}>
+                    {message.content || (message.status === "PROCESSING" ? "正在比对对白、视觉事件与前后语境" : message.lastError || "未生成回答")}
+                  </p>
+                  {message.status === "FAILED" && message.content ? <p className={styles.messageError}>{message.lastError || "本次回答未完成"}</p> : null}
+                  {message.searchResult?.hits.length ? (
+                    <button type="button" className="button-secondary" onClick={() => setSelection({ conversationId: message.conversationId, messageId: message.messageId, chunkId: null })}>
+                      <Check size={12} /> 查看 {message.searchResult.hits.length} 份视频证据
+                    </button>
+                  ) : null}
                 </div>
               </article>
             ))}
-            {searching ? (
+            {loading || (searching && !messages.some((message) => message.status === "PROCESSING")) ? (
               <article className={styles.agentMessage}>
                 <Bot size={14} />
-                <div><span>AGENT</span><p className={styles.thinking}>正在比对对白、视觉事件与前后语境</p></div>
+                <div><span>AGENT</span><p className={styles.thinking}>{loading ? "正在恢复会话" : "正在准备本次问询"}</p></div>
               </article>
             ) : null}
+            {error ? <article className={styles.agentMessage}><Bot size={14} /><div><span>AGENT</span><p className={styles.messageError}>{error}</p></div></article> : null}
             <div ref={threadEnd} />
           </div>
           <form className={styles.composer} onSubmit={submit}>
@@ -152,7 +113,7 @@ export function SearchPage() {
               rows={3}
               aria-label="向画面札记 Agent 提问"
             />
-            <div><span>Enter 发送 · Shift + Enter 换行</span><button type="submit" disabled={!query.trim() || searching || !searchSeriesId || mode !== "live"} aria-label="发送问题"><ArrowUp size={17} /></button></div>
+            <div><span>Enter 发送 · Shift + Enter 换行</span><button type="submit" disabled={!query.trim() || loading || searching || !conversationId || !searchSeriesId || mode !== "live"} aria-label="发送问题"><ArrowUp size={17} /></button></div>
           </form>
         </section>
 
@@ -171,7 +132,7 @@ export function SearchPage() {
                     type="button"
                     key={hit.evidence.videoChunkId}
                     className={selected ? styles.candidateSelected : styles.candidate}
-                    onClick={() => setSelectedHit(hit)}
+                    onClick={() => { if (conversationId && evidenceMessage) setSelection({ conversationId, messageId: evidenceMessage.messageId, chunkId: hit.evidence.videoChunkId }); }}
                   >
                     <div className={styles.candidateTop}>
                       <span className={styles.rank}>{String(hit.candidate.fusedRank).padStart(2, "0")}</span>

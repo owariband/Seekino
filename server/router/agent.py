@@ -60,6 +60,12 @@ router.add_api_route(
     agent.send_agent_message,
     methods=["POST"],
     response_model=AgentMessageSendView,
+    responses={
+        200: {
+            "description": "JSON message pair, or live answer events when Accept is text/event-stream.",
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+    },
 )
 router.add_api_route(
     "/api/agent/messages/events",
