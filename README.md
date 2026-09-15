@@ -67,7 +67,7 @@ uv run python -m evals.recall.cli --help
 uv run python -m gateway.cli --help
 uv run python -m server.cli --help
 uv run python -m server.api
-uv run python -m server.worker --once
+uv run python -m server.mq --once
 ```
 
 ## 上游归属

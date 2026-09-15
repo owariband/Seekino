@@ -11,7 +11,7 @@ from server.api.app import create_app
 from server.config import ServerSettings
 from server.config.retrieval import RetrievalConfig
 from server.config.sse import SSEConfig
-from server.worker import __main__ as worker_main
+from server.mq import __main__ as worker_main
 
 
 class _QdrantClient:
@@ -101,7 +101,7 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path, 
         monkeypatch.setattr(
             ServerSettings, "from_environment", classmethod(lambda _cls: settings)
         )
-        monkeypatch.setattr(sys, "argv", ["python -m server.worker", "--once"])
+        monkeypatch.setattr(sys, "argv", ["python -m server.mq", "--once"])
         worker_main.main()
         assert received["model"] == settings.video_embedding_model
         assert received["fps"] == settings.video_embedding_fps

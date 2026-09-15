@@ -1045,7 +1045,7 @@ interface VideoChunkSearchResult {
 ```bash
 uv run --env-file .env.local python -m server.cli init-db
 uv run --env-file .env.local python -m server.api
-uv run --env-file .env.local python -m server.worker
+uv run --env-file .env.local python -m server.mq
 ```
 
 基础检查：

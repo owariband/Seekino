@@ -8,7 +8,7 @@ from server.database import create_session_factory
 from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
 from server.model.video import SeriesRecord, VideoRecord
 from server.repository.job import ParseJobLease, ParseJobRepository
-from server.worker.runtime import ParseWorker
+from server.mq.worker import ParseWorker
 
 
 @dataclass

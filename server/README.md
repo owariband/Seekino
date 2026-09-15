@@ -34,8 +34,8 @@ HTTP 专用 Request/View 位于 `server/api/schema.py`；API、CLI、Agent 共�
 
 ## 后台任务与共享代码
 
-`server/worker/` 是后台任务执行入口，不是 Event：Event 表达发生了什么，Worker
-领取并执行任务。当前任务保存在 MySQL，不依赖事件总线。API 保存完整视频并创建
+`server/mq/` 放队列任务的 Worker，当前使用 MySQL DB Queue，不依赖外部消息中间件。
+Worker 领取并执行任务；Event 则表达发生了什么。API 保存完整视频并创建
 ParseJob 后，Worker 即可独立运行；浏览器关闭不影响已经入队的解析任务。
 
 ```text
@@ -44,8 +44,8 @@ server/constants/workspace.py    本地默认 Workspace；不承担身份认证
 server/utils/                    时间、文本校验、异常摘要等无业务取数的纯函数
 server/service/video_processing.py
                                  解析、checkpoint、向量化、入库与索引同步编排
-server/worker/__main__.py         Worker 进程装配和启动
-server/worker/runtime.py          任务领取、Lease、Heartbeat、Retry、Reaper
+server/mq/__main__.py             Worker 进程装配和启动
+server/mq/worker.py               任务领取、Lease、Heartbeat、Retry、Reaper
 ```
 
 配置入口为 `ServerSettings.from_environment()`，`from server.config import
@@ -118,7 +118,7 @@ MySQL 表使用 InnoDB。
 ```bash
 uv run python -m server.cli init-db
 uv run python -m server.api
-uv run python -m server.worker
+uv run python -m server.mq
 ```
 
 API 默认监听 `127.0.0.1:9621`，OpenAPI 位于 `/docs`。API 与 Worker 是两个进程；API

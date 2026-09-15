@@ -19,12 +19,12 @@ from ..service.index_sync import IndexSyncService
 from ..service.video_processing import VideoProcessingService
 from ..storage.artifact import LocalArtifactStore
 from ..storage.qdrant import QdrantVideoChunkStore
-from .runtime import ParseWorker
+from .worker import ParseWorker
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m server.worker",
+        prog="python -m server.mq",
         description="Run the durable AniVAG video parse/index Worker.",
     )
     parser.add_argument(
