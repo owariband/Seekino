@@ -103,10 +103,12 @@ interface ConversationState {
   requestedId: string | null;
   conversationId: string | null;
   messages: AgentMessageView[];
+  progress: Record<string, AgentProgressEvent[]>;
   loading: boolean;
   sending: boolean;
   error: string | null;
 }
+export type AgentProgressEvent = Extract<AgentAnswerEvent, { type: "answer.progress" }>;
 interface ActiveConversation {
   conversationId: string | null;
   controller: AbortController;
@@ -117,7 +119,7 @@ interface ActiveConversation {
 
 export function useAgentConversation(requestedId: string | null = null) {
   const [state, setState] = useState<ConversationState>({
-    requestedId, conversationId: null, messages: [], loading: true, sending: false, error: null,
+    requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, error: null,
   });
   const activeRef = useRef<ActiveConversation | null>(null);
 
@@ -125,7 +127,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     const active: ActiveConversation = { conversationId: null, controller: new AbortController(), sending: false, recoveryMessageId: null, streamedMessageId: null };
     activeRef.current = active;
     let unsubscribe: (() => void) | undefined;
-    setState({ requestedId, conversationId: null, messages: [], loading: true, sending: false, error: null });
+    setState({ requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, error: null });
     void (async () => {
       try {
         const conversation = requestedId ? await getAgentConversation(requestedId) : await ensureConversation();
@@ -180,14 +182,23 @@ export function useAgentConversation(requestedId: string | null = null) {
       setState((current) => {
         if (current.conversationId !== conversationId) return current;
         if (event.type === "answer.started" || event.type === "answer.completed") {
-          return { ...current, messages: mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId) };
+          const phase = event.assistantMessage.phase;
+          const progress = event.type === "answer.started" && phase && !current.progress[event.messageId]
+            ? { ...current.progress, [event.messageId]: [{ type: "answer.progress" as const, conversationId, messageId: event.messageId, sequence: event.sequence, occurredAt: event.occurredAt, phase }] }
+            : current.progress;
+          return { ...current, progress, messages: mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId) };
         }
         if (event.type === "answer.failed") {
           const messages = mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId);
           return { ...current, messages, error: event.error.message };
         }
         if (event.type === "answer.interrupted") return { ...current, error: event.error.message };
-        return { ...current, messages: current.messages.map((message) => {
+        if (!current.messages.some((message) => message.messageId === event.messageId && message.status === "PROCESSING")) return current;
+        const steps = current.progress[event.messageId] ?? [];
+        const progress = event.type === "answer.progress" && steps.at(-1)?.phase !== event.phase
+          ? { ...current.progress, [event.messageId]: [...steps, event] }
+          : current.progress;
+        return { ...current, progress, messages: current.messages.map((message) => {
           if (message.messageId !== event.messageId || message.status !== "PROCESSING") return message;
           if (event.type === "answer.delta") return { ...message, content: deltaBuffer };
           if (event.type === "answer.evidence") return { ...message, searchResult: event.searchResult };
@@ -233,7 +244,7 @@ export function useAgentConversation(requestedId: string | null = null) {
   }, [requestedId, state.requestedId, state.messages]);
 
   const visible = state.requestedId === requestedId ? state : {
-    requestedId, conversationId: null, messages: [], loading: true, sending: false, error: null,
+    requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, error: null,
   };
   return {
     ...visible,

@@ -10,8 +10,8 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { listJobs, shouldRetryApiRequest } from "../../api/client";
-import type { ParseJobStatus, ParseJobView } from "../../api/contracts";
+import { listAllJobs, shouldRetryApiRequest } from "../../api/client";
+import type { ParseJobStatus } from "../../api/contracts";
 import { episodeLabel, stageLabel } from "../../shared/format";
 import styles from "./tasks.module.css";
 import { ParseUsageDetails } from "./ParseUsageDetails";
@@ -42,17 +42,7 @@ export function TasksPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const jobsQuery = useQuery({
     queryKey: ["jobs"],
-    queryFn: async () => {
-      const items: ParseJobView[] = [];
-      let cursor: string | undefined;
-      do {
-        const page = await listJobs(cursor);
-        items.push(...page.items);
-        if (page.hasMore && !page.nextCursor) throw new Error("任务列表缺少下一页游标");
-        cursor = page.hasMore ? page.nextCursor! : undefined;
-      } while (cursor);
-      return items;
-    },
+    queryFn: ({ signal }) => listAllJobs(signal),
     retry: shouldRetryApiRequest,
     refetchInterval: 5_000,
   });
@@ -72,9 +62,7 @@ export function TasksPage() {
     <main className="page">
       <header className={styles.header}>
         <div>
-          <p className="page-kicker">Processing ledger · 解析账簿</p>
           <h1 className="page-title">解析任务</h1>
-          <p className="page-description">上传只是把影像送达；这里记录切片、理解、向量化与入库的每一次推进。</p>
         </div>
         <button className="button-secondary" type="button" disabled={jobsQuery.isFetching} onClick={() => void jobsQuery.refetch()}>
           <RefreshCw size={15} className={jobsQuery.isFetching ? styles.spinning : undefined} />同步状态

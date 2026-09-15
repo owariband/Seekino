@@ -70,6 +70,26 @@ async function send(result: { current: ReturnType<typeof useAgentConversation> }
 }
 
 describe("Conversation state", () => {
+  it("records genuine repeated retrieval/review steps without replaying duplicate or late events", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    const phases = ["RETRIEVING", "EVALUATING", "RETRIEVING", "EVALUATING", "RESPONDING"] as const;
+    act(() => {
+      phases.forEach((phase, index) => stream.emit({ type: "answer.progress", occurredAt: now + index, conversationId: "conv-A", messageId: "assistant", sequence: index + 2, phase }));
+      stream.emit({ type: "answer.progress", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 6, phase: "RESPONDING" });
+      stream.emit({ type: "answer.progress", occurredAt: now, conversationId: "conv-B", messageId: "assistant", sequence: 7, phase: "RETRIEVING" });
+    });
+    expect(result.current.progress.assistant?.map((step) => step.phase)).toEqual(["QUEUED", ...phases]);
+    expect(result.current.progress.assistant?.map((step) => step.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
+    act(() => {
+      stream.emit({ ...started("conv-A"), type: "answer.completed", sequence: 7, assistantMessage: message("conv-A", { status: "COMPLETED", phase: null, content: "最终回答" }) } as AgentAnswerEvent);
+      stream.emit({ type: "answer.progress", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 8, phase: "RETRIEVING" });
+      stream.finish();
+    });
+    await waitFor(() => expect(result.current.searching).toBe(false));
+    expect(result.current.progress.assistant?.map((step) => step.phase)).toEqual(["QUEUED", ...phases]);
+  });
+
   it("snapshots a multi-series scope without changing Conversation or interrupting the running stream", async () => {
     const { result, rerender } = await ready();
     const selected = ["A", "B"];
@@ -167,6 +187,7 @@ describe("Conversation state", () => {
     const oldSnapshot = snapshots.get("conv-A")!;
     rerender({ id: "conv-B" });
     expect(result.current.messages).toEqual([]);
+    expect(result.current.progress).toEqual({});
     await waitFor(() => expect(result.current.conversationId).toBe("conv-B"));
     expect(oldStream.signal.aborted).toBe(true);
     expect(close).toHaveBeenCalledOnce();

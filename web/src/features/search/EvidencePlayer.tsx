@@ -81,8 +81,7 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
       <aside className={styles.evidencePanel}>
         <div className={styles.evidenceEmpty}>
           <ScanSearch size={26} strokeWidth={1.4} />
-          <h2>证据会在这里展开</h2>
-          <p>从 Agent 召回的候选中选择一段，即可核验画面、对白和前后语境。</p>
+          <p>选择片段，查看画面与证据。</p>
         </div>
       </aside>
     );
@@ -114,7 +113,6 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
 
       <div className={styles.playerHeading}>
         <div>
-          <span className="eyebrow">Evidence window · 证据窗口</span>
           <h2>{evidence.seriesName}</h2>
         </div>
         <button className="button-secondary" type="button" disabled={!playbackUrl} onClick={() => playRef.current?.()}>
@@ -125,7 +123,7 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
 
       {playError ? <p className={styles.messageError} role="alert">{playError}</p> : null}
       {!playbackUrl || playError ? <button className="button-secondary" type="button" disabled={refreshing} onClick={() => void refreshMedia()}>{refreshing ? "正在刷新媒体状态…" : "刷新媒体状态"}</button> : null}
-      {evidence.thumbnail ? failedImage === evidence.thumbnail.imageId ? <p>关键帧图片无法读取</p> : <img src={mediaUrl(evidence.thumbnail.url) ?? undefined} alt={evidence.thumbnail.alt ?? "已登记关键帧"} onError={() => setFailedImage(evidence.thumbnail!.imageId)} /> : null}
+      {!playbackUrl && evidence.thumbnail ? failedImage === evidence.thumbnail.imageId ? <p>关键帧图片无法读取</p> : <img src={mediaUrl(evidence.thumbnail.url) ?? undefined} alt={evidence.thumbnail.alt ?? "已登记关键帧"} onError={() => setFailedImage(evidence.thumbnail!.imageId)} /> : null}
 
       <nav className={styles.evidenceTabs} aria-label="证据详情">
         {([
@@ -150,7 +148,6 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
             <section className={styles.reasonLead}>
               <span className={styles.reasonNumber}>{String(hit.candidate.rank).padStart(2, "0")}</span>
               <div>
-                <span className="eyebrow">Agent’s selection note</span>
                 <p>{explanation.summary}</p>
               </div>
             </section>
@@ -202,7 +199,6 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
         ) : null}
       </div>
 
-      <p className={styles.explainDisclosure}>理由由返回的对白、画面事件、排名和上下文整理而成，可逐项核验；不声称展示模型的私有思考过程。</p>
     </aside>
   );
 }

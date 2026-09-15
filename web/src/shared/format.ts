@@ -10,6 +10,16 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${units[index]}`;
 }
 
+export function formatTokens(value: number | null): string {
+  return value === null ? "未记录" : value.toLocaleString("zh-CN");
+}
+
+export function formatCostCny(value: string | null): string {
+  if (value === null) return "未估算";
+  const [integer, fraction = ""] = value.split(".");
+  return `¥${integer!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction.padEnd(2, "0")}`;
+}
+
 export function formatTimecode(milliseconds: number): string {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
   const hours = Math.floor(seconds / 3600);

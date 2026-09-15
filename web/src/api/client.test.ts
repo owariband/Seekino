@@ -12,6 +12,7 @@ import {
   getParseUsage,
   getSeries,
   getUploadSession,
+  imageContentUrl,
   jobEventsUrl,
   listJobs,
   listSeries,
@@ -23,9 +24,48 @@ import {
   streamAgentMessage,
   subscribeAgentMessages,
   videoContentUrl,
+  updateSeries,
+  uploadSeriesImage,
 } from "./client";
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe("Series background routes", () => {
+  it("distinguishes omitted fields from explicit clearing and preserves raw JSON text", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    await updateSeries({ workspaceId: "local-default", seriesId: "series/id", description: "简介" });
+    await updateSeries({ workspaceId: "local-default", seriesId: "series/id", importantExtraData: null });
+    const content = ' \n[ { "自定义字段" : true } ]\n ';
+    await updateSeries({ workspaceId: "local-default", seriesId: "series/id", importantExtraData: { format: "json", content } });
+    expect(String(fetchMock.mock.calls[0]![0])).toBe("/api/series/update");
+    expect(fetchMock.mock.calls[0]![1]?.method).toBe("POST");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toEqual({ workspaceId: "local-default", seriesId: "series/id", description: "简介" });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]?.body))).toEqual({ workspaceId: "local-default", seriesId: "series/id", importantExtraData: null });
+    expect(JSON.parse(String(fetchMock.mock.calls[2]![1]?.body)).importantExtraData.content).toBe(content);
+  });
+
+  it("uploads raw image bytes, not multipart, and uses managed preview URLs", async () => {
+    const asset = { imageId: "simg_managed", url: "/api/media/images/content?imageId=simg_managed&workspaceId=local-default", expiresAt: null };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(asset), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File([new Uint8Array([137, 80, 78, 71])], "参考图.png", { type: "image/png" });
+    const signal = new AbortController().signal;
+    expect(await uploadSeriesImage("series/id", file, signal)).toEqual(asset);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("/api/series/images/upload?workspaceId=local-default&seriesId=series%2Fid");
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("Content-Type")).toBe("image/png");
+    expect(init?.body).toBe(file);
+    expect(init?.signal).toBe(signal);
+    expect(imageContentUrl("image/id", "workspace/id")).toBe("/api/media/images/content?workspaceId=workspace%2Fid&imageId=image%2Fid");
+  });
+
+  it("surfaces background validation errors without replacing them with fake success", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "INVALID_REQUEST", message: "background image does not exist in this Series" }), { status: 400 })));
+    await expect(updateSeries({ workspaceId: "local-default", seriesId: "series/id", importantExtraData: { format: "markdown", content: "![参考](asset://invalid)" } })).rejects.toMatchObject({ status: 400, code: "INVALID_REQUEST", message: "background image does not exist in this Series" });
+  });
+});
 
 describe("parse usage route", () => {
   it("reads usage for the exact task and preserves decimal costs and missing tokens", async () => {

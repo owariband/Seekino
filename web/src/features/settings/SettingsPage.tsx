@@ -13,9 +13,7 @@ export function SettingsPage() {
   return (
     <main className="page">
       <header>
-        <p className="page-kicker">Preferences · 偏好</p>
         <h1 className="page-title">设置</h1>
-        <p className="page-description">只保留真正影响使用体验与数据边界的选择。</p>
       </header>
 
       <div className={styles.layout}>

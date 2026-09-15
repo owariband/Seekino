@@ -2,12 +2,16 @@ import clsx from "clsx";
 import {
   Activity,
   ArrowUpFromLine,
+  ChartNoAxesCombined,
   LibraryBig,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Search,
   Settings,
   Sun,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 
 import { taskProgress } from "../features/uploads/upload-types";
@@ -17,13 +21,15 @@ import { useWorkspace } from "./workspace";
 import styles from "./app-shell.module.css";
 
 const navigation = [
-  { to: "/search", label: "问画面", caption: "Agent", icon: Search },
-  { to: "/library", label: "资料库", caption: "Library", icon: LibraryBig },
-  { to: "/tasks", label: "解析任务", caption: "Tasks", icon: Activity },
-  { to: "/settings", label: "设置", caption: "Settings", icon: Settings },
+  { to: "/search", label: "名场面检索", icon: Search },
+  { to: "/library", label: "资料库", icon: LibraryBig },
+  { to: "/tasks", label: "解析任务", icon: Activity },
+  { to: "/usage", label: "模型消耗", icon: ChartNoAxesCombined },
+  { to: "/settings", label: "设置", icon: Settings },
 ];
 
 export function AppShell() {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("anivag-sidebar-collapsed") === "true");
   const { theme, toggleTheme } = useTheme();
   const { mode } = useWorkspace();
   const { visibleTasks, activeCount, overallProgress, openDialog } = useUploads();
@@ -31,23 +37,38 @@ export function AppShell() {
     .filter((task) => !["completed", "cancelled"].includes(task.status))
     .slice(0, 3);
 
+  useEffect(() => {
+    window.localStorage.setItem("anivag-sidebar-collapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
   return (
-    <div className={styles.shell}>
-      <aside className={styles.sidebar}>
+    <div className={clsx(styles.shell, sidebarCollapsed && styles.sidebarCollapsed)}>
+      <button
+        className={styles.sidebarToggle}
+        type="button"
+        onClick={() => setSidebarCollapsed((current) => !current)}
+        aria-label={sidebarCollapsed ? "展开导航" : "收起导航"}
+        title={sidebarCollapsed ? "展开导航" : "收起导航"}
+        aria-expanded={!sidebarCollapsed}
+        aria-controls="anivag-sidebar"
+      >
+        {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+      </button>
+      <aside id="anivag-sidebar" className={styles.sidebar} hidden={sidebarCollapsed}>
         <NavLink className={styles.brand} to="/search" aria-label="AniVAG 首页">
           <img src="/anivag-mark.svg" alt="" />
-          <div><strong>AniVAG</strong><span>影像札记</span></div>
+          <strong>AniVAG</strong>
         </NavLink>
 
         <nav className={styles.navigation} aria-label="主导航">
-          {navigation.map(({ to, label, caption, icon: Icon }) => (
+          {navigation.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
               className={({ isActive }) => clsx(styles.navItem, isActive && styles.navActive)}
             >
               <Icon size={17} strokeWidth={1.8} />
-              <div><span>{label}</span><small>{caption}</small></div>
+              <span>{label}</span>
             </NavLink>
           ))}
         </nav>

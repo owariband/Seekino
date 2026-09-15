@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { getParseUsage, shouldRetryApiRequest, WORKSPACE_ID } from "../../api/client";
 import type { ParseJobStatus } from "../../api/contracts";
-import { episodeLabel } from "../../shared/format";
+import { episodeLabel, formatCostCny, formatTokens } from "../../shared/format";
 import styles from "./tasks.module.css";
 
 const operationLabels: Record<string, string> = {
@@ -15,16 +15,6 @@ const operationLabels: Record<string, string> = {
   text_embedding: "文本向量化",
   video_embedding: "视频向量化",
 };
-
-function tokens(value: number | null): string {
-  return value === null ? "未记录" : value.toLocaleString("zh-CN");
-}
-
-function cost(value: string | null): string {
-  if (value === null) return "未估算";
-  const [integer, fraction = ""] = value.split(".");
-  return `¥${integer!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction.padEnd(2, "0")}`;
-}
 
 export function ParseUsageDetails({ jobId, status }: { jobId: string; status: ParseJobStatus }) {
   const [expanded, setExpanded] = useState(false);
@@ -57,9 +47,9 @@ export function ParseUsageDetails({ jobId, status }: { jobId: string; status: Pa
         {usage ? <>
           <p className={styles.usageSource}>{usage.seriesName} · {episodeLabel(usage.episodeOrder)} · {usage.originalFilename}</p>
           <dl className={styles.usageTotals} aria-label="本次任务模型消耗合计">
-            <div><dt>本次任务合计 · Token</dt><dd>{tokens(usage.totalTokens)}</dd></div>
+            <div><dt>本次任务合计 · Token</dt><dd>{formatTokens(usage.totalTokens)}</dd></div>
             <div><dt>已记录调用</dt><dd>{usage.callCount.toLocaleString("zh-CN")}</dd></div>
-            <div><dt>预估费用（人民币）</dt><dd>{cost(usage.estimatedCostCny)}</dd></div>
+            <div><dt>预估费用（人民币）</dt><dd>{formatCostCny(usage.estimatedCostCny)}</dd></div>
           </dl>
           {usage.items.length ? <div className={styles.usageTableScroll}><table className={styles.usageTable}>
             <caption>按模型与职责统计本次任务所有执行尝试</caption>
@@ -67,7 +57,7 @@ export function ParseUsageDetails({ jobId, status }: { jobId: string; status: Pa
             <tbody>{usage.items.map((item) => <tr key={`${item.provider}:${item.model}:${item.category}:${item.operation}`}>
               <th scope="row">{item.model}<small>{item.provider}</small></th>
               <td>{item.category === "embedding" ? "向量化" : "解析"} · {operationLabels[item.operation] ?? item.operation}</td>
-              <td>{item.callCount.toLocaleString("zh-CN")}</td><td>{tokens(item.inputTokens)}</td><td>{tokens(item.outputTokens)}</td><td>{tokens(item.cachedInputTokens)}</td><td>{tokens(item.reasoningTokens)}</td><td>{tokens(item.totalTokens)}</td><td>{cost(item.estimatedCostCny)}{item.missingUsageCount || item.unpricedCallCount ? <small>记录不完整</small> : null}</td>
+              <td>{item.callCount.toLocaleString("zh-CN")}</td><td>{formatTokens(item.inputTokens)}</td><td>{formatTokens(item.outputTokens)}</td><td>{formatTokens(item.cachedInputTokens)}</td><td>{formatTokens(item.reasoningTokens)}</td><td>{formatTokens(item.totalTokens)}</td><td>{formatCostCny(item.estimatedCostCny)}{item.missingUsageCount || item.unpricedCallCount ? <small>记录不完整</small> : null}</td>
             </tr>)}</tbody>
           </table></div> : <p className={styles.usageNotice}>{usage.coverage === "not_started" ? "任务尚未开始记录模型调用。" : usage.coverage === "recorded" ? "本次任务已跟踪，尚无模型调用。" : "暂无已记录的模型调用。"}</p>}
           {usage.coverage === "unknown" ? <p className={styles.usageNotice}>此任务没有模型消耗记录，无法还原历史 Token 和费用。</p> : null}

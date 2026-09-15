@@ -13,12 +13,14 @@ import {
   createSeries as createSeriesRequest,
   getSeries,
   listSeries,
+  updateSeries as updateSeriesRequest,
   shouldRetryApiRequest,
   WORKSPACE_ID,
 } from "../api/client";
 import type {
   RuntimeMode,
   SeriesCreateRequest,
+  SeriesUpdateRequest,
   SeriesView,
   SeriesSummary,
 } from "../api/contracts";
@@ -33,6 +35,7 @@ interface WorkspaceContextValue {
   error: Error | null;
   selectSeries: (seriesId: string) => void;
   createSeries: (input: Omit<SeriesCreateRequest, "workspaceId">) => Promise<SeriesView>;
+  updateSeries: (input: Omit<SeriesUpdateRequest, "workspaceId">) => Promise<SeriesView>;
   refreshSeries: () => Promise<void>;
 }
 
@@ -126,6 +129,12 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
         await queryClient.invalidateQueries({ queryKey: ["series"] });
         setSelectedSeriesId(created.seriesId);
         return created;
+      },
+      updateSeries: async (input) => {
+        const updated = await updateSeriesRequest({ ...input, workspaceId: WORKSPACE_ID });
+        queryClient.setQueryData(["series-detail", updated.seriesId], updated);
+        await queryClient.invalidateQueries({ queryKey: ["series"] });
+        return updated;
       },
       refreshSeries: async () => {
         await Promise.all([

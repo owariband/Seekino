@@ -83,6 +83,18 @@ export interface SeriesCreateRequest {
   characterBible?: Character[];
 }
 
+export interface SeriesBackground {
+  format: "markdown" | "json";
+  content: string;
+}
+
+export interface SeriesUpdateRequest {
+  workspaceId: string;
+  seriesId: string;
+  description?: string | null;
+  importantExtraData?: SeriesBackground | null;
+}
+
 export interface UploadSessionCreateRequest {
   workspaceId: string;
   episodeOrder: number;

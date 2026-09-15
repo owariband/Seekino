@@ -6,10 +6,12 @@ import type {
   AgentMessageView,
   ApiErrorPayload,
   EvidenceReference,
+  ImageAsset,
   Page,
   ParseJobView,
   ParseUsageVO,
   SeriesCreateRequest,
+  SeriesUpdateRequest,
   SeriesView,
   SeriesSummary,
   UploadCompleteView,
@@ -107,6 +109,27 @@ export function createSeries(body: SeriesCreateRequest): Promise<SeriesView> {
   });
 }
 
+export function updateSeries(body: SeriesUpdateRequest): Promise<SeriesView> {
+  return requestJson("/api/series/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function uploadSeriesImage(seriesId: string, file: File, signal?: AbortSignal): Promise<ImageAsset> {
+  return requestJson(`/api/series/images/upload?${new URLSearchParams({ workspaceId: WORKSPACE_ID, seriesId })}`, {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+    signal,
+  });
+}
+
+export function imageContentUrl(imageId: string, workspaceId = WORKSPACE_ID): string {
+  return apiUrl(`/api/media/images/content?${new URLSearchParams({ workspaceId, imageId })}`);
+}
+
 export function createUploadSession(
   seriesId: string,
   idempotencyKey: string,
@@ -144,8 +167,23 @@ export function completeUpload(
   );
 }
 
-export function listJobs(cursor?: string, limit = 100): Promise<Page<ParseJobView>> {
-  return requestJson(`/api/jobs/list?workspaceId=${WORKSPACE_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+export function listJobs(cursor?: string, limit = 100, signal?: AbortSignal): Promise<Page<ParseJobView>> {
+  return requestJson(`/api/jobs/list?workspaceId=${WORKSPACE_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal });
+}
+
+export async function listAllJobs(signal?: AbortSignal): Promise<ParseJobView[]> {
+  const items = new Map<string, ParseJobView>();
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await listJobs(cursor, 100, signal);
+    for (const job of page.items) items.set(job.jobId, job);
+    if (page.hasMore && !page.nextCursor) throw new Error("任务列表缺少下一页游标");
+    cursor = page.hasMore ? page.nextCursor! : undefined;
+    if (cursor && cursors.has(cursor)) throw new Error("任务列表返回了重复的分页游标");
+    if (cursor) cursors.add(cursor);
+  } while (cursor);
+  return [...items.values()];
 }
 
 export function getJob(jobId: string): Promise<ParseJobView> {
@@ -155,9 +193,10 @@ export function getJob(jobId: string): Promise<ParseJobView> {
   );
 }
 
-export function getParseUsage(jobId: string): Promise<ParseUsageVO> {
+export function getParseUsage(jobId: string, signal?: AbortSignal): Promise<ParseUsageVO> {
   return requestJson(
     `/api/jobs/usage/get?workspaceId=${WORKSPACE_QUERY}&jobId=${encodeURIComponent(jobId)}`,
+    { signal },
   );
 }
 

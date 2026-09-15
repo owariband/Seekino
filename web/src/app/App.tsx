@@ -4,6 +4,7 @@ import { LibraryPage } from "../features/library/LibraryPage";
 import { SearchPage } from "../features/search/SearchPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { TasksPage } from "../features/tasks/TasksPage";
+import { UsagePage } from "../features/usage/UsagePage";
 import { UploadDialog } from "../features/uploads/UploadDialog";
 import { UploadProvider } from "../features/uploads/UploadProvider";
 import { AppShell } from "./AppShell";
@@ -17,6 +18,7 @@ export function App() {
           <Route path="search" element={<SearchPage />} />
           <Route path="library" element={<LibraryPage />} />
           <Route path="tasks" element={<TasksPage />} />
+          <Route path="usage" element={<UsagePage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/search" replace />} />
         </Route>
