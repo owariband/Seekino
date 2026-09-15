@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from ..model.index_sync import IndexSyncOperation, IndexSyncStatus
 from ..repository.index_sync import IndexSyncItem, IndexSyncRepository
 from ..schema import IndexReconcileReport, IndexSyncRunReport
 from ..storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
+from ..utils.errors import exception_summary
+from ..utils.time import utc_now
 
 
 class IndexSyncInvariantError(RuntimeError):
@@ -37,7 +39,7 @@ class IndexSyncService:
         self._store = store
         self._retry_base_seconds = retry_base_seconds
         self._retry_max_seconds = retry_max_seconds
-        self._clock = clock or _utc_now
+        self._clock = clock or utc_now
 
     def sync_due(
         self,
@@ -126,7 +128,7 @@ class IndexSyncService:
                         item.source_revision,
                         item.operation,
                         item.generation,
-                        error=_error_summary(exc),
+                        error=exception_summary(exc),
                         available_at=(
                             self._clock()
                             + self._retry_delay(item.attempt_count)
@@ -247,7 +249,7 @@ class IndexSyncService:
                     item.source_revision,
                     item.operation,
                     item.generation,
-                    error=_error_summary(exc),
+                    error=exception_summary(exc),
                     available_at=retry_at,
                 )
                 if recorded:
@@ -310,13 +312,3 @@ def _batches(
 ) -> Iterator[Sequence[IndexSyncItem]]:
     for offset in range(0, len(items), batch_size):
         yield items[offset : offset + batch_size]
-
-
-def _error_summary(exc: Exception) -> str:
-    message = str(exc).strip()
-    summary = type(exc).__name__ if not message else f"{type(exc).__name__}: {message}"
-    return summary[:8192]
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)

@@ -9,6 +9,7 @@ from qdrant_client import QdrantClient
 
 from server.database import DatabaseEnvironment, create_session_factory
 from server.repository.index_sync import IndexSyncRepository
+from server.repository.video import SeriesScopeNotFoundError
 from server.service.index_sync import IndexSyncService
 from server.service.parse_import import PreparedEmbedding
 from server.service.video_retrieval import (
@@ -91,6 +92,7 @@ def test_formal_retrieval_closes_qdrant_rrf_and_joined_hydrate(
 
     result = service.search(
         "  find the first action  ",
+        workspace_id=prepared.workspace_id,
         series_ids=[prepared.series_id],
         top_k=2,
     )
@@ -166,7 +168,12 @@ def test_retrieval_reports_a_qdrant_orphan_instead_of_dropping_it(
         RetrievalIndexConsistencyError,
         match="missing from MySQL",
     ):
-        service.search("find orphan", series_ids=[prepared.series_id], top_k=1)
+        service.search(
+            "find orphan",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=1,
+        )
     client.close()
 
 
@@ -189,7 +196,12 @@ def test_retrieval_detects_a_stale_qdrant_source_revision(
         RetrievalIndexConsistencyError,
         match="sourceRevision",
     ):
-        service.search("find stale", series_ids=[prepared.series_id], top_k=1)
+        service.search(
+            "find stale",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=1,
+        )
     client.close()
 
 
@@ -213,5 +225,29 @@ def test_retrieval_checks_ready_scope_before_calling_the_embedder(
     )
 
     with pytest.raises(RuntimeError, match="not READY"):
-        service.search("must not embed", series_ids=[prepared_import.series_id])
+        service.search(
+            "must not embed",
+            workspace_id=prepared_import.workspace_id,
+            series_ids=[prepared_import.series_id],
+        )
     assert embedder.calls == []
+
+
+def test_retrieval_checks_workspace_before_calling_the_embedder(
+    repository,
+    prepared_import,
+) -> None:
+    service, _store, client, embedder, prepared, _report = _ready_retrieval(
+        repository,
+        prepared_import,
+    )
+    try:
+        with pytest.raises(SeriesScopeNotFoundError, match="workspace"):
+            service.search(
+                "must not embed",
+                workspace_id="another-workspace",
+                series_ids=[prepared.series_id],
+            )
+        assert embedder.calls == []
+    finally:
+        client.close()

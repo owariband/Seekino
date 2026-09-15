@@ -302,7 +302,7 @@ class AgentRepository:
         workspace_id: str,
         *,
         after_sequence_no: int,
-        limit: int,
+        limit: int | None,
     ) -> list[AgentMessageState]:
         with self._session_factory() as session:
             self._require_conversation(session, conversation_id, workspace_id)

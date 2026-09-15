@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +21,7 @@ from ..model.video import (
 )
 from ..schema import ParseImportReport, VideoChunkEvidence
 from ..service.parse_import import PreparedVideoParseImport
+from ..utils.time import utc_now_naive
 from .index_sync import materialize_index_sync_intents
 from .job import ParseJobLease, ParseJobLeaseLostError
 
@@ -134,7 +135,7 @@ class VideoRepository:
         with self._session_factory.begin() as session:
             job: SeriesParseJobRecord | None = None
             if lease is not None:
-                checked_at = _utc_now()
+                checked_at = utc_now_naive()
                 job = session.scalar(
                     select(SeriesParseJobRecord)
                     .where(
@@ -433,7 +434,7 @@ class VideoRepository:
             # external write is deliberately handled after this transaction.
             materialize_index_sync_intents(session, chunk_ids)
             if job is not None:
-                if job.lease_expires_at is None or job.lease_expires_at <= _utc_now():
+                if job.lease_expires_at is None or job.lease_expires_at <= utc_now_naive():
                     raise ParseJobLeaseLostError(
                         "parse job lease expired while facts were being persisted"
                     )
@@ -456,7 +457,12 @@ class VideoRepository:
             for item in self.hydrate_video_chunk_states(video_chunk_ids)
         ]
 
-    def require_ready_series(self, series_ids: Sequence[str]) -> list[str]:
+    def require_ready_series(
+        self,
+        series_ids: Sequence[str],
+        *,
+        workspace_id: str,
+    ) -> list[str]:
         """Resolve a complete, READY Series scope without silently narrowing it."""
 
         if isinstance(series_ids, (str, bytes)):
@@ -475,14 +481,15 @@ class VideoRepository:
         with self._session_factory() as session:
             rows = session.execute(
                 select(SeriesRecord.series_id, SeriesRecord.status).where(
-                    SeriesRecord.series_id.in_(ordered_ids)
+                    SeriesRecord.series_id.in_(ordered_ids),
+                    SeriesRecord.workspace_id == workspace_id,
                 )
             ).all()
         statuses = {series_id: status for series_id, status in rows}
         missing = [series_id for series_id in ordered_ids if series_id not in statuses]
         if missing:
             raise SeriesScopeNotFoundError(
-                "seriesId values are missing from MySQL: " + ", ".join(missing)
+                "seriesId values do not exist in this workspace: " + ", ".join(missing)
             )
         not_ready = [
             f"{series_id} ({statuses[series_id]})"
@@ -620,6 +627,3 @@ class VideoRepository:
                 "videoChunkId values are missing from MySQL: " + ", ".join(missing)
             )
         return [states_by_id[item] for item in ordered_ids]
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)

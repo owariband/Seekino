@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from ..repository.job import (
@@ -10,6 +10,8 @@ from ..repository.job import (
     ParseJobLeaseLostError,
     ParseJobRepository,
 )
+from ..utils.errors import exception_summary
+from ..utils.time import utc_now_naive
 
 
 class ParseJobProcessor(Protocol):
@@ -49,7 +51,7 @@ class ParseWorker:
         self._retry_base = retry_base
         self._retry_max = retry_max
         self._poll_interval_seconds = poll_interval_seconds
-        self._clock = clock or _utc_now
+        self._clock = clock or utc_now_naive
         self._on_log = on_log or (lambda _message: None)
 
     def run_once(self) -> bool:
@@ -90,14 +92,14 @@ class ParseWorker:
             retry_at = self._clock() + self._retry_delay(lease.attempt_count)
             recorded = self._jobs.mark_failed(
                 lease,
-                error=_error_summary(exc),
+                error=exception_summary(exc),
                 retry_at=retry_at,
                 now=self._clock(),
             )
             disposition = "recorded" if recorded else "lease already lost"
             self._on_log(
                 f"failed job={lease.job_id}; {disposition}; "
-                f"error={_error_summary(exc)}"
+                f"error={exception_summary(exc)}"
             )
         return True
 
@@ -165,14 +167,3 @@ class _LeaseHeartbeat:
             if not current:
                 self._lost.set()
                 return
-
-
-def _error_summary(exc: Exception) -> str:
-    message = str(exc).strip()
-    return (type(exc).__name__ if not message else f"{type(exc).__name__}: {message}")[
-        :8192
-    ]
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)

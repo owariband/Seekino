@@ -14,6 +14,56 @@ Qdrant 的连接、写入和恢复属于产品持久化逻辑，因此放在 `se
 只负责生成解析结果、向量与检索算法。Qdrant payload 不保存业务正文；当前
 Embedding 的 durable source 是 MySQL，Qdrant 始终只是可重建派生索引。
 
+## HTTP 分层
+
+```text
+server/router/      URL、Method、Response Model 和 API Handler 的绑定
+server/api/         参数/Header/Body 校验、HTTP 响应映射、SSE、异常转 HTTP
+server/service/     业务用例、资源归属与状态校验、跨资源编排
+server/bootstrap.py API 进程的数据库、Storage、Gateway 和 Service 装配
+```
+
+调用方向为 `router → api → service → repository/storage`。Router 不实现 Handler；
+API 不查询业务事实后自行判断归属或状态。Content-Range 语法和 Body 长度在 API 校验，
+workspace 归属、会话总大小、分片范围、缺片计算、Job 归属和 READY 检索 Scope 由
+Service 负责；Repository 保留事务内的状态与并发约束。
+
+HTTP 专用 Request/View 位于 `server/api/schema.py`；API、CLI、Agent 共用的检索证据和
+应用报告留在 `server/schema.py`。`server/api/app.py` 只创建应用、配置生命周期与中间件、
+注册异常处理和 Router。
+
+## 后台任务与共享代码
+
+`server/worker/` 是后台任务执行入口，不是 Event：Event 表达发生了什么，Worker
+领取并执行任务。当前任务保存在 MySQL，不依赖事件总线。API 保存完整视频并创建
+ParseJob 后，Worker 即可独立运行；浏览器关闭不影响已经入队的解析任务。
+
+```text
+server/config/                   配置类型、环境变量读取与校验
+server/constants/workspace.py    本地默认 Workspace；不承担身份认证
+server/utils/                    时间、文本校验、异常摘要等无业务取数的纯函数
+server/service/video_processing.py
+                                 解析、checkpoint、向量化、入库与索引同步编排
+server/worker/__main__.py         Worker 进程装配和启动
+server/worker/runtime.py          任务领取、Lease、Heartbeat、Retry、Reaper
+```
+
+配置入口为 `ServerSettings.from_environment()`，`from server.config import
+ServerSettings` 保持可用。Upload、Agent、VideoProcessing、Retrieval 和 SSE 的配置类型
+分别放在对应配置模块；配置模块不依赖 Service。任务状态等领域枚举继续放在
+`server/model/`，不集中进无边界的 constants 文件，也不新增空的 common 目录。
+
+部署调优项已补到 `.env.example`：`ANIVAG_SSE_POLL_SECONDS`、
+`ANIVAG_SSE_KEEPALIVE_SECONDS`、`ANIVAG_DATABASE_POOL_RECYCLE_SECONDS`、
+`ANIVAG_RETRIEVAL_CHANNEL_TOP_K`、`ANIVAG_RETRIEVAL_RRF_K` 和双路权重
+`ANIVAG_RETRIEVAL_TEXT_WEIGHT` / `ANIVAG_RETRIEVAL_VISION_WEIGHT`。
+Embedding 模型与 FPS 覆盖值由 Settings 读取，API 与 Worker 使用同一套配置。
+
+Job SSE 忽略纯心跳变化，终态发送后关闭；Agent SSE 仍返回完整 Message 快照，包含
+500 条之后的消息以及同一条消息的状态变化。保活按单调时钟的经过时间计算，
+不是固定轮询次数。完整快照仍有随聊天长度增长的读取和传输成本，后续如改增量协议，
+须另行设计状态更新游标，不能只按 sequenceNo 跳过已有的 PROCESSING 消息。
+
 ## 数据库隔离
 
 开发、测试和正式环境必须使用不同的数据库。CLI 会强制检查数据库名：

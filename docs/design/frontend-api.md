@@ -6,7 +6,7 @@
 >
 > 面向对象：WebUI、前端状态管理与联调开发
 >
-> 实现来源：`server/api/app.py`、`server/schema.py`
+> 实现来源：`server/router/`、`server/api/`、`server/api/schema.py`、`server/schema.py`
 
 本文描述当前代码已经提供的 HTTP 契约，覆盖 Series 管理、视频分片上传与断点续传、
 解析任务进度、视频播放和正式检索。运行中的 FastAPI OpenAPI 是字段级最终事实源：
@@ -69,8 +69,8 @@ X-Content-SHA256
 | --- | --- | --- |
 | `400` | `INVALID_REQUEST` | 参数、UUID、Content-Range 或业务输入格式无效 |
 | `404` | `NOT_FOUND` | 资源不存在，或不属于指定 `workspaceId` |
-| `409` | `CONFLICT` | 幂等冲突、分片冲突、缺片、过期、Series 未 READY 或索引不一致 |
-| `422` | FastAPI 默认格式 | JSON 字段、Header 或 Query 缺失，未进入领域服务 |
+| `409` | `CONFLICT` | 幂等冲突、分片范围/总大小与会话不符、缺片、过期、Series 未 READY 或索引不一致 |
+| `422` | FastAPI 默认格式 | JSON 字段、Header 或 Query 缺失或不满足字段约束，未进入领域服务 |
 | `500` | 服务默认错误 | 未预期的服务异常；前端应保留请求上下文并展示可重试提示 |
 
 不要依赖英文 `message` 做业务分支；当前稳定分支依据是 HTTP 状态和 `code`。
@@ -347,6 +347,9 @@ X-Content-SHA256: <segment-sha256>
 ```
 
 分片编号从 `0` 开始。边界公式：
+
+Content-Range 语法与 Body 长度由 API 校验；Header 中的总大小和
+字节范围是否匹配 UploadSession，由 Service 读取会话后校验，不匹配返回 `409 CONFLICT`。
 
 ```ts
 const segmentSize = session.preferredSegmentSizeBytes;

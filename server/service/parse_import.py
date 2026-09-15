@@ -16,6 +16,7 @@ from engine.retrieval.video_retrieval import (
     build_video_chunk_retrieval_documents,
 )
 
+from ..constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
 from ..identity import (
     canonical_uuid,
     derive_context_snapshot_id,
@@ -174,7 +175,7 @@ def prepare_video_parse_import(
     series_name: str,
     episode_order: int,
     pipeline_version: str,
-    workspace_id: str = "local-default",
+    workspace_id: str = DEFAULT_LOCAL_WORKSPACE_ID,
     upload_sequence: int | None = None,
     series_id: str | None = None,
     video_id: str | None = None,

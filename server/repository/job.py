@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import exists, select, update
 from sqlalchemy.orm import Session, aliased, sessionmaker
@@ -14,6 +14,8 @@ from ..model.job import (
     VideoChunkCheckpointStage,
 )
 from ..model.video import SeriesRecord, VideoRecord
+from ..utils.time import utc_now_naive
+from ..utils.validation import require_nonempty_text
 from .index_sync import refresh_series_statuses
 
 
@@ -139,7 +141,7 @@ class ParseJobRepository:
         *,
         limit: int = 100,
     ) -> list[ParseJobState]:
-        normalized_workspace = _required_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ValueError("limit must be a positive integer")
         with self._session_factory() as session:
@@ -182,10 +184,10 @@ class ParseJobRepository:
         lease_duration: timedelta,
         now: datetime | None = None,
     ) -> ParseJobLease | None:
-        normalized_worker_id = _required_text(worker_id, "worker_id")
+        normalized_worker_id = require_nonempty_text(worker_id, "worker_id")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        claimed_at = now or _utc_now()
+        claimed_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
             active_job = aliased(SeriesParseJobRecord)
             row = session.execute(
@@ -276,7 +278,7 @@ class ParseJobRepository:
     ) -> bool:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        heartbeat_at = now or _utc_now()
+        heartbeat_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
             result = session.execute(
                 update(SeriesParseJobRecord)
@@ -301,7 +303,7 @@ class ParseJobRepository:
             raise ValueError("progress must be an integer")
         if not 0 <= progress <= 100:
             raise ValueError("progress must be between zero and 100")
-        updated_at = now or _utc_now()
+        updated_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
             job = session.scalar(
                 select(SeriesParseJobRecord)
@@ -332,7 +334,7 @@ class ParseJobRepository:
         if checkpoint.sequence_no < 0:
             raise ValueError("checkpoint sequence_no must be nonnegative")
         stage = VideoChunkCheckpointStage(checkpoint.stage).value
-        checked_at = now or _utc_now()
+        checked_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
             self._require_current_lease(session, lease, checked_at)
             current = session.get(
@@ -411,7 +413,7 @@ class ParseJobRepository:
         now: datetime | None = None,
     ) -> None:
         with self._session_factory() as session:
-            self._require_current_lease(session, lease, now or _utc_now())
+            self._require_current_lease(session, lease, now or utc_now_naive())
 
     def mark_succeeded(
         self,
@@ -419,7 +421,7 @@ class ParseJobRepository:
         *,
         now: datetime | None = None,
     ) -> bool:
-        completed_at = now or _utc_now()
+        completed_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
             result = session.execute(
                 update(SeriesParseJobRecord)
@@ -456,7 +458,7 @@ class ParseJobRepository:
         retry_at: datetime,
         now: datetime | None = None,
     ) -> bool:
-        failed_at = now or _utc_now()
+        failed_at = now or utc_now_naive()
         summary = _error_summary(error)
         with self._session_factory.begin() as session:
             job = session.scalar(
@@ -493,7 +495,7 @@ class ParseJobRepository:
             raise ValueError("retry_delay cannot be negative")
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
-        reaped_at = now or _utc_now()
+        reaped_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
             jobs = session.scalars(
                 select(SeriesParseJobRecord)
@@ -600,16 +602,6 @@ class ParseJobRepository:
         )
 
 
-def _required_text(value: str, field_name: str) -> str:
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{field_name} must be a non-empty string")
-    return value
-
-
 def _error_summary(error: str) -> str:
     normalized = error.strip() or "parse job failed"
     return normalized[:8192]
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)

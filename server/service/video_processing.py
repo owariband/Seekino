@@ -4,7 +4,6 @@ import hashlib
 import json
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -17,6 +16,7 @@ from engine.retrieval.video_retrieval import (
 )
 from gateway.schemas import EmbeddingResult
 
+from ..config.video_processing import VideoProcessingConfig
 from ..identity import derive_video_chunk_id
 from ..model.job import (
     ParseJobStage,
@@ -29,30 +29,26 @@ from ..repository.job import (
     VideoChunkCheckpointState,
 )
 from ..repository.video import VideoRepository
-from ..service.index_sync import IndexSyncService
-from ..service.parse_import import (
+from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
+from .index_sync import IndexSyncService
+from .parse_import import (
     PreparedEmbedding,
     prepare_completed_video_parse_import,
 )
-from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
+
+# Stage weights describe work completed, not elapsed time or an ETA.
+_PREPARING_PROGRESS = 2
+_SPLIT_READY_PROGRESS = 10
+_PARSED_PROGRESS = 60
+_TEXT_EMBEDDED_PROGRESS = 75
+_VISION_EMBEDDED_PROGRESS = 90
+_PERSISTING_PROGRESS = 92
 
 
 class MultimodalEmbedder(Protocol):
     def embed_text(self, text: str) -> EmbeddingResult: ...
 
     def embed_video(self, video_path: str | Path) -> EmbeddingResult: ...
-
-
-@dataclass(frozen=True, slots=True)
-class VideoProcessingConfig:
-    embedding_dimensions: int = 1024
-    canonical_max_height: int = 720
-
-    def __post_init__(self) -> None:
-        if self.embedding_dimensions <= 0:
-            raise ValueError("embedding_dimensions must be greater than zero")
-        if self.canonical_max_height <= 0:
-            raise ValueError("canonical_max_height must be greater than zero")
 
 
 class VideoProcessingService:
@@ -92,7 +88,7 @@ class VideoProcessingService:
         self._update_progress(
             lease,
             stage=ParseJobStage.PREPARING,
-            progress=2,
+            progress=_PREPARING_PROGRESS,
         )
 
         def windows_ready(windows: list[AnalysisWindow]) -> None:
@@ -145,7 +141,7 @@ class VideoProcessingService:
             self._update_progress(
                 lease,
                 stage=ParseJobStage.SPLIT_READY,
-                progress=10,
+                progress=_SPLIT_READY_PROGRESS,
             )
 
         def chunk_complete(chunk: VideoChunkParseResult, path: Path) -> None:
@@ -158,11 +154,14 @@ class VideoProcessingService:
                 parse_artifact_uri=self._artifacts.uri_for_path(path),
             )
             parsed_count = sequence_no + 1
-            progress = 10 + round(50 * parsed_count / max(window_count, 1))
+            progress = _SPLIT_READY_PROGRESS + round(
+                (_PARSED_PROGRESS - _SPLIT_READY_PROGRESS)
+                * parsed_count / max(window_count, 1)
+            )
             self._update_progress(
                 lease,
                 stage=ParseJobStage.PARSING,
-                progress=min(progress, 60),
+                progress=min(progress, _PARSED_PROGRESS),
             )
 
         result = self._parser.run(
@@ -196,7 +195,7 @@ class VideoProcessingService:
         self._update_progress(
             lease,
             stage=ParseJobStage.PARSING,
-            progress=60,
+            progress=_PARSED_PROGRESS,
         )
 
         documents = {
@@ -218,7 +217,7 @@ class VideoProcessingService:
         self._update_progress(
             lease,
             stage=ParseJobStage.PERSISTING,
-            progress=92,
+            progress=_PERSISTING_PROGRESS,
         )
         prepared = prepare_completed_video_parse_import(
             result,
@@ -289,7 +288,9 @@ class VideoProcessingService:
             self._update_progress(
                 lease,
                 stage=ParseJobStage.TEXT_EMBEDDING,
-                progress=60 + round(15 * completed / total),
+                progress=_PARSED_PROGRESS + round(
+                    (_TEXT_EMBEDDED_PROGRESS - _PARSED_PROGRESS) * completed / total
+                ),
             )
         return embeddings
 
@@ -329,7 +330,10 @@ class VideoProcessingService:
             self._update_progress(
                 lease,
                 stage=ParseJobStage.VISION_EMBEDDING,
-                progress=75 + round(15 * completed / total),
+                progress=_TEXT_EMBEDDED_PROGRESS + round(
+                    (_VISION_EMBEDDED_PROGRESS - _TEXT_EMBEDDED_PROGRESS)
+                    * completed / total
+                ),
             )
         return embeddings
 

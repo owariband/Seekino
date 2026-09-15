@@ -25,7 +25,7 @@ from server.service.index_sync import IndexSyncService
 from server.service.library import LibraryService
 from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
-from server.worker.processor import VideoProcessingConfig, VideoProcessingService
+from server.service.video_processing import VideoProcessingConfig, VideoProcessingService
 
 
 class _Parser:
@@ -142,11 +142,16 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
         upload_session.upload_session_id,
         0,
         source_bytes,
+        workspace_id="local-default",
         checksum_sha256=hashlib.sha256(source_bytes).hexdigest(),
         start_byte=0,
         end_byte_exclusive=len(source_bytes),
+        total_size_bytes=len(source_bytes),
     )
-    completed = upload.complete(upload_session.upload_session_id)
+    completed = upload.complete(
+        upload_session.upload_session_id,
+        workspace_id="local-default",
+    )
     jobs = ParseJobRepository(session_factory)
     lease = jobs.claim_next(
         "worker-a",
@@ -166,7 +171,7 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
         return paths
 
     monkeypatch.setattr(
-        "server.worker.processor.materialize_canonical_chunks",
+        "server.service.video_processing.materialize_canonical_chunks",
         materialize,
     )
     embedder = _Embedder()

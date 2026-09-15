@@ -28,22 +28,27 @@ AgentSession
 ## 2. Multi-Agent 协作图
 
 ```text
-Chat Agent：结合历史消息改写 retrievalQuery
+Chat Agent：结合历史消息解析 Retrieval Intent
     ↓
 Scene Retrieval Tool：Text + Vision → RRF → MySQL Hydrate
     ↓
-Evaluator Agent：检查 query 和 Evidence 是否覆盖用户意图
-    ├── correctedQuery → 最多补查一次 → 再次评估
-    └── 通过
-         ↓
-Chat Agent：只基于完整 VideoChunkEvidence 生成回答与候选 ID
-         ↓
+Chat Agent：只基于完整 VideoChunkEvidence 生成待审核回答与候选 ID
+    ↓
+Evaluator Agent：审核回答、候选 ID 与 Evidence 是否忠实且可核验
+    ├── 通过 → 放行
+    └── 不通过 → 将 feedback 注入 Chat Agent
+         ├── correctedQuery → 重新召回后重写
+         └── 无 correctedQuery → 复用当前 Evidence 重写
+              ↓
+         最多两次 Chat Agent 回答；仍未通过则标记 FAILED
+    ↓
 Assistant Message：内容、modelName、retrievalQuery、searchResult 原子落库
 ```
 
 检索 Tool 是进程内 typed Tool，直接调用 `VideoRetrievalService`，不是 Server 对自己的
-HTTP 请求。Evaluator 只返回公开校验摘要和可选的 corrected query，不保存或返回模型
-私有思维链。
+HTTP 请求。Evaluator 只返回是否放行、给 Chat Agent 的公开修改建议和可选的 corrected
+query，不保存或返回模型私有思维链。只有审核通过的回答才会成为 `COMPLETED` Assistant
+Message；第一次不通过最多触发一次重写，第二次仍不通过不会放行未审核答案。
 
 这里的技术分工是明确的：
 
@@ -172,8 +177,9 @@ Content-Type: application/json
 ```
 
 `topK` 可省略，默认 `8`；当前服务端上限默认 `20`。一次发送先提交 USER Message 和
-`PROCESSING` ASSISTANT Message，再运行 LangGraph，成功后更新同一个 ASSISTANT Message。
-同一 Conversation 同时只允许一个 ASSISTANT Message 处于 `PROCESSING`。
+`PROCESSING` ASSISTANT Message，再运行 LangGraph。Chat Agent 草稿通过 Evaluator 审核后，
+才会更新同一个 ASSISTANT Message 为 `COMPLETED`。同一 Conversation 同时只允许一个
+ASSISTANT Message 处于 `PROCESSING`。
 
 响应 `200`：
 
@@ -267,6 +273,10 @@ Message 新增，或同一 ASSISTANT Message 从 `PROCESSING` 变成 `COMPLETED/
 新的完整快照。约 15 秒无变化时发送 SSE 注释 keep-alive。断线重连后首帧仍是 MySQL
 当前完整状态，所以前端不需要依赖丢失的中间事件恢复。
 
+快照不受 List Message 的单页 500 条上限截断；List 接口仍按原来的分页参数工作。
+轮询与保活间隔由 `ANIVAG_SSE_POLL_SECONDS`（默认 1 秒）和
+`ANIVAG_SSE_KEEPALIVE_SECONDS`（默认 15 秒）配置，保活按经过时间计算。
+
 当前 SSE 是持久化 Message 状态流，不是 token delta 流。LangGraph node/token 的细粒度
 透传需要独立增加 run/event 序号和断线游标，不能把进程内 token 直接当成可靠聊天记录。
 
@@ -274,7 +284,7 @@ Message 新增，或同一 ASSISTANT Message 从 `PROCESSING` 变成 `COMPLETED/
 
 Message 状态：
 
-- `PROCESSING`：LangGraph 正在规划、召回、评估或组织回答。
+- `PROCESSING`：LangGraph 正在解析检索意图、召回、生成草稿或执行审核。
 - `COMPLETED`：`content`、`retrievalQuery`、`searchResult` 已保存。
 - `FAILED`：失败事实和 `lastError` 已保存；使用新 Idempotency-Key 重试。
 
@@ -283,7 +293,7 @@ Message 状态：
 | `400` | `INVALID_REQUEST` | ID、正文、Scope 或参数格式错误 |
 | `404` | `NOT_FOUND` | Session、Conversation 或 Series 不属于 Workspace |
 | `409` | `CONFLICT` | 幂等冲突、同一对话已有消息执行中、Series 未 READY 或检索事实不一致 |
-| `502` | `AGENT_MODEL_ERROR` | Chat/Evaluator 模型调用或结构化输出失败 |
+| `502` | `AGENT_MODEL_ERROR` | Chat/Evaluator 模型调用、结构化输出失败，或两次回答均未通过审核 |
 
 ## 8. 模型配置
 

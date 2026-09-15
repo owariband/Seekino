@@ -5,10 +5,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from server.api.app import _job_event_fingerprint, _job_view, create_app
-from server.api.dependencies import ApplicationServices
+from server.api.app import create_app
+from server.api.jobs import _job_event_fingerprint, _job_view
+from server.bootstrap import ApplicationServices
 from server.database import (
     DatabaseEnvironment,
     create_database_engine,
@@ -31,11 +34,11 @@ from server.storage.artifact import LocalArtifactStore
 
 @dataclass
 class _RetrievalStub:
-    calls: list[tuple[str, list[str], int]]
+    calls: list[tuple[str, list[str], int, str]]
 
-    def search(self, query: str, *, series_ids, top_k: int):
+    def search(self, query: str, *, workspace_id: str, series_ids, top_k: int):
         scope = list(series_ids)
-        self.calls.append((query, scope, top_k))
+        self.calls.append((query, scope, top_k, workspace_id))
         return VideoChunkSearchResult(
             query=query,
             series_ids=scope,
@@ -54,13 +57,14 @@ class _AgentModelStub:
 
     def generate(self, _inputs, *, schema_name: str, result_type):
         payloads = {
-            "anivag_chat_retrieval_plan": {
+            "anivag_retrieval_intent": {
                 "retrieval_query": "她为什么哭",
                 "top_k": 5,
             },
-            "anivag_retrieval_evaluation": {
+            "anivag_answer_evaluation": {
+                "approved": True,
+                "feedback": "回答与证据一致，可以交付。",
                 "corrected_query": None,
-                "public_summary": "当前 query 与召回范围一致。",
             },
             "anivag_chat_answer": {
                 "message": "没有找到可以核验的候选画面。",
@@ -106,7 +110,7 @@ def _client(tmp_path: Path):
             ),
             probe_duration=lambda _path: 12_345,
         ),
-        jobs=ParseJobService(job_repository),
+        jobs=ParseJobService(job_repository, library),
         media=MediaService(library, artifact_store),
         retrieval=retrieval,  # type: ignore[arg-type]
         agent=agent,
@@ -134,6 +138,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
     paths = set(openapi_paths)
 
     assert {
+        "/healthz",
         "/api/series/create",
         "/api/series/list",
         "/api/series/get",
@@ -145,6 +150,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/jobs/get",
         "/api/jobs/events",
         "/api/videos/content",
+        "/api/search",
         "/api/agent/sessions/create",
         "/api/agent/sessions/list",
         "/api/agent/sessions/get",
@@ -154,7 +160,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/messages/list",
         "/api/agent/messages/send",
         "/api/agent/messages/events",
-    } <= paths
+    } == paths
     assert {
         "/api/series",
         "/api/series/{series_id}",
@@ -171,6 +177,11 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/videos/{video_id}/content",
     }.isdisjoint(paths)
     assert all("{" not in path and "}" not in path for path in paths)
+    assert all(
+        route.endpoint.__module__.startswith("server.api.")
+        for route in client.app.routes
+        if isinstance(route, APIRoute)
+    )
 
     query_identifiers = {
         ("/api/series/get", "get"): {"seriesId"},
@@ -310,7 +321,7 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
         },
         "hits": [],
     }
-    assert retrieval.calls == [("她为什么哭", [series_id], 5)]
+    assert retrieval.calls == [("她为什么哭", [series_id], 5, "local-default")]
 
 
 def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) -> None:
@@ -383,19 +394,29 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert job.json()["episodeOrder"] == 7
     assert job.json()["originalFilename"] == "episode-07.mp4"
     assert [item["jobId"] for item in jobs.json()] == [job_id]
+    for path in ("/api/jobs/get", "/api/jobs/events"):
+        outside_workspace = client.get(
+            path,
+            params={"jobId": job_id, "workspaceId": "another-workspace"},
+        )
+        assert outside_workspace.status_code == 404
 
     lease = jobs_repository.claim_next(
         "api-test-worker",
         lease_duration=timedelta(minutes=5),
     )
     assert lease is not None
-    job_service = ParseJobService(jobs_repository)
-    before_heartbeat = _job_view(job_service.get(job_id))
+    job_service = client.app.state.services.jobs
+    before_heartbeat = _job_view(
+        job_service.get(job_id, workspace_id="local-default")
+    )
     assert jobs_repository.heartbeat(
         lease,
         lease_duration=timedelta(minutes=5),
     )
-    after_heartbeat = _job_view(job_service.get(job_id))
+    after_heartbeat = _job_view(
+        job_service.get(job_id, workspace_id="local-default")
+    )
     assert _job_event_fingerprint(before_heartbeat) == _job_event_fingerprint(
         after_heartbeat
     )
@@ -404,7 +425,9 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
         stage=ParseJobStage.PARSING,
         progress=30,
     )
-    after_progress = _job_view(job_service.get(job_id))
+    after_progress = _job_view(
+        job_service.get(job_id, workspace_id="local-default")
+    )
     assert _job_event_fingerprint(after_progress) != _job_event_fingerprint(
         after_heartbeat
     )
@@ -471,3 +494,64 @@ def test_upload_rejects_wrong_content_range_and_workspace(tmp_path: Path) -> Non
     assert wrong_workspace.status_code == 404
     assert wrong_range.status_code == 409
     assert wrong_range.json()["code"] == "CONFLICT"
+
+    mismatched_total = client.put(
+        "/api/uploads/segments/upload",
+        params={"uploadSessionId": upload_id, "segmentNumber": 0},
+        headers={
+            "Content-Range": "bytes 0-3/5",
+            "X-Content-SHA256": hashlib.sha256(b"abcd").hexdigest(),
+        },
+        content=b"abcd",
+    )
+    assert mismatched_total.status_code == 409
+    for path, method in (
+        ("/api/uploads/segments/upload", "PUT"),
+        ("/api/uploads/complete", "POST"),
+    ):
+        outside_workspace = client.request(
+            method,
+            path,
+            params={
+                "uploadSessionId": upload_id,
+                "segmentNumber": 0,
+                "workspaceId": "another-workspace",
+            },
+            headers={
+                "Content-Range": "bytes 0-3/4",
+                "X-Content-SHA256": hashlib.sha256(b"abcd").hexdigest(),
+            },
+            content=b"abcd" if method == "PUT" else None,
+        )
+        assert outside_workspace.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("segment_number", "content_range", "data", "expected_status"),
+    [
+        (0, "not-a-byte-range", b"abcd", 400),
+        (0, "bytes 0-3/4", b"abc", 400),
+        (-1, "bytes 0-3/4", b"abcd", 422),
+    ],
+)
+def test_upload_protocol_errors_do_not_require_business_data(
+    tmp_path: Path,
+    segment_number: int,
+    content_range: str,
+    data: bytes,
+    expected_status: int,
+) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    response = client.put(
+        "/api/uploads/segments/upload",
+        params={
+            "uploadSessionId": "00000000-0000-0000-0000-000000000000",
+            "segmentNumber": segment_number,
+        },
+        headers={
+            "Content-Range": content_range,
+            "X-Content-SHA256": hashlib.sha256(data).hexdigest(),
+        },
+        content=data,
+    )
+    assert response.status_code == expected_status

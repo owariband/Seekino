@@ -546,7 +546,10 @@ def test_ready_series_scope_is_complete_ordered_and_deduplicated(
     video_repository.import_video_parse(prepared_import)
 
     with pytest.raises(SeriesNotReadyError, match="INDEXING"):
-        video_repository.require_ready_series([prepared_import.series_id])
+        video_repository.require_ready_series(
+            [prepared_import.series_id],
+            workspace_id=prepared_import.workspace_id,
+        )
 
     with engine.begin() as connection:
         connection.execute(
@@ -555,13 +558,15 @@ def test_ready_series_scope_is_complete_ordered_and_deduplicated(
             .values(status="READY")
         )
     assert video_repository.require_ready_series(
-        [prepared_import.series_id, prepared_import.series_id]
+        [prepared_import.series_id, prepared_import.series_id],
+        workspace_id=prepared_import.workspace_id,
     ) == [prepared_import.series_id]
 
     missing_id = "00000000-0000-0000-0000-000000000000"
     with pytest.raises(SeriesScopeNotFoundError, match=missing_id):
         video_repository.require_ready_series(
-            [prepared_import.series_id, missing_id]
+            [prepared_import.series_id, missing_id],
+            workspace_id=prepared_import.workspace_id,
         )
 
 

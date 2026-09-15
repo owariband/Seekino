@@ -8,6 +8,7 @@ from ..repository.job import (
     ParseJobState,
     VideoChunkCheckpointState,
 )
+from .library import LibraryService
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,13 +18,20 @@ class ParseJobDetail:
 
 
 class ParseJobService:
-    def __init__(self, repository: ParseJobRepository) -> None:
+    def __init__(
+        self,
+        repository: ParseJobRepository,
+        library: LibraryService,
+    ) -> None:
         self._repository = repository
+        self._library = library
 
-    def get(self, job_id: str) -> ParseJobDetail:
+    def get(self, job_id: str, *, workspace_id: str) -> ParseJobDetail:
         canonical_job_id = canonical_uuid(job_id, "job_id")
+        job = self._repository.get(canonical_job_id)
+        self._library.get_video(job.video_id, workspace_id=workspace_id)
         return ParseJobDetail(
-            job=self._repository.get(canonical_job_id),
+            job=job,
             checkpoints=tuple(
                 self._repository.list_checkpoints(canonical_job_id)
             ),

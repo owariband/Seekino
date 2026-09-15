@@ -4,7 +4,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
@@ -22,6 +22,7 @@ from ..model.video import (
     VideoChunkEmbeddingRecord,
     VideoChunkRecord,
 )
+from ..utils.time import as_naive_utc, utc_now, utc_now_naive
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ class IndexSyncRepository:
     ) -> list[IndexSyncItem]:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
-        due_at = _as_naive_utc(now or datetime.now(UTC))
+        due_at = as_naive_utc(now or utc_now())
         statement = _item_statement().where(
             IndexSyncIntentRecord.status.in_(
                 (IndexSyncStatus.PENDING.value, IndexSyncStatus.RETRY_WAIT.value)
@@ -122,7 +123,7 @@ class IndexSyncRepository:
     ) -> bool:
         operation_value = IndexSyncOperation(operation).value
         current_generation = _validated_generation(generation)
-        now = _utc_now()
+        now = utc_now_naive()
         with self._session_factory.begin() as session:
             changed = session.execute(
                 update(IndexSyncIntentRecord)
@@ -157,8 +158,8 @@ class IndexSyncRepository:
     ) -> bool:
         operation_value = IndexSyncOperation(operation).value
         current_generation = _validated_generation(generation)
-        retry_at = _as_naive_utc(available_at)
-        now = _utc_now()
+        retry_at = as_naive_utc(available_at)
+        now = utc_now_naive()
         with self._session_factory.begin() as session:
             changed = session.execute(
                 update(IndexSyncIntentRecord)
@@ -191,7 +192,7 @@ class IndexSyncRepository:
     ) -> int | None:
         operation_value = IndexSyncOperation(operation).value
         current_generation = _validated_generation(generation)
-        now = _utc_now()
+        now = utc_now_naive()
         with self._session_factory.begin() as session:
             changed = session.execute(
                 update(IndexSyncIntentRecord)
@@ -224,7 +225,7 @@ class IndexSyncRepository:
         """Requeue current state after an older external write may have won."""
 
         stale_generation = _validated_generation(completed_generation)
-        now = _utc_now()
+        now = utc_now_naive()
         with self._session_factory.begin() as session:
             intent = session.scalar(
                 select(IndexSyncIntentRecord)
@@ -303,7 +304,7 @@ def materialize_index_sync_intents(
         }
 
     changed_count = 0
-    now = _utc_now()
+    now = utc_now_naive()
     affected_series_ids: set[str] = set()
     for row in rows:
         text_vector = _copy_vector(row.text_vector)
@@ -549,16 +550,6 @@ def refresh_series_statuses(
 
 def _copy_vector(vector) -> list[float] | None:
     return list(vector) if vector is not None else None
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
-
-
-def _as_naive_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value
-    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def _validated_generation(value: int) -> int:

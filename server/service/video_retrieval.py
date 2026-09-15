@@ -9,6 +9,7 @@ from engine.retrieval.video_retrieval import (
 )
 from gateway.schemas import EmbeddingResult
 
+from ..config.retrieval import RetrievalConfig
 from ..model.index_sync import IndexSyncOperation, IndexSyncStatus
 from ..repository.video import (
     HydratedVideoChunkState,
@@ -30,6 +31,8 @@ from ..storage.qdrant import (
     VideoChunkIndexMatch,
 )
 
+_DEFAULT_RETRIEVAL_CONFIG = RetrievalConfig()
+
 
 class QueryEmbedder(Protocol):
     def embed_query(self, query: str) -> EmbeddingResult: ...
@@ -48,10 +51,10 @@ class VideoRetrievalService:
         store: QdrantVideoChunkStore,
         embedder: QueryEmbedder,
         *,
-        channel_top_k: int = 20,
-        rrf_k: int = 60,
-        text_weight: float = 1.0,
-        vision_weight: float = 1.0,
+        channel_top_k: int = _DEFAULT_RETRIEVAL_CONFIG.channel_top_k,
+        rrf_k: int = _DEFAULT_RETRIEVAL_CONFIG.rrf_k,
+        text_weight: float = _DEFAULT_RETRIEVAL_CONFIG.text_weight,
+        vision_weight: float = _DEFAULT_RETRIEVAL_CONFIG.vision_weight,
         exact: bool = False,
     ) -> None:
         if store.text_dimensions != store.vision_dimensions:
@@ -82,16 +85,26 @@ class VideoRetrievalService:
         self,
         query: str,
         *,
+        workspace_id: str,
         series_ids: Sequence[str],
         top_k: int = 10,
     ) -> VideoChunkSearchResult:
+        if (
+            not isinstance(workspace_id, str)
+            or not workspace_id
+            or workspace_id != workspace_id.strip()
+        ):
+            raise ValueError("workspace_id must be a non-empty string")
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must not be empty")
         if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
             raise ValueError("top_k must be a positive integer")
 
         normalized_query = query.strip()
-        scope = self._repository.require_ready_series(series_ids)
+        scope = self._repository.require_ready_series(
+            series_ids,
+            workspace_id=workspace_id,
+        )
         embedding = self._embedder.embed_query(normalized_query)
         if embedding.modality != "text":
             raise RuntimeError("query embedder returned a non-text embedding")

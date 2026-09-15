@@ -10,7 +10,12 @@ from server.database import create_session_factory
 from server.model.job import ParseJobStatus, SeriesParseJobRecord
 from server.model.upload import UploadSegmentRecord, UploadSessionStatus
 from server.model.video import SeriesRecord, VideoRecord
-from server.repository.upload import UploadRepository, UploadStateError
+from server.repository.upload import (
+    UploadConflictError,
+    UploadRepository,
+    UploadSessionNotFoundError,
+    UploadStateError,
+)
 from server.service.upload import (
     UploadChecksumMismatchError,
     UploadService,
@@ -83,9 +88,11 @@ def _put(
         upload_session_id,
         number,
         data,
+        workspace_id="local-default",
         checksum_sha256=hashlib.sha256(data).hexdigest(),
         start_byte=start,
         end_byte_exclusive=start + len(data),
+        total_size_bytes=10,
     )
 
 
@@ -103,17 +110,59 @@ def test_upload_session_is_idempotent_and_reports_progress(
     _put(service, first.upload_session_id, 1, b"efgh")
     _put(service, first.upload_session_id, 0, b"abcd")
     repeated = _put(service, first.upload_session_id, 0, b"abcd")
-    current = service.get_session(first.upload_session_id)
+    current = service.get_session(
+        first.upload_session_id,
+        workspace_id="local-default",
+    )
 
     assert first.upload_session_id == second.upload_session_id
     assert first.total_segments == 3
     assert repeated.segment_number == 0
     assert current.uploaded_segment_count == 2
     assert current.uploaded_size_bytes == 8
+    assert service.get_detail(
+        first.upload_session_id,
+        workspace_id="local-default",
+    ).missing_segment_numbers == (2,)
     with engine.connect() as connection:
         assert connection.execute(
             select(UploadSegmentRecord.segment_number)
         ).all() == [(0,), (1,)]
+
+
+def test_service_checks_workspace_and_session_range_before_writing_bytes(
+    repository,
+    tmp_path,
+) -> None:
+    _engine, store, _upload_repository, service = _upload_service(
+        repository,
+        tmp_path,
+    )
+    upload = _create(service)
+
+    with pytest.raises(UploadSessionNotFoundError, match="workspace"):
+        service.get_detail(upload.upload_session_id, workspace_id="another-workspace")
+    with pytest.raises(UploadSessionNotFoundError, match="workspace"):
+        service.complete(upload.upload_session_id, workspace_id="another-workspace")
+    for workspace_id, total_size, end_byte, expected_error in (
+        ("another-workspace", 10, 4, UploadSessionNotFoundError),
+        ("local-default", 11, 4, UploadConflictError),
+        ("local-default", 10, 3, UploadConflictError),
+    ):
+        with pytest.raises(expected_error):
+            service.upload_segment(
+                upload.upload_session_id,
+                0,
+                b"abcd",
+                workspace_id=workspace_id,
+                checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
+                start_byte=0,
+                end_byte_exclusive=end_byte,
+                total_size_bytes=total_size,
+            )
+    assert not (
+        store.base_directory / "staging" / "uploads" / upload.upload_session_id
+    ).exists()
 
 
 def test_upload_rejects_checksum_mismatch_and_missing_completion(
@@ -131,12 +180,14 @@ def test_upload_rejects_checksum_mismatch_and_missing_completion(
             upload.upload_session_id,
             0,
             b"abcd",
+            workspace_id="local-default",
             checksum_sha256="0" * 64,
             start_byte=0,
             end_byte_exclusive=4,
+            total_size_bytes=10,
         )
     with pytest.raises(UploadStateError, match="missing segments: 0, 1, 2"):
-        service.complete(upload.upload_session_id)
+        service.complete(upload.upload_session_id, workspace_id="local-default")
 
 
 def test_complete_creates_video_and_durable_parse_job_once(
@@ -152,8 +203,8 @@ def test_complete_creates_video_and_durable_parse_job_once(
     _put(service, upload.upload_session_id, 0, b"abcd")
     _put(service, upload.upload_session_id, 1, b"efgh")
 
-    first = service.complete(upload.upload_session_id)
-    second = service.complete(upload.upload_session_id)
+    first = service.complete(upload.upload_session_id, workspace_id="local-default")
+    second = service.complete(upload.upload_session_id, workspace_id="local-default")
 
     assert first.video_id == second.video_id
     assert first.job_id == second.job_id

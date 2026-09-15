@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from sqlalchemy import func, or_, select, update
@@ -16,6 +16,7 @@ from ..model.upload import (
     UploadSessionStatus,
 )
 from ..model.video import SeriesRecord, VideoRecord
+from ..utils.time import utc_now_naive
 
 
 class UploadSessionNotFoundError(LookupError):
@@ -201,7 +202,7 @@ class UploadRepository:
         *,
         now: datetime | None = None,
     ) -> UploadSessionState:
-        checked_at = now or _utc_now()
+        checked_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
             record = session.scalar(
                 select(UploadSessionRecord)
@@ -244,7 +245,7 @@ class UploadRepository:
         artifact_uri: str,
         now: datetime | None = None,
     ) -> UploadSegmentState:
-        registered_at = now or _utc_now()
+        registered_at = now or utc_now_naive()
         expired = False
         result: UploadSegmentState | None = None
         with self._session_factory.begin() as session:
@@ -311,7 +312,7 @@ class UploadRepository:
         now: datetime | None = None,
         stale_after: timedelta = timedelta(minutes=15),
     ) -> UploadCompletionClaim:
-        claimed_at = now or _utc_now()
+        claimed_at = now or utc_now_naive()
         expired = False
         result: UploadCompletionClaim | None = None
         with self._session_factory.begin() as session:
@@ -413,7 +414,7 @@ class UploadRepository:
         max_job_attempts: int,
         now: datetime | None = None,
     ) -> CompletedUploadState:
-        completed_at = now or _utc_now()
+        completed_at = now or utc_now_naive()
         job_id = derive_parse_job_id(video_id, pipeline_version)
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
@@ -452,7 +453,7 @@ class UploadRepository:
                     total_bytes=upload.total_size_bytes,
                     duration_ms=duration_ms,
                     upload_status="COMPLETED",
-                    parse_status="QUEUED",
+                    parse_status=ParseJobStatus.QUEUED.value,
                     upload_progress=100,
                     parse_progress=0,
                 )
@@ -627,10 +628,6 @@ class UploadRepository:
                 "idempotency key was already used with different fields: "
                 + ", ".join(mismatches)
             )
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _active_slot_key(series_id: str, episode_order: int) -> str:

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Literal, cast
 
 from engine.parse.runtime import VideoParseRuntimeConfig
 
-from .database import DatabaseEnvironment
-from .service.agent import AgentServiceConfig
-from .service.upload import UploadServiceConfig
+from ..database import DatabaseEnvironment
+from .agent import AgentServiceConfig
+from .retrieval import RetrievalConfig
+from .sse import SSEConfig
+from .upload import UploadServiceConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,9 +40,19 @@ class ServerSettings:
     worker_retry_max: timedelta
     allowed_origins: tuple[str, ...]
     model_config_path: Path | None
+    sse: SSEConfig = field(default_factory=SSEConfig)
+    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    database_pool_recycle_seconds: int = 3600
+    video_embedding_model: str | None = None
+    video_embedding_fps: float | None = None
 
     @classmethod
     def from_environment(cls) -> "ServerSettings":
+        upload_defaults = UploadServiceConfig()
+        parse_defaults = VideoParseRuntimeConfig()
+        agent_defaults = AgentServiceConfig()
+        sse_defaults = SSEConfig()
+        retrieval_defaults = RetrievalConfig()
         environment = DatabaseEnvironment(
             os.getenv("ANIVAG_ENVIRONMENT", DatabaseEnvironment.DEVELOPMENT.value)
         )
@@ -51,11 +64,11 @@ class ServerSettings:
         ).expanduser()
         segment_size = _environment_int(
             "ANIVAG_UPLOAD_SEGMENT_SIZE_BYTES",
-            8 * 1024 * 1024,
+            upload_defaults.preferred_segment_size_bytes,
         )
         max_upload_size = _environment_int(
             "ANIVAG_MAX_UPLOAD_SIZE_BYTES",
-            10 * 1024 * 1024 * 1024,
+            upload_defaults.maximum_upload_size_bytes,
         )
         lease_seconds = _environment_int("ANIVAG_WORKER_LEASE_SECONDS", 300)
         heartbeat_seconds = _environment_int(
@@ -90,7 +103,7 @@ class ServerSettings:
             raise ValueError(
                 "text and vision vector dimensions must match for shared query vectors"
             )
-        asr_mode = os.getenv("ANIVAG_ASR_MODE", "lite").strip().casefold()
+        asr_mode = os.getenv("ANIVAG_ASR_MODE", parse_defaults.asr_mode).strip().casefold()
         if asr_mode not in {"lite", "none"}:
             raise ValueError("ANIVAG_ASR_MODE must be 'lite' or 'none'")
         origins = tuple(
@@ -102,8 +115,12 @@ class ServerSettings:
             if item.strip()
         )
         model_config = os.getenv("ANIVAG_MODEL_CONFIG")
-        agent_default_top_k = _environment_int("ANIVAG_AGENT_DEFAULT_TOP_K", 8)
-        agent_maximum_top_k = _environment_int("ANIVAG_AGENT_MAX_TOP_K", 20)
+        agent_default_top_k = _environment_int(
+            "ANIVAG_AGENT_DEFAULT_TOP_K", agent_defaults.default_top_k
+        )
+        agent_maximum_top_k = _environment_int(
+            "ANIVAG_AGENT_MAX_TOP_K", agent_defaults.maximum_top_k
+        )
         if agent_maximum_top_k < agent_default_top_k:
             raise ValueError(
                 "ANIVAG_AGENT_MAX_TOP_K must be at least ANIVAG_AGENT_DEFAULT_TOP_K"
@@ -123,53 +140,57 @@ class ServerSettings:
                 session_ttl=timedelta(
                     seconds=_environment_int(
                         "ANIVAG_UPLOAD_SESSION_TTL_SECONDS",
-                        86_400,
+                        int(upload_defaults.session_ttl.total_seconds()),
                     )
                 ),
                 completion_stale_after=timedelta(
                     seconds=_environment_int(
                         "ANIVAG_UPLOAD_COMPLETION_STALE_SECONDS",
-                        900,
+                        int(upload_defaults.completion_stale_after.total_seconds()),
                     )
                 ),
                 pipeline_version=os.getenv(
                     "ANIVAG_PIPELINE_VERSION",
-                    "m1",
+                    upload_defaults.pipeline_version,
                 ),
                 max_job_attempts=_environment_int(
                     "ANIVAG_PARSE_JOB_MAX_ATTEMPTS",
-                    3,
+                    upload_defaults.max_job_attempts,
                 ),
             ),
             parse=VideoParseRuntimeConfig(
                 chunk_duration_ms=_environment_int(
                     "ANIVAG_CHUNK_DURATION_MS",
-                    60_000,
+                    parse_defaults.chunk_duration_ms,
                 ),
                 context_overlap_ms=_environment_nonnegative_int(
                     "ANIVAG_CONTEXT_OVERLAP_MS",
-                    3_000,
+                    parse_defaults.context_overlap_ms,
                 ),
-                max_height=_environment_int("ANIVAG_PARSE_MAX_HEIGHT", 720),
-                asr_concurrency=_environment_int("ANIVAG_ASR_CONCURRENCY", 4),
+                max_height=_environment_int(
+                    "ANIVAG_PARSE_MAX_HEIGHT", parse_defaults.max_height
+                ),
+                asr_concurrency=_environment_int(
+                    "ANIVAG_ASR_CONCURRENCY", parse_defaults.asr_concurrency
+                ),
                 asr_mode=cast(Literal["lite", "none"], asr_mode),
                 request_timeout_seconds=_environment_float(
                     "ANIVAG_PARSE_REQUEST_TIMEOUT_SECONDS",
-                    600,
+                    parse_defaults.request_timeout_seconds,
                 ),
                 max_context_events=_environment_int(
                     "ANIVAG_MAX_CONTEXT_EVENTS",
-                    8,
+                    parse_defaults.max_context_events,
                 ),
                 max_context_chars=_environment_int(
                     "ANIVAG_MAX_CONTEXT_CHARS",
-                    2000,
+                    parse_defaults.max_context_chars,
                 ),
             ),
             agent=AgentServiceConfig(
                 history_message_limit=_environment_int(
                     "ANIVAG_AGENT_HISTORY_MESSAGE_LIMIT",
-                    12,
+                    agent_defaults.history_message_limit,
                 ),
                 default_top_k=agent_default_top_k,
                 maximum_top_k=agent_maximum_top_k,
@@ -195,6 +216,41 @@ class ServerSettings:
             model_config_path=(
                 Path(model_config).expanduser() if model_config else None
             ),
+            sse=SSEConfig(
+                poll_interval_seconds=_environment_float(
+                    "ANIVAG_SSE_POLL_SECONDS", sse_defaults.poll_interval_seconds
+                ),
+                keepalive_interval_seconds=_environment_float(
+                    "ANIVAG_SSE_KEEPALIVE_SECONDS", sse_defaults.keepalive_interval_seconds
+                ),
+            ),
+            retrieval=RetrievalConfig(
+                channel_top_k=_environment_int(
+                    "ANIVAG_RETRIEVAL_CHANNEL_TOP_K", retrieval_defaults.channel_top_k
+                ),
+                rrf_k=_environment_int(
+                    "ANIVAG_RETRIEVAL_RRF_K", retrieval_defaults.rrf_k
+                ),
+                text_weight=float(
+                    os.getenv(
+                        "ANIVAG_RETRIEVAL_TEXT_WEIGHT", str(retrieval_defaults.text_weight)
+                    )
+                ),
+                vision_weight=float(
+                    os.getenv(
+                        "ANIVAG_RETRIEVAL_VISION_WEIGHT", str(retrieval_defaults.vision_weight)
+                    )
+                ),
+            ),
+            database_pool_recycle_seconds=_environment_int(
+                "ANIVAG_DATABASE_POOL_RECYCLE_SECONDS", 3600
+            ),
+            video_embedding_model=_optional_environment("ANIVAG_VIDEO_EMBEDDING_MODEL"),
+            video_embedding_fps=(
+                _environment_float("ANIVAG_VIDEO_EMBEDDING_FPS", 1.0)
+                if _optional_environment("ANIVAG_VIDEO_EMBEDDING_FPS") is not None
+                else None
+            ),
         )
 
 
@@ -219,8 +275,8 @@ def _environment_int(name: str, default: int) -> int:
 
 def _environment_float(name: str, default: float) -> float:
     value = float(os.getenv(name, str(default)))
-    if value <= 0:
-        raise ValueError(f"{name} must be greater than zero")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite and greater than zero")
     return value
 
 

@@ -25,6 +25,7 @@ def create_database_engine(
     database_url: str,
     *,
     environment: DatabaseEnvironment | str,
+    pool_recycle_seconds: int = 3600,
 ) -> Engine:
     environment = DatabaseEnvironment(environment)
     url = make_url(database_url)
@@ -38,7 +39,7 @@ def create_database_engine(
     return create_engine(
         url,
         pool_pre_ping=True,
-        pool_recycle=3600,
+        pool_recycle=pool_recycle_seconds,
     )
 
 

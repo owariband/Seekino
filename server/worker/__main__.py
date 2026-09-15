@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import signal
 import threading
 
@@ -11,14 +10,15 @@ from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
 from qdrant_client import QdrantClient
 
 from ..config import ServerSettings
+from ..config.video_processing import VideoProcessingConfig
 from ..database import create_database_engine, create_schema, create_session_factory
 from ..repository.index_sync import IndexSyncRepository
 from ..repository.job import ParseJobRepository
 from ..repository.video import VideoRepository
 from ..service.index_sync import IndexSyncService
+from ..service.video_processing import VideoProcessingService
 from ..storage.artifact import LocalArtifactStore
 from ..storage.qdrant import QdrantVideoChunkStore
-from .processor import VideoProcessingConfig, VideoProcessingService
 from .runtime import ParseWorker
 
 
@@ -46,6 +46,7 @@ def main() -> None:
     engine = create_database_engine(
         settings.database_url,
         environment=settings.environment,
+        pool_recycle_seconds=settings.database_pool_recycle_seconds,
     )
     if args.init_db:
         create_schema(engine)
@@ -77,14 +78,12 @@ def main() -> None:
             settings.model_config_path
         ).multimodal_embedding
         embedder = DoubaoMultimodalEmbedder(
-            os.getenv("ANIVAG_VIDEO_EMBEDDING_MODEL")
-            or embedding_config.model,
+            settings.video_embedding_model or embedding_config.model,
             output_dimensionality=settings.text_vector_dimensions,
-            fps=float(
-                os.getenv(
-                    "ANIVAG_VIDEO_EMBEDDING_FPS",
-                    str(embedding_config.fps),
-                )
+            fps=(
+                settings.video_embedding_fps
+                if settings.video_embedding_fps is not None
+                else embedding_config.fps
             ),
         )
         processor = VideoProcessingService(

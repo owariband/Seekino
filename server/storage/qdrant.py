@@ -9,6 +9,7 @@ from uuid import UUID
 from qdrant_client import QdrantClient, models
 
 from ..database import DatabaseEnvironment
+from ..utils.validation import require_nonempty_text
 
 TEXT_VECTOR_NAME = "text"
 VISION_VECTOR_NAME = "vision"
@@ -134,9 +135,9 @@ class QdrantVideoChunkStore:
 
     def upsert(self, point: VideoChunkIndexPoint) -> None:
         point_id = _canonical_video_chunk_id(point.video_chunk_id)
-        series_id = _required_text(point.series_id, "series_id")
-        video_id = _required_text(point.video_id, "video_id")
-        source_revision = _required_text(point.source_revision, "source_revision")
+        series_id = require_nonempty_text(point.series_id, "series_id")
+        video_id = require_nonempty_text(point.video_id, "video_id")
+        source_revision = require_nonempty_text(point.source_revision, "source_revision")
         if not isinstance(point.is_fallback, bool):
             raise ValueError("is_fallback must be a bool")
 
@@ -330,17 +331,17 @@ class QdrantVideoChunkStore:
                 )
                 if payload_chunk_id != point_id:
                     raise ValueError("payload videoChunkId does not match point ID")
-                series_id = _required_text(
+                series_id = require_nonempty_text(
                     payload[SERIES_ID_PAYLOAD_KEY],
                     "payload seriesId",
                 )
                 if series_id not in scope:
                     raise ValueError("payload seriesId is outside the requested scope")
-                video_id = _required_text(
+                video_id = require_nonempty_text(
                     payload[VIDEO_ID_PAYLOAD_KEY],
                     "payload videoId",
                 )
-                source_revision = _required_text(
+                source_revision = require_nonempty_text(
                     payload[SOURCE_REVISION_PAYLOAD_KEY],
                     "payload sourceRevision",
                 )
@@ -449,18 +450,12 @@ def _canonical_video_chunk_id(value: str) -> str:
     return value
 
 
-def _required_text(value: str, field_name: str) -> str:
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{field_name} must be a non-empty string")
-    return value
-
-
 def _validated_series_scope(series_ids: Sequence[str]) -> list[str]:
     if isinstance(series_ids, (str, bytes)):
         raise ValueError("series_ids must be a sequence of IDs")
     try:
         scope = list(
-            dict.fromkeys(_required_text(item, "series_id") for item in series_ids)
+            dict.fromkeys(require_nonempty_text(item, "series_id") for item in series_ids)
         )
     except TypeError as exc:
         raise ValueError("series_ids must be a sequence of IDs") from exc

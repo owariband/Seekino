@@ -4,24 +4,31 @@ import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from engine.parse.analysis_windows import probe_video_duration_ms
 
+from ..config.upload import UploadServiceConfig
 from ..identity import canonical_uuid, derive_video_id
+from ..model.upload import UploadSessionStatus
 from ..repository.upload import (
     CompletedUploadState,
     UploadCompletionClaim,
     UploadConflictError,
     UploadRepository,
     UploadSegmentState,
+    UploadSessionNotFoundError,
     UploadSessionState,
+    UploadStateError,
 )
 from ..storage.artifact import (
     ArtifactStore,
     UploadSegmentArtifact,
 )
+from ..utils.errors import exception_summary
+from ..utils.time import utc_now_naive
+from ..utils.validation import require_nonempty_text
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _SUPPORTED_MEDIA_TYPES = frozenset(
@@ -33,32 +40,14 @@ _SUPPORTED_MEDIA_TYPES = frozenset(
 )
 
 
-@dataclass(frozen=True, slots=True)
-class UploadServiceConfig:
-    preferred_segment_size_bytes: int = 8 * 1024 * 1024
-    maximum_upload_size_bytes: int = 10 * 1024 * 1024 * 1024
-    session_ttl: timedelta = timedelta(hours=24)
-    completion_stale_after: timedelta = timedelta(minutes=15)
-    pipeline_version: str = "m1"
-    max_job_attempts: int = 3
-
-    def __post_init__(self) -> None:
-        if self.preferred_segment_size_bytes <= 0:
-            raise ValueError("preferred segment size must be greater than zero")
-        if self.maximum_upload_size_bytes < self.preferred_segment_size_bytes:
-            raise ValueError("maximum upload size cannot be smaller than a segment")
-        if self.session_ttl <= timedelta(0):
-            raise ValueError("upload session TTL must be positive")
-        if self.completion_stale_after <= timedelta(0):
-            raise ValueError("completion stale timeout must be positive")
-        if not self.pipeline_version.strip():
-            raise ValueError("pipeline version must not be empty")
-        if self.max_job_attempts <= 0:
-            raise ValueError("max job attempts must be greater than zero")
-
-
 class UploadChecksumMismatchError(ValueError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class UploadSessionDetail:
+    session: UploadSessionState
+    missing_segment_numbers: tuple[int, ...]
 
 
 class UploadService:
@@ -75,7 +64,7 @@ class UploadService:
         self._artifact_store = artifact_store
         self._config = config or UploadServiceConfig()
         self._probe_duration = probe_duration
-        self._clock = clock or _utc_now
+        self._clock = clock or utc_now_naive
 
     def create_session(
         self,
@@ -89,11 +78,11 @@ class UploadService:
         idempotency_key: str,
         upload_sequence: int | None = None,
     ) -> UploadSessionState:
-        normalized_workspace = _required_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
         normalized_series_id = canonical_uuid(series_id, "series_id")
         normalized_filename = _filename(original_filename)
-        normalized_media_type = _required_text(media_type, "media_type").casefold()
-        normalized_idempotency_key = _required_text(
+        normalized_media_type = require_nonempty_text(media_type, "media_type").casefold()
+        normalized_idempotency_key = require_nonempty_text(
             idempotency_key,
             "idempotency_key",
         )
@@ -137,15 +126,37 @@ class UploadService:
             now=now,
         )
 
-    def get_session(self, upload_session_id: str) -> UploadSessionState:
-        return self._repository.get_session(
+    def get_session(
+        self,
+        upload_session_id: str,
+        *,
+        workspace_id: str,
+    ) -> UploadSessionState:
+        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        state = self._repository.get_session(
             canonical_uuid(upload_session_id, "upload_session_id"),
             now=self._clock(),
         )
+        if state.workspace_id != normalized_workspace:
+            raise UploadSessionNotFoundError(
+                "upload session does not exist in this workspace"
+            )
+        return state
 
-    def list_segments(self, upload_session_id: str) -> list[UploadSegmentState]:
-        return self._repository.list_segments(
-            canonical_uuid(upload_session_id, "upload_session_id")
+    def get_detail(
+        self,
+        upload_session_id: str,
+        *,
+        workspace_id: str,
+    ) -> UploadSessionDetail:
+        state = self.get_session(upload_session_id, workspace_id=workspace_id)
+        segments = self._repository.list_segments(state.upload_session_id)
+        present = {item.segment_number for item in segments}
+        return UploadSessionDetail(
+            session=state,
+            missing_segment_numbers=tuple(
+                number for number in range(state.total_segments) if number not in present
+            ),
         )
 
     def upload_segment(
@@ -154,14 +165,28 @@ class UploadService:
         segment_number: int,
         data: bytes,
         *,
+        workspace_id: str,
         checksum_sha256: str,
         start_byte: int,
         end_byte_exclusive: int,
+        total_size_bytes: int,
     ) -> UploadSegmentState:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
         checksum = checksum_sha256.casefold()
         if not _SHA256_PATTERN.fullmatch(checksum):
             raise ValueError("checksum_sha256 must be 64 lowercase hex characters")
+        self.require_uploadable_segment(
+            session_id,
+            segment_number,
+            workspace_id=workspace_id,
+            start_byte=start_byte,
+            end_byte_exclusive=end_byte_exclusive,
+            total_size_bytes=total_size_bytes,
+        )
+        if len(data) != end_byte_exclusive - start_byte:
+            raise UploadConflictError(
+                "upload segment size does not match its byte range"
+            )
         stored = self._artifact_store.put_upload_segment(
             session_id,
             segment_number,
@@ -182,8 +207,47 @@ class UploadService:
             now=self._clock(),
         )
 
-    def complete(self, upload_session_id: str) -> CompletedUploadState:
+    def require_uploadable_segment(
+        self,
+        upload_session_id: str,
+        segment_number: int,
+        *,
+        workspace_id: str,
+        start_byte: int,
+        end_byte_exclusive: int,
+        total_size_bytes: int,
+    ) -> None:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
+        current = self.get_session(session_id, workspace_id=workspace_id)
+        if current.status != UploadSessionStatus.UPLOADING.value:
+            raise UploadStateError(
+                f"upload session is {current.status.lower()} and cannot accept segments"
+            )
+        if total_size_bytes != current.total_size_bytes:
+            raise UploadConflictError(
+                "upload total size does not match the upload session"
+            )
+        expected_start = segment_number * current.preferred_segment_size_bytes
+        expected_end = min(
+            expected_start + current.preferred_segment_size_bytes,
+            current.total_size_bytes,
+        )
+        if segment_number < 0 or (start_byte, end_byte_exclusive) != (
+            expected_start,
+            expected_end,
+        ):
+            raise UploadConflictError(
+                "byte range does not match this upload segment"
+            )
+
+    def complete(
+        self,
+        upload_session_id: str,
+        *,
+        workspace_id: str,
+    ) -> CompletedUploadState:
+        session_id = canonical_uuid(upload_session_id, "upload_session_id")
+        self.get_session(session_id, workspace_id=workspace_id)
         claim = self._repository.claim_completion(
             session_id,
             now=self._clock(),
@@ -232,7 +296,7 @@ class UploadService:
             self._repository.release_completion(
                 session_id,
                 claim.completion_token,
-                error=_error_summary(exc),
+                error=exception_summary(exc),
             )
             raise
 
@@ -249,25 +313,8 @@ def _artifact_segment(segment: UploadSegmentState) -> UploadSegmentArtifact:
     )
 
 
-def _required_text(value: str, field_name: str) -> str:
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{field_name} must be a non-empty string")
-    return value
-
-
 def _filename(value: str) -> str:
-    normalized = _required_text(value, "original_filename")
+    normalized = require_nonempty_text(value, "original_filename")
     if Path(normalized).name != normalized or "\x00" in normalized:
         raise ValueError("original_filename must not contain a path")
     return normalized
-
-
-def _error_summary(exc: Exception) -> str:
-    message = str(exc).strip()
-    return (type(exc).__name__ if not message else f"{type(exc).__name__}: {message}")[
-        :8192
-    ]
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)

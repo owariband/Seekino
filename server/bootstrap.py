@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from threading import Lock
@@ -14,23 +13,23 @@ from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from sqlalchemy import Engine
 
-from ..config import ServerSettings
-from ..database import create_database_engine, create_session_factory
-from ..repository.agent import AgentRepository
-from ..repository.index_sync import IndexSyncRepository
-from ..repository.job import ParseJobRepository
-from ..repository.library import LibraryRepository
-from ..repository.upload import UploadRepository
-from ..repository.video import VideoRepository
-from ..service.agent import AgentConversationService
-from ..service.index_sync import IndexSyncService
-from ..service.job import ParseJobService
-from ..service.library import LibraryService
-from ..service.media import MediaService
-from ..service.upload import UploadService
-from ..service.video_retrieval import VideoRetrievalService
-from ..storage.artifact import LocalArtifactStore
-from ..storage.qdrant import QdrantVideoChunkStore
+from .config import ServerSettings
+from .database import create_database_engine, create_session_factory
+from .repository.agent import AgentRepository
+from .repository.index_sync import IndexSyncRepository
+from .repository.job import ParseJobRepository
+from .repository.library import LibraryRepository
+from .repository.upload import UploadRepository
+from .repository.video import VideoRepository
+from .service.agent import AgentConversationService
+from .service.index_sync import IndexSyncService
+from .service.job import ParseJobService
+from .service.library import LibraryService
+from .service.media import MediaService
+from .service.upload import UploadService
+from .service.video_retrieval import VideoRetrievalService
+from .storage.artifact import LocalArtifactStore
+from .storage.qdrant import QdrantVideoChunkStore
 
 
 @dataclass(slots=True)
@@ -58,6 +57,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
     engine = create_database_engine(
         settings.database_url,
         environment=settings.environment,
+        pool_recycle_seconds=settings.database_pool_recycle_seconds,
     )
     session_factory = create_session_factory(engine)
     artifact_store = LocalArtifactStore(
@@ -70,7 +70,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         artifact_store,
         config=settings.upload,
     )
-    jobs = ParseJobService(ParseJobRepository(session_factory))
+    jobs = ParseJobService(ParseJobRepository(session_factory), library)
     media = MediaService(library, artifact_store)
 
     qdrant_client = QdrantClient(
@@ -87,16 +87,12 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
     gateway_config = load_config(settings.model_config_path)
     embedding_config = gateway_config.multimodal_embedding
     embedder = _LazyQueryEmbedder(
-        model=(
-            os.getenv("ANIVAG_VIDEO_EMBEDDING_MODEL")
-            or embedding_config.model
-        ),
+        model=settings.video_embedding_model or embedding_config.model,
         dimensions=settings.text_vector_dimensions,
-        fps=float(
-            os.getenv(
-                "ANIVAG_VIDEO_EMBEDDING_FPS",
-                str(embedding_config.fps),
-            )
+        fps=(
+            settings.video_embedding_fps
+            if settings.video_embedding_fps is not None
+            else embedding_config.fps
         ),
     )
     video_repository = VideoRepository(session_factory)
@@ -104,6 +100,10 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         video_repository,
         vector_store,
         embedder,
+        channel_top_k=settings.retrieval.channel_top_k,
+        rrf_k=settings.retrieval.rrf_k,
+        text_weight=settings.retrieval.text_weight,
+        vision_weight=settings.retrieval.vision_weight,
     )
     chat_model_name = (
         settings.agent_chat_model or gateway_config.video_parser.transcript_model

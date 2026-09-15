@@ -307,11 +307,16 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
             upload.upload_session_id,
             number,
             data,
+            workspace_id="mysql-integration",
             checksum_sha256=hashlib.sha256(data).hexdigest(),
             start_byte=start,
             end_byte_exclusive=start + len(data),
+            total_size_bytes=len(source),
         )
-    completed = uploads.complete(upload.upload_session_id)
+    completed = uploads.complete(
+        upload.upload_session_id,
+        workspace_id="mysql-integration",
+    )
     second_source = b"klmnopqrst"
     second_upload = uploads.create_session(
         workspace_id="mysql-integration",
@@ -328,11 +333,16 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
             second_upload.upload_session_id,
             number,
             data,
+            workspace_id="mysql-integration",
             checksum_sha256=hashlib.sha256(data).hexdigest(),
             start_byte=start,
             end_byte_exclusive=start + len(data),
+            total_size_bytes=len(second_source),
         )
-    second_completed = uploads.complete(second_upload.upload_session_id)
+    second_completed = uploads.complete(
+        second_upload.upload_session_id,
+        workspace_id="mysql-integration",
+    )
     jobs = ParseJobRepository(session_factory)
     now = datetime.now(UTC).replace(tzinfo=None)
     barrier = Barrier(2)

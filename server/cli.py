@@ -10,6 +10,7 @@ from gateway.config import load_config
 from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
 from qdrant_client import QdrantClient
 
+from .constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
 from .database import (
     DatabaseEnvironment,
     create_database_engine,
@@ -61,7 +62,7 @@ def _build_parser() -> argparse.ArgumentParser:
     import_parse.add_argument("--series-description")
     import_parse.add_argument("--series-id")
     import_parse.add_argument("--video-id")
-    import_parse.add_argument("--workspace-id", default="local-default")
+    import_parse.add_argument("--workspace-id", default=DEFAULT_LOCAL_WORKSPACE_ID)
     import_parse.add_argument("--episode-order", type=int, required=True)
     import_parse.add_argument("--upload-sequence", type=int)
     import_parse.add_argument("--pipeline-version", required=True)
@@ -113,6 +114,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_database_arguments(search)
     _add_qdrant_arguments(search)
     search.add_argument("--query", required=True)
+    search.add_argument("--workspace-id", default=DEFAULT_LOCAL_WORKSPACE_ID)
     search.add_argument(
         "--series-id",
         dest="series_ids",
@@ -284,6 +286,7 @@ def main() -> None:
                     exact=args.exact,
                 ).search(
                     args.query,
+                    workspace_id=args.workspace_id,
                     series_ids=args.series_ids,
                     top_k=args.top_k,
                 )
