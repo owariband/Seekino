@@ -7,7 +7,8 @@ from uuid import uuid4
 from server.database import create_session_factory
 from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
 from server.model.video import SeriesRecord, VideoRecord
-from server.repository.job import ParseJobLease, ParseJobRepository
+from server.model.dto.jobDTO import ParseJobLease
+from server.repository.job import ParseJobRepository
 from server.mq.worker import ParseWorker
 
 

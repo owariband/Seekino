@@ -72,7 +72,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
             : job.status === "FAILED"
               ? "failed"
               : "processing",
-        error: job.status === "FAILED" ? job.lastError || "解析任务失败" : undefined,
+        error: job.status === "FAILED" ? job.lastError?.message || "解析任务失败" : undefined,
       }));
     },
     [updateTask],
@@ -126,11 +126,37 @@ export function UploadProvider({ children }: PropsWithChildren) {
         session = await createUploadSession(task.seriesId, task.idempotencyKey, {
           workspaceId: WORKSPACE_ID,
           episodeOrder: task.episodeOrder,
-          uploadSequence: task.episodeOrder,
           originalFilename: task.file.name,
           mediaType,
           totalSizeBytes: task.file.size,
         });
+      }
+
+      if (
+        session.seriesId !== task.seriesId ||
+        session.episodeOrder !== task.episodeOrder ||
+        session.originalFilename !== task.file.name ||
+        session.totalSizeBytes !== task.file.size
+      ) {
+        throw new Error("上传会话与当前文件不一致，请重新选择视频");
+      }
+      if (session.status === "EXPIRED") {
+        throw new Error("上传会话已过期，请重新加入这个视频");
+      }
+      if (session.status === "COMPLETING") {
+        throw new Error("服务端正在合并视频，请稍后重试");
+      }
+      if (session.status === "COMPLETED") {
+        const completed = await completeUpload(session.uploadSessionId);
+        updateTask(task.taskId, (current) => ({
+          ...current,
+          session: completed.uploadSession,
+          status: "processing",
+          confirmedBytes: task.totalBytes,
+          inFlightBytes: 0,
+        }));
+        watchJob(task.taskId, { jobId: completed.jobId });
+        return;
       }
 
       updateTask(task.taskId, (current) => ({

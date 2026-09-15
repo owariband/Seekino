@@ -5,13 +5,17 @@ import type {
   AgentMessageSendView,
   AgentMessageView,
   ApiErrorPayload,
+  EvidenceReference,
+  Page,
   ParseJobView,
   SeriesCreateRequest,
   SeriesView,
+  SeriesSummary,
   UploadCompleteView,
   UploadSessionCreateRequest,
   UploadSessionView,
   VideoChunkSearchResult,
+  VideoChunkEvidence,
   VideoSearchRequest,
 } from "./contracts";
 
@@ -33,6 +37,14 @@ export class ApiClientError extends Error {
     this.status = status;
     this.code = payload?.code;
   }
+}
+
+export function shouldRetryApiRequest(
+  failureCount: number,
+  error: unknown,
+): boolean {
+  if (error instanceof ApiClientError && error.status < 500) return false;
+  return failureCount < 1;
 }
 
 function apiUrl(path: string): string {
@@ -68,13 +80,15 @@ export async function checkHealth(): Promise<boolean> {
   const response = await fetch(apiUrl("/healthz"), {
     headers: { Accept: "application/json" },
   });
-  if (!response.ok) return false;
+  if (!response.ok) {
+    throw new ApiClientError(response.status, await readError(response));
+  }
   const payload = (await response.json()) as { status?: string };
   return payload.status === "ok";
 }
 
-export function listSeries(): Promise<SeriesView[]> {
-  return requestJson(`/api/series/list?workspaceId=${WORKSPACE_QUERY}`);
+export function listSeries(cursor?: string, limit = 100): Promise<Page<SeriesSummary>> {
+  return requestJson(`/api/series/list?workspaceId=${WORKSPACE_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
 }
 
 export function getSeries(seriesId: string): Promise<SeriesView> {
@@ -129,8 +143,8 @@ export function completeUpload(
   );
 }
 
-export function listJobs(): Promise<ParseJobView[]> {
-  return requestJson(`/api/jobs/list?workspaceId=${WORKSPACE_QUERY}&limit=100`);
+export function listJobs(cursor?: string, limit = 100): Promise<Page<ParseJobView>> {
+  return requestJson(`/api/jobs/list?workspaceId=${WORKSPACE_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
 }
 
 export function getJob(jobId: string): Promise<ParseJobView> {
@@ -163,20 +177,35 @@ export function createAgentConversation(
   return requestJson("/api/agent/conversations/create", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, title: "画面问询" }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID }),
   });
 }
 
-export function listAgentConversations(limit?: number): Promise<AgentConversationView[]> {
-  return requestJson(`/api/agent/conversations/list?workspaceId=${WORKSPACE_QUERY}${limit === undefined ? "" : `&limit=${limit}`}`);
+export function listAgentConversations(limit = 100, cursor?: string): Promise<Page<AgentConversationView>> {
+  return requestJson(`/api/agent/conversations/list?workspaceId=${WORKSPACE_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
 }
 
 export function getAgentConversation(conversationId: string): Promise<AgentConversationView> {
   return requestJson(`/api/agent/conversations/get?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}`);
 }
 
-export function listAgentMessages(conversationId: string, afterSequenceNo = -1): Promise<AgentMessageView[]> {
-  return requestJson(`/api/agent/messages/list?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}&afterSequenceNo=${afterSequenceNo}&limit=500`);
+export function listAgentMessages(conversationId: string, afterSequenceNo = -1, cursor?: string): Promise<Page<AgentMessageView>> {
+  return requestJson(`/api/agent/messages/list?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}&afterSequenceNo=${afterSequenceNo}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+}
+
+export function getAgentMessage(conversationId: string, identity: { messageId: string } | { idempotencyKey: string }): Promise<AgentMessageSendView> {
+  const query = new URLSearchParams({ workspaceId: WORKSPACE_ID, conversationId, ...identity });
+  return requestJson(`/api/agent/messages/get?${query}`);
+}
+
+export function getVideoChunk(videoChunkId: string, workspaceId = WORKSPACE_ID): Promise<VideoChunkEvidence> {
+  return requestJson(`/api/video-chunks/get?${new URLSearchParams({ workspaceId, videoChunkId })}`);
+}
+
+export function mediaUrl(url: string | null): string | null {
+  if (!url) return null;
+  if (/^https?:\/\//i.test(url)) return url;
+  return url.startsWith("/") && !url.startsWith("//") ? apiUrl(url) : null;
 }
 
 export function agentMessagesEventsUrl(conversationId: string): string {
@@ -203,11 +232,12 @@ export function sendAgentMessage(
   idempotencyKey: string,
   seriesIds: string[] = [],
   topK = 10,
+  reference: EvidenceReference | null = null,
 ): Promise<AgentMessageSendView> {
   return requestJson(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, topK }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, topK, reference }),
   });
 }
 
@@ -219,11 +249,12 @@ export async function streamAgentMessage(
   signal: AbortSignal,
   seriesIds: string[] = [],
   topK = 10,
+  reference: EvidenceReference | null = null,
 ): Promise<void> {
   const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`), {
     method: "POST",
     headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, topK }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, topK, reference }),
     signal,
   });
   if (!response.ok) throw new ApiClientError(response.status, await readError(response));

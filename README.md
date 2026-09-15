@@ -72,4 +72,6 @@ uv run python -m server.mq --once
 
 ## 上游归属
 
+前端请求与公开返回模型见 [UI DTO / VO 契约](docs/api-ui-views.md)，包含逐消息 Series 范围、分页 / SSE、媒体读取与旧数据库迁移说明。
+
 `engines/VideoRAG` 来源于 [Slimzeo/VideoRAG](https://github.com/Slimzeo/VideoRAG)。AniVAG 会保留上游许可证与提交历史，并明确区分 Adapter 集成、独立复现和动画领域改造三类贡献。

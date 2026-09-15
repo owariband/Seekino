@@ -1,8 +1,8 @@
 import { Captions, CircleAlert, Clock3, Play, ScanSearch } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { errorMessage, videoContentUrl } from "../../api/client";
-import type { VideoChunkSearchHit } from "../../api/contracts";
+import { errorMessage, getVideoChunk, mediaUrl } from "../../api/client";
+import type { VideoChunkEvidence, VideoChunkSearchHit } from "../../api/contracts";
 import { episodeLabel, formatTimeRange, formatTimecode } from "../../shared/format";
 import { explainHit, readableTranscript } from "./explain";
 import styles from "./search.module.css";
@@ -18,14 +18,23 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
   const playRef = useRef<(() => void) | null>(null);
   const [tab, setTab] = useState<EvidenceTab>("reason");
   const [playError, setPlayError] = useState<string | null>(null);
+  const [refreshed, setRefreshed] = useState<VideoChunkEvidence | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  const evidence = refreshed?.videoChunkId === hit?.evidence.videoChunkId && refreshed?.workspaceId === hit?.evidence.workspaceId ? refreshed : hit?.evidence;
+  const selectionRef = useRef<string | null>(null);
+  const selectionKey = evidence ? `${evidence.workspaceId}:${evidence.videoChunkId}` : null;
+  selectionRef.current = selectionKey;
+  useEffect(() => { setRefreshing(false); }, [hit?.evidence.workspaceId, hit?.evidence.videoChunkId]);
+  const playbackUrl = evidence?.playbackStatus === "READY" ? mediaUrl(evidence.playbackUrl) : null;
 
   useEffect(() => {
     setTab("reason");
     setPlayError(null);
     const video = videoRef.current;
-    if (!video || !hit) return;
-    const start = hit.evidence.startMs / 1000;
-    const end = hit.evidence.endMs / 1000;
+    if (!video || !evidence || !playbackUrl) return;
+    const start = evidence.startMs / 1000;
+    const end = evidence.endMs / 1000;
     let active = true;
     let requested = false;
     video.pause();
@@ -65,9 +74,9 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
       video.removeEventListener("play", keepInRange);
       video.pause();
     };
-  }, [hit?.evidence.workspaceId, hit?.evidence.videoId, hit?.evidence.videoChunkId, hit?.evidence.startMs, hit?.evidence.endMs]);
+  }, [evidence?.workspaceId, evidence?.videoId, evidence?.videoChunkId, evidence?.startMs, evidence?.endMs, playbackUrl]);
 
-  if (!hit) {
+  if (!hit || !evidence) {
     return (
       <aside className={styles.evidencePanel}>
         <div className={styles.evidenceEmpty}>
@@ -79,13 +88,24 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
     );
   }
 
-  const { evidence } = hit;
   const explanation = explainHit(hit);
+  const refreshMedia = async () => {
+    setRefreshing(true);
+    try {
+      const next = await getVideoChunk(evidence.videoChunkId, evidence.workspaceId);
+      if (selectionRef.current !== selectionKey) return;
+      if (next.videoChunkId !== evidence.videoChunkId || next.workspaceId !== evidence.workspaceId) throw new Error("返回的视频证据不属于当前片段");
+      setRefreshed(next);
+      setPlayError(null);
+    } catch (error) { if (selectionRef.current === selectionKey) setPlayError(errorMessage(error)); }
+    finally { if (selectionRef.current === selectionKey) setRefreshing(false); }
+  };
 
   return (
     <aside className={styles.evidencePanel}>
       <div className={styles.viewer}>
-        <video key={`${evidence.workspaceId}:${evidence.videoId}`} ref={videoRef} controls preload="metadata" src={videoContentUrl(evidence.videoId, evidence.workspaceId)} aria-label="视频证据" />
+        {playbackUrl ? <video key={`${evidence.workspaceId}:${evidence.videoId}:${playbackUrl}`} ref={videoRef} controls preload="metadata" src={playbackUrl} poster={evidence.thumbnail && failedImage !== evidence.thumbnail.imageId ? mediaUrl(evidence.thumbnail.url) ?? undefined : undefined} onError={() => setPlayError("视频媒体无法读取，请刷新媒体状态后重试。")} aria-label="视频证据" />
+          : <p role="status">{evidence.playbackStatus === "MISSING" ? "原视频文件已丢失，仍可查看文字证据。" : evidence.playbackStatus === "PREPARING" ? "播放媒体正在准备，仍可查看文字证据。" : "暂无可播放媒体，仍可查看文字证据。"}</p>}
         <div className={styles.frameMeta}>
           <span>{episodeLabel(evidence.episodeOrder)}</span>
           <strong>{formatTimeRange(evidence.startMs, evidence.endMs)}</strong>
@@ -97,13 +117,15 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
           <span className="eyebrow">Evidence window · 证据窗口</span>
           <h2>{evidence.seriesName}</h2>
         </div>
-        <button className="button-secondary" type="button" onClick={() => playRef.current?.()}>
+        <button className="button-secondary" type="button" disabled={!playbackUrl} onClick={() => playRef.current?.()}>
           <Play size={15} fill="currentColor" />
           从 {formatTimecode(evidence.startMs)} 播放
         </button>
       </div>
 
       {playError ? <p className={styles.messageError} role="alert">{playError}</p> : null}
+      {!playbackUrl || playError ? <button className="button-secondary" type="button" disabled={refreshing} onClick={() => void refreshMedia()}>{refreshing ? "正在刷新媒体状态…" : "刷新媒体状态"}</button> : null}
+      {evidence.thumbnail ? failedImage === evidence.thumbnail.imageId ? <p>关键帧图片无法读取</p> : <img src={mediaUrl(evidence.thumbnail.url) ?? undefined} alt={evidence.thumbnail.alt ?? "已登记关键帧"} onError={() => setFailedImage(evidence.thumbnail!.imageId)} /> : null}
 
       <nav className={styles.evidenceTabs} aria-label="证据详情">
         {([
@@ -126,7 +148,7 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
         {tab === "reason" ? (
           <>
             <section className={styles.reasonLead}>
-              <span className={styles.reasonNumber}>{String(hit.candidate.fusedRank).padStart(2, "0")}</span>
+              <span className={styles.reasonNumber}>{String(hit.candidate.rank).padStart(2, "0")}</span>
               <div>
                 <span className="eyebrow">Agent’s selection note</span>
                 <p>{explanation.summary}</p>

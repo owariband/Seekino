@@ -11,7 +11,7 @@ from server.model.index_sync import IndexSyncStatus
 from server.model.video import SeriesRecord, VideoChunkRecord
 from server.repository.index_sync import IndexSyncRepository
 from server.service.index_sync import IndexSyncService
-from server.service.parse_import import PreparedEmbedding
+from server.model.dto.parseDTO import PreparedEmbedding
 from server.storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
 
 

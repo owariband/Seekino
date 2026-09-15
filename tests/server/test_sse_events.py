@@ -11,9 +11,9 @@ import pytest
 from server.api import agent as agent_api
 from server.api import jobs as jobs_api
 from server.config.sse import SSEConfig
-from server.repository.agent import AgentMessageState
-from server.repository.job import ParseJobState
-from server.service.job import ParseJobDetail
+from server.model.dto.agentDTO import AgentMessageState
+from server.model.dto.jobDTO import ParseJobState
+from server.model.dto.jobDTO import ParseJobDetail
 
 _NOW = datetime(2026, 9, 15, 12)
 _CONVERSATION_ID = "conversation-1"
@@ -138,7 +138,8 @@ def test_agent_sse_emits_same_sequence_status_updates(monkeypatch, final_status)
         processing,
         status=final_status,
         content="verified answer" if final_status == "COMPLETED" else None,
-        last_error="model unavailable" if final_status == "FAILED" else None,
+        last_error={"code": "PROCESSING_FAILED", "message": "model unavailable"} if final_status == "FAILED" else None,
+        version=processing.version + 1,
         updated_at=_NOW + timedelta(seconds=2),
     )
     service = _AgentService([[user, processing], [user, processing], [user, final]])
@@ -153,6 +154,7 @@ def test_agent_sse_emits_same_sequence_status_updates(monkeypatch, final_status)
 
     assert len(events) == 2
     payloads = [_payload(event) for event in events]
+    assert all(payload["type"] == "messages" and isinstance(payload["occurredAt"], int) for payload in payloads)
     assert [item["messages"][1]["status"] for item in payloads] == [
         "PROCESSING",
         final_status,
@@ -195,6 +197,8 @@ def _job_detail() -> ParseJobDetail:
     return ParseJobDetail(
         job=ParseJobState(
             job_id="job-1",
+            workspace_id=_WORKSPACE_ID,
+            version=1,
             series_id="series-1",
             video_id="video-1",
             series_name="Test Series",
@@ -345,7 +349,7 @@ def test_answer_stream_whitelists_events_keeps_alive_and_detaches(monkeypatch):
         {"type": "internal.plan", "private": "hidden"},
         "idle", "idle",
         {"type": "answer.delta", "conversationId": _CONVERSATION_ID,
-         "messageId": "message-1", "sequence": 1, "delta": "用户正文"},
+         "messageId": "message-1", "sequence": 1, "occurredAt": 1789473600000, "delta": "用户正文"},
         None,
     ], clock)
     events = asyncio.run(_collect(agent_api._answer_events(
@@ -356,6 +360,7 @@ def test_answer_stream_whitelists_events_keeps_alive_and_detaches(monkeypatch):
     assert events[0] == ": keep-alive\n\n"
     assert len(events) == 2 and events[1].startswith("event: answer.delta\nid: message-1:1\n")
     assert _payload(events[1])["delta"] == "用户正文"
+    assert _payload(events[1])["occurredAt"] == 1789473600000
     assert "hidden" not in "".join(events)
 
 

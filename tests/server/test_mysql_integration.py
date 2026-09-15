@@ -25,16 +25,13 @@ from server.model.video import (
     VideoChunkEmbeddingRecord,
     VideoChunkRecord,
 )
-from server.repository.job import (
-    ParseJobLeaseLostError,
-    ParseJobRepository,
-    VideoChunkCheckpointState,
-)
+from server.repository.job import ParseJobLeaseLostError, ParseJobRepository
+from server.model.dto.jobDTO import VideoChunkCheckpointState
 from server.repository.library import LibraryRepository
 from server.repository.upload import UploadRepository
 from server.repository.video import VideoRepository
 from server.service.library import LibraryService
-from server.service.parse_import import PreparedEmbedding
+from server.model.dto.parseDTO import PreparedEmbedding
 from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
 

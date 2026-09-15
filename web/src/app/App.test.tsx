@@ -18,7 +18,7 @@ const apiSeries: SeriesView = {
   importantExtraData: null,
   characterBible: [],
   videoCount: 0,
-  videos: [],
+  videos: [], pendingUploads: [], readyVideoCount: 1, failedVideoCount: 0, pendingUploadCount: 0, cover: null, lastSearch: null, createdAt: 1, updatedAt: 1,
 };
 
 function jsonResponse(payload: unknown): Response {
@@ -32,21 +32,21 @@ function jsonResponse(payload: unknown): Response {
 function renderApp(availableSeries: SeriesView[] = [apiSeries]) {
   let finishAnswer: (() => void) | undefined;
   let messageSends = 0;
-  const now = "2026-09-15T00:00:00Z";
-  const conversation = { conversationId: "conversation", workspaceId: "local-default", title: "Test", messageCount: 0, lastMessageAt: null, createdAt: now, updatedAt: now };
+  const now = Date.parse("2026-09-15T00:00:00Z");
+  const conversation = { conversationId: "conversation", workspaceId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
   const assistantMessage: AgentMessageView = {
-    messageId: "assistant", conversationId: "conversation", seriesIds: [apiSeries.seriesId], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", content: null,
+    messageId: "assistant", conversationId: "conversation", seriesIds: [apiSeries.seriesId], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", phase: "QUEUED", version: 1, reference: null, content: null,
     modelName: null, replyToMessageId: "user", retrievalQuery: null, searchResult: null, lastError: null, createdAt: now, updatedAt: now,
   };
   const userMessage = { ...assistantMessage, messageId: "user", sequenceNo: 0, role: "USER", status: "COMPLETED", content: "雨天门口" };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/healthz")) return jsonResponse({ status: "ok" });
-    if (url.includes("/api/series/list")) return jsonResponse(availableSeries);
+    if (url.includes("/api/series/list")) return jsonResponse({ items: availableSeries, total: availableSeries.length, hasMore: false, nextCursor: null });
     if (url.includes("/api/series/get")) return jsonResponse(apiSeries);
-    if (url.includes("/api/jobs/list")) return jsonResponse([]);
+    if (url.includes("/api/jobs/list")) return jsonResponse({ items: [], total: 0, hasMore: false, nextCursor: null });
     if (url.includes("/api/agent/conversations/")) return jsonResponse(conversation);
-    if (url.includes("/api/agent/messages/list")) return jsonResponse([]);
+    if (url.includes("/api/agent/messages/list")) return jsonResponse({ items: [], total: 0, hasMore: false, nextCursor: null });
     if (url.includes("/api/agent/messages/send")) {
       const requestedIds = (JSON.parse(String(_init?.body)) as { seriesIds: string[] }).seriesIds;
       const seriesIds = requestedIds.length ? requestedIds : availableSeries.filter((item) => item.status === "READY").map((item) => item.seriesId);
@@ -55,13 +55,13 @@ function renderApp(availableSeries: SeriesView[] = [apiSeries]) {
       const assistantSnapshot = { ...assistantMessage, messageId: `assistant-${index}`, replyToMessageId: userSnapshot.messageId, sequenceNo: index * 2 + 1, seriesIds };
       const body = new ReadableStream<Uint8Array>({ start(controller) {
         const emit = (type: string, payload: unknown) => controller.enqueue(new TextEncoder().encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`));
-        const base = { conversationId: "conversation", messageId: assistantSnapshot.messageId };
+        const base = { occurredAt: now, conversationId: "conversation", messageId: assistantSnapshot.messageId };
         emit("answer.started", { ...base, sequence: 1, userMessage: userSnapshot, assistantMessage: assistantSnapshot });
-        emit("answer.evidence", { ...base, sequence: 2, hits: [] });
+        emit("answer.evidence", { ...base, sequence: 2, searchResult: { query: "雨天门口", seriesIds, searchedVideoIds: [], partial: false, warnings: [], agentReply: { message: "", resultCount: 0 }, hits: [] } });
         emit("answer.delta", { ...base, sequence: 3, delta: "这是 Agent Chat" });
         finishAnswer = () => {
           emit("answer.delta", { ...base, sequence: 4, delta: " 保存的完整回答。" });
-          emit("answer.completed", { ...base, sequence: 5, userMessage: userSnapshot, assistantMessage: { ...assistantSnapshot, status: "COMPLETED", content: "这是 Agent Chat 保存的完整回答。" } });
+          emit("answer.completed", { ...base, sequence: 5, userMessage: userSnapshot, assistantMessage: { ...assistantSnapshot, version: 2, phase: null, status: "COMPLETED", content: "这是 Agent Chat 保存的完整回答。" } });
           controller.close();
         };
       } });
@@ -165,7 +165,7 @@ describe("application shell", () => {
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
     const creation = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/conversations/create"));
     expect(String(creation?.[0])).toBe("/api/agent/conversations/create");
-    expect(JSON.parse(String(creation?.[1]?.body))).toEqual({ workspaceId: "local-default", title: "画面问询" });
+    expect(JSON.parse(String(creation?.[1]?.body))).toEqual({ workspaceId: "local-default" });
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/sessions/"))).toBe(false);
     const sendCall = fetchMock.mock.calls.find(([input]) =>
       String(input).includes("/api/agent/messages/send?conversationId=conversation"),
@@ -176,7 +176,7 @@ describe("application shell", () => {
       workspaceId: "local-default",
       content: "雨天门口",
       seriesIds: [],
-      topK: 10,
+      topK: 10, reference: null,
     });
   });
 

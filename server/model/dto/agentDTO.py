@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Generic, TypeVar
+
+from pydantic import Field
+
+from ...agent.state import AnswerPhase
+from ...schema import ContractModel
+
+_Item = TypeVar("_Item")
+
+
+class EvidenceReference(ContractModel):
+    message_id: str = Field(min_length=1)
+    video_chunk_id: str = Field(min_length=1)
+
+
+class AgentConversationCreateRequest(ContractModel):
+    workspace_id: str = Field(min_length=1, max_length=64)
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class AgentMessageSendRequest(ContractModel):
+    workspace_id: str = Field(min_length=1, max_length=64)
+    content: str = Field(min_length=1, max_length=20_000)
+    series_ids: list[str] = Field(default_factory=list)
+    top_k: int | None = Field(default=None, gt=0, le=100)
+    reference: EvidenceReference | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentFailure:
+    code: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentConversationState:
+    conversation_id: str
+    workspace_id: str
+    title: str
+    message_count: int
+    last_message_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    last_message_preview: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentMessageState:
+    message_id: str
+    conversation_id: str
+    sequence_no: int
+    role: str
+    status: str
+    content: str | None
+    series_ids: tuple[str, ...]
+    model_name: str | None
+    reply_to_message_id: str | None
+    retrieval_query: str | None
+    search_result: dict | None
+    last_error: AgentFailure | None
+    created_at: datetime
+    updated_at: datetime
+    phase: AnswerPhase | None = None
+    version: int = 1
+    reference: dict[str, str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StartedAgentMessageState:
+    user_message: AgentMessageState
+    assistant_message: AgentMessageState
+    reused: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AgentPageState(Generic[_Item]):
+    items: list[_Item]
+    total: int
+    next_cursor: str | None
+    has_more: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AgentMessageSendState:
+    user_message: AgentMessageState
+    assistant_message: AgentMessageState

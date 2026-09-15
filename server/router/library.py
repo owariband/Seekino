@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ..api import library
-from ..api.schema import SeriesView
+from ..model.vo.commonVO import Page
+from ..model.vo.libraryVO import SeriesView, SeriesSummary
 
 router = APIRouter()
 router.add_api_route(
@@ -17,16 +18,11 @@ router.add_api_route(
     "/api/series/list",
     library.list_series,
     methods=["GET"],
-    response_model=list[SeriesView],
+    response_model=Page[SeriesSummary],
 )
 router.add_api_route(
     "/api/series/get",
     library.get_series,
     methods=["GET"],
     response_model=SeriesView,
-)
-router.add_api_route(
-    "/api/videos/content",
-    library.get_video_content,
-    methods=["GET"],
 )

@@ -11,7 +11,7 @@ from server.database import DatabaseEnvironment, create_session_factory
 from server.repository.index_sync import IndexSyncRepository
 from server.repository.video import SeriesScopeNotFoundError
 from server.service.index_sync import IndexSyncService
-from server.service.parse_import import PreparedEmbedding
+from server.model.dto.parseDTO import PreparedEmbedding
 from server.service.video_retrieval import (
     RetrievalIndexConsistencyError,
     VideoRetrievalService,
@@ -100,6 +100,7 @@ def test_formal_retrieval_closes_qdrant_rrf_and_joined_hydrate(
     assert embedder.calls == ["find the first action"]
     assert result.query == "find the first action"
     assert result.series_ids == [prepared.series_id]
+    assert result.searched_video_ids == [prepared.video_id]
     assert result.agent_reply.result_count == len(result.hits)
     assert "2 段备选" in result.agent_reply.message
     assert [hit.candidate.video_chunk_id for hit in result.hits] == (

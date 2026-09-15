@@ -10,8 +10,8 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { listJobs } from "../../api/client";
-import type { ParseJobStatus } from "../../api/contracts";
+import { listJobs, shouldRetryApiRequest } from "../../api/client";
+import type { ParseJobStatus, ParseJobView } from "../../api/contracts";
 import { episodeLabel, stageLabel } from "../../shared/format";
 import styles from "./tasks.module.css";
 
@@ -41,8 +41,18 @@ export function TasksPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const jobsQuery = useQuery({
     queryKey: ["jobs"],
-    queryFn: listJobs,
-    retry: 1,
+    queryFn: async () => {
+      const items: ParseJobView[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await listJobs(cursor);
+        items.push(...page.items);
+        if (page.hasMore && !page.nextCursor) throw new Error("任务列表缺少下一页游标");
+        cursor = page.hasMore ? page.nextCursor! : undefined;
+      } while (cursor);
+      return items;
+    },
+    retry: shouldRetryApiRequest,
     refetchInterval: 5_000,
   });
 
@@ -144,7 +154,7 @@ export function TasksPage() {
               </div>
 
               {job.lastError ? (
-                <div className={styles.jobError}><CircleAlert size={15} /><div><strong>最近一次错误</strong><p>{job.lastError}</p></div></div>
+                <div className={styles.jobError}><CircleAlert size={15} /><div><strong>最近一次错误</strong><p>{job.lastError.message}</p></div></div>
               ) : null}
               {job.status === "RETRY_WAIT" ? <p className={styles.retryNote}><Clock3 size={13} />服务端会在可用时间自动重试，前端不会重复创建任务。</p> : null}
             </article>

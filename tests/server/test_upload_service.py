@@ -9,6 +9,7 @@ from sqlalchemy import select
 from server.database import create_session_factory
 from server.model.job import ParseJobStatus, SeriesParseJobRecord
 from server.model.upload import UploadSegmentRecord, UploadSessionStatus
+from server.api.uploads import project_upload_session
 from server.model.video import SeriesRecord, VideoRecord
 from server.repository.upload import (
     UploadConflictError,
@@ -82,6 +83,8 @@ def _put(
     upload_session_id: str,
     number: int,
     data: bytes,
+    *,
+    total_size_bytes: int = 10,
 ):
     start = number * 4
     return service.upload_segment(
@@ -92,7 +95,7 @@ def _put(
         checksum_sha256=hashlib.sha256(data).hexdigest(),
         start_byte=start,
         end_byte_exclusive=start + len(data),
-        total_size_bytes=10,
+        total_size_bytes=total_size_bytes,
     )
 
 
@@ -257,3 +260,73 @@ def test_expired_session_rejects_new_segments(repository, tmp_path) -> None:
     )
     assert renewed.upload_session_id != upload.upload_session_id
     assert renewed.status == UploadSessionStatus.UPLOADING.value
+
+
+@pytest.mark.parametrize("content_sha256", ["0" * 64, hashlib.sha256(b"abcd").hexdigest()])
+def test_source_checksum_and_visible_completion_versions(repository, tmp_path, content_sha256):
+    _engine, _store, upload_repository, service = _upload_service(repository, tmp_path)
+    upload = service.create_session(
+        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7, original_filename="episode.mp4", media_type="video/mp4",
+        total_size_bytes=4, idempotency_key="checksum", content_sha256=content_sha256,
+    )
+    assert upload.upload_sequence == 1
+    _put(service, upload.upload_session_id, 0, b"abcd", total_size_bytes=4)
+    received = service.get_session(upload.upload_session_id, workspace_id="local-default")
+    assert received.version > upload.version
+    _put(service, upload.upload_session_id, 0, b"abcd", total_size_bytes=4)
+    assert service.get_session(upload.upload_session_id, workspace_id="local-default").version == received.version
+    if content_sha256 == "0" * 64:
+        with pytest.raises(UploadChecksumMismatchError):
+            service.complete(upload.upload_session_id, workspace_id="local-default")
+        current = service.get_session(upload.upload_session_id, workspace_id="local-default")
+        assert current.status == "UPLOADING" and current.missing_segment_numbers == ()
+        assert current.job_id is None and current.completion_stage is None
+        assert current.version > received.version
+        public = project_upload_session(current)
+        assert public.last_error.code == "CHECKSUM_MISMATCH"
+        assert public.completion_progress is public.estimated_remaining_ms is None
+    else:
+        completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+        assert completed.session.job_id == completed.job_id
+        assert completed.session.version > received.version
+        assert completed.session.content_sha256 == content_sha256
+        assert completed.session.completion_stage is None
+        replay = service.complete(upload.upload_session_id, workspace_id="local-default")
+        assert replay.session.version == completed.session.version
+        assert replay.job_id == completed.job_id
+
+
+def test_auto_upload_sequence_is_stable_on_replay_and_increases(repository, tmp_path):
+    _engine, _store, _repo, service = _upload_service(repository, tmp_path)
+    first = _create(service)
+    second = service.create_session(
+        workspace_id="local-default", series_id=first.series_id, episode_order=8,
+        original_filename="episode-08.mp4", media_type="video/mp4", total_size_bytes=4,
+        idempotency_key="second-upload",
+    )
+    assert second.upload_sequence == first.upload_sequence + 1
+    assert _create(service).upload_sequence == first.upload_sequence
+
+
+@pytest.mark.parametrize("first_optional,changed_optional", [
+    ({"content_sha256": "0" * 64}, {}),
+    ({}, {"content_sha256": hashlib.sha256(b"abcd").hexdigest()}),
+    ({"upload_sequence": 5}, {}),
+    ({}, {"upload_sequence": 1}),
+])
+def test_upload_key_keeps_optional_original_request_parameters(repository, tmp_path, first_optional, changed_optional):
+    _engine, _store, _repo, service = _upload_service(repository, tmp_path)
+    request = {
+        "workspace_id": "local-default", "series_id": "77285f16-3e5b-592e-ba15-8b224b619806",
+        "episode_order": 7, "original_filename": "episode.mp4", "media_type": "video/mp4",
+        "total_size_bytes": 4, "idempotency_key": "optional-parameters",
+    }
+    first = service.create_session(**request, **first_optional)
+    if not first_optional and "content_sha256" in changed_optional:
+        _put(service, first.upload_session_id, 0, b"abcd", total_size_bytes=4)
+        service.complete(first.upload_session_id, workspace_id="local-default")
+    with pytest.raises(UploadConflictError):
+        service.create_session(**request, **changed_optional)
+    replay = service.create_session(**request, **first_optional)
+    assert replay.upload_session_id == first.upload_session_id

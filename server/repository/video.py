@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import datetime
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..identity import canonical_uuid
-from ..model.index_sync import IndexSyncIntentRecord
+from ..model.dto.jobDTO import ParseJobLease
+from ..model.dto.parseDTO import ParseImportReport, PreparedVideoParseImport
+from ..model.dto.videoDTO import HydratedVideoChunkState
+from ..model.index_sync import IndexSyncIntentRecord, IndexSyncStatus, IndexSyncOperation
 from ..model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
 from ..model.video import (
     ContextSnapshotRecord,
@@ -19,11 +20,10 @@ from ..model.video import (
     VideoChunkEmbeddingRecord,
     VideoChunkRecord,
 )
-from ..schema import ParseImportReport, VideoChunkEvidence
-from ..service.parse_import import PreparedVideoParseImport
+from ..schema import VideoChunkEvidence
 from ..utils.time import utc_now_naive
 from .index_sync import materialize_index_sync_intents
-from .job import ParseJobLease, ParseJobLeaseLostError
+from .job import ParseJobLeaseLostError
 
 
 class ParseImportConflictError(RuntimeError):
@@ -40,14 +40,6 @@ class SeriesScopeNotFoundError(LookupError):
 
 class SeriesNotReadyError(RuntimeError):
     """One or more requested Series have not reached the searchable state."""
-
-
-@dataclass(frozen=True, slots=True)
-class HydratedVideoChunkState:
-    evidence: VideoChunkEvidence
-    source_revision: str | None
-    index_operation: str | None
-    index_status: str | None
 
 
 class VideoRepository:
@@ -438,6 +430,8 @@ class VideoRepository:
                     raise ParseJobLeaseLostError(
                         "parse job lease expired while facts were being persisted"
                     )
+                if job.stage != ParseJobStage.INDEXING.value or job.progress < 95:
+                    job.version += 1
                 job.stage = ParseJobStage.INDEXING.value
                 job.progress = max(job.progress, 95)
                 existing_video.parse_status = ParseJobStatus.RUNNING.value
@@ -501,6 +495,20 @@ class VideoRepository:
                 "Series are not READY for retrieval: " + ", ".join(not_ready)
             )
         return ordered_ids
+
+    def list_indexed_video_ids(self, series_ids: Sequence[str], *, workspace_id: str) -> list[str]:
+        statement = (
+            select(VideoRecord.video_id).distinct()
+            .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
+            .join(VideoChunkRecord, VideoChunkRecord.video_id == VideoRecord.video_id)
+            .join(IndexSyncIntentRecord, IndexSyncIntentRecord.video_chunk_id == VideoChunkRecord.video_chunk_id)
+            .where(SeriesRecord.workspace_id == workspace_id, SeriesRecord.series_id.in_(series_ids),
+                   IndexSyncIntentRecord.status == IndexSyncStatus.SYNCED.value,
+                   IndexSyncIntentRecord.operation == IndexSyncOperation.UPSERT.value)
+            .order_by(VideoRecord.video_id)
+        )
+        with self._session_factory() as session:
+            return list(session.scalars(statement))
 
     def hydrate_video_chunk_states(
         self,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
@@ -27,6 +28,14 @@ MYSQL_TABLE_OPTIONS = {
     "mysql_engine": "InnoDB",
     "mysql_charset": "utf8mb4",
 }
+
+
+class VideoIndexStatus(StrEnum):
+    NOT_READY = "NOT_READY"
+    SYNCING = "SYNCING"
+    READY = "READY"
+    FAILED = "FAILED"
+
 
 
 class TimestampedRecord:

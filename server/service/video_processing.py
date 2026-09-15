@@ -18,23 +18,17 @@ from gateway.schemas import EmbeddingResult
 
 from ..config.video_processing import VideoProcessingConfig
 from ..identity import derive_video_chunk_id
+from ..model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
+from ..model.dto.parseDTO import PreparedEmbedding
 from ..model.job import (
     ParseJobStage,
     VideoChunkCheckpointStage,
 )
-from ..repository.job import (
-    ParseJobLease,
-    ParseJobLeaseLostError,
-    ParseJobRepository,
-    VideoChunkCheckpointState,
-)
+from ..repository.job import ParseJobLeaseLostError, ParseJobRepository
 from ..repository.video import VideoRepository
 from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
 from .index_sync import IndexSyncService
-from .parse_import import (
-    PreparedEmbedding,
-    prepare_completed_video_parse_import,
-)
+from .parse_import import prepare_completed_video_parse_import
 
 # Stage weights describe work completed, not elapsed time or an ETA.
 _PREPARING_PROGRESS = 2

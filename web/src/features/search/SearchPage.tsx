@@ -2,6 +2,7 @@ import { ArrowUp, Bot, Check, MessageCircleMore, Sparkles } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { useWorkspace } from "../../app/workspace";
+import type { EvidenceReference } from "../../api/contracts";
 import { clipText, episodeLabel, formatTimeRange } from "../../shared/format";
 import { EvidencePlayer } from "./EvidencePlayer";
 import { explainHit, readableTranscript } from "./explain";
@@ -12,21 +13,24 @@ export function SearchPage() {
   const { mode, series } = useWorkspace();
   const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
+  const [reference, setReference] = useState<EvidenceReference | null>(null);
   const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string | null } | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
   const { conversationId, messages, loading, searching, error, send } = useAgentConversation();
-  const scopeValid = selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && item.status === "READY"));
-  const canSend = Boolean(query.trim() && !loading && !searching && conversationId && scopeValid && series.some((item) => item.status === "READY") && mode === "live");
+  const isSearchable = (status: string) => status === "READY" || status === "PARTIAL";
+  const scopeValid = selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && isSearchable(item.status)));
+  const canSend = Boolean(query.trim() && !loading && !searching && conversationId && scopeValid && series.some((item) => isSearchable(item.status)) && mode === "live");
   const latestEvidence = messages.toReversed().find((message) => message.searchResult);
   const evidenceMessage = selection?.conversationId === conversationId
     ? messages.find((message) => message.messageId === selection.messageId) ?? latestEvidence
     : latestEvidence;
   const result = evidenceMessage?.searchResult ?? null;
+  const referenceHit = reference ? messages.find((message) => message.messageId === reference.messageId)?.searchResult?.hits.find((hit) => hit.evidence.videoChunkId === reference.videoChunkId) : null;
   const selectedHit = (selection?.conversationId === conversationId
     ? result?.hits.find((hit) => hit.evidence.videoChunkId === selection.chunkId)
     : null) ?? result?.hits[0] ?? null;
 
-  useEffect(() => { setSelection(null); }, [conversationId]);
+  useEffect(() => { setSelection(null); setReference(null); }, [conversationId]);
 
   useEffect(() => {
     threadEnd.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
@@ -35,8 +39,9 @@ export function SearchPage() {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!canSend) return;
-    void send(query, selectedSeriesIds);
+    void send(query, selectedSeriesIds, reference);
     setQuery("");
+    setReference(null);
   };
 
   return (
@@ -57,11 +62,11 @@ export function SearchPage() {
                   <input
                     type="checkbox"
                     checked={selectedSeriesIds.includes(item.seriesId)}
-                    disabled={item.status !== "READY" && !selectedSeriesIds.includes(item.seriesId)}
+                    disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
                     onChange={(event) => setSelectedSeriesIds((current) => event.target.checked ? [...current, item.seriesId] : current.filter((id) => id !== item.seriesId))}
                   />
                   <span>{item.name}</span>
-                  <small>{item.status === "READY" ? `${item.videoCount} 集` : "暂不可检索"}</small>
+                  <small>{isSearchable(item.status) ? `${item.readyVideoCount} 集可检索` : "暂不可检索"}</small>
                 </label>
               ))}
               {!series.length ? <p>资料库还没有动画</p> : null}
@@ -95,9 +100,9 @@ export function SearchPage() {
                   <span>{message.role === "ASSISTANT" ? "AGENT" : "YOU"}</span>
                   {message.role === "USER" ? <small className={styles.messageScope}>检索范围：{message.seriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join("、") || "无可检索动画"}</small> : null}
                   <p className={message.status === "FAILED" ? styles.messageError : !message.content && message.status === "PROCESSING" ? styles.thinking : undefined} style={{ whiteSpace: "pre-wrap" }}>
-                    {message.content || (message.status === "PROCESSING" ? "正在比对对白、视觉事件与前后语境" : message.lastError || "未生成回答")}
+                    {message.content || (message.status === "PROCESSING" ? ({ QUEUED: "等待执行", RETRIEVING: "正在检索视频证据", EVALUATING: "正在审核召回证据", RESPONDING: "正在组织最终回答" }[message.phase ?? "RETRIEVING"]) : message.lastError?.message || "未生成回答")}
                   </p>
-                  {message.status === "FAILED" && message.content ? <p className={styles.messageError}>{message.lastError || "本次回答未完成"}</p> : null}
+                  {message.status === "FAILED" && message.content ? <p className={styles.messageError}>{message.lastError?.message || "本次回答未完成"}</p> : null}
                   {message.searchResult?.hits.length ? (
                     <button type="button" className="button-secondary" onClick={() => setSelection({ conversationId: message.conversationId, messageId: message.messageId, chunkId: null })}>
                       <Check size={12} /> 查看 {message.searchResult.hits.length} 份视频证据
@@ -116,6 +121,7 @@ export function SearchPage() {
             <div ref={threadEnd} />
           </div>
           <form className={styles.composer} onSubmit={submit}>
+            {reference ? <p className={styles.messageScope}>已引用{referenceHit ? ` ${referenceHit.evidence.seriesName} · ${episodeLabel(referenceHit.evidence.episodeOrder)} · ${formatTimeRange(referenceHit.evidence.startMs, referenceHit.evidence.endMs)}` : "选中片段"}<button type="button" onClick={() => setReference(null)}>取消引用</button></p> : null}
             <textarea
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -138,6 +144,7 @@ export function SearchPage() {
             <div><span className="eyebrow">Recalled scenes</span><h2>备选画面</h2></div>
             <span>{result ? `${result.hits.length} 段` : "等待问询"}</span>
           </div>
+          {result?.warnings.length ? <div className={styles.messageError} role="status">{result.partial ? <strong>结果包含资料限制</strong> : null}{result.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
           {result?.hits.length ? (
             <div className={styles.candidateList}>
               {result.hits.map((hit) => {
@@ -151,7 +158,7 @@ export function SearchPage() {
                     onClick={() => { if (conversationId && evidenceMessage) setSelection({ conversationId, messageId: evidenceMessage.messageId, chunkId: hit.evidence.videoChunkId }); }}
                   >
                     <div className={styles.candidateTop}>
-                      <span className={styles.rank}>{String(hit.candidate.fusedRank).padStart(2, "0")}</span>
+                      <span className={styles.rank}>{String(hit.candidate.rank).padStart(2, "0")}</span>
                       <span>{hit.evidence.seriesName} · {episodeLabel(hit.evidence.episodeOrder)}</span>
                       <time>{formatTimeRange(hit.evidence.startMs, hit.evidence.endMs)}</time>
                     </div>
@@ -173,7 +180,7 @@ export function SearchPage() {
           )}
         </section>
 
-        <EvidencePlayer hit={selectedHit} />
+        <div>{selectedHit && evidenceMessage ? <button className="button-secondary" type="button" onClick={() => setReference({ messageId: evidenceMessage.messageId, videoChunkId: selectedHit.evidence.videoChunkId })}>引用此片段追问</button> : null}<EvidencePlayer hit={selectedHit} /></div>
       </div>
     </main>
   );

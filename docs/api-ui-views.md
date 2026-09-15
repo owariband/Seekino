@@ -1,0 +1,111 @@
+# UI 公开 DTO / VO
+
+本次按 UI 规格补齐现有接口的输入与返回数据。Conversation 不绑定动画范围：每次 `messages/send` 提交 `seriesIds`，省略或空数组展开为当前 Workspace 全部 READY Series。后端保存本轮实际范围并注入 Retrieve Tool；后续多选改变不会修改历史消息，也不会改变正在执行的 Kick。
+
+模型按职责分目录：`server/model/dto/` 存放请求参数和业务传输对象，`server/model/vo/` 存放前端公开视图，`server/model/` 下保留 ORM 与业务枚举。两类模型均按资源分文件，如 `agentDTO.py` / `agentVO.py`、`libraryDTO.py` / `libraryVO.py`、`uploadDTO.py` / `uploadVO.py`。Repository、Service 直接引用 DTO，不再各自定义跨层数据类。请求沿用原类名、字段、默认值、校验与 camelCase JSON 别名；原内部状态类继续使用 dataclass、datetime 和内部字段，不直接作为 HTTP 返回结构。
+
+解析导入、索引同步与核对的结果报告也分别放在 `parseDTO.py` / `indexSyncDTO.py`；它们是业务传输对象，沿用原 Pydantic 字段校验。`server/schema.py` 保留通用契约基类和 Harness / 检索共享证据契约。
+
+VO 按 `commonVO.py`、`libraryVO.py`、`uploadVO.py`、`jobVO.py`、`agentVO.py`、`searchVO.py`、`systemVO.py` 分组；投影函数留在对应 API 模块。旧 `server/api/schema.py` 作为兼容导入入口，分别引用 DTO 请求与 VO 返回模型。Harness 与原始检索契约在 `server/schema.py` / `server/agent/`，不依赖 HTTP VO。公开投影在 API 边界明确转换，内部媒体 URI、执行租约和模型审核意见不出现在公开 Evidence / Message 中。
+
+| 类型分组 | 公开模型 | UI 使用的数据 |
+| --- | --- | --- |
+| common | Page、Failure、FieldError、ApiError、ImageAsset | 全范围 total、下一页游标、稳定错误 code、请求编号、公开图片 URL |
+| library | Character、SeriesSummary、SeriesDetail、VideoSummary、LastSearchView | 视频 ready / failed 数量、待完成上传、最近检索、视频索引与播放状态、实际 latestJobId |
+| upload | UploadSessionCreateRequest、UploadSessionView、UploadSegmentView、UploadCompleteView | 完整上传确认点、缺失分段、真实合并阶段、源 SHA、后续 Job、资源 version |
+| job | ParseJobView、VideoChunkCheckpointView、JobCounts、JobSummary | 实际阶段 / 进度 / 检查点、结构化错误、单调 version、全范围权威统计 |
+| agent | Conversation / Message 请求与 View、EvidenceReference、各类回答事件 | 历史 preview、毫秒时间、消息 phase / version、候选引用、恢复同一轮消息对 |
+| search | VideoChunkEvidenceView、VideoChunkCandidateView、SearchHitView、SearchResultView、Keyframe | 正文与证据、视频定位、完整检索范围、最终 rank、partial / warnings、可读取媒体 |
+| system | HealthView | API 存活与真实 serverTime |
+
+所有业务请求显式传 `workspaceId`：有 JSON Body 时放 Body，否则放 Query。所有公开绝对时间用 Unix 毫秒整数，未知时间为 null；视频偏移继续用 startMs / endMs，不当作日期。所有列表使用 `Page<T>`，参数默认 limit=50，范围 1–100；cursor 绑定 Workspace、筛选与固定排序。
+
+```ts
+interface Page<T> {
+  items: T[];
+  total: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+interface Failure { code: string; message: string }
+interface ApiError extends Failure {
+  requestId: string;
+  fieldErrors: Array<{field: string; message: string}>;
+  retryAt: number | null;
+}
+```
+
+Series list 返回轻量 `SeriesSummary`，get / create 返回 `SeriesDetail`；列表不会假装包含完整剧集信息。Job list 的 total 与 jobs/summary 均从完整 SQL 范围统计，不用首屏数量冒充全局统计。索引状态由 Chunk / Embedding / Sync Intent 事实推导，不将解析完成视为索引 READY。
+
+新增的只读接口：
+
+| 路由 | 参数 | 返回 |
+| --- | --- | --- |
+| GET /api/uploads/list | workspaceId；可选 seriesId、status、limit、cursor；默认非终态，status=all 或逗号分隔状态 | Page&lt;UploadSessionView&gt; |
+| GET /api/jobs/summary | workspaceId；可选 seriesId | JobSummary |
+| GET /api/agent/messages/get | workspaceId、conversationId；messageId 与 idempotencyKey 恰好一个 | 同一 USER / ASSISTANT 消息对 |
+| GET /api/video-chunks/get | workspaceId、videoChunkId | 可刷新媒体状态的事实 Evidence |
+| GET /api/media/images/content | workspaceId、imageId | 经过资源归属与受管路径验证的真实图片 |
+
+已有 series / jobs / conversations / messages 列表同步改为 Page。series/list 支持 status、query；jobs/list 支持 seriesId、status（逗号分隔）；conversations/list 支持 query、历史消息实际 seriesId；messages/list 保留 afterSequenceNo，并增加 cursor / limit。
+
+创建与发送示例：
+
+```http
+POST /api/agent/conversations/create
+Idempotency-Key: <创建键>
+Content-Type: application/json
+
+{"workspaceId":"local-default"}
+```
+
+省略标题时，后端根据首条问题生成短标题。自定义标题保留；默认创建请求的幂等重放不会因自动标题变化而失效。
+
+```http
+POST /api/agent/messages/send?conversationId=<conversationId>
+Idempotency-Key: <本轮发送键>
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "workspaceId":"local-default",
+  "content":"这段里发生了什么？",
+  "seriesIds":["<seriesId>"],
+  "topK":5,
+  "reference":{"messageId":"<来源assistantId>","videoChunkId":"<真实候选Id>"}
+}
+```
+
+reference 可省略 / 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
+
+SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits。消息快照有 phase 与单调 version，前端拒绝旧版本覆盖新状态。phase 仅有 QUEUED / RETRIEVING / EVALUATING / RESPONDING，终态为 null，不包含私有推理。
+
+持久化 FAILED 时，answer.failed 返回公开 error 与真实消息对，并保留已经确认的证据 / 部分正文。队列溢出或无法确认终态提交时返回 answer.interrupted，不谎称后台 FAILED。恢复时读取 messages/get / list / events。断开流不取消后台任务。不同 Conversation 的流、上下文和候选引用隔离。
+
+SearchResult 同时包含 query、seriesIds、searchedVideoIds、agentReply、hits、partial、warnings。searchedVideoIds 来自实际索引范围，Harness 汇总各轮真实检索的视频范围，不能从命中候选反推。旧记录没有该事实时返回 [] 并说明缺少原始范围记录。candidate.rank 是最终候选位置+1；fusedRank 保留原检索排序，不把融合分数显示成置信度。
+
+videos/content 新增 variant=playback|original，默认 playback；原文件可读取不等于兼容浏览器。播放器使用后端提供的 playbackUrl，保留原视频毫秒时间轴。媒体丢失返回 MEDIA_MISSING / 410，未准备好或不兼容返回 MEDIA_NOT_READY / 409。Range、If-Range 与 ETag 等浏览器读取头通过 CORS 放行并暴露。
+
+当前与完整 UI 目标的差异：
+
+- 保留 JSON send 同步返回 200，没有改成首次受理 202；SSE 是真实增量输出。
+- Series 创建仍按 Workspace + name 的业务身份幂等，upload complete 仍按 uploadSessionId 幂等，未增加覆盖规格所有写入路由的通用幂等记录。
+- 没有新增取消、手动重跑、settings 写入或 system/status；jobs/events 仍是指定 jobId 的流。因此 canCancel / canRetry=false，retryOfJobId=null。
+- contentSha256 请求暂可省略；提供时固定并在合并后真实校验全文件 SHA。历史 / 未计算值为 null，完成后保存真实值。前端没有新增全文件 Worker hash。
+- completionStage 来自真实合并步骤；无法可靠度量的 completionProgress / estimatedRemainingMs 为 null。Upload / Message / Job 的 version 由实际可见变化递增，Job 心跳不伪造新版本。
+- 当前没有新增视频转码，不将 MOV / AVI 或无法确认 codec 的原文件标为可播放。解析没有保存关键帧的原视频 atMs，Evidence.keyframes=[] / thumbnail=null，并给出明确限制；系列封面仅使用可读取的已登记真实图片。
+- 没有开放 PARTIAL Series 检索，仍遵守当前 READY 范围规则。离线导入没有 ParseJob 时 latestJobId=null，不填假的 Job。
+- 真实模型、开发 MySQL / Qdrant、浏览器视频回放仍需单独联调；本地 Mock / SQLite 回归不代替该验收。
+
+旧数据库需要受控迁移，不能把 init-db 当作 ALTER TABLE。新增列：
+
+| 表 | 新增列 |
+| --- | --- |
+| agent_conversation | title_is_auto BOOLEAN NOT NULL DEFAULT FALSE |
+| agent_message | phase VARCHAR(16) NULL、version INT NOT NULL DEFAULT 1、reference JSON NULL、last_error_code VARCHAR(64) NULL、last_error_message LONGTEXT NULL |
+| series_parse_job | version INT NOT NULL DEFAULT 1 |
+| upload_session | content_sha256 VARCHAR(64) NULL、completion_stage VARCHAR(32) NULL、version INT NOT NULL DEFAULT 1、job_id VARCHAR(36) NULL、last_error_code VARCHAR(64) NULL、request_fingerprint VARCHAR(64) NULL |
+
+为 Message / Job / Upload 添加 version>0 检查；Message phase 与 Upload completionStage 添加合法值检查。upload_session.job_id 关联实际 series_parse_job.job_id。旧上传完成记录应从 Video / 对应 pipeline Job 回填实际 SHA / Job；无法确认的值保留 null，禁止猜测关联。旧错误只能回填公开通用 Failure，不直接复制含内部诊断的信息到 last_error_message。已有 PROCESSING phase 不能凭空猜测，保持 null，直到真实运行阶段写入。init-db 会检查这些列并拒绝缺列结构；本次没有执行真实数据库 DDL。
+
+request_fingerprint 只保存原始规范化创建请求的摘要，不包含服务端分段配置、后续分配的顺序或计算出的实际 SHA；因此同键不同可选参数会冲突。历史上传无法从结果反推原始可选参数意图时保留 null，继续按旧字段校验；不填伪造指纹。新增上传均固定真实请求指纹。

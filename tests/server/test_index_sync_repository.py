@@ -25,7 +25,7 @@ from server.repository.index_sync import (
     IndexSyncRepository,
     materialize_index_sync_intents,
 )
-from server.service.parse_import import PreparedEmbedding
+from server.model.dto.parseDTO import PreparedEmbedding
 
 
 def _with_vectors(prepared_import, *, first_text: list[float] | None = None):

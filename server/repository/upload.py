@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta
+import hashlib
+import json
 from uuid import uuid4
 
 from sqlalchemy import func, or_, select, update
@@ -9,11 +10,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..identity import derive_parse_job_id
+from ..model.dto.uploadDTO import (
+    CompletedUploadState, UploadCompletionClaim, UploadSegmentState, UploadSessionState,
+)
 from ..model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
 from ..model.upload import (
     UploadSegmentRecord,
     UploadSessionRecord,
     UploadSessionStatus,
+    UploadCompletionStage,
 )
 from ..model.video import SeriesRecord, VideoRecord
 from ..utils.time import utc_now_naive
@@ -43,57 +48,6 @@ class UploadCompletionLeaseLostError(UploadStateError):
     pass
 
 
-@dataclass(frozen=True, slots=True)
-class UploadSegmentState:
-    segment_number: int
-    start_byte: int
-    end_byte_exclusive: int
-    actual_size_bytes: int
-    checksum_sha256: str
-    artifact_uri: str
-
-
-@dataclass(frozen=True, slots=True)
-class UploadSessionState:
-    upload_session_id: str
-    workspace_id: str
-    series_id: str
-    episode_order: int
-    upload_sequence: int
-    original_filename: str
-    media_type: str
-    total_size_bytes: int
-    preferred_segment_size_bytes: int
-    total_segments: int
-    status: str
-    uploaded_segment_count: int
-    uploaded_size_bytes: int
-    expires_at: datetime
-    video_id: str | None
-    last_error: str | None
-    created_at: datetime
-    updated_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class UploadCompletionClaim:
-    session: UploadSessionState
-    segments: tuple[UploadSegmentState, ...]
-    completion_token: str | None
-    existing_job_id: str | None
-
-    @property
-    def already_completed(self) -> bool:
-        return self.session.status == UploadSessionStatus.COMPLETED.value
-
-
-@dataclass(frozen=True, slots=True)
-class CompletedUploadState:
-    session: UploadSessionState
-    video_id: str
-    job_id: str
-
-
 class UploadRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
@@ -104,7 +58,7 @@ class UploadRepository:
         workspace_id: str,
         series_id: str,
         episode_order: int,
-        upload_sequence: int,
+        upload_sequence: int | None,
         original_filename: str,
         media_type: str,
         total_size_bytes: int,
@@ -113,6 +67,7 @@ class UploadRepository:
         idempotency_key: str,
         expires_at: datetime,
         now: datetime,
+        content_sha256: str | None = None,
     ) -> UploadSessionState:
         requested = {
             "workspace_id": workspace_id,
@@ -125,7 +80,18 @@ class UploadRepository:
             "preferred_segment_size_bytes": preferred_segment_size_bytes,
             "total_segments": total_segments,
             "idempotency_key": idempotency_key,
+            "content_sha256": content_sha256,
         }
+        if upload_sequence is None:
+            requested.pop("upload_sequence")
+        if content_sha256 is None:
+            requested.pop("content_sha256")
+        fingerprint_fields = {
+            **requested, "upload_sequence": upload_sequence, "content_sha256": content_sha256,
+        }
+        fingerprint_fields.pop("preferred_segment_size_bytes")
+        fingerprint_fields.pop("total_segments")
+        request_fingerprint = hashlib.sha256(json.dumps(fingerprint_fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         for attempt in range(2):
             try:
                 with self._session_factory.begin() as session:
@@ -137,10 +103,12 @@ class UploadRepository:
                     )
                     if existing is not None:
                         self._expire_if_due(existing, now)
-                        self._validate_same_session(existing, requested)
+                        self._validate_same_session(existing, requested, request_fingerprint=request_fingerprint)
                         return self._snapshot(session, existing)
 
-                    series = session.get(SeriesRecord, series_id)
+                    series = session.scalar(select(SeriesRecord).where(
+                        SeriesRecord.series_id == series_id
+                    ).with_for_update())
                     if series is None or series.workspace_id != workspace_id:
                         raise UploadSeriesNotFoundError(
                             f"seriesId {series_id!r} does not exist in this workspace"
@@ -172,19 +140,31 @@ class UploadRepository:
                             "the Series episode already has a Video"
                         )
 
+                    resolved_sequence = upload_sequence
+                    if resolved_sequence is None:
+                        upload_max = session.scalar(select(func.max(UploadSessionRecord.upload_sequence)).where(
+                            UploadSessionRecord.series_id == series_id
+                        )) or 0
+                        video_max = session.scalar(select(func.max(VideoRecord.upload_sequence)).where(
+                            VideoRecord.series_id == series_id
+                        )) or 0
+                        resolved_sequence = max(upload_max, video_max) + 1
+
                     record = UploadSessionRecord(
                         upload_session_id=str(uuid4()),
                         workspace_id=workspace_id,
                         series_id=series_id,
                         episode_order=episode_order,
-                        upload_sequence=upload_sequence,
+                        upload_sequence=resolved_sequence,
                         original_filename=original_filename,
                         media_type=media_type,
                         total_size_bytes=total_size_bytes,
                         preferred_segment_size_bytes=preferred_segment_size_bytes,
                         total_segments=total_segments,
+                        content_sha256=content_sha256,
                         status=UploadSessionStatus.UPLOADING.value,
                         idempotency_key=idempotency_key,
+                        request_fingerprint=request_fingerprint,
                         active_slot_key=_active_slot_key(series_id, episode_order),
                         expires_at=expires_at,
                     )
@@ -298,6 +278,8 @@ class UploadRepository:
                         created_at=registered_at,
                     )
                     session.add(record)
+                    upload.version += 1
+                    upload.updated_at = registered_at
                     session.flush()
                     result = self._segment_snapshot(record)
         if expired:
@@ -318,8 +300,8 @@ class UploadRepository:
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
             if upload.status == UploadSessionStatus.COMPLETED.value:
-                job_id = None
-                if upload.video_id is not None:
+                job_id = upload.job_id
+                if job_id is None and upload.video_id is not None:
                     job_id = session.scalar(
                         select(SeriesParseJobRecord.job_id).where(
                             SeriesParseJobRecord.video_id == upload.video_id
@@ -363,6 +345,10 @@ class UploadRepository:
                 upload.completion_token = completion_token
                 upload.completion_started_at = claimed_at
                 upload.last_error = None
+                upload.completion_stage = UploadCompletionStage.VERIFYING.value
+                upload.last_error_code = None
+                upload.version += 1
+                upload.updated_at = claimed_at
                 session.flush()
                 result = UploadCompletionClaim(
                     session=self._snapshot(session, upload),
@@ -375,12 +361,52 @@ class UploadRepository:
         assert result is not None
         return result
 
+    def set_completion_stage(self, upload_session_id: str, completion_token: str, stage: UploadCompletionStage) -> None:
+        with self._session_factory.begin() as session:
+            upload = self._locked_session(session, upload_session_id)
+            if upload.status != UploadSessionStatus.COMPLETING.value or upload.completion_token != completion_token:
+                raise UploadCompletionLeaseLostError("upload completion claim is no longer current")
+            if upload.completion_stage != stage:
+                upload.completion_stage = stage
+                upload.version += 1
+
+    def list_for_series(self, series_id: str, *, workspace_id: str, status: str | None = None) -> list[UploadSessionState]:
+        return self.list_for_workspace(workspace_id, series_id=series_id, status=status)
+
+    def list_for_workspace(self, workspace_id: str, *, series_id: str | None = None, status: str | None = None) -> list[UploadSessionState]:
+        if status == "all":
+            statuses = None
+        elif status is None:
+            statuses = {UploadSessionStatus.UPLOADING.value, UploadSessionStatus.COMPLETING.value}
+        else:
+            statuses = {UploadSessionStatus(value.strip()).value for value in status.split(",")}
+        with self._session_factory.begin() as session:
+            statement = select(UploadSessionRecord).where(UploadSessionRecord.workspace_id == workspace_id)
+            if series_id is not None:
+                statement = statement.where(UploadSessionRecord.series_id == series_id)
+            records = session.scalars(statement.order_by(UploadSessionRecord.upload_sequence, UploadSessionRecord.created_at, UploadSessionRecord.upload_session_id).with_for_update()).all()
+            segments_by_upload: dict[str, list[tuple[int, int]]] = {}
+            if records:
+                for upload_id, number, size in session.execute(
+                    select(UploadSegmentRecord.upload_session_id, UploadSegmentRecord.segment_number, UploadSegmentRecord.actual_size_bytes)
+                    .where(UploadSegmentRecord.upload_session_id.in_([record.upload_session_id for record in records]))
+                ):
+                    segments_by_upload.setdefault(upload_id, []).append((number, size))
+            result = []
+            checked_at = utc_now_naive()
+            for record in records:
+                self._expire_if_due(record, checked_at)
+                if statuses is None or record.status in statuses:
+                    result.append(self._snapshot(session, record, segments=segments_by_upload.get(record.upload_session_id, [])))
+            return result
+
     def release_completion(
         self,
         upload_session_id: str,
         completion_token: str,
         *,
         error: str,
+        error_code: str = "PROCESSING_FAILED",
     ) -> bool:
         summary = error.strip()[:8192] or "upload completion failed"
         with self._session_factory.begin() as session:
@@ -397,6 +423,9 @@ class UploadRepository:
                     completion_token=None,
                     completion_started_at=None,
                     last_error=summary,
+                    last_error_code=error_code,
+                    completion_stage=None,
+                    version=UploadSessionRecord.version + 1,
                 )
             )
             return result.rowcount == 1
@@ -498,6 +527,12 @@ class UploadRepository:
             upload.completion_token = None
             upload.completion_started_at = None
             upload.last_error = None
+            upload.last_error_code = None
+            upload.content_sha256 = content_hash
+            upload.job_id = job_id
+            upload.completion_stage = None
+            upload.version += 1
+            upload.updated_at = completed_at
             session.flush()
             return CompletedUploadState(
                 session=self._snapshot(session, upload),
@@ -531,13 +566,16 @@ class UploadRepository:
     @staticmethod
     def _expire_if_due(upload: UploadSessionRecord, now: datetime) -> bool:
         if (
-            upload.status != UploadSessionStatus.COMPLETED.value
+            upload.status not in (UploadSessionStatus.COMPLETED.value, UploadSessionStatus.EXPIRED.value)
             and upload.expires_at <= now
         ):
             upload.status = UploadSessionStatus.EXPIRED.value
             upload.completion_token = None
             upload.completion_started_at = None
             upload.active_slot_key = None
+            upload.completion_stage = None
+            upload.version += 1
+            upload.updated_at = now
             return True
         return upload.status == UploadSessionStatus.EXPIRED.value
 
@@ -557,16 +595,16 @@ class UploadRepository:
         cls,
         session: Session,
         upload: UploadSessionRecord,
+        *,
+        segments: list[tuple[int, int]] | None = None,
     ) -> UploadSessionState:
-        uploaded_segment_count, uploaded_size_bytes = session.execute(
-            select(
-                func.count(UploadSegmentRecord.segment_number),
-                func.coalesce(func.sum(UploadSegmentRecord.actual_size_bytes), 0),
-            ).where(
-                UploadSegmentRecord.upload_session_id
-                == upload.upload_session_id
-            )
-        ).one()
+        if segments is None:
+            segments = session.execute(
+                select(UploadSegmentRecord.segment_number, UploadSegmentRecord.actual_size_bytes).where(
+                    UploadSegmentRecord.upload_session_id == upload.upload_session_id
+                )
+            ).all()
+        present = {number for number, _size in segments}
         return UploadSessionState(
             upload_session_id=upload.upload_session_id,
             workspace_id=upload.workspace_id,
@@ -579,13 +617,19 @@ class UploadRepository:
             preferred_segment_size_bytes=upload.preferred_segment_size_bytes,
             total_segments=upload.total_segments,
             status=upload.status,
-            uploaded_segment_count=int(uploaded_segment_count),
-            uploaded_size_bytes=int(uploaded_size_bytes),
+            uploaded_segment_count=len(segments),
+            uploaded_size_bytes=sum(size for _number, size in segments),
             expires_at=upload.expires_at,
             video_id=upload.video_id,
             last_error=upload.last_error,
             created_at=upload.created_at,
             updated_at=upload.updated_at,
+            content_sha256=upload.content_sha256,
+            completion_stage=upload.completion_stage,
+            job_id=upload.job_id,
+            version=upload.version,
+            missing_segment_numbers=tuple(n for n in range(upload.total_segments) if n not in present),
+            last_error_code=upload.last_error_code,
         )
 
     @classmethod
@@ -619,7 +663,13 @@ class UploadRepository:
     def _validate_same_session(
         record: UploadSessionRecord,
         requested: dict[str, object],
+        *,
+        request_fingerprint: str,
     ) -> None:
+        if record.request_fingerprint is not None:
+            if record.request_fingerprint != request_fingerprint:
+                raise UploadConflictError("idempotency key was already used with different upload parameters")
+            return
         mismatches = [
             name for name, value in requested.items() if getattr(record, name) != value
         ]

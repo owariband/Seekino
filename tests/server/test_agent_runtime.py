@@ -140,9 +140,13 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     assert result.agent_reply.result_count == 1
     assert result.hits[0].evidence.start_ms == 1000
     assert result.hits[0].evidence.end_ms == 2000
-    assert [event["type"] for event in events] == ["answer.evidence", "answer.delta", "answer.delta"]
-    assert events[0]["hits"] == result.model_dump(mode="json", by_alias=True)["hits"]
-    assert events[1]["delta"] == "final "
+    assert [event["phase"] for event in events if event["type"] == "answer.progress"] == [
+        *(["RETRIEVING", "EVALUATING"] * approve_at), "RESPONDING",
+    ]
+    delivery = [event for event in events if event["type"] != "answer.progress"]
+    assert [event["type"] for event in delivery] == ["answer.evidence", "answer.delta", "answer.delta"]
+    assert delivery[0]["searchResult"]["hits"] == result.model_dump(mode="json", by_alias=True)["hits"]
+    assert delivery[1]["delta"] == "final "
     assert all(event["conversationId"] == "conversation" for event in events)
     assert all(event["messageId"] == "conversation-answer" for event in events)
     assert runtime.model_name == "chat-test"
@@ -154,7 +158,8 @@ def test_third_rejection_is_failure_and_never_starts_final_chat():
     with pytest.raises(AgentModelInvocationError, match="after 3 turns"):
         runtime.kick(_inputs(), emit=events.append)
     assert len(query.contexts) == len(evaluator.contexts) == 3
-    assert chat.contexts == events == []
+    assert chat.contexts == []
+    assert [event["phase"] for event in events] == ["RETRIEVING", "EVALUATING"] * 3
 
 
 def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
@@ -389,7 +394,7 @@ def test_chat_failure_leaves_partial_deltas_without_output_or_completed_event():
     events = []
     with pytest.raises(AgentModelInvocationError, match="Chat Agent model"):
         runtime.kick(_inputs(), emit=events.append)
-    assert [event["type"] for event in events] == ["answer.evidence", "answer.delta"]
+    assert [event["type"] for event in events if event["type"] != "answer.progress"] == ["answer.evidence", "answer.delta"]
 
 
 def test_cancel_between_deltas_closes_provider_and_stops_output():
@@ -497,7 +502,8 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
         assert results[name].agent_reply.message == name
         assert results[name].hits[0].evidence.video_chunk_id == f"chunk-{name}"
         assert all(event["conversationId"] == name for event in events[name])
-        assert events[name][0]["hits"][0]["evidence"]["workspaceId"] == f"workspace-{name}"
+        evidence = next(event for event in events[name] if event["type"] == "answer.evidence")
+        assert evidence["searchResult"]["hits"][0]["evidence"]["workspaceId"] == f"workspace-{name}"
 
 
 class DisjointRetrieval(Retrieval):

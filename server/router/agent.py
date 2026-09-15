@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ..api import agent
+from ..model.vo.commonVO import Page
 from ..api.schema import (
     AgentConversationView,
     AgentMessageSendView,
@@ -21,7 +22,7 @@ router.add_api_route(
     "/api/agent/conversations/list",
     agent.list_agent_conversations,
     methods=["GET"],
-    response_model=list[AgentConversationView],
+    response_model=Page[AgentConversationView],
 )
 router.add_api_route(
     "/api/agent/conversations/get",
@@ -33,7 +34,13 @@ router.add_api_route(
     "/api/agent/messages/list",
     agent.list_agent_messages,
     methods=["GET"],
-    response_model=list[AgentMessageView],
+    response_model=Page[AgentMessageView],
+)
+router.add_api_route(
+    "/api/agent/messages/get",
+    agent.get_agent_message,
+    methods=["GET"],
+    response_model=AgentMessageSendView,
 )
 router.add_api_route(
     "/api/agent/messages/send",

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import exists, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
+from ..model.dto.jobDTO import (
+    ParseJobLease,
+    ParseJobState,
+    ParseJobSummaryState,
+    VideoChunkCheckpointState,
+)
 from ..model.job import (
     ParseJobStage,
     ParseJobStatus,
@@ -31,71 +36,6 @@ class ParseJobCheckpointConflictError(RuntimeError):
     pass
 
 
-@dataclass(frozen=True, slots=True)
-class ParseJobState:
-    job_id: str
-    series_id: str
-    video_id: str
-    series_name: str
-    episode_order: int
-    original_filename: str
-    pipeline_version: str
-    status: str
-    stage: str
-    progress: int
-    attempt_count: int
-    max_attempts: int
-    available_at: datetime
-    lease_owner: str | None
-    lease_version: int
-    lease_expires_at: datetime | None
-    heartbeat_at: datetime | None
-    started_at: datetime | None
-    completed_at: datetime | None
-    last_error: str | None
-    created_at: datetime
-    updated_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class ParseJobLease:
-    job_id: str
-    series_id: str
-    video_id: str
-    pipeline_version: str
-    worker_id: str
-    lease_version: int
-    lease_expires_at: datetime
-    attempt_count: int
-    max_attempts: int
-    episode_order: int
-    upload_sequence: int
-    original_filename: str
-    original_source_uri: str
-    content_hash: str
-    total_bytes: int
-    duration_ms: int
-    workspace_id: str
-    series_name: str
-    series_description: str | None
-    important_extra_data: dict | None
-    character_bible: list[dict]
-
-
-@dataclass(frozen=True, slots=True)
-class VideoChunkCheckpointState:
-    job_id: str
-    sequence_no: int
-    video_chunk_id: str
-    stage: str
-    chunk_media_uri: str | None = None
-    analysis_window_media_uri: str | None = None
-    parse_artifact_uri: str | None = None
-    text_embedding_artifact_uri: str | None = None
-    vision_embedding_artifact_uri: str | None = None
-    last_error: str | None = None
-
-
 _CHECKPOINT_ORDER = {
     stage.value: order for order, stage in enumerate(VideoChunkCheckpointStage)
 }
@@ -111,6 +51,7 @@ class ParseJobRepository:
             row = session.execute(
                 select(
                     SeriesParseJobRecord,
+                    SeriesRecord.workspace_id,
                     SeriesRecord.name,
                     VideoRecord.episode_order,
                     VideoRecord.original_filename,
@@ -127,9 +68,10 @@ class ParseJobRepository:
             ).one_or_none()
             if row is None:
                 raise ParseJobNotFoundError(f"jobId {job_id!r} does not exist")
-            record, series_name, episode_order, original_filename = row
+            record, workspace_id, series_name, episode_order, original_filename = row
             return self._state(
                 record,
+                workspace_id=workspace_id,
                 series_name=series_name,
                 episode_order=episode_order,
                 original_filename=original_filename,
@@ -140,6 +82,9 @@ class ParseJobRepository:
         workspace_id: str,
         *,
         limit: int = 100,
+        offset: int = 0,
+        series_id: str | None = None,
+        statuses: tuple[str, ...] | None = None,
     ) -> list[ParseJobState]:
         normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
@@ -148,6 +93,7 @@ class ParseJobRepository:
             rows = session.execute(
                 select(
                     SeriesParseJobRecord,
+                    SeriesRecord.workspace_id,
                     SeriesRecord.name,
                     VideoRecord.episode_order,
                     VideoRecord.original_filename,
@@ -160,22 +106,74 @@ class ParseJobRepository:
                     VideoRecord,
                     VideoRecord.video_id == SeriesParseJobRecord.video_id,
                 )
-                .where(SeriesRecord.workspace_id == normalized_workspace)
+                .where(*self._workspace_filters(normalized_workspace, series_id=series_id, statuses=statuses))
                 .order_by(
                     SeriesParseJobRecord.created_at.desc(),
                     SeriesParseJobRecord.job_id.desc(),
                 )
                 .limit(limit)
+                .offset(offset)
             ).all()
             return [
                 self._state(
                     record,
+                    workspace_id=workspace_id,
                     series_name=series_name,
                     episode_order=episode_order,
                     original_filename=original_filename,
                 )
-                for record, series_name, episode_order, original_filename in rows
+                for record, workspace_id, series_name, episode_order, original_filename in rows
             ]
+
+    def count_for_workspace(
+        self,
+        workspace_id: str,
+        *,
+        series_id: str | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> int:
+        with self._session_factory() as session:
+            return int(session.scalar(
+                select(func.count(SeriesParseJobRecord.job_id))
+                .join(SeriesRecord)
+                .where(*self._workspace_filters(workspace_id, series_id=series_id, statuses=statuses))
+            ) or 0)
+
+    def summary_for_workspace(self, workspace_id: str, *, series_id: str | None = None) -> ParseJobSummaryState:
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(
+                    SeriesParseJobRecord.status,
+                    func.count(SeriesParseJobRecord.job_id),
+                    func.sum(SeriesParseJobRecord.version),
+                    func.max(SeriesParseJobRecord.updated_at),
+                )
+                .join(SeriesRecord)
+                .where(*self._workspace_filters(workspace_id, series_id=series_id, statuses=None))
+                .group_by(SeriesParseJobRecord.status)
+            ).all()
+            checkpoint_count = session.scalar(
+                select(func.count(VideoChunkCheckpointRecord.video_chunk_id))
+                .join(SeriesParseJobRecord)
+                .join(SeriesRecord)
+                .where(*self._workspace_filters(workspace_id, series_id=series_id, statuses=None))
+            )
+            return ParseJobSummaryState(
+                workspace_id=workspace_id, series_id=series_id,
+                counts={status: int(count) for status, count, _version, _updated in rows},
+                checkpoint_count=int(checkpoint_count or 0),
+                version=sum(int(version) for _status, _count, version, _updated in rows),
+                updated_at=max((updated for _status, _count, _version, updated in rows), default=utc_now_naive()),
+            )
+
+    @staticmethod
+    def _workspace_filters(workspace_id: str, *, series_id: str | None, statuses: tuple[str, ...] | None):
+        filters = [SeriesRecord.workspace_id == workspace_id]
+        if series_id is not None:
+            filters.append(SeriesParseJobRecord.series_id == series_id)
+        if statuses is not None:
+            filters.append(SeriesParseJobRecord.status.in_(statuses))
+        return filters
 
     def claim_next(
         self,
@@ -242,6 +240,7 @@ class ParseJobRepository:
             job.heartbeat_at = claimed_at
             job.started_at = job.started_at or claimed_at
             job.last_error = None
+            job.version += 1
             video.parse_status = ParseJobStatus.RUNNING.value
             series.status = "INDEXING"
             session.flush()
@@ -312,10 +311,15 @@ class ParseJobRepository:
             )
             if job is None:
                 return False
+            changed = False
             if progress > job.progress:
                 job.progress = progress
+                changed = True
             if _JOB_STAGE_ORDER[stage_value] > _JOB_STAGE_ORDER[job.stage]:
                 job.stage = stage_value
+                changed = True
+            if changed:
+                job.version += 1
             video = session.get(VideoRecord, lease.video_id)
             if video is not None:
                 video.parse_status = ParseJobStatus.RUNNING.value
@@ -336,11 +340,12 @@ class ParseJobRepository:
         stage = VideoChunkCheckpointStage(checkpoint.stage).value
         checked_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
-            self._require_current_lease(session, lease, checked_at)
+            job = self._require_current_lease(session, lease, checked_at)
             current = session.get(
                 VideoChunkCheckpointRecord,
                 (checkpoint.job_id, checkpoint.sequence_no),
             )
+            changed = current is None
             if current is None:
                 current = VideoChunkCheckpointRecord(
                     job_id=checkpoint.job_id,
@@ -358,7 +363,9 @@ class ParseJobRepository:
                     raise ParseJobCheckpointConflictError(
                         "checkpoint stage cannot move backwards"
                     )
-                current.stage = stage
+                if current.stage != stage:
+                    current.stage = stage
+                    changed = True
 
             for field_name in (
                 "chunk_media_uri",
@@ -369,8 +376,12 @@ class ParseJobRepository:
                 "last_error",
             ):
                 value = getattr(checkpoint, field_name)
-                if value is not None:
+                if value is not None and getattr(current, field_name) != value:
                     setattr(current, field_name, value)
+                    changed = True
+            if changed:
+                job.version += 1
+                job.updated_at = checked_at
             session.flush()
             return self._checkpoint_state(current)
 
@@ -435,6 +446,7 @@ class ParseJobRepository:
                     heartbeat_at=None,
                     completed_at=completed_at,
                     last_error=None,
+                    version=SeriesParseJobRecord.version + 1,
                 )
             )
             if result.rowcount != 1:
@@ -479,6 +491,8 @@ class ParseJobRepository:
             job.lease_expires_at = None
             job.heartbeat_at = None
             job.last_error = summary
+            job.version += 1
+            job.completed_at = failed_at if exhausted else None
             video = session.get(VideoRecord, lease.video_id)
             if video is not None:
                 video.parse_status = job.status
@@ -519,6 +533,8 @@ class ParseJobRepository:
                 job.lease_expires_at = None
                 job.heartbeat_at = None
                 job.last_error = "worker lease expired"
+                job.version += 1
+                job.completed_at = reaped_at if exhausted else None
                 video = session.get(VideoRecord, job.video_id)
                 if video is not None:
                     video.parse_status = job.status
@@ -555,12 +571,14 @@ class ParseJobRepository:
     def _state(
         record: SeriesParseJobRecord,
         *,
+        workspace_id: str,
         series_name: str,
         episode_order: int,
         original_filename: str,
     ) -> ParseJobState:
         return ParseJobState(
             job_id=record.job_id,
+            workspace_id=workspace_id,
             series_id=record.series_id,
             video_id=record.video_id,
             series_name=series_name,
@@ -572,6 +590,7 @@ class ParseJobRepository:
             progress=record.progress,
             attempt_count=record.attempt_count,
             max_attempts=record.max_attempts,
+            version=record.version,
             available_at=record.available_at,
             lease_owner=record.lease_owner,
             lease_version=record.lease_version,

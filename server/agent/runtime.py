@@ -16,7 +16,7 @@ from .chat import render_chat
 from .evaluator import evaluate
 from .output import bind_draft, finalize_output
 from .query import run_query
-from .state import AgentModelInvocationError, ExecutionControl, LoopTurn, RunInputs, RunState
+from .state import AgentModelInvocationError, AnswerPhase, ExecutionControl, LoopTurn, RunInputs, RunState
 from .tools import build_retrieval_tool
 
 
@@ -103,6 +103,7 @@ class AgentRuntime:
         control.check()
         if len(previous) >= self._max_loop_turns:
             raise AgentModelInvocationError("Query / Evaluator loop-turn budget exceeded")
+        control.publish(inputs, {"type": "answer.progress", "phase": AnswerPhase.RETRIEVING})
         calls = []
         tool = build_retrieval_tool(
             self._retrieve, inputs=inputs, control=control, calls=calls,
@@ -118,6 +119,7 @@ class AgentRuntime:
         available, selected, sources = bind_draft(
             inputs, previous, calls, draft, max_selected_hits=selection_limit,
         )
+        control.publish(inputs, {"type": "answer.progress", "phase": AnswerPhase.EVALUATING})
         review = evaluate(
             self._evaluator_model, inputs, previous, draft, available, selected, calls, sources,
         )
@@ -130,7 +132,7 @@ class AgentRuntime:
         )
         if review.action == "continue" and current.number >= self._max_loop_turns:
             raise AgentModelInvocationError(
-                f"Evaluator rejected the Query draft after {current.number} turns: {review.advice}"
+                f"Evaluator rejected the Query draft after {current.number} turns"
             )
         return {"turns": [*previous, current]}
 
@@ -140,6 +142,9 @@ class AgentRuntime:
 
     def _chat(self, state: RunState) -> dict:
         current = state["turns"][-1]
+        state["control"].publish(state["inputs"], {
+            "type": "answer.progress", "phase": AnswerPhase.RESPONDING,
+        })
         text = render_chat(self._chat_model, state["inputs"], current, state["control"])
         return {"turns": [*state["turns"][:-1], replace(current, rendered_text=text)]}
 

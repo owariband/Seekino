@@ -5,12 +5,11 @@ import json
 import math
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from engine.parse.schemas import VideoChunkParseResult, VideoParseResult
+from engine.parse.schemas import VideoParseResult
 from engine.retrieval.video_retrieval import (
     VideoChunkRetrievalDocument,
     build_video_chunk_retrieval_documents,
@@ -24,45 +23,11 @@ from ..identity import (
     derive_video_chunk_id,
     derive_video_id,
 )
-
-
-@dataclass(frozen=True)
-class PreparedEmbedding:
-    vector: list[float]
-    metadata: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class PreparedVideoChunk:
-    video_chunk_id: str
-    snapshot_id: str
-    parse_result: VideoChunkParseResult
-    retrieval_document: VideoChunkRetrievalDocument
-    chunk_media_ref: str
-    analysis_window_media_ref: str
-    text_embedding: PreparedEmbedding | None
-    vision_embedding: PreparedEmbedding | None
-
-
-@dataclass(frozen=True)
-class PreparedVideoParseImport:
-    series_id: str
-    workspace_id: str
-    series_name: str
-    series_description: str | None
-    important_extra_data: dict[str, Any] | None
-    character_bible: list[dict[str, Any]]
-    video_id: str
-    episode_order: int
-    upload_sequence: int
-    original_filename: str
-    original_source_uri: str
-    content_hash: str
-    total_bytes: int
-    pipeline_version: str
-    parsed_at: datetime
-    parse_result: VideoParseResult
-    chunks: tuple[PreparedVideoChunk, ...]
+from ..model.dto.parseDTO import (
+    PreparedEmbedding,
+    PreparedVideoChunk,
+    PreparedVideoParseImport,
+)
 
 
 def prepare_completed_video_parse_import(

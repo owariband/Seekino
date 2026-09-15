@@ -5,11 +5,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from ..repository.job import (
-    ParseJobLease,
-    ParseJobLeaseLostError,
-    ParseJobRepository,
-)
+from ..model.dto.jobDTO import ParseJobLease
+from ..repository.job import ParseJobLeaseLostError, ParseJobRepository
 from ..utils.errors import exception_summary
 from ..utils.time import utc_now_naive
 

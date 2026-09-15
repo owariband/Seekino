@@ -17,6 +17,7 @@ import {
   listAgentConversations,
   listAgentMessages,
   searchVideos,
+  shouldRetryApiRequest,
   sendAgentMessage,
   streamAgentMessage,
   subscribeAgentMessages,
@@ -24,6 +25,33 @@ import {
 } from "./client";
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe("API retry contract", () => {
+  it("does not retry domain and validation responses", () => {
+    for (const status of [400, 404, 409, 422]) {
+      expect(
+        shouldRetryApiRequest(
+          0,
+          new ApiClientError(status, {
+            code: "REQUEST_REJECTED",
+            message: "request rejected",
+          }),
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("retries a network or server failure at most once", () => {
+    expect(shouldRetryApiRequest(0, new TypeError("network unavailable"))).toBe(true);
+    expect(
+      shouldRetryApiRequest(
+        0,
+        new ApiClientError(503, { code: "UNAVAILABLE", message: "unavailable" }),
+      ),
+    ).toBe(true);
+    expect(shouldRetryApiRequest(1, new TypeError("network unavailable"))).toBe(false);
+  });
+});
 
 describe("Agent Chat routes", () => {
   it("keeps identifiers in queries and sends each message's scope", async () => {
@@ -40,14 +68,14 @@ describe("Agent Chat routes", () => {
     const calls = fetchMock.mock.calls;
     expect(String(calls[0]![0])).toBe("/api/agent/conversations/create");
     expect(new Headers(calls[0]![1]?.headers).get("Idempotency-Key")).toBe("conversation-key");
-    expect(JSON.parse(String(calls[0]![1]?.body))).toEqual({ workspaceId: "local-default", title: "画面问询" });
-    expect(String(calls[1]![0])).toBe("/api/agent/conversations/list?workspaceId=local-default");
+    expect(JSON.parse(String(calls[0]![1]?.body))).toEqual({ workspaceId: "local-default" });
+    expect(String(calls[1]![0])).toBe("/api/agent/conversations/list?workspaceId=local-default&limit=100");
     expect(String(calls[2]![0])).toBe("/api/agent/conversations/list?workspaceId=local-default&limit=50");
     expect(String(calls[3]![0])).toBe("/api/agent/conversations/get?conversationId=conversation%2Fid&workspaceId=local-default");
-    expect(String(calls[4]![0])).toBe("/api/agent/messages/list?conversationId=conversation%2Fid&workspaceId=local-default&afterSequenceNo=499&limit=500");
+    expect(String(calls[4]![0])).toBe("/api/agent/messages/list?conversationId=conversation%2Fid&workspaceId=local-default&afterSequenceNo=499&limit=100");
     expect(String(calls[5]![0])).toBe("/api/agent/messages/send?conversationId=conversation%2Fid");
     expect(new Headers(calls[5]![1]?.headers).get("Accept")).toBe("application/json");
-    expect(JSON.parse(String(calls[5]![1]?.body))).toEqual({ workspaceId: "local-default", content: "找摔杯子的画面", seriesIds: ["series/id", "another/id"], topK: 10 });
+    expect(JSON.parse(String(calls[5]![1]?.body))).toEqual({ workspaceId: "local-default", content: "找摔杯子的画面", seriesIds: ["series/id", "another/id"], topK: 10, reference: null });
     expect(JSON.parse(String(calls[6]![1]?.body)).seriesIds).toEqual([]);
     expect(agentMessagesEventsUrl("conversation/id")).toBe("/api/agent/messages/events?conversationId=conversation%2Fid&workspaceId=local-default");
     expect(videoContentUrl("video/id", "workspace/id")).toBe("/api/videos/content?videoId=video%2Fid&workspaceId=workspace%2Fid");
@@ -193,7 +221,7 @@ describe("current API routes", () => {
     });
 
     const calls = fetchMock.mock.calls;
-    expect(String(calls[0]?.[0])).toBe("/api/series/list?workspaceId=local-default");
+    expect(String(calls[0]?.[0])).toBe("/api/series/list?workspaceId=local-default&limit=100");
     expect(String(calls[1]?.[0])).toBe(
       "/api/series/get?seriesId=series%2Fid&workspaceId=local-default",
     );

@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from pydantic import Field
+
+from ...schema import ContractModel
+from ..video import VideoIndexStatus
+from .uploadDTO import UploadSessionState
+
+
+class Character(ContractModel):
+    name: str = Field(min_length=1)
+    aliases: list[str] = Field(default_factory=list)
+
+
+class SeriesCreateRequest(ContractModel):
+    workspace_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    important_extra_data: dict | None = None
+    character_bible: list[Character] = Field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class VideoSummaryState:
+    video_id: str
+    workspace_id: str
+    series_id: str
+    episode_order: int
+    upload_sequence: int
+    original_filename: str
+    original_source_uri: str
+    inference_proxy_uri: str | None
+    content_hash: str
+    total_bytes: int
+    duration_ms: int
+    upload_status: str
+    parse_status: str
+    upload_progress: int
+    parse_progress: int
+    index_status: VideoIndexStatus
+    latest_job_id: str | None
+    last_error: str | None
+    keyframe_uris: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesLastSearchState:
+    conversation_id: str
+    query: str
+    searched_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesState:
+    series_id: str
+    workspace_id: str
+    name: str
+    description: str | None
+    status: str
+    important_extra_data: dict | None
+    character_bible: list[dict]
+    video_count: int
+    created_at: datetime
+    updated_at: datetime
+    ready_video_count: int = 0
+    failed_video_count: int = 0
+    pending_upload_count: int = 0
+    last_search: SeriesLastSearchState | None = None
+    videos: tuple[VideoSummaryState, ...] = ()
+    pending_uploads: tuple[UploadSessionState, ...] = ()
+    representative_video: VideoSummaryState | None = None

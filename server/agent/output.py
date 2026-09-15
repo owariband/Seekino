@@ -52,6 +52,10 @@ def bind_draft(
     sources: dict[str, int] = {}
     query_by_id: dict[str, str] = {}
     last_query = ""
+    searched_video_ids: set[str] = set()
+    scope_recorded = True
+    warnings: list[str] = []
+    partial = False
     for number, turn_calls in [
         *((turn.number, turn.retrieval_calls) for turn in previous_turns),
         (len(previous_turns) + 1, calls),
@@ -59,6 +63,10 @@ def bind_draft(
         for call in turn_calls:
             validate_result(call.result, inputs)
             last_query = call.query
+            scope_recorded = scope_recorded and call.result.searched_video_ids is not None
+            searched_video_ids.update(call.result.searched_video_ids or [])
+            partial = partial or call.result.partial
+            warnings.extend(call.result.warnings)
             for hit in call.result.hits:
                 video_chunk_id = hit.candidate.video_chunk_id
                 by_id[video_chunk_id] = hit.model_copy(deep=True)
@@ -79,10 +87,14 @@ def bind_draft(
         query=last_query, series_ids=list(inputs["series_ids"]),
         agent_reply=AgentReply(message="实际检索证据。", result_count=len(by_id)),
         hits=list(by_id.values()),
+        searched_video_ids=sorted(searched_video_ids) if scope_recorded else None,
+        partial=partial, warnings=list(dict.fromkeys(warnings)),
     )
     bound = VideoChunkSearchResult(
         query=selected_query, series_ids=list(inputs["series_ids"]),
         agent_reply=AgentReply(message=draft.message, result_count=len(selected)), hits=selected,
+        searched_video_ids=available.searched_video_ids,
+        partial=available.partial, warnings=available.warnings,
     )
     return available, bound, {key: sources[key] for key in selected_ids}
 
@@ -96,4 +108,6 @@ def finalize_output(turn: LoopTurn, inputs: RunInputs) -> VideoChunkSearchResult
         series_ids=list(turn.draft_output.series_ids),
         agent_reply=AgentReply(message=turn.rendered_text, result_count=len(turn.draft_output.hits)),
         hits=[hit.model_copy(deep=True) for hit in turn.draft_output.hits],
+        searched_video_ids=turn.draft_output.searched_video_ids,
+        partial=turn.draft_output.partial, warnings=list(turn.draft_output.warnings),
     )

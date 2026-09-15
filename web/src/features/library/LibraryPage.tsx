@@ -11,6 +11,7 @@ import {
 import { type FormEvent, useState } from "react";
 
 import type { SeriesStatus } from "../../api/contracts";
+import { mediaUrl } from "../../api/client";
 import { useWorkspace } from "../../app/workspace";
 import { useUploads } from "../uploads/UploadProvider";
 import { episodeLabel, formatBytes, formatTimecode, stageLabel } from "../../shared/format";
@@ -19,7 +20,9 @@ import styles from "./library.module.css";
 const statusLabels: Record<SeriesStatus, string> = {
   EMPTY: "等待影像",
   INDEXING: "正在整理",
+  PARTIAL: "部分可检索",
   READY: "可检索",
+  FAILED: "整理失败",
 };
 
 export function LibraryPage() {
@@ -38,6 +41,7 @@ export function LibraryPage() {
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [failedCover, setFailedCover] = useState<string | null>(null);
 
   const submitSeries = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -109,7 +113,9 @@ export function LibraryPage() {
         <>
           <section className={styles.feature}>
             <div className={styles.cover}>
-              <img src="/media-placeholder.svg" alt="系列抽象封面" />
+              {selectedSeries.cover && failedCover !== selectedSeries.cover.imageId && mediaUrl(selectedSeries.cover.url)
+                ? <img src={mediaUrl(selectedSeries.cover.url)!} alt={`${selectedSeries.name} 已登记关键帧`} onError={() => setFailedCover(selectedSeries.cover!.imageId)} />
+                : <p>{failedCover === selectedSeries.cover?.imageId ? "封面图片无法读取" : "暂无已登记封面"}</p>}
               <span>{String(selectedSeries.videoCount).padStart(2, "0")}</span>
             </div>
             <div className={styles.featureCopy}>
@@ -118,6 +124,8 @@ export function LibraryPage() {
               <p>{selectedSeries.description || "还没有简介。上传第一集后，这里会成为整部作品的影像索引。"}</p>
               <dl>
                 <div><dt>视频</dt><dd>{selectedSeries.videoCount}</dd></div>
+                <div><dt>可检索 / 失败</dt><dd>{selectedSeries.readyVideoCount} / {selectedSeries.failedVideoCount}</dd></div>
+                <div><dt>待上传</dt><dd>{selectedSeries.pendingUploadCount}</dd></div>
                 <div><dt>人物资料</dt><dd>{selectedSeries.characterBible.length}</dd></div>
                 <div><dt>状态</dt><dd>{statusLabels[selectedSeries.status]}</dd></div>
               </dl>
@@ -150,9 +158,11 @@ export function LibraryPage() {
                     <div className={styles.progressCell}>
                       <span>{video.parseStatus === "SUCCEEDED" ? "解析" : stageLabel(video.parseStatus)}</span><i><em style={{ width: `${video.parseProgress}%` }} /></i><b>{video.parseProgress}%</b>
                     </div>
-                    <div className={styles.episodeReady} data-ready={video.parseStatus === "SUCCEEDED"}>
-                      {video.parseStatus === "SUCCEEDED" ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
-                      {video.parseStatus === "SUCCEEDED" ? "可检索" : "处理中"}
+                    <div className={styles.episodeReady} data-ready={video.indexStatus === "READY"}>
+                      {video.indexStatus === "READY" ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
+                      {video.indexStatus === "READY" ? "可检索" : video.indexStatus === "FAILED" ? "索引失败" : "索引未就绪"}
+                      <small>{video.playbackStatus === "READY" ? "可播放" : video.playbackStatus === "MISSING" ? "原视频已丢失" : "播放未就绪"}</small>
+                      {video.lastError ? <small>{video.lastError.message}</small> : null}
                     </div>
                   </article>
                 ))}
@@ -166,6 +176,7 @@ export function LibraryPage() {
               </div>
             )}
           </section>
+          {selectedSeries.pendingUploads.length ? <section className={styles.episodes}><h2>尚未完成上传</h2>{selectedSeries.pendingUploads.map((upload) => <p key={upload.uploadSessionId}>{upload.originalFilename} · {upload.uploadedSizeBytes} / {upload.totalSizeBytes} 字节 · {upload.status}{upload.lastError ? ` · ${upload.lastError.message}` : ""}</p>)}</section> : null}
         </>
       ) : null}
 

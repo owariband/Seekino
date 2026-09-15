@@ -11,7 +11,7 @@ from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
 from server.model.video import SeriesRecord, VideoChunkRecord, VideoRecord
 from server.repository.job import ParseJobLeaseLostError, ParseJobRepository
 from server.repository.video import VideoRepository
-from server.service.parse_import import PreparedEmbedding
+from server.model.dto.parseDTO import PreparedEmbedding
 
 
 def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> None:

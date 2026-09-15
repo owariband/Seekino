@@ -3,15 +3,23 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from threading import Event
 from time import monotonic
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from ..schema import VideoChunkSearchResult
 
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
+
+
+class AnswerPhase(StrEnum):
+    QUEUED = "QUEUED"
+    RETRIEVING = "RETRIEVING"
+    EVALUATING = "EVALUATING"
+    RESPONDING = "RESPONDING"
 
 
 class AgentModelInvocationError(RuntimeError):
@@ -54,6 +62,7 @@ class RunInputs(TypedDict):
     user_message: str
     history: list[dict]
     requested_top_k: int
+    reference_context: NotRequired[dict | None]
 
 
 @dataclass(frozen=True, slots=True)

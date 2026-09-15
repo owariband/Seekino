@@ -51,6 +51,7 @@ class _RetrievalStub:
         return VideoChunkSearchResult(
             query=query,
             series_ids=scope,
+            searched_video_ids=[],
             agent_reply=AgentReply(
                 message="这次没有找到符合当前检索范围的候选片段。",
                 result_count=0,
@@ -166,17 +167,22 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/series/get",
         "/api/uploads/create",
         "/api/uploads/get",
+        "/api/uploads/list",
         "/api/uploads/segments/upload",
         "/api/uploads/complete",
         "/api/jobs/list",
         "/api/jobs/get",
+        "/api/jobs/summary",
         "/api/jobs/events",
         "/api/videos/content",
+        "/api/video-chunks/get",
+        "/api/media/images/content",
         "/api/search",
         "/api/agent/conversations/create",
         "/api/agent/conversations/list",
         "/api/agent/conversations/get",
         "/api/agent/messages/list",
+        "/api/agent/messages/get",
         "/api/agent/messages/send",
         "/api/agent/messages/events",
     } == paths
@@ -243,7 +249,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
     assert "seriesIds" not in schemas["AgentConversationCreateRequest"]["properties"]
     assert "seriesIds" in schemas["AgentMessageView"]["required"]
     assert "seriesIds" in schemas["AgentMessageSendRequest"]["properties"]
-    assert "seriesId" in schemas["VideoChunkEvidence"]["required"]
+    assert "seriesId" in schemas["VideoChunkEvidenceView"]["required"]
     conversation_create_parameters = openapi_paths[
         "/api/agent/conversations/create"
     ]["post"]["parameters"]
@@ -254,15 +260,15 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/conversations/list"
     ]["get"]["parameters"]
     assert {parameter["name"] for parameter in conversation_list_parameters} == {
-        "workspaceId", "limit"
+        "workspaceId", "limit", "cursor", "seriesId", "query"
     }
     assert {
         "seriesName",
         "episodeOrder",
         "originalFilename",
     } <= set(schemas["ParseJobView"]["required"])
-    assert "agentReply" in schemas["VideoChunkSearchResult"]["required"]
-    assert "selectionReason" in schemas["VideoChunkSearchHit"]["required"]
+    assert "agentReply" in schemas["SearchResultView"]["required"]
+    assert "selectionReason" in schemas["SearchHitView"]["required"]
     assert {
         "speaker",
         "text",
@@ -302,14 +308,14 @@ def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:
     conflicting = client.post(
         "/api/agent/conversations/create",
         headers={"Idempotency-Key": "conversation-1"},
-        json={"title": "另一个标题"},
+        json={"workspaceId": "local-default", "title": "另一个标题"},
     )
     assert conflicting.status_code == 409
     assert conflicting.json()["code"] == "CONFLICT"
 
     sent = client.post(
         "/api/agent/messages/send",
-        params={"conversationId": conversation_id},
+        params={"workspaceId": "local-default", "conversationId": conversation_id},
         headers={"Idempotency-Key": "message-1"},
         json={
             "workspaceId": "local-default",
@@ -320,25 +326,25 @@ def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:
     )
     listed = client.get(
         "/api/agent/messages/list",
-        params={"conversationId": conversation_id},
+        params={"workspaceId": "local-default", "conversationId": conversation_id},
     )
-    listed_conversations = client.get("/api/agent/conversations/list")
+    listed_conversations = client.get("/api/agent/conversations/list", params={"workspaceId": "local-default"})
     messages_after_user = client.get(
         "/api/agent/messages/list",
-        params={"conversationId": conversation_id, "afterSequenceNo": 0},
+        params={"workspaceId": "local-default", "conversationId": conversation_id, "afterSequenceNo": 0},
     )
 
     assert sent.status_code == 200, sent.text
     assert listed.status_code == 200
-    assert [item["role"] for item in listed.json()] == ["USER", "ASSISTANT"]
-    assert listed.json()[0]["modelName"] is None
-    assert listed.json()[1]["modelName"] == "chat-model-v1"
-    assert listed.json()[1]["status"] == "COMPLETED"
-    assert all(message["seriesIds"] == [series_id] for message in listed.json())
-    assert listed.json()[1]["searchResult"]["seriesIds"] == [series_id]
-    assert len(listed_conversations.json()) == 1
-    assert listed_conversations.json()[0]["messageCount"] == 2
-    assert [item["role"] for item in messages_after_user.json()] == ["ASSISTANT"]
+    assert [item["role"] for item in listed.json()["items"]] == ["USER", "ASSISTANT"]
+    assert listed.json()["items"][0]["modelName"] is None
+    assert listed.json()["items"][1]["modelName"] == "chat-model-v1"
+    assert listed.json()["items"][1]["status"] == "COMPLETED"
+    assert all(message["seriesIds"] == [series_id] for message in listed.json()["items"])
+    assert listed.json()["items"][1]["searchResult"]["seriesIds"] == [series_id]
+    assert len(listed_conversations.json()["items"]) == 1
+    assert listed_conversations.json()["items"][0]["messageCount"] == 2
+    assert [item["role"] for item in messages_after_user.json()["items"]] == ["ASSISTANT"]
 
 
 def test_agent_conversations_are_created_and_listed_within_workspace(tmp_path: Path) -> None:
@@ -363,7 +369,7 @@ def test_agent_conversations_are_created_and_listed_within_workspace(tmp_path: P
                 params={"workspaceId": workspace_id},
             )
             assert listed.status_code == 200
-            assert listed.json() == [response.json()]
+            assert listed.json()["items"] == [response.json()]
         assert (
             conversations["local-default"]["conversationId"]
             != conversations["other-workspace"]["conversationId"]
@@ -384,14 +390,14 @@ def test_agent_conversations_are_created_and_listed_within_workspace(tmp_path: P
             assert outside.status_code == 404
         outside_send = client.post(
             "/api/agent/messages/send",
-            params={"conversationId": conversation_id},
+            params={"workspaceId": "local-default", "conversationId": conversation_id},
             headers={"Idempotency-Key": "outside-message"},
             json={"workspaceId": "other-workspace", "content": "找画面"},
         )
         assert outside_send.status_code == 404
         outside_scope = client.post(
             "/api/agent/messages/send",
-            params={"conversationId": conversations["other-workspace"]["conversationId"]},
+            params={"workspaceId": "local-default", "conversationId": conversations["other-workspace"]["conversationId"]},
             headers={"Idempotency-Key": "outside-scope"},
             json={"workspaceId": "other-workspace", "content": "找画面", "seriesIds": [local_series_id]},
         )
@@ -399,14 +405,14 @@ def test_agent_conversations_are_created_and_listed_within_workspace(tmp_path: P
         another = client.post(
             "/api/agent/conversations/create",
             headers={"Idempotency-Key": "another-local-conversation"},
-            json={},
+            json={"workspaceId": "local-default"},
         )
         assert another.status_code == 201
-        assert len(client.get("/api/agent/conversations/list").json()) == 2
-        limited = client.get("/api/agent/conversations/list", params={"limit": 1})
+        assert len(client.get("/api/agent/conversations/list", params={"workspaceId": "local-default"}).json()["items"]) == 2
+        limited = client.get("/api/agent/conversations/list", params={"workspaceId": "local-default", "limit": 1})
         assert limited.status_code == 200
-        assert len(limited.json()) == 1
-        assert limited.json()[0]["workspaceId"] == "local-default"
+        assert len(limited.json()["items"]) == 1
+        assert limited.json()["items"][0]["workspaceId"] == "local-default"
         assert retrieval.calls == []
     finally:
         client.app.state.services.agent.close()
@@ -416,10 +422,10 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
     client, retrieval, _jobs = _client(tmp_path)
     series_id = _create_series(client)
 
-    listed = client.get("/api/series/list").json()
+    listed = client.get("/api/series/list", params={"workspaceId": "local-default"}).json()["items"]
     detail = client.get(
         "/api/series/get",
-        params={"seriesId": series_id},
+        params={"workspaceId": "local-default", "seriesId": series_id},
     ).json()
     searched = client.post(
         "/api/search",
@@ -438,6 +444,9 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
     assert searched.json() == {
         "query": "她为什么哭",
         "seriesIds": [series_id],
+        "searchedVideoIds": [],
+        "partial": False,
+        "warnings": [],
         "agentReply": {
             "message": "这次没有找到符合当前检索范围的候选片段。",
             "resultCount": 0,
@@ -460,13 +469,13 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
 
     first = client.post(
         "/api/uploads/create",
-        params={"seriesId": series_id},
+        params={"workspaceId": "local-default", "seriesId": series_id},
         headers={"Idempotency-Key": "episode-07-upload"},
         json=create_payload,
     )
     repeated = client.post(
         "/api/uploads/create",
-        params={"seriesId": series_id},
+        params={"workspaceId": "local-default", "seriesId": series_id},
         headers={"Idempotency-Key": "episode-07-upload"},
         json=create_payload,
     )
@@ -481,7 +490,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
         end = start + len(data) - 1
         response = client.put(
             "/api/uploads/segments/upload",
-            params={
+            params={"workspaceId": "local-default",
                 "uploadSessionId": upload_id,
                 "segmentNumber": number,
             },
@@ -496,27 +505,27 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
 
     current = client.get(
         "/api/uploads/get",
-        params={"uploadSessionId": upload_id},
+        params={"workspaceId": "local-default", "uploadSessionId": upload_id},
     )
     assert current.json()["uploadedSizeBytes"] == 10
     assert current.json()["missingSegmentNumbers"] == []
 
     completed = client.post(
         "/api/uploads/complete",
-        params={"uploadSessionId": upload_id},
+        params={"workspaceId": "local-default", "uploadSessionId": upload_id},
     )
     assert completed.status_code == 200, completed.text
     video_id = completed.json()["videoId"]
     job_id = completed.json()["jobId"]
-    job = client.get("/api/jobs/get", params={"jobId": job_id})
-    jobs = client.get("/api/jobs/list")
+    job = client.get("/api/jobs/get", params={"workspaceId": "local-default", "jobId": job_id})
+    jobs = client.get("/api/jobs/list", params={"workspaceId": "local-default"})
     assert job.status_code == 200
     assert job.json()["status"] == "QUEUED"
     assert job.json()["progress"] == 0
     assert job.json()["seriesName"] == "Test Series"
     assert job.json()["episodeOrder"] == 7
     assert job.json()["originalFilename"] == "episode-07.mp4"
-    assert [item["jobId"] for item in jobs.json()] == [job_id]
+    assert [item["jobId"] for item in jobs.json()["items"]] == [job_id]
     for path in ("/api/jobs/get", "/api/jobs/events"):
         outside_workspace = client.get(
             path,
@@ -558,7 +567,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     with client.stream(
         "GET",
         "/api/jobs/events",
-        params={"jobId": job_id},
+        params={"workspaceId": "local-default", "jobId": job_id},
     ) as events:
         body = "\n".join(events.iter_lines())
     assert "event: job" in body
@@ -566,11 +575,11 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
 
     full_video = client.get(
         "/api/videos/content",
-        params={"videoId": video_id},
+        params={"workspaceId": "local-default", "videoId": video_id, "variant": "original"},
     )
     ranged_video = client.get(
         "/api/videos/content",
-        params={"videoId": video_id},
+        params={"workspaceId": "local-default", "videoId": video_id, "variant": "original"},
         headers={"Range": "bytes=2-5"},
     )
     assert full_video.content == b"abcdefghij"
@@ -583,9 +592,9 @@ def test_upload_rejects_wrong_content_range_and_workspace(tmp_path: Path) -> Non
     series_id = _create_series(client)
     created = client.post(
         "/api/uploads/create",
-        params={"seriesId": series_id},
+        params={"workspaceId": "local-default", "seriesId": series_id},
         headers={"Idempotency-Key": "bad-range"},
-        json={
+        json={"workspaceId": "local-default",
             "episodeOrder": 1,
             "originalFilename": "episode.mp4",
             "mediaType": "video/mp4",
@@ -603,7 +612,7 @@ def test_upload_rejects_wrong_content_range_and_workspace(tmp_path: Path) -> Non
     )
     wrong_range = client.put(
         "/api/uploads/segments/upload",
-        params={
+        params={"workspaceId": "local-default",
             "uploadSessionId": upload_id,
             "segmentNumber": 0,
         },
@@ -620,7 +629,7 @@ def test_upload_rejects_wrong_content_range_and_workspace(tmp_path: Path) -> Non
 
     mismatched_total = client.put(
         "/api/uploads/segments/upload",
-        params={"uploadSessionId": upload_id, "segmentNumber": 0},
+        params={"workspaceId": "local-default", "uploadSessionId": upload_id, "segmentNumber": 0},
         headers={
             "Content-Range": "bytes 0-3/5",
             "X-Content-SHA256": hashlib.sha256(b"abcd").hexdigest(),
@@ -667,7 +676,7 @@ def test_upload_protocol_errors_do_not_require_business_data(
     client, _retrieval, _jobs = _client(tmp_path)
     response = client.put(
         "/api/uploads/segments/upload",
-        params={
+        params={"workspaceId": "local-default",
             "uploadSessionId": "00000000-0000-0000-0000-000000000000",
             "segmentNumber": segment_number,
         },
@@ -684,7 +693,7 @@ def _create_agent_conversation(client):
     response = client.post(
         "/api/agent/conversations/create",
         headers={"Idempotency-Key": "conversation-stream"},
-        json={},
+        json={"workspaceId": "local-default"},
     )
     assert response.status_code == 201, response.text
     return response.json()["conversationId"]
@@ -705,9 +714,9 @@ def test_each_message_can_choose_its_own_series_in_one_conversation(tmp_path):
         for index, scope in enumerate(scopes):
             response = client.post(
                 "/api/agent/messages/send",
-                params={"conversationId": conversation_id},
+                params={"workspaceId": "local-default", "conversationId": conversation_id},
                 headers={"Idempotency-Key": f"scoped-message-{index}"},
-                json={"content": "找哭泣的画面", "seriesIds": scope, "topK": 5},
+                json={"workspaceId": "local-default", "content": "找哭泣的画面", "seriesIds": scope, "topK": 5},
             )
             assert response.status_code == 200, response.text
             pair = response.json()
@@ -716,13 +725,13 @@ def test_each_message_can_choose_its_own_series_in_one_conversation(tmp_path):
             assert set(pair["assistantMessage"]["searchResult"]["seriesIds"]) == set(scope)
         assert [set(call[1]) for call in retrieval.calls] == [set(scope) for scope in scopes]
         messages = client.get(
-            "/api/agent/messages/list", params={"conversationId": conversation_id},
-        ).json()
+            "/api/agent/messages/list", params={"workspaceId": "local-default", "conversationId": conversation_id},
+        ).json()["items"]
         assert [set(message["seriesIds"]) for message in messages] == [
             set(scopes[0]), set(scopes[0]), set(scopes[1]), set(scopes[1]),
         ]
         conversation = client.get(
-            "/api/agent/conversations/get", params={"conversationId": conversation_id},
+            "/api/agent/conversations/get", params={"workspaceId": "local-default", "conversationId": conversation_id},
         ).json()
         assert conversation["messageCount"] == 4
         assert "seriesIds" not in conversation
@@ -737,11 +746,11 @@ def test_empty_selection_resolves_all_workspace_series_once_for_idempotent_repla
     _create_series(client, workspace_id="other-workspace")
     _create_series(client, name="Not Ready Series", ready=False)
     conversation_id = _create_agent_conversation(client)
-    body = {"content": "找画面", "topK": 5}
+    body = {"workspaceId": "local-default", "content": "找画面", "topK": 5}
     if selection is not None:
         body["seriesIds"] = selection
     kwargs = {
-        "params": {"conversationId": conversation_id},
+        "params": {"workspaceId": "local-default", "conversationId": conversation_id},
         "headers": {"Idempotency-Key": "all-series-message"},
         "json": body,
     }
@@ -766,25 +775,25 @@ def test_reusing_message_key_with_different_series_conflicts_before_retrieval(tm
     second_series = _create_series(client, name="Second Series")
     conversation_id = _create_agent_conversation(client)
     kwargs = {
-        "params": {"conversationId": conversation_id},
+        "params": {"workspaceId": "local-default", "conversationId": conversation_id},
         "headers": {"Idempotency-Key": "selected-series-message"},
     }
     try:
         sent = client.post(
             "/api/agent/messages/send", **kwargs,
-            json={"content": "找画面", "seriesIds": [first_series]},
+            json={"workspaceId": "local-default", "content": "找画面", "seriesIds": [first_series]},
         )
         assert sent.status_code == 200, sent.text
         conflicting = client.post(
             "/api/agent/messages/send", **kwargs,
-            json={"content": "找画面", "seriesIds": [second_series]},
+            json={"workspaceId": "local-default", "content": "找画面", "seriesIds": [second_series]},
         )
         assert conflicting.status_code == 409
         assert conflicting.json()["code"] == "CONFLICT"
         assert len(retrieval.calls) == 1
         assert len(client.get(
-            "/api/agent/messages/list", params={"conversationId": conversation_id},
-        ).json()) == 2
+            "/api/agent/messages/list", params={"workspaceId": "local-default", "conversationId": conversation_id},
+        ).json()["items"]) == 2
     finally:
         client.app.state.services.agent.close()
 
@@ -795,16 +804,16 @@ def test_explicit_non_ready_series_is_rejected_before_starting_message(tmp_path)
     conversation_id = _create_agent_conversation(client)
     try:
         response = client.post(
-            "/api/agent/messages/send", params={"conversationId": conversation_id},
+            "/api/agent/messages/send", params={"workspaceId": "local-default", "conversationId": conversation_id},
             headers={"Idempotency-Key": "non-ready-message"},
-            json={"content": "找画面", "seriesIds": [series_id]},
+            json={"workspaceId": "local-default", "content": "找画面", "seriesIds": [series_id]},
         )
         assert response.status_code == 409, response.text
-        assert response.json()["code"] == "CONFLICT"
+        assert response.json()["code"] == "SERIES_NOT_READY"
         assert retrieval.calls == []
         assert client.get(
-            "/api/agent/messages/list", params={"conversationId": conversation_id},
-        ).json() == []
+            "/api/agent/messages/list", params={"workspaceId": "local-default", "conversationId": conversation_id},
+        ).json()["items"] == []
     finally:
         client.app.state.services.agent.close()
 
@@ -853,14 +862,14 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(tmp_pat
     service._runtime._query_model = QueryWithEvidence("query-evidence")
     try:
         response = client.post(
-            "/api/agent/messages/send", params={"conversationId": conversation_id},
+            "/api/agent/messages/send", params={"workspaceId": "local-default", "conversationId": conversation_id},
             headers={"Accept": accept, "Idempotency-Key": "joined-evidence"},
-            json={"content": "找动作片段", "seriesIds": [prepared_import.series_id]},
+            json={"workspaceId": "local-default", "content": "找动作片段", "seriesIds": [prepared_import.series_id]},
         )
         assert response.status_code == 200, response.text
         if accept == "text/event-stream":
             events = _answer_payloads(response.text)
-            evidence_hits = next(event["hits"] for event in events if event["type"] == "answer.evidence")
+            evidence_hits = next(event["searchResult"]["hits"] for event in events if event["type"] == "answer.evidence")
             final = events[-1]["assistantMessage"]
             assert evidence_hits == final["searchResult"]["hits"]
         else:
@@ -885,18 +894,19 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     series_id = _create_series(client)
     conversation_id = _create_agent_conversation(client)
     kwargs = {
-        "params": {"conversationId": conversation_id},
+        "params": {"workspaceId": "local-default", "conversationId": conversation_id},
         "headers": {"Accept": "text/event-stream", "Idempotency-Key": "stream-message"},
-        "json": {"content": "找哭泣的画面", "topK": 5},
+        "json": {"workspaceId": "local-default", "content": "找哭泣的画面", "topK": 5},
     }
     response = client.post("/api/agent/messages/send", **kwargs)
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     events = _answer_payloads(response.text)
     assert [event["type"] for event in events] == [
-        "answer.started", "answer.evidence", "answer.delta", "answer.delta", "answer.completed",
+        "answer.started", "answer.progress", "answer.progress", "answer.progress",
+        "answer.evidence", "answer.delta", "answer.delta", "answer.completed",
     ]
-    assert [event["sequence"] for event in events] == [1, 2, 3, 4, 5]
+    assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
     assert all(event["conversationId"] == conversation_id for event in events)
     assert len({event["messageId"] for event in events}) == 1
     assert events[0]["assistantMessage"]["status"] == "PROCESSING"
@@ -907,7 +917,7 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     final = events[-1]["assistantMessage"]
     assert final["status"] == "COMPLETED"
     assert final["content"] == "".join(event["delta"] for event in events if event["type"] == "answer.delta")
-    persisted = client.get("/api/agent/messages/list", params={"conversationId": conversation_id}).json()
+    persisted = client.get("/api/agent/messages/list", params={"workspaceId": "local-default", "conversationId": conversation_id}).json()["items"]
     assert final == persisted[-1]
     replay = _answer_payloads(client.post("/api/agent/messages/send", **kwargs).text)
     assert [event["type"] for event in replay] == ["answer.started", "answer.completed"]
@@ -934,23 +944,23 @@ def test_rejected_loop_sends_failed_event_and_json_maps_harness_error(tmp_path):
         raise AssertionError("rejected draft reached final Chat")
     runtime._chat_model.stream_text = forbidden_chat
     response = client.post(
-        "/api/agent/messages/send", params={"conversationId": conversation_id},
+        "/api/agent/messages/send", params={"workspaceId": "local-default", "conversationId": conversation_id},
         headers={"Accept": "text/event-stream", "Idempotency-Key": "rejected-stream"},
-        json={"content": "找摔杯子的画面"},
+        json={"workspaceId": "local-default", "content": "找摔杯子的画面"},
     )
     events = _answer_payloads(response.text)
-    assert [event["type"] for event in events] == ["answer.started", "answer.failed"]
-    assert events[-1]["code"] == "AGENT_MODEL_ERROR"
+    assert [event["type"] for event in events] == ["answer.started", *(["answer.progress"] * 6), "answer.failed"]
+    assert events[-1]["error"]["code"] == "AGENT_MODEL_ERROR"
     assert events[-1]["assistantMessage"]["status"] == "FAILED"
-    assert "after 3 turns" in events[-1]["message"]
+    assert "需要重新找摔杯子的片段" not in events[-1]["error"]["message"]
     json_response = client.post(
-        "/api/agent/messages/send", params={"conversationId": conversation_id},
-        headers={"Idempotency-Key": "rejected-json"}, json={"content": "重试"},
+        "/api/agent/messages/send", params={"workspaceId": "local-default", "conversationId": conversation_id},
+        headers={"Idempotency-Key": "rejected-json"}, json={"workspaceId": "local-default", "content": "重试"},
     )
     assert json_response.status_code == 502
     assert json_response.json()["code"] == "AGENT_MODEL_ERROR"
     outside = client.post(
-        "/api/agent/messages/send", params={"conversationId": conversation_id},
+        "/api/agent/messages/send", params={"workspaceId": "local-default", "conversationId": conversation_id},
         headers={"Accept": "text/event-stream", "Idempotency-Key": "outside"},
         json={"content": "隔离", "workspaceId": "other-workspace"},
     )
@@ -974,7 +984,7 @@ def test_asgi_delivers_first_delta_before_provider_finishes(tmp_path):
         assert release.wait(5), "test did not release Provider"
         yield "第二段"
     service._runtime._chat_model.stream_text = blocked_provider
-    body = json.dumps({"content": "找画面"}).encode()
+    body = json.dumps({"workspaceId": "local-default", "content": "找画面"}).encode()
 
     async def exercise():
         first_delta = asyncio.Event()
@@ -1032,9 +1042,9 @@ def test_send_respects_accept_quality(tmp_path, accept, expected):
     _create_series(client)
     conversation_id = _create_agent_conversation(client)
     response = client.post(
-        "/api/agent/messages/send", params={"conversationId": conversation_id},
+        "/api/agent/messages/send", params={"workspaceId": "local-default", "conversationId": conversation_id},
         headers={"Accept": accept, "Idempotency-Key": "accept-message"},
-        json={"content": "找画面"},
+        json={"workspaceId": "local-default", "content": "找画面"},
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith(expected)
@@ -1042,7 +1052,7 @@ def test_send_respects_accept_quality(tmp_path, accept, expected):
 
 
 @pytest.mark.parametrize("failure,expected_status,expected_code", [
-    ("not-ready", 409, "CONFLICT"),
+    ("not-ready", 409, "SERIES_NOT_READY"),
     ("missing-scope", 404, "NOT_FOUND"),
     ("index-inconsistent", 409, "CONFLICT"),
 ])
@@ -1063,21 +1073,112 @@ def test_retrieval_domain_errors_keep_http_mapping_through_harness(tmp_path, fai
     service._runtime._retrieve = failed_search
     try:
         response = client.post(
-            "/api/agent/messages/send", params={"conversationId": conversation_id},
-            headers={"Idempotency-Key": "retrieval-error"}, json={"content": "找画面"},
+            "/api/agent/messages/send", params={"workspaceId": "local-default", "conversationId": conversation_id},
+            headers={"Idempotency-Key": "retrieval-error"}, json={"workspaceId": "local-default", "content": "找画面"},
         )
         assert response.status_code == expected_status
         assert response.json()["code"] == expected_code
         failed = service.list_all_messages(conversation_id, workspace_id="local-default")[-1]
-        assert failed.status == "FAILED" and failed.last_error.startswith(error_type.__name__)
+        assert failed.status == "FAILED" and failed.last_error is not None
+        assert "retrieval source unavailable" not in failed.last_error.message
         response = client.post(
-            "/api/agent/messages/send", params={"conversationId": conversation_id},
+            "/api/agent/messages/send", params={"workspaceId": "local-default", "conversationId": conversation_id},
             headers={"Accept": "text/event-stream", "Idempotency-Key": "retrieval-stream-error"},
-            json={"content": "再找画面"},
+            json={"workspaceId": "local-default", "content": "再找画面"},
         )
         events = _answer_payloads(response.text)
-        assert [event["type"] for event in events] == ["answer.started", "answer.failed"]
-        assert events[-1]["code"] == "AGENT_EXECUTION_ERROR"
+        assert [event["type"] for event in events] == ["answer.started", "answer.progress", "answer.failed"]
+        assert events[-1]["error"]["code"] == "PROCESSING_FAILED"
         assert events[-1]["assistantMessage"]["status"] == "FAILED"
+    finally:
+        service.close()
+
+
+def test_ui_error_and_time_contracts_require_explicit_workspace(tmp_path):
+    client, _, _ = _client(tmp_path)
+    try:
+        health = client.get("/healthz")
+        assert health.json()["status"] == "ok"
+        assert isinstance(health.json()["serverTime"], int)
+        response = client.get("/api/series/list")
+        assert response.status_code == 422
+        error = response.json()
+        assert error["code"] == "VALIDATION_ERROR"
+        assert error["requestId"] == response.headers["X-Request-Id"]
+        assert error["fieldErrors"][0]["field"] == "workspaceId"
+        assert error["retryAt"] is None
+        created = client.post("/api/agent/conversations/create",
+            headers={"Idempotency-Key": "ui-timestamp"}, json={"workspaceId": "local-default"})
+        for field in ("createdAt", "updatedAt"):
+            assert type(created.json()[field]) is int
+        assert created.json()["lastMessagePreview"] is None
+    finally:
+        client.app.state.services.agent.close()
+
+
+def test_upload_list_has_precise_total_and_cursor_bound_to_workspace(tmp_path):
+    client, _, _ = _client(tmp_path)
+    try:
+        series_id = _create_series(client)
+        for episode in (1, 2):
+            response = client.post("/api/uploads/create", params={"seriesId": series_id},
+                headers={"Idempotency-Key": f"paged-upload-{episode}"}, json={
+                    "workspaceId": "local-default", "episodeOrder": episode,
+                    "originalFilename": f"episode-{episode}.mp4", "mediaType": "video/mp4", "totalSizeBytes": 4,
+                })
+            assert response.status_code == 201, response.text
+        params = {"workspaceId": "local-default", "limit": 1}
+        page = client.get("/api/uploads/list", params=params).json()
+        assert page["total"] == 2 and page["hasMore"]
+        assert len(page["items"]) == 1
+        last = client.get("/api/uploads/list", params={**params, "cursor": page["nextCursor"]}).json()
+        assert last["total"] == 2 and not last["hasMore"] and last["nextCursor"] is None
+        assert page["items"][0]["uploadSessionId"] != last["items"][0]["uploadSessionId"]
+        mismatch = client.get("/api/uploads/list", params={**params, "workspaceId": "other", "cursor": page["nextCursor"]})
+        assert mismatch.status_code == 400
+    finally:
+        client.app.state.services.agent.close()
+
+
+def test_openapi_agent_top_k_comes_from_real_service_configuration(tmp_path):
+    from dataclasses import replace
+
+    client, _, _ = _client(tmp_path)
+    service = client.app.state.services.agent
+    try:
+        service._config = replace(service._config, default_top_k=5, maximum_top_k=7)
+        schema = client.app.openapi()["components"]["schemas"]["AgentMessageSendRequest"]
+        top_k = schema["properties"]["topK"]
+        assert top_k["default"] == 5
+        assert next(value for value in top_k["anyOf"] if value["type"] == "integer")["maximum"] == 7
+        conversation_id = _create_agent_conversation(client)
+        rejected = client.post("/api/agent/messages/send", params={"conversationId": conversation_id},
+            headers={"Idempotency-Key": "too-many-results"},
+            json={"workspaceId": "local-default", "content": "找画面", "topK": 8})
+        assert rejected.status_code == 400
+    finally:
+        service.close()
+
+
+def test_ui_cors_allows_stream_and_media_headers(tmp_path, monkeypatch):
+    from server.config.settings import ServerSettings
+
+    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
+    monkeypatch.setenv("ANIVAG_DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    monkeypatch.setenv("ANIVAG_QDRANT_URL", "http://127.0.0.1:6333")
+    monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "ui_contract_test")
+    monkeypatch.setenv("ANIVAG_ALLOWED_ORIGINS", "http://localhost:5173")
+    existing, _, _ = _client(tmp_path)
+    service = existing.app.state.services.agent
+    try:
+        client = TestClient(create_app(existing.app.state.services, settings=ServerSettings.from_environment()))
+        requested_headers = "Range, If-Range, If-None-Match, Last-Event-ID, Accept, Content-Range, X-Content-SHA256"
+        preflight = client.options("/api/videos/content", headers={"Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": requested_headers})
+        assert preflight.status_code == 200, preflight.text
+        assert preflight.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
+        health = client.get("/healthz", headers={"Origin": "http://localhost:5173"})
+        exposed = health.headers["Access-Control-Expose-Headers"]
+        assert all(name in exposed for name in ("Content-Range", "Content-Length", "ETag", "X-Request-Id"))
     finally:
         service.close()

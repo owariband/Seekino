@@ -25,6 +25,13 @@ class UploadSessionStatus(StrEnum):
     EXPIRED = "EXPIRED"
 
 
+class UploadCompletionStage(StrEnum):
+    VERIFYING = "VERIFYING"
+    ASSEMBLING = "ASSEMBLING"
+    PROBING = "PROBING"
+    CREATING_JOB = "CREATING_JOB"
+
+
 class UploadSessionRecord(TimestampedRecord, Base):
     __tablename__ = "upload_session"
     __table_args__ = (
@@ -54,6 +61,11 @@ class UploadSessionRecord(TimestampedRecord, Base):
             "total_segments > 0",
             name="ck_upload_session_total_segments",
         ),
+        CheckConstraint("version > 0", name="ck_upload_session_version"),
+        CheckConstraint(
+            "completion_stage IS NULL OR completion_stage IN ('VERIFYING', 'ASSEMBLING', 'PROBING', 'CREATING_JOB')",
+            name="ck_upload_session_completion_stage",
+        ),
         CheckConstraint(
             "status IN ('UPLOADING', 'COMPLETING', 'COMPLETED', 'EXPIRED')",
             name="ck_upload_session_status",
@@ -81,8 +93,12 @@ class UploadSessionRecord(TimestampedRecord, Base):
         nullable=False,
     )
     total_segments: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    completion_stage: Mapped[str | None] = mapped_column(String(32))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64))
     active_slot_key: Mapped[str | None] = mapped_column(String(96))
     completion_token: Mapped[str | None] = mapped_column(String(ID_LENGTH))
     completion_started_at: Mapped[datetime | None] = mapped_column(
@@ -98,6 +114,10 @@ class UploadSessionRecord(TimestampedRecord, Base):
         index=True,
     )
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
+    last_error_code: Mapped[str | None] = mapped_column(String(64))
+    job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("series_parse_job.job_id", ondelete="SET NULL"), index=True
+    )
 
 
 class UploadSegmentRecord(Base):

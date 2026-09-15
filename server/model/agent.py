@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -52,6 +53,7 @@ class AgentConversationRecord(TimestampedRecord, Base):
     )
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    title_is_auto: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     next_message_sequence: Mapped[int] = mapped_column(
         Integer,
@@ -84,6 +86,11 @@ class AgentMessageRecord(TimestampedRecord, Base):
             "sequence_no >= 0",
             name="ck_agent_message_sequence",
         ),
+        CheckConstraint("version > 0", name="ck_agent_message_version"),
+        CheckConstraint(
+            "phase IS NULL OR phase IN ('QUEUED', 'RETRIEVING', 'EVALUATING', 'RESPONDING')",
+            name="ck_agent_message_phase",
+        ),
         CheckConstraint(
             "role IN ('USER', 'ASSISTANT')",
             name="ck_agent_message_role",
@@ -113,6 +120,9 @@ class AgentMessageRecord(TimestampedRecord, Base):
     sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    phase: Mapped[str | None] = mapped_column(String(16))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    reference: Mapped[dict[str, str] | None] = mapped_column(JSON)
     content: Mapped[str | None] = mapped_column(LONG_TEXT)
     series_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     model_name: Mapped[str | None] = mapped_column(String(255))
@@ -125,3 +135,5 @@ class AgentMessageRecord(TimestampedRecord, Base):
     retrieval_query: Mapped[str | None] = mapped_column(LONG_TEXT)
     search_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
+    last_error_code: Mapped[str | None] = mapped_column(String(64))
+    last_error_message: Mapped[str | None] = mapped_column(LONG_TEXT)

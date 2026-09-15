@@ -13,18 +13,20 @@ import {
   createSeries as createSeriesRequest,
   getSeries,
   listSeries,
+  shouldRetryApiRequest,
   WORKSPACE_ID,
 } from "../api/client";
 import type {
   RuntimeMode,
   SeriesCreateRequest,
   SeriesView,
+  SeriesSummary,
 } from "../api/contracts";
 const SERIES_STORAGE_KEY = "anivag-selected-series";
 
 interface WorkspaceContextValue {
   mode: RuntimeMode;
-  series: SeriesView[];
+  series: SeriesSummary[];
   selectedSeries: SeriesView | null;
   selectedSeriesId: string | null;
   isLoading: boolean;
@@ -45,14 +47,24 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
   const health = useQuery({
     queryKey: ["health"],
     queryFn: checkHealth,
-    retry: 1,
+    retry: shouldRetryApiRequest,
     refetchInterval: 15_000,
   });
 
   const seriesQuery = useQuery({
     queryKey: ["series"],
-    queryFn: listSeries,
-    retry: 1,
+    queryFn: async () => {
+      const items: SeriesSummary[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await listSeries(cursor);
+        items.push(...page.items);
+        if (page.hasMore && !page.nextCursor) throw new Error("系列列表缺少下一页游标");
+        cursor = page.hasMore ? page.nextCursor! : undefined;
+      } while (cursor);
+      return items;
+    },
+    retry: shouldRetryApiRequest,
   });
 
   const mode: RuntimeMode =
@@ -87,10 +99,10 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
     queryKey: ["series-detail", selectedSummary?.seriesId],
     queryFn: () => getSeries(selectedSummary!.seriesId),
     enabled: Boolean(selectedSummary),
-    retry: 1,
+    retry: shouldRetryApiRequest,
   });
 
-  const selectedSeries = selectedSeriesQuery.data ?? selectedSummary;
+  const selectedSeries = selectedSeriesQuery.data ?? null;
   const error =
     seriesQuery.error instanceof Error
       ? seriesQuery.error

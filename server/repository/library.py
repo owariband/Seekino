@@ -1,12 +1,25 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import replace
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..model.video import SeriesRecord, VideoRecord
+from ..model.agent import AgentConversationRecord, AgentMessageRecord, AgentMessageRole
+from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesState, VideoSummaryState
+from ..model.index_sync import IndexSyncIntentRecord, IndexSyncOperation, IndexSyncStatus
+from ..model.job import SeriesParseJobRecord
+from ..model.upload import UploadSessionRecord
+from ..model.video import (
+    SeriesRecord,
+    VideoIndexStatus,
+    VideoRecord,
+    VideoChunkRecord,
+    VideoChunkEmbeddingRecord,
+)
+from ..utils.time import utc_now_naive
+from .upload import UploadRepository
 
 
 class SeriesNotFoundError(LookupError):
@@ -15,36 +28,6 @@ class SeriesNotFoundError(LookupError):
 
 class SeriesConflictError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True, slots=True)
-class VideoSummaryState:
-    video_id: str
-    episode_order: int
-    upload_sequence: int
-    original_filename: str
-    original_source_uri: str
-    inference_proxy_uri: str | None
-    content_hash: str
-    total_bytes: int
-    duration_ms: int
-    upload_status: str
-    parse_status: str
-    upload_progress: int
-    parse_progress: int
-
-
-@dataclass(frozen=True, slots=True)
-class SeriesState:
-    series_id: str
-    workspace_id: str
-    name: str
-    description: str | None
-    status: str
-    important_extra_data: dict | None
-    character_bible: list[dict]
-    video_count: int
-    videos: tuple[VideoSummaryState, ...] = ()
 
 
 class LibraryRepository:
@@ -112,19 +95,38 @@ class LibraryRepository:
                     raise
         raise AssertionError("unreachable")
 
-    def list_series(self, workspace_id: str) -> list[SeriesState]:
+    def list_series(
+        self,
+        workspace_id: str,
+        *,
+        status: str | None = None,
+        query: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[SeriesState]:
         with self._session_factory() as session:
-            rows = session.execute(
-                select(SeriesRecord, func.count(VideoRecord.video_id))
-                .outerjoin(VideoRecord, VideoRecord.series_id == SeriesRecord.series_id)
-                .where(SeriesRecord.workspace_id == workspace_id)
-                .group_by(SeriesRecord.series_id)
+            records = session.scalars(
+                select(SeriesRecord)
+                .where(*self._series_filters(workspace_id, status=status, query=query))
                 .order_by(SeriesRecord.created_at, SeriesRecord.series_id)
+                .offset(offset)
+                .limit(limit)
             ).all()
-            return [
-                self._state(series, video_count=int(video_count))
-                for series, video_count in rows
-            ]
+            return self._series_states(session, records)
+
+    def count_series(
+        self,
+        workspace_id: str,
+        *,
+        status: str | None = None,
+        query: str | None = None,
+    ) -> int:
+        with self._session_factory() as session:
+            return int(session.scalar(
+                select(func.count(SeriesRecord.series_id)).where(
+                    *self._series_filters(workspace_id, status=status, query=query)
+                )
+            ) or 0)
 
     def get_series(self, series_id: str, workspace_id: str) -> SeriesState:
         with self._session_factory() as session:
@@ -138,17 +140,17 @@ class LibraryRepository:
                 raise SeriesNotFoundError(
                     f"seriesId {series_id!r} does not exist in this workspace"
                 )
-            videos = session.scalars(
-                select(VideoRecord)
-                .where(VideoRecord.series_id == series_id)
-                .order_by(VideoRecord.episode_order)
-            ).all()
-            video_states = tuple(self._video_state(item) for item in videos)
-            return self._state(
-                series,
-                video_count=len(video_states),
-                videos=video_states,
-            )
+            state = self._series_states(session, [series], include_videos=True)[0]
+        uploads = UploadRepository(self._session_factory).list_for_series(
+            series_id, workspace_id=workspace_id,
+        )
+        return replace(
+            state,
+            pending_uploads=tuple(
+                item for item in sorted(uploads, key=lambda upload: upload.upload_sequence)
+                if item.status not in {"COMPLETED", "EXPIRED", "CANCELLED"}
+            ),
+        )
 
     def get_video(
         self,
@@ -156,19 +158,171 @@ class LibraryRepository:
         workspace_id: str,
     ) -> VideoSummaryState:
         with self._session_factory() as session:
-            record = session.scalar(
-                select(VideoRecord)
-                .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
-                .where(
-                    VideoRecord.video_id == video_id,
-                    SeriesRecord.workspace_id == workspace_id,
-                )
-            )
-            if record is None:
+            states = self._video_states(session, workspace_id=workspace_id, video_id=video_id)
+            if not states:
                 raise SeriesNotFoundError(
                     f"videoId {video_id!r} does not exist in this workspace"
                 )
-            return self._video_state(record)
+            return states[0]
+
+    @staticmethod
+    def _series_filters(workspace_id: str, *, status: str | None, query: str | None):
+        filters = [SeriesRecord.workspace_id == workspace_id]
+        if status:
+            filters.append(SeriesRecord.status == status)
+        if query:
+            filters.append(SeriesRecord.name.icontains(query, autoescape=True))
+        return filters
+
+    def _series_states(
+        self,
+        session: Session,
+        records: list[SeriesRecord],
+        *,
+        include_videos: bool = False,
+    ) -> list[SeriesState]:
+        if not records:
+            return []
+        series_ids = [record.series_id for record in records]
+        videos = self._video_states(
+            session, workspace_id=records[0].workspace_id, series_ids=series_ids,
+        )
+        pending = dict(session.execute(
+            select(UploadSessionRecord.series_id, func.count(UploadSessionRecord.upload_session_id))
+            .where(
+                UploadSessionRecord.series_id.in_(series_ids),
+                UploadSessionRecord.workspace_id == records[0].workspace_id,
+                UploadSessionRecord.status.not_in({"COMPLETED", "EXPIRED", "CANCELLED"}),
+                (UploadSessionRecord.status != "UPLOADING")
+                | (UploadSessionRecord.expires_at > utc_now_naive()),
+            )
+            .group_by(UploadSessionRecord.series_id)
+        ).all())
+        last_searches: dict[str, SeriesLastSearchState] = {}
+        messages = session.scalars(
+            select(AgentMessageRecord)
+            .join(AgentConversationRecord)
+            .where(
+                AgentConversationRecord.workspace_id == records[0].workspace_id,
+                AgentMessageRecord.role == AgentMessageRole.USER.value,
+            )
+            .order_by(AgentMessageRecord.created_at.desc(), AgentMessageRecord.message_id.desc())
+        )
+        for message in messages:
+            for series_id in set(message.series_ids).intersection(series_ids):
+                last_searches.setdefault(series_id, SeriesLastSearchState(
+                    conversation_id=message.conversation_id,
+                    query=message.content or "",
+                    searched_at=message.created_at,
+                ))
+            if len(last_searches) == len(series_ids):
+                break
+        return [
+            self._state(
+                record,
+                video_count=sum(video.series_id == record.series_id for video in videos),
+                videos=tuple(video for video in videos if video.series_id == record.series_id)
+                if include_videos else (),
+                ready_video_count=sum(
+                    video.series_id == record.series_id
+                    and video.parse_status in {"SUCCEEDED", "COMPLETED"}
+                    and video.index_status == VideoIndexStatus.READY
+                    for video in videos
+                ),
+                failed_video_count=sum(
+                    video.series_id == record.series_id and video.parse_status == "FAILED"
+                    for video in videos
+                ),
+                pending_upload_count=int(pending.get(record.series_id, 0)),
+                last_search=last_searches.get(record.series_id),
+                representative_video=next(
+                    (video for video in videos if video.series_id == record.series_id and video.keyframe_uris),
+                    None,
+                ),
+            )
+            for record in records
+        ]
+
+    def _video_states(
+        self,
+        session: Session,
+        *,
+        workspace_id: str,
+        series_ids: list[str] | None = None,
+        video_id: str | None = None,
+    ) -> list[VideoSummaryState]:
+        latest = select(
+            SeriesParseJobRecord.video_id,
+            SeriesParseJobRecord.job_id,
+            SeriesParseJobRecord.status,
+            SeriesParseJobRecord.progress,
+            SeriesParseJobRecord.last_error,
+            func.row_number().over(
+                partition_by=SeriesParseJobRecord.video_id,
+                order_by=(SeriesParseJobRecord.created_at.desc(), SeriesParseJobRecord.job_id.desc()),
+            ).label("position"),
+        ).subquery()
+        statement = (
+            select(VideoRecord, latest.c.job_id, latest.c.status, latest.c.progress, latest.c.last_error)
+            .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
+            .outerjoin(latest, (latest.c.video_id == VideoRecord.video_id) & (latest.c.position == 1))
+            .where(SeriesRecord.workspace_id == workspace_id)
+            .order_by(VideoRecord.episode_order, VideoRecord.upload_sequence, VideoRecord.video_id)
+        )
+        if series_ids is not None:
+            statement = statement.where(VideoRecord.series_id.in_(series_ids))
+        if video_id is not None:
+            statement = statement.where(VideoRecord.video_id == video_id)
+        rows = session.execute(statement).all()
+        if not rows:
+            return []
+        chunks = session.execute(
+            select(
+                VideoChunkRecord.video_id,
+                VideoChunkRecord.keyframe_uris,
+                VideoChunkEmbeddingRecord.text_vector,
+                VideoChunkEmbeddingRecord.vision_vector,
+                IndexSyncIntentRecord.operation,
+                IndexSyncIntentRecord.status,
+                IndexSyncIntentRecord.last_error,
+            )
+            .select_from(VideoChunkRecord)
+            .outerjoin(VideoChunkEmbeddingRecord, VideoChunkEmbeddingRecord.video_chunk_id == VideoChunkRecord.video_chunk_id)
+            .outerjoin(IndexSyncIntentRecord, IndexSyncIntentRecord.video_chunk_id == VideoChunkRecord.video_chunk_id)
+            .where(VideoChunkRecord.video_id.in_([row[0].video_id for row in rows]))
+            .order_by(VideoChunkRecord.sequence_no)
+        ).all()
+        by_video: dict[str, list] = {}
+        for chunk in chunks:
+            by_video.setdefault(chunk.video_id, []).append(chunk)
+        states = []
+        for video, job_id, job_status, job_progress, error in rows:
+            video_chunks = by_video.get(video.video_id, [])
+            indexed = bool(video_chunks) and all(
+                chunk.text_vector and chunk.vision_vector
+                and chunk.operation == IndexSyncOperation.UPSERT.value
+                and chunk.status == IndexSyncStatus.SYNCED.value
+                for chunk in video_chunks
+            )
+            index_error = next((chunk.last_error for chunk in video_chunks if chunk.last_error), None)
+            if indexed:
+                index_status = VideoIndexStatus.READY
+            elif index_error:
+                index_status = VideoIndexStatus.FAILED
+            elif video_chunks and all(chunk.text_vector and chunk.vision_vector for chunk in video_chunks):
+                index_status = VideoIndexStatus.SYNCING
+            else:
+                index_status = VideoIndexStatus.NOT_READY
+            states.append(self._video_state(
+                video, workspace_id=workspace_id, index_status=index_status,
+                latest_job_id=job_id, parse_status=job_status or video.parse_status,
+                parse_progress=job_progress if job_progress is not None else video.parse_progress,
+                last_error=error or index_error,
+                keyframe_uris=tuple(dict.fromkeys(
+                    uri for chunk in video_chunks for uri in chunk.keyframe_uris
+                )),
+            ))
+        return states
 
     @staticmethod
     def _state(
@@ -176,6 +330,11 @@ class LibraryRepository:
         *,
         video_count: int,
         videos: tuple[VideoSummaryState, ...] = (),
+        ready_video_count: int = 0,
+        failed_video_count: int = 0,
+        pending_upload_count: int = 0,
+        last_search: SeriesLastSearchState | None = None,
+        representative_video: VideoSummaryState | None = None,
     ) -> SeriesState:
         return SeriesState(
             series_id=record.series_id,
@@ -186,13 +345,32 @@ class LibraryRepository:
             important_extra_data=record.important_extra_data,
             character_bible=record.character_bible,
             video_count=video_count,
+            ready_video_count=ready_video_count,
+            failed_video_count=failed_video_count,
+            pending_upload_count=pending_upload_count,
+            last_search=last_search,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            representative_video=representative_video,
             videos=videos,
         )
 
     @staticmethod
-    def _video_state(record: VideoRecord) -> VideoSummaryState:
+    def _video_state(
+        record: VideoRecord,
+        *,
+        workspace_id: str,
+        index_status: VideoIndexStatus,
+        latest_job_id: str | None,
+        parse_status: str,
+        parse_progress: int,
+        last_error: str | None,
+        keyframe_uris: tuple[str, ...],
+    ) -> VideoSummaryState:
         return VideoSummaryState(
             video_id=record.video_id,
+            workspace_id=workspace_id,
+            series_id=record.series_id,
             episode_order=record.episode_order,
             upload_sequence=record.upload_sequence,
             original_filename=record.original_filename,
@@ -202,7 +380,11 @@ class LibraryRepository:
             total_bytes=record.total_bytes,
             duration_ms=record.duration_ms,
             upload_status=record.upload_status,
-            parse_status=record.parse_status,
+            parse_status=parse_status,
             upload_progress=record.upload_progress,
-            parse_progress=record.parse_progress,
+            parse_progress=parse_progress,
+            index_status=index_status,
+            latest_job_id=latest_job_id,
+            last_error=last_error,
+            keyframe_uris=keyframe_uris,
         )

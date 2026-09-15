@@ -74,7 +74,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         config=settings.upload,
     )
     jobs = ParseJobService(ParseJobRepository(session_factory), library)
-    media = MediaService(library, artifact_store)
+    video_repository = VideoRepository(session_factory)
+    media = MediaService(library, artifact_store, video_repository)
 
     qdrant_client = QdrantClient(
         url=settings.qdrant_url,
@@ -101,7 +102,6 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
         ),
     )
-    video_repository = VideoRepository(session_factory)
     retrieval = VideoRetrievalService(
         video_repository,
         vector_store,

@@ -4,9 +4,9 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 
+from ..model.dto.indexSyncDTO import IndexReconcileReport, IndexSyncItem, IndexSyncRunReport
 from ..model.index_sync import IndexSyncOperation, IndexSyncStatus
-from ..repository.index_sync import IndexSyncItem, IndexSyncRepository
-from ..schema import IndexReconcileReport, IndexSyncRunReport
+from ..repository.index_sync import IndexSyncRepository
 from ..storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
 from ..utils.errors import exception_summary
 from ..utils.time import utc_now

@@ -1,12 +1,20 @@
 export type RuntimeMode = "checking" | "live" | "offline";
 export type ThemeMode = "light" | "dark";
 
-export type SeriesStatus = "EMPTY" | "INDEXING" | "READY";
+export type SeriesStatus = "EMPTY" | "INDEXING" | "PARTIAL" | "READY" | "FAILED";
+export type UnixTimeMs = number;
+export type PlaybackStatus = "PREPARING" | "READY" | "FAILED" | "MISSING";
+export type IndexStatus = "NOT_READY" | "SYNCING" | "READY" | "FAILED";
+export interface Failure { code: string; message: string }
+export interface Page<T> { items: T[]; total: number; hasMore: boolean; nextCursor: string | null }
+export interface ImageAsset { imageId: string; url: string; expiresAt: UnixTimeMs | null }
+export interface Keyframe extends ImageAsset { atMs: number; alt: string | null }
 export type UploadStatus =
   | "UPLOADING"
   | "COMPLETING"
   | "COMPLETED"
   | "EXPIRED";
+export type UploadCompletionStage = "VERIFYING" | "ASSEMBLING" | "PROBING" | "CREATING_JOB";
 export type ParseJobStatus =
   | "QUEUED"
   | "RUNNING"
@@ -14,38 +22,57 @@ export type ParseJobStatus =
   | "SUCCEEDED"
   | "FAILED";
 
-export interface ApiErrorPayload {
-  code?: string;
-  message?: string;
-  detail?: unknown;
+export interface ApiErrorView extends Failure {
+  requestId: string;
+  fieldErrors: Array<{ field: string; message: string }>;
+  retryAt: UnixTimeMs | null;
 }
+export type ApiErrorPayload = Partial<ApiErrorView>;
+export interface Character { name: string; aliases: string[] }
 
 export interface VideoSummary {
   videoId: string;
+  workspaceId: string;
+  seriesId: string;
   episodeOrder: number;
   uploadSequence: number;
   originalFilename: string;
-  originalSourceUri: string;
-  inferenceProxyUri: string | null;
-  contentHash: string;
   totalBytes: number;
   durationMs: number;
   uploadStatus: string;
   parseStatus: string;
   uploadProgress: number;
   parseProgress: number;
+  indexStatus: IndexStatus;
+  playbackStatus: PlaybackStatus;
+  playbackUrl: string | null;
+  playbackUrlExpiresAt: UnixTimeMs | null;
+  thumbnail: ImageAsset | null;
+  latestJobId: string | null;
+  lastError: Failure | null;
 }
 
-export interface SeriesView {
+export interface SeriesSummary {
   seriesId: string;
   workspaceId: string;
   name: string;
   description: string | null;
   status: SeriesStatus;
-  importantExtraData: Record<string, unknown> | null;
-  characterBible: Array<Record<string, unknown>>;
   videoCount: number;
+  readyVideoCount: number;
+  failedVideoCount: number;
+  pendingUploadCount: number;
+  cover: ImageAsset | null;
+  lastSearch: { conversationId: string; query: string; searchedAt: UnixTimeMs } | null;
+  createdAt: UnixTimeMs;
+  updatedAt: UnixTimeMs;
+}
+
+export interface SeriesView extends SeriesSummary {
+  importantExtraData: Record<string, unknown> | null;
+  characterBible: Character[];
   videos: VideoSummary[];
+  pendingUploads: UploadSessionView[];
 }
 
 export interface SeriesCreateRequest {
@@ -53,7 +80,7 @@ export interface SeriesCreateRequest {
   name: string;
   description?: string | null;
   importantExtraData?: Record<string, unknown> | null;
-  characterBible?: Array<Record<string, unknown>>;
+  characterBible?: Character[];
 }
 
 export interface UploadSessionCreateRequest {
@@ -63,6 +90,7 @@ export interface UploadSessionCreateRequest {
   originalFilename: string;
   mediaType: string;
   totalSizeBytes: number;
+  contentSha256?: string | null;
 }
 
 export interface UploadSessionView {
@@ -74,17 +102,23 @@ export interface UploadSessionView {
   originalFilename: string;
   mediaType: string;
   totalSizeBytes: number;
+  contentSha256: string | null;
   preferredSegmentSizeBytes: number;
   totalSegments: number;
   status: UploadStatus;
   uploadedSegmentCount: number;
   uploadedSizeBytes: number;
   missingSegmentNumbers: number[];
-  expiresAt: string;
+  completionStage: UploadCompletionStage | null;
+  completionProgress: number | null;
+  estimatedRemainingMs: number | null;
+  expiresAt: UnixTimeMs;
   videoId: string | null;
-  lastError: string | null;
-  createdAt: string;
-  updatedAt: string;
+  jobId: string | null;
+  lastError: Failure | null;
+  version: number;
+  createdAt: UnixTimeMs;
+  updatedAt: UnixTimeMs;
 }
 
 export interface UploadCompleteView {
@@ -97,36 +131,40 @@ export interface VideoChunkCheckpointView {
   sequenceNo: number;
   videoChunkId: string;
   stage: string;
-  chunkMediaUri: string | null;
-  analysisWindowMediaUri: string | null;
-  lastError: string | null;
+  lastError: Failure | null;
 }
 
 export interface ParseJobView {
   jobId: string;
+  workspaceId: string;
   seriesId: string;
   videoId: string;
   seriesName: string;
   episodeOrder: number;
   originalFilename: string;
   pipelineVersion: string;
+  retryOfJobId: string | null;
   status: ParseJobStatus;
   stage: string;
   progress: number;
   attemptCount: number;
   maxAttempts: number;
-  availableAt: string;
-  leaseExpiresAt: string | null;
-  startedAt: string | null;
-  completedAt: string | null;
-  lastError: string | null;
+  availableAt: UnixTimeMs | null;
+  startedAt: UnixTimeMs | null;
+  completedAt: UnixTimeMs | null;
+  estimatedRemainingMs: number | null;
+  canRetry: boolean;
+  canCancel: boolean;
+  lastError: Failure | null;
+  version: number;
   checkpoints: VideoChunkCheckpointView[];
-  createdAt: string;
-  updatedAt: string;
+  createdAt: UnixTimeMs;
+  updatedAt: UnixTimeMs;
 }
 
 export interface VideoChunkCandidate {
   videoChunkId: string;
+  rank: number;
   fusedRank: number;
   fusedScore: number;
   textRank: number | null;
@@ -146,43 +184,35 @@ export interface VideoChunkEvidence {
   seriesId: string;
   workspaceId: string;
   seriesName: string;
-  seriesDescription: string | null;
   seriesStatus: SeriesStatus;
-  importantExtraData: Record<string, unknown> | null;
-  characterBible: Array<Record<string, unknown>>;
   videoId: string;
   episodeOrder: number;
   originalFilename: string;
-  originalSourceUri: string;
-  inferenceProxyUri: string | null;
-  contentHash: string;
   durationMs: number;
-  uploadStatus: string;
-  parseStatus: string;
   videoChunkId: string;
   sequenceNo: number;
   startMs: number;
   endMs: number;
   analysisWindowStartMs: number;
   analysisWindowEndMs: number;
-  chunkMediaRef: string;
-  analysisWindowMediaRef: string;
+  playbackStatus: PlaybackStatus;
+  playbackUrl: string | null;
+  playbackUrlExpiresAt: UnixTimeMs | null;
+  thumbnail: Keyframe | null;
+  keyframes: Keyframe[];
   transcript: TranscriptCue[];
   baselineVisualCaption: string | null;
-  keyframeUris: string[];
-  allTimeEvents: Array<Record<string, unknown>>;
+  allTimeEvents: Array<{ description: string; startMs: number; endMs: number }>;
   allTimeEventText: string;
-  retrievalText: string;
   videoCompact: string;
-  contextBeforeCompact: string;
-  contextAfterCompact: string;
+  contextBeforeCompact: string | null;
+  contextAfterCompact: string | null;
   windowSummary: string;
   modelProvider: string | null;
   modelName: string | null;
   pipelineVersion: string;
   isFallback: boolean;
-  parseProvenance: Record<string, unknown> | null;
-  parsedAt: string;
+  parsedAt: UnixTimeMs;
 }
 
 export type MatchedEvidenceKind = "TRANSCRIPT" | "VISUAL_EVENT" | "CONTEXT";
@@ -214,6 +244,9 @@ export interface AgentReply {
 export interface VideoChunkSearchResult {
   query: string;
   seriesIds: string[];
+  searchedVideoIds: string[];
+  partial: boolean;
+  warnings: string[];
   agentReply: AgentReply;
   hits: VideoChunkSearchHit[];
 }
@@ -230,10 +263,14 @@ export interface AgentConversationView {
   workspaceId: string;
   title: string;
   messageCount: number;
-  lastMessageAt: string | null;
-  createdAt: string;
-  updatedAt: string;
+  lastMessagePreview: string | null;
+  lastMessageAt: UnixTimeMs | null;
+  createdAt: UnixTimeMs;
+  updatedAt: UnixTimeMs;
 }
+
+export type AnswerPhase = "QUEUED" | "RETRIEVING" | "EVALUATING" | "RESPONDING";
+export interface EvidenceReference { messageId: string; videoChunkId: string }
 
 export interface AgentMessageView {
   messageId: string;
@@ -242,14 +279,17 @@ export interface AgentMessageView {
   sequenceNo: number;
   role: "USER" | "ASSISTANT";
   status: "PROCESSING" | "COMPLETED" | "FAILED";
+  phase: AnswerPhase | null;
+  version: number;
+  reference: EvidenceReference | null;
   content: string | null;
   modelName: string | null;
   replyToMessageId: string | null;
   retrievalQuery: string | null;
   searchResult: VideoChunkSearchResult | null;
-  lastError: string | null;
-  createdAt: string;
-  updatedAt: string;
+  lastError: Failure | null;
+  createdAt: UnixTimeMs;
+  updatedAt: UnixTimeMs;
 }
 
 export interface AgentMessageSendView {
@@ -258,14 +298,17 @@ export interface AgentMessageSendView {
 }
 
 export interface AgentMessageEventView {
+  type: "messages";
   conversationId: string;
   messages: AgentMessageView[];
+  occurredAt: UnixTimeMs;
 }
 
 interface AgentAnswerEventBase {
   conversationId: string;
   messageId: string;
   sequence: number;
+  occurredAt: UnixTimeMs;
 }
 
 export type AgentAnswerEvent =
@@ -274,13 +317,12 @@ export type AgentAnswerEvent =
     })
   | (AgentAnswerEventBase & {
       type: "answer.evidence";
-      hits: VideoChunkSearchHit[];
+      searchResult: VideoChunkSearchResult;
     })
+  | (AgentAnswerEventBase & { type: "answer.progress"; phase: AnswerPhase })
   | (AgentAnswerEventBase & { type: "answer.delta"; delta: string })
-  | (AgentAnswerEventBase & {
+  | (AgentAnswerEventBase & AgentMessageSendView & {
       type: "answer.failed";
-      code: string;
-      message: string;
-      userMessage?: AgentMessageView;
-      assistantMessage?: AgentMessageView;
-    });
+      error: Failure;
+    })
+  | (AgentAnswerEventBase & { type: "answer.interrupted"; error: Failure });

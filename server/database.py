@@ -115,6 +115,23 @@ def create_schema(engine: Engine) -> None:
             f"message-scope migration before init-db; found: {found}"
         )
 
+    missing_view_columns: set[str] = set()
+    for table_name, required_columns in {
+        "agent_conversation": {"title_is_auto"},
+        "agent_message": {"phase", "version", "reference", "last_error_code", "last_error_message"},
+        "series_parse_job": {"version"},
+        "upload_session": {"content_sha256", "completion_stage", "version", "job_id", "last_error_code", "request_fingerprint"},
+    }.items():
+        if table_name not in existing_tables:
+            continue
+        actual_columns = {column["name"] for column in inspector.get_columns(table_name)}
+        missing_view_columns.update(f"{table_name}.{name}" for name in required_columns - actual_columns)
+    if missing_view_columns:
+        raise SchemaUpgradeRequiredError(
+            "UI view schema requires a controlled migration before init-db; missing: "
+            + ", ".join(sorted(missing_view_columns))
+        )
+
     # Importing registers every table on Base.metadata without making the
     # connection module depend on concrete repositories.
     from .model import agent as _agent_models  # noqa: F401

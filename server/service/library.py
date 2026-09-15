@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from ..identity import canonical_uuid, derive_series_id
-from ..repository.library import LibraryRepository, SeriesState, VideoSummaryState
+from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
+from ..repository.library import LibraryRepository
 from ..utils.validation import require_nonempty_text
 
 
@@ -23,7 +24,7 @@ class LibraryService:
         normalized_description = None
         if description is not None:
             normalized_description = description.strip() or None
-        return self._repository.create_series(
+        created = self._repository.create_series(
             series_id=derive_series_id(normalized_workspace, normalized_name),
             workspace_id=normalized_workspace,
             name=normalized_name,
@@ -31,10 +32,34 @@ class LibraryService:
             important_extra_data=important_extra_data,
             character_bible=character_bible or [],
         )
+        return self._repository.get_series(created.series_id, normalized_workspace)
 
-    def list_series(self, *, workspace_id: str) -> list[SeriesState]:
+    def list_series(
+        self,
+        *,
+        workspace_id: str,
+        status: str | None = None,
+        query: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[SeriesState]:
+        if status is not None and status not in {"EMPTY", "INDEXING", "PARTIAL", "READY", "FAILED"}:
+            raise ValueError("status is not a supported Series status")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a nonnegative integer")
+        if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100):
+            raise ValueError("limit must be between 1 and 100")
         return self._repository.list_series(
-            require_nonempty_text(workspace_id, "workspace_id")
+            require_nonempty_text(workspace_id, "workspace_id"),
+            status=status, query=query.strip() if query else None, offset=offset, limit=limit,
+        )
+
+    def count_series(self, *, workspace_id: str, status: str | None = None, query: str | None = None) -> int:
+        if status is not None and status not in {"EMPTY", "INDEXING", "PARTIAL", "READY", "FAILED"}:
+            raise ValueError("status is not a supported Series status")
+        return self._repository.count_series(
+            require_nonempty_text(workspace_id, "workspace_id"),
+            status=status, query=query.strip() if query else None,
         )
 
     def get_series(self, series_id: str, *, workspace_id: str) -> SeriesState:

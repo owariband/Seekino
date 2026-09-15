@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -11,15 +10,15 @@ from engine.parse.analysis_windows import probe_video_duration_ms
 
 from ..config.upload import UploadServiceConfig
 from ..identity import canonical_uuid, derive_video_id
-from ..model.upload import UploadSessionStatus
+from ..model.upload import UploadSessionStatus, UploadCompletionStage
+from ..model.dto.uploadDTO import (
+    CompletedUploadState, UploadCompletionClaim, UploadSegmentState, UploadSessionDetail,
+    UploadSessionState,
+)
 from ..repository.upload import (
-    CompletedUploadState,
-    UploadCompletionClaim,
     UploadConflictError,
     UploadRepository,
-    UploadSegmentState,
     UploadSessionNotFoundError,
-    UploadSessionState,
     UploadStateError,
 )
 from ..storage.artifact import (
@@ -42,12 +41,6 @@ _SUPPORTED_MEDIA_TYPES = frozenset(
 
 class UploadChecksumMismatchError(ValueError):
     pass
-
-
-@dataclass(frozen=True, slots=True)
-class UploadSessionDetail:
-    session: UploadSessionState
-    missing_segment_numbers: tuple[int, ...]
 
 
 class UploadService:
@@ -77,6 +70,7 @@ class UploadService:
         total_size_bytes: int,
         idempotency_key: str,
         upload_sequence: int | None = None,
+        content_sha256: str | None = None,
     ) -> UploadSessionState:
         normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
         normalized_series_id = canonical_uuid(series_id, "series_id")
@@ -98,15 +92,16 @@ class UploadService:
             raise ValueError("episode_order must be an integer")
         if episode_order <= 0:
             raise ValueError("episode_order must be greater than zero")
-        resolved_upload_sequence = (
-            episode_order if upload_sequence is None else upload_sequence
-        )
         if (
-            isinstance(resolved_upload_sequence, bool)
-            or not isinstance(resolved_upload_sequence, int)
-            or resolved_upload_sequence <= 0
+            upload_sequence is not None and (
+                isinstance(upload_sequence, bool)
+                or not isinstance(upload_sequence, int)
+                or upload_sequence <= 0
+            )
         ):
             raise ValueError("upload_sequence must be a positive integer")
+        if content_sha256 is not None and not _SHA256_PATTERN.fullmatch(content_sha256):
+            raise ValueError("content_sha256 must be 64 lowercase hex characters")
 
         segment_size = self._config.preferred_segment_size_bytes
         total_segments = math.ceil(total_size_bytes / segment_size)
@@ -115,7 +110,7 @@ class UploadService:
             workspace_id=normalized_workspace,
             series_id=normalized_series_id,
             episode_order=episode_order,
-            upload_sequence=resolved_upload_sequence,
+            upload_sequence=upload_sequence,
             original_filename=normalized_filename,
             media_type=normalized_media_type,
             total_size_bytes=total_size_bytes,
@@ -124,6 +119,14 @@ class UploadService:
             idempotency_key=normalized_idempotency_key,
             expires_at=now + self._config.session_ttl,
             now=now,
+            content_sha256=content_sha256,
+        )
+
+    def list_sessions(self, *, workspace_id: str, series_id: str | None = None, status: str | None = None) -> list[UploadSessionState]:
+        return self._repository.list_for_workspace(
+            require_nonempty_text(workspace_id, "workspace_id"),
+            series_id=canonical_uuid(series_id, "series_id") if series_id is not None else None,
+            status=status,
         )
 
     def get_session(
@@ -150,13 +153,9 @@ class UploadService:
         workspace_id: str,
     ) -> UploadSessionDetail:
         state = self.get_session(upload_session_id, workspace_id=workspace_id)
-        segments = self._repository.list_segments(state.upload_session_id)
-        present = {item.segment_number for item in segments}
         return UploadSessionDetail(
             session=state,
-            missing_segment_numbers=tuple(
-                number for number in range(state.total_segments) if number not in present
-            ),
+            missing_segment_numbers=state.missing_segment_numbers,
         )
 
     def upload_segment(
@@ -266,11 +265,15 @@ class UploadService:
         assert claim.completion_token is not None
 
         try:
+            self._repository.set_completion_stage(session_id, claim.completion_token, UploadCompletionStage.ASSEMBLING)
             assembled = self._artifact_store.assemble_upload(
                 session_id,
                 [_artifact_segment(item) for item in claim.segments],
                 expected_total_size=claim.session.total_size_bytes,
             )
+            self._repository.set_completion_stage(session_id, claim.completion_token, UploadCompletionStage.VERIFYING)
+            if claim.session.content_sha256 is not None and assembled.sha256 != claim.session.content_sha256:
+                raise UploadChecksumMismatchError("source file SHA-256 does not match the upload session")
             video_id = derive_video_id(claim.session.series_id, assembled.sha256)
             published = self._artifact_store.publish_original(
                 assembled,
@@ -278,9 +281,11 @@ class UploadService:
                 video_id=video_id,
                 original_filename=claim.session.original_filename,
             )
+            self._repository.set_completion_stage(session_id, claim.completion_token, UploadCompletionStage.PROBING)
             duration_ms = self._probe_duration(
                 self._artifact_store.resolve(published.uri)
             )
+            self._repository.set_completion_stage(session_id, claim.completion_token, UploadCompletionStage.CREATING_JOB)
             completed = self._repository.complete_upload(
                 session_id,
                 claim.completion_token,
@@ -297,6 +302,7 @@ class UploadService:
                 session_id,
                 claim.completion_token,
                 error=exception_summary(exc),
+                error_code="CHECKSUM_MISMATCH" if isinstance(exc, UploadChecksumMismatchError) else "PROCESSING_FAILED",
             )
             raise
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from queue import Empty
 from threading import Event
@@ -18,10 +18,13 @@ from server.model.agent import AgentConversationRecord, AgentMessageRecord
 from server.model.video import SeriesRecord
 from server.repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
-    AgentRepository,
+    AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
 )
 from server.repository.library import LibraryRepository
-from server.schema import AgentReply, VideoChunkSearchResult
+from server.repository.video import VideoRepository
+from server.schema import (
+    AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult,
+)
 from server.service.agent_chat import AgentChatService
 from server.service.library import LibraryService
 
@@ -29,12 +32,13 @@ from server.service.library import LibraryService
 @dataclass
 class _RetrievalStub:
     calls: list[tuple[str, list[str], int, str]] = field(default_factory=list)
+    hits: list[VideoChunkSearchHit] = field(default_factory=list)
 
     def search(self, query, *, workspace_id, series_ids, top_k):
         self.calls.append((query, list(series_ids), top_k, workspace_id))
         return VideoChunkSearchResult(
             query=query, series_ids=list(series_ids),
-            agent_reply=AgentReply(message="底层检索完成。", result_count=0), hits=[],
+            agent_reply=AgentReply(message="底层检索完成。", result_count=len(self.hits)), hits=self.hits,
         )
 
 
@@ -43,6 +47,7 @@ class _QueryModel:
     model_name: str = "query-test"
     queries: tuple[str | None, ...] = ("第一次改写",)
     prompts: list[str] = field(default_factory=list)
+    selected_ids: tuple[str, ...] = ()
 
     def run_query(self, prompt, *, tools, result_type, max_model_calls, **_kwargs):
         self.prompts.append(prompt)
@@ -52,7 +57,7 @@ class _QueryModel:
             tools[0].invoke({"query": query, "top_k": 8})
         return result_type.model_validate({
             "plan_context": f"第 {number} 轮检索并核验动作。",
-            "message": f"第 {number} 轮待审核草稿。", "selected_video_chunk_ids": [],
+            "message": f"第 {number} 轮待审核草稿。", "selected_video_chunk_ids": list(self.selected_ids),
         })
 
 
@@ -122,10 +127,11 @@ def build_service(tmp_path):
         engine.dispose()
 
 
-def _send(service, conversation, *, key="message", content="寻找摔杯子的片段", series_ids=None):
+def _send(service, conversation, *, key="message", content="寻找摔杯子的片段", series_ids=None, reference=None):
     return service.send_message(
         conversation.conversation_id, workspace_id="local-default",
         content=content, idempotency_key=key, series_ids=series_ids,
+        reference=reference,
     )
 
 
@@ -139,6 +145,122 @@ def _collect(execution):
         if event is None:
             return events
         events.append(event)
+
+
+@pytest.fixture
+def evidence_service(build_service, prepared_import):
+    resources = build_service()
+    service, _, retrieval, repository, query, *_ = resources
+    videos = VideoRepository(repository._session_factory)
+    report = videos.import_video_parse(prepared_import)
+    with repository._session_factory.begin() as session:
+        session.get(SeriesRecord, report.series_id).status = "READY"
+    retrieval.hits = [VideoChunkSearchHit(
+        candidate=VideoChunkCandidate(video_chunk_id=chunk.video_chunk_id, fused_rank=index + 1, fused_score=1),
+        selection_reason=SelectionReason(summary=chunk.window_summary, matched_evidence=[], limitations=[]),
+        evidence=chunk,
+    ) for index, chunk in enumerate(videos.hydrate_video_chunks(report.video_chunk_ids))]
+    query.selected_ids = tuple(report.video_chunk_ids)
+    return resources
+
+
+def test_first_question_titles_only_default_conversations_and_creation_replay_is_stable(build_service):
+    service, custom, *_ = build_service()
+    default = service.create_conversation(workspace_id="local-default", idempotency_key="default-title")
+    question = "寻找爽世哭泣并说出春日影的片段"
+    _send(service, default, content=question)
+    updated = service.get_conversation(default.conversation_id, workspace_id="local-default")
+    assert updated.title == question
+    assert updated.last_message_preview == "目前没有足够的候选画面，建议补充人物或动作。"
+    assert service.create_conversation(workspace_id="local-default", idempotency_key="default-title") == updated
+    _send(service, custom, key="custom-message", content=question)
+    assert service.get_conversation(custom.conversation_id, workspace_id="local-default").title == "测试对话"
+
+
+def test_read_only_message_recovery_by_user_assistant_or_request_key(build_service):
+    service, conversation, retrieval, *_ = build_service()
+    result = _send(service, conversation)
+    for identifier in ({"message_id": result.user_message.message_id},
+                       {"message_id": result.assistant_message.message_id},
+                       {"idempotency_key": "message"}):
+        assert service.get_message(conversation.conversation_id, workspace_id="local-default", **identifier) == result
+    assert len(retrieval.calls) == 1
+    with pytest.raises(ValueError, match="exactly one"):
+        service.get_message(conversation.conversation_id, workspace_id="local-default")
+    with pytest.raises(AgentMessageNotFoundError):
+        service.get_message(conversation.conversation_id, workspace_id="local-default", idempotency_key="not-accepted")
+    with pytest.raises(AgentConversationNotFoundError):
+        service.get_message(conversation.conversation_id, workspace_id="other-workspace", idempotency_key="message")
+
+
+def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidence_service):
+    service, conversation, _, _, query, *_ = evidence_service
+    source = _send(service, conversation)
+    hits = source.assistant_message.search_result["hits"]
+    reference = {"messageId": source.assistant_message.message_id,
+                 "videoChunkId": hits[1]["candidate"]["videoChunkId"]}
+    followup = _send(service, conversation, key="reference", content="这段的前文呢？", reference=reference)
+    assert followup.user_message.reference == reference
+    assert followup.assistant_message.reference is None
+    assert _send(service, conversation, key="reference", content="这段的前文呢？", reference=reference) == followup
+    context = json.loads(query.prompts[-1].split("\n\n", 1)[1])["inputs"]
+    assert context["reference_context"]["evidence"]["videoChunkId"] == reference["videoChunkId"]
+    assert context["reference_context"]["evidence"]["contextBeforeCompact"] == hits[1]["evidence"]["contextBeforeCompact"]
+    assert context["reference_context"]["sourceStatus"] == "COMPLETED"
+    assert [hit["candidate"]["videoChunkId"] for hit in context["history"][1]["searchResult"]["hits"]] == [
+        hit["candidate"]["videoChunkId"] for hit in hits
+    ]
+    changed = {**reference, "videoChunkId": hits[0]["candidate"]["videoChunkId"]}
+    with pytest.raises(AgentConflictError):
+        _send(service, conversation, key="reference", content="这段的前文呢？", reference=changed)
+
+
+@pytest.mark.parametrize("invalid", ["user-message", "missing-chunk", "other-conversation", "outside-scope"])
+def test_invalid_reference_does_not_start_a_message(evidence_service, invalid):
+    service, conversation, _, repository, query, *_ = evidence_service
+    source = _send(service, conversation)
+    reference = {"messageId": source.assistant_message.message_id,
+                 "videoChunkId": source.assistant_message.search_result["hits"][0]["candidate"]["videoChunkId"]}
+    target = conversation
+    scope = None
+    if invalid == "user-message":
+        reference["messageId"] = source.user_message.message_id
+    elif invalid == "missing-chunk":
+        reference["videoChunkId"] = str(uuid4())
+    elif invalid == "other-conversation":
+        target = service.create_conversation(workspace_id="local-default", title="独立聊天", idempotency_key="other")
+    else:
+        library = LibraryService(LibraryRepository(repository._session_factory))
+        series = library.create_series(workspace_id="local-default", name="Other Series")
+        with repository._session_factory.begin() as session:
+            session.get(SeriesRecord, series.series_id).status = "READY"
+        scope = [series.series_id]
+    before = service.list_all_messages(target.conversation_id, workspace_id="local-default")
+    query_count = len(query.prompts)
+    with pytest.raises(AgentReferenceInvalidError):
+        _send(service, target, key="bad-reference", reference=reference, series_ids=scope)
+    assert service.list_all_messages(target.conversation_id, workspace_id="local-default") == before
+    assert len(query.prompts) == query_count
+
+
+def test_agent_pages_count_filter_and_bind_cursor_to_query_and_scope(build_service):
+    service, conversation, retrieval, *_ = build_service()
+    first = _send(service, conversation)
+    _send(service, conversation, key="second")
+    initial = service.page_messages(conversation.conversation_id, workspace_id="local-default", limit=2)
+    assert initial.total == 4 and initial.has_more and len(initial.items) == 2
+    next_page = service.page_messages(conversation.conversation_id, workspace_id="local-default", limit=2,
+                                      cursor=initial.next_cursor)
+    assert [item.sequence_no for item in next_page.items] == [2, 3]
+    assert next_page.total == 4 and not next_page.has_more and next_page.next_cursor is None
+    with pytest.raises(ValueError):
+        service.page_messages(conversation.conversation_id, workspace_id="local-default", limit=2,
+                              cursor=initial.next_cursor, after_sequence_no=0)
+    service.create_conversation(workspace_id="local-default", title="没搜索的对话", idempotency_key="unused")
+    filtered = service.page_conversations(workspace_id="local-default", series_id=first.user_message.series_ids[0], query="测试")
+    assert filtered.total == 1 and filtered.items[0].conversation_id == conversation.conversation_id
+    assert service.page_conversations(workspace_id="local-default", query="不存在").total == 0
+    assert len(retrieval.calls) == 2
 
 
 def test_conversation_creation_is_idempotent_within_workspace(build_service):
@@ -215,8 +337,11 @@ def test_next_kick_reads_only_completed_conversation_history(build_service):
     context = json.loads(query.prompts[1].split("\n\n", 1)[1])
     assert context["turn_number"] == 1 and context["turns"] == []
     assert context["inputs"]["history"] == [
-        {"role": "USER", "content": first.user_message.content, "seriesIds": list(first.user_message.series_ids)},
-        {"role": "ASSISTANT", "content": first.assistant_message.content, "seriesIds": list(first.assistant_message.series_ids)},
+        {"role": "USER", "content": first.user_message.content, "seriesIds": list(first.user_message.series_ids),
+         "messageId": first.user_message.message_id, "status": "COMPLETED", "reference": None, "searchResult": None},
+        {"role": "ASSISTANT", "content": first.assistant_message.content, "seriesIds": list(first.assistant_message.series_ids),
+         "messageId": first.assistant_message.message_id, "status": "COMPLETED", "reference": None,
+         "searchResult": first.assistant_message.search_result},
     ]
     with pytest.raises(AgentConversationNotFoundError):
         service.send_message(conversation.conversation_id, workspace_id="other-workspace", content="隔离", idempotency_key="other")
@@ -291,10 +416,16 @@ def test_live_delta_precedes_commit_and_disconnect_does_not_cancel(build_service
     service, conversation, _, _, _, _, _ = build_service(chat=_ChatModel(release=release))
     execution = service.start_message(conversation.conversation_id, workspace_id="local-default", content="找到杯子", idempotency_key="stream", stream=True)
     try:
-        events = [execution.next_event(timeout=2) for _ in range(3)]
-        assert [event["type"] for event in events] == ["answer.started", "answer.evidence", "answer.delta"]
+        events = [execution.next_event(timeout=2) for _ in range(6)]
+        assert [event["type"] for event in events] == [
+            "answer.started", "answer.progress", "answer.progress", "answer.progress", "answer.evidence", "answer.delta",
+        ]
+        assert [event["phase"] for event in events if event["type"] == "answer.progress"] == [
+            "RETRIEVING", "EVALUATING", "RESPONDING",
+        ]
         assert all(event["conversationId"] == conversation.conversation_id for event in events)
-        assert [event["sequence"] for event in events] == [1, 2, 3]
+        assert [event["sequence"] for event in events] == list(range(1, 7))
+        assert all(isinstance(event["occurredAt"], int) for event in events)
         assert not execution.future.done()
         assert service.list_all_messages(conversation.conversation_id, workspace_id="local-default")[-1].status == "PROCESSING"
         with pytest.raises(AgentMessageInProgressError):
@@ -321,7 +452,7 @@ def test_completed_event_observes_committed_snapshot(build_service):
 
 
 @pytest.mark.parametrize("failure", ["chat", "commit"])
-def test_failure_has_no_completed_event_and_does_not_save_partial_text(build_service, monkeypatch, failure):
+def test_failure_has_no_completed_event_and_preserves_reviewed_evidence_and_real_partial_text(build_service, monkeypatch, failure):
     service, conversation, _, repository, _, _, _ = build_service(chat=_ChatModel(fail=failure == "chat"))
     if failure == "commit":
         def fail_commit(*_args, **_kwargs):
@@ -334,9 +465,49 @@ def test_failure_has_no_completed_event_and_does_not_save_partial_text(build_ser
     assert events[-1]["type"] == "answer.failed"
     assert "answer.completed" not in [event["type"] for event in events]
     failed = service.list_all_messages(conversation.conversation_id, workspace_id="local-default")[-1]
-    assert failed.status == "FAILED" and failed.search_result is None
-    assert "候选画面" not in failed.content
-    assert "private upstream failure" not in events[-1]["message"]
+    assert failed.status == "FAILED" and failed.search_result is not None
+    assert "候选画面" in failed.content
+    assert failed.content == "".join(event["delta"] for event in events if event["type"] == "answer.delta")
+    assert failed.phase is None and failed.version > 1
+    assert asdict(failed.last_error) == events[-1]["error"]
+    assert "private upstream failure" not in events[-1]["error"]["message"]
+
+
+def test_unconfirmed_terminal_write_emits_interrupted_and_recovers_processing_snapshot(build_service, monkeypatch):
+    service, conversation, _, repository, *_ = build_service(chat=_ChatModel(fail=True))
+    def unavailable_failure_write(*_args, **_kwargs):
+        raise RuntimeError("terminal database write unavailable")
+    monkeypatch.setattr(repository, "fail_assistant_message", unavailable_failure_write)
+    execution = service.start_message(conversation.conversation_id, workspace_id="local-default",
+                                      content="找画面", idempotency_key="unknown-terminal", stream=True)
+    events = _collect(execution)
+    with pytest.raises(AgentModelInvocationError):
+        execution.result()
+    assert events[-1]["type"] == "answer.interrupted"
+    assert not {"userMessage", "assistantMessage"} & set(events[-1])
+    assert not {"answer.completed", "answer.failed"} & {event["type"] for event in events}
+    recovered = service.get_message(conversation.conversation_id, workspace_id="local-default",
+                                    idempotency_key="unknown-terminal").assistant_message
+    assert recovered.status == "PROCESSING" and recovered.search_result is not None
+    assert recovered.content == "".join(event["delta"] for event in events if event["type"] == "answer.delta")
+
+
+def test_slow_consumer_receives_transport_interruption_while_business_completes(build_service, monkeypatch):
+    service, conversation, *_ = build_service()
+    def many_deltas(_inputs):
+        for _ in range(300):
+            yield "真实增量"
+    monkeypatch.setattr(service._runtime._chat_model, "stream_text", many_deltas)
+    execution = service.start_message(conversation.conversation_id, workspace_id="local-default",
+                                      content="找画面", idempotency_key="slow-reader", stream=True)
+    result = execution.result()
+    events = _collect(execution)
+    assert [event["type"] for event in events] == ["answer.interrupted"]
+    assert events[0]["error"]["code"] == "STREAM_INTERRUPTED"
+    assert result.assistant_message.status == "COMPLETED"
+    assert result.assistant_message.content == "真实增量" * 300
+    assert service.get_message(conversation.conversation_id, workspace_id="local-default",
+                               idempotency_key="slow-reader") == result
 
 
 def test_shutdown_requests_stop_and_waits_before_resources_close(build_service):
@@ -344,7 +515,7 @@ def test_shutdown_requests_stop_and_waits_before_resources_close(build_service):
     service, conversation, _, _, _, _, _ = build_service(chat=_ChatModel(release=release))
     execution = service.start_message(conversation.conversation_id, workspace_id="local-default", content="找杯子", idempotency_key="shutdown", stream=True)
     try:
-        for _ in range(3):
+        for _ in range(6):
             execution.next_event(timeout=2)
         execution.cancellation.set()
     finally:

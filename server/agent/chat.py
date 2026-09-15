@@ -30,7 +30,7 @@ def render_chat(
     )
     control.publish(inputs, {
         "type": "answer.evidence",
-        "hits": [hit.model_dump(mode="json", by_alias=True) for hit in turn.draft_output.hits],
+        "searchResult": turn.draft_output.model_dump(mode="json", by_alias=True),
     })
     stream = None
     chunks: list[str] = []

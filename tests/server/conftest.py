@@ -19,10 +19,8 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.service.parse_import import (
-    PreparedVideoParseImport,
-    prepare_video_parse_import,
-)
+from server.model.dto.parseDTO import PreparedVideoParseImport
+from server.service.parse_import import prepare_video_parse_import
 from server.repository.video import VideoRepository
 
 

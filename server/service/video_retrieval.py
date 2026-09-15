@@ -11,11 +11,8 @@ from gateway.schemas import EmbeddingResult
 
 from ..config.retrieval import RetrievalConfig
 from ..model.index_sync import IndexSyncOperation, IndexSyncStatus
-from ..repository.video import (
-    HydratedVideoChunkState,
-    VideoChunkNotFoundError,
-    VideoRepository,
-)
+from ..model.dto.videoDTO import HydratedVideoChunkState
+from ..repository.video import VideoChunkNotFoundError, VideoRepository
 from ..schema import (
     AgentReply,
     MatchedEvidence,
@@ -105,6 +102,7 @@ class VideoRetrievalService:
             series_ids,
             workspace_id=workspace_id,
         )
+        searched_video_ids = self._repository.list_indexed_video_ids(scope, workspace_id=workspace_id)
         embedding = self._embedder.embed_query(normalized_query)
         if embedding.modality != "text":
             raise RuntimeError("query embedder returned a non-text embedding")
@@ -171,6 +169,7 @@ class VideoRetrievalService:
         return VideoChunkSearchResult(
             query=normalized_query,
             series_ids=scope,
+            searched_video_ids=searched_video_ids,
             agent_reply=_agent_reply(hits),
             hits=hits,
         )

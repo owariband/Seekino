@@ -20,32 +20,6 @@ class ContractModel(BaseModel):
     )
 
 
-class ParseImportReport(ContractModel):
-    series_id: str
-    video_id: str
-    video_chunk_ids: list[str]
-    chunk_count: int = Field(gt=0)
-    vectors_imported: bool
-
-
-class IndexSyncRunReport(ContractModel):
-    materialized_count: int = Field(ge=0)
-    selected_count: int = Field(ge=0)
-    synced_count: int = Field(ge=0)
-    failed_count: int = Field(ge=0)
-    stale_result_count: int = Field(ge=0)
-
-
-class IndexReconcileReport(ContractModel):
-    materialized_count: int = Field(ge=0)
-    inspected_count: int = Field(ge=0)
-    consistent_count: int = Field(ge=0)
-    repair_attempted_count: int = Field(ge=0)
-    synced_count: int = Field(ge=0)
-    failed_count: int = Field(ge=0)
-    stale_result_count: int = Field(ge=0)
-
-
 class TranscriptCueView(ContractModel):
     speaker: str | None
     text: str = Field(min_length=1)
@@ -155,6 +129,9 @@ class VideoChunkSearchResult(ContractModel):
     series_ids: list[str] = Field(min_length=1)
     agent_reply: AgentReply
     hits: list[VideoChunkSearchHit]
+    searched_video_ids: list[str] | None = None
+    partial: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_result_contract(self) -> "VideoChunkSearchResult":

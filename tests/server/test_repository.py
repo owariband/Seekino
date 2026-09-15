@@ -25,11 +25,8 @@ from server.repository.video import (
     SeriesScopeNotFoundError,
     VideoChunkNotFoundError,
 )
-from server.service.parse_import import (
-    PreparedEmbedding,
-    _load_embedding,
-    prepare_video_parse_import,
-)
+from server.model.dto.parseDTO import PreparedEmbedding
+from server.service.parse_import import _load_embedding, prepare_video_parse_import
 
 
 def _table_counts(engine) -> dict[str, int]:

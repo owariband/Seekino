@@ -3,9 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ..api import uploads
+from ..model.vo.commonVO import Page
 from ..api.schema import UploadCompleteView, UploadSegmentView, UploadSessionView
 
 router = APIRouter()
+router.add_api_route(
+    "/api/uploads/list", uploads.list_upload_sessions, methods=["GET"],
+    response_model=Page[UploadSessionView],
+)
 router.add_api_route(
     "/api/uploads/create",
     uploads.create_upload_session,

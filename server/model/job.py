@@ -83,6 +83,7 @@ class SeriesParseJobRecord(TimestampedRecord, Base):
             "lease_version >= 0",
             name="ck_series_parse_job_lease_version",
         ),
+        CheckConstraint("version >= 1", name="ck_series_parse_job_version"),
         Index("ix_series_parse_job_due", "status", "available_at"),
         MYSQL_TABLE_OPTIONS,
     )
@@ -104,6 +105,7 @@ class SeriesParseJobRecord(TimestampedRecord, Base):
     progress: Mapped[int] = mapped_column(Integer, nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
         nullable=False,

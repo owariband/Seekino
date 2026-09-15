@@ -215,3 +215,17 @@ def test_create_schema_accepts_current_message_scope_schema_repeatedly() -> None
     }
     assert "series_ids" not in conversation_columns
     assert {"series_ids", "requested_series_ids"} <= message_columns
+
+
+def test_create_schema_requires_ui_view_migration_and_preserves_existing_rows() -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
+    )
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE upload_session (upload_session_id TEXT, status TEXT)"))
+        connection.execute(text("INSERT INTO upload_session VALUES ('existing-upload', 'COMPLETED')"))
+    with pytest.raises(SchemaUpgradeRequiredError, match="UI view schema requires a controlled migration"):
+        create_schema(engine)
+    assert set(inspect(engine).get_table_names()) == {"upload_session"}
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT status FROM upload_session")).scalar_one() == "COMPLETED"

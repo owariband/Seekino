@@ -1,17 +1,29 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import base64
+import json
+import subprocess
+from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlencode
 
+from ..identity import canonical_uuid
+from ..model.dto.libraryDTO import VideoSummaryState
+from ..model.dto.mediaDTO import ImageReference, PlaybackMedia, VideoMedia
+from ..repository.library import SeriesNotFoundError
+from ..repository.video import VideoRepository
+from ..schema import VideoChunkEvidence
 from ..storage.artifact import ArtifactStore
 from .library import LibraryService
 
 
-@dataclass(frozen=True, slots=True)
-class VideoMedia:
-    path: Path
-    media_type: str
-    size_bytes: int
+class MediaMissingError(FileNotFoundError):
+    pass
+
+
+class MediaNotReadyError(RuntimeError):
+    pass
 
 
 class MediaService:
@@ -19,23 +31,118 @@ class MediaService:
         self,
         library: LibraryService,
         artifact_store: ArtifactStore,
+        video_repository: VideoRepository | None = None,
+        *,
+        probe_playback: Callable[[Path], bool] | None = None,
     ) -> None:
         self._library = library
         self._artifact_store = artifact_store
+        self._video_repository = video_repository
+        self._probe_playback = probe_playback or _cached_browser_playable
 
     def get_original(
         self,
         video_id: str,
         *,
         workspace_id: str,
+        video: VideoSummaryState | VideoChunkEvidence | None = None,
     ) -> VideoMedia:
-        video = self._library.get_video(video_id, workspace_id=workspace_id)
-        path = self._artifact_store.resolve(video.original_source_uri)
+        video = video or self._library.get_video(video_id, workspace_id=workspace_id)
+        if video.video_id != video_id or getattr(video, "workspace_id", workspace_id) != workspace_id:
+            raise SeriesNotFoundError("视频资源不存在")
+        try:
+            path = self._artifact_store.resolve(video.original_source_uri)
+            size = path.stat().st_size
+        except FileNotFoundError as exc:
+            raise MediaMissingError("原视频文件已丢失") from exc
+        except ValueError as exc:
+            raise MediaNotReadyError("尚无受管的原视频文件") from exc
         return VideoMedia(
             path=path,
             media_type=_media_type(path),
-            size_bytes=path.stat().st_size,
+            size_bytes=size,
         )
+
+    def playback_view(
+        self, video_id: str, *, workspace_id: str,
+        video: VideoSummaryState | VideoChunkEvidence | None = None,
+    ) -> PlaybackMedia:
+        # File presence and codec facts are rechecked when a public VO is built.
+        try:
+            media = self.get_original(video_id, workspace_id=workspace_id, video=video)
+        except MediaMissingError:
+            return PlaybackMedia("MISSING", None)
+        except (MediaNotReadyError, ValueError, OSError):
+            return PlaybackMedia("FAILED", None)
+        try:
+            playable = self._probe_playback(media.path)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            playable = False
+        if not playable:
+            return PlaybackMedia("FAILED", None)
+        return PlaybackMedia("READY", "/api/videos/content?" + urlencode({
+            "workspaceId": workspace_id, "videoId": video_id, "variant": "playback",
+        }))
+
+    def get_playback(self, video_id: str, *, workspace_id: str) -> VideoMedia:
+        playback = self.playback_view(video_id, workspace_id=workspace_id)
+        if playback.status == "MISSING":
+            raise MediaMissingError("原视频文件已丢失")
+        if playback.status != "READY":
+            raise MediaNotReadyError("原视频尚无可确认兼容浏览器的播放媒体")
+        return self.get_original(video_id, workspace_id=workspace_id)
+
+    def thumbnail_view(
+        self, video_id: str, *, workspace_id: str, video: VideoSummaryState | None = None,
+    ) -> ImageReference | None:
+        video = video or self._library.get_video(video_id, workspace_id=workspace_id)
+        if video.video_id != video_id or getattr(video, "workspace_id", workspace_id) != workspace_id:
+            raise SeriesNotFoundError("视频资源不存在")
+        for index, uri in enumerate(getattr(video, "keyframe_uris", ())):
+            try:
+                path = self._artifact_store.resolve(uri)
+                if _image_type(path) is None:
+                    continue
+            except (OSError, ValueError):
+                continue
+            image_id = base64.urlsafe_b64encode(json.dumps([video_id, index]).encode()).decode().rstrip("=")
+            return ImageReference(image_id, "/api/media/images/content?" + urlencode({
+                "workspaceId": workspace_id, "imageId": image_id,
+            }))
+        return None
+
+    def get_image(self, image_id: str, *, workspace_id: str) -> VideoMedia:
+        try:
+            video_id, index = json.loads(base64.urlsafe_b64decode(image_id + "=" * (-len(image_id) % 4)))
+            video_id = canonical_uuid(video_id, "image_id")
+            if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                raise ValueError("invalid image index")
+        except (TypeError, ValueError) as exc:
+            raise SeriesNotFoundError("图片资源不存在") from exc
+        video = self._library.get_video(video_id, workspace_id=workspace_id)
+        sources = getattr(video, "keyframe_uris", ())
+        if index >= len(sources):
+            raise SeriesNotFoundError("图片资源不存在")
+        try:
+            path = self._artifact_store.resolve(sources[index])
+            media_type = _image_type(path)
+            size = path.stat().st_size
+        except FileNotFoundError as exc:
+            raise MediaMissingError("关键帧图片已丢失") from exc
+        except (OSError, ValueError) as exc:
+            raise MediaNotReadyError("关键帧图片尚不可读取") from exc
+        if media_type is None:
+            raise MediaNotReadyError("关键帧资源不是可确认的图片")
+        return VideoMedia(path, media_type, size)
+
+    def get_chunk_evidence(self, video_chunk_id: str, *, workspace_id: str) -> VideoChunkEvidence:
+        if self._video_repository is None:
+            raise MediaNotReadyError("片段证据读取尚未装配")
+        chunk_id = canonical_uuid(video_chunk_id, "video_chunk_id")
+        evidence = self._video_repository.hydrate_video_chunk_states([chunk_id])[0].evidence
+        if evidence.workspace_id != workspace_id:
+            raise SeriesNotFoundError("片段资源不存在")
+        return evidence
 
 
 def _media_type(path: Path) -> str:
@@ -45,3 +152,42 @@ def _media_type(path: Path) -> str:
         ".mov": "video/quicktime",
         ".avi": "video/x-msvideo",
     }.get(suffix, "application/octet-stream")
+
+
+def _image_type(path: Path) -> str | None:
+    with path.open("rb") as source:
+        header = source.read(16)
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _cached_browser_playable(path: Path) -> bool:
+    facts = path.stat()
+    return _playback_codec_fact(path, facts.st_size, facts.st_mtime_ns, facts.st_ino)
+
+
+@lru_cache(maxsize=256)
+def _playback_codec_fact(path: Path, size: int, modified_ns: int, inode: int) -> bool:
+    return _is_browser_playable(path)
+
+
+def _is_browser_playable(path: Path) -> bool:
+    result = subprocess.run([
+        "ffprobe", "-v", "error", "-show_entries", "format=format_name:stream=codec_type,codec_name,pix_fmt",
+        "-of", "json", str(path),
+    ], check=True, capture_output=True, text=True, timeout=5)
+    payload = json.loads(result.stdout)
+    if "mp4" not in payload.get("format", {}).get("format_name", "").split(","):
+        return False
+    streams = payload.get("streams", [])
+    videos = [stream for stream in streams if stream.get("codec_type") == "video"]
+    audio = [stream for stream in streams if stream.get("codec_type") == "audio"]
+    return bool(videos) and all(
+        stream.get("codec_name") == "h264" and stream.get("pix_fmt") in {"yuv420p", "yuvj420p"}
+        for stream in videos
+    ) and all(stream.get("codec_name") == "aac" for stream in audio)
