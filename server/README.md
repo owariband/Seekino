@@ -126,7 +126,18 @@ uv run python -m server.mq
 ```
 
 API 默认监听 `127.0.0.1:9621`，OpenAPI 位于 `/docs`。API 与 Worker 是两个进程；API
-写入 MySQL 中的事实和任务，Worker 从 MySQL Claim，不依赖进程内队列。主要接口：
+写入 MySQL 中的事实和任务，Worker 从 MySQL Claim，不依赖进程内队列。
+
+上传顺序由后端成功创建 `UploadSession` 的顺序确定。同一 Series 在行锁内分配下一个
+追加序号，新会话的 `episodeOrder` 与 `uploadSequence` 相等；不解析文件名，也不采纳
+客户端指定的序号。`uploads/create` 的两个旧序号参数仅保留兼容接收，现已可省略。
+幂等重放返回原序号；已分配序号不复用，既有视频不重新编号。
+
+Worker 按固定上传序号领取任务，更早的未过期上传、未成功解析的视频（含重试等待和
+失败）会阻塞后续任务；传输完成先后不会改变 Parse 顺序。已过期且未生成 Video 的
+上传不再占用解析队列。这一门禁负责视频的执行顺序，跨视频 Context 传递仍未实现。
+
+主要接口：
 
 ```text
 POST /api/series/create

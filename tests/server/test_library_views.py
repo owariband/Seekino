@@ -131,7 +131,7 @@ def test_pending_upload_counts_expiry_and_full_detail(repository):
     assert detail.video_count == 0
     assert detail.pending_upload_count == 2
     assert [item.upload_session_id for item in detail.pending_uploads] == active
-    assert [item.upload_sequence for item in detail.pending_uploads] == [2, 3]
+    assert [item.upload_sequence for item in detail.pending_uploads] == [1, 2]
     assert all(item.missing_segment_numbers == (0, 1, 2) for item in detail.pending_uploads)
     assert library.list_series(workspace_id="local-default")[0].pending_upload_count == 2
 

@@ -74,8 +74,14 @@ class UploadSessionDetail:
 
 class UploadSessionCreateRequest(ContractModel):
     workspace_id: str = Field(min_length=1, max_length=64)
-    episode_order: int = Field(gt=0, strict=True)
-    upload_sequence: int | None = Field(default=None, gt=0, strict=True)
+    episode_order: int | None = Field(
+        default=None, gt=0, strict=True, deprecated=True,
+        description="Compatibility only; ignored. The server assigns append order.",
+    )
+    upload_sequence: int | None = Field(
+        default=None, gt=0, strict=True, deprecated=True,
+        description="Compatibility only; ignored. The server assigns append order.",
+    )
     original_filename: str = Field(min_length=1, max_length=1024)
     media_type: str = Field(min_length=1, max_length=255)
     total_size_bytes: int = Field(gt=0, le=9_007_199_254_740_991, strict=True)

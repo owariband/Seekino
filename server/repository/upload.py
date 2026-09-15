@@ -57,8 +57,8 @@ class UploadRepository:
         *,
         workspace_id: str,
         series_id: str,
-        episode_order: int,
-        upload_sequence: int | None,
+        episode_order: int | None = None,
+        upload_sequence: int | None = None,
         original_filename: str,
         media_type: str,
         total_size_bytes: int,
@@ -72,40 +72,31 @@ class UploadRepository:
         requested = {
             "workspace_id": workspace_id,
             "series_id": series_id,
-            "episode_order": episode_order,
-            "upload_sequence": upload_sequence,
             "original_filename": original_filename,
             "media_type": media_type,
             "total_size_bytes": total_size_bytes,
-            "preferred_segment_size_bytes": preferred_segment_size_bytes,
-            "total_segments": total_segments,
             "idempotency_key": idempotency_key,
             "content_sha256": content_sha256,
         }
-        if upload_sequence is None:
-            requested.pop("upload_sequence")
-        if content_sha256 is None:
-            requested.pop("content_sha256")
-        fingerprint_fields = {
-            **requested, "upload_sequence": upload_sequence, "content_sha256": content_sha256,
-        }
-        fingerprint_fields.pop("preferred_segment_size_bytes")
-        fingerprint_fields.pop("total_segments")
-        request_fingerprint = hashlib.sha256(json.dumps(fingerprint_fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        request_fingerprint = hashlib.sha256(json.dumps(requested, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         for attempt in range(2):
             try:
+                # Replay locks only Upload: completion uses Upload then Series.
                 with self._session_factory.begin() as session:
                     existing = session.scalar(
                         select(UploadSessionRecord).where(
                             UploadSessionRecord.workspace_id == workspace_id,
                             UploadSessionRecord.idempotency_key == idempotency_key,
-                        )
+                        ).with_for_update()
                     )
                     if existing is not None:
-                        self._expire_if_due(existing, now)
                         self._validate_same_session(existing, requested, request_fingerprint=request_fingerprint)
+                        self._expire_if_due(existing, now)
                         return self._snapshot(session, existing)
 
+                with self._session_factory.begin() as session:
+                    # Lock before ordinary reads so MySQL's snapshot includes the
+                    # preceding upload that released this Series lock.
                     series = session.scalar(select(SeriesRecord).where(
                         SeriesRecord.series_id == series_id
                     ).with_for_update())
@@ -113,49 +104,32 @@ class UploadRepository:
                         raise UploadSeriesNotFoundError(
                             f"seriesId {series_id!r} does not exist in this workspace"
                         )
-                    episode_session = session.scalar(
+                    existing = session.scalar(
                         select(UploadSessionRecord).where(
-                            UploadSessionRecord.active_slot_key
-                            == _active_slot_key(series_id, episode_order),
+                            UploadSessionRecord.workspace_id == workspace_id,
+                            UploadSessionRecord.idempotency_key == idempotency_key,
                         )
                     )
-                    if (
-                        episode_session is not None
-                        and self._expire_if_due(episode_session, now)
-                    ):
-                        session.flush()
-                        episode_session = None
-                    if episode_session is not None:
-                        raise UploadConflictError(
-                            "the Series episode already has another upload session"
-                        )
-                    existing_video = session.scalar(
-                        select(VideoRecord.video_id).where(
-                            VideoRecord.series_id == series_id,
-                            VideoRecord.episode_order == episode_order,
-                        )
-                    )
-                    if existing_video is not None:
-                        raise UploadConflictError(
-                            "the Series episode already has a Video"
-                        )
+                    if existing is not None:
+                        # Release Series before returning to the Upload-only replay.
+                        continue
 
-                    resolved_sequence = upload_sequence
-                    if resolved_sequence is None:
-                        upload_max = session.scalar(select(func.max(UploadSessionRecord.upload_sequence)).where(
-                            UploadSessionRecord.series_id == series_id
-                        )) or 0
-                        video_max = session.scalar(select(func.max(VideoRecord.upload_sequence)).where(
-                            VideoRecord.series_id == series_id
-                        )) or 0
-                        resolved_sequence = max(upload_max, video_max) + 1
+                    upload_orders = session.execute(select(
+                        func.max(UploadSessionRecord.episode_order),
+                        func.max(UploadSessionRecord.upload_sequence),
+                    ).where(UploadSessionRecord.series_id == series_id)).one()
+                    video_orders = session.execute(select(
+                        func.max(VideoRecord.episode_order),
+                        func.max(VideoRecord.upload_sequence),
+                    ).where(VideoRecord.series_id == series_id)).one()
+                    next_order = max(value or 0 for value in (*upload_orders, *video_orders)) + 1
 
                     record = UploadSessionRecord(
                         upload_session_id=str(uuid4()),
                         workspace_id=workspace_id,
                         series_id=series_id,
-                        episode_order=episode_order,
-                        upload_sequence=resolved_sequence,
+                        episode_order=next_order,
+                        upload_sequence=next_order,
                         original_filename=original_filename,
                         media_type=media_type,
                         total_size_bytes=total_size_bytes,
@@ -165,7 +139,7 @@ class UploadRepository:
                         status=UploadSessionStatus.UPLOADING.value,
                         idempotency_key=idempotency_key,
                         request_fingerprint=request_fingerprint,
-                        active_slot_key=_active_slot_key(series_id, episode_order),
+                        active_slot_key=_active_slot_key(series_id, next_order),
                         expires_at=expires_at,
                     )
                     session.add(record)
@@ -667,9 +641,18 @@ class UploadRepository:
         request_fingerprint: str,
     ) -> None:
         if record.request_fingerprint is not None:
-            if record.request_fingerprint != request_fingerprint:
-                raise UploadConflictError("idempotency key was already used with different upload parameters")
-            return
+            if record.request_fingerprint == request_fingerprint:
+                return
+            # Previously the fingerprint also captured client-provided order.
+            legacy_fields = {
+                **requested, "episode_order": record.episode_order,
+            }
+            for original_sequence in (None, record.upload_sequence):
+                legacy_fields["upload_sequence"] = original_sequence
+                legacy_fingerprint = hashlib.sha256(json.dumps(legacy_fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                if record.request_fingerprint == legacy_fingerprint:
+                    return
+            raise UploadConflictError("idempotency key was already used with different upload parameters")
         mismatches = [
             name for name, value in requested.items() if getattr(record, name) != value
         ]

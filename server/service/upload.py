@@ -64,7 +64,7 @@ class UploadService:
         *,
         workspace_id: str,
         series_id: str,
-        episode_order: int,
+        episode_order: int | None = None,
         original_filename: str,
         media_type: str,
         total_size_bytes: int,
@@ -88,18 +88,6 @@ class UploadService:
             raise ValueError("total_size_bytes must be an integer")
         if not 0 < total_size_bytes <= self._config.maximum_upload_size_bytes:
             raise ValueError("total_size_bytes is outside the configured upload limit")
-        if isinstance(episode_order, bool) or not isinstance(episode_order, int):
-            raise ValueError("episode_order must be an integer")
-        if episode_order <= 0:
-            raise ValueError("episode_order must be greater than zero")
-        if (
-            upload_sequence is not None and (
-                isinstance(upload_sequence, bool)
-                or not isinstance(upload_sequence, int)
-                or upload_sequence <= 0
-            )
-        ):
-            raise ValueError("upload_sequence must be a positive integer")
         if content_sha256 is not None and not _SHA256_PATTERN.fullmatch(content_sha256):
             raise ValueError("content_sha256 must be 64 lowercase hex characters")
 
@@ -109,8 +97,6 @@ class UploadService:
         return self._repository.create_session(
             workspace_id=normalized_workspace,
             series_id=normalized_series_id,
-            episode_order=episode_order,
-            upload_sequence=upload_sequence,
             original_filename=normalized_filename,
             media_type=normalized_media_type,
             total_size_bytes=total_size_bytes,

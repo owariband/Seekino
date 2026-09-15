@@ -458,6 +458,43 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
     assert retrieval.calls == [("她为什么哭", [series_id], 5, "local-default")]
 
 
+def test_upload_order_is_assigned_and_legacy_order_fields_are_ignored(tmp_path: Path) -> None:
+    client, _retrieval, _jobs_repository = _client(tmp_path)
+    series_id = _create_series(client)
+    payload = {
+        "workspaceId": "local-default", "originalFilename": "episode-99.mp4",
+        "mediaType": "video/mp4", "totalSizeBytes": 4,
+    }
+    first = client.post(
+        "/api/uploads/create", params={"seriesId": series_id},
+        headers={"Idempotency-Key": "first"},
+        json={**payload, "episodeOrder": 99, "uploadSequence": 500},
+    )
+    second = client.post(
+        "/api/uploads/create", params={"seriesId": series_id},
+        headers={"Idempotency-Key": "second"}, json=payload,
+    )
+    replay = client.post(
+        "/api/uploads/create", params={"seriesId": series_id},
+        headers={"Idempotency-Key": "first"},
+        json={**payload, "episodeOrder": 10, "uploadSequence": 20},
+    )
+    assert first.status_code == second.status_code == replay.status_code == 201
+    assert first.json()["episodeOrder"] == first.json()["uploadSequence"] == 1
+    assert second.json()["episodeOrder"] == second.json()["uploadSequence"] == 2
+    assert replay.json()["uploadSessionId"] == first.json()["uploadSessionId"]
+    changed = client.post(
+        "/api/uploads/create", params={"seriesId": series_id},
+        headers={"Idempotency-Key": "first"}, json={**payload, "originalFilename": "changed.mp4"},
+    )
+    assert changed.status_code == 409
+    schema = client.get("/openapi.json").json()["components"]["schemas"]["UploadSessionCreateRequest"]
+    for field in ("episodeOrder", "uploadSequence"):
+        assert field not in schema["required"]
+        assert schema["properties"][field]["deprecated"] is True
+        assert "ignored" in schema["properties"][field]["description"]
+
+
 def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) -> None:
     client, _retrieval, jobs_repository = _client(tmp_path)
     series_id = _create_series(client)
@@ -486,6 +523,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     upload_id = first.json()["uploadSessionId"]
     assert repeated.json()["uploadSessionId"] == upload_id
     assert first.json()["missingSegmentNumbers"] == [0, 1, 2]
+    assert first.json()["episodeOrder"] == first.json()["uploadSequence"] == 1
 
     parts = [(2, 8, b"ij"), (0, 0, b"abcd"), (1, 4, b"efgh")]
     for number, start, data in parts:
@@ -525,7 +563,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert job.json()["status"] == "QUEUED"
     assert job.json()["progress"] == 0
     assert job.json()["seriesName"] == "Test Series"
-    assert job.json()["episodeOrder"] == 7
+    assert job.json()["episodeOrder"] == 1
     assert job.json()["originalFilename"] == "episode-07.mp4"
     assert [item["jobId"] for item in jobs.json()["items"]] == [job_id]
     for path in ("/api/jobs/get", "/api/jobs/events"):

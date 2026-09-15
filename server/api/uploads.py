@@ -28,8 +28,6 @@ def create_upload_session(
     state = service.create_session(
         workspace_id=body.workspace_id,
         series_id=series_id,
-        episode_order=body.episode_order,
-        upload_sequence=body.upload_sequence,
         original_filename=body.original_filename,
         media_type=body.media_type,
         total_size_bytes=body.total_size_bytes,

@@ -15,6 +15,7 @@ from server.model.job import (
     VideoChunkCheckpointStage,
 )
 from server.model.video import SeriesRecord, VideoRecord
+from server.model.upload import UploadSessionRecord, UploadSessionStatus
 from server.repository.job import (
     ParseJobCheckpointConflictError,
     ParseJobLeaseLostError,
@@ -363,6 +364,89 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
 
     with session_factory() as session:
         assert session.get(SeriesRecord, series_a).status == "INDEXING"
+
+
+def test_later_upload_waits_for_earlier_video_and_its_retry(repository) -> None:
+    jobs, first_job_id, first_video_id, now = _seed_job(repository)
+    engine, _repository = repository
+    session_factory = create_session_factory(engine)
+    later_job_id = str(uuid4())
+    later_video_id = str(uuid4())
+    with session_factory.begin() as session:
+        first_video = session.get(VideoRecord, first_video_id)
+        session.add(VideoRecord(
+            video_id=later_video_id, series_id=first_video.series_id,
+            episode_order=2, upload_sequence=2,
+            original_filename="later.mp4", original_source_uri="artifact://test/later.mp4",
+            content_hash="b" * 64, total_bytes=100, duration_ms=60_000,
+            upload_status="COMPLETED", parse_status="QUEUED", upload_progress=100, parse_progress=0,
+        ))
+        session.add(SeriesParseJobRecord(
+            job_id=later_job_id, series_id=first_video.series_id, video_id=later_video_id,
+            pipeline_version="pipeline-v1", status="QUEUED", stage="QUEUED",
+            progress=0, attempt_count=0, max_attempts=3, lease_version=0,
+            available_at=now - timedelta(minutes=1),
+        ))
+
+    # The later upload finished first and has an older available_at.
+    first = jobs.claim_next("worker-a", lease_duration=timedelta(minutes=2), now=now)
+    assert first is not None and first.job_id == first_job_id
+    retry_at = now + timedelta(minutes=5)
+    assert jobs.mark_failed(first, error="temporary error", retry_at=retry_at, now=now)
+    assert jobs.claim_next(
+        "worker-b", lease_duration=timedelta(minutes=2), now=now + timedelta(seconds=1),
+    ) is None
+    retry = jobs.claim_next("worker-b", lease_duration=timedelta(minutes=2), now=retry_at)
+    assert retry is not None and retry.job_id == first_job_id
+    assert jobs.mark_succeeded(retry, now=retry_at)
+    later = jobs.claim_next("worker-c", lease_duration=timedelta(minutes=2), now=retry_at)
+    assert later is not None and later.job_id == later_job_id
+
+
+@pytest.mark.parametrize("earlier_status", ["FAILED", "RUNNING", "QUEUED"])
+def test_earlier_unfinished_video_without_due_job_blocks_later_parse(repository, earlier_status) -> None:
+    jobs, job_id, video_id, now = _seed_job(repository)
+    engine, _repository = repository
+    session_factory = create_session_factory(engine)
+    with session_factory.begin() as session:
+        candidate = session.get(VideoRecord, video_id)
+        candidate.episode_order = 2
+        candidate.upload_sequence = 2
+        # No due Job exists for this earlier video; ordering still applies.
+        session.add(VideoRecord(
+            video_id=str(uuid4()), series_id=candidate.series_id,
+            episode_order=1, upload_sequence=1,
+            original_filename="earlier.mp4", original_source_uri="artifact://test/earlier.mp4",
+            content_hash="b" * 64, total_bytes=100, duration_ms=60_000,
+            upload_status="COMPLETED", parse_status=earlier_status,
+            upload_progress=100, parse_progress=0,
+        ))
+    assert jobs.claim_next("worker", lease_duration=timedelta(minutes=2), now=now) is None
+    assert jobs.get(job_id).status == "QUEUED"
+
+
+@pytest.mark.parametrize("upload_status", [UploadSessionStatus.UPLOADING, UploadSessionStatus.COMPLETING])
+def test_earlier_upload_without_job_blocks_later_parse_until_expired(repository, upload_status) -> None:
+    jobs, job_id, video_id, now = _seed_job(repository)
+    engine, _repository = repository
+    session_factory = create_session_factory(engine)
+    with session_factory.begin() as session:
+        candidate = session.get(VideoRecord, video_id)
+        candidate.episode_order = 2
+        candidate.upload_sequence = 2
+        session.add(UploadSessionRecord(
+            upload_session_id=str(uuid4()), workspace_id="local-default", series_id=candidate.series_id,
+            episode_order=1, upload_sequence=1, original_filename="earlier.mp4",
+            media_type="video/mp4", total_size_bytes=100, preferred_segment_size_bytes=100,
+            total_segments=1, status=upload_status.value, idempotency_key="earlier-upload",
+            expires_at=now + timedelta(minutes=1),
+        ))
+    assert jobs.claim_next("worker", lease_duration=timedelta(minutes=2), now=now) is None
+    assert jobs.get(job_id).status == "QUEUED"
+    lease = jobs.claim_next(
+        "worker", lease_duration=timedelta(minutes=2), now=now + timedelta(minutes=1),
+    )
+    assert lease is not None and lease.job_id == job_id
 
 
 def test_checkpoint_cannot_move_backwards_or_change_identity(repository) -> None:

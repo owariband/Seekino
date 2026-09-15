@@ -38,6 +38,47 @@ from server.storage.artifact import LocalArtifactStore
 TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
 
 
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+def test_mysql_allocates_upload_order_under_concurrent_requests(tmp_path) -> None:
+    engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    session_factory = create_session_factory(engine)
+    series = LibraryService(LibraryRepository(session_factory)).create_series(
+        workspace_id="mysql-order", name=f"Concurrent Upload Order {uuid4()}",
+    )
+    uploads = UploadService(
+        UploadRepository(session_factory),
+        LocalArtifactStore(tmp_path / "artifacts", environment="test"),
+    )
+    barrier = Barrier(4)
+
+    def create(number: int):
+        barrier.wait()
+        return uploads.create_session(
+            workspace_id="mysql-order", series_id=series.series_id,
+            episode_order=999, upload_sequence=999,
+            original_filename=f"episode-999-{number}.mp4", media_type="video/mp4",
+            total_size_bytes=100, idempotency_key=f"upload-{number}",
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            uploads_created = list(executor.map(create, range(4)))
+        assert sorted(item.episode_order for item in uploads_created) == [1, 2, 3, 4]
+        assert all(item.episode_order == item.upload_sequence for item in uploads_created)
+        replay = uploads.create_session(
+            workspace_id="mysql-order", series_id=series.series_id,
+            original_filename="episode-999-0.mp4", media_type="video/mp4",
+            total_size_bytes=100, idempotency_key="upload-0",
+        )
+        assert replay.upload_session_id == uploads_created[0].upload_session_id
+        assert replay.episode_order == uploads_created[0].episode_order
+    finally:
+        with engine.begin() as connection:
+            connection.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id))
+        engine.dispose()
+
+
 @pytest.mark.skipif(
     not TEST_DATABASE_URL,
     reason="ANIVAG_TEST_DATABASE_URL is not configured",
@@ -341,7 +382,8 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         workspace_id="mysql-integration",
     )
     jobs = ParseJobRepository(session_factory)
-    now = datetime.now(UTC).replace(tzinfo=None)
+    # MySQL DATETIME stores whole seconds; claim after the completed uploads.
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
     barrier = Barrier(2)
 
     def claim(worker_id: str):
@@ -362,7 +404,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         claimed = [item for item in leases if item is not None]
         assert len(claimed) == 1
         first = claimed[0]
-        assert first.job_id in {completed.job_id, second_completed.job_id}
+        assert first.job_id == completed.job_id
         checkpoint = jobs.save_checkpoint(
             first,
             VideoChunkCheckpointState(
@@ -386,12 +428,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
             lease_duration=timedelta(minutes=2),
             now=now + timedelta(seconds=1),
         )
-        assert sibling is not None
-        assert sibling.job_id != first.job_id
-        assert jobs.mark_succeeded(
-            sibling,
-            now=now + timedelta(seconds=2),
-        )
+        assert sibling is None
         second = jobs.claim_next(
             "worker-d",
             lease_duration=timedelta(minutes=2),
@@ -402,6 +439,11 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         assert second.lease_version == first.lease_version + 1
         with pytest.raises(ParseJobLeaseLostError):
             jobs.save_checkpoint(first, checkpoint, now=retry_at)
+        assert jobs.mark_succeeded(second, now=retry_at)
+        sibling = jobs.claim_next(
+            "worker-e", lease_duration=timedelta(minutes=2), now=retry_at,
+        )
+        assert sibling is not None and sibling.job_id == second_completed.job_id
     finally:
         with engine.begin() as connection:
             connection.execute(

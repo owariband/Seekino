@@ -19,6 +19,7 @@ from ..model.job import (
     VideoChunkCheckpointStage,
 )
 from ..model.video import SeriesRecord, VideoRecord
+from ..model.upload import UploadSessionRecord, UploadSessionStatus
 from ..utils.time import utc_now_naive
 from ..utils.validation import require_nonempty_text
 from .index_sync import refresh_series_statuses
@@ -188,6 +189,8 @@ class ParseJobRepository:
         claimed_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
             active_job = aliased(SeriesParseJobRecord)
+            earlier_video = aliased(VideoRecord)
+            earlier_upload = aliased(UploadSessionRecord)
             row = session.execute(
                 select(SeriesParseJobRecord, VideoRecord, SeriesRecord)
                 .join(
@@ -216,8 +219,32 @@ class ParseJobRepository:
                             active_job.lease_expires_at > claimed_at,
                         )
                     ),
+                    # A later upload can finish first. Wait for every earlier
+                    # video to succeed, including jobs waiting for retry.
+                    ~exists(
+                        select(earlier_video.video_id).where(
+                            earlier_video.series_id == SeriesParseJobRecord.series_id,
+                            earlier_video.upload_sequence < VideoRecord.upload_sequence,
+                            earlier_video.parse_status.not_in(
+                                [ParseJobStatus.SUCCEEDED.value, "COMPLETED"]
+                            ),
+                        )
+                    ),
+                    # Earlier uploads have no Job until completion. Expired
+                    # sessions without a video are abandoned, not parse work.
+                    ~exists(
+                        select(earlier_upload.upload_session_id).where(
+                            earlier_upload.series_id == SeriesParseJobRecord.series_id,
+                            earlier_upload.upload_sequence < VideoRecord.upload_sequence,
+                            earlier_upload.status.in_(
+                                [UploadSessionStatus.UPLOADING.value, UploadSessionStatus.COMPLETING.value]
+                            ),
+                            earlier_upload.expires_at > claimed_at,
+                        )
+                    ),
                 )
                 .order_by(
+                    VideoRecord.upload_sequence,
                     SeriesParseJobRecord.available_at,
                     SeriesParseJobRecord.created_at,
                     SeriesParseJobRecord.job_id,
