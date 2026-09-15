@@ -14,6 +14,7 @@ import { listJobs, shouldRetryApiRequest } from "../../api/client";
 import type { ParseJobStatus, ParseJobView } from "../../api/contracts";
 import { episodeLabel, stageLabel } from "../../shared/format";
 import styles from "./tasks.module.css";
+import { ParseUsageDetails } from "./ParseUsageDetails";
 
 type Filter = "all" | "active" | "failed" | "completed";
 
@@ -157,6 +158,7 @@ export function TasksPage() {
                 <div className={styles.jobError}><CircleAlert size={15} /><div><strong>最近一次错误</strong><p>{job.lastError.message}</p></div></div>
               ) : null}
               {job.status === "RETRY_WAIT" ? <p className={styles.retryNote}><Clock3 size={13} />服务端会在可用时间自动重试，前端不会重复创建任务。</p> : null}
+              <ParseUsageDetails jobId={job.jobId} status={job.status} />
             </article>
           );
         })}

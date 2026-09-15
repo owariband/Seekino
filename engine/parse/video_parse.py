@@ -4,7 +4,6 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 
-from .video_chunk_parse import VideoChunkEvidenceParser
 from .schemas import (
     AnalysisWindow,
     ContextEvent,
@@ -16,6 +15,8 @@ from .schemas import (
     TranscriptAnalysis,
     VideoParseResult,
 )
+from .usage import parse_chunk_scope
+from .video_chunk_parse import VideoChunkEvidenceParser
 
 
 class ParsePipeline:
@@ -90,12 +91,13 @@ class ParsePipeline:
                 context_before,
                 series_bible=series_bible,
             )
-            evidence = self._parser.analyze(
-                str(window.media_path),
-                context=model_context,
-                duration_ms=window.analysis_duration_ms,
-                candidate_transcript=candidate_transcript,
-            )
+            with parse_chunk_scope(window.sequence_no):
+                evidence = self._parser.analyze(
+                    str(window.media_path),
+                    context=model_context,
+                    duration_ms=window.analysis_duration_ms,
+                    candidate_transcript=candidate_transcript,
+                )
             observed_events, owned_events = self._merge_window_events(
                 window,
                 evidence.events,

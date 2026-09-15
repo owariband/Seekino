@@ -162,6 +162,41 @@ export interface ParseJobView {
   updatedAt: UnixTimeMs;
 }
 
+export type ParseUsageCoverage = "not_started" | "recorded" | "partial" | "unknown";
+
+export interface ParseUsageRowVO {
+  provider: string;
+  model: string;
+  category: "parse" | "embedding";
+  operation: string;
+  callCount: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedInputTokens: number | null;
+  reasoningTokens: number | null;
+  totalTokens: number | null;
+  estimatedCostCny: string | null;
+  missingUsageCount: number;
+  unpricedCallCount: number;
+}
+
+export interface ParseUsageVO {
+  jobId: string;
+  videoId: string;
+  seriesId: string;
+  seriesName: string;
+  episodeOrder: number;
+  originalFilename: string;
+  currency: "CNY";
+  coverage: ParseUsageCoverage;
+  totalTokens: number | null;
+  estimatedCostCny: string | null;
+  callCount: number;
+  missingUsageCount: number;
+  unpricedCallCount: number;
+  items: ParseUsageRowVO[];
+}
+
 export interface VideoChunkCandidate {
   videoChunkId: string;
   rank: number;

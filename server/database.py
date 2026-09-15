@@ -137,6 +137,7 @@ def create_schema(engine: Engine) -> None:
     from .model import agent as _agent_models  # noqa: F401
     from .model import index_sync as _index_sync_models  # noqa: F401
     from .model import job as _job_models  # noqa: F401
+    from .model import parse_usage as _parse_usage_models  # noqa: F401
     from .model import upload as _upload_models  # noqa: F401
     from .model import video as _video_models  # noqa: F401
 

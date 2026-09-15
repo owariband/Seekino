@@ -9,6 +9,7 @@ import {
   createAgentConversation,
   getAgentConversation,
   getJob,
+  getParseUsage,
   getSeries,
   getUploadSession,
   jobEventsUrl,
@@ -25,6 +26,18 @@ import {
 } from "./client";
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe("parse usage route", () => {
+  it("reads usage for the exact task and preserves decimal costs and missing tokens", async () => {
+    const payload = { jobId: "job/id", currency: "CNY", totalTokens: null, estimatedCostCny: "0.00000004", items: [] };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const usage = await getParseUsage("job/id");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/jobs/usage/get?workspaceId=local-default&jobId=job%2Fid");
+    expect(usage.estimatedCostCny).toBe("0.00000004");
+    expect(usage.totalTokens).toBeNull();
+  });
+});
 
 describe("API retry contract", () => {
   it("does not retry domain and validation responses", () => {

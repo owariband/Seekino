@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from .schemas import (
     VideoChunkCheckpoint,
     VideoChunkParseResult,
 )
+from .usage import parse_chunk_scope
 from .video_chunk_parse import VideoChunkParser
 
 
@@ -192,13 +194,14 @@ def prepare_candidate_transcripts(
         return transcripts
 
     errors: list[tuple[AnalysisWindow, Exception]] = []
+
+    def transcribe(window: AnalysisWindow) -> TranscriptAnalysis:
+        with parse_chunk_scope(window.sequence_no):
+            return parser.transcribe(window.media_path, duration_ms=window.analysis_duration_ms)
+
     with ThreadPoolExecutor(max_workers=min(concurrency, len(pending))) as executor:
         futures = {
-            executor.submit(
-                parser.transcribe,
-                window.media_path,
-                duration_ms=window.analysis_duration_ms,
-            ): window
+            executor.submit(copy_context().run, transcribe, window): window
             for window in pending
         }
         for future in as_completed(futures):

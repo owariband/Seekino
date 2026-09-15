@@ -14,6 +14,7 @@ from openai import APIError, OpenAI
 from pydantic import BaseModel
 
 from .sse_proxy import request_sse_json, request_sse_text
+from .usage import track_model_call
 
 _MAX_ARK_INLINE_MEDIA_BYTES = 45 * 1024 * 1024
 _MAX_DEEPSEEK_INLINE_IMAGE_BYTES = 32 * 1024 * 1024
@@ -162,11 +163,12 @@ class ArkMultimodalModel:
             request["max_output_tokens"] = self.max_output_tokens
         client = self._client or self._new_client()
         try:
-            payload = request_sse_json(client.responses, **request)
+            with track_model_call(provider=self.provider_name, model=self.model_name, operation=schema_name) as call:
+                payload = request_sse_json(client.responses, usage_call=call, **request)
+                return result_type.model_validate(payload)
         finally:
             if self._client is None:
                 client.close()
-        return result_type.model_validate(payload)
 
     def _new_client(self) -> Ark:
         # Ark documents its client as thread unsafe: never share one across Kicks.
@@ -185,7 +187,8 @@ class ArkMultimodalModel:
             request["max_output_tokens"] = self.max_output_tokens
         client = self._client or self._new_client()
         try:
-            yield from request_sse_text(client.responses, **request)
+            with track_model_call(provider=self.provider_name, model=self.model_name, operation="text_generation") as call:
+                yield from request_sse_text(client.responses, usage_call=call, **request)
         finally:
             if self._client is None:
                 client.close()
@@ -274,55 +277,61 @@ class DeepSeekMultimodalModel:
                 }
             )
 
-        try:
-            response = self._client.responses.create(
-                model=self.model_name,
-                input=[{"role": "user", "content": content}],
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": schema_name,
-                        "schema": _inline_schema_refs(
-                            result_type.model_json_schema()
-                        ),
-                        "strict": True,
-                    }
-                },
-                reasoning={"effort": self.reasoning_effort},
-                temperature=0,
-                max_output_tokens=self.max_output_tokens,
-            )
-        except APIError as error:
-            raise DeepSeekModelError(
-                f"DeepSeek request failed for model {self.model_name}: {error}"
-            ) from error
+        schema = _inline_schema_refs(result_type.model_json_schema())
+        with track_model_call(provider=self.provider_name, model=self.model_name, operation=schema_name) as call:
+            try:
+                response = self._client.responses.create(
+                    model=self.model_name,
+                    input=[{"role": "user", "content": content}],
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": schema_name,
+                            "schema": schema,
+                            "strict": True,
+                        }
+                    },
+                    reasoning={"effort": self.reasoning_effort},
+                    temperature=0,
+                    max_output_tokens=self.max_output_tokens,
+                )
+            except APIError as error:
+                call.capture_response(error)
+                raise DeepSeekModelError(
+                    f"DeepSeek request failed for model {self.model_name}: {error}"
+                ) from error
 
-        if getattr(response, "status", None) == "incomplete":
-            raise DeepSeekModelError(
-                "DeepSeek exhausted max_output_tokens before completing the response"
-            )
-        output_text = getattr(response, "output_text", None)
-        if not isinstance(output_text, str) or not output_text.strip():
-            raise DeepSeekModelError("DeepSeek returned no output text")
+            call.capture_response(response)
+            if getattr(response, "status", None) == "incomplete":
+                raise DeepSeekModelError(
+                    "DeepSeek exhausted max_output_tokens before completing the response"
+                )
+            if getattr(response, "status", None) not in {None, "completed"}:
+                raise DeepSeekModelError("DeepSeek response did not complete")
+            output_text = getattr(response, "output_text", None)
+            if not isinstance(output_text, str) or not output_text.strip():
+                raise DeepSeekModelError("DeepSeek returned no output text")
 
-        try:
-            return result_type.model_validate_json(output_text)
-        except (ValueError, TypeError) as error:
-            raise DeepSeekModelError(
-                f"DeepSeek output does not match schema {schema_name}"
-            ) from error
+            try:
+                return result_type.model_validate_json(output_text)
+            except (ValueError, TypeError) as error:
+                raise DeepSeekModelError(
+                    f"DeepSeek output does not match schema {schema_name}"
+                ) from error
 
     def stream_text(self, inputs: Sequence[MultimodalInput]) -> Iterator[str]:
         content = _text_only_inputs(inputs, input_type="input_text")
         try:
-            yield from request_sse_text(
-                self._client.responses,
-                model=self.model_name,
-                input=[{"role": "user", "content": content}],
-                reasoning={"effort": self.reasoning_effort},
-                temperature=0,
-                max_output_tokens=self.max_output_tokens,
-            )
+            with track_model_call(provider=self.provider_name, model=self.model_name, operation="text_generation") as call:
+                yield from request_sse_text(
+                    self._client.responses,
+                    usage_call=call,
+                    model=self.model_name,
+                    input=[{"role": "user", "content": content}],
+                    reasoning={"effort": self.reasoning_effort},
+                    temperature=0,
+                    max_output_tokens=self.max_output_tokens,
+                )
         except APIError as error:
             raise DeepSeekModelError(
                 f"DeepSeek request failed for model {self.model_name}: {error}"
@@ -389,55 +398,56 @@ class OllamaMultimodalModel:
                 }
             )
 
-        try:
-            response = self._client.post(
-                f"{self.base_url}/v1/chat/completions",
-                json={
-                    "model": self.model_name,
-                    "messages": [{"role": "user", "content": content}],
-                    "response_format": {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": schema_name,
-                            "strict": True,
-                            "schema": _inline_schema_refs(
-                                result_type.model_json_schema()
-                            ),
+        schema = _inline_schema_refs(result_type.model_json_schema())
+        with track_model_call(provider=self.provider_name, model=self.model_name, operation=schema_name) as call:
+            try:
+                response = self._client.post(
+                    f"{self.base_url}/v1/chat/completions",
+                    json={
+                        "model": self.model_name,
+                        "messages": [{"role": "user", "content": content}],
+                        "response_format": {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": schema_name,
+                                "strict": True,
+                                "schema": schema,
+                            },
                         },
+                        "temperature": 0,
+                        "max_tokens": self.max_output_tokens,
+                        "stream": False,
                     },
-                    "temperature": 0,
-                    "max_tokens": self.max_output_tokens,
-                    "stream": False,
-                },
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as error:
-            raise OllamaModelError(
-                f"Ollama request failed for model {self.model_name}: {error}"
-            ) from error
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as error:
+                raise OllamaModelError(
+                    f"Ollama request failed for model {self.model_name}: {error}"
+                ) from error
 
-        try:
-            response_payload = response.json()
-            choice = response_payload["choices"][0]
-            output_text = choice["message"]["content"]
-            finish_reason = choice.get("finish_reason")
-        except (ValueError, KeyError, IndexError, TypeError) as error:
-            raise OllamaModelError(
-                "Ollama returned an invalid chat completion envelope"
-            ) from error
-        if finish_reason == "length":
-            raise OllamaModelError(
-                "Ollama exhausted max_output_tokens before completing the response"
-            )
-        if not isinstance(output_text, str) or not output_text.strip():
-            raise OllamaModelError("Ollama returned no output text")
+            try:
+                response_payload = response.json()
+                call.capture_response(response_payload)
+                choice = response_payload["choices"][0]
+                output_text = choice["message"]["content"]
+                finish_reason = choice.get("finish_reason")
+            except (ValueError, KeyError, IndexError, TypeError) as error:
+                raise OllamaModelError(
+                    "Ollama returned an invalid chat completion envelope"
+                ) from error
+            if finish_reason == "length":
+                raise OllamaModelError(
+                    "Ollama exhausted max_output_tokens before completing the response"
+                )
+            if not isinstance(output_text, str) or not output_text.strip():
+                raise OllamaModelError("Ollama returned no output text")
 
-        try:
-            return result_type.model_validate_json(output_text)
-        except (ValueError, TypeError) as error:
-            raise OllamaModelError(
-                f"Ollama output does not match schema {schema_name}"
-            ) from error
+            try:
+                return result_type.model_validate_json(output_text)
+            except (ValueError, TypeError) as error:
+                raise OllamaModelError(
+                    f"Ollama output does not match schema {schema_name}"
+                ) from error
 
     def stream_text(self, inputs: Sequence[MultimodalInput]) -> Iterator[str]:
         yield from _stream_chat_completion(
@@ -527,61 +537,62 @@ class LlamaCppMultimodalModel:
                 }
             )
 
-        try:
-            response = self._client.post(
-                f"{self.base_url}/v1/chat/completions",
-                json={
-                    "model": self.model_name,
-                    "messages": [{"role": "user", "content": content}],
-                    "response_format": {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": schema_name,
-                            "strict": True,
-                            "schema": _inline_schema_refs(
-                                result_type.model_json_schema()
-                            ),
+        schema = _inline_schema_refs(result_type.model_json_schema())
+        with track_model_call(provider=self.provider_name, model=self.model_name, operation=schema_name) as call:
+            try:
+                response = self._client.post(
+                    f"{self.base_url}/v1/chat/completions",
+                    json={
+                        "model": self.model_name,
+                        "messages": [{"role": "user", "content": content}],
+                        "response_format": {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": schema_name,
+                                "strict": True,
+                                "schema": schema,
+                            },
                         },
+                        "temperature": 0,
+                        "max_tokens": self.max_output_tokens,
+                        "stream": False,
                     },
-                    "temperature": 0,
-                    "max_tokens": self.max_output_tokens,
-                    "stream": False,
-                },
-            )
-        except httpx.HTTPError as error:
-            raise LlamaCppModelError(
-                f"llama.cpp request failed for model {self.model_name}: {error}"
-            ) from error
+                )
+            except httpx.HTTPError as error:
+                raise LlamaCppModelError(
+                    f"llama.cpp request failed for model {self.model_name}: {error}"
+                ) from error
 
-        if not response.is_success:
-            detail = _llama_cpp_error_detail(response)
-            raise LlamaCppModelError(
-                f"llama.cpp request failed for model {self.model_name}: "
-                f"HTTP {response.status_code}; server detail: {detail}"
-            )
+            if not response.is_success:
+                detail = _llama_cpp_error_detail(response)
+                raise LlamaCppModelError(
+                    f"llama.cpp request failed for model {self.model_name}: "
+                    f"HTTP {response.status_code}; server detail: {detail}"
+                )
 
-        try:
-            response_payload = response.json()
-            choice = response_payload["choices"][0]
-            output_text = choice["message"]["content"]
-            finish_reason = choice.get("finish_reason")
-        except (ValueError, KeyError, IndexError, TypeError) as error:
-            raise LlamaCppModelError(
-                "llama.cpp returned an invalid chat completion envelope"
-            ) from error
-        if finish_reason == "length":
-            raise LlamaCppModelError(
-                "llama.cpp exhausted max_output_tokens before completing the response"
-            )
-        if not isinstance(output_text, str) or not output_text.strip():
-            raise LlamaCppModelError("llama.cpp returned no output text")
+            try:
+                response_payload = response.json()
+                call.capture_response(response_payload)
+                choice = response_payload["choices"][0]
+                output_text = choice["message"]["content"]
+                finish_reason = choice.get("finish_reason")
+            except (ValueError, KeyError, IndexError, TypeError) as error:
+                raise LlamaCppModelError(
+                    "llama.cpp returned an invalid chat completion envelope"
+                ) from error
+            if finish_reason == "length":
+                raise LlamaCppModelError(
+                    "llama.cpp exhausted max_output_tokens before completing the response"
+                )
+            if not isinstance(output_text, str) or not output_text.strip():
+                raise LlamaCppModelError("llama.cpp returned no output text")
 
-        try:
-            return result_type.model_validate_json(output_text)
-        except (ValueError, TypeError) as error:
-            raise LlamaCppModelError(
-                f"llama.cpp output does not match schema {schema_name}"
-            ) from error
+            try:
+                return result_type.model_validate_json(output_text)
+            except (ValueError, TypeError) as error:
+                raise LlamaCppModelError(
+                    f"llama.cpp output does not match schema {schema_name}"
+                ) from error
 
     def stream_text(self, inputs: Sequence[MultimodalInput]) -> Iterator[str]:
         yield from _stream_chat_completion(

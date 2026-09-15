@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
+
+from .usage import ModelCallTracker, track_model_call
 
 _OUTPUT_CONTENT_FILTER_CODES = frozenset(
     {
@@ -42,45 +45,62 @@ class ContentFilterError(SSEProxyError):
     """The provider explicitly rejected generated output via content policy."""
 
 
-def request_sse_json(responses: Any, **request: Any) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
-    for _ in _request_sse_text(
-        responses, allow_terminal_text=True, metadata=metadata, **request
-    ):
-        pass
-    output_text = metadata["output_text"]
-    try:
-        payload = json.loads(output_text)
-    except json.JSONDecodeError as error:
-        raise SSEProxyError(
-            f"Ark Responses SSE returned invalid JSON at char {error.pos}",
-            response_id=metadata.get("response_id"),
-            partial_output_chars=len(output_text),
-        ) from error
-    if not isinstance(payload, dict):
-        raise SSEProxyError(
-            "Ark Responses SSE JSON root must be an object",
-            response_id=metadata.get("response_id"),
-            partial_output_chars=len(output_text),
-        )
-    return payload
+def request_sse_json(
+    responses: Any, *, usage_call: ModelCallTracker | None = None, **request: Any
+) -> dict[str, Any]:
+    with _usage_scope(usage_call, request) as call:
+        metadata: dict[str, Any] = {}
+        for _ in _request_sse_text(
+            responses, allow_terminal_text=True, metadata=metadata, usage_call=call, **request
+        ):
+            pass
+        output_text = metadata["output_text"]
+        try:
+            payload = json.loads(output_text)
+        except json.JSONDecodeError as error:
+            raise SSEProxyError(
+                f"Ark Responses SSE returned invalid JSON at char {error.pos}",
+                response_id=metadata.get("response_id"),
+                partial_output_chars=len(output_text),
+            ) from error
+        if not isinstance(payload, dict):
+            raise SSEProxyError(
+                "Ark Responses SSE JSON root must be an object",
+                response_id=metadata.get("response_id"),
+                partial_output_chars=len(output_text),
+            )
+        return payload
 
 
-def request_sse_text(responses: Any, **request: Any) -> Iterator[str]:
+def request_sse_text(
+    responses: Any, *, usage_call: ModelCallTracker | None = None, **request: Any
+) -> Iterator[str]:
     """Yield original provider deltas; exhaustion means completion was verified."""
-    yield from _request_sse_text(responses, allow_terminal_text=False, **request)
+    with _usage_scope(usage_call, request) as call:
+        yield from _request_sse_text(responses, allow_terminal_text=False, usage_call=call, **request)
+
+
+def _usage_scope(
+    usage_call: ModelCallTracker | None, request: dict[str, Any]
+) -> AbstractContextManager[ModelCallTracker]:
+    if usage_call is not None:
+        return nullcontext(usage_call)
+    operation = request.get("text", {}).get("format", {}).get("name", "text_generation")
+    return track_model_call(provider="ark", model=request.get("model", "unknown"), operation=operation)
 
 
 def _request_sse_text(
     responses: Any,
     *,
     allow_terminal_text: bool,
+    usage_call: ModelCallTracker,
     metadata: dict[str, Any] | None = None,
     **request: Any,
 ) -> Iterator[str]:
     try:
         stream = responses.create(stream=True, **request)
     except Exception as error:
+        usage_call.capture_response(error)
         code = getattr(error, "code", None)
         if (
             getattr(error, "status_code", None) == 400
@@ -92,6 +112,7 @@ def _request_sse_text(
                 response_id=getattr(error, "request_id", None),
             ) from error
         raise
+    usage_call.capture_response(getattr(stream, "response", None))
     text_parts: dict[tuple[int, str, int], list[str]] = {}
     emitted_parts: list[str] = []
     done_texts: dict[tuple[int, str, int], str] = {}
@@ -101,7 +122,9 @@ def _request_sse_text(
 
     try:
         for event in stream:
+            response = getattr(event, "response", None)
             event_type = getattr(event, "type", None)
+            usage_call.capture_response(response, include_usage=event_type in {"response.completed", "response.failed", "response.incomplete"})
             sequence = getattr(event, "sequence_number", None)
             if isinstance(sequence, int):
                 if sequence <= last_sequence:
@@ -112,7 +135,6 @@ def _request_sse_text(
                     )
                 last_sequence = sequence
 
-            response = getattr(event, "response", None)
             response_id = getattr(response, "id", None) or response_id
             if metadata is not None:
                 metadata["response_id"] = response_id

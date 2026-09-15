@@ -8,6 +8,7 @@ import type {
   EvidenceReference,
   Page,
   ParseJobView,
+  ParseUsageVO,
   SeriesCreateRequest,
   SeriesView,
   SeriesSummary,
@@ -151,6 +152,12 @@ export function getJob(jobId: string): Promise<ParseJobView> {
   return requestJson(
     `/api/jobs/get?jobId=${encodeURIComponent(jobId)}` +
       `&workspaceId=${WORKSPACE_QUERY}`,
+  );
+}
+
+export function getParseUsage(jobId: string): Promise<ParseUsageVO> {
+  return requestJson(
+    `/api/jobs/usage/get?workspaceId=${WORKSPACE_QUERY}&jobId=${encodeURIComponent(jobId)}`,
   );
 }
 

@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ..api import jobs
+from ..api import jobs, parse_usage
 from ..model.vo.commonVO import Page
 from ..model.vo.jobVO import ParseJobView, JobSummary
+from ..model.vo.parseUsageVO import ParseUsageVO
 
 router = APIRouter()
+router.add_api_route(
+    "/api/jobs/usage/get",
+    parse_usage.get_parse_usage,
+    methods=["GET"],
+    response_model=ParseUsageVO,
+)
 router.add_api_route(
     "/api/jobs/get",
     jobs.get_job,

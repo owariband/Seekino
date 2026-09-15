@@ -11,11 +11,17 @@ from qdrant_client import QdrantClient
 
 from ..config import ServerSettings
 from ..config.video_processing import VideoProcessingConfig
+from ..config.usage import load_model_pricing
 from ..database import create_database_engine, create_schema, create_session_factory
 from ..repository.index_sync import IndexSyncRepository
 from ..repository.job import ParseJobRepository
+from ..repository.library import LibraryRepository
+from ..repository.parse_usage import ParseUsageRepository
 from ..repository.video import VideoRepository
 from ..service.index_sync import IndexSyncService
+from ..service.job import ParseJobService
+from ..service.library import LibraryService
+from ..service.parse_usage import ParseUsageService
 from ..service.video_processing import VideoProcessingService
 from ..storage.artifact import LocalArtifactStore
 from ..storage.qdrant import QdrantVideoChunkStore
@@ -52,6 +58,11 @@ def main() -> None:
         create_schema(engine)
     session_factory = create_session_factory(engine)
     jobs = ParseJobRepository(session_factory)
+    parse_usage = ParseUsageService(
+        ParseUsageRepository(session_factory),
+        ParseJobService(jobs, LibraryService(LibraryRepository(session_factory))),
+        load_model_pricing(settings.model_pricing_path),
+    )
     artifact_store = LocalArtifactStore(
         settings.artifact_root,
         environment=settings.environment,
@@ -97,6 +108,7 @@ def main() -> None:
                 on_log=_log,
             ),
             embedder,
+            parse_usage=parse_usage,
             config=VideoProcessingConfig(
                 embedding_dimensions=settings.text_vector_dimensions,
                 canonical_max_height=settings.parse.max_height,

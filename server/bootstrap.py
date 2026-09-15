@@ -13,12 +13,14 @@ from qdrant_client import QdrantClient
 from sqlalchemy import Engine
 
 from .config import ServerSettings
+from .config.usage import load_model_pricing
 from .agent.runtime import AgentRuntime
 from .database import create_database_engine, create_session_factory
 from .repository.agent import AgentRepository
 from .repository.index_sync import IndexSyncRepository
 from .repository.job import ParseJobRepository
 from .repository.library import LibraryRepository
+from .repository.parse_usage import ParseUsageRepository
 from .repository.upload import UploadRepository
 from .repository.video import VideoRepository
 from .service.agent_chat import AgentChatService
@@ -26,6 +28,7 @@ from .service.index_sync import IndexSyncService
 from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
+from .service.parse_usage import ParseUsageService
 from .service.upload import UploadService
 from .service.video_retrieval import VideoRetrievalService
 from .storage.artifact import LocalArtifactStore
@@ -43,6 +46,7 @@ class ApplicationServices:
     index_sync: IndexSyncService
     engine: Engine | None = None
     qdrant_client: Any | None = None
+    parse_usage: ParseUsageService | None = None
 
     def close(self) -> None:
         try:
@@ -74,6 +78,10 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         config=settings.upload,
     )
     jobs = ParseJobService(ParseJobRepository(session_factory), library)
+    parse_usage = ParseUsageService(
+        ParseUsageRepository(session_factory), jobs,
+        load_model_pricing(settings.model_pricing_path),
+    )
     video_repository = VideoRepository(session_factory)
     media = MediaService(library, artifact_store, video_repository)
 
@@ -162,6 +170,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         index_sync=index_sync,
         engine=engine,
         qdrant_client=qdrant_client,
+        parse_usage=parse_usage,
     )
 
 

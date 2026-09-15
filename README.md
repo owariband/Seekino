@@ -16,7 +16,7 @@ AniVAG 是一个面向事件级视频检索与时间证据定位的多模态视�
 
 ## 快速开始
 
-仓库根目录是运行配置的唯一入口：`config.yaml` 保存可提交的模型默认值，`.env.local` 保存 API Key 和个人 Endpoint，不进入 Git。
+仓库根目录是运行配置的唯一入口：`config.yaml` 保存可提交的模型默认值，`config/model-pricing.yaml` 保存 Parse 模型人民币单价，`.env.local` 保存 API Key 和个人 Endpoint，不进入 Git。
 
 ```bash
 cp .env.example .env.local
@@ -37,6 +37,7 @@ AniVAG/
 ├── pyproject.toml                    # 统一依赖与测试配置；package = false
 ├── uv.lock                           # 全仓唯一依赖锁
 ├── config.yaml                       # 可提交的模型默认配置
+├── config/model-pricing.yaml          # Parse 模型计价属性与价格版本，人民币
 ├── server/                           # 工程编排、事实源、持久化与外部接口
 ├── engine/                           # VideoChunk 解析与检索算法
 ├── gateway/                          # 模型供应商调用与数据归一化
@@ -73,5 +74,7 @@ uv run python -m server.mq --once
 ## 上游归属
 
 前端请求与公开返回模型见 [UI DTO / VO 契约](docs/api-ui-views.md)，包含逐消息 Series 范围、分页 / SSE、媒体读取与旧数据库迁移说明。
+
+解析任务的模型 Token、视频与职责归属、人民币预估费用及查询接口见 [Parse 模型消耗统计](docs/parse-model-usage.md)。任务页展开“模型消耗”查看；价格配置变更只影响后续调用。
 
 `engines/VideoRAG` 来源于 [Slimzeo/VideoRAG](https://github.com/Slimzeo/VideoRAG)。AniVAG 会保留上游许可证与提交历史，并明确区分 Adapter 集成、独立复现和动画领域改造三类贡献。

@@ -46,6 +46,7 @@ class ServerSettings:
     video_embedding_model: str | None = None
     video_embedding_fps: float | None = None
     agent_query_model: str | None = None
+    model_pricing_path: Path | None = None
 
     @classmethod
     def from_environment(cls) -> "ServerSettings":
@@ -116,6 +117,7 @@ class ServerSettings:
             if item.strip()
         )
         model_config = os.getenv("ANIVAG_MODEL_CONFIG")
+        model_pricing_config = _optional_environment("ANIVAG_MODEL_PRICING_CONFIG")
         agent_default_top_k = _environment_int(
             "ANIVAG_AGENT_DEFAULT_TOP_K", agent_defaults.default_top_k
         )
@@ -239,6 +241,9 @@ class ServerSettings:
             allowed_origins=origins,
             model_config_path=(
                 Path(model_config).expanduser() if model_config else None
+            ),
+            model_pricing_path=(
+                Path(model_pricing_config).expanduser() if model_pricing_config else None
             ),
             sse=SSEConfig(
                 poll_interval_seconds=_environment_float(

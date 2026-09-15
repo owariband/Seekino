@@ -239,6 +239,40 @@
 .jobError p { margin: 2px 0 0; color: var(--ink-soft); }
 .retryNote { align-items: center; color: var(--amber); }
 
+.usageDetails {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.usageDetails summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--teal-deep);
+  font-size: .68rem;
+  cursor: pointer;
+}
+
+.usageDetails summary span { margin-left: auto; color: var(--ink-faint); font-size: .6rem; }
+.usageChevron { transition: transform .15s ease; }
+.usageDetails[open] .usageChevron { transform: rotate(180deg); }
+.usageBody { margin-top: 18px; }
+.usageBody > p { font-size: .65rem; }
+.usageSource { color: var(--ink-soft); }
+.usageTotals { display: flex; flex-wrap: wrap; gap: 24px; margin: 18px 0; }
+.usageTotals div { display: grid; gap: 6px; }
+.usageTotals dt { color: var(--ink-faint); font-size: .61rem; }
+.usageTotals dd { margin: 0; color: var(--teal-deep); font: 500 .85rem/1.3 var(--mono); }
+.usageTableScroll { overflow-x: auto; }
+.usageTable { width: 100%; border-collapse: collapse; text-align: left; font-size: .61rem; }
+.usageTable caption { padding-bottom: 12px; color: var(--ink-faint); text-align: left; }
+.usageTable th, .usageTable td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.usageTable thead { color: var(--ink-faint); }
+.usageTable tbody { color: var(--ink-soft); }
+.usageTable small { display: block; margin-top: 4px; color: var(--ink-faint); font-size: .57rem; font-weight: 400; }
+.usageNotice { color: var(--ink-faint); line-height: 1.7; }
+
 .empty {
   display: grid;
   justify-items: center;

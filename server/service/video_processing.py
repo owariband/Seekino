@@ -4,12 +4,14 @@ import hashlib
 import json
 import math
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Protocol
 
 from engine.parse.analysis_windows import materialize_canonical_chunks
 from engine.parse.runtime import EngineVideoParseRuntime
 from engine.parse.schemas import AnalysisWindow, VideoChunkParseResult
+from engine.parse.usage import parse_chunk_scope
 from engine.retrieval.video_retrieval import (
     VideoChunkRetrievalDocument,
     build_video_chunk_retrieval_documents,
@@ -29,6 +31,7 @@ from ..repository.video import VideoRepository
 from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
 from .index_sync import IndexSyncService
 from .parse_import import prepare_completed_video_parse_import
+from .parse_usage import ParseUsageService
 
 # Stage weights describe work completed, not elapsed time or an ETA.
 _PREPARING_PROGRESS = 2
@@ -58,6 +61,7 @@ class VideoProcessingService:
         embedder: MultimodalEmbedder,
         *,
         config: VideoProcessingConfig | None = None,
+        parse_usage: ParseUsageService | None = None,
     ) -> None:
         self._jobs = jobs
         self._videos = videos
@@ -66,8 +70,14 @@ class VideoProcessingService:
         self._parser = parser
         self._embedder = embedder
         self._config = config or VideoProcessingConfig()
+        self._parse_usage = parse_usage
 
     def process(self, lease: ParseJobLease) -> list[str]:
+        capture = self._parse_usage.capture(lease) if self._parse_usage else nullcontext()
+        with capture:
+            return self._process(lease)
+
+    def _process(self, lease: ParseJobLease) -> list[str]:
         source_video = self._verified_source(lease)
         work_directory = self._artifacts.work_directory(lease.job_id)
         checkpoints = {
@@ -268,6 +278,7 @@ class VideoProcessingService:
                 path,
                 video_chunk_id=derive_video_chunk_id(lease.video_id, sequence_no),
                 modality="text",
+                sequence_no=sequence_no,
                 input_hash=input_hash,
                 create=lambda: self._embedder.embed_text(document.text),
             )
@@ -310,6 +321,7 @@ class VideoProcessingService:
                 path,
                 video_chunk_id=derive_video_chunk_id(lease.video_id, sequence_no),
                 modality="video",
+                sequence_no=sequence_no,
                 input_hash=input_hash,
                 create=lambda media=media: self._embedder.embed_video(media),
             )
@@ -337,6 +349,7 @@ class VideoProcessingService:
         *,
         video_chunk_id: str,
         modality: str,
+        sequence_no: int,
         input_hash: str,
         create: Callable[[], EmbeddingResult],
     ) -> PreparedEmbedding:
@@ -351,7 +364,8 @@ class VideoProcessingService:
                 self._validate_embedding(result, modality)
                 return _prepared_embedding(result, input_hash, video_chunk_id)
 
-        result = create()
+        with parse_chunk_scope(sequence_no, category="embedding"):
+            result = create()
         self._validate_embedding(result, modality)
         _write_json_atomic(
             path,

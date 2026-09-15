@@ -1,0 +1,88 @@
+# 人民币，常规在线推理；每百万 Token。仅用于预估，不含赠金、折扣及资源包抵扣。
+# 方舟表头以“千 token”表示输入档位；这里转为整数，并把含上界改为不含上界。
+# 方舟价格从本次核对日期起使用，不据此补算未记录的历史调用。
+version: 1
+currency: CNY
+unit: 1000000
+models:
+  - provider: ark
+    model: doubao-seed-2-0-lite-260428
+    category: parse
+    source_url: https://www.volcengine.com/docs/82379/1544106?lang=zh
+    checked_at: '2026-09-15T11:27:39Z'
+    effective_from: '2026-09-15T00:00:00Z'
+    tiers:
+      - min_input_tokens: 0
+        max_input_tokens: 32001
+        input_cny_per_unit: '0.6'
+        output_cny_per_unit: '3.6'
+        cached_input_cny_per_unit: '0.12'
+        audio_input_cny_per_unit: '9.0'
+        cached_audio_input_cny_per_unit: '1.8'
+      - min_input_tokens: 32001
+        max_input_tokens: 128001
+        input_cny_per_unit: '0.9'
+        output_cny_per_unit: '5.4'
+        cached_input_cny_per_unit: '0.18'
+        audio_input_cny_per_unit: '13.5'
+        cached_audio_input_cny_per_unit: '2.7'
+      - min_input_tokens: 128001
+        max_input_tokens: 256001
+        input_cny_per_unit: '1.8'
+        output_cny_per_unit: '10.8'
+        cached_input_cny_per_unit: '0.36'
+        audio_input_cny_per_unit: '27.0'
+        cached_audio_input_cny_per_unit: '5.4'
+
+  - provider: ark
+    model: doubao-seed-2-1-pro-260628
+    category: parse
+    source_url: https://www.volcengine.com/docs/82379/1544106?lang=zh
+    checked_at: '2026-09-15T11:27:39Z'
+    effective_from: '2026-09-15T00:00:00Z'
+    tiers:
+      - min_input_tokens: 0
+        max_input_tokens: 256001
+        input_cny_per_unit: '6.0'
+        output_cny_per_unit: '30.0'
+        cached_input_cny_per_unit: '1.2'
+
+  - provider: ark
+    model: doubao-embedding-vision-251215
+    category: embedding
+    source_url: https://www.volcengine.com/docs/82379/1544106?lang=zh
+    checked_at: '2026-09-15T11:27:39Z'
+    effective_from: '2026-09-15T00:00:00Z'
+    tiers:
+      - min_input_tokens: 0
+        max_input_tokens: null
+        text_input_cny_per_unit: '0.7'
+        image_input_cny_per_unit: '1.8'
+
+  - provider: deepseek
+    model: deepseek-flash
+    category: parse
+    source_url: https://api-docs.deepseek.com/zh-cn/quick_start/pricing/
+    checked_at: '2026-09-15T11:27:39Z'
+    effective_from: '2026-09-10T04:00:00Z'
+    # 基础档为谷价；北京时间工作日 09–12、14–18 使用峰价。
+    tiers:
+      - min_input_tokens: 0
+        max_input_tokens: null
+        input_cny_per_unit: '1.0'
+        output_cny_per_unit: '4.0'
+        cached_input_cny_per_unit: '0.02'
+    time_bands:
+      - name: peak
+        weekdays: [1, 2, 3, 4, 5]
+        ranges:
+          - start: '09:00'
+            end: '12:00'
+          - start: '14:00'
+            end: '18:00'
+        tiers:
+          - min_input_tokens: 0
+            max_input_tokens: null
+            input_cny_per_unit: '2.0'
+            output_cny_per_unit: '8.0'
+            cached_input_cny_per_unit: '0.04'

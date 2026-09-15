@@ -7,6 +7,7 @@ from arkruntime import Ark
 
 from ._video_file import read_video_file
 from .schemas import EmbeddingResult
+from .usage import track_model_call
 
 _MAX_INLINE_VIDEO_BYTES = 45 * 1024 * 1024
 _SUPPORTED_VIDEO_MIME_TYPES = {
@@ -33,7 +34,7 @@ class DoubaoMultimodalEmbedder:
         self.model_name = model
         self.output_dimensionality = output_dimensionality
         self.fps = fps
-        self._client = client or Ark.volc()
+        self._client = client or Ark.volc(max_retries=0)
 
     def embed_video(self, video_path: str | Path) -> EmbeddingResult:
         path, video_bytes, mime_type = read_video_file(video_path)
@@ -51,31 +52,35 @@ class DoubaoMultimodalEmbedder:
             f"data:{mime_type};base64,"
             f"{base64.b64encode(video_bytes).decode('ascii')}"
         )
-        response = self._client.multimodal_embeddings.create(
-            model=self.model_name,
-            input=[
-                {
-                    "type": "video_url",
-                    "video_url": {"url": video_url, "fps": self.fps},
-                }
-            ],
-            dimensions=self.output_dimensionality,
-            encoding_format="float",
-        )
-        return self._to_result(response, modality="video")
+        with track_model_call(provider="ark", model=self.model_name, operation="video_embedding") as call:
+            response = self._client.multimodal_embeddings.create(
+                model=self.model_name,
+                input=[
+                    {
+                        "type": "video_url",
+                        "video_url": {"url": video_url, "fps": self.fps},
+                    }
+                ],
+                dimensions=self.output_dimensionality,
+                encoding_format="float",
+            )
+            call.capture_response(response)
+            return self._to_result(response, modality="video")
 
     def embed_text(self, text: str) -> EmbeddingResult:
         normalized_text = text.strip()
         if not normalized_text:
             raise ValueError("text must not be empty")
 
-        response = self._client.multimodal_embeddings.create(
-            model=self.model_name,
-            input=[{"type": "text", "text": normalized_text}],
-            dimensions=self.output_dimensionality,
-            encoding_format="float",
-        )
-        return self._to_result(response, modality="text")
+        with track_model_call(provider="ark", model=self.model_name, operation="text_embedding") as call:
+            response = self._client.multimodal_embeddings.create(
+                model=self.model_name,
+                input=[{"type": "text", "text": normalized_text}],
+                dimensions=self.output_dimensionality,
+                encoding_format="float",
+            )
+            call.capture_response(response)
+            return self._to_result(response, modality="text")
 
     def embed_query(self, query: str) -> EmbeddingResult:
         """Backward-compatible query-specific alias for text embedding."""

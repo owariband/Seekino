@@ -14,6 +14,7 @@ VO 按 `commonVO.py`、`libraryVO.py`、`uploadVO.py`、`jobVO.py`、`agentVO.py
 | library | Character、SeriesSummary、SeriesDetail、VideoSummary、LastSearchView | 视频 ready / failed 数量、待完成上传、最近检索、视频索引与播放状态、实际 latestJobId |
 | upload | UploadSessionCreateRequest、UploadSessionView、UploadSegmentView、UploadCompleteView | 完整上传确认点、缺失分段、真实合并阶段、源 SHA、后续 Job、资源 version |
 | job | ParseJobView、VideoChunkCheckpointView、JobCounts、JobSummary | 实际阶段 / 进度 / 检查点、结构化错误、单调 version、全范围权威统计 |
+| parseUsage | ParseUsageVO、ParseUsageRowVO | 真实视频与动画身份、按模型和职责汇总的 Token／调用数、人民币预估金额、消耗记录完整性 |
 | agent | Conversation / Message 请求与 View、EvidenceReference、各类回答事件 | 历史 preview、毫秒时间、消息 phase / version、候选引用、恢复同一轮消息对 |
 | search | VideoChunkEvidenceView、VideoChunkCandidateView、SearchHitView、SearchResultView、Keyframe | 正文与证据、视频定位、完整检索范围、最终 rank、partial / warnings、可读取媒体 |
 | system | HealthView | API 存活与真实 serverTime |
@@ -43,11 +44,14 @@ Series list 返回轻量 `SeriesSummary`，get / create 返回 `SeriesDetail`；
 | --- | --- | --- |
 | GET /api/uploads/list | workspaceId；可选 seriesId、status、limit、cursor；默认非终态，status=all 或逗号分隔状态 | Page&lt;UploadSessionView&gt; |
 | GET /api/jobs/summary | workspaceId；可选 seriesId | JobSummary |
+| GET /api/jobs/usage/get | workspaceId、jobId | ParseUsageVO：指定任务全部执行尝试，按模型与职责展示真实 Token、人民币预估费用和记录完整性；详见 [Parse 模型消耗统计](parse-model-usage.md) |
 | GET /api/agent/messages/get | workspaceId、conversationId；messageId 与 idempotencyKey 恰好一个 | 同一 USER / ASSISTANT 消息对 |
 | GET /api/video-chunks/get | workspaceId、videoChunkId | 可刷新媒体状态的事实 Evidence |
 | GET /api/media/images/content | workspaceId、imageId | 经过资源归属与受管路径验证的真实图片 |
 
 已有 series / jobs / conversations / messages 列表同步改为 Page。series/list 支持 status、query；jobs/list 支持 seriesId、status（逗号分隔）；conversations/list 支持 query、历史消息实际 seriesId；messages/list 保留 afterSequenceNo，并增加 cursor / limit。
+
+Parse 用量由前端 `getParseUsage(jobId)` 读取，Workspace 与 Job ID 放 Query，返回模型对应 `server/model/vo/parseUsageVO.py` 和 `web/src/api/contracts.ts`。任务页每张卡片包含 `ParseUsageDetails`：展开后按模型、parse/embedding 分类及 operation 展示用量，金额 `estimatedCostCny` 是十进制字符串，以 `¥` 显示并保留小额精度；Token 和金额的 null 分别显示“未记录”和“未估算”，不能转成零。coverage=unknown 明确提示无法还原历史费用；partial 展示已采集明细并说明缺口；只有已完整跟踪且零次请求才能显示零费用。统计单独调用只读接口，运行中每 5 秒刷新，终态 partial 每 15 秒刷新，收起后停止。
 
 创建与发送示例：
 
