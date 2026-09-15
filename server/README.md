@@ -6,6 +6,10 @@ VideoChunk checkpoint、持久化 Index Sync Intent、Qdrant 派生索引，以�
 限定的双路召回、RRF 和 `videoChunkId[]` 批量回源。模型协议仍由 Gateway 实现，Worker
 直接复用 Engine 的解析链路。
 
+Multi-Agent 对话作为独立领域建立在正式检索之上：MySQL 保存 AgentSession、
+AgentConversation 和 AgentMessage，LangGraph 编排 Chat Agent、Scene Retrieval Tool 与
+Evaluator Agent。完整接口见 [Agent API 对接文档](../docs/design/agent-api.md)。
+
 Qdrant 的连接、写入和恢复属于产品持久化逻辑，因此放在 `server/storage/`；Engine
 只负责生成解析结果、向量与检索算法。Qdrant payload 不保存业务正文；当前
 Embedding 的 durable source 是 MySQL，Qdrant 始终只是可重建派生索引。
@@ -85,6 +89,15 @@ GET  /api/jobs/get?jobId={jobId}
 GET  /api/jobs/events?jobId={jobId}             text/event-stream
 GET  /api/videos/content?videoId={videoId}      支持 Range
 POST /api/search
+POST /api/agent/sessions/create
+GET  /api/agent/sessions/list
+GET  /api/agent/sessions/get?sessionId={sessionId}
+POST /api/agent/conversations/create?sessionId={sessionId}
+GET  /api/agent/conversations/list?sessionId={sessionId}
+GET  /api/agent/conversations/get?conversationId={conversationId}
+GET  /api/agent/messages/list?conversationId={conversationId}
+POST /api/agent/messages/send?conversationId={conversationId}
+GET  /api/agent/messages/events?conversationId={conversationId}
 ```
 
 `Complete` 会在校验所有分片后流式合并、计算整文件 SHA-256、发布 Original Video、探测

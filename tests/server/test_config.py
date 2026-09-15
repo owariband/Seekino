@@ -23,7 +23,7 @@ def _clean_anivag_environment(monkeypatch) -> None:
     )
 
 
-def test_server_settings_load_upload_parse_and_worker_defaults(monkeypatch) -> None:
+def test_server_settings_load_upload_parse_agent_and_worker_defaults(monkeypatch) -> None:
     _clean_anivag_environment(monkeypatch)
 
     settings = ServerSettings.from_environment()
@@ -32,6 +32,11 @@ def test_server_settings_load_upload_parse_and_worker_defaults(monkeypatch) -> N
     assert settings.upload.preferred_segment_size_bytes == 8 * 1024 * 1024
     assert settings.parse.chunk_duration_ms == 60_000
     assert settings.parse.context_overlap_ms == 3_000
+    assert settings.agent.history_message_limit == 12
+    assert settings.agent.default_top_k == 8
+    assert settings.agent.maximum_top_k == 20
+    assert settings.agent_chat_model is None
+    assert settings.agent_evaluator_model is None
     assert settings.worker_heartbeat_interval < settings.worker_lease_duration
     assert settings.text_vector_dimensions == settings.vision_vector_dimensions
 
@@ -42,4 +47,13 @@ def test_server_settings_reject_cross_modal_dimension_mismatch(monkeypatch) -> N
     monkeypatch.setenv("ANIVAG_VISION_VECTOR_DIMENSIONS", "768")
 
     with pytest.raises(ValueError, match="must match"):
+        ServerSettings.from_environment()
+
+
+def test_server_settings_reject_agent_default_above_maximum(monkeypatch) -> None:
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_AGENT_DEFAULT_TOP_K", "21")
+    monkeypatch.setenv("ANIVAG_AGENT_MAX_TOP_K", "20")
+
+    with pytest.raises(ValueError, match="must be at least"):
         ServerSettings.from_environment()

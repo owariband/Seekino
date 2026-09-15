@@ -10,6 +10,11 @@ from server.database import (
     create_database_engine,
     create_schema,
 )
+from server.model.agent import (
+    AgentConversationRecord,
+    AgentMessageRecord,
+    AgentSessionRecord,
+)
 from server.model.video import VideoChunkInfoRecord, VideoChunkRecord
 
 
@@ -64,6 +69,27 @@ def test_mysql_schema_uses_innodb_json_and_integer_milliseconds() -> None:
     assert "start_ms BIGINT" in chunk_ddl
     assert "all_time_events JSON" in info_ddl
     assert "video_compact LONGTEXT" in info_ddl
+
+
+def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> None:
+    session_ddl = str(
+        CreateTable(AgentSessionRecord.__table__).compile(dialect=mysql.dialect())
+    )
+    conversation_ddl = str(
+        CreateTable(AgentConversationRecord.__table__).compile(
+            dialect=mysql.dialect()
+        )
+    )
+    message_ddl = str(
+        CreateTable(AgentMessageRecord.__table__).compile(dialect=mysql.dialect())
+    )
+
+    assert "ENGINE=InnoDB" in session_ddl
+    assert "series_ids JSON" in conversation_ddl
+    assert "content LONGTEXT" in message_ddl
+    assert "model_name VARCHAR(255)" in message_ddl
+    assert "search_result JSON" in message_ddl
+    assert "requested_top_k INTEGER" in message_ddl
 
 
 def test_create_schema_refuses_to_shadow_a_legacy_video_segment_schema() -> None:

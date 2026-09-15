@@ -16,10 +16,12 @@ from server.database import (
     create_session_factory,
 )
 from server.model.job import ParseJobStage
+from server.repository.agent import AgentRepository
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
 from server.repository.upload import UploadRepository
 from server.schema import AgentReply, VideoChunkSearchResult
+from server.service.agent import AgentConversationService
 from server.service.job import ParseJobService
 from server.service.library import LibraryService
 from server.service.media import MediaService
@@ -45,6 +47,29 @@ class _RetrievalStub:
         )
 
 
+@dataclass
+class _AgentModelStub:
+    model_name: str
+    provider_name: str = "test"
+
+    def generate(self, _inputs, *, schema_name: str, result_type):
+        payloads = {
+            "anivag_chat_retrieval_plan": {
+                "retrieval_query": "她为什么哭",
+                "top_k": 5,
+            },
+            "anivag_retrieval_evaluation": {
+                "corrected_query": None,
+                "public_summary": "当前 query 与召回范围一致。",
+            },
+            "anivag_chat_answer": {
+                "message": "没有找到可以核验的候选画面。",
+                "selected_video_chunk_ids": [],
+            },
+        }
+        return result_type.model_validate(payloads[schema_name])
+
+
 def _client(tmp_path: Path):
     engine = create_database_engine(
         f"sqlite+pysqlite:///{tmp_path / 'api.sqlite'}",
@@ -59,6 +84,13 @@ def _client(tmp_path: Path):
     library = LibraryService(LibraryRepository(session_factory))
     job_repository = ParseJobRepository(session_factory)
     retrieval = _RetrievalStub([])
+    agent = AgentConversationService(
+        AgentRepository(session_factory),
+        library,
+        retrieval,  # type: ignore[arg-type]
+        _AgentModelStub("chat-model-v1"),
+        _AgentModelStub("evaluator-model-v1"),
+    )
     services = ApplicationServices(
         library=library,
         uploads=UploadService(
@@ -77,6 +109,7 @@ def _client(tmp_path: Path):
         jobs=ParseJobService(job_repository),
         media=MediaService(library, artifact_store),
         retrieval=retrieval,  # type: ignore[arg-type]
+        agent=agent,
         index_sync=object(),  # type: ignore[arg-type]
     )
     return TestClient(create_app(services)), retrieval, job_repository
@@ -112,6 +145,15 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/jobs/get",
         "/api/jobs/events",
         "/api/videos/content",
+        "/api/agent/sessions/create",
+        "/api/agent/sessions/list",
+        "/api/agent/sessions/get",
+        "/api/agent/conversations/create",
+        "/api/agent/conversations/list",
+        "/api/agent/conversations/get",
+        "/api/agent/messages/list",
+        "/api/agent/messages/send",
+        "/api/agent/messages/events",
     } <= paths
     assert {
         "/api/series",
@@ -142,6 +184,13 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         ("/api/jobs/get", "get"): {"jobId"},
         ("/api/jobs/events", "get"): {"jobId"},
         ("/api/videos/content", "get"): {"videoId"},
+        ("/api/agent/sessions/get", "get"): {"sessionId"},
+        ("/api/agent/conversations/create", "post"): {"sessionId"},
+        ("/api/agent/conversations/list", "get"): {"sessionId"},
+        ("/api/agent/conversations/get", "get"): {"conversationId"},
+        ("/api/agent/messages/list", "get"): {"conversationId"},
+        ("/api/agent/messages/send", "post"): {"conversationId"},
+        ("/api/agent/messages/events", "get"): {"conversationId"},
     }
     for (path, method), identifiers in query_identifiers.items():
         parameters = openapi_paths[path][method]["parameters"]
@@ -166,6 +215,68 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "startMs",
         "endMs",
     } <= set(schemas["TranscriptCueView"]["required"])
+    assert "modelName" in schemas["AgentMessageView"]["required"]
+
+
+def test_agent_session_conversation_send_and_list_messages(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    series_id = _create_series(client)
+
+    session_response = client.post(
+        "/api/agent/sessions/create",
+        headers={"Idempotency-Key": "agent-session-1"},
+        json={"workspaceId": "local-default", "name": "画面札记"},
+    )
+    assert session_response.status_code == 201, session_response.text
+    session_id = session_response.json()["sessionId"]
+
+    conversation_response = client.post(
+        "/api/agent/conversations/create",
+        params={"sessionId": session_id},
+        headers={"Idempotency-Key": "conversation-1"},
+        json={
+            "workspaceId": "local-default",
+            "title": "寻找哭泣场景",
+            "seriesIds": [series_id],
+        },
+    )
+    assert conversation_response.status_code == 201, conversation_response.text
+    conversation_id = conversation_response.json()["conversationId"]
+
+    sent = client.post(
+        "/api/agent/messages/send",
+        params={"conversationId": conversation_id},
+        headers={"Idempotency-Key": "message-1"},
+        json={
+            "workspaceId": "local-default",
+            "content": "她为什么哭？",
+            "topK": 5,
+        },
+    )
+    listed = client.get(
+        "/api/agent/messages/list",
+        params={"conversationId": conversation_id},
+    )
+    listed_sessions = client.get("/api/agent/sessions/list")
+    listed_conversations = client.get(
+        "/api/agent/conversations/list",
+        params={"sessionId": session_id},
+    )
+    messages_after_user = client.get(
+        "/api/agent/messages/list",
+        params={"conversationId": conversation_id, "afterSequenceNo": 0},
+    )
+
+    assert sent.status_code == 200, sent.text
+    assert listed.status_code == 200
+    assert [item["role"] for item in listed.json()] == ["USER", "ASSISTANT"]
+    assert listed.json()[0]["modelName"] is None
+    assert listed.json()[1]["modelName"] == "chat-model-v1"
+    assert listed.json()[1]["status"] == "COMPLETED"
+    assert listed.json()[1]["searchResult"]["seriesIds"] == [series_id]
+    assert listed_sessions.json()[0]["conversationCount"] == 1
+    assert listed_conversations.json()[0]["messageCount"] == 2
+    assert [item["role"] for item in messages_after_user.json()] == ["ASSISTANT"]
 
 
 def test_series_and_search_contract(tmp_path: Path) -> None:

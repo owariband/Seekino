@@ -1,23 +1,28 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any
+from typing import Any, TypeVar
 
 from gateway.config import load_config
+from gateway.models import ArkMultimodalModel, MultimodalInput
 from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
 from gateway.schemas import EmbeddingResult
+from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from sqlalchemy import Engine
 
 from ..config import ServerSettings
 from ..database import create_database_engine, create_session_factory
+from ..repository.agent import AgentRepository
 from ..repository.index_sync import IndexSyncRepository
 from ..repository.job import ParseJobRepository
 from ..repository.library import LibraryRepository
 from ..repository.upload import UploadRepository
 from ..repository.video import VideoRepository
+from ..service.agent import AgentConversationService
 from ..service.index_sync import IndexSyncService
 from ..service.job import ParseJobService
 from ..service.library import LibraryService
@@ -35,6 +40,7 @@ class ApplicationServices:
     jobs: ParseJobService
     media: MediaService
     retrieval: VideoRetrievalService
+    agent: AgentConversationService
     index_sync: IndexSyncService
     engine: Engine | None = None
     qdrant_client: Any | None = None
@@ -78,9 +84,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         text_dimensions=settings.text_vector_dimensions,
         vision_dimensions=settings.vision_vector_dimensions,
     )
-    embedding_config = load_config(
-        settings.model_config_path
-    ).multimodal_embedding
+    gateway_config = load_config(settings.model_config_path)
+    embedding_config = gateway_config.multimodal_embedding
     embedder = _LazyQueryEmbedder(
         model=(
             os.getenv("ANIVAG_VIDEO_EMBEDDING_MODEL")
@@ -100,6 +105,24 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         vector_store,
         embedder,
     )
+    chat_model_name = (
+        settings.agent_chat_model or gateway_config.video_parser.transcript_model
+    )
+    evaluator_model_name = settings.agent_evaluator_model or chat_model_name
+    agent = AgentConversationService(
+        AgentRepository(session_factory),
+        library,
+        retrieval,
+        _LazyStructuredAgentModel(
+            model=chat_model_name,
+            request_timeout_seconds=settings.agent_request_timeout_seconds,
+        ),
+        _LazyStructuredAgentModel(
+            model=evaluator_model_name,
+            request_timeout_seconds=settings.agent_request_timeout_seconds,
+        ),
+        config=settings.agent,
+    )
     index_sync = IndexSyncService(
         IndexSyncRepository(session_factory),
         vector_store,
@@ -112,6 +135,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         jobs=jobs,
         media=media,
         retrieval=retrieval,
+        agent=agent,
         index_sync=index_sync,
         engine=engine,
         qdrant_client=qdrant_client,
@@ -141,3 +165,41 @@ class _LazyQueryEmbedder:
                     )
                     self._delegate = delegate
         return delegate.embed_query(query)
+
+
+_ResultModel = TypeVar("_ResultModel", bound=BaseModel)
+
+
+class _LazyStructuredAgentModel:
+    """Keep non-Agent APIs available until the first real Agent message."""
+
+    provider_name = "ark"
+
+    def __init__(self, *, model: str, request_timeout_seconds: float) -> None:
+        self.model_name = model
+        self._request_timeout_seconds = request_timeout_seconds
+        self._delegate: ArkMultimodalModel | None = None
+        self._lock = Lock()
+
+    def generate(
+        self,
+        inputs: Sequence[MultimodalInput],
+        *,
+        schema_name: str,
+        result_type: type[_ResultModel],
+    ) -> _ResultModel:
+        delegate = self._delegate
+        if delegate is None:
+            with self._lock:
+                delegate = self._delegate
+                if delegate is None:
+                    delegate = ArkMultimodalModel(
+                        self.model_name,
+                        request_timeout_seconds=self._request_timeout_seconds,
+                    )
+                    self._delegate = delegate
+        return delegate.generate(
+            inputs,
+            schema_name=schema_name,
+            result_type=result_type,
+        )

@@ -81,6 +81,7 @@ def create_schema(engine: Engine) -> None:
 
     # Importing registers every table on Base.metadata without making the
     # connection module depend on concrete repositories.
+    from .model import agent as _agent_models  # noqa: F401
     from .model import index_sync as _index_sync_models  # noqa: F401
     from .model import job as _job_models  # noqa: F401
     from .model import upload as _upload_models  # noqa: F401

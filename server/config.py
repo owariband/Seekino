@@ -9,6 +9,7 @@ from typing import Literal, cast
 from engine.parse.runtime import VideoParseRuntimeConfig
 
 from .database import DatabaseEnvironment
+from .service.agent import AgentServiceConfig
 from .service.upload import UploadServiceConfig
 
 
@@ -24,6 +25,10 @@ class ServerSettings:
     vision_vector_dimensions: int
     upload: UploadServiceConfig
     parse: VideoParseRuntimeConfig
+    agent: AgentServiceConfig
+    agent_chat_model: str | None
+    agent_evaluator_model: str | None
+    agent_request_timeout_seconds: float
     worker_id: str
     worker_lease_duration: timedelta
     worker_heartbeat_interval: timedelta
@@ -97,6 +102,12 @@ class ServerSettings:
             if item.strip()
         )
         model_config = os.getenv("ANIVAG_MODEL_CONFIG")
+        agent_default_top_k = _environment_int("ANIVAG_AGENT_DEFAULT_TOP_K", 8)
+        agent_maximum_top_k = _environment_int("ANIVAG_AGENT_MAX_TOP_K", 20)
+        if agent_maximum_top_k < agent_default_top_k:
+            raise ValueError(
+                "ANIVAG_AGENT_MAX_TOP_K must be at least ANIVAG_AGENT_DEFAULT_TOP_K"
+            )
         return cls(
             environment=environment,
             database_url=database_url,
@@ -155,6 +166,22 @@ class ServerSettings:
                     2000,
                 ),
             ),
+            agent=AgentServiceConfig(
+                history_message_limit=_environment_int(
+                    "ANIVAG_AGENT_HISTORY_MESSAGE_LIMIT",
+                    12,
+                ),
+                default_top_k=agent_default_top_k,
+                maximum_top_k=agent_maximum_top_k,
+            ),
+            agent_chat_model=_optional_environment("ANIVAG_AGENT_CHAT_MODEL"),
+            agent_evaluator_model=_optional_environment(
+                "ANIVAG_AGENT_EVALUATOR_MODEL"
+            ),
+            agent_request_timeout_seconds=_environment_float(
+                "ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS",
+                180,
+            ),
             worker_id=os.getenv("ANIVAG_WORKER_ID", f"local-worker-{os.getpid()}"),
             worker_lease_duration=timedelta(seconds=lease_seconds),
             worker_heartbeat_interval=timedelta(seconds=heartbeat_seconds),
@@ -176,6 +203,11 @@ def _required_environment(name: str) -> str:
     if value is None or not value.strip():
         raise RuntimeError(f"missing required environment variable {name}")
     return value.strip()
+
+
+def _optional_environment(name: str) -> str | None:
+    value = os.getenv(name)
+    return value.strip() if value and value.strip() else None
 
 
 def _environment_int(name: str, default: int) -> int:

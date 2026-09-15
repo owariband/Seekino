@@ -16,6 +16,9 @@
 ID 统一通过 camelCase Query 参数传递，不放在 URL Path 中。检索请求中的 `seriesIds` 是
 业务 Scope 集合，继续随 `/api/search` 的 JSON Body 传递。
 
+独立的 Multi-Agent Session、Conversation、Message 和 SSE 契约见
+[Agent API 对接文档](agent-api.md)。
+
 - Swagger UI：`http://127.0.0.1:9621/docs`
 - OpenAPI JSON：`http://127.0.0.1:9621/openapi.json`
 - 默认 API Base URL：`http://127.0.0.1:9621`

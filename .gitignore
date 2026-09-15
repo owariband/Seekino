@@ -4,6 +4,7 @@
 # Local design notes and generated architecture artifacts
 docs/design/*
 !docs/design/frontend-api.md
+!docs/design/agent-api.md
 docs/notes/
 docs/ui-design/
 /transfer.md
