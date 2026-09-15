@@ -1,6 +1,6 @@
 # AniVAG 前端 API 对接文档
 
-> 状态：M1 已实现
+> 状态：Upload-to-Search M1 与 Agent Chat 基础接口已实现；真实模型聊天联调与异常恢复仍待验收/补齐
 >
 > 更新时间：2026-09-15
 >
@@ -9,15 +9,16 @@
 > 实现来源：`server/router/`、`server/api/`、`server/api/schema.py`、`server/schema.py`
 
 本文描述当前代码已经提供的 HTTP 契约，覆盖 Series 管理、视频分片上传与断点续传、
-解析任务进度、视频播放和正式检索。运行中的 FastAPI OpenAPI 是字段级最终事实源：
+解析任务进度、视频播放、正式检索及 Workspace 下的 Agent Conversation / Message。
+运行中的 FastAPI OpenAPI 是字段级最终事实源；接口已实现不等于真实模型效果已验收。
 
-本文只描述 Upload-to-Search，不包含聊天或对话系统协议。创建、列表和详情接口在路径中
+创建、列表和详情接口在路径中
 显式使用 `create`、`list`、`get`，不依靠 HTTP Method 隐含操作名称；用于定位路由资源的
 ID 统一通过 camelCase Query 参数传递，不放在 URL Path 中。检索请求中的 `seriesIds` 是
-业务 Scope 集合，继续随 `/api/search` 的 JSON Body 传递。
+业务 Scope 集合，随 `/api/search` 或每次 Agent `messages/send` 的 JSON Body 传递。
 
-独立的 Multi-Agent Conversation、Message 和 SSE 契约见
-[Agent API 对接文档](agent-api.md)。
+聊天联调入口、消息类型、模型名与 SSE 规则见本文第 12 节；逐接口示例也可参阅
+[Agent API 对接文档](agent-api.md)。本文不新增接口，全部路径与字段均对应当前源码。
 
 - Swagger UI：`http://127.0.0.1:9621/docs`
 - OpenAPI JSON：`http://127.0.0.1:9621/openapi.json`
@@ -69,9 +70,10 @@ X-Content-SHA256
 | --- | --- | --- |
 | `400` | `INVALID_REQUEST` | 参数、UUID、Content-Range 或业务输入格式无效 |
 | `404` | `NOT_FOUND` | 资源不存在，或不属于指定 `workspaceId` |
-| `409` | `CONFLICT` | 幂等冲突、分片范围/总大小与会话不符、缺片、过期、Series 未 READY 或索引不一致 |
+| `409` | `CONFLICT` | 幂等冲突、分片范围/总大小与会话不符、缺片、过期、Series 未 READY、索引不一致，或 Conversation 已有处理中消息 |
 | `422` | FastAPI 默认格式 | JSON 字段、Header 或 Query 缺失或不满足字段约束，未进入领域服务 |
 | `500` | 服务默认错误 | 未预期的服务异常；前端应保留请求上下文并展示可重试提示 |
+| `502` | `AGENT_MODEL_ERROR` | Query/Evaluator/Chat 模型调用、输出或执行预算失败，最多 3 轮仍未通过审核，或最终证据 ID/时间/Scope 校验失败 |
 
 不要依赖英文 `message` 做业务分支；当前稳定分支依据是 HTTP 状态和 `code`。
 
@@ -92,6 +94,15 @@ X-Content-SHA256
 | Job | `GET` | `/api/jobs/events?jobId=...&workspaceId=...` | SSE 订阅任务变化 |
 | Media | `GET` | `/api/videos/content?videoId=...&workspaceId=...` | 播放 Original Video，支持 Range |
 | Search | `POST` | `/api/search` | Series Scope 内双路检索并返回完整 Evidence |
+| Agent Conversation | `POST` | `/api/agent/conversations/create` | 以 JSON workspaceId/title 创建对话，不绑定动画范围 |
+| Agent Conversation | `GET` | `/api/agent/conversations/list?workspaceId=...&limit=100` | Workspace 下的 Conversation 列表 |
+| Agent Conversation | `GET` | `/api/agent/conversations/get?conversationId=...&workspaceId=...` | Conversation 详情 |
+| Agent Message | `GET` | `/api/agent/messages/list?conversationId=...&workspaceId=...&afterSequenceNo=-1&limit=200` | 按序查询持久化消息，包含 `modelName` 和完整结果 |
+| Agent Message | `POST` | `/api/agent/messages/send?conversationId=...` | Query/Evaluator 最多 3 轮，通过后由 Chat 交付；按 Accept 返回 JSON 或实时正文 SSE |
+| Agent Message | `GET` | `/api/agent/messages/events?conversationId=...&workspaceId=...` | SSE 订阅消息状态快照，不是 token 流 |
+
+共 19 个路径。不存在 `/api/agent/sessions/*` 或 `/api/agent/turns`；内部 Retrieval Tool 直接调用检索 Service，
+不把 Agent 工具调用绕成对自身 HTTP API 的请求。
 
 ## 3. Series API
 
@@ -161,6 +172,10 @@ GET /api/series/list?workspaceId=local-default
 
 返回 `SeriesView[]`。列表接口提供 `videoCount`，当前不会展开每个 Series 的 Video；
 需要 Video 详情时调用单个 Series 接口。
+
+Agent 搜索页复用该接口的必填 `seriesId/name/status` 提供动画多选，未 READY 项展示状态并
+禁用。选中项随下一次 `messages/send.seriesIds` 传递；全部取消选择表示当前 Workspace
+的全部 READY 动画，由后端在发送时展开，无须新增只返回 ID 的列表接口。
 
 ### 3.3 获取 Series 详情
 
@@ -734,6 +749,9 @@ Content-Type: application/json
 - `topK` 默认 10，范围 1～100。
 - Series 未 READY 或 Qdrant/MySQL 不一致时返回 `409`，不会静默缩小 Scope。
 
+这是基础 `/api/search` 的非空 Scope 契约；Agent `messages/send` 允许省略 / 空数组，
+由 AgentChatService 展开为全部 READY 动画后调用同一检索 Service。
+
 ### 7.2 检索响应
 
 ```json
@@ -832,8 +850,8 @@ Content-Type: application/json
 数据语义：
 
 - `candidate` 是 Qdrant Text/Vision 双路召回和 RRF 的排序信息。
-- `agentReply` 是本轮检索结果的公开摘要，`resultCount` 始终等于 `hits.length`；它不是持久化对话记录。
-- `selectionReason` 只整理当前响应中可核验的 Evidence、召回通道和限制，不包含模型私有思维链。
+- `/api/search` 的 `agentReply` 是确定性生成的检索摘要，`resultCount` 始终等于 `hits.length`；它不是 Chat Agent 回答或持久化对话记录。
+- 当前 `selectionReason` 是根据通道排名和候选 Evidence 生成的公开摘要，不是模型按 Query 作出的逐候选审核结论，也不包含私有思维链。Agent 选择候选后沿用该字段，前端不要自行编造额外理由。
 - `evidence` 是按照 `videoChunkId` 从 MySQL 一次联表 Hydrate 的完整事实。
 - `retrievalText` 是生成该 Text vector 时实际使用的完整文本，可供上层回答与分析能力使用。
 - Vision vector 绑定的是无重叠 canonical VideoChunk MP4，不是 caption。
@@ -1020,9 +1038,14 @@ interface VideoChunkSearchResult {
 | GET Job | 只读 | 直接重试 |
 | SSE | 通知流 | 自动重连并用 GET Job 校准 |
 | Search | 只读 | 网络错误可重试；`409` 先处理 READY 或一致性问题 |
+| 创建 Agent Conversation | 是，依赖原 `Idempotency-Key` 和相同字段 | 保留原 Key 重试，不另建资源 |
+| 发送消息 | 是，依赖原 `Idempotency-Key`、内容和有效 `topK` | 先查询消息；原 Key 重试只读回原结果，处理中返回 `409`，不会重跑 FAILED 消息 |
+| POST Answer SSE | 同一次幂等发送的实时输出 | 断流后读取消息/GET 快照；已完成重试不重放原增量 |
+| GET Message SSE | 状态通知流 | 重连获取完整快照；按 `messageId` 更新同一条消息 |
 
-建议只自动重试网络错误和明确的 `5xx`；`400/404/409/422` 应先根据业务状态处理，避免
-无意义的快速重试。
+上传与检索可自动重试网络错误和明确可重试的 `5xx`；`400/404/409/422` 应先根据业务
+状态处理。聊天 `502` 应先读取持久化消息：同 Key 不会重新执行，用户明确再次发送时才
+生成新 Key。不要把任意 `5xx` 都当作可以无限重跑的请求。
 
 ## 10. 当前尚未提供的前端能力
 
@@ -1034,6 +1057,10 @@ interface VideoChunkSearchResult {
 - 暂停 Worker 解析；
 - 登录、用户鉴权和权限管理；
 - 直接读取 `artifact://` URI 的接口。
+- Agent 消息撤销/取消、Conversation 删除、跨 Worker 增量重放；
+- Agent 执行的 Lease/Reaper 或进程崩溃后自动恢复；
+- Agent 异常时自动降级为基础召回；独立 `/api/search` 可用不等于已实现自动回退；
+- 模型输出的精确 Clip 范围、相邻 VideoChunk 补查和 Query 相关逐候选解释。
 
 上传“暂停”不需要后端状态切换：停止发送分片请求即可；恢复时重新 GET UploadSession，
 根据 `missingSegmentNumbers` 继续。
@@ -1057,24 +1084,265 @@ curl -sS http://127.0.0.1:9621/healthz
 API 和 Worker 是两个独立进程：只启动 API 可以创建 Series 和上传视频，但 ParseJob 会
 保持 `QUEUED`，直到 Worker 启动并成功 Claim。
 
-## 12. Agent Chat 动画多选
+`server.mq.worker.ParseWorker` 消费的是 MySQL 视频解析任务，不消费 Agent Message。
+聊天由 API 进程中的 AgentChatService 执行线程池运行；HTTP 订阅断开不会终止执行，但进程崩溃后的 Agent Run 恢复尚未实现。
+`init-db` 只创建缺失表，不会迁移旧 Schema；现有数据库如含旧命名表，应先执行受控迁移，
+不要把启动命令当作自动迁移方案。
 
-资源关系为 `Workspace → Conversation → Message`，不提供额外的 Agent Session 容器。
-Conversation 创建 Body 为 `workspaceId / title`，创建与列表均直接按 Workspace 归属。
-检索范围随每次发送选择，不保存在 Conversation。完整接口、消息与 SSE 契约见
-[Agent API 对接文档](agent-api.md)。
+## 12. Agent Chat 联调
 
-- 复用 `GET /api/series/list?workspaceId=...` 的 `seriesId/name/status` 展示动画多选。
-- `POST /api/agent/messages/send?conversationId=...` 的 Body 增加 `seriesIds`。
-  省略或传 `[]` 默认搜索当前 Workspace 全部 READY 动画；显式选择未 READY 返回 409，
-  缺失或跨 Workspace 返回 404。未 READY 项不能新选，已选项仍可取消。
-- 每次 Kick 启动前解析并冻结实际范围，USER / ASSISTANT 均返回必填 `seriesIds`。
-  改变多选只影响下一次发送，不新建对话、不终止正在进行的 SSE。
-- Query 获取带各消息范围的聊天历史；Retrieve Tool 仅使用当前 Kick 的固定范围。
-  每个 `hits[].evidence.seriesId` 必填，来自 MySQL join，卡片按证据自身显示动画来源。
-- 幂等比较正文、有效 TopK 与规范化原请求范围；相同 Key 重放读回旧范围，
-  不因新增动画重新扩大全部。JSON 与 POST SSE 使用同一发送路径。
-- 失效的显式范围提示用户调整；按钮与 Enter 共用发送条件，无效提交保留输入。
+完整请求示例、错误映射及 SSE 契约见 [Agent API 对接文档](agent-api.md)；本节保留前端
+联调所需的资源、模型和状态规则。
 
-已有数据库需要先回填消息范围，再删除 Conversation 旧范围列；旧 Session 结构也需迁移。
-[受控迁移步骤](agent-api.md#8-已有数据库升级) 保留 Conversation ID 与全部消息；本次未执行真实 DDL。
+### 12.1 资源关系与三 Agent 交付
+
+资源关系为 `Workspace → Conversation → Message`。一个 Conversation 是可以连续追问的
+完整对话，保存 workspace 和 title；其下按 `sequenceNo` 排列 USER / ASSISTANT 消息。
+动画范围随每次发送选择，不保存在 Conversation。同一对话可以先搜索动画 A，再搜索
+动画 B；选择变化只影响下一次发送，不能改变正在运行的 Kick。不同 Conversation 不共享
+聊天历史，没有额外的 Agent Session 容器。
+
+```text
+当前消息 + 当前 Conversation 近期已完成消息（各自 seriesIds）+ 本次消息固定 Scope
+  → Query：规划，调用内部 Retrieval Tool，生成草稿并选择证据
+  → Evaluator：基于草稿与召回证据返回 complete / continue
+      ├── continue：advice 连同逐轮计划、召回、草稿和审核记录交回 Query
+      │    → Query 可以重新召回或复用已有候选，再交 Evaluator
+      └── complete：Chat 基于获批草稿与证据实时输出正文
+           → Output 校验证据并封装结果 → 提交 ASSISTANT → 交付 completed
+```
+
+Query/Evaluator 默认最多迭代 3 轮，包含首轮。任一轮通过即进入 Chat；第三轮仍要求
+continue 则消息 `FAILED`，不能把跑满轮数当作审核通过。Query 可以选择当前 Kick 已验证
+召回记录中的候选，最终片段数量仍受有效 `topK` 限制，ID、时间范围和 Scope 必须合法。
+Evaluator 读取结构化文本 Evidence，并非重新观看原视频；重新召回不等于相邻片段补查。
+
+### 12.2 最小请求顺序
+
+Conversation 创建和消息发送必须带 `Idempotency-Key`，最长 128 字符，不能只包含空白。
+同一操作的网络重试复用 Key，不同操作生成新 Key。
+
+1. 查询 Workspace 下的 Conversation，选择已有对话或直接创建：
+
+   ```http
+   GET /api/agent/conversations/list?workspaceId=local-default&limit=100
+   GET /api/agent/conversations/get?conversationId={conversationId}&workspaceId=local-default
+   ```
+
+   ```http
+   POST /api/agent/conversations/create
+   Content-Type: application/json
+   Idempotency-Key: conversation-create-001
+
+   {"workspaceId":"local-default","title":"第七集画面查询"}
+   ```
+
+   返回 `201 AgentConversationView`。`title` 可省略，默认“新对话”，范围 1～255 字符。
+   创建不传 `seriesIds`，不校验动画。也不传 `sessionId`，不先创建 Session。
+
+2. 加载消息并订阅持久化状态：
+
+   ```http
+   GET /api/agent/messages/list?conversationId={conversationId}&workspaceId=local-default&afterSequenceNo=-1&limit=200
+   GET /api/agent/messages/events?conversationId={conversationId}&workspaceId=local-default
+   ```
+
+3. 从已有列表接口加载动画，维护独立于 Conversation 的多选状态：
+
+   ```http
+   GET /api/series/list?workspaceId=local-default
+   ```
+
+   使用 `SeriesView[]` 中的 `seriesId/name/status`。未 READY 项不能新选，已选项仍可取消；没有选中项显示
+   “全部可检索动画”。切换选择不新建或切换对话，检索结果卡片仍按消息保存各自来源。
+   已选动画变成非 READY 或缺失时提示用户调整范围，不静默删成空数组。按钮和 Enter
+   共用发送条件，无效提交保留输入正文。
+
+4. 发送当前消息，使用 `Accept` 选择同一路径的交付形式：
+
+   ```http
+   POST /api/agent/messages/send?conversationId={conversationId}
+   Accept: text/event-stream
+   Content-Type: application/json
+   Idempotency-Key: message-send-001
+
+   {"workspaceId":"local-default","content":"爽世为什么哭着质问大家要演奏春日影","seriesIds":["77285f16-3e5b-592e-ba15-8b224b619806"],"topK":8}
+   ```
+
+   `Accept: application/json` 或默认请求等待执行结束，返回 `200 AgentMessageSendView`。
+   `Accept: text/event-stream` 返回 POST SSE，事件及完成条件见第 12.5 节；应使用 `fetch`
+   消费 POST 流，`EventSource` 仅用于 GET 状态快照。
+
+   `content` 为 1～20000 字符，不能只包含空白。`topK` 可省略或为 `null`，当前默认 8，
+   Service 上限默认 20；分别由 `ANIVAG_AGENT_DEFAULT_TOP_K`、`ANIVAG_AGENT_MAX_TOP_K`
+   配置。HTTP Schema 的 1～100 只是外层限制，超过 Service 上限仍返回 `400`。
+   最终候选数可能小于 `topK`，也可以为 0。
+
+   `seriesIds` 可省略或为 `[]`，后端展开为当前 Workspace 全部 READY 动画；没有 READY
+   动画返回 `409`。显式数组中的 ID 必须属于当前 Workspace 且已 READY，跨 Workspace /
+   缺失返回 `404`，未 READY 返回 `409`，不能静默删去选择项。UUID 规范化、去重并排序后用于请求
+   幂等比较，选择顺序不影响幂等；实际展开后的范围在启动任务前保存到 USER / ASSISTANT 消息。
+
+`workspaceId` 可省略，默认 `local-default`，范围 1～64 字符。Conversation 列表默认
+`limit=100`、上限 500，只有 `limit`、没有翻页游标；Message 列表默认 200、上限 500，
+按 `sequenceNo` 升序返回严格大于 `afterSequenceNo` 的消息。列表返回数组，没有 `total` 包装。
+
+### 12.3 消息模型与当前模型名
+
+以下摘录复用第 8 节的 `VideoChunkSearchResult`：
+
+```ts
+interface AgentConversationView {
+  conversationId: string;
+  workspaceId: string;
+  title: string;
+  messageCount: number;
+  lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AgentMessageView {
+  messageId: string;
+  conversationId: string;
+  sequenceNo: number;
+  role: "USER" | "ASSISTANT";
+  status: "PROCESSING" | "COMPLETED" | "FAILED";
+  content: string | null;
+  seriesIds: string[];
+  modelName: string | null;
+  replyToMessageId: string | null;
+  retrievalQuery: string | null;
+  searchResult: VideoChunkSearchResult | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AgentMessageSendView {
+  userMessage: AgentMessageView;
+  assistantMessage: AgentMessageView;
+}
+
+interface AgentMessageEventView {
+  conversationId: string;
+  messages: AgentMessageView[];
+}
+
+interface AgentAnswerEventBase {
+  conversationId: string;
+  messageId: string;
+  sequence: number;
+}
+
+type AgentAnswerEvent =
+  | (AgentAnswerEventBase & AgentMessageSendView & {
+      type: "answer.started" | "answer.completed";
+    })
+  | (AgentAnswerEventBase & {
+      type: "answer.evidence";
+      hits: VideoChunkSearchHit[];
+    })
+  | (AgentAnswerEventBase & { type: "answer.delta"; delta: string })
+  | (AgentAnswerEventBase & {
+      type: "answer.failed";
+      code: string;
+      message: string;
+      userMessage?: AgentMessageView;
+      assistantMessage?: AgentMessageView;
+    });
+```
+
+POST SSE 的 `type` 来自 SSE `event:` 行，DTO data 为对应载荷；不要假定 data 自带 `type`。
+`messageId` 始终指向该次发送的 ASSISTANT，`sequence` 是该流内正整数事件序号，与消息的
+`sequenceNo` 不同。命名流的精确 Schema 见 `server/api/schema.py`。
+
+`messages/list`、JSON `messages/send`、流中的消息对和 GET 快照复用 `AgentMessageView`。
+其中 `seriesIds` 必填，为本次消息实际 Scope；同一次发送的 USER / ASSISTANT 范围相同，
+省略 / 空选择也返回已展开的 ID 列表。Query 获得带各自范围的聊天历史，上一条动画的
+证据不能直接作为本次新召回。每个获批 `hits[].evidence.seriesId` 也必填，来自真实 MySQL
+join 回源，必须属于当前消息范围；视频卡片不能从当前多选项推测历史结果来源。
+
+`modelName` 始终返回：USER 为 `null`，ASSISTANT 从 PROCESSING 开始保存实际 Chat 模型名，
+完成或失败后保留。它不是 Query/Evaluator 模型名，也不是 `evidence.modelName`；配置切换
+不会重写历史记录。页面可显示最近一条 ASSISTANT 的模型名，无记录时显示“尚未调用”。
+
+Chat 使用 `ANIVAG_AGENT_CHAT_MODEL`，未设置时使用 Gateway `config.yaml` 的
+`video_parser.transcript_model`；Query 和 Evaluator 分别使用 `ANIVAG_AGENT_QUERY_MODEL`、
+`ANIVAG_AGENT_EVALUATOR_MODEL`，未设置时沿用实际 Chat 模型。三个角色可以使用同一模型。
+
+### 12.4 发送、状态机与幂等恢复
+
+服务先在 MySQL 写入已完成 USER 与 `PROCESSING` ASSISTANT，再由 AgentChatService 的
+执行线程池运行 Harness，最终更新同一条 ASSISTANT。JSON 请求等待结果；POST SSE
+实时消费输出，两者均不返回 `202`。HTTP 订阅断开不会停止服务持有的 Kick。
+
+```text
+USER：COMPLETED
+ASSISTANT：PROCESSING → COMPLETED / FAILED
+```
+
+同一个 Conversation 同时只能有一个 `PROCESSING` ASSISTANT。网络断线、请求超时或
+切换页面不代表模型执行失败，应从持久化消息确认状态：
+
+- 原 Key + 相同请求：完成或失败时读回原消息对，不重新调用模型；处理中返回 `409`。
+- 原 Key + 不同内容/有效 `topK`/规范化请求 `seriesIds`：返回 `409`，不能在重试时更改参数。
+  省略与 `[]` 等价；USER 内部保存原请求 `requested_series_ids`，公开 DTO 不返回它。
+  重放优先读旧消息，新增动画不会扩大旧“全部”请求的实际范围；改成显式数组仍属新请求。
+- Query/Evaluator/Chat 调用、预算、输出或证据校验失败，以及最多 3 轮仍未通过：JSON 首次
+  请求返回 `502 AGENT_MODEL_ERROR`，持久化 `FAILED` 与 `lastError`；POST 流已开始时用
+  `answer.failed` 报告错误。原 Key 的终态重试可能返回 `200`，仍须检查消息 `status`。
+- 检索业务错误保留 `404/409` 等既有映射；POST SSE 已开始后通过 failed 及消息快照报告。
+- 用户明确重新尝试使用新 Key，新增消息对。进程硬退出可能遗留 PROCESSING，目前没有
+  Agent Reaper，不能用新 Key 循环发送绕过此状态。
+
+收到 `answer.evidence` 后可渲染获批视频卡片，收到 delta 后显示逐段正文，此时消息仍为
+PROCESSING；只有 completed 或持久化 COMPLETED 快照代表完整交付成功。最终候选从
+`assistantMessage.searchResult.hits` 读取，播放使用 `evidence.videoId + startMs/endMs`。
+不要从模型正文反解析视频时间，也不要把 `/api/search` 摘要当作获批后的 Chat 回答。
+
+### 12.5 POST 正文 SSE、GET 快照与页面恢复
+
+同一 POST 的正常事件顺序为：
+
+```text
+answer.started → answer.evidence → answer.delta（多段）→ answer.completed
+```
+
+| 事件 | 载荷与前端处理 |
+| --- | --- |
+| `answer.started` | 已落库的 USER/PROCESSING ASSISTANT 消息对；按 ID 创建或合并消息 |
+| `answer.evidence` | Evaluator 放行后的完整 `hits`；渲染视频证据卡片 |
+| `answer.delta` | 最终 Chat Provider 的原始文本增量；追加到该 ASSISTANT 正文 |
+| `answer.completed` | Provider 正常结束且数据库提交成功后的完整消息对；确认完成 |
+| `answer.failed` | `code/message` 与可选持久化消息对；失败后不会发送 completed |
+
+每帧包含 `conversationId/messageId/sequence`，SSE `id:` 为 `messageId:sequence`。按
+Conversation、ASSISTANT ID 和单调事件序号拒绝迟到、重复或不相关事件；不把 Query 草稿
+或 Evaluator advice 展示为最终正文。终态幂等重试读回原结果，不重放原始 delta。
+
+GET `/api/agent/messages/events` 则发送独立的完整持久化状态快照：
+
+```text
+event: messages
+data: {"conversationId":"...","messages":[...]}
+```
+
+用 `EventSource.addEventListener("messages", ...)` 接收命名事件，首次连接也发送快照，
+包括空数组。GET 快照不会启动新 Kick，也不重放 Chat 增量。
+
+- 按 `messageId` 合并并按 `sequenceNo` 排序；PROCESSING 快照不能抹掉已收到的实时正文
+  和卡片，旧 PROCESSING 状态不能覆盖已完成/失败状态。
+- PROCESSING 到终态不改变消息 sequence，仅用 `afterSequenceNo` 拉新消息会漏掉状态
+  变化，需要完整快照或重新拉取覆盖已有消息。
+- 切换 Conversation 时关闭旧 GET 连接、终止旧 POST 消费，并校验 Conversation ID，
+  旧订阅回调不得污染当前页面。
+- POST 断流或 `STREAM_INTERRUPTED` 表示订阅需恢复；没有真实 FAILED 快照时保留
+  PROCESSING 和部分正文，等 GET 终态校准，不编造执行失败。
+- REST 首次加载超过 500 条时按最后一个 `sequenceNo` 继续分页；GET 完整快照不受该
+  REST 上限截断，目前每轮重读全部消息，长对话容量优化仍待做。
+- 默认每 1 秒检查变化，每 15 秒空闲发送 `: keep-alive`，可通过
+  `ANIVAG_SSE_POLL_SECONDS`、`ANIVAG_SSE_KEEPALIVE_SECONDS` 调整。
+
+数据库是终态事实源。前端可以展示“检索与审核中”和获批后的正文流，不能制造未提供的
+百分比进度；进程崩溃后的运行恢复与跨 Worker 增量重放尚未实现。
