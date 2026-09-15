@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from pydantic import Field
 
@@ -21,6 +22,18 @@ class SeriesCreateRequest(ContractModel):
     description: str | None = None
     important_extra_data: dict | None = None
     character_bible: list[Character] = Field(default_factory=list)
+
+
+class SeriesBackground(ContractModel):
+    format: Literal["markdown", "json"] = "markdown"
+    content: str
+
+
+class SeriesUpdateRequest(ContractModel):
+    workspace_id: str = Field(min_length=1, max_length=64)
+    series_id: str = Field(min_length=1)
+    description: str | None = None
+    important_extra_data: SeriesBackground | None = None
 
 
 @dataclass(frozen=True, slots=True)

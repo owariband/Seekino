@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Protocol
 
 from engine.parse.analysis_windows import materialize_canonical_chunks
+from engine.parse.background import (
+    BackgroundImage,
+    extract_background_image_ids,
+    prepare_background_text,
+)
 from engine.parse.runtime import EngineVideoParseRuntime
 from engine.parse.schemas import AnalysisWindow, VideoChunkParseResult
 from engine.parse.usage import parse_chunk_scope
@@ -29,6 +34,7 @@ from ..model.job import (
 from ..repository.job import ParseJobLeaseLostError, ParseJobRepository
 from ..repository.video import VideoRepository
 from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
+from ..utils.files import write_json_once
 from .index_sync import IndexSyncService
 from .parse_import import prepare_completed_video_parse_import
 from .parse_usage import ParseUsageService
@@ -84,6 +90,9 @@ class VideoProcessingService:
             item.sequence_no: item
             for item in self._jobs.list_checkpoints(lease.job_id)
         }
+        series_bible, background_images, legacy_parse = self._parse_background(
+            lease, work_directory, checkpoints,
+        )
         chunk_paths: dict[int, Path] = {}
         chunk_media_refs: dict[int, str] = {}
         analysis_media_refs: dict[int, str] = {}
@@ -97,6 +106,15 @@ class VideoProcessingService:
 
         def windows_ready(windows: list[AnalysisWindow]) -> None:
             nonlocal window_count
+            if legacy_parse and any(
+                not (work_directory / "chunks" / f"chunk-{window.sequence_no:04d}.json").is_file()
+                and not (work_directory / "segments" / f"segment-{window.sequence_no:04d}.json").is_file()
+                for window in windows
+            ):
+                raise RuntimeError(
+                    "旧解析任务缺少背景快照，无法确认已解析片段使用的背景；"
+                    "请保留原检查点并创建新的解析任务"
+                )
             window_count = len(windows)
             for window in windows:
                 sequence_no = window.sequence_no
@@ -172,10 +190,8 @@ class VideoProcessingService:
             source_video,
             duration_ms=lease.duration_ms,
             output_dir=work_directory,
-            series_bible=_series_bible(
-                lease.character_bible,
-                lease.important_extra_data,
-            ),
+            series_bible=series_bible,
+            background_images=background_images,
             on_windows_ready=windows_ready,
             on_chunk_complete=chunk_complete,
         )
@@ -256,6 +272,77 @@ class VideoProcessingService:
                 sequence_no=sequence_no,
             )
         return report.video_chunk_ids
+
+    def _parse_background(
+        self,
+        lease: ParseJobLease,
+        work_directory: Path,
+        checkpoints: Mapping[int, VideoChunkCheckpointState],
+    ) -> tuple[str | None, list[BackgroundImage], bool]:
+        snapshot_path = work_directory / "background.snapshot.json"
+        if not snapshot_path.is_file():
+            legacy_parse = any(
+                _checkpoint_rank(item.stage) >= _checkpoint_rank(VideoChunkCheckpointStage.PARSED)
+                for item in checkpoints.values()
+            ) or any(
+                directory.is_dir() and next(directory.glob("*.json"), None) is not None
+                for directory in (work_directory / "chunks", work_directory / "segments")
+            )
+            # 已完成的旧片段仍可恢复入库；部分解析不能冒用当前背景续跑。
+            if legacy_parse:
+                return None, [], True
+            text = prepare_background_text(lease.character_bible, lease.important_extra_data)
+            images = []
+            for image_id in extract_background_image_ids(text or ""):
+                path = self._artifacts.resolve_series_image(
+                    image_id, series_id=lease.series_id, variant="model",
+                )
+                images.append({
+                    "image_id": image_id,
+                    "sha256": self._artifacts.fingerprint(self._artifacts.uri_for_path(path)).sha256,
+                })
+            self._jobs.assert_current_lease(lease)
+            write_json_once(snapshot_path, {
+                "version": 1,
+                "job_id": lease.job_id,
+                "workspace_id": lease.workspace_id,
+                "series_id": lease.series_id,
+                "content_hash": lease.content_hash,
+                "series_bible": text,
+                "images": images,
+            })
+
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        if not isinstance(snapshot, dict) or any(
+            snapshot.get(key) != expected for key, expected in {
+                "version": 1, "job_id": lease.job_id, "workspace_id": lease.workspace_id,
+                "series_id": lease.series_id, "content_hash": lease.content_hash,
+            }.items()
+        ):
+            raise ArtifactIntegrityError("解析背景快照与任务不一致")
+        text = snapshot.get("series_bible")
+        images = snapshot.get("images")
+        if (text is not None and not isinstance(text, str)) or not isinstance(images, list):
+            raise ArtifactIntegrityError("解析背景快照格式错误")
+        if any(
+            not isinstance(item, dict) or not isinstance(item.get("image_id"), str)
+            or not isinstance(item.get("sha256"), str) for item in images
+        ) or [item["image_id"] for item in images] != extract_background_image_ids(text or ""):
+            raise ArtifactIntegrityError("解析背景快照图片引用不一致")
+        references = []
+        for item in images:
+            try:
+                path = self._artifacts.resolve_series_image(
+                    item["image_id"], series_id=lease.series_id, variant="model",
+                )
+                actual = self._artifacts.fingerprint(self._artifacts.uri_for_path(path))
+            except (FileNotFoundError, ValueError) as exc:
+                raise ArtifactIntegrityError("解析背景参考图已丢失或归属错误") from exc
+            if actual.sha256 != item["sha256"]:
+                raise ArtifactIntegrityError("解析背景参考图内容已改变")
+            references.append(BackgroundImage(image_id=item["image_id"], path=path))
+        self._jobs.assert_current_lease(lease)
+        return text, references, False
 
     def _embed_text_chunks(
         self,
@@ -466,30 +553,6 @@ def _prepared_embedding(
             "video_chunk_id": video_chunk_id,
         },
     )
-
-
-def _series_bible(
-    character_bible: list[dict],
-    important_extra_data: dict | None,
-) -> str | None:
-    source_text = None
-    if important_extra_data is not None:
-        candidate = important_extra_data.get("seriesBible")
-        if isinstance(candidate, str) and candidate.strip():
-            source_text = candidate.strip()
-    if not character_bible and source_text is None:
-        return None
-    structured = json.dumps(
-        {"characters": character_bible},
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-    )
-    if source_text is None:
-        return structured
-    if not character_bible:
-        return source_text
-    return f"{source_text}\n\nStructured character data:\n{structured}"
 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:

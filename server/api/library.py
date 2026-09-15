@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from fastapi import Query, Request
+from starlette.concurrency import run_in_threadpool
 
 from ..model.dto.libraryDTO import (
     Character,
     SeriesCreateRequest,
     SeriesState,
+    SeriesUpdateRequest,
     VideoSummaryState,
 )
 from ..model.job import ParseJobStatus
@@ -34,6 +36,46 @@ def create_series(request: Request, body: SeriesCreateRequest) -> SeriesView:
         character_bible=[item.model_dump() for item in body.character_bible],
     )
     return _series_view(state, get_services(request).media)
+
+
+def update_series(request: Request, body: SeriesUpdateRequest) -> SeriesView:
+    services = get_services(request)
+    changes = body.model_dump(exclude_unset=True, exclude={"workspace_id", "series_id"})
+    state = services.library.update_series(
+        body.series_id, workspace_id=body.workspace_id, changes=changes,
+    )
+    return _series_view(state, services.media)
+
+
+async def upload_series_image(
+    request: Request,
+    series_id: str = Query(alias="seriesId"),
+    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+) -> ImageAsset:
+    services = get_services(request)
+    await run_in_threadpool(services.library.get_series, series_id, workspace_id=workspace_id)
+    maximum_bytes = services.media.image_upload_config.maximum_upload_size_bytes
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_size = int(content_length)
+        except ValueError as exc:
+            raise ValueError("Content-Length must be a nonnegative integer") from exc
+        if declared_size < 0 or declared_size > maximum_bytes:
+            raise ValueError("background image exceeds the upload size limit")
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > maximum_bytes:
+            raise ValueError("background image exceeds the upload size limit")
+        chunks.append(chunk)
+    if content_length is not None and size != declared_size:
+        raise ValueError("background image body size does not match Content-Length")
+    image = await run_in_threadpool(
+        services.media.upload_series_image, series_id, b"".join(chunks), workspace_id=workspace_id,
+    )
+    return ImageAsset.model_validate(asdict(image))
 
 
 def list_series(

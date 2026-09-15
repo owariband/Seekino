@@ -54,6 +54,9 @@ def test_server_settings_load_upload_parse_agent_and_worker_defaults(monkeypatch
     assert settings.database_pool_recycle_seconds == 3600
     assert settings.video_embedding_model is None
     assert settings.video_embedding_fps is None
+    assert settings.images.maximum_upload_size_bytes == 10 * 1024 * 1024
+    assert settings.images.maximum_pixels == 40_000_000
+    assert settings.images.model_max_edge == 1024
 
 
 def test_server_settings_reject_cross_modal_dimension_mismatch(monkeypatch) -> None:
@@ -77,6 +80,9 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
         "ANIVAG_DATABASE_POOL_RECYCLE_SECONDS": "1200",
         "ANIVAG_VIDEO_EMBEDDING_MODEL": " embedding-test-model ",
         "ANIVAG_VIDEO_EMBEDDING_FPS": "2.0",
+        "ANIVAG_MAX_IMAGE_UPLOAD_SIZE_BYTES": "2048",
+        "ANIVAG_MAX_IMAGE_PIXELS": "1000000",
+        "ANIVAG_BACKGROUND_IMAGE_MAX_EDGE": "512",
     }
     for name, value in overrides.items():
         monkeypatch.setenv(name, value)
@@ -92,6 +98,9 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
     assert settings.database_pool_recycle_seconds == 1200
     assert settings.video_embedding_model == "embedding-test-model"
     assert settings.video_embedding_fps == 2.0
+    assert settings.images.maximum_upload_size_bytes == 2048
+    assert settings.images.maximum_pixels == 1_000_000
+    assert settings.images.model_max_edge == 512
 
 
 @pytest.mark.parametrize(
@@ -106,6 +115,9 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
         ("ANIVAG_RETRIEVAL_TEXT_WEIGHT", "nan"),
         ("ANIVAG_RETRIEVAL_VISION_WEIGHT", "-1"),
         ("ANIVAG_DATABASE_POOL_RECYCLE_SECONDS", "0"),
+        ("ANIVAG_MAX_IMAGE_UPLOAD_SIZE_BYTES", "0"),
+        ("ANIVAG_MAX_IMAGE_PIXELS", "-1"),
+        ("ANIVAG_BACKGROUND_IMAGE_MAX_EDGE", "0"),
     ],
 )
 def test_server_settings_reject_invalid_runtime_tuning(monkeypatch, name, value):

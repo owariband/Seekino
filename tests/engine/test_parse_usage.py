@@ -101,7 +101,7 @@ def test_asr_failed_request_is_recorded_and_checkpoint_resume_only_counts_new_re
 def test_pipeline_counts_each_fallback_call_and_does_not_recount_completed_chunks():
     ledger = []
     class Parser:
-        def analyze(self, path, *, context, duration_ms, candidate_transcript):
+        def analyze(self, path, *, context, duration_ms, candidate_transcript, background_images=()):
             with pytest.raises(RuntimeError), track_model_call(provider="ark", model="pro", operation="video_timeline"):
                 raise RuntimeError("content filter")
             for operation in ["neutral_visual_evidence", "neutral_visual_evidence", "fallback_video_timeline"]:

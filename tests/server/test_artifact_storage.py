@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import hashlib
+from io import BytesIO
 from uuid import uuid4
 
 import pytest
+from PIL import Image
 
+from server.config.media import ImageUploadConfig
 from server.database import DatabaseEnvironment
 from server.storage.artifact import (
     ArtifactIntegrityError,
     LocalArtifactStore,
     UploadSegmentArtifact,
 )
+from server.utils.images import prepare_series_image
+from server.utils.media import decode_series_image_id
 
 
 def test_local_artifact_store_assembles_and_publishes_upload(tmp_path) -> None:
@@ -96,3 +101,53 @@ def test_artifact_store_enforces_environment_and_safe_filenames(tmp_path) -> Non
             video_id=str(uuid4()),
             original_filename="../episode.mp4",
         )
+
+
+def test_series_images_store_original_and_immutable_model_scoped_by_hash(tmp_path):
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    series_id = str(uuid4())
+    output = BytesIO()
+    Image.new("RGBA", (32, 24), (1, 2, 3, 128)).save(output, format="PNG")
+    data = output.getvalue()
+    extension, model_data = prepare_series_image(data, config=ImageUploadConfig())
+
+    image_id = store.put_series_image(series_id, data, extension=extension, model_data=model_data)
+    assert decode_series_image_id(image_id) == (series_id, hashlib.sha256(data).hexdigest(), "png")
+    original = store.resolve_series_image(image_id, series_id=series_id)
+    model = store.resolve_series_image(image_id, series_id=series_id, variant="model")
+    assert original.read_bytes() == data
+    assert model.read_bytes() == model_data
+    assert str(original).startswith(str(store.base_directory / "media" / "series" / series_id))
+
+    assert store.put_series_image(series_id, data, extension=extension, model_data=model_data) == image_id
+    _extension, smaller_model = prepare_series_image(data, config=ImageUploadConfig(model_max_edge=8))
+    assert store.put_series_image(series_id, data, extension=extension, model_data=smaller_model) == image_id
+    assert model.read_bytes() == model_data
+    with pytest.raises(ValueError, match="another Series"):
+        store.resolve_series_image(image_id, series_id=str(uuid4()))
+    with pytest.raises(ValueError, match="unsupported Series image variant"):
+        store.resolve_series_image(image_id, series_id=series_id, variant="../../private")
+    with pytest.raises(FileNotFoundError):
+        LocalArtifactStore(tmp_path / "artifacts", environment="development").resolve_series_image(
+            image_id, series_id=series_id,
+        )
+
+    original.write_bytes(b"corrupt")
+    with pytest.raises(ArtifactIntegrityError, match="stored Series image bytes changed"):
+        store.put_series_image(series_id, data, extension=extension, model_data=model_data)
+
+
+def test_series_image_resolve_rejects_filesystem_escape(tmp_path):
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    series_id = str(uuid4())
+    image_id = store.put_series_image(series_id, b"original", extension="jpg", model_data=b"model")
+    original = store.resolve_series_image(image_id, series_id=series_id)
+    outside = tmp_path / "private.jpg"
+    outside.write_bytes(b"private")
+    original.unlink()
+    original.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="escapes the configured root"):
+        store.resolve_series_image(image_id, series_id=series_id)
+    with pytest.raises(ValueError, match="escapes the configured root"):
+        store.put_series_image(series_id, b"original", extension="jpg", model_data=b"model")

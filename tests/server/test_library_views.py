@@ -185,3 +185,33 @@ def test_series_page_counts_filters_and_cursor_bind_actual_query(repository, tmp
         library_api.list_series(request, "local-default", first.next_cursor, 1, "EMPTY", "Other")
     with pytest.raises(ValueError, match="cursor"):
         library_api.list_series(request, "other", first.next_cursor, 1, "EMPTY", "Match")
+
+
+def test_background_edit_preserves_video_order_and_character_metadata(repository, prepared_import):
+    _factory, videos, library = _library(repository)
+    report = videos.import_video_parse(prepared_import)
+    before = library.get_series(report.series_id, workspace_id="local-default")
+    edited = library.update_series(
+        report.series_id, workspace_id="local-default",
+        changes={"description": "背景资料更新", "important_extra_data": {"content": "# 新背景"}},
+    )
+    assert edited.description == "背景资料更新"
+    assert edited.important_extra_data == {"format": "markdown", "content": "# 新背景"}
+    assert edited.name == before.name
+    assert edited.character_bible == before.character_bible
+    assert [(video.video_id, video.episode_order, video.upload_sequence) for video in edited.videos] == [
+        (video.video_id, video.episode_order, video.upload_sequence) for video in before.videos
+    ]
+
+
+def test_create_preserves_legacy_freeform_background_and_validates_managed_refs(repository):
+    _factory, _videos, library = _library(repository)
+    legacy = {"seriesBible": "旧Markdown", "arbitrary": {"custom": [1, "freeform"]}}
+    series = library.create_series(workspace_id="local-default", name="Legacy", important_extra_data=legacy)
+    assert series.important_extra_data == legacy
+    with pytest.raises(ValueError, match="storage is unavailable"):
+        library.create_series(
+            workspace_id="local-default", name="Invalid image",
+            important_extra_data={"arbitrary": {"image": "asset://missing"}},
+        )
+    assert library.count_series(workspace_id="local-default") == 1

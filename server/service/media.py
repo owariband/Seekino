@@ -8,6 +8,8 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlencode
 
+from ..config.media import ImageUploadConfig
+from ..constants.media import SERIES_IMAGE_ID_PREFIX
 from ..identity import canonical_uuid
 from ..model.dto.libraryDTO import VideoSummaryState
 from ..model.dto.mediaDTO import ImageReference, PlaybackMedia, VideoMedia
@@ -15,6 +17,8 @@ from ..repository.library import SeriesNotFoundError
 from ..repository.video import VideoRepository
 from ..schema import VideoChunkEvidence
 from ..storage.artifact import ArtifactStore
+from ..utils.images import prepare_series_image
+from ..utils.media import decode_series_image_id, image_media_type
 from .library import LibraryService
 
 
@@ -34,11 +38,25 @@ class MediaService:
         video_repository: VideoRepository | None = None,
         *,
         probe_playback: Callable[[Path], bool] | None = None,
+        config: ImageUploadConfig | None = None,
     ) -> None:
         self._library = library
         self._artifact_store = artifact_store
         self._video_repository = video_repository
         self._probe_playback = probe_playback or _cached_browser_playable
+        self.image_upload_config = config or ImageUploadConfig()
+
+    def upload_series_image(
+        self, series_id: str, data: bytes, *, workspace_id: str,
+    ) -> ImageReference:
+        series = self._library.get_series(series_id, workspace_id=workspace_id)
+        extension, model_data = prepare_series_image(data, config=self.image_upload_config)
+        image_id = self._artifact_store.put_series_image(
+            series.series_id, data, extension=extension, model_data=model_data,
+        )
+        return ImageReference(image_id, "/api/media/images/content?" + urlencode({
+            "workspaceId": workspace_id, "imageId": image_id,
+        }))
 
     def get_original(
         self,
@@ -101,7 +119,7 @@ class MediaService:
         for index, uri in enumerate(getattr(video, "keyframe_uris", ())):
             try:
                 path = self._artifact_store.resolve(uri)
-                if _image_type(path) is None:
+                if image_media_type(path) is None:
                     continue
             except (OSError, ValueError):
                 continue
@@ -112,6 +130,23 @@ class MediaService:
         return None
 
     def get_image(self, image_id: str, *, workspace_id: str) -> VideoMedia:
+        if isinstance(image_id, str) and image_id.startswith(SERIES_IMAGE_ID_PREFIX):
+            try:
+                series_id, _checksum, _extension = decode_series_image_id(image_id)
+            except ValueError as exc:
+                raise SeriesNotFoundError("图片资源不存在") from exc
+            self._library.get_series(series_id, workspace_id=workspace_id)
+            try:
+                path = self._artifact_store.resolve_series_image(image_id, series_id=series_id)
+                media_type = image_media_type(path)
+                size = path.stat().st_size
+            except FileNotFoundError as exc:
+                raise MediaMissingError("背景图片已丢失") from exc
+            except (OSError, ValueError) as exc:
+                raise MediaNotReadyError("背景图片尚不可读取") from exc
+            if media_type is None:
+                raise MediaNotReadyError("背景资源不是可确认的图片")
+            return VideoMedia(path, media_type, size)
         try:
             video_id, index = json.loads(base64.urlsafe_b64decode(image_id + "=" * (-len(image_id) % 4)))
             video_id = canonical_uuid(video_id, "image_id")
@@ -125,7 +160,7 @@ class MediaService:
             raise SeriesNotFoundError("图片资源不存在")
         try:
             path = self._artifact_store.resolve(sources[index])
-            media_type = _image_type(path)
+            media_type = image_media_type(path)
             size = path.stat().st_size
         except FileNotFoundError as exc:
             raise MediaMissingError("关键帧图片已丢失") from exc
@@ -152,18 +187,6 @@ def _media_type(path: Path) -> str:
         ".mov": "video/quicktime",
         ".avi": "video/x-msvideo",
     }.get(suffix, "application/octet-stream")
-
-
-def _image_type(path: Path) -> str | None:
-    with path.open("rb") as source:
-        header = source.read(16)
-    if header.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if header.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
-        return "image/webp"
-    return None
 
 
 def _cached_browser_playable(path: Path) -> bool:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from io import BytesIO
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -8,11 +9,13 @@ from pathlib import Path
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from server.api.app import create_app
 from server.agent.runtime import AgentRuntime
 from server.api.jobs import _job_event_fingerprint, _job_view
 from server.bootstrap import ApplicationServices
+from server.config.media import ImageUploadConfig
 from server.database import (
     DatabaseEnvironment,
     create_database_engine,
@@ -95,7 +98,7 @@ def _client(tmp_path: Path):
         tmp_path / "artifacts",
         environment=DatabaseEnvironment.TEST,
     )
-    library = LibraryService(LibraryRepository(session_factory))
+    library = LibraryService(LibraryRepository(session_factory), artifact_store)
     job_repository = ParseJobRepository(session_factory)
     retrieval = _RetrievalStub([])
     agent = AgentChatService(
@@ -165,6 +168,8 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/series/create",
         "/api/series/list",
         "/api/series/get",
+        "/api/series/update",
+        "/api/series/images/upload",
         "/api/uploads/create",
         "/api/uploads/get",
         "/api/uploads/list",
@@ -217,6 +222,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
 
     query_identifiers = {
         ("/api/series/get", "get"): {"seriesId"},
+        ("/api/series/images/upload", "post"): {"seriesId", "workspaceId"},
         ("/api/uploads/create", "post"): {"seriesId"},
         ("/api/uploads/get", "get"): {"uploadSessionId"},
         ("/api/uploads/segments/upload", "put"): {
@@ -278,6 +284,154 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "endMs",
     } <= set(schemas["TranscriptCueView"]["required"])
     assert "modelName" in schemas["AgentMessageView"]["required"]
+
+
+def _background_png() -> bytes:
+    image_bytes = BytesIO()
+    Image.new("RGB", (32, 16), color="red").save(image_bytes, format="PNG")
+    return image_bytes.getvalue()
+
+
+def test_series_background_upload_save_and_read_back(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    series_id = _create_series(client)
+    picture = _background_png()
+    uploaded = client.post(
+        "/api/series/images/upload",
+        params={"workspaceId": "local-default", "seriesId": series_id},
+        content=picture,
+        headers={"Content-Type": "image/png"},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    asset = uploaded.json()
+    assert asset["imageId"]
+    fetched_image = client.get(asset["url"])
+    assert fetched_image.status_code == 200
+    assert fetched_image.content == picture
+    assert fetched_image.headers["content-type"] == "image/png"
+    content = f"# 角色\n\n![角色参考](asset://{asset['imageId']})\n\n红色衣服。"
+    updated = client.post(
+        "/api/series/update",
+        json={
+            "workspaceId": "local-default", "seriesId": series_id,
+            "importantExtraData": {"content": content},
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["importantExtraData"] == {"format": "markdown", "content": content}
+    assert updated.json()["description"] == "API fixture"
+    loaded = client.get("/api/series/get", params={"workspaceId": "local-default", "seriesId": series_id})
+    assert loaded.json()["importantExtraData"] == updated.json()["importantExtraData"]
+    repeat_upload = client.post(
+        "/api/series/images/upload",
+        params={"workspaceId": "local-default", "seriesId": series_id}, content=picture,
+    )
+    assert repeat_upload.json()["imageId"] == asset["imageId"]
+
+
+def test_series_background_json_patch_and_clear(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    series_id = _create_series(client)
+    request_scope = {"workspaceId": "local-default", "seriesId": series_id}
+    json_text = '{  "customKey": [{"trait": "任意字段"}], "enabled": true }'
+    saved = client.post(
+        "/api/series/update", json={
+            **request_scope, "importantExtraData": {"format": "json", "content": json_text},
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["importantExtraData"]["content"] == json_text
+    description_only = client.post("/api/series/update", json={**request_scope, "description": "  新介绍  "})
+    assert description_only.json()["description"] == "新介绍"
+    assert description_only.json()["importantExtraData"] == saved.json()["importantExtraData"]
+    omitted = client.post("/api/series/update", json=request_scope)
+    assert omitted.json()["importantExtraData"] == saved.json()["importantExtraData"]
+    cleared_description = client.post("/api/series/update", json={**request_scope, "description": None})
+    assert cleared_description.json()["description"] is None
+    assert cleared_description.json()["importantExtraData"] == saved.json()["importantExtraData"]
+    cleared_background = client.post("/api/series/update", json={**request_scope, "importantExtraData": None})
+    assert cleared_background.status_code == 200
+    assert cleared_background.json()["importantExtraData"] is None
+    assert cleared_background.json()["description"] is None
+
+
+@pytest.mark.parametrize("document,expected_status", [
+    ({"format": "json", "content": "{bad json"}, 400),
+    ({"format": "json", "content": '{"number": NaN}'}, 400),
+    ({"format": "unsupported", "content": "background"}, 422),
+    ({"format": "markdown", "content": 42}, 422),
+    ({"format": "markdown", "content": "background", "characters": []}, 422),
+    ({"content": "![missing](asset://missingImage)"}, 400),
+])
+def test_series_background_rejects_invalid_document_without_overwriting(tmp_path, document, expected_status):
+    client, _retrieval, _jobs = _client(tmp_path)
+    series_id = _create_series(client)
+    result = client.post("/api/series/update", json={
+        "workspaceId": "local-default", "seriesId": series_id, "description": "must not persist",
+        "importantExtraData": document,
+    })
+    assert result.status_code == expected_status, result.text
+    loaded = client.get("/api/series/get", params={"workspaceId": "local-default", "seriesId": series_id})
+    assert loaded.json()["description"] == "API fixture"
+    assert loaded.json()["importantExtraData"] is None
+
+
+def test_series_background_image_scope_and_missing_file(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    first_id = _create_series(client, name="First Series")
+    other_id = _create_series(client, name="Other Series")
+    foreign_id = _create_series(client, workspace_id="other-workspace", name="Foreign Series")
+    image = client.post(
+        "/api/series/images/upload", content=_background_png(),
+        params={"workspaceId": "local-default", "seriesId": first_id},
+    ).json()
+    for series_id, workspace_id, status in ((other_id, "local-default", 400), (foreign_id, "local-default", 404)):
+        result = client.post("/api/series/update", json={
+            "workspaceId": workspace_id, "seriesId": series_id,
+            "importantExtraData": {"content": f"asset://{image['imageId']}"},
+        })
+        assert result.status_code == status
+    assert client.get(image["url"].replace("workspaceId=local-default", "workspaceId=other-workspace")).status_code == 404
+    store = client.app.state.services.media._artifact_store
+    store.resolve_series_image(image["imageId"], series_id=first_id).unlink()
+    missing = client.post("/api/series/update", json={
+        "workspaceId": "local-default", "seriesId": first_id,
+        "importantExtraData": {"content": f"asset://{image['imageId']}"},
+    })
+    assert missing.status_code == 400
+
+
+def test_series_background_rejects_image_without_model_variant(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    series_id = _create_series(client)
+    uploaded = client.post(
+        "/api/series/images/upload", content=_background_png(),
+        params={"workspaceId": "local-default", "seriesId": series_id},
+    ).json()
+    store = client.app.state.services.media._artifact_store
+    store.resolve_series_image(uploaded["imageId"], series_id=series_id, variant="model").unlink()
+    assert store.resolve_series_image(uploaded["imageId"], series_id=series_id).is_file()
+    result = client.post("/api/series/update", json={
+        "workspaceId": "local-default", "seriesId": series_id, "description": "must not save",
+        "importantExtraData": {"content": f"asset://{uploaded['imageId']}"},
+    })
+    assert result.status_code == 400
+    loaded = client.get("/api/series/get", params={"workspaceId": "local-default", "seriesId": series_id}).json()
+    assert loaded["description"] == "API fixture"
+    assert loaded["importantExtraData"] is None
+
+
+def test_series_background_upload_validates_scope_body_and_limit(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    series_id = _create_series(client)
+    client.app.state.services.media.image_upload_config = ImageUploadConfig(maximum_upload_size_bytes=128)
+    scope = {"workspaceId": "local-default", "seriesId": series_id}
+    assert client.post("/api/series/images/upload", params=scope, content=b"").status_code == 400
+    assert client.post("/api/series/images/upload", params=scope, content=b"not an image").status_code == 400
+    assert client.post("/api/series/images/upload", params=scope, content=b"x" * 129).status_code == 400
+    streamed = client.post("/api/series/images/upload", params=scope, content=iter([b"x" * 100, b"x" * 100]))
+    assert streamed.status_code == 400
+    assert client.post("/api/series/images/upload", params={**scope, "workspaceId": "other"}, content=b"x" * 129).status_code == 404
 
 
 def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:

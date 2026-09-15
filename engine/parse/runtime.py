@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -10,6 +10,7 @@ from gateway.config import load_config
 from gateway.models import ArkMultimodalModel, DeepSeekMultimodalModel
 
 from .analysis_windows import materialize_analysis_windows, plan_analysis_windows
+from .background import BackgroundImage
 from .checkpoints import (
     load_completed_chunks,
     prepare_candidate_transcripts,
@@ -82,6 +83,7 @@ class EngineVideoParseRuntime:
         duration_ms: int,
         output_dir: str | Path,
         series_bible: str | None = None,
+        background_images: Sequence[BackgroundImage] = (),
         on_windows_ready: Callable[[list[AnalysisWindow]], None] | None = None,
         on_chunk_complete: (
             Callable[[VideoChunkParseResult, Path], None] | None
@@ -272,6 +274,7 @@ class EngineVideoParseRuntime:
             context_overlap_ms=self._config.context_overlap_ms,
             windows=windows,
             series_bible=series_bible,
+            background_images=background_images,
             candidate_transcripts=candidate_transcripts,
             completed_chunks=completed_chunks,
             on_chunk_complete=checkpoint,

@@ -1,5 +1,7 @@
+from collections.abc import Sequence
 from pathlib import Path
 
+from engine.parse.background import BackgroundImage
 from engine.parse.schemas import (
     AnalysisWindow,
     TimelineEvent,
@@ -30,6 +32,7 @@ def _event(
 class FakeParser:
     def __init__(self) -> None:
         self.contexts: list[str] = []
+        self.background_images: list[tuple[BackgroundImage, ...]] = []
         self._events = [
             [
                 _event(1000, 3000, "第一段已确认动作"),
@@ -52,11 +55,13 @@ class FakeParser:
         context: str | None = None,
         duration_ms: int | None = None,
         candidate_transcript: TranscriptAnalysis | None = None,
+        background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         index = int(Path(video_path).stem.rsplit("-", 1)[-1])
         assert duration_ms is not None
         assert Path(video_path).name == f"window-{index}.mp4"
         self.contexts.append(context or "")
+        self.background_images.append(tuple(background_images))
         return VideoEvidence(
             duration_ms=duration_ms,
             candidate_transcript=[],
@@ -73,12 +78,14 @@ class FakeFallbackParser(FakeParser):
         context: str | None = None,
         duration_ms: int | None = None,
         candidate_transcript: TranscriptAnalysis | None = None,
+        background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         evidence = super().analyze(
             video_path,
             context=context,
             duration_ms=duration_ms,
             candidate_transcript=candidate_transcript,
+            background_images=background_images,
         )
         return evidence.model_copy(
             update={
@@ -210,6 +217,63 @@ def test_pipeline_resumes_after_the_last_completed_chunk() -> None:
     assert resumed == initial
     assert len(resumed_parser.contexts) == 2
     assert "第一段已确认动作" in resumed_parser.contexts[0]
+
+
+def test_pipeline_passes_complete_background_and_images_to_every_window(tmp_path) -> None:
+    images = (
+        BackgroundImage(image_id="tomori_01", path=tmp_path / "tomori.png"),
+        BackgroundImage(image_id="anon-02", path=tmp_path / "anon.png"),
+    )
+    background = (
+        "# 完整系列背景\n\n"
+        "![灯](asset://tomori_01)\n![爱音](asset://anon-02)\n"
+        '{"customSchema": {"emotion": ["困惑", "平静"]}}'
+    )
+    parser = FakeParser()
+
+    result = ParsePipeline(parser).run(
+        source_video="episode.mp4",
+        duration_ms=30_000,
+        chunk_duration_ms=10_000,
+        context_overlap_ms=2_000,
+        windows=_windows(),
+        series_bible=background,
+        background_images=images,
+    )
+
+    assert len(result.chunks) == 3
+    assert parser.background_images == [images, images, images]
+    assert all(background in context for context in parser.contexts)
+
+
+def test_resumed_pipeline_passes_images_only_to_unfinished_windows(tmp_path) -> None:
+    images = (BackgroundImage(image_id="tomori_01", path=tmp_path / "tomori.png"),)
+    background = "![灯](asset://tomori_01)"
+    initial = ParsePipeline(FakeParser()).run(
+        source_video="episode.mp4",
+        duration_ms=30_000,
+        chunk_duration_ms=10_000,
+        context_overlap_ms=2_000,
+        windows=_windows(),
+        series_bible=background,
+        background_images=images,
+    )
+    parser = FakeParser()
+
+    resumed = ParsePipeline(parser).run(
+        source_video="episode.mp4",
+        duration_ms=30_000,
+        chunk_duration_ms=10_000,
+        context_overlap_ms=2_000,
+        windows=_windows(),
+        series_bible=background,
+        background_images=images,
+        completed_chunks=initial.chunks[:1],
+    )
+
+    assert resumed == initial
+    assert parser.background_images == [images, images]
+    assert all(background in context for context in parser.contexts)
 
 
 def test_pipeline_marks_content_filter_result_as_fallback() -> None:

@@ -71,7 +71,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         settings.artifact_root,
         environment=settings.environment,
     )
-    library = LibraryService(LibraryRepository(session_factory))
+    library = LibraryService(LibraryRepository(session_factory), artifact_store)
     uploads = UploadService(
         UploadRepository(session_factory),
         artifact_store,
@@ -83,7 +83,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         load_model_pricing(settings.model_pricing_path),
     )
     video_repository = VideoRepository(session_factory)
-    media = MediaService(library, artifact_store, video_repository)
+    media = MediaService(library, artifact_store, video_repository, config=settings.images)
 
     qdrant_client = QdrantClient(
         url=settings.qdrant_url,

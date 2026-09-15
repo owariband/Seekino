@@ -14,6 +14,7 @@ from gateway.models import (
 from gateway.sse_proxy import ContentFilterError
 
 from .analysis_windows import probe_video_duration_ms
+from .background import BackgroundImage, build_background_image_inputs
 from .frame_sampler import extract_video_frames, plan_frame_timestamps
 from .prompts import (
     ARK_FRAME_SEQUENCE_INTRO,
@@ -42,6 +43,7 @@ class VideoChunkEvidenceParser(Protocol):
         context: str | None = None,
         duration_ms: int | None = None,
         candidate_transcript: TranscriptAnalysis | None = None,
+        background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence: ...
 
 
@@ -88,6 +90,7 @@ class VideoChunkParser:
         context: str | None = None,
         duration_ms: int | None = None,
         candidate_transcript: TranscriptAnalysis | None = None,
+        background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
         transcript = candidate_transcript
@@ -103,6 +106,7 @@ class VideoChunkParser:
         )
         timeline = self._video_model.generate(
             [
+                *build_background_image_inputs(background_images),
                 VideoInput(path=path, fps=self.video_fps),
                 TextInput(text=instruction),
             ],
@@ -129,6 +133,7 @@ class VideoChunkParser:
         duration_ms: int,
         candidate_transcript: TranscriptAnalysis,
         context: str | None = None,
+        background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         return _analyze_ordered_frames(
             self._video_model,
@@ -138,6 +143,7 @@ class VideoChunkParser:
             context=context,
             frame_fps=None,
             sequence_intro=ARK_FRAME_SEQUENCE_INTRO,
+            background_images=background_images,
         )
 
 
@@ -170,6 +176,7 @@ class OrderedFrameVideoChunkParser:
         context: str | None = None,
         duration_ms: int | None = None,
         candidate_transcript: TranscriptAnalysis | None = None,
+        background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
         transcript = candidate_transcript or TranscriptAnalysis(transcript=[])
@@ -190,6 +197,7 @@ class OrderedFrameVideoChunkParser:
                 duration_ms=resolved_duration_ms,
                 candidate_transcript=transcript,
                 context=context,
+                background_images=background_images,
             )
 
     def analyze_frames(
@@ -199,6 +207,7 @@ class OrderedFrameVideoChunkParser:
         duration_ms: int,
         candidate_transcript: TranscriptAnalysis,
         context: str | None = None,
+        background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         return _analyze_ordered_frames(
             self._model,
@@ -208,6 +217,7 @@ class OrderedFrameVideoChunkParser:
             context=context,
             frame_fps=self.frame_fps,
             sequence_intro=FRAME_SEQUENCE_INTRO,
+            background_images=background_images,
         )
 
 
@@ -258,6 +268,7 @@ class DeepSeekFallbackVideoChunkParser:
         context: str | None = None,
         duration_ms: int | None = None,
         candidate_transcript: TranscriptAnalysis | None = None,
+        background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
         # The primary path may deliberately use an empty candidate transcript.
@@ -330,6 +341,7 @@ class DeepSeekFallbackVideoChunkParser:
         )
         timeline = self._refiner_model.generate(
             [
+                *build_background_image_inputs(background_images),
                 TextInput(
                     text=build_fallback_refiner_prompt(
                         resolved_duration_ms,
@@ -391,6 +403,7 @@ class ContentFilterFallbackVideoChunkParser:
         context: str | None = None,
         duration_ms: int | None = None,
         candidate_transcript: TranscriptAnalysis | None = None,
+        background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         try:
             return self._primary.analyze(
@@ -398,6 +411,7 @@ class ContentFilterFallbackVideoChunkParser:
                 context=context,
                 duration_ms=duration_ms,
                 candidate_transcript=candidate_transcript,
+                background_images=background_images,
             )
         except ContentFilterError as error:
             if self._on_fallback is not None:
@@ -407,6 +421,7 @@ class ContentFilterFallbackVideoChunkParser:
                 context=context,
                 duration_ms=duration_ms,
                 candidate_transcript=candidate_transcript,
+                background_images=background_images,
             )
             if evidence.provenance is None:
                 raise RuntimeError("fallback must return video parse provenance")
@@ -438,12 +453,14 @@ def _analyze_ordered_frames(
     context: str | None,
     frame_fps: float | None,
     sequence_intro: str,
+    background_images: Sequence[BackgroundImage] = (),
 ) -> VideoEvidence:
     inputs, timestamps_ms = _ordered_frame_inputs(
         frames,
         duration_ms=duration_ms,
         sequence_intro=sequence_intro,
     )
+    inputs = [*build_background_image_inputs(background_images), *inputs]
     transcript = _clamp_transcript(candidate_transcript, duration_ms)
     inputs.append(
         TextInput(

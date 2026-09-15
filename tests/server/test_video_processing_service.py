@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from dataclasses import replace
 from datetime import timedelta
+from io import BytesIO
 from pathlib import Path
 
+import pytest
+from PIL import Image
 from engine.parse.schemas import VideoParseResult
 from gateway.schemas import EmbeddingResult
 from sqlalchemy import select
@@ -23,14 +28,17 @@ from server.repository.upload import UploadRepository
 from server.repository.video import VideoRepository
 from server.service.index_sync import IndexSyncService
 from server.service.library import LibraryService
+from server.service.media import MediaService
 from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
 from server.service.video_processing import VideoProcessingConfig, VideoProcessingService
+from server.storage.artifact import ArtifactIntegrityError
 
 
 class _Parser:
     def __init__(self, template: VideoParseResult) -> None:
         self.template = template
+        self.backgrounds = []
 
     def run(
         self,
@@ -39,9 +47,11 @@ class _Parser:
         duration_ms,
         output_dir,
         series_bible,
+        background_images,
         on_windows_ready,
         on_chunk_complete,
     ) -> VideoParseResult:
+        self.backgrounds.append((series_bible, background_images))
         output = Path(output_dir)
         chunks = []
         for chunk in self.template.chunks:
@@ -118,6 +128,16 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
         description="fixture",
         character_bible=[{"name": "Anon"}],
     )
+    image_bytes = BytesIO()
+    Image.new("RGB", (2048, 1024), "blue").save(image_bytes, format="PNG")
+    image = MediaService(library, artifacts).upload_series_image(
+        series.series_id, image_bytes.getvalue(), workspace_id="local-default",
+    )
+    background = f"# Anon\n![角色参考](asset://{image.image_id})\n蓝发角色"
+    with session_factory.begin() as session:
+        session.get(SeriesRecord, series.series_id).important_extra_data = {
+            "format": "markdown", "content": background,
+        }
     source_bytes = b"not-a-real-video-but-content-addressed"
     upload = UploadService(
         UploadRepository(session_factory),
@@ -176,19 +196,20 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
     )
     embedder = _Embedder()
     index_store = _IndexStore()
+    parser = _Parser(prepared_import.parse_result)
     processor = VideoProcessingService(
         jobs,
         VideoRepository(session_factory),
         IndexSyncService(IndexSyncRepository(session_factory), index_store),  # type: ignore[arg-type]
         artifacts,
-        _Parser(prepared_import.parse_result),  # type: ignore[arg-type]
+        parser,  # type: ignore[arg-type]
         embedder,
         config=VideoProcessingConfig(embedding_dimensions=3),
     )
 
     video_chunk_ids = processor.process(lease)
-    repeated_video_chunk_ids = processor.process(lease)
-    assert jobs.mark_succeeded(lease)
+    edited_lease = replace(lease, important_extra_data={"format": "markdown", "content": "新背景"})
+    repeated_video_chunk_ids = processor.process(edited_lease)
 
     assert repeated_video_chunk_ids == video_chunk_ids
     assert len(video_chunk_ids) == 2
@@ -199,6 +220,30 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
         "chunk-0001.mp4",
     ]
     assert len(index_store.points) == 2
+    assert len(parser.backgrounds) == 2
+    assert parser.backgrounds[0] == parser.backgrounds[1]
+    text, references = parser.backgrounds[0]
+    assert background in text
+    assert "Anon" in text
+    assert [reference.image_id for reference in references] == [image.image_id]
+    with Image.open(references[0].path) as model_image:
+        assert model_image.size == (1024, 512)
+    snapshot_path = artifacts.work_directory(lease.job_id) / "background.snapshot.json"
+    saved_snapshot = snapshot_path.read_bytes()
+    references[0].path.write_bytes(b"changed-image")
+    with pytest.raises(ArtifactIntegrityError, match="内容已改变"):
+        processor._parse_background(edited_lease, snapshot_path.parent, {})
+    assert snapshot_path.read_bytes() == saved_snapshot
+    # A completed legacy parse can finish persistence without adopting new background.
+    snapshot_path.unlink()
+    assert processor.process(edited_lease) == video_chunk_ids
+    assert parser.backgrounds[-1] == (None, [])
+    assert not snapshot_path.exists()
+    (snapshot_path.parent / "chunks" / "chunk-0001.json").unlink()
+    with pytest.raises(RuntimeError, match="旧解析任务缺少背景快照"):
+        processor.process(edited_lease)
+    assert (snapshot_path.parent / "chunks" / "chunk-0000.json").is_file()
+    assert jobs.mark_succeeded(lease)
     checkpoints = jobs.list_checkpoints(completed.job_id)
     assert {item.stage for item in checkpoints} == {
         VideoChunkCheckpointStage.INDEXED.value
@@ -219,3 +264,17 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
     assert all(item.text_vector == [1.0, 2.0, 3.0] for item in embeddings)
     assert all(item.vision_vector == [3.0, 2.0, 1.0] for item in embeddings)
     assert all(item.status == IndexSyncStatus.SYNCED.value for item in intents)
+
+def test_background_snapshot_publish_keeps_first_complete_version(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from server.utils.files import write_json_once
+
+    target = tmp_path / "background.snapshot.json"
+    candidates = [{"content": f"背景 {index}", "images": list(range(100))} for index in range(8)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda data: write_json_once(target, data), candidates))
+    saved = json.loads(target.read_text(encoding="utf-8"))
+    assert saved in candidates
+    write_json_once(target, {"content": "later"})
+    assert json.loads(target.read_text(encoding="utf-8")) == saved
+    assert list(tmp_path.iterdir()) == [target]

@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 
+from .background import BackgroundImage
 from .schemas import (
     AnalysisWindow,
     ContextEvent,
@@ -44,6 +45,7 @@ class ParsePipeline:
         context_overlap_ms: int,
         windows: Sequence[AnalysisWindow],
         series_bible: str | None = None,
+        background_images: Sequence[BackgroundImage] = (),
         candidate_transcripts: Mapping[int, TranscriptAnalysis] | None = None,
         completed_chunks: Sequence[VideoChunkParseResult] = (),
         on_chunk_complete: Callable[[VideoChunkParseResult], None] | None = None,
@@ -97,6 +99,7 @@ class ParsePipeline:
                     context=model_context,
                     duration_ms=window.analysis_duration_ms,
                     candidate_transcript=candidate_transcript,
+                    background_images=background_images,
                 )
             observed_events, owned_events = self._merge_window_events(
                 window,

@@ -8,6 +8,7 @@ from gateway.models import ImageInput, TextInput, VideoInput
 from gateway.sse_proxy import ContentFilterError
 
 import engine.parse.video_chunk_parse as video_chunk_parse_module
+from engine.parse.background import BackgroundImage
 from engine.parse.video_chunk_parse import (
     ContentFilterFallbackVideoChunkParser,
     DeepSeekFallbackVideoChunkParser,
@@ -134,6 +135,7 @@ def _run_deepseek_fallback(
     monkeypatch,
     *,
     refiner_timeline: VideoTimeline | None = None,
+    background_images=(),
 ):
     video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
@@ -212,6 +214,7 @@ def _run_deepseek_fallback(
         duration_ms=66_000,
         candidate_transcript=TranscriptAnalysis(transcript=[]),
         context=context,
+        background_images=background_images,
     )
     return {
         "result": result,
@@ -271,6 +274,45 @@ def test_video_chunk_parser_fuses_candidate_transcript_with_video(tmp_path) -> N
     assert "脱离前后文单独正确理解" in instruction
     assert "开始学习吉他的年龄" in instruction
     assert "text 写 null" in instruction
+
+
+def test_video_chunk_parser_sends_labeled_background_images_with_video(tmp_path) -> None:
+    transcript_model = FakeModel("test-lite", {})
+    video_model = FakeModel("test-pro", {"video_timeline": _timeline()})
+    video_path = tmp_path / "chunk.mp4"
+    video_path.write_bytes(b"fake-video")
+    images = [
+        BackgroundImage("tomori_01", tmp_path / "tomori.png"),
+        BackgroundImage("anon-02", tmp_path / "anon.png"),
+    ]
+    for image in images:
+        image.path.write_bytes(b"background image")
+
+    VideoChunkParser(
+        transcript_model,
+        video_model,
+        transcript_fps=1.0,
+        video_fps=1.0,
+    ).analyze(
+        video_path,
+        duration_ms=8000,
+        candidate_transcript=_transcript(),
+        context="人物背景正文与自定义字段",
+        background_images=images,
+    )
+
+    assert transcript_model.calls == []
+    inputs = video_model.calls[0]["inputs"]
+    assert [type(item) for item in inputs] == [
+        TextInput, ImageInput, TextInput, ImageInput, VideoInput, TextInput,
+    ]
+    assert "asset://tomori_01" in inputs[0].text
+    assert "不是当前视频证据" in inputs[0].text
+    assert inputs[1].path == images[0].path
+    assert "asset://anon-02" in inputs[2].text
+    assert inputs[3].path == images[1].path
+    assert inputs[4].path == video_path
+    assert "人物背景正文与自定义字段" in inputs[5].text
 
 
 def test_video_chunk_parser_reuses_precomputed_candidate_transcript(tmp_path) -> None:
@@ -420,6 +462,102 @@ def test_ordered_frame_video_chunk_parser_records_local_sampling(tmp_path) -> No
     assert result.provenance.frame_timestamps_ms == [1000]
 
 
+@pytest.mark.parametrize("mode", ["ark_frames", "ordered_frames", "ordered_video"])
+def test_frame_paths_keep_background_images_separate_from_timed_frames(
+    tmp_path,
+    monkeypatch,
+    mode,
+) -> None:
+    background = BackgroundImage("portrait_01", tmp_path / "portrait.png")
+    background.path.write_bytes(b"background image")
+    frame = tmp_path / "frame.jpg"
+    frame.write_bytes(b"video frame")
+    frames = [(1000, frame)]
+    model = FakeModel("frame-model", {"video_timeline": _timeline()})
+    if mode == "ark_frames":
+        parser = VideoChunkParser(
+            FakeModel("test-lite", {}), model,
+            transcript_fps=1.0, video_fps=1.0,
+        )
+    else:
+        parser = OrderedFrameVideoChunkParser(
+            model, frame_fps=0.5, max_frames=33, max_height=720,
+        )
+    if mode == "ordered_video":
+        video = tmp_path / "chunk.mp4"
+        video.write_bytes(b"video")
+        monkeypatch.setattr(
+            video_chunk_parse_module, "extract_video_frames",
+            lambda *_args, **_kwargs: frames,
+        )
+        result = parser.analyze(
+            video, duration_ms=8000,
+            candidate_transcript=TranscriptAnalysis(transcript=[]),
+            background_images=[background],
+        )
+    else:
+        result = parser.analyze_frames(
+            frames, duration_ms=8000,
+            candidate_transcript=TranscriptAnalysis(transcript=[]),
+            background_images=[background],
+        )
+
+    inputs = model.calls[0]["inputs"]
+    assert "asset://portrait_01" in inputs[0].text
+    assert inputs[1].path == background.path
+    assert "视频采样帧" in inputs[2].text
+    assert inputs[3].text == "Frame 1/1: t=1000 ms"
+    assert inputs[4].path == frame
+    assert "不属于视频采样帧" in inputs[5].text
+    assert result.provenance.frame_timestamps_ms == [1000]
+
+
+def test_deepseek_fallback_uses_background_images_only_in_refinement(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    background = BackgroundImage("portrait_01", tmp_path / "portrait.png")
+    background.path.write_bytes(b"background image")
+    run = _run_deepseek_fallback(
+        tmp_path, monkeypatch, background_images=[background],
+    )
+
+    for call in run["vision_model"].calls:
+        assert "asset://portrait_01" not in _call_text(call)
+        assert all(
+            item.path != background.path
+            for item in call["inputs"] if isinstance(item, ImageInput)
+        )
+    transcript_inputs = run["transcript_model"].calls[0]["inputs"]
+    assert not any(isinstance(item, ImageInput) for item in transcript_inputs)
+    refiner_call = run["refiner_model"].calls[0]
+    assert "asset://portrait_01" in refiner_call["inputs"][0].text
+    assert isinstance(refiner_call["inputs"][1], ImageInput)
+    assert refiner_call["inputs"][1].path == background.path
+    refiner_prompt = _call_text(refiner_call)
+    assert "看不到当前片段的原始视频帧" in refiner_prompt
+    assert "背景图中的动作或文字不能作为当前事件或台词证据" in refiner_prompt
+    assert "只能来自 visual_observations" in refiner_prompt
+
+
+def test_background_images_cannot_supply_fallback_dialogue_text(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    timeline = VideoTimeline(
+        summary="背景图中的台词",
+        events=[TimelineEvent(
+            start_ms=1000, end_ms=2000, event_type="DIALOGUE",
+            description="人物说话", text="来自背景图而不是视频的台词",
+        )],
+    )
+    with pytest.raises(ValueError, match="not grounded in ASR or subtitles"):
+        _run_deepseek_fallback(
+            tmp_path, monkeypatch, refiner_timeline=timeline,
+            background_images=[BackgroundImage("portrait_01", tmp_path / "portrait.png")],
+        )
+
+
 def test_deepseek_fallback_groups_frames_and_isolates_visual_stage(
     tmp_path,
     monkeypatch,
@@ -539,9 +677,11 @@ class RaisingParser:
     def __init__(self, error: Exception) -> None:
         self.error = error
         self.calls = 0
+        self.requests = []
 
     def analyze(self, *args, **kwargs):
         self.calls += 1
+        self.requests.append(kwargs)
         raise self.error
 
 
@@ -549,13 +689,15 @@ class ReturningParser:
     def __init__(self, evidence: VideoEvidence) -> None:
         self.evidence = evidence
         self.calls = 0
+        self.requests = []
 
     def analyze(self, *args, **kwargs) -> VideoEvidence:
         self.calls += 1
+        self.requests.append(kwargs)
         return self.evidence
 
 
-def test_content_filter_falls_back_once_and_preserves_diagnostics() -> None:
+def test_content_filter_falls_back_once_and_preserves_diagnostics(tmp_path) -> None:
     primary_error = ContentFilterError(
         "filtered",
         code="OutputTextSensitiveContentDetected",
@@ -581,14 +723,17 @@ def test_content_filter_falls_back_once_and_preserves_diagnostics() -> None:
         )
     )
 
+    images = [BackgroundImage("portrait_01", tmp_path / "portrait.png")]
     result = ContentFilterFallbackVideoChunkParser(
         primary,
         fallback,
         primary_model="test-pro",
-    ).analyze("chunk.mp4", duration_ms=8000)
+    ).analyze("chunk.mp4", duration_ms=8000, background_images=images)
 
     assert primary.calls == 1
     assert fallback.calls == 1
+    assert primary.requests[0]["background_images"] == images
+    assert fallback.requests[0]["background_images"] == images
     assert result.provenance is not None
     assert result.provenance.fallback_reason == "content_filter"
     assert result.provenance.primary_model == "test-pro"

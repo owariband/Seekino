@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+from io import BytesIO
 from types import SimpleNamespace
-from uuid import uuid4
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from server.api.errors import register_exception_handlers
 from server.api.search import search_result_view
+from server.config.media import ImageUploadConfig
 from server.repository.library import SeriesNotFoundError
 from server.router.media import router as media_router
 from server.router.search import router as search_router
@@ -79,6 +82,43 @@ def test_media_requires_workspace_and_rejects_unmanaged_sources(tmp_path):
     assert client.get("/api/videos/content", params={"videoId": state.video_id}).status_code == 422
     state.original_source_uri = source.as_uri()
     assert service.playback_view(state.video_id, workspace_id="workspace", video=state).status == "FAILED"
+
+
+def test_series_image_upload_reads_actual_bytes_and_enforces_series_scope(tmp_path):
+    service, client, _source, _frame, _state, _probe = media_fixture(tmp_path)
+    series_id = str(uuid4())
+
+    def get_series(identifier, *, workspace_id):
+        if identifier != series_id or workspace_id != "workspace":
+            raise SeriesNotFoundError("Series 资源不存在")
+        return SimpleNamespace(series_id=series_id)
+
+    service._library.get_series.side_effect = get_series
+    output = BytesIO()
+    Image.new("RGB", (16, 12), "green").save(output, format="PNG")
+    data = output.getvalue()
+    image = service.upload_series_image(series_id, data, workspace_id="workspace")
+
+    assert image.image_id.startswith("simg_")
+    response = client.get(image.url)
+    assert response.status_code == 200
+    assert response.content == data
+    assert response.headers["content-type"] == "image/png"
+    assert client.get(image.url.replace("workspaceId=workspace", "workspaceId=other")).status_code == 404
+    with pytest.raises(SeriesNotFoundError):
+        service.upload_series_image(series_id, data, workspace_id="other")
+    with pytest.raises(SeriesNotFoundError):
+        service.upload_series_image(str(uuid4()), data, workspace_id="workspace")
+    with pytest.raises(ValueError, match="corrupt"):
+        service.upload_series_image(series_id, b"not an image", workspace_id="workspace")
+    service.image_upload_config = ImageUploadConfig(maximum_upload_size_bytes=len(data) - 1)
+    with pytest.raises(ValueError, match="maximum upload size"):
+        service.upload_series_image(series_id, data, workspace_id="workspace")
+    assert client.get("/api/media/images/content", params={
+        "workspaceId": "workspace", "imageId": "simg_invalid",
+    }).status_code == 404
+    service.get_image(image.image_id, workspace_id="workspace").path.unlink()
+    assert client.get(image.url).status_code == 410
 
 
 def domain_result(repository, prepared_import):

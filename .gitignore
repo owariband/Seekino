@@ -3,6 +3,7 @@
 
 # Local design notes and generated architecture artifacts
 docs/design/*
+!docs/design/series-background-api.md
 docs/notes/
 docs/ui-design/
 /transfer.md

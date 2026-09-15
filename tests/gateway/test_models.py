@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from PIL import Image
 from pydantic import BaseModel, ConfigDict
 
 from gateway.models import (
@@ -88,7 +89,7 @@ class FakeResponses:
 
 def test_ark_maps_text_image_and_video_to_responses_sse(tmp_path) -> None:
     image_path = tmp_path / "frame.jpg"
-    image_path.write_bytes(b"image-bytes")
+    Image.new("RGB", (64, 32), "blue").save(image_path, format="JPEG")
     video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"video-bytes")
     responses = FakeResponses(_result())
@@ -122,7 +123,7 @@ def test_ark_maps_text_image_and_video_to_responses_sse(tmp_path) -> None:
     assert content[1]["detail"] == "low"
     assert content[1]["image_url"] == (
         "data:image/jpeg;base64,"
-        + base64.b64encode(b"image-bytes").decode("ascii")
+        + base64.b64encode(image_path.read_bytes()).decode("ascii")
     )
     assert content[2]["type"] == "input_video"
     assert content[2]["fps"] == 0.5
@@ -284,9 +285,9 @@ def test_deepseek_uses_official_responses_api_and_preserves_ordered_images(
     tmp_path,
 ) -> None:
     first_image = tmp_path / "first.jpg"
-    first_image.write_bytes(b"first-image")
+    Image.new("RGB", (64, 32), "blue").save(first_image, format="JPEG")
     second_image = tmp_path / "second.png"
-    second_image.write_bytes(b"second-image")
+    Image.new("RGB", (32, 64), "red").save(second_image, format="PNG")
     responses = FakeDeepSeekResponses(_result().model_dump_json())
     model = DeepSeekMultimodalModel(
         "deepseek-flash",
@@ -329,7 +330,7 @@ def test_deepseek_uses_official_responses_api_and_preserves_ordered_images(
         "type": "input_image",
         "image_url": (
             "data:image/jpeg;base64,"
-            + base64.b64encode(b"first-image").decode("ascii")
+            + base64.b64encode(first_image.read_bytes()).decode("ascii")
         ),
         "detail": "high",
     }
@@ -337,7 +338,7 @@ def test_deepseek_uses_official_responses_api_and_preserves_ordered_images(
         "type": "input_image",
         "image_url": (
             "data:image/png;base64,"
-            + base64.b64encode(b"second-image").decode("ascii")
+            + base64.b64encode(second_image.read_bytes()).decode("ascii")
         ),
         "detail": "low",
     }

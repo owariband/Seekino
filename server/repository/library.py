@@ -95,6 +95,20 @@ class LibraryRepository:
                     raise
         raise AssertionError("unreachable")
 
+    def update_series(self, series_id: str, *, workspace_id: str, changes: dict) -> None:
+        with self._session_factory.begin() as session:
+            record = session.scalar(
+                select(SeriesRecord).where(
+                    SeriesRecord.series_id == series_id,
+                    SeriesRecord.workspace_id == workspace_id,
+                ).with_for_update()
+            )
+            if record is None:
+                raise SeriesNotFoundError("Series does not exist in this workspace")
+            for field in ("description", "important_extra_data"):
+                if field in changes:
+                    setattr(record, field, changes[field])
+
     def list_series(
         self,
         workspace_id: str,

@@ -11,6 +11,7 @@ from engine.parse.runtime import VideoParseRuntimeConfig
 
 from ..database import DatabaseEnvironment
 from .agent import AgentServiceConfig
+from .media import ImageUploadConfig
 from .retrieval import RetrievalConfig
 from .sse import SSEConfig
 from .upload import UploadServiceConfig
@@ -47,6 +48,7 @@ class ServerSettings:
     video_embedding_fps: float | None = None
     agent_query_model: str | None = None
     model_pricing_path: Path | None = None
+    images: ImageUploadConfig = field(default_factory=ImageUploadConfig)
 
     @classmethod
     def from_environment(cls) -> "ServerSettings":
@@ -55,6 +57,7 @@ class ServerSettings:
         agent_defaults = AgentServiceConfig()
         sse_defaults = SSEConfig()
         retrieval_defaults = RetrievalConfig()
+        image_defaults = ImageUploadConfig()
         environment = DatabaseEnvironment(
             os.getenv("ANIVAG_ENVIRONMENT", DatabaseEnvironment.DEVELOPMENT.value)
         )
@@ -132,6 +135,17 @@ class ServerSettings:
             environment=environment,
             database_url=database_url,
             artifact_root=artifact_root,
+            images=ImageUploadConfig(
+                maximum_upload_size_bytes=_environment_int(
+                    "ANIVAG_MAX_IMAGE_UPLOAD_SIZE_BYTES", image_defaults.maximum_upload_size_bytes,
+                ),
+                maximum_pixels=_environment_int(
+                    "ANIVAG_MAX_IMAGE_PIXELS", image_defaults.maximum_pixels,
+                ),
+                model_max_edge=_environment_int(
+                    "ANIVAG_BACKGROUND_IMAGE_MAX_EDGE", image_defaults.model_max_edge,
+                ),
+            ),
             qdrant_url=qdrant_url,
             qdrant_collection=qdrant_collection,
             qdrant_api_key=os.getenv("ANIVAG_QDRANT_API_KEY") or None,

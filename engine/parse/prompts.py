@@ -53,7 +53,7 @@ VIDEO_ONLY_PARSE_PROMPT = """
 """.strip()
 
 FRAME_PARSE_EVIDENCE_PROMPT = """
-当前视觉输入是从原视频按时间顺序采样的静态帧，每张图前都标有相对于当前 AnalysisWindow 起点的时间；这些图片不包含音轨。
+标有 Frame 和时间标签的视觉输入是从原视频按时间顺序采样的静态帧，每张图前都标有相对于当前 AnalysisWindow 起点的时间；这些图片不包含音轨。标有 asset:// 的背景参考图不属于视频采样帧，不能用来确定当前事件或时间。
 
 帧降级约束：
 1. 只根据采样帧中实际可见的画面、硬字幕和候选 ASR 记录事件；候选 ASR 为空时，不得猜测仅靠音频才能确认的对白。
@@ -64,12 +64,12 @@ FRAME_PARSE_EVIDENCE_PROMPT = """
 """.strip()
 
 FRAME_SEQUENCE_INTRO = (
-    "以下图片来自同一个 AnalysisWindow。每张图片紧跟在自己的"
+    "以下视频采样帧来自同一个 AnalysisWindow。每张图片紧跟在自己的"
     "时间标签后，所有标签按相对毫秒严格递增。"
 )
 
 ARK_FRAME_SEQUENCE_INTRO = (
-    "以下图片来自同一个 AnalysisWindow，按标签中的相对毫秒严格递增排列。"
+    "以下视频采样帧来自同一个 AnalysisWindow，按标签中的相对毫秒严格递增排列。"
 )
 
 NEUTRAL_VISUAL_PROMPT = """
@@ -88,10 +88,10 @@ NEUTRAL_VISUAL_PROMPT = """
 """.strip()
 
 FALLBACK_REFINER_PROMPT = """
-请把 Lite 音轨转写与匿名逐帧视觉证据整理为 VideoTimeline。你在本阶段看不到原始图片、视频或音轨，不得假装观察到输入中未写出的内容。
+请把 Lite 音轨转写与匿名逐帧视觉证据整理为 VideoTimeline。你在本阶段看不到当前片段的原始视频帧、视频或音轨；可能收到带 asset:// 标签的背景参考图，仅用于人物身份与术语消歧，不得假装观察到当前片段证据中未写出的内容。
 
 证据边界：
-1. 当前片段的画面、动作、物体和硬字幕只能来自 visual_observations；可听见的台词只能来自 lite_candidate_asr。解析上下文只承接上一片段并帮助人物与术语消歧，不能创造当前片段事实。
+1. 当前片段的画面、动作、物体和硬字幕只能来自 visual_observations；可听见的台词只能来自 lite_candidate_asr。解析上下文承接上一片段；上下文与背景参考图只能帮助人物与术语消歧，不能创造当前片段事实。背景图中的动作或文字不能作为当前事件或台词证据。
 2. visual_fact 是抽帧视觉证据；hard_subtitle 是抽帧时刻可见文字；visible_speaker 只是低置信线索，不能单独认定说话者。Lite ASR 可能有错漏或少量时间偏差，应与硬字幕互相校验。
 3. 人物归一不能只凭发色；只有外观、乐器、服装和位置等多项证据与解析上下文共同匹配时才使用标准名。灯光会改变发色观感。证据不足时保留匿名外观描述，明确区分台上人物与台下观众。孤立一帧且相邻观察不支持的高细节描述应省略，不要扩写。
 

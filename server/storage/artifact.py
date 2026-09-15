@@ -12,6 +12,7 @@ from urllib.parse import quote, unquote, urlparse
 
 from ..database import DatabaseEnvironment
 from ..identity import canonical_uuid
+from ..utils.media import decode_series_image_id, encode_series_image_id
 
 _COPY_BUFFER_BYTES = 1024 * 1024
 
@@ -75,6 +76,14 @@ class ArtifactStore(Protocol):
         category: str,
         filename: str,
     ) -> StoredArtifact: ...
+
+    def put_series_image(
+        self, series_id: str, data: bytes, *, extension: str, model_data: bytes,
+    ) -> str: ...
+
+    def resolve_series_image(
+        self, image_id: str, *, series_id: str, variant: str = "original",
+    ) -> Path: ...
 
     def uri_for_path(self, path: str | Path) -> str: ...
 
@@ -326,6 +335,43 @@ class LocalArtifactStore:
             raise ValueError("artifact path is outside the configured store") from exc
         return self._uri(PurePosixPath(*relative.parts))
 
+    def put_series_image(
+        self, series_id: str, data: bytes, *, extension: str, model_data: bytes,
+    ) -> str:
+        if not isinstance(data, bytes) or not data:
+            raise ValueError("image data must not be empty")
+        if not isinstance(model_data, bytes) or not model_data:
+            raise ValueError("model image data must not be empty")
+        checksum = hashlib.sha256(data).hexdigest()
+        image_id = encode_series_image_id(series_id, checksum, extension)
+        canonical_series_id = canonical_uuid(series_id, "series_id")
+        relative_directory = PurePosixPath(
+            "media", "series", canonical_series_id, "background", "images", checksum,
+        )
+        directory = self._path(relative_directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        original = self._path(relative_directory / f"original.{extension}")
+        model = self._path(relative_directory / "model.jpg")
+        for target, content in ((original, data), (model, model_data)):
+            self._write_immutable(target, content)
+        return image_id
+
+    def resolve_series_image(
+        self, image_id: str, *, series_id: str, variant: str = "original",
+    ) -> Path:
+        image_series_id, checksum, extension = decode_series_image_id(image_id)
+        if image_series_id != canonical_uuid(series_id, "series_id"):
+            raise ValueError("image belongs to another Series")
+        if variant not in {"original", "model"}:
+            raise ValueError("unsupported Series image variant")
+        filename = f"original.{extension}" if variant == "original" else "model.jpg"
+        path = self._path(PurePosixPath(
+            "media", "series", image_series_id, "background", "images", checksum, filename,
+        ))
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        return path
+
     def fingerprint(self, uri: str) -> StoredArtifact:
         path = self.resolve(uri)
         result = self._fingerprint(path)
@@ -395,6 +441,26 @@ class LocalArtifactStore:
         except BaseException:
             Path(temporary_name).unlink(missing_ok=True)
             raise
+
+    @staticmethod
+    def _write_immutable(target: Path, data: bytes) -> None:
+        """Publish complete bytes once without replacing a concurrent writer."""
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent,
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as destination:
+                destination.write(data)
+                destination.flush()
+                os.fsync(destination.fileno())
+            try:
+                os.link(temporary_name, target)
+            except FileExistsError:
+                # An earlier model derivative remains stable across retries/config edits.
+                if target.name != "model.jpg" and target.read_bytes() != data:
+                    raise ArtifactIntegrityError("stored Series image bytes changed")
+        finally:
+            Path(temporary_name).unlink(missing_ok=True)
 
     @staticmethod
     def _copy_file_atomic(source: Path, target: Path) -> None:

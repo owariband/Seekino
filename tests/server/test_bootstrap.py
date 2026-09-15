@@ -11,6 +11,7 @@ from server.api.app import create_app
 from server.config import ServerSettings
 from server.config.retrieval import RetrievalConfig
 from server.config.agent import AgentServiceConfig
+from server.config.media import ImageUploadConfig
 from server.config.sse import SSEConfig
 from server.mq import __main__ as worker_main
 
@@ -48,6 +49,7 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path, 
         agent_evaluator_model="configured-review-model",
         agent_chat_model="configured-chat-model",
         agent_request_timeout_seconds=120,
+        images=ImageUploadConfig(maximum_upload_size_bytes=2048, maximum_pixels=1_000_000, model_max_edge=512),
         agent=AgentServiceConfig(
             max_loop_turns=2, max_model_calls_per_turn=4,
             max_tool_calls_per_turn=2, max_output_tokens=2048,
@@ -57,6 +59,7 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path, 
     # Change the environment after loading Settings to prove assembly uses it.
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "unexpected-env-model")
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "0.5")
+    monkeypatch.setenv("ANIVAG_BACKGROUND_IMAGE_MAX_EDGE", "2048")
     module = bootstrap if entrypoint == "api" else worker_main
     monkeypatch.setattr(module, "QdrantClient", _QdrantClient)
     received = {}
@@ -78,6 +81,7 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path, 
         monkeypatch.setattr(bootstrap, "VideoRetrievalService", create_retrieval)
         services = bootstrap.build_application_services(settings)
         try:
+            assert services.media.image_upload_config == settings.images
             assert received["retrieval"] == {
                 "channel_top_k": 35,
                 "rrf_k": 42,
