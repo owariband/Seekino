@@ -30,6 +30,35 @@ uv run --env-file .env.local python -m gateway.cli --help
 冒烟见 [`gateway/README.md`](gateway/README.md)，业务事实与索引同步命令见
 [`server/README.md`](server/README.md)。所有命令都从仓库根目录运行。
 
+本地验证时，可直接懒启动 MySQL、原生 Qdrant、API、视频 Worker 和 Web：
+
+```bash
+./start.sh          # 已运行的服务直接复用，只启动缺少的进程
+./start.sh status   # 查看服务监听 / readiness 和 Worker 进程状态
+./start.sh stop     # 只停止本脚本启动的进程，保留数据
+```
+
+默认 Web 为 `http://127.0.0.1:5173`，API 文档为 `http://127.0.0.1:9621/docs`。
+脚本读取根目录 `.env.local`，保留显式环境配置。缺少数据库配置时，默认连接
+`root` / 空密码的 `127.0.0.1:3306/anivag_development` 和
+`http://127.0.0.1:6333` 的 `anivag_video_chunks_development` 集合。
+首次自建 MySQL 使用该 root 账号；复用已有认证实例时，在 `.env.local` 配置其数据库账号。
+
+需要本机已有 `uv`、Node、npm、MySQL 8、Qdrant、ffmpeg / ffprobe 和 `lsof`。
+脚本会在缺少 `.venv` / Web 依赖时执行 `uv sync` / `npm ci`。
+可通过 `ANIVAG_MYSQLD_BIN` / `ANIVAG_QDRANT_BIN` 指定二进制；也会查找 Homebrew
+MySQL 8.4 和 `~/.local/bin/qdrant`。Gateway / Engine 由 API / Worker 调用，无需额外进程。
+
+自建数据、PID 与日志保存在 `outputs/local-services/`，媒体仍使用
+`ANIVAG_ARTIFACT_ROOT`（默认 `outputs/server/artifacts`）。启动会创建缺失的开发库 / 表 /
+Qdrant 集合，并校验现有 Schema；旧 Schema 会报错，需要按迁移说明处理。
+不清空数据、不自动 ALTER 旧表。启动失败后已启动的进程会保留，可查看日志、重试或运行 stop。
+
+可在 `.env.local` 修改 `ANIVAG_HTTP_PORT`、`ANIVAG_WEB_PORT`、数据库 URL 端口和
+Qdrant URL 端口；自建 Qdrant 的 gRPC 端口由 `ANIVAG_QDRANT_GRPC_PORT` 指定（默认 6334）。
+Vite 代理会跟随 API 端口。此脚本仅用于 localhost development 环境。
+修改运行配置后，先 `./start.sh stop` 再启动；脚本会检查自管应用的配置摘要，防止复用旧配置。
+
 ## 仓库结构
 
 ```text
