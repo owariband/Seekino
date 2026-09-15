@@ -62,6 +62,7 @@ def _message(sequence_no: int, *, status: str = "COMPLETED") -> AgentMessageStat
     return AgentMessageState(
         message_id=f"message-{sequence_no}",
         conversation_id=_CONVERSATION_ID,
+        series_ids=("series-1",),
         sequence_no=sequence_no,
         role="ASSISTANT" if is_assistant else "USER",
         status=status,
@@ -123,6 +124,7 @@ def test_agent_sse_initial_snapshot_includes_messages_after_500(monkeypatch) -> 
     assert payload["messages"][-1]["sequenceNo"] == 501
     assert payload["messages"][-1]["modelName"] == "chat-model-v1"
     assert payload["messages"][0]["modelName"] is None
+    assert all(message["seriesIds"] == ["series-1"] for message in payload["messages"])
     assert service.calls == [(_CONVERSATION_ID, _WORKSPACE_ID)]
 
 

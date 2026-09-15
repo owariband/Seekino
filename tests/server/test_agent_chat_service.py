@@ -15,6 +15,7 @@ from server.database import (
     DatabaseEnvironment, create_database_engine, create_schema, create_session_factory,
 )
 from server.model.agent import AgentConversationRecord, AgentMessageRecord
+from server.model.video import SeriesRecord
 from server.repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
     AgentRepository,
@@ -107,10 +108,11 @@ def build_service(tmp_path):
         )
         resources.append((service, engine))
         series = library.create_series(workspace_id="local-default", name="Test Series")
-        session = service.create_session(workspace_id="local-default", name="画面札记", idempotency_key="session")
+        with factory.begin() as session:
+            session.get(SeriesRecord, series.series_id).status = "READY"
         conversation = service.create_conversation(
-            session.session_id, workspace_id="local-default", title="测试对话",
-            series_ids=[series.series_id], idempotency_key="conversation",
+            workspace_id="local-default", title="测试对话",
+            idempotency_key="conversation",
         )
         return service, conversation, retrieval, repository, query, evaluator, chat
 
@@ -120,10 +122,10 @@ def build_service(tmp_path):
         engine.dispose()
 
 
-def _send(service, conversation, *, key="message", content="寻找摔杯子的片段"):
+def _send(service, conversation, *, key="message", content="寻找摔杯子的片段", series_ids=None):
     return service.send_message(
         conversation.conversation_id, workspace_id="local-default",
-        content=content, idempotency_key=key,
+        content=content, idempotency_key=key, series_ids=series_ids,
     )
 
 
@@ -137,6 +139,37 @@ def _collect(execution):
         if event is None:
             return events
         events.append(event)
+
+
+def test_conversation_creation_is_idempotent_within_workspace(build_service):
+    service, conversation, *_ = build_service()
+    repeated = service.create_conversation(
+        workspace_id="local-default", title="测试对话",
+        idempotency_key="conversation",
+    )
+    assert repeated.conversation_id == conversation.conversation_id
+    assert repeated.workspace_id == "local-default"
+    assert [item.conversation_id for item in service.list_conversations(workspace_id="local-default")] == [conversation.conversation_id]
+    with pytest.raises(AgentConflictError, match="different fields"):
+        service.create_conversation(
+            workspace_id="local-default", title="另一条对话",
+            idempotency_key="conversation",
+        )
+
+
+def test_conversation_reads_and_execution_do_not_cross_workspaces(build_service):
+    service, conversation, retrieval, _, query, *_ = build_service()
+    assert service.list_conversations(workspace_id="another-workspace") == []
+    for read in [service.get_conversation, service.list_messages, service.list_all_messages]:
+        with pytest.raises(AgentConversationNotFoundError):
+            read(conversation.conversation_id, workspace_id="another-workspace")
+    with pytest.raises(AgentConversationNotFoundError):
+        service.send_message(
+            conversation.conversation_id, workspace_id="another-workspace",
+            content="寻找摔杯子的片段", idempotency_key="message",
+        )
+    assert not retrieval.calls and not query.prompts
+    assert service.list_all_messages(conversation.conversation_id, workspace_id="local-default") == []
 
 
 @pytest.mark.parametrize("second_query", ["补充摔杯子", None])
@@ -182,11 +215,75 @@ def test_next_kick_reads_only_completed_conversation_history(build_service):
     context = json.loads(query.prompts[1].split("\n\n", 1)[1])
     assert context["turn_number"] == 1 and context["turns"] == []
     assert context["inputs"]["history"] == [
-        {"role": "USER", "content": first.user_message.content},
-        {"role": "ASSISTANT", "content": first.assistant_message.content},
+        {"role": "USER", "content": first.user_message.content, "seriesIds": list(first.user_message.series_ids)},
+        {"role": "ASSISTANT", "content": first.assistant_message.content, "seriesIds": list(first.assistant_message.series_ids)},
     ]
     with pytest.raises(AgentConversationNotFoundError):
         service.send_message(conversation.conversation_id, workspace_id="other-workspace", content="隔离", idempotency_key="other")
+
+
+def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kick(
+    build_service, monkeypatch,
+):
+    service, conversation, retrieval, repository, query, _, _ = build_service(
+        evaluator=_EvaluatorModel(approve_after=2),
+    )
+    library = LibraryService(LibraryRepository(repository._session_factory))
+    original_id = library.list_series(workspace_id="local-default")[0].series_id
+    run_query = query.run_query
+    added_ids = []
+
+    def query_with_new_series(*args, **kwargs):
+        draft = run_query(*args, **kwargs)
+        if not added_ids:
+            added = library.create_series(workspace_id="local-default", name="Added mid-loop")
+            with repository._session_factory.begin() as session:
+                session.get(SeriesRecord, added.series_id).status = "READY"
+            added_ids.append(added.series_id)
+        return draft
+
+    monkeypatch.setattr(query, "run_query", query_with_new_series)
+    first = _send(service, conversation, series_ids=[])
+    assert [call[1] for call in retrieval.calls] == [[original_id], [original_id]]
+    assert first.user_message.series_ids == first.assistant_message.series_ids == (original_id,)
+    assert all(
+        json.loads(prompt.split("\n\n", 1)[1])["inputs"]["series_ids"] == [original_id]
+        for prompt in query.prompts
+    )
+
+    # An identical "all" request returns its saved answer, even after readiness changes.
+    with repository._session_factory.begin() as session:
+        session.get(SeriesRecord, original_id).status = "INDEXING"
+    assert _send(service, conversation) == first
+    assert len(retrieval.calls) == 2
+    with repository._session_factory.begin() as session:
+        session.get(SeriesRecord, original_id).status = "READY"
+
+    second = _send(service, conversation, key="next-all", series_ids=[])
+    assert second.user_message.series_ids == tuple(sorted([original_id, added_ids[0]]))
+    assert retrieval.calls[-1][1] == list(second.user_message.series_ids)
+    context = json.loads(query.prompts[-1].split("\n\n", 1)[1])
+    assert [item["seriesIds"] for item in context["inputs"]["history"]] == [[original_id], [original_id]]
+
+
+def test_next_message_can_choose_another_scope_without_reusing_old_evidence(build_service):
+    service, conversation, retrieval, repository, query, _, _ = build_service()
+    library = LibraryService(LibraryRepository(repository._session_factory))
+    original_id = library.list_series(workspace_id="local-default")[0].series_id
+    added = library.create_series(workspace_id="local-default", name="Second animation")
+    with repository._session_factory.begin() as session:
+        session.get(SeriesRecord, added.series_id).status = "READY"
+
+    first = _send(service, conversation, series_ids=[original_id])
+    second = _send(service, conversation, key="second", series_ids=[added.series_id])
+    assert [call[1] for call in retrieval.calls] == [[original_id], [added.series_id]]
+    assert first.assistant_message.series_ids == (original_id,)
+    assert second.assistant_message.series_ids == (added.series_id,)
+    context = json.loads(query.prompts[-1].split("\n\n", 1)[1])
+    assert context["turns"] == [] and context["inputs"]["series_ids"] == [added.series_id]
+    assert all(item["seriesIds"] == [original_id] for item in context["inputs"]["history"])
+    with pytest.raises(AgentConflictError):
+        _send(service, conversation, series_ids=[added.series_id])
 
 
 def test_live_delta_precedes_commit_and_disconnect_does_not_cancel(build_service):
@@ -278,14 +375,9 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
         library,
         AgentRuntime(_QueryModel(), _EvaluatorModel(), _ChatModel(), _RetrievalStub().search),
     )
-    session = service.create_session(
-        workspace_id="workspace-1", name="History", idempotency_key="session"
-    )
     conversation = service.create_conversation(
-        session.session_id,
         workspace_id="workspace-1",
         title="History",
-        series_ids=[series.series_id],
         idempotency_key="conversation",
     )
     with session_factory.begin() as db_session:
@@ -297,6 +389,8 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
                 role="USER" if index % 2 == 0 else "ASSISTANT",
                 status="COMPLETED",
                 content=f"history {index}",
+                series_ids=[series.series_id],
+                requested_series_ids=[series.series_id] if index % 2 == 0 else None,
                 model_name=None if index % 2 == 0 else "historical-model",
             )
             for index in range(500)
@@ -312,6 +406,8 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
         content="new question",
         model_name="current-model",
         requested_top_k=8,
+        series_ids=[series.series_id],
+        requested_series_ids=[series.series_id],
         idempotency_key="new-message",
         user_message_id=str(uuid4()),
         assistant_message_id=str(uuid4()),

@@ -29,35 +29,39 @@ function jsonResponse(payload: unknown): Response {
   } as Response;
 }
 
-function renderApp() {
+function renderApp(availableSeries: SeriesView[] = [apiSeries]) {
   let finishAnswer: (() => void) | undefined;
+  let messageSends = 0;
   const now = "2026-09-15T00:00:00Z";
-  const session = { sessionId: "session", workspaceId: "local-default", name: "Test", conversationCount: 1, createdAt: now, updatedAt: now };
-  const conversation = { conversationId: "conversation", sessionId: "session", workspaceId: "local-default", title: "Test", seriesIds: [apiSeries.seriesId], messageCount: 0, lastMessageAt: null, createdAt: now, updatedAt: now };
+  const conversation = { conversationId: "conversation", workspaceId: "local-default", title: "Test", messageCount: 0, lastMessageAt: null, createdAt: now, updatedAt: now };
   const assistantMessage: AgentMessageView = {
-    messageId: "assistant", conversationId: "conversation", sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", content: null,
+    messageId: "assistant", conversationId: "conversation", seriesIds: [apiSeries.seriesId], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", content: null,
     modelName: null, replyToMessageId: "user", retrievalQuery: null, searchResult: null, lastError: null, createdAt: now, updatedAt: now,
   };
   const userMessage = { ...assistantMessage, messageId: "user", sequenceNo: 0, role: "USER", status: "COMPLETED", content: "雨天门口" };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/healthz")) return jsonResponse({ status: "ok" });
-    if (url.includes("/api/series/list")) return jsonResponse([apiSeries]);
+    if (url.includes("/api/series/list")) return jsonResponse(availableSeries);
     if (url.includes("/api/series/get")) return jsonResponse(apiSeries);
     if (url.includes("/api/jobs/list")) return jsonResponse([]);
-    if (url.includes("/api/agent/sessions/")) return jsonResponse(session);
     if (url.includes("/api/agent/conversations/")) return jsonResponse(conversation);
     if (url.includes("/api/agent/messages/list")) return jsonResponse([]);
     if (url.includes("/api/agent/messages/send")) {
+      const requestedIds = (JSON.parse(String(_init?.body)) as { seriesIds: string[] }).seriesIds;
+      const seriesIds = requestedIds.length ? requestedIds : availableSeries.filter((item) => item.status === "READY").map((item) => item.seriesId);
+      const index = messageSends++;
+      const userSnapshot = { ...userMessage, messageId: `user-${index}`, sequenceNo: index * 2, seriesIds };
+      const assistantSnapshot = { ...assistantMessage, messageId: `assistant-${index}`, replyToMessageId: userSnapshot.messageId, sequenceNo: index * 2 + 1, seriesIds };
       const body = new ReadableStream<Uint8Array>({ start(controller) {
         const emit = (type: string, payload: unknown) => controller.enqueue(new TextEncoder().encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`));
-        const base = { conversationId: "conversation", messageId: "assistant" };
-        emit("answer.started", { ...base, sequence: 1, userMessage, assistantMessage });
+        const base = { conversationId: "conversation", messageId: assistantSnapshot.messageId };
+        emit("answer.started", { ...base, sequence: 1, userMessage: userSnapshot, assistantMessage: assistantSnapshot });
         emit("answer.evidence", { ...base, sequence: 2, hits: [] });
         emit("answer.delta", { ...base, sequence: 3, delta: "这是 Agent Chat" });
         finishAnswer = () => {
           emit("answer.delta", { ...base, sequence: 4, delta: " 保存的完整回答。" });
-          emit("answer.completed", { ...base, sequence: 5, userMessage, assistantMessage: { ...assistantMessage, status: "COMPLETED", content: "这是 Agent Chat 保存的完整回答。" } });
+          emit("answer.completed", { ...base, sequence: 5, userMessage: userSnapshot, assistantMessage: { ...assistantSnapshot, status: "COMPLETED", content: "这是 Agent Chat 保存的完整回答。" } });
           controller.close();
         };
       } });
@@ -81,7 +85,7 @@ function renderApp() {
       </ThemeProvider>
     </QueryClientProvider>,
   );
-  return { ...view, fetchMock, finishAnswer: () => finishAnswer?.() };
+  return { ...view, fetchMock, queryClient, finishAnswer: () => finishAnswer?.() };
 }
 
 describe("application shell", () => {
@@ -94,7 +98,8 @@ describe("application shell", () => {
     const { fetchMock } = renderApp();
     const user = userEvent.setup();
 
-    expect(await screen.findByRole("option", { name: apiSeries.name })).toBeInTheDocument();
+    await user.click(await screen.findByLabelText("选择检索动画"));
+    expect(await screen.findByRole("checkbox", { name: new RegExp(apiSeries.name) })).toBeInTheDocument();
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(([input]) => String(input).includes("/api/series/list")),
@@ -141,7 +146,7 @@ describe("application shell", () => {
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 
-  it("creates a scoped Conversation and renders a real delta before durable completion", async () => {
+  it("creates a Conversation without fixed scope and renders a real delta before durable completion", async () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
 
@@ -159,7 +164,9 @@ describe("application shell", () => {
     act(finishAnswer);
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
     const creation = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/conversations/create"));
-    expect(JSON.parse(String(creation?.[1]?.body)).seriesIds).toEqual([apiSeries.seriesId]);
+    expect(String(creation?.[0])).toBe("/api/agent/conversations/create");
+    expect(JSON.parse(String(creation?.[1]?.body))).toEqual({ workspaceId: "local-default", title: "画面问询" });
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/sessions/"))).toBe(false);
     const sendCall = fetchMock.mock.calls.find(([input]) =>
       String(input).includes("/api/agent/messages/send?conversationId=conversation"),
     );
@@ -168,7 +175,84 @@ describe("application shell", () => {
     expect(JSON.parse(String(sendCall?.[1]?.body))).toEqual({
       workspaceId: "local-default",
       content: "雨天门口",
+      seriesIds: [],
       topK: 10,
     });
+  });
+
+  it("allows multi-selection and keeps a running answer and its scope when the next selection changes", async () => {
+    const secondSeries = { ...apiSeries, seriesId: "second-series", name: "第二部动画" };
+    const unreadySeries = { ...apiSeries, seriesId: "unready-series", name: "解析中的动画", status: "INDEXING" as const };
+    const { fetchMock, finishAnswer } = renderApp([apiSeries, secondSeries, unreadySeries]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByLabelText("选择检索动画"));
+    const firstChoice = await screen.findByRole("checkbox", { name: new RegExp(apiSeries.name) });
+    const secondChoice = screen.getByRole("checkbox", { name: /第二部动画/ });
+    expect(screen.getByRole("checkbox", { name: /解析中的动画/ })).toBeDisabled();
+    await user.click(firstChoice);
+    await user.click(secondChoice);
+    expect(screen.getByLabelText("选择检索动画")).toHaveTextContent("已选 2 部动画");
+    await user.type(screen.getByRole("textbox", { name: "向画面札记 Agent 提问" }), "雨天门口");
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
+    await user.click(firstChoice);
+    expect(screen.getByLabelText("选择检索动画")).toHaveTextContent("已选 1 部动画");
+    expect(screen.getByText(`检索范围：${apiSeries.name}、第二部动画`)).toBeInTheDocument();
+    act(finishAnswer);
+    expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
+    const sendCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/messages/send"));
+    expect(JSON.parse(String(sendCall?.[1]?.body)).seriesIds).toEqual([apiSeries.seriesId, secondSeries.seriesId]);
+    expect(sendCall?.[1]?.signal?.aborted).toBe(false);
+    await user.click(secondChoice);
+    expect(screen.getByLabelText("选择检索动画")).toHaveTextContent("全部动画");
+    await user.type(screen.getByRole("textbox", { name: "向画面札记 Agent 提问" }), "雨天门口");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send"))).toHaveLength(2));
+    const calls = fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send"));
+    expect(JSON.parse(String(calls[1]?.[1]?.body)).seriesIds).toEqual([]);
+    act(finishAnswer);
+  });
+
+  it("allows deselecting an animation that became unready and preserves unsent text when Enter is blocked", async () => {
+    const secondSeries = { ...apiSeries, seriesId: "second-series", name: "第二部动画" };
+    const { fetchMock, queryClient, finishAnswer } = renderApp([apiSeries, secondSeries]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByLabelText("选择检索动画"));
+    const firstChoice = await screen.findByRole("checkbox", { name: new RegExp(apiSeries.name) });
+    await user.click(firstChoice);
+    const composer = screen.getByRole("textbox", { name: "向画面札记 Agent 提问" });
+    await user.type(composer, "雨天门口");
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled());
+    act(() => queryClient.setQueryData(["series"], [{ ...apiSeries, status: "INDEXING" }, secondSeries]));
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled());
+    expect(firstChoice).toBeChecked();
+    expect(firstChoice).toBeEnabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("所选动画暂不可检索");
+    await user.click(composer);
+    await user.keyboard("{Enter}");
+    expect(composer).toHaveValue("雨天门口");
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/messages/send"))).toBe(false);
+    await user.click(firstChoice);
+    expect(firstChoice).not.toBeChecked();
+    expect(firstChoice).toBeDisabled();
+    expect(screen.getByLabelText("选择检索动画")).toHaveTextContent("全部动画");
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled();
+    await user.click(composer);
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
+    act(finishAnswer);
+  });
+
+  it("does not send or discard a question on Enter when no animation is ready", async () => {
+    const { fetchMock } = renderApp([{ ...apiSeries, status: "INDEXING" }]);
+    const user = userEvent.setup();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/messages/list"))).toBe(true));
+    const composer = screen.getByRole("textbox", { name: "向画面札记 Agent 提问" });
+    await user.type(composer, "雨天门口{Enter}");
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+    expect(composer).toHaveValue("雨天门口");
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/messages/send"))).toBe(false);
   });
 });

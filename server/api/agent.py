@@ -28,61 +28,17 @@ from .schema import (
     AgentMessageSendRequest,
     AgentMessageSendView,
     AgentMessageView,
-    AgentSessionCreateRequest,
-    AgentSessionView,
 )
-
-
-def create_agent_session(
-    request: Request,
-    body: AgentSessionCreateRequest,
-    idempotency_key: str = Header(alias="Idempotency-Key"),
-) -> AgentSessionView:
-    state = get_services(request).agent.create_session(
-        workspace_id=body.workspace_id,
-        name=body.name,
-        idempotency_key=idempotency_key,
-    )
-    return AgentSessionView.model_validate(asdict(state))
-
-
-def list_agent_sessions(
-    request: Request,
-    workspace_id: str = Query(DEFAULT_LOCAL_WORKSPACE_ID, alias="workspaceId"),
-    limit: int = Query(100, ge=1, le=500),
-) -> list[AgentSessionView]:
-    return [
-        AgentSessionView.model_validate(asdict(item))
-        for item in get_services(request).agent.list_sessions(
-            workspace_id=workspace_id,
-            limit=limit,
-        )
-    ]
-
-
-def get_agent_session(
-    request: Request,
-    session_id: str = Query(alias="sessionId"),
-    workspace_id: str = Query(DEFAULT_LOCAL_WORKSPACE_ID, alias="workspaceId"),
-) -> AgentSessionView:
-    state = get_services(request).agent.get_session(
-        session_id,
-        workspace_id=workspace_id,
-    )
-    return AgentSessionView.model_validate(asdict(state))
 
 
 def create_agent_conversation(
     request: Request,
     body: AgentConversationCreateRequest,
-    session_id: str = Query(alias="sessionId"),
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> AgentConversationView:
     state = get_services(request).agent.create_conversation(
-        session_id,
         workspace_id=body.workspace_id,
         title=body.title,
-        series_ids=body.series_ids,
         idempotency_key=idempotency_key,
     )
     return AgentConversationView.model_validate(asdict(state))
@@ -90,14 +46,12 @@ def create_agent_conversation(
 
 def list_agent_conversations(
     request: Request,
-    session_id: str = Query(alias="sessionId"),
     workspace_id: str = Query(DEFAULT_LOCAL_WORKSPACE_ID, alias="workspaceId"),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[AgentConversationView]:
     return [
         AgentConversationView.model_validate(asdict(item))
         for item in get_services(request).agent.list_conversations(
-            session_id,
             workspace_id=workspace_id,
             limit=limit,
         )
@@ -166,6 +120,7 @@ async def send_agent_message(
             conversation_id,
             workspace_id=body.workspace_id,
             content=body.content,
+            series_ids=body.series_ids,
             idempotency_key=idempotency_key,
             top_k=body.top_k,
             stream=True,
@@ -180,6 +135,7 @@ async def send_agent_message(
         conversation_id,
         workspace_id=body.workspace_id,
         content=body.content,
+        series_ids=body.series_ids,
         idempotency_key=idempotency_key,
         top_k=body.top_k,
     )

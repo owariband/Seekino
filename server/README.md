@@ -6,9 +6,13 @@ VideoChunk checkpoint、持久化 Index Sync Intent、Qdrant 派生索引，以�
 限定的双路召回、RRF 和 `videoChunkId[]` 批量回源。模型协议仍由 Gateway 实现，Worker
 直接复用 Engine 的解析链路。
 
-Multi-Agent 对话作为独立领域建立在正式检索之上：MySQL 保存 AgentSession、
-AgentConversation 和 AgentMessage，LangGraph 编排 Chat Agent、Scene Retrieval Tool 与
-Evaluator Agent。完整接口见 [Agent API 对接文档](../docs/design/agent-api.md)。
+Multi-Agent 对话作为独立领域建立在正式检索之上：Workspace 直接拥有
+AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存每次发送的 Series Scope，
+不再增加 Agent Session 容器。独立 Harness 用 LangGraph 编排 Query / Evaluator 最多
+3 轮，审核通过后由 Chat 实时输出最终正文，Output 保留结构化视频证据。
+完整接口见 [Agent API 对接文档](../docs/design/agent-api.md)。旧 Agent Session
+及 Conversation 固定 Scope 数据库结构会被 init-db / create_schema 拒绝；[迁移步骤](../docs/design/agent-api.md#8-已有数据库升级)
+保留 Conversation ID 与消息，本次未对真实开发 / 生产库执行 DDL。
 
 Qdrant 的连接、写入和恢复属于产品持久化逻辑，因此放在 `server/storage/`；Engine
 只负责生成解析结果、向量与检索算法。Qdrant payload 不保存业务正文；当前
@@ -139,16 +143,24 @@ GET  /api/jobs/get?jobId={jobId}
 GET  /api/jobs/events?jobId={jobId}             text/event-stream
 GET  /api/videos/content?videoId={videoId}      支持 Range
 POST /api/search
-POST /api/agent/sessions/create
-GET  /api/agent/sessions/list
-GET  /api/agent/sessions/get?sessionId={sessionId}
-POST /api/agent/conversations/create?sessionId={sessionId}
-GET  /api/agent/conversations/list?sessionId={sessionId}
+POST /api/agent/conversations/create
+GET  /api/agent/conversations/list?workspaceId={workspaceId}
 GET  /api/agent/conversations/get?conversationId={conversationId}
 GET  /api/agent/messages/list?conversationId={conversationId}
 POST /api/agent/messages/send?conversationId={conversationId}
 GET  /api/agent/messages/events?conversationId={conversationId}
 ```
+
+创建 Conversation 的 JSON 为 `workspaceId, title`，不需要父容器 ID；
+`Idempotency-Key` 在 Workspace 内唯一。Conversation 详情直接返回 `workspaceId`，
+同一 Conversation 可以在后续消息选择不同动画。`messages/send` 的 JSON 可传 `seriesIds`，
+省略或空数组默认搜索当前 Workspace 全部 READY 动画；显式选择未 READY 动画返回 409。
+每次 Kick 冻结实际 Scope，USER / ASSISTANT 消息均公开保存 `seriesIds`。前端复用
+`GET /api/series/list?workspaceId=...` 的 `seriesId/name/status` 实现多选；改变选择只影响
+下一次发送。消息幂等限定在 Conversation，并按原请求范围比较；原 Key 的“全部”重放
+不会因新增动画而扩大旧消息 Scope。完整召回 `hits[].evidence.seriesId` 必填，来自 MySQL join。
+`messages/send` 默认 JSON，通过 `Accept: text/event-stream` 返回
+started / evidence / delta / completed / failed；`messages/events` 单独恢复数据库消息快照。
 
 `Complete` 会在校验所有分片后流式合并、计算整文件 SHA-256、发布 Original Video、探测
 时长，并在同一个 MySQL 事务中创建 `Video + SeriesParseJob`。重复请求复用相同结果。

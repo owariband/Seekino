@@ -4,7 +4,6 @@ import type {
   AgentMessageEventView,
   AgentMessageSendView,
   AgentMessageView,
-  AgentSessionView,
   ApiErrorPayload,
   ParseJobView,
   SeriesCreateRequest,
@@ -158,36 +157,18 @@ export function searchVideos(
   });
 }
 
-export function createAgentSession(idempotencyKey: string): Promise<AgentSessionView> {
-  return requestJson("/api/agent/sessions/create", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, name: "画面札记" }),
-  });
-}
-
-export function listAgentSessions(): Promise<AgentSessionView[]> {
-  return requestJson(`/api/agent/sessions/list?workspaceId=${WORKSPACE_QUERY}`);
-}
-
-export function getAgentSession(sessionId: string): Promise<AgentSessionView> {
-  return requestJson(`/api/agent/sessions/get?sessionId=${encodeURIComponent(sessionId)}&workspaceId=${WORKSPACE_QUERY}`);
-}
-
 export function createAgentConversation(
-  sessionId: string,
-  seriesId: string,
   idempotencyKey: string,
 ): Promise<AgentConversationView> {
-  return requestJson(`/api/agent/conversations/create?sessionId=${encodeURIComponent(sessionId)}`, {
+  return requestJson("/api/agent/conversations/create", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, title: "画面问询", seriesIds: [seriesId] }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, title: "画面问询" }),
   });
 }
 
-export function listAgentConversations(sessionId: string): Promise<AgentConversationView[]> {
-  return requestJson(`/api/agent/conversations/list?sessionId=${encodeURIComponent(sessionId)}&workspaceId=${WORKSPACE_QUERY}`);
+export function listAgentConversations(limit?: number): Promise<AgentConversationView[]> {
+  return requestJson(`/api/agent/conversations/list?workspaceId=${WORKSPACE_QUERY}${limit === undefined ? "" : `&limit=${limit}`}`);
 }
 
 export function getAgentConversation(conversationId: string): Promise<AgentConversationView> {
@@ -220,12 +201,13 @@ export function sendAgentMessage(
   conversationId: string,
   content: string,
   idempotencyKey: string,
+  seriesIds: string[] = [],
   topK = 10,
 ): Promise<AgentMessageSendView> {
   return requestJson(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, topK }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, topK }),
   });
 }
 
@@ -235,12 +217,13 @@ export async function streamAgentMessage(
   idempotencyKey: string,
   onEvent: (event: AgentAnswerEvent) => void,
   signal: AbortSignal,
+  seriesIds: string[] = [],
   topK = 10,
 ): Promise<void> {
   const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`), {
     method: "POST",
     headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, topK }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, topK }),
     signal,
   });
   if (!response.ok) throw new ApiClientError(response.status, await readError(response));

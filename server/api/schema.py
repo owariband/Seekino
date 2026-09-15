@@ -130,20 +130,15 @@ class VideoSearchRequest(ContractModel):
     top_k: int = Field(default=10, gt=0, le=100)
 
 
-class AgentSessionCreateRequest(ContractModel):
-    workspace_id: str = Field(default=DEFAULT_LOCAL_WORKSPACE_ID, min_length=1, max_length=64)
-    name: str = Field(default="画面札记", min_length=1, max_length=255)
-
-
 class AgentConversationCreateRequest(ContractModel):
     workspace_id: str = Field(default=DEFAULT_LOCAL_WORKSPACE_ID, min_length=1, max_length=64)
     title: str = Field(default="新对话", min_length=1, max_length=255)
-    series_ids: list[str] = Field(min_length=1)
 
 
 class AgentMessageSendRequest(ContractModel):
     workspace_id: str = Field(default=DEFAULT_LOCAL_WORKSPACE_ID, min_length=1, max_length=64)
     content: str = Field(min_length=1, max_length=20_000)
+    series_ids: list[str] = Field(default_factory=list)
     top_k: int | None = Field(default=None, gt=0, le=100)
 
 
@@ -152,21 +147,10 @@ class ApiError(ContractModel):
     message: str
 
 
-class AgentSessionView(ContractModel):
-    session_id: str
-    workspace_id: str
-    name: str
-    conversation_count: int = Field(ge=0)
-    created_at: datetime
-    updated_at: datetime
-
-
 class AgentConversationView(ContractModel):
     conversation_id: str
-    session_id: str
     workspace_id: str
     title: str
-    series_ids: list[str] = Field(min_length=1)
     message_count: int = Field(ge=0)
     last_message_at: datetime | None
     created_at: datetime
@@ -176,6 +160,7 @@ class AgentConversationView(ContractModel):
 class AgentMessageView(ContractModel):
     message_id: str
     conversation_id: str
+    series_ids: list[str] = Field(min_length=1)
     sequence_no: int = Field(ge=0)
     role: Literal["USER", "ASSISTANT"]
     status: Literal["PROCESSING", "COMPLETED", "FAILED"]

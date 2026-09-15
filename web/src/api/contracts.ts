@@ -225,21 +225,10 @@ export interface VideoSearchRequest {
   topK: number;
 }
 
-export interface AgentSessionView {
-  sessionId: string;
-  workspaceId: string;
-  name: string;
-  conversationCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface AgentConversationView {
   conversationId: string;
-  sessionId: string;
   workspaceId: string;
   title: string;
-  seriesIds: string[];
   messageCount: number;
   lastMessageAt: string | null;
   createdAt: string;
@@ -249,6 +238,7 @@ export interface AgentConversationView {
 export interface AgentMessageView {
   messageId: string;
   conversationId: string;
+  seriesIds: string[];
   sequenceNo: number;
   role: "USER" | "ASSISTANT";
   status: "PROCESSING" | "COMPLETED" | "FAILED";

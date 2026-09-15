@@ -31,30 +31,13 @@ class AgentMessageStatus(StrEnum):
     FAILED = "FAILED"
 
 
-class AgentSessionRecord(TimestampedRecord, Base):
-    __tablename__ = "agent_session"
-    __table_args__ = (
-        UniqueConstraint(
-            "workspace_id",
-            "idempotency_key",
-            name="uq_agent_session_workspace_idempotency",
-        ),
-        MYSQL_TABLE_OPTIONS,
-    )
-
-    session_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
-
-
 class AgentConversationRecord(TimestampedRecord, Base):
     __tablename__ = "agent_conversation"
     __table_args__ = (
         UniqueConstraint(
-            "session_id",
+            "workspace_id",
             "idempotency_key",
-            name="uq_agent_conversation_session_idempotency",
+            name="uq_agent_conversation_workspace_idempotency",
         ),
         CheckConstraint(
             "next_message_sequence >= 0",
@@ -67,13 +50,8 @@ class AgentConversationRecord(TimestampedRecord, Base):
         String(ID_LENGTH),
         primary_key=True,
     )
-    session_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_session.session_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    series_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     next_message_sequence: Mapped[int] = mapped_column(
         Integer,
@@ -136,9 +114,11 @@ class AgentMessageRecord(TimestampedRecord, Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str | None] = mapped_column(LONG_TEXT)
+    series_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     model_name: Mapped[str | None] = mapped_column(String(255))
     idempotency_key: Mapped[str | None] = mapped_column(String(128))
     requested_top_k: Mapped[int | None] = mapped_column(Integer)
+    requested_series_ids: Mapped[list[str] | None] = mapped_column(JSON)
     reply_to_message_id: Mapped[str | None] = mapped_column(
         ForeignKey("agent_message.message_id", ondelete="CASCADE")
     )

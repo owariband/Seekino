@@ -2,32 +2,28 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  ApiClientError, createAgentConversation, createAgentSession, getAgentConversation,
-  getAgentSession, listAgentMessages, streamAgentMessage, subscribeAgentMessages,
+  ApiClientError, createAgentConversation, getAgentConversation,
+  listAgentMessages, streamAgentMessage, subscribeAgentMessages,
 } from "../../api/client";
 import type {
   AgentAnswerEvent, AgentConversationView, AgentMessageEventView,
-  AgentMessageView, AgentSessionView, VideoChunkSearchHit,
+  AgentMessageView, VideoChunkSearchHit,
 } from "../../api/contracts";
 import { useAgentConversation } from "./useAgentConversation";
 
 vi.mock("../../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../api/client")>(),
-  createAgentConversation: vi.fn(), createAgentSession: vi.fn(),
-  getAgentConversation: vi.fn(), getAgentSession: vi.fn(),
+  createAgentConversation: vi.fn(), getAgentConversation: vi.fn(),
   listAgentMessages: vi.fn(), streamAgentMessage: vi.fn(), subscribeAgentMessages: vi.fn(),
 }));
 
 const now = "2026-09-15T00:00:00Z";
-const session: AgentSessionView = {
-  sessionId: "session", workspaceId: "local-default", name: "Test", conversationCount: 0, createdAt: now, updatedAt: now,
-};
-function conversation(seriesId: string): AgentConversationView {
-  return { conversationId: `conv-${seriesId}`, sessionId: "session", workspaceId: "local-default", title: "Test", seriesIds: [seriesId], messageCount: 0, lastMessageAt: null, createdAt: now, updatedAt: now };
+function conversation(conversationId = "conv-A"): AgentConversationView {
+  return { conversationId, workspaceId: "local-default", title: "Test", messageCount: 0, lastMessageAt: null, createdAt: now, updatedAt: now };
 }
 function message(conversationId: string, overrides: Partial<AgentMessageView> = {}): AgentMessageView {
   return {
-    messageId: "assistant", conversationId, sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", content: null,
+    messageId: "assistant", conversationId, seriesIds: ["A"], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", content: null,
     modelName: null, replyToMessageId: "user", retrievalQuery: null, searchResult: null, lastError: null, createdAt: now, updatedAt: now, ...overrides,
   };
 }
@@ -44,10 +40,8 @@ const streams = new Map<string, { emit: (event: AgentAnswerEvent) => void; signa
 
 beforeEach(() => {
   vi.clearAllMocks(); localStorage.clear(); snapshots.clear(); streams.clear();
-  vi.mocked(createAgentSession).mockResolvedValue(session);
-  vi.mocked(getAgentSession).mockResolvedValue(session);
-  vi.mocked(createAgentConversation).mockImplementation(async (_session, seriesId) => conversation(seriesId));
-  vi.mocked(getAgentConversation).mockImplementation(async (id) => conversation(id.replace("conv-", "")));
+  vi.mocked(createAgentConversation).mockImplementation(async () => conversation());
+  vi.mocked(getAgentConversation).mockImplementation(async (id) => conversation(id));
   vi.mocked(listAgentMessages).mockResolvedValue([]);
   vi.mocked(subscribeAgentMessages).mockImplementation((id, onSnapshot) => {
     snapshots.set(id, onSnapshot); return close;
@@ -61,9 +55,9 @@ afterEach(() => {
   for (const stream of streams.values()) stream.finish();
 });
 
-async function ready(seriesId = "A") {
-  const rendered = renderHook(({ series }) => useAgentConversation(series), { initialProps: { series: seriesId as string | null } });
-  await waitFor(() => expect(rendered.result.current.conversationId).toBe(`conv-${seriesId}`));
+async function ready(conversationId: string | null = null) {
+  const rendered = renderHook(({ id }) => useAgentConversation(id), { initialProps: { id: conversationId } });
+  await waitFor(() => expect(rendered.result.current.conversationId).toBe(conversationId ?? "conv-A"));
   return rendered;
 }
 async function send(result: { current: ReturnType<typeof useAgentConversation> }, id = "conv-A") {
@@ -74,6 +68,63 @@ async function send(result: { current: ReturnType<typeof useAgentConversation> }
 }
 
 describe("Conversation state", () => {
+  it("snapshots a multi-series scope without changing Conversation or interrupting the running stream", async () => {
+    const { result, rerender } = await ready();
+    const selected = ["A", "B"];
+    act(() => { void result.current.send("query", selected); });
+    await waitFor(() => expect(streams.has("conv-A")).toBe(true));
+    const stream = streams.get("conv-A")!;
+    selected.splice(0, selected.length, "C");
+    rerender({ id: null });
+    act(() => {
+      const event = started("conv-A");
+      if (event.type === "answer.started") {
+        stream.emit({ ...event, userMessage: { ...event.userMessage, seriesIds: ["A", "B"] }, assistantMessage: { ...event.assistantMessage, seriesIds: ["A", "B"] } });
+      }
+      stream.emit({ type: "answer.evidence", conversationId: "conv-A", messageId: "assistant", sequence: 2, hits: [] });
+      stream.emit({ type: "answer.delta", conversationId: "conv-A", messageId: "assistant", sequence: 3, delta: "跨动画回答" });
+    });
+    expect(vi.mocked(streamAgentMessage).mock.calls[0]![5]).toEqual(["A", "B"]);
+    expect(stream.signal.aborted).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    expect(createAgentConversation).toHaveBeenCalledOnce();
+    expect(result.current.messages[1]?.content).toBe("跨动画回答");
+    expect(result.current.messages[1]?.searchResult?.seriesIds).toEqual(["A", "B"]);
+  });
+
+  it("sends an empty selection as all and uses the server's resolved scope for streamed evidence", async () => {
+    const { result } = await ready();
+    act(() => { void result.current.send("query"); });
+    await waitFor(() => expect(streams.has("conv-A")).toBe(true));
+    const stream = streams.get("conv-A")!;
+    act(() => {
+      const event = started("conv-A");
+      if (event.type === "answer.started") stream.emit({ ...event, assistantMessage: { ...event.assistantMessage, seriesIds: ["A", "B"] } });
+      stream.emit({ type: "answer.evidence", conversationId: "conv-A", messageId: "assistant", sequence: 2, hits: [] });
+    });
+    expect(vi.mocked(streamAgentMessage).mock.calls[0]![5]).toEqual([]);
+    expect(result.current.messages[1]?.searchResult?.seriesIds).toEqual(["A", "B"]);
+  });
+
+  it("migrates the previous selected series' saved Conversation once and restores its messages", async () => {
+    localStorage.setItem("anivag-selected-series", "old-series");
+    localStorage.setItem("anivag-agent-conversation:local-default:old-series", JSON.stringify({ key: "old-key", id: "conv-legacy" }));
+    vi.mocked(listAgentMessages).mockResolvedValue([message("conv-legacy", { status: "COMPLETED", content: "原有聊天" })]);
+    const { result } = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(result.current.conversationId).toBe("conv-legacy"));
+    expect(result.current.messages[0]?.content).toBe("原有聊天");
+    expect(createAgentConversation).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!)).toEqual({ key: "old-key", id: "conv-legacy" });
+  });
+
+  it("uses a new creation key for an unfinished legacy request with the old scope payload", async () => {
+    localStorage.setItem("anivag-selected-series", "old-series");
+    localStorage.setItem("anivag-agent-conversation:local-default:old-series", JSON.stringify({ key: "old-key" }));
+    await ready();
+    expect(createAgentConversation).toHaveBeenCalledOnce();
+    expect(vi.mocked(createAgentConversation).mock.calls[0]![0]).not.toBe("old-key");
+  });
+
   it("retains genuine deltas through PROCESSING snapshots and rejects duplicate or unrelated events", async () => {
     const { result } = await ready();
     const stream = await send(result);
@@ -106,7 +157,7 @@ describe("Conversation state", () => {
     const { result, rerender } = await ready();
     const oldStream = await send(result);
     const oldSnapshot = snapshots.get("conv-A")!;
-    rerender({ series: "B" });
+    rerender({ id: "conv-B" });
     expect(result.current.messages).toEqual([]);
     await waitFor(() => expect(result.current.conversationId).toBe("conv-B"));
     expect(oldStream.signal.aborted).toBe(true);
@@ -121,11 +172,14 @@ describe("Conversation state", () => {
   });
 
   it("restores a saved Conversation on remount and waits for a running Kick snapshot", async () => {
+    localStorage.setItem("anivag-agent-session:local-default", JSON.stringify({ key: "legacy-key", id: "legacy" }));
     const first = await ready(); first.unmount();
     vi.mocked(listAgentMessages).mockResolvedValue([message("conv-A")]);
     const { result } = await ready();
     expect(getAgentConversation).toHaveBeenCalledWith("conv-A");
     expect(createAgentConversation).toHaveBeenCalledOnce();
+    expect(createAgentConversation).toHaveBeenCalledWith(expect.any(String));
+    expect(localStorage.getItem("anivag-agent-session:local-default")).toBeNull();
     expect(result.current.searching).toBe(true);
     act(() => { void result.current.send("second query"); });
     expect(streamAgentMessage).not.toHaveBeenCalled();
@@ -191,13 +245,13 @@ describe("Conversation state", () => {
 
   it("replaces a deleted Conversation identity and preserves it across network failures", async () => {
     const first = await ready(); first.unmount();
-    const savedKey = JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default:A")!).key;
+    const savedKey = JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).key;
     vi.mocked(getAgentConversation).mockRejectedValue(new ApiClientError(404, { message: "deleted" }));
     const second = await ready();
-    expect(vi.mocked(createAgentConversation).mock.calls[1]![2]).not.toBe(savedKey);
+    expect(vi.mocked(createAgentConversation).mock.calls[1]![0]).not.toBe(savedKey);
     second.unmount();
     vi.mocked(getAgentConversation).mockRejectedValue(new TypeError("network down"));
-    const { result } = renderHook(() => useAgentConversation("A"));
+    const { result } = renderHook(() => useAgentConversation());
     await waitFor(() => expect(result.current.error).toBe("network down"));
     expect(createAgentConversation).toHaveBeenCalledTimes(2);
   });

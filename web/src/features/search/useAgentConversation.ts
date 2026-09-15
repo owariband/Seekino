@@ -3,10 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiClientError,
   createAgentConversation,
-  createAgentSession,
   errorMessage,
   getAgentConversation,
-  getAgentSession,
   listAgentMessages,
   streamAgentMessage,
   subscribeAgentMessages,
@@ -16,11 +14,9 @@ import type {
   AgentAnswerEvent,
   AgentConversationView,
   AgentMessageView,
-  AgentSessionView,
 } from "../../api/contracts";
 
 interface StoredIdentity { key: string; id?: string }
-const sessions = new Map<string, Promise<AgentSessionView>>();
 const conversations = new Map<string, Promise<AgentConversationView>>();
 
 function storedIdentity(storageKey: string): StoredIdentity {
@@ -36,47 +32,32 @@ function storedIdentity(storageKey: string): StoredIdentity {
   return identity;
 }
 
-async function ensureSession(): Promise<AgentSessionView> {
-  const storageKey = `anivag-agent-session:${WORKSPACE_ID}`;
-  const pending = sessions.get(storageKey);
-  if (pending) return pending;
-  const promise = (async () => {
-    let identity = storedIdentity(storageKey);
-    if (identity.id) {
-      try { return await getAgentSession(identity.id); }
-      catch (error) {
-        if (!(error instanceof ApiClientError) || error.status !== 404) throw error;
-        identity = { key: crypto.randomUUID() };
-        localStorage.setItem(storageKey, JSON.stringify(identity));
-      }
-    }
-    const session = await createAgentSession(identity.key);
-    localStorage.setItem(storageKey, JSON.stringify({ ...identity, id: session.sessionId }));
-    return session;
-  })();
-  sessions.set(storageKey, promise);
-  try { return await promise; }
-  finally { sessions.delete(storageKey); }
-}
-
-async function ensureConversation(seriesId: string): Promise<AgentConversationView> {
-  const storageKey = `anivag-agent-conversation:${WORKSPACE_ID}:${seriesId}`;
+async function ensureConversation(): Promise<AgentConversationView> {
+  const storageKey = `anivag-agent-conversation:${WORKSPACE_ID}`;
   const pending = conversations.get(storageKey);
   if (pending) return pending;
   const promise = (async () => {
+    localStorage.removeItem(`anivag-agent-session:${WORKSPACE_ID}`);
+    const legacySeriesId = localStorage.getItem("anivag-selected-series");
+    const legacyIdentity = legacySeriesId ? localStorage.getItem(`${storageKey}:${legacySeriesId}`) : null;
+    if (!localStorage.getItem(storageKey) && legacyIdentity) {
+      try {
+        const legacy = JSON.parse(legacyIdentity) as StoredIdentity;
+        if (typeof legacy.id === "string" && typeof legacy.key === "string") localStorage.setItem(storageKey, legacyIdentity);
+      } catch { /* An unfinished legacy creation needs a new idempotency key. */ }
+    }
     let identity = storedIdentity(storageKey);
     if (identity.id) {
       try {
         const conversation = await getAgentConversation(identity.id);
-        if (conversation.workspaceId === WORKSPACE_ID && conversation.seriesIds.length === 1 && conversation.seriesIds[0] === seriesId) return conversation;
+        if (conversation.workspaceId === WORKSPACE_ID) return conversation;
       } catch (error) {
         if (!(error instanceof ApiClientError) || error.status !== 404) throw error;
       }
       identity = { key: crypto.randomUUID() };
       localStorage.setItem(storageKey, JSON.stringify(identity));
     }
-    const session = await ensureSession();
-    const conversation = await createAgentConversation(session.sessionId, seriesId, identity.key);
+    const conversation = await createAgentConversation(identity.key);
     localStorage.setItem(storageKey, JSON.stringify({ ...identity, id: conversation.conversationId }));
     return conversation;
   })();
@@ -114,7 +95,7 @@ function mergeMessages(
 }
 
 interface ConversationState {
-  seriesId: string | null;
+  requestedId: string | null;
   conversationId: string | null;
   messages: AgentMessageView[];
   loading: boolean;
@@ -122,28 +103,27 @@ interface ConversationState {
   error: string | null;
 }
 interface ActiveConversation {
-  seriesId: string;
   conversationId: string | null;
   controller: AbortController;
   sending: boolean;
   recoveryMessageId: string | null;
 }
 
-export function useAgentConversation(seriesId: string | null) {
+export function useAgentConversation(requestedId: string | null = null) {
   const [state, setState] = useState<ConversationState>({
-    seriesId: null, conversationId: null, messages: [], loading: false, sending: false, error: null,
+    requestedId, conversationId: null, messages: [], loading: true, sending: false, error: null,
   });
   const activeRef = useRef<ActiveConversation | null>(null);
 
   useEffect(() => {
-    if (!seriesId) { activeRef.current = null; return; }
-    const active: ActiveConversation = { seriesId, conversationId: null, controller: new AbortController(), sending: false, recoveryMessageId: null };
+    const active: ActiveConversation = { conversationId: null, controller: new AbortController(), sending: false, recoveryMessageId: null };
     activeRef.current = active;
     let unsubscribe: (() => void) | undefined;
-    setState({ seriesId, conversationId: null, messages: [], loading: true, sending: false, error: null });
+    setState({ requestedId, conversationId: null, messages: [], loading: true, sending: false, error: null });
     void (async () => {
       try {
-        const conversation = await ensureConversation(seriesId);
+        const conversation = requestedId ? await getAgentConversation(requestedId) : await ensureConversation();
+        if (conversation.workspaceId !== WORKSPACE_ID) throw new Error("对话不属于当前工作区");
         if (activeRef.current !== active) return;
         active.conversationId = conversation.conversationId;
         const messages = await loadMessages(conversation.conversationId);
@@ -164,12 +144,13 @@ export function useAgentConversation(seriesId: string | null) {
       active.controller.abort();
       unsubscribe?.();
     };
-  }, [seriesId]);
+  }, [requestedId]);
 
-  const send = useCallback(async (content: string) => {
+  const send = useCallback(async (content: string, seriesIds: string[] = []) => {
     const active = activeRef.current;
-    if (!content.trim() || !active?.conversationId || active.seriesId !== seriesId || active.sending || state.messages.some((message) => message.status === "PROCESSING")) return;
+    if (!content.trim() || !active?.conversationId || state.requestedId !== requestedId || active.sending || state.messages.some((message) => message.status === "PROCESSING")) return;
     const conversationId = active.conversationId;
+    const scope = [...seriesIds];
     active.sending = true;
     active.recoveryMessageId = null;
     setState((current) => ({ ...current, sending: true, error: null }));
@@ -200,7 +181,7 @@ export function useAgentConversation(seriesId: string | null) {
           if (message.messageId !== event.messageId || message.status !== "PROCESSING") return message;
           if (event.type === "answer.delta") return { ...message, content: (message.content ?? "") + event.delta };
           if (event.type === "answer.evidence") return { ...message, searchResult: {
-            query: message.retrievalQuery ?? content.trim(), seriesIds: [active.seriesId],
+            query: message.retrievalQuery ?? content.trim(), seriesIds: [...message.seriesIds],
             agentReply: { message: message.content ?? "", resultCount: event.hits.length }, hits: event.hits,
           } };
           return message;
@@ -208,7 +189,7 @@ export function useAgentConversation(seriesId: string | null) {
       });
     };
     try {
-      await streamAgentMessage(conversationId, content.trim(), crypto.randomUUID(), onEvent, active.controller.signal);
+      await streamAgentMessage(conversationId, content.trim(), crypto.randomUUID(), onEvent, active.controller.signal, scope);
     } catch (error) {
       if (activeRef.current === active && !active.controller.signal.aborted) {
         active.recoveryMessageId = messageId;
@@ -231,10 +212,10 @@ export function useAgentConversation(seriesId: string | null) {
         }
       }
     }
-  }, [seriesId, state.messages]);
+  }, [requestedId, state.requestedId, state.messages]);
 
-  const visible = state.seriesId === seriesId ? state : {
-    seriesId, conversationId: null, messages: [], loading: Boolean(seriesId), sending: false, error: null,
+  const visible = state.requestedId === requestedId ? state : {
+    requestedId, conversationId: null, messages: [], loading: true, sending: false, error: null,
   };
   return {
     ...visible,

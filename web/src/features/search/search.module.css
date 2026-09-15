@@ -18,17 +18,55 @@
   border-left: 2px solid var(--teal);
 }
 
-.scope select {
-  max-width: 290px;
-  overflow: hidden;
-  padding: 0;
+.scopePicker {
+  position: relative;
+}
+
+.scopePicker summary {
   color: var(--ink);
-  border: 0;
-  outline: 0;
-  background: transparent;
+  cursor: pointer;
   font: 400 1rem/1.3 var(--display);
-  text-overflow: ellipsis;
+}
+
+.scopeOptions {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 330px;
+  max-width: calc(100vw - 40px);
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+}
+
+.scopeOptions label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 6px;
+  font-size: .75rem;
+}
+
+.scopeOptions input {
+  accent-color: var(--teal-deep);
+}
+
+.scopeOptions small {
+  margin-left: auto;
   white-space: nowrap;
+}
+
+.scopeOptions button {
+  padding: 8px 6px;
+  color: var(--teal-deep);
+  cursor: pointer;
+  background: transparent;
+  font-size: .75rem;
 }
 
 .scope small {
@@ -175,6 +213,12 @@
   gap: 5px;
   color: var(--teal-deep);
   font-size: .65rem;
+}
+
+.messageScope {
+  color: var(--ink-faint);
+  font-size: .62rem;
+  line-height: 1.5;
 }
 
 .messageError {

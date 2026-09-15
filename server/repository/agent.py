@@ -12,12 +12,7 @@ from ..model.agent import (
     AgentMessageRecord,
     AgentMessageRole,
     AgentMessageStatus,
-    AgentSessionRecord,
 )
-
-
-class AgentSessionNotFoundError(LookupError):
-    pass
 
 
 class AgentConversationNotFoundError(LookupError):
@@ -37,22 +32,10 @@ class AgentMessageInProgressError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class AgentSessionState:
-    session_id: str
-    workspace_id: str
-    name: str
-    conversation_count: int
-    created_at: datetime
-    updated_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
 class AgentConversationState:
     conversation_id: str
-    session_id: str
     workspace_id: str
     title: str
-    series_ids: tuple[str, ...]
     message_count: int
     last_message_at: datetime | None
     created_at: datetime
@@ -67,6 +50,7 @@ class AgentMessageState:
     role: str
     status: str
     content: str | None
+    series_ids: tuple[str, ...]
     model_name: str | None
     reply_to_message_id: str | None
     retrieval_query: str | None
@@ -87,120 +71,25 @@ class AgentRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 
-    def create_session(
-        self,
-        *,
-        session_id: str,
-        workspace_id: str,
-        name: str,
-        idempotency_key: str,
-    ) -> AgentSessionState:
-        for attempt in range(2):
-            try:
-                with self._session_factory.begin() as session:
-                    existing = session.scalar(
-                        select(AgentSessionRecord).where(
-                            AgentSessionRecord.workspace_id == workspace_id,
-                            AgentSessionRecord.idempotency_key == idempotency_key,
-                        )
-                    )
-                    if existing is not None:
-                        if existing.name != name:
-                            raise AgentConflictError(
-                                "the session idempotency key is already used with "
-                                "another name"
-                            )
-                        conversation_count = session.scalar(
-                            select(
-                                func.count(AgentConversationRecord.conversation_id)
-                            ).where(
-                                AgentConversationRecord.session_id
-                                == existing.session_id
-                            )
-                        )
-                        return self._session_state(
-                            existing,
-                            conversation_count=int(conversation_count or 0),
-                        )
-
-                    record = AgentSessionRecord(
-                        session_id=session_id,
-                        workspace_id=workspace_id,
-                        name=name,
-                        idempotency_key=idempotency_key,
-                    )
-                    session.add(record)
-                    session.flush()
-                    return self._session_state(record, conversation_count=0)
-            except IntegrityError:
-                if attempt == 1:
-                    raise
-        raise AssertionError("unreachable")
-
-    def list_sessions(
-        self,
-        workspace_id: str,
-        *,
-        limit: int,
-    ) -> list[AgentSessionState]:
-        with self._session_factory() as session:
-            rows = session.execute(
-                select(
-                    AgentSessionRecord,
-                    func.count(AgentConversationRecord.conversation_id),
-                )
-                .outerjoin(
-                    AgentConversationRecord,
-                    AgentConversationRecord.session_id == AgentSessionRecord.session_id,
-                )
-                .where(AgentSessionRecord.workspace_id == workspace_id)
-                .group_by(AgentSessionRecord.session_id)
-                .order_by(
-                    AgentSessionRecord.updated_at.desc(),
-                    AgentSessionRecord.session_id.desc(),
-                )
-                .limit(limit)
-            ).all()
-            return [
-                self._session_state(record, conversation_count=int(count))
-                for record, count in rows
-            ]
-
-    def get_session(self, session_id: str, workspace_id: str) -> AgentSessionState:
-        with self._session_factory() as session:
-            record = self._require_session(session, session_id, workspace_id)
-            conversation_count = session.scalar(
-                select(func.count(AgentConversationRecord.conversation_id)).where(
-                    AgentConversationRecord.session_id == session_id
-                )
-            )
-            return self._session_state(
-                record,
-                conversation_count=int(conversation_count or 0),
-            )
-
     def create_conversation(
         self,
         *,
         conversation_id: str,
-        session_id: str,
         workspace_id: str,
         title: str,
-        series_ids: list[str],
         idempotency_key: str,
     ) -> AgentConversationState:
         for attempt in range(2):
             try:
                 with self._session_factory.begin() as session:
-                    self._require_session(session, session_id, workspace_id)
                     existing = session.scalar(
                         select(AgentConversationRecord).where(
-                            AgentConversationRecord.session_id == session_id,
+                            AgentConversationRecord.workspace_id == workspace_id,
                             AgentConversationRecord.idempotency_key == idempotency_key,
                         )
                     )
                     if existing is not None:
-                        if existing.title != title or existing.series_ids != series_ids:
+                        if existing.title != title:
                             raise AgentConflictError(
                                 "the conversation idempotency key is already used "
                                 "with different fields"
@@ -213,15 +102,13 @@ class AgentRepository:
                         )
                         return self._conversation_state(
                             existing,
-                            workspace_id=workspace_id,
                             message_count=int(message_count or 0),
                         )
 
                     record = AgentConversationRecord(
                         conversation_id=conversation_id,
-                        session_id=session_id,
+                        workspace_id=workspace_id,
                         title=title,
-                        series_ids=series_ids,
                         idempotency_key=idempotency_key,
                         next_message_sequence=0,
                     )
@@ -229,7 +116,6 @@ class AgentRepository:
                     session.flush()
                     return self._conversation_state(
                         record,
-                        workspace_id=workspace_id,
                         message_count=0,
                     )
             except IntegrityError:
@@ -239,13 +125,11 @@ class AgentRepository:
 
     def list_conversations(
         self,
-        session_id: str,
         workspace_id: str,
         *,
         limit: int,
     ) -> list[AgentConversationState]:
         with self._session_factory() as session:
-            self._require_session(session, session_id, workspace_id)
             rows = session.execute(
                 select(
                     AgentConversationRecord,
@@ -256,7 +140,7 @@ class AgentRepository:
                     AgentMessageRecord.conversation_id
                     == AgentConversationRecord.conversation_id,
                 )
-                .where(AgentConversationRecord.session_id == session_id)
+                .where(AgentConversationRecord.workspace_id == workspace_id)
                 .group_by(AgentConversationRecord.conversation_id)
                 .order_by(
                     AgentConversationRecord.last_message_at.desc(),
@@ -268,7 +152,6 @@ class AgentRepository:
             return [
                 self._conversation_state(
                     record,
-                    workspace_id=workspace_id,
                     message_count=int(count),
                 )
                 for record, count in rows
@@ -280,7 +163,7 @@ class AgentRepository:
         workspace_id: str,
     ) -> AgentConversationState:
         with self._session_factory() as session:
-            record, actual_workspace = self._require_conversation(
+            record = self._require_conversation(
                 session,
                 conversation_id,
                 workspace_id,
@@ -292,7 +175,6 @@ class AgentRepository:
             )
             return self._conversation_state(
                 record,
-                workspace_id=actual_workspace,
                 message_count=int(message_count or 0),
             )
 
@@ -339,6 +221,27 @@ class AgentRepository:
             ).all()
             return [self._message_state(record) for record in reversed(records)]
 
+    def find_idempotent_message(
+        self,
+        *,
+        conversation_id: str,
+        workspace_id: str,
+        content: str,
+        requested_top_k: int,
+        idempotency_key: str,
+        requested_series_ids: list[str],
+    ) -> StartedAgentMessageState | None:
+        with self._session_factory() as session:
+            self._require_conversation(session, conversation_id, workspace_id)
+            return self._find_idempotent_message(
+                session,
+                conversation_id=conversation_id,
+                content=content,
+                requested_top_k=requested_top_k,
+                idempotency_key=idempotency_key,
+                requested_series_ids=requested_series_ids,
+            )
+
     def start_message(
         self,
         *,
@@ -348,48 +251,29 @@ class AgentRepository:
         model_name: str,
         requested_top_k: int,
         idempotency_key: str,
+        series_ids: list[str],
+        requested_series_ids: list[str],
         user_message_id: str,
         assistant_message_id: str,
         now: datetime,
     ) -> StartedAgentMessageState:
         with self._session_factory.begin() as session:
-            conversation, _workspace = self._require_conversation(
+            conversation = self._require_conversation(
                 session,
                 conversation_id,
                 workspace_id,
                 for_update=True,
             )
-            existing_user = session.scalar(
-                select(AgentMessageRecord).where(
-                    AgentMessageRecord.conversation_id == conversation_id,
-                    AgentMessageRecord.idempotency_key == idempotency_key,
-                )
+            existing = self._find_idempotent_message(
+                session,
+                conversation_id=conversation_id,
+                content=content,
+                requested_top_k=requested_top_k,
+                idempotency_key=idempotency_key,
+                requested_series_ids=requested_series_ids,
             )
-            if existing_user is not None:
-                if (
-                    existing_user.role != AgentMessageRole.USER.value
-                    or existing_user.content != content
-                    or existing_user.requested_top_k != requested_top_k
-                ):
-                    raise AgentConflictError(
-                        "the message idempotency key is already used with "
-                        "different request fields"
-                    )
-                assistant = session.scalar(
-                    select(AgentMessageRecord).where(
-                        AgentMessageRecord.reply_to_message_id
-                        == existing_user.message_id
-                    )
-                )
-                if assistant is None:
-                    raise AgentConflictError(
-                        "the idempotent user message has no assistant reply record"
-                    )
-                return StartedAgentMessageState(
-                    user_message=self._message_state(existing_user),
-                    assistant_message=self._message_state(assistant),
-                    reused=True,
-                )
+            if existing is not None:
+                return existing
 
             processing = session.scalar(
                 select(AgentMessageRecord.message_id).where(
@@ -411,9 +295,11 @@ class AgentRepository:
                 role=AgentMessageRole.USER.value,
                 status=AgentMessageStatus.COMPLETED.value,
                 content=content,
+                series_ids=series_ids,
                 model_name=None,
                 idempotency_key=idempotency_key,
                 requested_top_k=requested_top_k,
+                requested_series_ids=requested_series_ids,
             )
             assistant = AgentMessageRecord(
                 message_id=assistant_message_id,
@@ -422,6 +308,7 @@ class AgentRepository:
                 role=AgentMessageRole.ASSISTANT.value,
                 status=AgentMessageStatus.PROCESSING.value,
                 content=None,
+                series_ids=series_ids,
                 model_name=model_name,
                 reply_to_message_id=user_message_id,
             )
@@ -501,23 +388,48 @@ class AgentRepository:
                 session.flush()
             return self._message_state(record)
 
-    @staticmethod
-    def _require_session(
+    def _find_idempotent_message(
+        self,
         session: Session,
-        session_id: str,
-        workspace_id: str,
-    ) -> AgentSessionRecord:
-        record = session.scalar(
-            select(AgentSessionRecord).where(
-                AgentSessionRecord.session_id == session_id,
-                AgentSessionRecord.workspace_id == workspace_id,
+        *,
+        conversation_id: str,
+        content: str,
+        requested_top_k: int,
+        idempotency_key: str,
+        requested_series_ids: list[str],
+    ) -> StartedAgentMessageState | None:
+        existing_user = session.scalar(
+            select(AgentMessageRecord).where(
+                AgentMessageRecord.conversation_id == conversation_id,
+                AgentMessageRecord.idempotency_key == idempotency_key,
             )
         )
-        if record is None:
-            raise AgentSessionNotFoundError(
-                f"sessionId {session_id!r} does not exist in this workspace"
+        if existing_user is None:
+            return None
+        if (
+            existing_user.role != AgentMessageRole.USER.value
+            or existing_user.content != content
+            or existing_user.requested_top_k != requested_top_k
+            or existing_user.requested_series_ids != requested_series_ids
+        ):
+            raise AgentConflictError(
+                "the message idempotency key is already used with "
+                "different request fields"
             )
-        return record
+        assistant = session.scalar(
+            select(AgentMessageRecord).where(
+                AgentMessageRecord.reply_to_message_id == existing_user.message_id
+            )
+        )
+        if assistant is None:
+            raise AgentConflictError(
+                "the idempotent user message has no assistant reply record"
+            )
+        return StartedAgentMessageState(
+            user_message=self._message_state(existing_user),
+            assistant_message=self._message_state(assistant),
+            reused=True,
+        )
 
     @staticmethod
     def _require_conversation(
@@ -526,55 +438,30 @@ class AgentRepository:
         workspace_id: str,
         *,
         for_update: bool = False,
-    ) -> tuple[AgentConversationRecord, str]:
-        statement = (
-            select(AgentConversationRecord, AgentSessionRecord.workspace_id)
-            .join(
-                AgentSessionRecord,
-                AgentSessionRecord.session_id == AgentConversationRecord.session_id,
-            )
-            .where(
-                AgentConversationRecord.conversation_id == conversation_id,
-                AgentSessionRecord.workspace_id == workspace_id,
-            )
+    ) -> AgentConversationRecord:
+        statement = select(AgentConversationRecord).where(
+            AgentConversationRecord.conversation_id == conversation_id,
+            AgentConversationRecord.workspace_id == workspace_id,
         )
         if for_update:
             statement = statement.with_for_update()
-        row = session.execute(statement).one_or_none()
-        if row is None:
+        record = session.scalar(statement)
+        if record is None:
             raise AgentConversationNotFoundError(
                 f"conversationId {conversation_id!r} does not exist in this workspace"
             )
-        return row[0], row[1]
-
-    @staticmethod
-    def _session_state(
-        record: AgentSessionRecord,
-        *,
-        conversation_count: int,
-    ) -> AgentSessionState:
-        return AgentSessionState(
-            session_id=record.session_id,
-            workspace_id=record.workspace_id,
-            name=record.name,
-            conversation_count=conversation_count,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-        )
+        return record
 
     @staticmethod
     def _conversation_state(
         record: AgentConversationRecord,
         *,
-        workspace_id: str,
         message_count: int,
     ) -> AgentConversationState:
         return AgentConversationState(
             conversation_id=record.conversation_id,
-            session_id=record.session_id,
-            workspace_id=workspace_id,
+            workspace_id=record.workspace_id,
             title=record.title,
-            series_ids=tuple(record.series_ids),
             message_count=message_count,
             last_message_at=record.last_message_at,
             created_at=record.created_at,
@@ -590,6 +477,7 @@ class AgentRepository:
             role=record.role,
             status=record.status,
             content=record.content,
+            series_ids=tuple(record.series_ids),
             model_name=record.model_name,
             reply_to_message_id=record.reply_to_message_id,
             retrieval_query=record.retrieval_query,

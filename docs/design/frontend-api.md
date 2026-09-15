@@ -16,7 +16,7 @@
 ID 统一通过 camelCase Query 参数传递，不放在 URL Path 中。检索请求中的 `seriesIds` 是
 业务 Scope 集合，继续随 `/api/search` 的 JSON Body 传递。
 
-独立的 Multi-Agent Session、Conversation、Message 和 SSE 契约见
+独立的 Multi-Agent Conversation、Message 和 SSE 契约见
 [Agent API 对接文档](agent-api.md)。
 
 - Swagger UI：`http://127.0.0.1:9621/docs`
@@ -1056,3 +1056,25 @@ curl -sS http://127.0.0.1:9621/healthz
 
 API 和 Worker 是两个独立进程：只启动 API 可以创建 Series 和上传视频，但 ParseJob 会
 保持 `QUEUED`，直到 Worker 启动并成功 Claim。
+
+## 12. Agent Chat 动画多选
+
+资源关系为 `Workspace → Conversation → Message`，不提供额外的 Agent Session 容器。
+Conversation 创建 Body 为 `workspaceId / title`，创建与列表均直接按 Workspace 归属。
+检索范围随每次发送选择，不保存在 Conversation。完整接口、消息与 SSE 契约见
+[Agent API 对接文档](agent-api.md)。
+
+- 复用 `GET /api/series/list?workspaceId=...` 的 `seriesId/name/status` 展示动画多选。
+- `POST /api/agent/messages/send?conversationId=...` 的 Body 增加 `seriesIds`。
+  省略或传 `[]` 默认搜索当前 Workspace 全部 READY 动画；显式选择未 READY 返回 409，
+  缺失或跨 Workspace 返回 404。未 READY 项不能新选，已选项仍可取消。
+- 每次 Kick 启动前解析并冻结实际范围，USER / ASSISTANT 均返回必填 `seriesIds`。
+  改变多选只影响下一次发送，不新建对话、不终止正在进行的 SSE。
+- Query 获取带各消息范围的聊天历史；Retrieve Tool 仅使用当前 Kick 的固定范围。
+  每个 `hits[].evidence.seriesId` 必填，来自 MySQL join，卡片按证据自身显示动画来源。
+- 幂等比较正文、有效 TopK 与规范化原请求范围；相同 Key 重放读回旧范围，
+  不因新增动画重新扩大全部。JSON 与 POST SSE 使用同一发送路径。
+- 失效的显式范围提示用户调整；按钮与 Enter 共用发送条件，无效提交保留输入。
+
+已有数据库需要先回填消息范围，再删除 Conversation 旧范围列；旧 Session 结构也需迁移。
+[受控迁移步骤](agent-api.md#8-已有数据库升级) 保留 Conversation ID 与全部消息；本次未执行真实 DDL。

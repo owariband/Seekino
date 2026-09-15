@@ -108,6 +108,7 @@ def test_formal_retrieval_closes_qdrant_rrf_and_joined_hydrate(
     assert [hit.evidence.video_chunk_id for hit in result.hits] == (
         report.video_chunk_ids
     )
+    assert all(hit.evidence.series_id == prepared.series_id for hit in result.hits)
     first = result.hits[0]
     assert first.candidate.fused_rank == 1
     assert first.candidate.text_rank == 1
@@ -130,6 +131,7 @@ def test_formal_retrieval_closes_qdrant_rrf_and_joined_hydrate(
     )
 
     payload = result.model_dump(mode="json", by_alias=True)
+    assert all(hit["evidence"]["seriesId"] == prepared.series_id for hit in payload["hits"])
     assert payload["hits"][0]["candidate"]["videoChunkId"] == (
         report.video_chunk_ids[0]
     )

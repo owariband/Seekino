@@ -20,11 +20,19 @@ from server.database import (
     create_session_factory,
 )
 from server.model.job import ParseJobStage
+from server.model.video import SeriesRecord
 from server.repository.agent import AgentRepository
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
 from server.repository.upload import UploadRepository
-from server.schema import AgentReply, VideoChunkSearchResult
+from server.repository.video import VideoRepository
+from server.schema import (
+    AgentReply,
+    SelectionReason,
+    VideoChunkCandidate,
+    VideoChunkSearchHit,
+    VideoChunkSearchResult,
+)
 from server.service.agent_chat import AgentChatService
 from server.service.job import ParseJobService
 from server.service.library import LibraryService
@@ -123,17 +131,27 @@ def _client(tmp_path: Path):
     return TestClient(create_app(services)), retrieval, job_repository
 
 
-def _create_series(client: TestClient) -> str:
+def _create_series(
+    client: TestClient,
+    *,
+    workspace_id: str = "local-default",
+    name: str = "Test Series",
+    ready: bool = True,
+) -> str:
     response = client.post(
         "/api/series/create",
         json={
-            "workspaceId": "local-default",
-            "name": "Test Series",
+            "workspaceId": workspace_id,
+            "name": name,
             "description": "API fixture",
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()["seriesId"]
+    series_id = response.json()["seriesId"]
+    if ready:
+        with client.app.state.services.library._repository._session_factory.begin() as session:
+            session.get(SeriesRecord, series_id).status = "READY"
+    return series_id
 
 
 def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> None:
@@ -155,9 +173,6 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/jobs/events",
         "/api/videos/content",
         "/api/search",
-        "/api/agent/sessions/create",
-        "/api/agent/sessions/list",
-        "/api/agent/sessions/get",
         "/api/agent/conversations/create",
         "/api/agent/conversations/list",
         "/api/agent/conversations/get",
@@ -181,6 +196,12 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/videos/{video_id}/content",
     }.isdisjoint(paths)
     assert all("{" not in path and "}" not in path for path in paths)
+    for path, method in (
+        ("/api/agent/sessions/create", "POST"),
+        ("/api/agent/sessions/list", "GET"),
+        ("/api/agent/sessions/get", "GET"),
+    ):
+        assert client.request(method, path).status_code == 404
     assert all(
         route.endpoint.__module__.startswith("server.api.")
         for route in client.app.routes
@@ -199,9 +220,6 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         ("/api/jobs/get", "get"): {"jobId"},
         ("/api/jobs/events", "get"): {"jobId"},
         ("/api/videos/content", "get"): {"videoId"},
-        ("/api/agent/sessions/get", "get"): {"sessionId"},
-        ("/api/agent/conversations/create", "post"): {"sessionId"},
-        ("/api/agent/conversations/list", "get"): {"sessionId"},
         ("/api/agent/conversations/get", "get"): {"conversationId"},
         ("/api/agent/messages/list", "get"): {"conversationId"},
         ("/api/agent/messages/send", "post"): {"conversationId"},
@@ -217,6 +235,27 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         assert identifiers <= actual
 
     schemas = client.app.openapi()["components"]["schemas"]
+    assert "AgentSessionView" not in schemas
+    assert "AgentSessionCreateRequest" not in schemas
+    assert "sessionId" not in schemas["AgentConversationView"]["properties"]
+    assert "workspaceId" in schemas["AgentConversationView"]["required"]
+    assert "seriesIds" not in schemas["AgentConversationView"]["properties"]
+    assert "seriesIds" not in schemas["AgentConversationCreateRequest"]["properties"]
+    assert "seriesIds" in schemas["AgentMessageView"]["required"]
+    assert "seriesIds" in schemas["AgentMessageSendRequest"]["properties"]
+    assert "seriesId" in schemas["VideoChunkEvidence"]["required"]
+    conversation_create_parameters = openapi_paths[
+        "/api/agent/conversations/create"
+    ]["post"]["parameters"]
+    assert {parameter["name"] for parameter in conversation_create_parameters} == {
+        "Idempotency-Key"
+    }
+    conversation_list_parameters = openapi_paths[
+        "/api/agent/conversations/list"
+    ]["get"]["parameters"]
+    assert {parameter["name"] for parameter in conversation_list_parameters} == {
+        "workspaceId", "limit"
+    }
     assert {
         "seriesName",
         "episodeOrder",
@@ -233,30 +272,40 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
     assert "modelName" in schemas["AgentMessageView"]["required"]
 
 
-def test_agent_session_conversation_send_and_list_messages(tmp_path: Path) -> None:
+def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:
     client, _retrieval, _jobs = _client(tmp_path)
     series_id = _create_series(client)
 
-    session_response = client.post(
-        "/api/agent/sessions/create",
-        headers={"Idempotency-Key": "agent-session-1"},
-        json={"workspaceId": "local-default", "name": "画面札记"},
-    )
-    assert session_response.status_code == 201, session_response.text
-    session_id = session_response.json()["sessionId"]
-
     conversation_response = client.post(
         "/api/agent/conversations/create",
-        params={"sessionId": session_id},
         headers={"Idempotency-Key": "conversation-1"},
         json={
             "workspaceId": "local-default",
             "title": "寻找哭泣场景",
-            "seriesIds": [series_id],
         },
     )
     assert conversation_response.status_code == 201, conversation_response.text
     conversation_id = conversation_response.json()["conversationId"]
+    assert conversation_response.json()["workspaceId"] == "local-default"
+    assert "sessionId" not in conversation_response.json()
+    assert "seriesIds" not in conversation_response.json()
+    replayed = client.post(
+        "/api/agent/conversations/create",
+        headers={"Idempotency-Key": "conversation-1"},
+        json={
+            "workspaceId": "local-default",
+            "title": "寻找哭泣场景",
+        },
+    )
+    assert replayed.status_code == 201
+    assert replayed.json() == conversation_response.json()
+    conflicting = client.post(
+        "/api/agent/conversations/create",
+        headers={"Idempotency-Key": "conversation-1"},
+        json={"title": "另一个标题"},
+    )
+    assert conflicting.status_code == 409
+    assert conflicting.json()["code"] == "CONFLICT"
 
     sent = client.post(
         "/api/agent/messages/send",
@@ -265,6 +314,7 @@ def test_agent_session_conversation_send_and_list_messages(tmp_path: Path) -> No
         json={
             "workspaceId": "local-default",
             "content": "她为什么哭？",
+            "seriesIds": [series_id],
             "topK": 5,
         },
     )
@@ -272,11 +322,7 @@ def test_agent_session_conversation_send_and_list_messages(tmp_path: Path) -> No
         "/api/agent/messages/list",
         params={"conversationId": conversation_id},
     )
-    listed_sessions = client.get("/api/agent/sessions/list")
-    listed_conversations = client.get(
-        "/api/agent/conversations/list",
-        params={"sessionId": session_id},
-    )
+    listed_conversations = client.get("/api/agent/conversations/list")
     messages_after_user = client.get(
         "/api/agent/messages/list",
         params={"conversationId": conversation_id, "afterSequenceNo": 0},
@@ -288,10 +334,82 @@ def test_agent_session_conversation_send_and_list_messages(tmp_path: Path) -> No
     assert listed.json()[0]["modelName"] is None
     assert listed.json()[1]["modelName"] == "chat-model-v1"
     assert listed.json()[1]["status"] == "COMPLETED"
+    assert all(message["seriesIds"] == [series_id] for message in listed.json())
     assert listed.json()[1]["searchResult"]["seriesIds"] == [series_id]
-    assert listed_sessions.json()[0]["conversationCount"] == 1
+    assert len(listed_conversations.json()) == 1
     assert listed_conversations.json()[0]["messageCount"] == 2
     assert [item["role"] for item in messages_after_user.json()] == ["ASSISTANT"]
+
+
+def test_agent_conversations_are_created_and_listed_within_workspace(tmp_path: Path) -> None:
+    client, retrieval, _jobs = _client(tmp_path)
+    local_series_id = _create_series(client)
+    other_series_id = _create_series(client, workspace_id="other-workspace")
+    conversations = {}
+    try:
+        for workspace_id, series_id in (
+            ("local-default", local_series_id),
+            ("other-workspace", other_series_id),
+        ):
+            response = client.post(
+                "/api/agent/conversations/create",
+                headers={"Idempotency-Key": "same-key-across-workspaces"},
+                json={"workspaceId": workspace_id},
+            )
+            assert response.status_code == 201, response.text
+            conversations[workspace_id] = response.json()
+            listed = client.get(
+                "/api/agent/conversations/list",
+                params={"workspaceId": workspace_id},
+            )
+            assert listed.status_code == 200
+            assert listed.json() == [response.json()]
+        assert (
+            conversations["local-default"]["conversationId"]
+            != conversations["other-workspace"]["conversationId"]
+        )
+        conversation_id = conversations["local-default"]["conversationId"]
+        for path in (
+            "/api/agent/conversations/get",
+            "/api/agent/messages/list",
+            "/api/agent/messages/events",
+        ):
+            outside = client.get(
+                path,
+                params={
+                    "conversationId": conversation_id,
+                    "workspaceId": "other-workspace",
+                },
+            )
+            assert outside.status_code == 404
+        outside_send = client.post(
+            "/api/agent/messages/send",
+            params={"conversationId": conversation_id},
+            headers={"Idempotency-Key": "outside-message"},
+            json={"workspaceId": "other-workspace", "content": "找画面"},
+        )
+        assert outside_send.status_code == 404
+        outside_scope = client.post(
+            "/api/agent/messages/send",
+            params={"conversationId": conversations["other-workspace"]["conversationId"]},
+            headers={"Idempotency-Key": "outside-scope"},
+            json={"workspaceId": "other-workspace", "content": "找画面", "seriesIds": [local_series_id]},
+        )
+        assert outside_scope.status_code == 404
+        another = client.post(
+            "/api/agent/conversations/create",
+            headers={"Idempotency-Key": "another-local-conversation"},
+            json={},
+        )
+        assert another.status_code == 201
+        assert len(client.get("/api/agent/conversations/list").json()) == 2
+        limited = client.get("/api/agent/conversations/list", params={"limit": 1})
+        assert limited.status_code == 200
+        assert len(limited.json()) == 1
+        assert limited.json()[0]["workspaceId"] == "local-default"
+        assert retrieval.calls == []
+    finally:
+        client.app.state.services.agent.close()
 
 
 def test_series_and_search_contract(tmp_path: Path) -> None:
@@ -314,6 +432,7 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
     )
 
     assert listed[0]["seriesId"] == series_id
+    assert {"seriesId", "name", "status"} <= listed[0].keys()
     assert detail["videoCount"] == 0
     assert searched.status_code == 200
     assert searched.json() == {
@@ -561,15 +680,11 @@ def test_upload_protocol_errors_do_not_require_business_data(
     assert response.status_code == expected_status
 
 
-def _create_agent_conversation(client, series_id):
-    session = client.post(
-        "/api/agent/sessions/create", headers={"Idempotency-Key": "session-stream"},
-        json={"name": "流式会话"},
-    ).json()
+def _create_agent_conversation(client):
     response = client.post(
-        "/api/agent/conversations/create", params={"sessionId": session["sessionId"]},
+        "/api/agent/conversations/create",
         headers={"Idempotency-Key": "conversation-stream"},
-        json={"seriesIds": [series_id]},
+        json={},
     )
     assert response.status_code == 201, response.text
     return response.json()["conversationId"]
@@ -580,9 +695,195 @@ def _answer_payloads(text):
     return [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: ")]
 
 
+def test_each_message_can_choose_its_own_series_in_one_conversation(tmp_path):
+    client, retrieval, _ = _client(tmp_path)
+    first_series = _create_series(client)
+    second_series = _create_series(client, name="Second Series")
+    conversation_id = _create_agent_conversation(client)
+    scopes = [[first_series], [second_series, first_series]]
+    try:
+        for index, scope in enumerate(scopes):
+            response = client.post(
+                "/api/agent/messages/send",
+                params={"conversationId": conversation_id},
+                headers={"Idempotency-Key": f"scoped-message-{index}"},
+                json={"content": "找哭泣的画面", "seriesIds": scope, "topK": 5},
+            )
+            assert response.status_code == 200, response.text
+            pair = response.json()
+            assert set(pair["userMessage"]["seriesIds"]) == set(scope)
+            assert set(pair["assistantMessage"]["seriesIds"]) == set(scope)
+            assert set(pair["assistantMessage"]["searchResult"]["seriesIds"]) == set(scope)
+        assert [set(call[1]) for call in retrieval.calls] == [set(scope) for scope in scopes]
+        messages = client.get(
+            "/api/agent/messages/list", params={"conversationId": conversation_id},
+        ).json()
+        assert [set(message["seriesIds"]) for message in messages] == [
+            set(scopes[0]), set(scopes[0]), set(scopes[1]), set(scopes[1]),
+        ]
+        conversation = client.get(
+            "/api/agent/conversations/get", params={"conversationId": conversation_id},
+        ).json()
+        assert conversation["messageCount"] == 4
+        assert "seriesIds" not in conversation
+    finally:
+        client.app.state.services.agent.close()
+
+
+@pytest.mark.parametrize("selection", [None, []])
+def test_empty_selection_resolves_all_workspace_series_once_for_idempotent_replay(tmp_path, selection):
+    client, retrieval, _ = _client(tmp_path)
+    scope = {_create_series(client), _create_series(client, name="Second Series")}
+    _create_series(client, workspace_id="other-workspace")
+    _create_series(client, name="Not Ready Series", ready=False)
+    conversation_id = _create_agent_conversation(client)
+    body = {"content": "找画面", "topK": 5}
+    if selection is not None:
+        body["seriesIds"] = selection
+    kwargs = {
+        "params": {"conversationId": conversation_id},
+        "headers": {"Idempotency-Key": "all-series-message"},
+        "json": body,
+    }
+    try:
+        sent = client.post("/api/agent/messages/send", **kwargs)
+        assert sent.status_code == 200, sent.text
+        assert set(sent.json()["userMessage"]["seriesIds"]) == scope
+        assert set(sent.json()["assistantMessage"]["seriesIds"]) == scope
+        assert set(retrieval.calls[0][1]) == scope
+        _create_series(client, name="Newly Ready Series")
+        replay = client.post("/api/agent/messages/send", **kwargs)
+        assert replay.status_code == 200, replay.text
+        assert replay.json() == sent.json()
+        assert len(retrieval.calls) == 1
+    finally:
+        client.app.state.services.agent.close()
+
+
+def test_reusing_message_key_with_different_series_conflicts_before_retrieval(tmp_path):
+    client, retrieval, _ = _client(tmp_path)
+    first_series = _create_series(client)
+    second_series = _create_series(client, name="Second Series")
+    conversation_id = _create_agent_conversation(client)
+    kwargs = {
+        "params": {"conversationId": conversation_id},
+        "headers": {"Idempotency-Key": "selected-series-message"},
+    }
+    try:
+        sent = client.post(
+            "/api/agent/messages/send", **kwargs,
+            json={"content": "找画面", "seriesIds": [first_series]},
+        )
+        assert sent.status_code == 200, sent.text
+        conflicting = client.post(
+            "/api/agent/messages/send", **kwargs,
+            json={"content": "找画面", "seriesIds": [second_series]},
+        )
+        assert conflicting.status_code == 409
+        assert conflicting.json()["code"] == "CONFLICT"
+        assert len(retrieval.calls) == 1
+        assert len(client.get(
+            "/api/agent/messages/list", params={"conversationId": conversation_id},
+        ).json()) == 2
+    finally:
+        client.app.state.services.agent.close()
+
+
+def test_explicit_non_ready_series_is_rejected_before_starting_message(tmp_path):
+    client, retrieval, _ = _client(tmp_path)
+    series_id = _create_series(client, ready=False)
+    conversation_id = _create_agent_conversation(client)
+    try:
+        response = client.post(
+            "/api/agent/messages/send", params={"conversationId": conversation_id},
+            headers={"Idempotency-Key": "non-ready-message"},
+            json={"content": "找画面", "seriesIds": [series_id]},
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["code"] == "CONFLICT"
+        assert retrieval.calls == []
+        assert client.get(
+            "/api/agent/messages/list", params={"conversationId": conversation_id},
+        ).json() == []
+    finally:
+        client.app.state.services.agent.close()
+
+
+@pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])
+def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(tmp_path, prepared_import, accept):
+    client, _, _ = _client(tmp_path)
+    service = client.app.state.services.agent
+    video_repository = VideoRepository(service._repository._session_factory)
+    report = video_repository.import_video_parse(prepared_import)
+    with service._repository._session_factory.begin() as session:
+        session.get(SeriesRecord, prepared_import.series_id).status = "READY"
+    conversation_id = _create_agent_conversation(client)
+
+    def joined_search(query, *, workspace_id, series_ids, top_k):
+        assert workspace_id == prepared_import.workspace_id
+        assert series_ids == [prepared_import.series_id]
+        evidence = video_repository.hydrate_video_chunks(report.video_chunk_ids)
+        hits = [
+            VideoChunkSearchHit(
+                candidate=VideoChunkCandidate(
+                    video_chunk_id=chunk.video_chunk_id, fused_rank=index + 1, fused_score=1,
+                ),
+                selection_reason=SelectionReason(
+                    summary="画面中有对应动作。", matched_evidence=[], limitations=[],
+                ),
+                evidence=chunk,
+            )
+            for index, chunk in enumerate(evidence[:top_k])
+        ]
+        return VideoChunkSearchResult(
+            query=query, series_ids=series_ids,
+            agent_reply=AgentReply(message="找到动作片段。", result_count=len(hits)), hits=hits,
+        )
+
+    class QueryWithEvidence(_AgentModelStub):
+        def run_query(self, _prompt, *, tools, result_type, **_kwargs):
+            result = tools[0].invoke({"query": "找动作片段", "top_k": 5})
+            return result_type.model_validate({
+                "plan_context": "召回动作并检查片段来源。",
+                "message": "这些片段包含动作。",
+                "selected_video_chunk_ids": [hit["evidence"]["videoChunkId"] for hit in result["hits"]],
+            })
+
+    service._runtime._retrieve = joined_search
+    service._runtime._query_model = QueryWithEvidence("query-evidence")
+    try:
+        response = client.post(
+            "/api/agent/messages/send", params={"conversationId": conversation_id},
+            headers={"Accept": accept, "Idempotency-Key": "joined-evidence"},
+            json={"content": "找动作片段", "seriesIds": [prepared_import.series_id]},
+        )
+        assert response.status_code == 200, response.text
+        if accept == "text/event-stream":
+            events = _answer_payloads(response.text)
+            evidence_hits = next(event["hits"] for event in events if event["type"] == "answer.evidence")
+            final = events[-1]["assistantMessage"]
+            assert evidence_hits == final["searchResult"]["hits"]
+        else:
+            final = response.json()["assistantMessage"]
+        hits = final["searchResult"]["hits"]
+        assert len(hits) == len(report.video_chunk_ids) == 2
+        assert final["seriesIds"] == [prepared_import.series_id]
+        for hit in hits:
+            evidence = hit["evidence"]
+            assert evidence["seriesId"] == prepared_import.series_id
+            assert evidence["workspaceId"] == prepared_import.workspace_id
+            assert evidence["seriesName"] == prepared_import.series_name
+            assert evidence["videoId"] == prepared_import.video_id
+            assert evidence["videoChunkId"] == hit["candidate"]["videoChunkId"]
+            assert 0 <= evidence["startMs"] < evidence["endMs"] <= evidence["durationMs"]
+    finally:
+        service.close()
+
+
 def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     client, retrieval, _ = _client(tmp_path)
-    conversation_id = _create_agent_conversation(client, _create_series(client))
+    series_id = _create_series(client)
+    conversation_id = _create_agent_conversation(client)
     kwargs = {
         "params": {"conversationId": conversation_id},
         "headers": {"Accept": "text/event-stream", "Idempotency-Key": "stream-message"},
@@ -601,6 +902,8 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     assert events[0]["assistantMessage"]["status"] == "PROCESSING"
     assert events[0]["assistantMessage"]["content"] is None
     assert events[0]["userMessage"]["modelName"] is None
+    assert events[0]["userMessage"]["seriesIds"] == [series_id]
+    assert events[0]["assistantMessage"]["seriesIds"] == [series_id]
     final = events[-1]["assistantMessage"]
     assert final["status"] == "COMPLETED"
     assert final["content"] == "".join(event["delta"] for event in events if event["type"] == "answer.delta")
@@ -617,7 +920,8 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
 
 def test_rejected_loop_sends_failed_event_and_json_maps_harness_error(tmp_path):
     client, _, _ = _client(tmp_path)
-    conversation_id = _create_agent_conversation(client, _create_series(client))
+    _create_series(client)
+    conversation_id = _create_agent_conversation(client)
     runtime = client.app.state.services.agent._runtime
 
     class RejectModel:
@@ -660,7 +964,8 @@ def test_asgi_delivers_first_delta_before_provider_finishes(tmp_path):
     from threading import Event
 
     client, _, _ = _client(tmp_path)
-    conversation_id = _create_agent_conversation(client, _create_series(client))
+    _create_series(client)
+    conversation_id = _create_agent_conversation(client)
     service = client.app.state.services.agent
     release = Event()
 
@@ -724,7 +1029,8 @@ def test_asgi_delivers_first_delta_before_provider_finishes(tmp_path):
 ])
 def test_send_respects_accept_quality(tmp_path, accept, expected):
     client, _, _ = _client(tmp_path)
-    conversation_id = _create_agent_conversation(client, _create_series(client))
+    _create_series(client)
+    conversation_id = _create_agent_conversation(client)
     response = client.post(
         "/api/agent/messages/send", params={"conversationId": conversation_id},
         headers={"Accept": accept, "Idempotency-Key": "accept-message"},
@@ -744,7 +1050,8 @@ def test_retrieval_domain_errors_keep_http_mapping_through_harness(tmp_path, fai
     from server.repository.video import SeriesNotReadyError, SeriesScopeNotFoundError
     from server.service.video_retrieval import RetrievalIndexConsistencyError
     client, _, _ = _client(tmp_path)
-    conversation_id = _create_agent_conversation(client, _create_series(client))
+    _create_series(client)
+    conversation_id = _create_agent_conversation(client)
     error_type = {
         "not-ready": SeriesNotReadyError,
         "missing-scope": SeriesScopeNotFoundError,

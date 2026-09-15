@@ -13,8 +13,9 @@ from ..config.agent import AgentServiceConfig
 from ..identity import canonical_uuid
 from ..repository.agent import (
     AgentConversationState, AgentMessageInProgressError, AgentMessageState,
-    AgentRepository, AgentSessionState,
+    AgentRepository,
 )
+from ..repository.video import SeriesNotReadyError
 from ..utils.time import utc_now_naive
 from ..utils.validation import require_nonempty_text
 from .library import LibraryService
@@ -129,53 +130,11 @@ class AgentChatService:
     def model_name(self) -> str:
         return self._runtime.model_name
 
-    def create_session(
-        self,
-        *,
-        workspace_id: str,
-        name: str,
-        idempotency_key: str,
-    ) -> AgentSessionState:
-        return self._repository.create_session(
-            session_id=str(uuid4()),
-            workspace_id=require_nonempty_text(workspace_id, "workspace_id", maximum=64),
-            name=require_nonempty_text(name, "name", maximum=255),
-            idempotency_key=require_nonempty_text(
-                idempotency_key,
-                "idempotency_key",
-                maximum=128,
-            ),
-        )
-
-    def list_sessions(
-        self,
-        *,
-        workspace_id: str,
-        limit: int = 100,
-    ) -> list[AgentSessionState]:
-        return self._repository.list_sessions(
-            require_nonempty_text(workspace_id, "workspace_id", maximum=64),
-            limit=_positive_limit(limit),
-        )
-
-    def get_session(
-        self,
-        session_id: str,
-        *,
-        workspace_id: str,
-    ) -> AgentSessionState:
-        return self._repository.get_session(
-            canonical_uuid(session_id, "session_id"),
-            require_nonempty_text(workspace_id, "workspace_id", maximum=64),
-        )
-
     def create_conversation(
         self,
-        session_id: str,
         *,
         workspace_id: str,
         title: str,
-        series_ids: list[str],
         idempotency_key: str,
     ) -> AgentConversationState:
         normalized_workspace = require_nonempty_text(
@@ -183,17 +142,10 @@ class AgentChatService:
             "workspace_id",
             maximum=64,
         )
-        normalized_session_id = canonical_uuid(session_id, "session_id")
-        self._repository.get_session(normalized_session_id, normalized_workspace)
-        scope = _canonical_scope(series_ids)
-        for series_id in scope:
-            self._library.get_series(series_id, workspace_id=normalized_workspace)
         return self._repository.create_conversation(
             conversation_id=str(uuid4()),
-            session_id=normalized_session_id,
             workspace_id=normalized_workspace,
             title=require_nonempty_text(title, "title", maximum=255),
-            series_ids=scope,
             idempotency_key=require_nonempty_text(
                 idempotency_key,
                 "idempotency_key",
@@ -203,14 +155,12 @@ class AgentChatService:
 
     def list_conversations(
         self,
-        session_id: str,
         *,
         workspace_id: str,
         limit: int = 100,
     ) -> list[AgentConversationState]:
         return self._repository.list_conversations(
-            canonical_uuid(session_id, "session_id"),
-            require_nonempty_text(workspace_id, "workspace_id", maximum=64),
+            workspace_id=require_nonempty_text(workspace_id, "workspace_id", maximum=64),
             limit=_positive_limit(limit),
         )
 
@@ -262,20 +212,22 @@ class AgentChatService:
 
     def send_message(
         self, conversation_id: str, *, workspace_id: str, content: str,
-        idempotency_key: str, top_k: int | None = None,
+        idempotency_key: str, series_ids: list[str] | None = None, top_k: int | None = None,
     ) -> AgentMessageSendState:
         return self.start_message(
             conversation_id, workspace_id=workspace_id, content=content,
-            idempotency_key=idempotency_key, top_k=top_k,
+            idempotency_key=idempotency_key, series_ids=series_ids, top_k=top_k,
         ).result()
 
     def start_message(
         self, conversation_id: str, *, workspace_id: str, content: str,
-        idempotency_key: str, top_k: int | None = None, stream: bool = False,
+        idempotency_key: str, series_ids: list[str] | None = None,
+        top_k: int | None = None, stream: bool = False,
     ) -> AgentMessageExecution:
         normalized_workspace = require_nonempty_text(workspace_id, "workspace_id", maximum=64)
         normalized_conversation_id = canonical_uuid(conversation_id, "conversation_id")
         normalized_content = require_nonempty_text(content, "content", maximum=20_000)
+        requested_scope = _canonical_scope([] if series_ids is None else series_ids)
         requested_top_k = self._config.default_top_k if top_k is None else top_k
         if (
             isinstance(requested_top_k, bool) or not isinstance(requested_top_k, int)
@@ -286,14 +238,23 @@ class AgentChatService:
         with self._lock:
             if self._closed:
                 raise AgentMessageInProgressError("the Agent service is shutting down")
-            started = self._repository.start_message(
+            started = self._repository.find_idempotent_message(
                 conversation_id=normalized_conversation_id,
                 workspace_id=normalized_workspace, content=normalized_content,
-                model_name=require_nonempty_text(self.model_name, "chat_model.model_name", maximum=255),
                 requested_top_k=requested_top_k, idempotency_key=normalized_key,
-                user_message_id=str(uuid4()), assistant_message_id=str(uuid4()),
-                now=utc_now_naive(),
+                requested_series_ids=requested_scope,
             )
+            if started is None:
+                scope = self._resolve_scope(requested_scope, normalized_workspace)
+                started = self._repository.start_message(
+                    conversation_id=normalized_conversation_id,
+                    workspace_id=normalized_workspace, content=normalized_content,
+                    model_name=require_nonempty_text(self.model_name, "chat_model.model_name", maximum=255),
+                    requested_top_k=requested_top_k, idempotency_key=normalized_key,
+                    series_ids=scope, requested_series_ids=requested_scope,
+                    user_message_id=str(uuid4()), assistant_message_id=str(uuid4()),
+                    now=utc_now_naive(),
+                )
             if started.reused and started.assistant_message.status == "PROCESSING":
                 raise AgentMessageInProgressError("the idempotent message is still being processed")
             initial = AgentMessageSendState(started.user_message, started.assistant_message)
@@ -319,6 +280,23 @@ class AgentChatService:
                 raise
             return execution
 
+    def _resolve_scope(self, requested: list[str], workspace_id: str) -> list[str]:
+        if requested:
+            series = [
+                self._library.get_series(series_id, workspace_id=workspace_id)
+                for series_id in requested
+            ]
+            if any(item.status != "READY" for item in series):
+                raise SeriesNotReadyError("selected Series must be READY before retrieval")
+        else:
+            series = [
+                item for item in self._library.list_series(workspace_id=workspace_id)
+                if item.status == "READY"
+            ]
+        if not series:
+            raise SeriesNotReadyError("this workspace has no READY Series to retrieve")
+        return sorted(item.series_id for item in series)
+
     def _execute(
         self, execution: AgentMessageExecution, workspace_id: str, requested_top_k: int,
     ) -> AgentMessageSendState:
@@ -326,7 +304,6 @@ class AgentChatService:
         assistant_id = initial.assistant_message.message_id
         conversation_id = initial.assistant_message.conversation_id
         try:
-            conversation = self._repository.get_conversation(conversation_id, workspace_id)
             history = self._repository.list_recent_completed_messages(
                 conversation_id, workspace_id,
                 before_sequence_no=initial.user_message.sequence_no,
@@ -334,14 +311,17 @@ class AgentChatService:
             )
             series = [
                 self._library.get_series(series_id, workspace_id=workspace_id)
-                for series_id in conversation.series_ids
+                for series_id in initial.user_message.series_ids
             ]
             inputs = RunInputs(
                 conversation_id=conversation_id, assistant_message_id=assistant_id,
-                workspace_id=workspace_id, series_ids=list(conversation.series_ids),
+                workspace_id=workspace_id, series_ids=list(initial.user_message.series_ids),
                 user_message=initial.user_message.content or "",
                 requested_top_k=requested_top_k,
-                history=[{"role": item.role, "content": item.content or ""} for item in history],
+                history=[{
+                    "role": item.role, "content": item.content or "",
+                    "seriesIds": list(item.series_ids),
+                } for item in history],
                 series_context=[{
                     "seriesId": item.series_id, "name": item.name,
                     "description": item.description,
@@ -415,11 +395,9 @@ def _terminal_event(result: AgentMessageSendState) -> dict:
 
 
 def _canonical_scope(series_ids: list[str]) -> list[str]:
-    if not isinstance(series_ids, list) or not series_ids:
-        raise ValueError("series_ids must contain at least one Series")
-    return list(
-        dict.fromkeys(canonical_uuid(item, "series_id") for item in series_ids)
-    )
+    if not isinstance(series_ids, list):
+        raise ValueError("series_ids must be a list")
+    return sorted({canonical_uuid(item, "series_id") for item in series_ids})
 
 
 def _positive_limit(value: int, *, maximum: int = 500) -> int:

@@ -80,6 +80,41 @@ def create_schema(engine: Engine) -> None:
             f"upgrade before init-db; found: {found}"
         )
 
+    legacy_agent_schema = existing_tables.intersection({"agent_session"})
+    if "agent_conversation" in existing_tables:
+        conversation_columns = {
+            column["name"] for column in inspector.get_columns("agent_conversation")
+        }
+        if "session_id" in conversation_columns:
+            legacy_agent_schema.add("agent_conversation.session_id")
+        if "workspace_id" not in conversation_columns:
+            legacy_agent_schema.add("agent_conversation missing workspace_id")
+    if legacy_agent_schema:
+        found = ", ".join(sorted(legacy_agent_schema))
+        raise SchemaUpgradeRequiredError(
+            "legacy Agent Session schema requires a controlled Workspace / "
+            f"Conversation upgrade before init-db; found: {found}"
+        )
+
+    legacy_message_scope: set[str] = set()
+    if "agent_conversation" in existing_tables:
+        if "series_ids" in conversation_columns:
+            legacy_message_scope.add("agent_conversation.series_ids")
+    if "agent_message" in existing_tables:
+        message_columns = {
+            column["name"] for column in inspector.get_columns("agent_message")
+        }
+        legacy_message_scope.update(
+            f"agent_message missing {column_name}"
+            for column_name in {"series_ids", "requested_series_ids"} - message_columns
+        )
+    if legacy_message_scope:
+        found = ", ".join(sorted(legacy_message_scope))
+        raise SchemaUpgradeRequiredError(
+            "legacy Agent scope schema requires a controlled Agent "
+            f"message-scope migration before init-db; found: {found}"
+        )
+
     # Importing registers every table on Base.metadata without making the
     # connection module depend on concrete repositories.
     from .model import agent as _agent_models  # noqa: F401

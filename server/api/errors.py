@@ -8,7 +8,6 @@ from ..repository.agent import (
     AgentConversationNotFoundError,
     AgentMessageInProgressError,
     AgentMessageNotFoundError,
-    AgentSessionNotFoundError,
 )
 from ..repository.job import ParseJobNotFoundError
 from ..repository.library import SeriesConflictError, SeriesNotFoundError
@@ -35,7 +34,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     not_found = (
         AgentConversationNotFoundError,
         AgentMessageNotFoundError,
-        AgentSessionNotFoundError,
         ParseJobNotFoundError,
         SeriesNotFoundError,
         SeriesScopeNotFoundError,

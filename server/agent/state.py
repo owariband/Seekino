@@ -52,7 +52,7 @@ class RunInputs(TypedDict):
     series_ids: list[str]
     series_context: list[dict]
     user_message: str
-    history: list[dict[str, str]]
+    history: list[dict]
     requested_top_k: int
 
 

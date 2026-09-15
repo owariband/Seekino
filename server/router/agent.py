@@ -7,29 +7,9 @@ from ..api.schema import (
     AgentConversationView,
     AgentMessageSendView,
     AgentMessageView,
-    AgentSessionView,
 )
 
 router = APIRouter()
-router.add_api_route(
-    "/api/agent/sessions/create",
-    agent.create_agent_session,
-    methods=["POST"],
-    response_model=AgentSessionView,
-    status_code=201,
-)
-router.add_api_route(
-    "/api/agent/sessions/list",
-    agent.list_agent_sessions,
-    methods=["GET"],
-    response_model=list[AgentSessionView],
-)
-router.add_api_route(
-    "/api/agent/sessions/get",
-    agent.get_agent_session,
-    methods=["GET"],
-    response_model=AgentSessionView,
-)
 router.add_api_route(
     "/api/agent/conversations/create",
     agent.create_agent_conversation,

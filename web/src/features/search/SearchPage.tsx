@@ -9,12 +9,14 @@ import { useAgentConversation } from "./useAgentConversation";
 import styles from "./search.module.css";
 
 export function SearchPage() {
-  const { mode, series, selectedSeries, selectedSeriesId, selectSeries } = useWorkspace();
+  const { mode, series } = useWorkspace();
+  const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string | null } | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
-  const searchSeriesId = selectedSeries?.status === "READY" ? selectedSeries.seriesId : null;
-  const { conversationId, messages, loading, searching, error, send } = useAgentConversation(searchSeriesId);
+  const { conversationId, messages, loading, searching, error, send } = useAgentConversation();
+  const scopeValid = selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && item.status === "READY"));
+  const canSend = Boolean(query.trim() && !loading && !searching && conversationId && scopeValid && series.some((item) => item.status === "READY") && mode === "live");
   const latestEvidence = messages.toReversed().find((message) => message.searchResult);
   const evidenceMessage = selection?.conversationId === conversationId
     ? messages.find((message) => message.messageId === selection.messageId) ?? latestEvidence
@@ -24,7 +26,7 @@ export function SearchPage() {
     ? result?.hits.find((hit) => hit.evidence.videoChunkId === selection.chunkId)
     : null) ?? result?.hits[0] ?? null;
 
-  useEffect(() => { setQuery(""); setSelection(null); }, [searchSeriesId]);
+  useEffect(() => { setSelection(null); }, [conversationId]);
 
   useEffect(() => {
     threadEnd.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
@@ -32,8 +34,8 @@ export function SearchPage() {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!query.trim() || !conversationId || searching) return;
-    void send(query);
+    if (!canSend) return;
+    void send(query, selectedSeriesIds);
     setQuery("");
   };
 
@@ -46,14 +48,27 @@ export function SearchPage() {
         </div>
         <div className={styles.scope}>
           <span className="eyebrow">当前检索范围</span>
-          <select
-            aria-label="选择检索系列"
-            value={selectedSeriesId ?? ""}
-            onChange={(event) => selectSeries(event.target.value)}
-          >
-            {series.map((item) => <option key={item.seriesId} value={item.seriesId}>{item.name}</option>)}
-          </select>
-          <small>{selectedSeries?.videoCount ?? 0} 集 · {selectedSeries?.status ?? "EMPTY"}</small>
+          <details className={styles.scopePicker}>
+            <summary aria-label="选择检索动画">{selectedSeriesIds.length ? `已选 ${selectedSeriesIds.length} 部动画` : "全部动画"}</summary>
+            <div className={styles.scopeOptions} role="group" aria-label="检索动画多选">
+              <button type="button" onClick={() => setSelectedSeriesIds([])}>检索全部动画</button>
+              {series.map((item) => (
+                <label key={item.seriesId}>
+                  <input
+                    type="checkbox"
+                    checked={selectedSeriesIds.includes(item.seriesId)}
+                    disabled={item.status !== "READY" && !selectedSeriesIds.includes(item.seriesId)}
+                    onChange={(event) => setSelectedSeriesIds((current) => event.target.checked ? [...current, item.seriesId] : current.filter((id) => id !== item.seriesId))}
+                  />
+                  <span>{item.name}</span>
+                  <small>{item.status === "READY" ? `${item.videoCount} 集` : "暂不可检索"}</small>
+                </label>
+              ))}
+              {!series.length ? <p>资料库还没有动画</p> : null}
+            </div>
+          </details>
+          <small>可多选 · 未选择时检索全部可检索动画</small>
+          {!scopeValid ? <small className={styles.messageError} role="alert">所选动画暂不可检索，请重新选择范围。</small> : null}
         </div>
       </header>
 
@@ -78,6 +93,7 @@ export function SearchPage() {
                 {message.role === "ASSISTANT" ? <Bot size={14} /> : null}
                 <div>
                   <span>{message.role === "ASSISTANT" ? "AGENT" : "YOU"}</span>
+                  {message.role === "USER" ? <small className={styles.messageScope}>检索范围：{message.seriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join("、") || "无可检索动画"}</small> : null}
                   <p className={message.status === "FAILED" ? styles.messageError : !message.content && message.status === "PROCESSING" ? styles.thinking : undefined} style={{ whiteSpace: "pre-wrap" }}>
                     {message.content || (message.status === "PROCESSING" ? "正在比对对白、视觉事件与前后语境" : message.lastError || "未生成回答")}
                   </p>
@@ -113,7 +129,7 @@ export function SearchPage() {
               rows={3}
               aria-label="向画面札记 Agent 提问"
             />
-            <div><span>Enter 发送 · Shift + Enter 换行</span><button type="submit" disabled={!query.trim() || loading || searching || !conversationId || !searchSeriesId || mode !== "live"} aria-label="发送问题"><ArrowUp size={17} /></button></div>
+            <div><span>Enter 发送 · Shift + Enter 换行</span><button type="submit" disabled={!canSend} aria-label="发送问题"><ArrowUp size={17} /></button></div>
           </form>
         </section>
 
@@ -136,7 +152,7 @@ export function SearchPage() {
                   >
                     <div className={styles.candidateTop}>
                       <span className={styles.rank}>{String(hit.candidate.fusedRank).padStart(2, "0")}</span>
-                      <span>{episodeLabel(hit.evidence.episodeOrder)}</span>
+                      <span>{hit.evidence.seriesName} · {episodeLabel(hit.evidence.episodeOrder)}</span>
                       <time>{formatTimeRange(hit.evidence.startMs, hit.evidence.endMs)}</time>
                     </div>
                     <strong>{clipText(hit.evidence.videoCompact || hit.evidence.windowSummary, 78)}</strong>

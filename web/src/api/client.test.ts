@@ -7,9 +7,7 @@ import {
   createSeries,
   createUploadSession,
   createAgentConversation,
-  createAgentSession,
   getAgentConversation,
-  getAgentSession,
   getJob,
   getSeries,
   getUploadSession,
@@ -18,7 +16,6 @@ import {
   listSeries,
   listAgentConversations,
   listAgentMessages,
-  listAgentSessions,
   searchVideos,
   sendAgentMessage,
   streamAgentMessage,
@@ -29,31 +26,29 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Agent Chat routes", () => {
-  it("keeps identifiers in queries and fixed scope in creation bodies", async () => {
+  it("keeps identifiers in queries and sends each message's scope", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response("{}", { headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
-    await createAgentSession("session-key");
-    await listAgentSessions();
-    await getAgentSession("session/id");
-    await createAgentConversation("session/id", "series/id", "conversation-key");
-    await listAgentConversations("session/id");
+    await createAgentConversation("conversation-key");
+    await listAgentConversations();
+    await listAgentConversations(50);
     await getAgentConversation("conversation/id");
     await listAgentMessages("conversation/id", 499);
-    await sendAgentMessage("conversation/id", "找摔杯子的画面", "message-key");
+    await sendAgentMessage("conversation/id", "找摔杯子的画面", "message-key", ["series/id", "another/id"]);
+    await sendAgentMessage("conversation/id", "搜索全部动画", "all-key");
     const calls = fetchMock.mock.calls;
-    expect(String(calls[0]![0])).toBe("/api/agent/sessions/create");
-    expect(new Headers(calls[0]![1]?.headers).get("Idempotency-Key")).toBe("session-key");
-    expect(String(calls[1]![0])).toBe("/api/agent/sessions/list?workspaceId=local-default");
-    expect(String(calls[2]![0])).toBe("/api/agent/sessions/get?sessionId=session%2Fid&workspaceId=local-default");
-    expect(String(calls[3]![0])).toBe("/api/agent/conversations/create?sessionId=session%2Fid");
-    expect(JSON.parse(String(calls[3]![1]?.body))).toEqual({ workspaceId: "local-default", title: "画面问询", seriesIds: ["series/id"] });
-    expect(String(calls[4]![0])).toBe("/api/agent/conversations/list?sessionId=session%2Fid&workspaceId=local-default");
-    expect(String(calls[5]![0])).toBe("/api/agent/conversations/get?conversationId=conversation%2Fid&workspaceId=local-default");
-    expect(String(calls[6]![0])).toBe("/api/agent/messages/list?conversationId=conversation%2Fid&workspaceId=local-default&afterSequenceNo=499&limit=500");
-    expect(String(calls[7]![0])).toBe("/api/agent/messages/send?conversationId=conversation%2Fid");
-    expect(new Headers(calls[7]![1]?.headers).get("Accept")).toBe("application/json");
-    expect(JSON.parse(String(calls[7]![1]?.body))).toEqual({ workspaceId: "local-default", content: "找摔杯子的画面", topK: 10 });
+    expect(String(calls[0]![0])).toBe("/api/agent/conversations/create");
+    expect(new Headers(calls[0]![1]?.headers).get("Idempotency-Key")).toBe("conversation-key");
+    expect(JSON.parse(String(calls[0]![1]?.body))).toEqual({ workspaceId: "local-default", title: "画面问询" });
+    expect(String(calls[1]![0])).toBe("/api/agent/conversations/list?workspaceId=local-default");
+    expect(String(calls[2]![0])).toBe("/api/agent/conversations/list?workspaceId=local-default&limit=50");
+    expect(String(calls[3]![0])).toBe("/api/agent/conversations/get?conversationId=conversation%2Fid&workspaceId=local-default");
+    expect(String(calls[4]![0])).toBe("/api/agent/messages/list?conversationId=conversation%2Fid&workspaceId=local-default&afterSequenceNo=499&limit=500");
+    expect(String(calls[5]![0])).toBe("/api/agent/messages/send?conversationId=conversation%2Fid");
+    expect(new Headers(calls[5]![1]?.headers).get("Accept")).toBe("application/json");
+    expect(JSON.parse(String(calls[5]![1]?.body))).toEqual({ workspaceId: "local-default", content: "找摔杯子的画面", seriesIds: ["series/id", "another/id"], topK: 10 });
+    expect(JSON.parse(String(calls[6]![1]?.body)).seriesIds).toEqual([]);
     expect(agentMessagesEventsUrl("conversation/id")).toBe("/api/agent/messages/events?conversationId=conversation%2Fid&workspaceId=local-default");
     expect(videoContentUrl("video/id", "workspace/id")).toBe("/api/videos/content?videoId=video%2Fid&workspaceId=workspace%2Fid");
   });
@@ -88,12 +83,13 @@ describe("POST answer stream", () => {
     vi.stubGlobal("fetch", fetchMock);
     const received = vi.fn();
     let finished = false;
-    const pending = streamAgentMessage("conversation/id", "query", "key", received, new AbortController().signal).then(() => { finished = true; });
+    const pending = streamAgentMessage("conversation/id", "query", "key", received, new AbortController().signal, ["A", "B"]).then(() => { finished = true; });
     controller.enqueue(encoder.encode(frame("第一段")));
     await vi.waitFor(() => expect(received).toHaveBeenCalledWith(expect.objectContaining({ type: "answer.delta", delta: "第一段" })));
     expect(finished).toBe(false);
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
     expect(new Headers(init?.headers).get("Accept")).toBe("text/event-stream");
+    expect(JSON.parse(String(init?.body)).seriesIds).toEqual(["A", "B"]);
     controller.close();
     await pending;
     expect(body.locked).toBe(false);

@@ -13,7 +13,6 @@ from server.database import (
 from server.model.agent import (
     AgentConversationRecord,
     AgentMessageRecord,
-    AgentSessionRecord,
 )
 from server.model.video import VideoChunkInfoRecord, VideoChunkRecord
 
@@ -72,9 +71,6 @@ def test_mysql_schema_uses_innodb_json_and_integer_milliseconds() -> None:
 
 
 def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> None:
-    session_ddl = str(
-        CreateTable(AgentSessionRecord.__table__).compile(dialect=mysql.dialect())
-    )
     conversation_ddl = str(
         CreateTable(AgentConversationRecord.__table__).compile(
             dialect=mysql.dialect()
@@ -84,9 +80,13 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
         CreateTable(AgentMessageRecord.__table__).compile(dialect=mysql.dialect())
     )
 
-    assert "ENGINE=InnoDB" in session_ddl
-    assert "series_ids JSON" in conversation_ddl
+    assert "ENGINE=InnoDB" in conversation_ddl
+    assert "workspace_id VARCHAR(64) NOT NULL" in conversation_ddl
+    assert "session_id" not in conversation_ddl
+    assert "series_ids" not in conversation_ddl
     assert "content LONGTEXT" in message_ddl
+    assert "series_ids JSON NOT NULL" in message_ddl
+    assert "requested_series_ids JSON" in message_ddl
     assert "model_name VARCHAR(255)" in message_ddl
     assert "search_result JSON" in message_ddl
     assert "requested_top_k INTEGER" in message_ddl
@@ -113,3 +113,105 @@ def test_create_schema_refuses_to_shadow_a_legacy_video_segment_schema() -> None
         create_schema(engine)
 
     assert "video_chunk" not in inspect(engine).get_table_names()
+
+
+@pytest.mark.parametrize("legacy_session_table", [False, True])
+def test_create_schema_refuses_to_shadow_a_legacy_agent_session_schema(
+    legacy_session_table: bool,
+) -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:",
+        environment=DatabaseEnvironment.TEST,
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text("CREATE TABLE agent_conversation (conversation_id TEXT, session_id TEXT)")
+        )
+        connection.execute(
+            text("INSERT INTO agent_conversation VALUES ('existing-conversation', 'old-session')")
+        )
+        if legacy_session_table:
+            connection.execute(text("CREATE TABLE agent_session (session_id TEXT)"))
+
+    with pytest.raises(SchemaUpgradeRequiredError, match="controlled Workspace / Conversation upgrade"):
+        create_schema(engine)
+
+    assert "agent_message" not in inspect(engine).get_table_names()
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT conversation_id FROM agent_conversation")).scalar_one() == "existing-conversation"
+
+
+@pytest.mark.parametrize(
+    "conversation_scope,message_columns",
+    [
+        (True, "series_ids JSON, requested_series_ids JSON"),
+        (False, "requested_series_ids JSON"),
+        (False, "series_ids JSON"),
+        (False, "content TEXT"),
+    ],
+)
+def test_create_schema_requires_controlled_message_scope_migration(
+    conversation_scope: bool,
+    message_columns: str,
+) -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:",
+        environment=DatabaseEnvironment.TEST,
+    )
+    scope_column = ", series_ids JSON" if conversation_scope else ""
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE agent_conversation "
+                f"(conversation_id TEXT, workspace_id TEXT{scope_column})"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO agent_conversation (conversation_id, workspace_id) "
+                "VALUES ('existing-conversation', 'local-default')"
+            )
+        )
+        connection.execute(
+            text(f"CREATE TABLE agent_message (message_id TEXT, {message_columns})")
+        )
+        connection.execute(
+            text("INSERT INTO agent_message (message_id) VALUES ('existing-message')")
+        )
+
+    with pytest.raises(
+        SchemaUpgradeRequiredError,
+        match="controlled Agent message-scope migration",
+    ):
+        create_schema(engine)
+
+    assert set(inspect(engine).get_table_names()) == {
+        "agent_conversation",
+        "agent_message",
+    }
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT conversation_id FROM agent_conversation")
+        ).scalar_one() == "existing-conversation"
+        assert connection.execute(
+            text("SELECT message_id FROM agent_message")
+        ).scalar_one() == "existing-message"
+
+
+def test_create_schema_accepts_current_message_scope_schema_repeatedly() -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:",
+        environment=DatabaseEnvironment.TEST,
+    )
+    create_schema(engine)
+    create_schema(engine)
+
+    inspector = inspect(engine)
+    conversation_columns = {
+        column["name"] for column in inspector.get_columns("agent_conversation")
+    }
+    message_columns = {
+        column["name"] for column in inspector.get_columns("agent_message")
+    }
+    assert "series_ids" not in conversation_columns
+    assert {"series_ids", "requested_series_ids"} <= message_columns

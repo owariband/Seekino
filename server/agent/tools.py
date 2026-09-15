@@ -67,7 +67,7 @@ def build_retrieval_tool(
         func=retrieve,
         name="search_video_chunk_evidence",
         description=(
-            "Search the fixed Conversation Series Scope for video evidence. "
+            "Search the fixed Series Scope of the current Kick for video evidence. "
             "Use query for characters, dialogue, actions and constraints; top_k limits hits. "
             "Returns real videoChunkId/videoId, startMs/endMs and complete evidence. "
             "The scope cannot be changed. First turn must call this tool at least once."
