@@ -283,7 +283,21 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "seriesName",
         "episodeOrder",
         "originalFilename",
+        "overallProgress",
+        "stageProgress",
+        "completedDurationMs",
+        "completedThroughMs",
+        "totalDurationMs",
+        "completedChunkCount",
+        "totalChunkCount",
+        "currentChunk",
     } <= set(schemas["ParseJobView"]["required"])
+    parse_progress = schemas["VideoSummary"]["properties"]["parseProgress"]
+    assert "parseProgress" in schemas["VideoSummary"]["required"]
+    assert {item.get("type") for item in parse_progress["anyOf"]} == {
+        "integer",
+        "null",
+    }
     assert "agentReply" in schemas["SearchResultView"]["required"]
     assert "selectionReason" in schemas["SearchHitView"]["required"]
     assert {
@@ -862,6 +876,14 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert job.json()["status"] == "QUEUED"
     assert job.json()["uploadSessionId"] == upload_id
     assert job.json()["progress"] == 0
+    assert job.json()["overallProgress"] is None
+    assert job.json()["stageProgress"] is None
+    assert job.json()["completedDurationMs"] is None
+    assert job.json()["completedThroughMs"] is None
+    assert job.json()["totalDurationMs"] == 12_345
+    assert job.json()["completedChunkCount"] is None
+    assert job.json()["totalChunkCount"] == 0
+    assert job.json()["currentChunk"] is None
     assert job.json()["seriesName"] == "Test Series"
     assert job.json()["episodeOrder"] == 1
     assert job.json()["originalFilename"] == "episode-07.mp4"

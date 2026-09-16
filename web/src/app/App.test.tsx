@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView } from "../api/contracts";
+import type { AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView, VideoSummary } from "../api/contracts";
 import { App } from "./App";
 import { ThemeProvider } from "./theme";
 import { WorkspaceProvider } from "./workspace";
@@ -28,6 +28,28 @@ const pendingUpload: UploadSessionView = {
   status: "UPLOADING", uploadedSegmentCount: 0, uploadedSizeBytes: 0, missingSegmentNumbers: [0],
   completionStage: null, completionProgress: null, estimatedRemainingMs: null, expiresAt: 100,
   videoId: null, jobId: null, lastError: null, version: 1, createdAt: 1, updatedAt: 1,
+};
+
+const videoWithoutProgress: VideoSummary = {
+  videoId: "video-without-progress",
+  workspaceId: "local-default",
+  seriesId: apiSeries.seriesId,
+  episodeOrder: 1,
+  uploadSequence: 1,
+  originalFilename: "calculating-progress.mp4",
+  totalBytes: 1024,
+  durationMs: 20_000,
+  uploadStatus: "COMPLETED",
+  uploadProgress: 100,
+  parseStatus: "RUNNING",
+  parseProgress: null,
+  indexStatus: "NOT_READY",
+  playbackStatus: "READY",
+  playbackUrl: "/api/videos/content?videoId=video-without-progress",
+  playbackUrlExpiresAt: null,
+  thumbnail: null,
+  latestJobId: "job-without-ranges",
+  lastError: null,
 };
 
 function jsonResponse(payload: unknown): Response {
@@ -240,6 +262,25 @@ describe("application shell", () => {
       description: null,
       importantExtraData: { format: "markdown", content: "灯与爱音是乐队成员。这里记录人物关系与剧情背景。" },
     });
+  });
+
+  it("shows unavailable checkpoint progress without falling back to a stale percent", async () => {
+    renderApp([{
+      ...apiSeries,
+      status: "INDEXING",
+      videoCount: 1,
+      readyVideoCount: 0,
+      videos: [videoWithoutProgress],
+    }]);
+    const user = userEvent.setup();
+
+    await user.click(screen.getAllByRole("link", { name: "资料库" })[0]!);
+
+    expect(await screen.findByText(videoWithoutProgress.originalFilename)).toBeInTheDocument();
+    const unavailable = screen.getByText("—");
+    expect(unavailable).toBeInTheDocument();
+    expect(unavailable.closest("div")?.querySelector("em")).toBeNull();
+    expect(screen.queryByText("34%")).not.toBeInTheDocument();
   });
 
   it("edits an existing Series through the update API and displays the returned detail", async () => {

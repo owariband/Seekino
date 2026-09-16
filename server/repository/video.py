@@ -219,7 +219,7 @@ class VideoRepository:
                         else "COMPLETED"
                     ),
                     upload_progress=100,
-                    parse_progress=100 if lease is None else 90,
+                    parse_progress=100 if lease is None else 0,
                 )
                 session.add(existing_video)
             else:
@@ -228,11 +228,8 @@ class VideoRepository:
                     if lease is not None
                     else "COMPLETED"
                 )
-                existing_video.parse_progress = (
-                    max(existing_video.parse_progress, 90)
-                    if lease is not None
-                    else 100
-                )
+                if lease is None:
+                    existing_video.parse_progress = 100
 
             existing_chunks = session.scalars(
                 select(VideoChunkRecord).where(
@@ -430,15 +427,10 @@ class VideoRepository:
                     raise ParseJobLeaseLostError(
                         "parse job lease expired while facts were being persisted"
                     )
-                if job.stage != ParseJobStage.INDEXING.value or job.progress < 95:
+                if job.stage != ParseJobStage.INDEXING.value:
                     job.version += 1
                 job.stage = ParseJobStage.INDEXING.value
-                job.progress = max(job.progress, 95)
                 existing_video.parse_status = ParseJobStatus.RUNNING.value
-                existing_video.parse_progress = max(
-                    existing_video.parse_progress,
-                    95,
-                )
 
     def hydrate_video_chunks(
         self,

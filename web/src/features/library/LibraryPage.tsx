@@ -126,7 +126,7 @@ export function LibraryPage() {
                       <span>上传</span><i><em style={{ width: `${video.uploadProgress}%` }} /></i><b>{video.uploadProgress}%</b>
                     </div>
                     <div className={styles.progressCell}>
-                      <span>{parseStatusLabels[video.parseStatus] ?? "解析"}</span><i><em style={{ width: `${video.parseProgress}%` }} /></i><b>{video.parseProgress}%</b>
+                      <span>{parseStatusLabels[video.parseStatus] ?? "解析"}</span><i>{video.parseProgress === null ? null : <em style={{ width: `${video.parseProgress}%` }} />}</i><b>{video.parseProgress === null ? "—" : `${video.parseProgress}%`}</b>
                     </div>
                     <div className={styles.episodeReady} data-ready={video.indexStatus === "READY"}>
                       {video.indexStatus === "READY" ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}

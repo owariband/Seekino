@@ -35,6 +35,14 @@ function job(status: ParseJobView["status"], id = status.toLowerCase()): ParseJo
     status,
     stage: status === "FAILED" ? "PARSING" : "PERSISTING",
     progress: status === "FAILED" ? 18 : 70,
+    overallProgress: status === "FAILED" ? 18 : 70,
+    stageProgress: status === "FAILED" ? 18 : null,
+    completedDurationMs: 120_000,
+    completedThroughMs: 120_000,
+    totalDurationMs: 300_000,
+    completedChunkCount: 2,
+    totalChunkCount: 5,
+    currentChunk: null,
     attemptCount: 1,
     maxAttempts: 3,
     availableAt: null,
@@ -204,5 +212,88 @@ describe("manual parse retry", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("重试失败：任务状态已变化，请刷新（请求编号：retry-request）");
     expect(button).toBeEnabled();
+  });
+});
+
+describe("segment progress presentation", () => {
+  it("shows one build progress and groups internal processing stages in the pipeline", async () => {
+    const running: ParseJobView = {
+      ...job("RUNNING"),
+      stage: "PARSING",
+      progress: 99,
+      overallProgress: 37,
+      stageProgress: 85,
+      completedDurationMs: 120_000,
+      completedThroughMs: 120_000,
+      totalDurationMs: 140_000,
+      completedChunkCount: 2,
+      totalChunkCount: 3,
+      currentChunk: { sequenceNo: 2, startMs: 120_000, endMs: 140_000 },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response({ items: [running], hasMore: false, nextCursor: null })));
+
+    const { container } = renderPage();
+
+    expect(await screen.findByText("37%")).toBeInTheDocument();
+    expect(screen.getByText("任务进度")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "正在解析画面与对白" })).toBeInTheDocument();
+    expect(screen.queryByText("85%")).not.toBeInTheDocument();
+    expect(screen.queryByText("99%")).not.toBeInTheDocument();
+    expect(screen.queryByText(/本阶段/)).not.toBeInTheDocument();
+    expect(screen.getByText("文件已上传")).toBeInTheDocument();
+    expect(screen.getByText("解析画面与对白")).toBeInTheDocument();
+    expect(screen.getByText("发布检索结果")).toBeInTheDocument();
+    expect(screen.getByText("可检索")).toBeInTheDocument();
+    const facts = screen.getByLabelText("解析任务进度");
+    expect(facts).toHaveTextContent("连续解析到 02:00 / 02:20");
+    expect(facts).toHaveTextContent("已解析 2 / 3 段");
+    expect(facts).toHaveTextContent("当前解析 02:00–02:20");
+    expect(screen.getByText("每 5 秒自动同步 · 手动刷新可立即校准")).toBeInTheDocument();
+    expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: "0%" });
+  });
+
+  it("does not substitute the legacy progress when exact progress is unavailable", async () => {
+    const preparing: ParseJobView = {
+      ...job("RUNNING"),
+      stage: "PREPARING",
+      progress: 92,
+      overallProgress: null,
+      stageProgress: null,
+      completedDurationMs: null,
+      completedThroughMs: null,
+      completedChunkCount: null,
+      currentChunk: null,
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response({ items: [preparing], hasMore: false, nextCursor: null })));
+
+    renderPage();
+
+    expect(await screen.findByText("等待检查点")).toBeInTheDocument();
+    expect(screen.queryByText("92%")).not.toBeInTheDocument();
+    expect(screen.getAllByText("—")).toHaveLength(1);
+  });
+
+  it("does not show a current segment after parsing has completed", async () => {
+    const completed: ParseJobView = {
+      ...job("SUCCEEDED"),
+      stage: "COMPLETED",
+      progress: 100,
+      overallProgress: 100,
+      stageProgress: 100,
+      completedDurationMs: 140_000,
+      completedThroughMs: 140_000,
+      totalDurationMs: 140_000,
+      completedChunkCount: 3,
+      totalChunkCount: 3,
+      currentChunk: null,
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response({ items: [completed], hasMore: false, nextCursor: null })));
+
+    renderPage();
+
+    const facts = await screen.findByLabelText("解析任务进度");
+    expect(facts).toHaveTextContent("连续解析到 02:20 / 02:20");
+    expect(facts).toHaveTextContent("已解析 3 / 3 段");
+    expect(facts).not.toHaveTextContent("当前解析");
   });
 });

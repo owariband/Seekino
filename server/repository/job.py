@@ -18,6 +18,7 @@ from ..model.job import (
     VideoChunkCheckpointRecord,
     VideoChunkCheckpointStage,
 )
+from ..model.job_progress import calculate_checkpoint_progress
 from ..model.video import SeriesRecord, VideoRecord
 from ..model.upload import UploadSessionRecord, UploadSessionStatus
 from ..utils.time import utc_now_naive
@@ -72,6 +73,7 @@ class ParseJobRepository:
                     SeriesRecord.name,
                     VideoRecord.episode_order,
                     VideoRecord.original_filename,
+                    VideoRecord.duration_ms,
                 )
                 .join(
                     SeriesRecord,
@@ -93,6 +95,7 @@ class ParseJobRepository:
                 series_name,
                 episode_order,
                 original_filename,
+                duration_ms,
             ) = row
             return self._state(
                 record,
@@ -102,6 +105,7 @@ class ParseJobRepository:
                 series_name=series_name,
                 episode_order=episode_order,
                 original_filename=original_filename,
+                duration_ms=duration_ms,
             )
 
     def list_for_workspace(
@@ -140,6 +144,7 @@ class ParseJobRepository:
                     SeriesRecord.name,
                     VideoRecord.episode_order,
                     VideoRecord.original_filename,
+                    VideoRecord.duration_ms,
                 )
                 .join(
                     SeriesRecord,
@@ -166,6 +171,7 @@ class ParseJobRepository:
                     series_name=series_name,
                     episode_order=episode_order,
                     original_filename=original_filename,
+                    duration_ms=duration_ms,
                 )
                 for (
                     record,
@@ -175,6 +181,7 @@ class ParseJobRepository:
                     series_name,
                     episode_order,
                     original_filename,
+                    duration_ms,
                 ) in rows
             ]
 
@@ -373,14 +380,22 @@ class ParseJobRepository:
         lease: ParseJobLease,
         *,
         stage: ParseJobStage | str,
-        progress: int,
+        progress: int | None = None,
         now: datetime | None = None,
     ) -> bool:
+        """Advance the public stage without inventing a percentage.
+
+        ``progress`` remains accepted for callers deployed with the previous
+        contract, but the durable percentage is now derived exclusively from
+        checkpoint time coverage in :meth:`save_checkpoint`.
+        """
+
         stage_value = ParseJobStage(stage).value
-        if isinstance(progress, bool) or not isinstance(progress, int):
-            raise ValueError("progress must be an integer")
-        if not 0 <= progress <= 100:
-            raise ValueError("progress must be between zero and 100")
+        if progress is not None:
+            if isinstance(progress, bool) or not isinstance(progress, int):
+                raise ValueError("progress must be an integer")
+            if not 0 <= progress <= 100:
+                raise ValueError("progress must be between zero and 100")
         updated_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
             job = session.scalar(
@@ -391,9 +406,6 @@ class ParseJobRepository:
             if job is None:
                 return False
             changed = False
-            if progress > job.progress:
-                job.progress = progress
-                changed = True
             if _JOB_STAGE_ORDER[stage_value] > _JOB_STAGE_ORDER[job.stage]:
                 job.stage = stage_value
                 changed = True
@@ -402,7 +414,6 @@ class ParseJobRepository:
             video = session.get(VideoRecord, lease.video_id)
             if video is not None:
                 video.parse_status = ParseJobStatus.RUNNING.value
-                video.parse_progress = max(video.parse_progress, progress)
             return True
 
     def save_checkpoint(
@@ -416,6 +427,7 @@ class ParseJobRepository:
             raise ValueError("checkpoint job_id does not match the lease")
         if checkpoint.sequence_no < 0:
             raise ValueError("checkpoint sequence_no must be nonnegative")
+        _validate_checkpoint_bounds(checkpoint, lease.duration_ms)
         stage = VideoChunkCheckpointStage(checkpoint.stage).value
         checked_at = now or utc_now_naive()
         with self._session_factory.begin() as session:
@@ -431,6 +443,8 @@ class ParseJobRepository:
                     sequence_no=checkpoint.sequence_no,
                     video_chunk_id=checkpoint.video_chunk_id,
                     stage=stage,
+                    chunk_start_ms=checkpoint.chunk_start_ms,
+                    chunk_end_ms=checkpoint.chunk_end_ms,
                 )
                 session.add(current)
             else:
@@ -446,6 +460,20 @@ class ParseJobRepository:
                     current.stage = stage
                     changed = True
 
+                incoming_range = (
+                    checkpoint.chunk_start_ms,
+                    checkpoint.chunk_end_ms,
+                )
+                current_range = (current.chunk_start_ms, current.chunk_end_ms)
+                if incoming_range != (None, None):
+                    if current_range == (None, None):
+                        current.chunk_start_ms, current.chunk_end_ms = incoming_range
+                        changed = True
+                    elif current_range != incoming_range:
+                        raise ParseJobCheckpointConflictError(
+                            "checkpoint canonical time range cannot change"
+                        )
+
             for field_name in (
                 "chunk_media_uri",
                 "analysis_window_media_uri",
@@ -458,10 +486,31 @@ class ParseJobRepository:
                 if value is not None and getattr(current, field_name) != value:
                     setattr(current, field_name, value)
                     changed = True
+            session.flush()
+            records = session.scalars(
+                select(VideoChunkCheckpointRecord)
+                .where(VideoChunkCheckpointRecord.job_id == checkpoint.job_id)
+                .order_by(VideoChunkCheckpointRecord.sequence_no)
+            ).all()
+            _validate_checkpoint_topology(records, lease.duration_ms)
+            progress = calculate_checkpoint_progress(
+                records,
+                lease.duration_ms,
+            )
+            derived_progress = (
+                progress.overall_progress if progress is not None else None
+            )
+            if derived_progress is not None:
+                video = session.get(VideoRecord, lease.video_id)
+                if video is not None:
+                    video.parse_progress = derived_progress
+                    video.parse_status = ParseJobStatus.RUNNING.value
+            if derived_progress is not None and job.progress != derived_progress:
+                job.progress = derived_progress
+                changed = True
             if changed:
                 job.version += 1
                 job.updated_at = checked_at
-            session.flush()
             return self._checkpoint_state(current)
 
     def list_checkpoints(self, job_id: str) -> list[VideoChunkCheckpointState]:
@@ -656,6 +705,7 @@ class ParseJobRepository:
         series_name: str,
         episode_order: int,
         original_filename: str,
+        duration_ms: int,
     ) -> ParseJobState:
         return ParseJobState(
             job_id=record.job_id,
@@ -667,6 +717,7 @@ class ParseJobRepository:
             series_name=series_name,
             episode_order=episode_order,
             original_filename=original_filename,
+            duration_ms=duration_ms,
             pipeline_version=record.pipeline_version,
             status=record.status,
             stage=record.stage,
@@ -695,6 +746,8 @@ class ParseJobRepository:
             sequence_no=record.sequence_no,
             video_chunk_id=record.video_chunk_id,
             stage=record.stage,
+            chunk_start_ms=record.chunk_start_ms,
+            chunk_end_ms=record.chunk_end_ms,
             chunk_media_uri=record.chunk_media_uri,
             analysis_window_media_uri=record.analysis_window_media_uri,
             parse_artifact_uri=record.parse_artifact_uri,
@@ -707,3 +760,56 @@ class ParseJobRepository:
 def _error_summary(error: str) -> str:
     normalized = error.strip() or "parse job failed"
     return normalized[:8192]
+
+
+def _validate_checkpoint_bounds(
+    checkpoint: VideoChunkCheckpointState,
+    duration_ms: int,
+) -> None:
+    start_ms = checkpoint.chunk_start_ms
+    end_ms = checkpoint.chunk_end_ms
+    if (start_ms is None) != (end_ms is None):
+        raise ValueError(
+            "checkpoint chunk_start_ms and chunk_end_ms must be provided together"
+        )
+    if start_ms is None:
+        return
+    if (
+        isinstance(start_ms, bool)
+        or isinstance(end_ms, bool)
+        or not isinstance(start_ms, int)
+        or not isinstance(end_ms, int)
+    ):
+        raise ValueError("checkpoint canonical time range must use integer milliseconds")
+    if start_ms < 0 or end_ms <= start_ms:
+        raise ValueError(
+            "checkpoint chunk_end_ms must be greater than nonnegative chunk_start_ms"
+        )
+    if end_ms > duration_ms:
+        raise ValueError("checkpoint canonical time range exceeds the Video duration")
+
+
+def _validate_checkpoint_topology(
+    records: list[VideoChunkCheckpointRecord],
+    duration_ms: int,
+) -> None:
+    ranged = [
+        item
+        for item in records
+        if item.chunk_start_ms is not None and item.chunk_end_ms is not None
+    ]
+    if ranged and ranged[0].sequence_no == 0 and ranged[0].chunk_start_ms != 0:
+        raise ParseJobCheckpointConflictError(
+            "the first checkpoint canonical range must start at zero"
+        )
+    for previous, current in zip(ranged, ranged[1:]):
+        if current.sequence_no != previous.sequence_no + 1:
+            continue
+        if current.chunk_start_ms != previous.chunk_end_ms:
+            raise ParseJobCheckpointConflictError(
+                "adjacent checkpoint canonical ranges must be contiguous"
+            )
+    if any(item.chunk_end_ms > duration_ms for item in ranged):
+        raise ParseJobCheckpointConflictError(
+            "checkpoint canonical range exceeds the Video duration"
+        )

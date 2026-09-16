@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..model.agent import AgentConversationRecord, AgentMessageRecord, AgentMessageRole
 from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesState, VideoSummaryState
 from ..model.index_sync import IndexSyncIntentRecord, IndexSyncOperation, IndexSyncStatus
-from ..model.job import SeriesParseJobRecord
+from ..model.job import SeriesParseJobRecord, VideoChunkCheckpointRecord
+from ..model.job_progress import calculate_checkpoint_progress
 from ..model.upload import UploadSessionRecord
 from ..model.video import (
     SeriesRecord,
@@ -269,7 +270,6 @@ class LibraryRepository:
             SeriesParseJobRecord.video_id,
             SeriesParseJobRecord.job_id,
             SeriesParseJobRecord.status,
-            SeriesParseJobRecord.progress,
             SeriesParseJobRecord.last_error,
             func.row_number().over(
                 partition_by=SeriesParseJobRecord.video_id,
@@ -277,7 +277,7 @@ class LibraryRepository:
             ).label("position"),
         ).subquery()
         statement = (
-            select(VideoRecord, latest.c.job_id, latest.c.status, latest.c.progress, latest.c.last_error)
+            select(VideoRecord, latest.c.job_id, latest.c.status, latest.c.last_error)
             .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
             .outerjoin(latest, (latest.c.video_id == VideoRecord.video_id) & (latest.c.position == 1))
             .where(SeriesRecord.workspace_id == workspace_id)
@@ -290,6 +290,19 @@ class LibraryRepository:
         rows = session.execute(statement).all()
         if not rows:
             return []
+        latest_job_ids = [job_id for _, job_id, _, _ in rows if job_id is not None]
+        checkpoints_by_job: dict[str, list[VideoChunkCheckpointRecord]] = {}
+        if latest_job_ids:
+            checkpoints = session.scalars(
+                select(VideoChunkCheckpointRecord)
+                .where(VideoChunkCheckpointRecord.job_id.in_(latest_job_ids))
+                .order_by(
+                    VideoChunkCheckpointRecord.job_id,
+                    VideoChunkCheckpointRecord.sequence_no,
+                )
+            ).all()
+            for checkpoint in checkpoints:
+                checkpoints_by_job.setdefault(checkpoint.job_id, []).append(checkpoint)
         chunks = session.execute(
             select(
                 VideoChunkRecord.video_id,
@@ -310,7 +323,7 @@ class LibraryRepository:
         for chunk in chunks:
             by_video.setdefault(chunk.video_id, []).append(chunk)
         states = []
-        for video, job_id, job_status, job_progress, error in rows:
+        for video, job_id, job_status, error in rows:
             video_chunks = by_video.get(video.video_id, [])
             indexed = bool(video_chunks) and all(
                 chunk.text_vector and chunk.vision_vector
@@ -327,10 +340,20 @@ class LibraryRepository:
                 index_status = VideoIndexStatus.SYNCING
             else:
                 index_status = VideoIndexStatus.NOT_READY
+            parse_status = job_status or video.parse_status
+            checkpoint_progress = calculate_checkpoint_progress(
+                checkpoints_by_job.get(job_id, ()),
+                video.duration_ms,
+                completed=parse_status in {"SUCCEEDED", "COMPLETED"},
+            )
             states.append(self._video_state(
                 video, workspace_id=workspace_id, index_status=index_status,
-                latest_job_id=job_id, parse_status=job_status or video.parse_status,
-                parse_progress=job_progress if job_progress is not None else video.parse_progress,
+                latest_job_id=job_id, parse_status=parse_status,
+                parse_progress=(
+                    checkpoint_progress.overall_progress
+                    if checkpoint_progress is not None
+                    else None
+                ),
                 last_error=error or index_error,
                 keyframe_uris=tuple(dict.fromkeys(
                     uri for chunk in video_chunks for uri in chunk.keyframe_uris
@@ -377,7 +400,7 @@ class LibraryRepository:
         index_status: VideoIndexStatus,
         latest_job_id: str | None,
         parse_status: str,
-        parse_progress: int,
+        parse_progress: int | None,
         last_error: str | None,
         keyframe_uris: tuple[str, ...],
     ) -> VideoSummaryState:

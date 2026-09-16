@@ -46,19 +46,35 @@ export function clipText(value: string, limit = 150): string {
 }
 
 const stageLabels: Record<string, string> = {
-  QUEUED: "等待处理",
-  PREPARING: "媒体准备",
-  SPLIT_READY: "切片完成",
-  PARSING: "理解画面与对白",
+  QUEUED: "等待开始建库",
+  PREPARING: "准备媒体",
+  SPLIT_READY: "完成媒体准备",
+  PARSING: "理解内容",
   TEXT_EMBEDDING: "生成文本向量",
   VISION_EMBEDDING: "生成视觉向量",
-  PERSISTING: "保存证据",
-  INDEXING: "同步检索索引",
-  COMPLETED: "可检索",
+  PERSISTING: "保存解析结果",
+  INDEXING: "建立检索索引",
+  COMPLETED: "已可检索",
 };
 
 export function stageLabel(stage: string): string {
   return stageLabels[stage] ?? stage.replaceAll("_", " ").toLowerCase();
+}
+
+const publicParseStageLabels: Record<string, string> = {
+  QUEUED: "解析画面与对白",
+  PREPARING: "解析画面与对白",
+  SPLIT_READY: "解析画面与对白",
+  PARSING: "解析画面与对白",
+  TEXT_EMBEDDING: "发布检索结果",
+  VISION_EMBEDDING: "发布检索结果",
+  PERSISTING: "发布检索结果",
+  INDEXING: "发布检索结果",
+  COMPLETED: "可检索",
+};
+
+export function publicParseStageLabel(stage: string): string {
+  return publicParseStageLabels[stage] ?? "解析画面与对白";
 }
 
 export function episodeLabel(order: number): string {

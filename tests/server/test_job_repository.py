@@ -31,7 +31,13 @@ from server.service.job import ParseJobService
 from server.service.library import LibraryService
 
 
-def _seed_job(repository, *, max_attempts: int = 3, workspace_id: str = "local-default"):
+def _seed_job(
+    repository,
+    *,
+    max_attempts: int = 3,
+    workspace_id: str = "local-default",
+    duration_ms: int = 60_000,
+):
     engine, _video_repository = repository
     session_factory = create_session_factory(engine)
     series_id = str(uuid4())
@@ -61,7 +67,7 @@ def _seed_job(repository, *, max_attempts: int = 3, workspace_id: str = "local-d
                 inference_proxy_uri=None,
                 content_hash="a" * 64,
                 total_bytes=100,
-                duration_ms=60_000,
+                duration_ms=duration_ms,
                 upload_status="COMPLETED",
                 parse_status="QUEUED",
                 upload_progress=100,
@@ -177,7 +183,14 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
     assert subset.version == 3
     detail = service.get(lease.job_id, workspace_id="local-default")
     public_checkpoint = project_job(detail).checkpoints[0].model_dump(by_alias=True)
-    assert public_checkpoint == {"sequenceNo": 0, "videoChunkId": checkpoint.video_chunk_id, "stage": "PARSED", "lastError": None}
+    assert public_checkpoint == {
+        "sequenceNo": 0,
+        "videoChunkId": checkpoint.video_chunk_id,
+        "stage": "PARSED",
+        "chunkStartMs": None,
+        "chunkEndMs": None,
+        "lastError": None,
+    }
     with pytest.raises(ValueError, match="cursor"):
         jobs_api.list_jobs(request, "local-default", None, "RUNNING", first.next_cursor, 1)
 
@@ -493,6 +506,204 @@ def test_checkpoint_cannot_move_backwards_or_change_identity(repository) -> None
         )
 
 
+def test_checkpoint_ranges_are_paired_bounded_and_immutable(repository) -> None:
+    jobs, job_id, _video_id, now = _seed_job(repository)
+    lease = jobs.claim_next(
+        "worker-a",
+        lease_duration=timedelta(minutes=2),
+        now=now,
+    )
+    assert lease is not None
+    video_chunk_id = str(uuid4())
+
+    with pytest.raises(ValueError, match="provided together"):
+        jobs.save_checkpoint(
+            lease,
+            VideoChunkCheckpointState(
+                job_id=job_id,
+                sequence_no=0,
+                video_chunk_id=video_chunk_id,
+                stage=VideoChunkCheckpointStage.PREPARED.value,
+                chunk_start_ms=0,
+            ),
+            now=now,
+        )
+    with pytest.raises(ValueError, match="exceeds"):
+        jobs.save_checkpoint(
+            lease,
+            VideoChunkCheckpointState(
+                job_id=job_id,
+                sequence_no=0,
+                video_chunk_id=video_chunk_id,
+                stage=VideoChunkCheckpointStage.PREPARED.value,
+                chunk_start_ms=0,
+                chunk_end_ms=60_001,
+            ),
+            now=now,
+        )
+
+    saved = jobs.save_checkpoint(
+        lease,
+        VideoChunkCheckpointState(
+            job_id=job_id,
+            sequence_no=0,
+            video_chunk_id=video_chunk_id,
+            stage=VideoChunkCheckpointStage.PREPARED.value,
+            chunk_start_ms=0,
+            chunk_end_ms=60_000,
+        ),
+        now=now,
+    )
+    assert (saved.chunk_start_ms, saved.chunk_end_ms) == (0, 60_000)
+    with pytest.raises(ParseJobCheckpointConflictError, match="cannot change"):
+        jobs.save_checkpoint(
+            lease,
+            replace(saved, chunk_end_ms=59_000),
+            now=now,
+        )
+
+
+def test_retry_can_fill_legacy_checkpoint_range_without_regressing_stage(
+    repository,
+) -> None:
+    jobs, job_id, _video_id, now = _seed_job(repository)
+    lease = jobs.claim_next(
+        "worker-a",
+        lease_duration=timedelta(minutes=2),
+        now=now,
+    )
+    assert lease is not None
+    legacy = jobs.save_checkpoint(
+        lease,
+        VideoChunkCheckpointState(
+            job_id=job_id,
+            sequence_no=0,
+            video_chunk_id=str(uuid4()),
+            stage=VideoChunkCheckpointStage.PARSED.value,
+        ),
+        now=now,
+    )
+
+    filled = jobs.save_checkpoint(
+        lease,
+        replace(legacy, chunk_start_ms=0, chunk_end_ms=60_000),
+        now=now,
+    )
+
+    assert filled.stage == VideoChunkCheckpointStage.PARSED.value
+    assert (filled.chunk_start_ms, filled.chunk_end_ms) == (0, 60_000)
+    assert jobs.get(job_id).progress == 99
+
+
+def test_checkpoint_ranges_must_be_contiguous(repository) -> None:
+    jobs, job_id, _video_id, now = _seed_job(repository)
+    lease = jobs.claim_next(
+        "worker-a",
+        lease_duration=timedelta(minutes=2),
+        now=now,
+    )
+    assert lease is not None
+    jobs.save_checkpoint(
+        lease,
+        VideoChunkCheckpointState(
+            job_id=job_id,
+            sequence_no=0,
+            video_chunk_id=str(uuid4()),
+            stage=VideoChunkCheckpointStage.PREPARED.value,
+            chunk_start_ms=0,
+            chunk_end_ms=40_000,
+        ),
+        now=now,
+    )
+    with pytest.raises(ParseJobCheckpointConflictError, match="contiguous"):
+        jobs.save_checkpoint(
+            lease,
+            VideoChunkCheckpointState(
+                job_id=job_id,
+                sequence_no=1,
+                video_chunk_id=str(uuid4()),
+                stage=VideoChunkCheckpointStage.PREPARED.value,
+                chunk_start_ms=41_000,
+                chunk_end_ms=60_000,
+            ),
+            now=now,
+        )
+
+
+def test_progress_uses_split_gate_and_duration_weighted_parse_coverage(
+    repository,
+) -> None:
+    jobs, job_id, video_id, now = _seed_job(repository)
+    engine, _video_repository = repository
+    session_factory = create_session_factory(engine)
+    lease = jobs.claim_next(
+        "worker-a",
+        lease_duration=timedelta(minutes=2),
+        now=now,
+    )
+    assert lease is not None
+    checkpoints = [
+        VideoChunkCheckpointState(
+            job_id=job_id,
+            sequence_no=0,
+            video_chunk_id=str(uuid4()),
+            stage=VideoChunkCheckpointStage.PREPARED.value,
+            chunk_start_ms=0,
+            chunk_end_ms=40_000,
+        ),
+        VideoChunkCheckpointState(
+            job_id=job_id,
+            sequence_no=1,
+            video_chunk_id=str(uuid4()),
+            stage=VideoChunkCheckpointStage.PREPARED.value,
+            chunk_start_ms=40_000,
+            chunk_end_ms=60_000,
+        ),
+    ]
+
+    # A partial range set is not enough to establish the denominator.
+    jobs.save_checkpoint(lease, checkpoints[0], now=now)
+    assert jobs.get(job_id).progress == 0
+    jobs.save_checkpoint(lease, checkpoints[1], now=now)
+    assert jobs.get(job_id).progress == 0
+
+    checkpoints[0] = replace(
+        checkpoints[0], stage=VideoChunkCheckpointStage.SPLIT_READY.value,
+    )
+    jobs.save_checkpoint(lease, checkpoints[0], now=now)
+    # The split point is awarded only after every chunk is split-ready.
+    assert jobs.get(job_id).progress == 0
+    checkpoints[1] = replace(
+        checkpoints[1], stage=VideoChunkCheckpointStage.SPLIT_READY.value,
+    )
+    jobs.save_checkpoint(lease, checkpoints[1], now=now)
+    assert jobs.get(job_id).progress == 1
+
+    checkpoints[0] = replace(
+        checkpoints[0], stage=VideoChunkCheckpointStage.PARSED.value,
+    )
+    jobs.save_checkpoint(lease, checkpoints[0], now=now)
+    # Parsed work is weighted by canonical duration, not chunk count.
+    assert jobs.get(job_id).progress == 66
+    checkpoints[1] = replace(
+        checkpoints[1], stage=VideoChunkCheckpointStage.PARSED.value,
+    )
+    jobs.save_checkpoint(lease, checkpoints[1], now=now)
+    assert jobs.get(job_id).progress == 99
+    with session_factory() as session:
+        assert session.get(VideoRecord, video_id).parse_progress == 99
+
+    for milestone in (
+        VideoChunkCheckpointStage.TEXT_EMBEDDED,
+        VideoChunkCheckpointStage.VISION_EMBEDDED,
+        VideoChunkCheckpointStage.INDEXED,
+    ):
+        for index, checkpoint in enumerate(checkpoints):
+            checkpoints[index] = replace(checkpoint, stage=milestone.value)
+            jobs.save_checkpoint(lease, checkpoints[index], now=now)
+        assert jobs.get(job_id).progress == 99
+
+
 def test_reaper_requeues_or_exhausts_expired_leases(repository) -> None:
     jobs, job_id, _video_id, now = _seed_job(repository, max_attempts=1)
     lease = jobs.claim_next(
@@ -521,12 +732,16 @@ def test_retry_can_replay_earlier_stages_without_regressing_progress(repository)
         now=now,
     )
     assert first is not None
-    assert jobs.update_progress(
-        first,
-        stage=ParseJobStage.INDEXING,
-        progress=95,
-        now=now,
+    checkpoint = VideoChunkCheckpointState(
+        job_id=job_id,
+        sequence_no=0,
+        video_chunk_id=str(uuid4()),
+        stage=VideoChunkCheckpointStage.VISION_EMBEDDED.value,
+        chunk_start_ms=0,
+        chunk_end_ms=60_000,
     )
+    jobs.save_checkpoint(first, checkpoint, now=now)
+    assert jobs.update_progress(first, stage=ParseJobStage.INDEXING, now=now)
     retry_at = now + timedelta(seconds=10)
     assert jobs.mark_failed(
         first,
@@ -544,10 +759,9 @@ def test_retry_can_replay_earlier_stages_without_regressing_progress(repository)
     assert jobs.update_progress(
         second,
         stage=ParseJobStage.PREPARING,
-        progress=2,
         now=retry_at,
     )
 
     state = jobs.get(job_id)
     assert state.stage == ParseJobStage.INDEXING.value
-    assert state.progress == 95
+    assert state.progress == 99

@@ -12,8 +12,11 @@ from server.api import agent as agent_api
 from server.api import jobs as jobs_api
 from server.config.sse import SSEConfig
 from server.model.dto.agentDTO import AgentMessageState
-from server.model.dto.jobDTO import ParseJobState
-from server.model.dto.jobDTO import ParseJobDetail
+from server.model.dto.jobDTO import (
+    ParseJobDetail,
+    ParseJobState,
+    VideoChunkCheckpointState,
+)
 
 _NOW = datetime(2026, 9, 15, 12)
 _CONVERSATION_ID = "conversation-1"
@@ -205,6 +208,7 @@ def _job_detail() -> ParseJobDetail:
             episode_order=1,
             original_filename="episode.mp4",
             pipeline_version="m1",
+            duration_ms=140_000,
             status="RUNNING",
             stage="PARSING",
             progress=30,
@@ -223,6 +227,92 @@ def _job_detail() -> ParseJobDetail:
         ),
         checkpoints=(),
     )
+
+
+def _checkpoint(
+    sequence_no: int,
+    start_ms: int | None,
+    end_ms: int | None,
+    stage: str,
+) -> VideoChunkCheckpointState:
+    return VideoChunkCheckpointState(
+        job_id="job-1",
+        sequence_no=sequence_no,
+        video_chunk_id=f"chunk-{sequence_no}",
+        stage=stage,
+        chunk_start_ms=start_ms,
+        chunk_end_ms=end_ms,
+    )
+
+
+def test_job_projection_keeps_semantic_parse_progress_across_later_stages() -> None:
+    detail = replace(
+        _job_detail(),
+        job=replace(_job_detail().job, stage="TEXT_EMBEDDING"),
+        checkpoints=(
+            _checkpoint(0, 0, 60_000, "TEXT_EMBEDDED"),
+            _checkpoint(1, 60_000, 120_000, "PARSED"),
+            _checkpoint(2, 120_000, 140_000, "SPLIT_READY"),
+        ),
+    )
+
+    payload = jobs_api.project_job(detail).model_dump(by_alias=True)
+
+    assert payload["progress"] == 30
+    assert payload["overallProgress"] == 85
+    assert payload["stageProgress"] == 42
+    assert payload["completedDurationMs"] == 120_000
+    assert payload["completedThroughMs"] == 120_000
+    assert payload["totalDurationMs"] == 140_000
+    assert payload["completedChunkCount"] == 2
+    assert payload["totalChunkCount"] == 3
+    assert payload["currentChunk"] == {
+        "sequenceNo": 2,
+        "startMs": 120_000,
+        "endMs": 140_000,
+    }
+    assert payload["checkpoints"][2]["chunkStartMs"] == 120_000
+    assert payload["checkpoints"][2]["chunkEndMs"] == 140_000
+
+
+def test_job_projection_does_not_guess_from_incomplete_checkpoint_ranges() -> None:
+    detail = replace(
+        _job_detail(),
+        checkpoints=(
+            _checkpoint(0, 0, 60_000, "PARSED"),
+            _checkpoint(1, None, None, "SPLIT_READY"),
+        ),
+    )
+
+    payload = jobs_api.project_job(detail).model_dump(by_alias=True)
+
+    assert payload["overallProgress"] is None
+    assert payload["stageProgress"] is None
+    assert payload["completedDurationMs"] is None
+    assert payload["completedThroughMs"] is None
+    assert payload["completedChunkCount"] is None
+    assert payload["currentChunk"] is None
+
+
+def test_succeeded_job_reports_complete_even_for_legacy_checkpoints() -> None:
+    detail = replace(
+        _job_detail(),
+        job=replace(
+            _job_detail().job,
+            status="SUCCEEDED",
+            stage="COMPLETED",
+            progress=100,
+        ),
+        checkpoints=(_checkpoint(0, None, None, "INDEXED"),),
+    )
+
+    payload = jobs_api.project_job(detail).model_dump(by_alias=True)
+
+    assert payload["overallProgress"] == 100
+    assert payload["stageProgress"] == 100
+    assert payload["completedDurationMs"] == 140_000
+    assert payload["completedThroughMs"] == 140_000
+    assert payload["completedChunkCount"] == payload["totalChunkCount"] == 1
 
 
 class _JobService:

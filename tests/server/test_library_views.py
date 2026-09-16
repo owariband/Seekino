@@ -15,7 +15,7 @@ from server.api.library import project_series_detail
 from server.database import DatabaseEnvironment, create_session_factory
 from server.model.agent import AgentConversationRecord, AgentMessageRecord
 from server.model.index_sync import IndexSyncIntentRecord
-from server.model.job import SeriesParseJobRecord
+from server.model.job import SeriesParseJobRecord, VideoChunkCheckpointRecord
 from server.model.video import VideoChunkEmbeddingRecord, VideoRecord
 from server.repository.library import LibraryRepository, SeriesNotFoundError
 from server.model.video import VideoIndexStatus
@@ -69,6 +69,7 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
     assert detail["createdAt"] == unix_time_ms(ready.created_at)
     assert detail["videos"][0]["indexStatus"] == "READY"
     assert detail["videos"][0]["parseStatus"] == "SUCCEEDED"
+    assert detail["videos"][0]["parseProgress"] == 100
     assert detail["videos"][0]["playbackStatus"] == "READY"
     assert detail["videos"][0]["latestJobId"] is None
     assert detail["videos"][0]["thumbnail"] is None
@@ -104,10 +105,68 @@ def test_latest_job_failure_and_index_error_are_actual_and_workspace_scoped(repo
     video = state.videos[0]
     assert video.latest_job_id == job_id
     assert video.parse_status == "FAILED"
-    assert video.parse_progress == 42
+    assert video.parse_progress is None
     assert video.index_status == VideoIndexStatus.FAILED
     with pytest.raises(SeriesNotFoundError):
         library.get_video(report.video_id, workspace_id="other-workspace")
+
+
+def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent(
+    repository,
+    prepared_import,
+) -> None:
+    factory, videos, library = _library(repository)
+    report = videos.import_video_parse(prepared_import)
+    now = utc_now_naive()
+    job_id = str(uuid4())
+    with factory.begin() as session:
+        session.add(SeriesParseJobRecord(
+            job_id=job_id,
+            series_id=report.series_id,
+            video_id=report.video_id,
+            pipeline_version="checkpoint-progress",
+            status="RUNNING",
+            stage="PARSING",
+            progress=34,
+            attempt_count=1,
+            max_attempts=3,
+            available_at=now,
+        ))
+        session.add_all([
+            VideoChunkCheckpointRecord(
+                job_id=job_id,
+                sequence_no=0,
+                video_chunk_id=str(uuid4()),
+                stage="PARSED",
+                chunk_start_ms=0,
+                chunk_end_ms=15_000,
+            ),
+            VideoChunkCheckpointRecord(
+                job_id=job_id,
+                sequence_no=1,
+                video_chunk_id=str(uuid4()),
+                stage="SPLIT_READY",
+                chunk_start_ms=15_000,
+                chunk_end_ms=20_000,
+            ),
+        ])
+
+    video = library.get_video(report.video_id, workspace_id="local-default")
+
+    assert video.latest_job_id == job_id
+    assert video.parse_progress == 74
+
+    with factory.begin() as session:
+        checkpoint = session.get(VideoChunkCheckpointRecord, (job_id, 1))
+        checkpoint.chunk_start_ms = 16_000
+
+    assert (
+        library.get_video(
+            report.video_id,
+            workspace_id="local-default",
+        ).parse_progress
+        is None
+    )
 
 
 def test_pending_upload_counts_expiry_and_full_detail(repository):

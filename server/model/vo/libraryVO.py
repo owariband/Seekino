@@ -30,7 +30,7 @@ class VideoSummary(ContractModel):
     upload_status: Literal["COMPLETED"]
     upload_progress: Literal[100]
     parse_status: ParseJobStatus
-    parse_progress: int = Field(ge=0, le=100)
+    parse_progress: int | None = Field(ge=0, le=100)
     index_status: VideoIndexStatus
     playback_status: Literal["PREPARING", "READY", "FAILED", "MISSING"]
     playback_url: str | None

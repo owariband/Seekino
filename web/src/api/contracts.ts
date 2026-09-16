@@ -42,7 +42,7 @@ export interface VideoSummary {
   uploadStatus: string;
   parseStatus: string;
   uploadProgress: number;
-  parseProgress: number;
+  parseProgress: number | null;
   indexStatus: IndexStatus;
   playbackStatus: PlaybackStatus;
   playbackUrl: string | null;
@@ -142,8 +142,16 @@ export interface UploadCompleteView {
 export interface VideoChunkCheckpointView {
   sequenceNo: number;
   videoChunkId: string;
+  chunkStartMs: number | null;
+  chunkEndMs: number | null;
   stage: string;
   lastError: Failure | null;
+}
+
+export interface ParseJobCurrentChunkView {
+  sequenceNo: number;
+  startMs: number;
+  endMs: number;
 }
 
 export interface ParseJobView {
@@ -160,6 +168,14 @@ export interface ParseJobView {
   status: ParseJobStatus;
   stage: string;
   progress: number;
+  overallProgress: number | null;
+  stageProgress: number | null;
+  completedDurationMs: number | null;
+  completedThroughMs: number | null;
+  totalDurationMs: number;
+  completedChunkCount: number | null;
+  totalChunkCount: number;
+  currentChunk: ParseJobCurrentChunkView | null;
   attemptCount: number;
   maxAttempts: number;
   availableAt: UnixTimeMs | null;

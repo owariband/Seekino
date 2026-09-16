@@ -16,23 +16,25 @@ import { useState } from "react";
 import { deleteUploadSession, errorMessage, listAllJobs, retryUploadParse, shouldRetryApiRequest } from "../../api/client";
 import type { ParseJobStatus, ParseJobView } from "../../api/contracts";
 import { useUploads } from "../uploads/UploadProvider";
-import { episodeLabel, stageLabel } from "../../shared/format";
+import { episodeLabel, formatTimecode, formatTimeRange } from "../../shared/format";
 import styles from "./tasks.module.css";
 import { ParseUsageDetails } from "./ParseUsageDetails";
 
 type Filter = "all" | "active" | "failed" | "completed";
 
-const PIPELINE = [
-  "QUEUED",
-  "PREPARING",
-  "SPLIT_READY",
-  "PARSING",
-  "TEXT_EMBEDDING",
-  "VISION_EMBEDDING",
-  "PERSISTING",
-  "INDEXING",
-  "COMPLETED",
-];
+const PIPELINE = ["解析画面与对白", "发布检索结果", "可检索"];
+
+const PIPELINE_STAGE_INDEX: Record<string, number> = {
+  QUEUED: 0,
+  PREPARING: 0,
+  SPLIT_READY: 0,
+  PARSING: 0,
+  TEXT_EMBEDDING: 1,
+  VISION_EMBEDDING: 1,
+  PERSISTING: 1,
+  INDEXING: 1,
+  COMPLETED: 2,
+};
 
 const statusText: Record<ParseJobStatus, string> = {
   QUEUED: "等待解析",
@@ -172,7 +174,7 @@ export function TasksPage() {
             <button type="button" key={value} className={filter === value ? styles.filterActive : undefined} onClick={() => setFilter(value)}>{label}</button>
           ))}
         </div>
-        <span>SSE 实时更新 · 断线后以服务端快照为准</span>
+        <span>每 5 秒自动同步 · 手动刷新可立即校准</span>
       </div>
 
       <section className={styles.jobList} aria-live="polite">
@@ -183,7 +185,12 @@ export function TasksPage() {
           <div className={styles.loadState} data-error="true"><CircleAlert size={22} /><h2>任务接口暂时不可用</h2><p>{jobsQuery.error.message}</p></div>
         ) : null}
         {visibleJobs.map((job) => {
-          const currentStageIndex = Math.max(0, PIPELINE.indexOf(job.stage));
+          const currentStageIndex = PIPELINE_STAGE_INDEX[job.stage] ?? 0;
+          const pipelineProgress = (currentStageIndex / (PIPELINE.length - 1)) * 100;
+          const userStageLabel = PIPELINE[currentStageIndex];
+          const jobStageTitle = job.status === "RUNNING" && job.stage !== "COMPLETED"
+            ? `正在${userStageLabel}`
+            : userStageLabel;
           const deleting = job.uploadSessionId ? deletingUploadSessionIds.has(job.uploadSessionId) : false;
           const retrying = job.uploadSessionId ? retryingUploadSessionIds.has(job.uploadSessionId) : false;
           const running = job.status === "RUNNING";
@@ -193,32 +200,35 @@ export function TasksPage() {
                 <div className={styles.episodeSeal}>{episodeLabel(job.episodeOrder)}</div>
                 <div className={styles.jobName}>
                   <span className="eyebrow">{job.seriesName}</span>
-                  <h2>{stageLabel(job.stage)}</h2>
+                  <h2>{jobStageTitle}</h2>
                 </div>
                 <div className={styles.jobActions}>
                   <div className={styles.jobStatus} data-status={job.status}>
                     <i />{statusText[job.status]}
                   </div>
-                  <strong className={styles.jobPercent}>{job.progress}%</strong>
+                  <div className={styles.jobPercent}>
+                    <small>任务进度</small>
+                    <strong>{job.overallProgress === null ? "—" : `${job.overallProgress}%`}</strong>
+                  </div>
                 </div>
               </header>
 
               <div className={styles.jobControls}>
                 <span className={styles.uploadState}><CheckCircle2 size={14} />文件已上传</span>
-                <div className={styles.controlButtons}>
-                  {job.uploadSessionId && job.canRetry ? (
-                    <button
-                      className={clsx("button-primary", styles.retryTask)}
-                      type="button"
-                      disabled={deleting || retrying}
-                      onClick={() => void retryParse(job)}
-                      aria-label={`重试解析 ${job.originalFilename}`}
-                      title="从已有检查点继续解析"
-                    >
-                      <RotateCcw size={14} />{retrying ? "正在重试…" : "重试解析"}
-                    </button>
-                  ) : null}
-                  {job.uploadSessionId ? (
+                {job.uploadSessionId ? (
+                  <div className={styles.controlButtons}>
+                    {job.canRetry ? (
+                      <button
+                        className={clsx("button-primary", styles.retryTask)}
+                        type="button"
+                        disabled={deleting || retrying}
+                        onClick={() => void retryParse(job)}
+                        aria-label={`重试解析 ${job.originalFilename}`}
+                        title="从已有检查点继续解析"
+                      >
+                        <RotateCcw size={14} />{retrying ? "正在重试…" : "重试解析"}
+                      </button>
+                    ) : null}
                     <button
                       className={clsx("button-secondary", styles.deleteTask)}
                       type="button"
@@ -229,8 +239,8 @@ export function TasksPage() {
                     >
                       <Trash2 size={14} />{deleting ? "正在删除…" : "删除任务"}
                     </button>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
               </div>
 
               {confirmingDeleteJobId === job.jobId ? (
@@ -257,16 +267,40 @@ export function TasksPage() {
               {actionErrors[job.jobId] ? <p className={styles.actionError} role="alert">{actionErrors[job.jobId]}</p> : null}
 
               <div className={styles.pipeline}>
-                <div className={styles.pipelineLine}><span style={{ width: `${job.progress}%` }} /></div>
+                <div className={styles.pipelineLine}><span style={{ width: `${pipelineProgress}%` }} /></div>
                 {PIPELINE.map((stage, index) => (
                   <div
                     key={stage}
                     className={clsx(styles.pipelineStage, index < currentStageIndex && styles.stageDone, index === currentStageIndex && styles.stageCurrent)}
                   >
                     <i />
-                    <span>{stageLabel(stage)}</span>
+                    <span>{stage}</span>
                   </div>
                 ))}
+              </div>
+
+              <div className={styles.progressFacts} aria-label="解析任务进度">
+                <span>
+                  连续解析到{" "}
+                  <strong>
+                    {job.completedThroughMs === null
+                      ? "等待检查点"
+                      : `${formatTimecode(job.completedThroughMs)} / ${formatTimecode(job.totalDurationMs)}`}
+                  </strong>
+                </span>
+                <span>
+                  已解析{" "}
+                  <strong>
+                    {job.completedChunkCount === null
+                      ? `— / ${job.totalChunkCount} 段`
+                      : `${job.completedChunkCount} / ${job.totalChunkCount} 段`}
+                  </strong>
+                </span>
+                {job.currentChunk ? (
+                  <span>
+                    当前解析 <strong>{formatTimeRange(job.currentChunk.startMs, job.currentChunk.endMs)}</strong>
+                  </span>
+                ) : null}
               </div>
 
               <div className={styles.jobDetail}>
@@ -274,7 +308,13 @@ export function TasksPage() {
                   <div className={styles.detailTitle}><span>切片检查点 · {job.checkpoints.length}</span><small>颜色越深，处理越靠后</small></div>
                   <div className={styles.checkpointGrid}>
                     {job.checkpoints.length > 0 ? job.checkpoints.map((checkpoint) => (
-                      <i key={checkpoint.videoChunkId} data-stage={checkpoint.stage} title={`片段 ${checkpoint.sequenceNo + 1} · ${checkpoint.stage}`} />
+                      <i
+                        key={checkpoint.videoChunkId}
+                        data-stage={checkpoint.stage}
+                        title={checkpoint.chunkStartMs === null || checkpoint.chunkEndMs === null
+                          ? `片段 ${checkpoint.sequenceNo + 1} · ${checkpoint.stage}`
+                          : `片段 ${checkpoint.sequenceNo + 1} · ${formatTimeRange(checkpoint.chunkStartMs, checkpoint.chunkEndMs)} · ${checkpoint.stage}`}
+                      />
                     )) : <span>等待媒体切片完成后生成</span>}
                   </div>
                 </div>

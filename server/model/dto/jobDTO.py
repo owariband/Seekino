@@ -30,6 +30,7 @@ class ParseJobState:
     last_error: str | None
     created_at: datetime
     updated_at: datetime
+    duration_ms: int
     upload_session_id: str | None = None
     is_primary_upload_job: bool = False
 
@@ -65,6 +66,8 @@ class VideoChunkCheckpointState:
     sequence_no: int
     video_chunk_id: str
     stage: str
+    chunk_start_ms: int | None = None
+    chunk_end_ms: int | None = None
     chunk_media_uri: str | None = None
     analysis_window_media_uri: str | None = None
     parse_artifact_uri: str | None = None

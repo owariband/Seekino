@@ -52,7 +52,7 @@ class VideoSummaryState:
     upload_status: str
     parse_status: str
     upload_progress: int
-    parse_progress: int
+    parse_progress: int | None
     index_status: VideoIndexStatus
     latest_job_id: str | None
     last_error: str | None

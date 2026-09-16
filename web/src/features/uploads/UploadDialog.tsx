@@ -12,7 +12,7 @@ import {
 import { type ChangeEvent, type DragEvent, useEffect, useRef, useState } from "react";
 
 import { useWorkspace } from "../../app/workspace";
-import { formatBytes, inferEpisodeOrder, stageLabel } from "../../shared/format";
+import { formatBytes, formatTimecode, formatTimeRange, inferEpisodeOrder, publicParseStageLabel } from "../../shared/format";
 import { useUploads } from "./UploadProvider";
 import type { UploadInput, UploadTask } from "./upload-types";
 import { mediaTypeForFile, taskProgress, taskStatusLabel } from "./upload-types";
@@ -28,6 +28,11 @@ function TaskRow({ task }: { task: UploadTask }) {
   const canResumeCompletion = !task.file
     && task.session?.status === "COMPLETING"
     && ["completing", "failed"].includes(task.status);
+  const parsePosition = task.job?.currentChunk
+    ? `当前解析 ${formatTimeRange(task.job.currentChunk.startMs, task.job.currentChunk.endMs)}`
+    : task.job?.completedThroughMs !== null && task.job?.completedThroughMs !== undefined
+      ? `连续解析到 ${formatTimecode(task.job.completedThroughMs)} / ${formatTimecode(task.job.totalDurationMs)}`
+      : "等待精确检查点";
 
   return (
     <article className={styles.task} data-status={task.status}>
@@ -54,7 +59,7 @@ function TaskRow({ task }: { task: UploadTask }) {
         </div>
         {task.status === "processing" && task.job ? (
           <div className={styles.stageLine}>
-            <span>{stageLabel(task.job.stage)}</span>
+            <span>{publicParseStageLabel(task.job.stage)} · {parsePosition}</span>
             <span>{task.job.attemptCount}/{task.job.maxAttempts} 次尝试</span>
           </div>
         ) : null}

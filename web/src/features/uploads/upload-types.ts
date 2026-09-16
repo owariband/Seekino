@@ -1,4 +1,5 @@
 import type { ParseJobView, UploadSessionView } from "../../api/contracts";
+import { publicParseStageLabel } from "../../shared/format";
 
 export type UploadTaskStatus =
   | "queued"
@@ -53,9 +54,10 @@ export interface UploadTask {
 }
 
 export function taskProgress(task: UploadTask): number {
-  if (task.status === "completed") return 100;
-  if (task.status === "processing" && task.job) return task.job.progress;
-  if (task.status === "completing") return 100;
+  if (
+    ["completing", "processing", "completed"].includes(task.status)
+    || (task.status === "failed" && task.job)
+  ) return 100;
   if (task.totalBytes <= 0) return 0;
   return Math.min(
     99,
@@ -76,7 +78,7 @@ export function taskStatusLabel(task: UploadTask): string {
     case "completing":
       return "校验并合并";
     case "processing":
-      return task.job?.stage ? `解析 · ${task.job.stage}` : "等待解析";
+      return task.job?.stage ? publicParseStageLabel(task.job.stage) : "等待解析";
     case "completed":
       return "已可检索";
     case "failed":

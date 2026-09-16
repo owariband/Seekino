@@ -198,18 +198,27 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
     embedder = _Embedder()
     index_store = _IndexStore()
     parser = _Parser(prepared_import.parse_result)
+    index_sync = IndexSyncService(
+        IndexSyncRepository(session_factory),
+        index_store,  # type: ignore[arg-type]
+        mutation_lock=QdrantMutationLock(
+            engine,
+            environment=DatabaseEnvironment.TEST,
+            collection_name="video_chunks_test",
+        ),
+    )
+    sync_calls: list[list[str]] = []
+    original_sync = index_sync.sync_video_chunks
+
+    def record_sync(video_chunk_ids):
+        sync_calls.append(list(video_chunk_ids))
+        return original_sync(video_chunk_ids)
+
+    monkeypatch.setattr(index_sync, "sync_video_chunks", record_sync)
     processor = VideoProcessingService(
         jobs,
         VideoRepository(session_factory),
-        IndexSyncService(
-            IndexSyncRepository(session_factory),
-            index_store,  # type: ignore[arg-type]
-            mutation_lock=QdrantMutationLock(
-                engine,
-                environment=DatabaseEnvironment.TEST,
-                collection_name="video_chunks_test",
-            ),
-        ),
+        index_sync,
         artifacts,
         parser,  # type: ignore[arg-type]
         embedder,
@@ -217,6 +226,7 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
     )
 
     video_chunk_ids = processor.process(lease)
+    assert jobs.get(completed.job_id).progress == 99
     edited_lease = replace(lease, important_extra_data={"format": "markdown", "content": "新背景"})
     repeated_video_chunk_ids = processor.process(edited_lease)
 
@@ -229,6 +239,7 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
         "chunk-0001.mp4",
     ]
     assert len(index_store.points) == 2
+    assert sync_calls[:2] == [[video_chunk_ids[0]], [video_chunk_ids[1]]]
     assert len(parser.backgrounds) == 2
     assert parser.backgrounds[0] == parser.backgrounds[1]
     text, references = parser.backgrounds[0]
@@ -257,6 +268,10 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
     assert {item.stage for item in checkpoints} == {
         VideoChunkCheckpointStage.INDEXED.value
     }
+    assert [
+        (item.chunk_start_ms, item.chunk_end_ms) for item in checkpoints
+    ] == [(0, 10_000), (10_000, 20_000)]
+    assert jobs.get(completed.job_id).progress == 100
     with session_factory() as session:
         series_record = session.get(SeriesRecord, series.series_id)
         chunks = session.scalars(select(VideoChunkRecord)).all()

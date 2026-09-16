@@ -27,10 +27,7 @@ from ..config.video_processing import VideoProcessingConfig
 from ..identity import derive_video_chunk_id
 from ..model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
 from ..model.dto.parseDTO import PreparedEmbedding
-from ..model.job import (
-    ParseJobStage,
-    VideoChunkCheckpointStage,
-)
+from ..model.job import ParseJobStage, VideoChunkCheckpointStage
 from ..repository.job import ParseJobLeaseLostError, ParseJobRepository
 from ..repository.video import VideoRepository
 from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
@@ -38,15 +35,6 @@ from ..utils.files import write_json_once
 from .index_sync import IndexSyncService
 from .parse_import import prepare_completed_video_parse_import
 from .parse_usage import ParseUsageService
-
-# Stage weights describe work completed, not elapsed time or an ETA.
-_PREPARING_PROGRESS = 2
-_SPLIT_READY_PROGRESS = 10
-_PARSED_PROGRESS = 60
-_TEXT_EMBEDDED_PROGRESS = 75
-_VISION_EMBEDDED_PROGRESS = 90
-_PERSISTING_PROGRESS = 92
-
 
 class MultimodalEmbedder(Protocol):
     def embed_text(self, text: str) -> EmbeddingResult: ...
@@ -96,16 +84,9 @@ class VideoProcessingService:
         chunk_paths: dict[int, Path] = {}
         chunk_media_refs: dict[int, str] = {}
         analysis_media_refs: dict[int, str] = {}
-        window_count = 0
-
-        self._update_progress(
-            lease,
-            stage=ParseJobStage.PREPARING,
-            progress=_PREPARING_PROGRESS,
-        )
+        self._advance_stage(lease, ParseJobStage.PREPARING)
 
         def windows_ready(windows: list[AnalysisWindow]) -> None:
-            nonlocal window_count
             if legacy_parse and any(
                 not (work_directory / "chunks" / f"chunk-{window.sequence_no:04d}.json").is_file()
                 and not (work_directory / "segments" / f"segment-{window.sequence_no:04d}.json").is_file()
@@ -115,7 +96,6 @@ class VideoProcessingService:
                     "旧解析任务缺少背景快照，无法确认已解析片段使用的背景；"
                     "请保留原检查点并创建新的解析任务"
                 )
-            window_count = len(windows)
             for window in windows:
                 sequence_no = window.sequence_no
                 checkpoints[sequence_no] = self._save_checkpoint(
@@ -123,6 +103,8 @@ class VideoProcessingService:
                     checkpoints.get(sequence_no),
                     requested_stage=VideoChunkCheckpointStage.PREPARED,
                     sequence_no=sequence_no,
+                    chunk_start_ms=window.chunk_start_ms,
+                    chunk_end_ms=window.chunk_end_ms,
                 )
             canonical_paths = materialize_canonical_chunks(
                 windows,
@@ -160,11 +142,10 @@ class VideoProcessingService:
                     chunk_media_uri=chunk_artifact.uri,
                     analysis_window_media_uri=analysis_artifact.uri,
                 )
-            self._update_progress(
-                lease,
-                stage=ParseJobStage.SPLIT_READY,
-                progress=_SPLIT_READY_PROGRESS,
-            )
+            # Parsing starts as soon as this callback returns. The durable
+            # SPLIT_READY milestone lives on each checkpoint; the Job stage
+            # describes the work currently in flight.
+            self._advance_stage(lease, ParseJobStage.PARSING)
 
         def chunk_complete(chunk: VideoChunkParseResult, path: Path) -> None:
             sequence_no = chunk.window.sequence_no
@@ -174,16 +155,6 @@ class VideoProcessingService:
                 requested_stage=VideoChunkCheckpointStage.PARSED,
                 sequence_no=sequence_no,
                 parse_artifact_uri=self._artifacts.uri_for_path(path),
-            )
-            parsed_count = sequence_no + 1
-            progress = _SPLIT_READY_PROGRESS + round(
-                (_PARSED_PROGRESS - _SPLIT_READY_PROGRESS)
-                * parsed_count / max(window_count, 1)
-            )
-            self._update_progress(
-                lease,
-                stage=ParseJobStage.PARSING,
-                progress=min(progress, _PARSED_PROGRESS),
             )
 
         result = self._parser.run(
@@ -212,33 +183,25 @@ class VideoProcessingService:
                 sequence_no=sequence_no,
                 parse_artifact_uri=self._artifacts.uri_for_path(parse_path),
             )
-        self._update_progress(
-            lease,
-            stage=ParseJobStage.PARSING,
-            progress=_PARSED_PROGRESS,
-        )
-
         documents = {
             item.sequence_no: item
             for item in build_video_chunk_retrieval_documents(result)
         }
+        self._advance_stage(lease, ParseJobStage.TEXT_EMBEDDING)
         text_embeddings = self._embed_text_chunks(
             lease,
             work_directory,
             documents,
             checkpoints,
         )
+        self._advance_stage(lease, ParseJobStage.VISION_EMBEDDING)
         vision_embeddings = self._embed_vision_chunks(
             lease,
             work_directory,
             chunk_media_refs,
             checkpoints,
         )
-        self._update_progress(
-            lease,
-            stage=ParseJobStage.PERSISTING,
-            progress=_PERSISTING_PROGRESS,
-        )
+        self._advance_stage(lease, ParseJobStage.PERSISTING)
         prepared = prepare_completed_video_parse_import(
             result,
             workspace_id=lease.workspace_id,
@@ -261,10 +224,17 @@ class VideoProcessingService:
             vision_embeddings=vision_embeddings,
         )
         report = self._videos.import_video_parse_for_job(prepared, lease)
-        self._jobs.assert_current_lease(lease)
-        self._index_sync.sync_video_chunks(report.video_chunk_ids)
-        self._jobs.assert_current_lease(lease)
+        imported_ids = set(report.video_chunk_ids)
+        checkpoint_ids = {item.video_chunk_id for item in checkpoints.values()}
+        if imported_ids != checkpoint_ids:
+            raise RuntimeError(
+                "persisted VideoChunk set disagrees with parse checkpoints"
+            )
         for sequence_no in sorted(checkpoints):
+            video_chunk_id = checkpoints[sequence_no].video_chunk_id
+            self._jobs.assert_current_lease(lease)
+            self._index_sync.sync_video_chunks([video_chunk_id])
+            self._jobs.assert_current_lease(lease)
             checkpoints[sequence_no] = self._save_checkpoint(
                 lease,
                 checkpoints[sequence_no],
@@ -352,8 +322,7 @@ class VideoProcessingService:
         checkpoints: dict[int, VideoChunkCheckpointState],
     ) -> dict[int, PreparedEmbedding]:
         embeddings: dict[int, PreparedEmbedding] = {}
-        total = len(documents)
-        for completed, sequence_no in enumerate(sorted(documents), start=1):
+        for sequence_no in sorted(documents):
             document = documents[sequence_no]
             input_hash = hashlib.sha256(document.text.encode("utf-8")).hexdigest()
             path = (
@@ -377,13 +346,6 @@ class VideoProcessingService:
                 sequence_no=sequence_no,
                 text_embedding_artifact_uri=self._artifacts.uri_for_path(path),
             )
-            self._update_progress(
-                lease,
-                stage=ParseJobStage.TEXT_EMBEDDING,
-                progress=_PARSED_PROGRESS + round(
-                    (_TEXT_EMBEDDED_PROGRESS - _PARSED_PROGRESS) * completed / total
-                ),
-            )
         return embeddings
 
     def _embed_vision_chunks(
@@ -394,8 +356,7 @@ class VideoProcessingService:
         checkpoints: dict[int, VideoChunkCheckpointState],
     ) -> dict[int, PreparedEmbedding]:
         embeddings: dict[int, PreparedEmbedding] = {}
-        total = len(chunk_media_refs)
-        for completed, sequence_no in enumerate(sorted(chunk_media_refs), start=1):
+        for sequence_no in sorted(chunk_media_refs):
             media_uri = chunk_media_refs[sequence_no]
             media = self._artifacts.resolve(media_uri)
             input_hash = self._artifacts.fingerprint(media_uri).sha256
@@ -419,14 +380,6 @@ class VideoProcessingService:
                 requested_stage=VideoChunkCheckpointStage.VISION_EMBEDDED,
                 sequence_no=sequence_no,
                 vision_embedding_artifact_uri=self._artifacts.uri_for_path(path),
-            )
-            self._update_progress(
-                lease,
-                stage=ParseJobStage.VISION_EMBEDDING,
-                progress=_TEXT_EMBEDDED_PROGRESS + round(
-                    (_VISION_EMBEDDED_PROGRESS - _TEXT_EMBEDDED_PROGRESS)
-                    * completed / total
-                ),
             )
         return embeddings
 
@@ -490,17 +443,14 @@ class VideoProcessingService:
             )
         return self._artifacts.resolve(lease.original_source_uri)
 
-    def _update_progress(
+    def _advance_stage(
         self,
         lease: ParseJobLease,
-        *,
         stage: ParseJobStage,
-        progress: int,
     ) -> None:
         if not self._jobs.update_progress(
             lease,
             stage=stage,
-            progress=progress,
         ):
             raise ParseJobLeaseLostError("parse job lease is no longer current")
 
@@ -511,6 +461,8 @@ class VideoProcessingService:
         *,
         requested_stage: VideoChunkCheckpointStage,
         sequence_no: int,
+        chunk_start_ms: int | None = None,
+        chunk_end_ms: int | None = None,
         chunk_media_uri: str | None = None,
         analysis_window_media_uri: str | None = None,
         parse_artifact_uri: str | None = None,
@@ -529,6 +481,16 @@ class VideoProcessingService:
                 sequence_no=sequence_no,
                 video_chunk_id=derive_video_chunk_id(lease.video_id, sequence_no),
                 stage=stage.value,
+                chunk_start_ms=(
+                    current.chunk_start_ms
+                    if chunk_start_ms is None and current is not None
+                    else chunk_start_ms
+                ),
+                chunk_end_ms=(
+                    current.chunk_end_ms
+                    if chunk_end_ms is None and current is not None
+                    else chunk_end_ms
+                ),
                 chunk_media_uri=chunk_media_uri,
                 analysis_window_media_uri=analysis_window_media_uri,
                 parse_artifact_uri=parse_artifact_uri,

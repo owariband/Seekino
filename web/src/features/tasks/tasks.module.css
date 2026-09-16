@@ -123,9 +123,21 @@
 .jobStatus[data-status="RETRY_WAIT"] { color: var(--amber); }
 
 .jobPercent {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  min-width: 58px;
+  text-align: right;
+}
+
+.jobPercent small {
+  color: var(--ink-faint);
+  font-size: .54rem;
+}
+
+.jobPercent strong {
   color: var(--teal-deep);
   font: 400 1.45rem/1 var(--display);
-  text-align: right;
 }
 
 .jobActions {
@@ -216,15 +228,15 @@
 .pipeline {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(9, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   margin-top: 32px;
 }
 
 .pipelineLine {
   position: absolute;
   top: 4px;
-  right: 4%;
-  left: 4%;
+  right: 16.667%;
+  left: 16.667%;
   height: 1px;
   overflow: hidden;
   background: var(--line);
@@ -260,6 +272,23 @@
 .stageCurrent { color: var(--teal-deep); }
 .stageDone i { background: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
 .stageCurrent i { background: var(--surface-raised); box-shadow: 0 0 0 2px var(--teal), 0 0 0 6px color-mix(in srgb, var(--teal) 12%, transparent); }
+
+.progressFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin-top: 24px;
+  padding: 12px 14px;
+  color: var(--ink-faint);
+  border-radius: 10px;
+  background: var(--teal-wash);
+  font-size: .62rem;
+}
+
+.progressFacts strong {
+  color: var(--teal-deep);
+  font: 600 .64rem/1 var(--mono);
+}
 
 .jobDetail {
   display: grid;
@@ -409,7 +438,6 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 920px) {
-  .pipelineStage span { display: none; }
   .jobDetail { grid-template-columns: 1fr; }
   .jobDetail dl { justify-content: space-between; }
 }

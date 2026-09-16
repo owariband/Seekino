@@ -4,6 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -134,6 +135,12 @@ class VideoChunkCheckpointRecord(Base):
             "'TEXT_EMBEDDED', 'VISION_EMBEDDED', 'INDEXED')",
             name="ck_video_chunk_checkpoint_stage",
         ),
+        CheckConstraint(
+            "(chunk_start_ms IS NULL AND chunk_end_ms IS NULL) OR "
+            "(chunk_start_ms IS NOT NULL AND chunk_end_ms IS NOT NULL AND "
+            "chunk_start_ms >= 0 AND chunk_end_ms > chunk_start_ms)",
+            name="ck_video_chunk_checkpoint_range",
+        ),
         Index("ix_video_chunk_checkpoint_job_stage", "job_id", "stage"),
         MYSQL_TABLE_OPTIONS,
     )
@@ -145,6 +152,8 @@ class VideoChunkCheckpointRecord(Base):
     sequence_no: Mapped[int] = mapped_column(Integer, primary_key=True)
     video_chunk_id: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
     stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    chunk_start_ms: Mapped[int | None] = mapped_column(BigInteger)
+    chunk_end_ms: Mapped[int | None] = mapped_column(BigInteger)
     chunk_media_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     analysis_window_media_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     parse_artifact_uri: Mapped[str | None] = mapped_column(LONG_TEXT)

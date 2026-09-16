@@ -120,6 +120,7 @@ def create_schema(engine: Engine) -> None:
         "agent_conversation": {"title_is_auto"},
         "agent_message": {"phase", "version", "reference", "last_error_code", "last_error_message"},
         "series_parse_job": {"version"},
+        "video_chunk_checkpoint": {"chunk_start_ms", "chunk_end_ms"},
         "upload_session": {"content_sha256", "completion_stage", "version", "job_id", "last_error_code", "request_fingerprint"},
     }.items():
         if table_name not in existing_tables:

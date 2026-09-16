@@ -42,7 +42,10 @@ const retriedJob: ParseJobView = {
   workspaceId: "local-default", seriesId: session.seriesId, videoId: "video-a",
   seriesName: "测试系列", episodeOrder: 1, originalFilename: file.name,
   pipelineVersion: "m1", retryOfJobId: null, status: "QUEUED", stage: "QUEUED",
-  progress: 18, attemptCount: 3, maxAttempts: 4, availableAt: 1,
+  progress: 18, overallProgress: 18, stageProgress: null,
+  completedDurationMs: null, completedThroughMs: null, totalDurationMs: 10_000,
+  completedChunkCount: null, totalChunkCount: 1, currentChunk: null,
+  attemptCount: 3, maxAttempts: 4, availableAt: 1,
   startedAt: 1, completedAt: null, estimatedRemainingMs: null,
   canRetry: false, canCancel: false, lastError: null, version: 8,
   checkpoints: [], createdAt: 1, updatedAt: 2,
@@ -158,7 +161,14 @@ describe("upload deletion", () => {
 
     await user.click(screen.getByRole("button", { name: "同步解析重试" }));
 
-    await waitFor(() => expect(screen.getByText(file.name).closest("article")).toHaveTextContent("解析 · QUEUED"));
+    await waitFor(() => {
+      const task = screen.getByText(file.name).closest("article");
+      expect(task).toHaveTextContent("解析画面与对白");
+      expect(task).toHaveTextContent("100%");
+      expect(task).not.toHaveTextContent("本阶段");
+      expect(task).toHaveTextContent("3/4 次尝试");
+      expect(task).toHaveTextContent("等待精确检查点");
+    });
   });
 
   it("retains a session created during pause and resumes without allocating another order", async () => {

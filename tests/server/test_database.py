@@ -15,6 +15,7 @@ from server.model.agent import (
     AgentMessageRecord,
 )
 from server.model.video import VideoChunkInfoRecord, VideoChunkRecord
+from server.model.job import VideoChunkCheckpointRecord
 
 
 def test_database_environment_requires_physically_separate_databases() -> None:
@@ -62,12 +63,20 @@ def test_mysql_schema_uses_innodb_json_and_integer_milliseconds() -> None:
             dialect=mysql.dialect()
         )
     )
+    checkpoint_ddl = str(
+        CreateTable(VideoChunkCheckpointRecord.__table__).compile(
+            dialect=mysql.dialect()
+        )
+    )
 
     assert "ENGINE=InnoDB" in chunk_ddl
     assert "CHARSET=utf8mb4" in chunk_ddl
     assert "start_ms BIGINT" in chunk_ddl
     assert "all_time_events JSON" in info_ddl
     assert "video_compact LONGTEXT" in info_ddl
+    assert "chunk_start_ms BIGINT" in checkpoint_ddl
+    assert "chunk_end_ms BIGINT" in checkpoint_ddl
+    assert "ck_video_chunk_checkpoint_range" in checkpoint_ddl
 
 
 def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> None:
@@ -229,3 +238,24 @@ def test_create_schema_requires_ui_view_migration_and_preserves_existing_rows() 
     assert set(inspect(engine).get_table_names()) == {"upload_session"}
     with engine.connect() as connection:
         assert connection.execute(text("SELECT status FROM upload_session")).scalar_one() == "COMPLETED"
+
+
+def test_create_schema_requires_checkpoint_range_migration() -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE video_chunk_checkpoint "
+                "(job_id TEXT, sequence_no INTEGER, stage TEXT)"
+            )
+        )
+
+    with pytest.raises(
+        SchemaUpgradeRequiredError,
+        match="video_chunk_checkpoint.chunk_end_ms",
+    ):
+        create_schema(engine)
+
+    assert set(inspect(engine).get_table_names()) == {"video_chunk_checkpoint"}
