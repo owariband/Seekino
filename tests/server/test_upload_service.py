@@ -33,6 +33,7 @@ from server.model.video import (
     VideoChunkRecord,
     VideoRecord,
 )
+from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.upload import (
     UploadCompletionInProgressError,
     UploadConflictError,
@@ -244,8 +245,12 @@ def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(
     )
     _put(service, later.upload_session_id, 0, b"efgh", total_size_bytes=4)
     completed = service.complete(later.upload_session_id, workspace_id="local-default")
-    jobs = ParseJobRepository(create_session_factory(engine))
-    assert jobs.claim_next("test-worker", lease_duration=timedelta(minutes=5)) is None
+    session_factory = create_session_factory(engine)
+    jobs = ParseJobRepository(session_factory)
+    queue = MySqlParseJobQueue(session_factory)
+    assert queue.claim_next(
+        "test-worker", lease_duration=timedelta(minutes=5),
+    ) is None
 
     deleted = service.delete_session(upload.upload_session_id, workspace_id="local-default")
     repeated = service.delete_session(upload.upload_session_id, workspace_id="local-default")
@@ -255,7 +260,9 @@ def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(
     assert upload_repository.list_segments(upload.upload_session_id) == []
     assert not staging.exists()
     assert service.list_sessions(workspace_id="local-default") == []
-    lease = jobs.claim_next("test-worker", lease_duration=timedelta(minutes=5))
+    lease = queue.claim_next(
+        "test-worker", lease_duration=timedelta(minutes=5),
+    )
     assert lease is not None and lease.job_id == completed.job_id
     with pytest.raises(UploadStateError, match="expired"):
         _put(service, upload.upload_session_id, 0, b"abcd")
@@ -303,7 +310,7 @@ def test_delete_rejects_completing_and_running_parse(repository, tmp_path):
     assert len(upload_repository.list_segments(upload.upload_session_id)) == 3
     upload_repository.release_completion(upload.upload_session_id, claim.completion_token, error="retry")
     completed = service.complete(upload.upload_session_id, workspace_id="local-default")
-    lease = ParseJobRepository(create_session_factory(engine)).claim_next(
+    lease = MySqlParseJobQueue(create_session_factory(engine)).claim_next(
         "test-worker",
         lease_duration=timedelta(minutes=5),
     )
@@ -373,7 +380,9 @@ def test_manual_parse_retry_preserves_progress_checkpoints_usage_and_attempt_his
     )
 
     assert job_id == completed.job_id
-    jobs = ParseJobRepository(create_session_factory(engine))
+    session_factory = create_session_factory(engine)
+    jobs = ParseJobRepository(session_factory)
+    queue = MySqlParseJobQueue(session_factory)
     retried = jobs.get(completed.job_id)
     assert retried.status == ParseJobStatus.QUEUED.value
     assert (retried.attempt_count, retried.max_attempts, retried.version) == (3, 4, 8)
@@ -401,7 +410,7 @@ def test_manual_parse_retry_preserves_progress_checkpoints_usage_and_attempt_his
             workspace_id="local-default",
             expected_job_version=7,
         )
-    claimed = jobs.claim_next(
+    claimed = queue.claim_next(
         "retry-worker",
         lease_duration=timedelta(minutes=5),
         now=retry_at,

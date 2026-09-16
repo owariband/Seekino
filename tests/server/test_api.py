@@ -26,6 +26,7 @@ from server.database import (
 )
 from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
 from server.model.video import SeriesRecord, VideoRecord
+from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.agent import AgentRepository
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
@@ -89,6 +90,17 @@ class _AgentModelStub:
         })
 
 
+class _ParseConsumerStub:
+    running = True
+    failure = None
+
+    def start(self) -> None:
+        self.running = True
+
+    def close(self) -> None:
+        self.running = False
+
+
 def _client(tmp_path: Path):
     engine = create_database_engine(
         f"sqlite+pysqlite:///{tmp_path / 'api.sqlite'}",
@@ -133,6 +145,7 @@ def _client(tmp_path: Path):
         retrieval=retrieval,  # type: ignore[arg-type]
         agent=agent,
         index_sync=object(),  # type: ignore[arg-type]
+        parse_consumer=_ParseConsumerStub(),  # type: ignore[arg-type]
     )
     return TestClient(create_app(services)), retrieval, job_repository
 
@@ -895,7 +908,8 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
         )
         assert outside_workspace.status_code == 404
 
-    lease = jobs_repository.claim_next(
+    queue = MySqlParseJobQueue(jobs_repository._session_factory)
+    lease = queue.claim_next(
         "api-test-worker",
         lease_duration=timedelta(minutes=5),
     )
@@ -904,7 +918,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     before_heartbeat = _job_view(
         job_service.get(job_id, workspace_id="local-default")
     )
-    assert jobs_repository.heartbeat(
+    assert queue.heartbeat(
         lease,
         lease_duration=timedelta(minutes=5),
     )
@@ -925,7 +939,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert _job_event_fingerprint(after_progress) != _job_event_fingerprint(
         after_heartbeat
     )
-    assert jobs_repository.mark_succeeded(lease)
+    assert queue.acknowledge(lease)
     with client.stream(
         "GET",
         "/api/jobs/events",
@@ -1483,6 +1497,19 @@ def test_ui_error_and_time_contracts_require_explicit_workspace(tmp_path):
         health = client.get("/healthz")
         assert health.json()["status"] == "ok"
         assert isinstance(health.json()["serverTime"], int)
+        assert health.json()["components"]["parseConsumer"] == {
+            "status": "running",
+            "failure": None,
+        }
+        consumer = client.app.state.services.parse_consumer
+        consumer.failure = RuntimeError("internal database detail")
+        degraded = client.get("/healthz")
+        assert degraded.json()["status"] == "degraded"
+        assert degraded.json()["components"]["parseConsumer"] == {
+            "status": "failed",
+            "failure": "RuntimeError",
+        }
+        assert "internal database detail" not in degraded.text
         response = client.get("/api/series/list")
         assert response.status_code == 422
         error = response.json()

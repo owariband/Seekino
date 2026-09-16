@@ -1,1 +1,1 @@
-"""MySQL-backed task queue execution with a durable ParseJob Worker."""
+"""ParseJob delivery adapters and the in-process queue consumer."""

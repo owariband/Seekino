@@ -1,10 +1,10 @@
 # AniVAG Server
 
 Server 当前实现 M1 的 Upload-to-Search 纵向闭环：分片上传与断点续传、环境隔离的
-Artifact Store、MySQL 事实与 DB Queue、带 Lease/Heartbeat/Retry/Reaper 的解析 Worker、
-VideoChunk checkpoint、持久化 Index Sync Intent、Qdrant 派生索引，以及按 `seriesIds`
-限定的双路召回、RRF 和 `videoChunkId[]` 批量回源。模型协议仍由 Gateway 实现，Worker
-直接复用 Engine 的解析链路。
+Artifact Store、MySQL 事实与 DB Queue、带 Lease/Heartbeat/Retry/Reaper 的进程内
+ParseJobConsumer、VideoChunk checkpoint、持久化 Index Sync Intent、Qdrant 派生索引，
+以及按 `seriesIds` 限定的双路召回、RRF 和 `videoChunkId[]` 批量回源。模型协议仍由
+Gateway 实现，AniVAG Server 进程内直接复用 Engine 的解析链路。
 
 Multi-Agent 对话作为独立领域建立在正式检索之上：Workspace 直接拥有
 AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存每次发送的 Series Scope，
@@ -24,7 +24,7 @@ Embedding 的 durable source 是 MySQL，Qdrant 始终只是可重建派生索�
 server/router/      URL、Method、Response Model 和 API Handler 的绑定
 server/api/         参数/Header/Body 校验、HTTP 响应映射、SSE、异常转 HTTP
 server/service/     业务用例、资源归属与状态校验、跨资源编排
-server/bootstrap.py API 进程的数据库、Storage、Gateway 和 Service 装配
+server/bootstrap.py AniVAG Server 的数据库、Storage、Gateway、Queue 和 Service 装配
 ```
 
 调用方向为 `router → api → service → repository/storage`。Router 不实现 Handler；
@@ -38,18 +38,22 @@ HTTP 专用 Request/View 位于 `server/api/schema.py`；API、CLI、Agent 共�
 
 ## 后台任务与共享代码
 
-`server/mq/` 放队列任务的 Worker，当前使用 MySQL DB Queue，不依赖外部消息中间件。
-Worker 领取并执行任务；Event 则表达发生了什么。API 保存完整视频并创建
-ParseJob 后，Worker 即可独立运行；浏览器关闭不影响已经入队的解析任务。
+`server/mq/` 是消息基础设施边界，当前使用 MySQL DB Queue，不依赖外部消息中间件。
+AniVAG Server 启动进程内 ParseJobConsumer 领取任务，再调用业务处理服务；Event 仍只
+表达已经发生的事实。API 保存完整视频并提交 ParseJob 后，Consumer 在同一 Server 进程
+继续处理，浏览器关闭不影响已经入队的任务。
 
 ```text
 server/config/                   配置类型、环境变量读取与校验
 server/constants/workspace.py    本地默认 Workspace；不承担身份认证
 server/utils/                    时间、文本校验、异常摘要等无业务取数的纯函数
+server/bootstrap.py              唯一 Composition Root 和应用生命周期资源装配
 server/service/video_processing.py
                                  解析、checkpoint、向量化、入库与索引同步编排
-server/mq/__main__.py             Worker 进程装配和启动
-server/mq/worker.py               任务领取、Lease、Heartbeat、Retry、Reaper
+server/mq/contracts.py            Queue / Handler 的最小内部协议
+server/mq/mysql_queue.py          MySQL Claim、Lease、Retry、Ack 和 Reaper adapter
+server/mq/consumer.py             进程内消费循环与 Lease Heartbeat
+server/mq/__main__.py             仅保留 --once 单任务诊断入口
 ```
 
 配置入口为 `ServerSettings.from_environment()`，`from server.config import
@@ -61,7 +65,11 @@ ServerSettings` 保持可用。Upload、Agent、VideoProcessing、Retrieval 和 
 `ANIVAG_SSE_KEEPALIVE_SECONDS`、`ANIVAG_DATABASE_POOL_RECYCLE_SECONDS`、
 `ANIVAG_RETRIEVAL_CHANNEL_TOP_K`、`ANIVAG_RETRIEVAL_RRF_K` 和双路权重
 `ANIVAG_RETRIEVAL_TEXT_WEIGHT` / `ANIVAG_RETRIEVAL_VISION_WEIGHT`。
-Embedding 模型与 FPS 覆盖值由 Settings 读取，API 与 Worker 使用同一套配置。
+Embedding 模型与 FPS 覆盖值由 Settings 读取，API 与进程内 Consumer 使用同一套配置。
+Consumer 的 Lease、Heartbeat、Poll 和 Retry 分别使用 `ANIVAG_MQ_*` 配置；旧的
+`ANIVAG_WORKER_*` 名称暂时作为兼容回退。Index Sync 的重试间隔已独立为
+`ANIVAG_INDEX_SYNC_RETRY_BASE_SECONDS` / `ANIVAG_INDEX_SYNC_RETRY_MAX_SECONDS`，不再
+与 Queue delivery retry 共用配置。
 
 Job SSE 忽略纯心跳变化，终态发送后关闭；Agent SSE 仍返回完整 Message 快照，包含
 500 条之后的消息以及同一条消息的状态变化。保活按单调时钟的经过时间计算，
@@ -112,28 +120,40 @@ uv run python -m server.cli init-db
 `SeriesParseJob/VideoChunkCheckpoint` 和 `IndexSyncIntent`，没有 `Episode` 表。所有
 MySQL 表使用 InnoDB。
 
-## Upload-to-Search API 与 Worker
+## Upload-to-Search API 与进程内 Consumer
 
 前端对接所需的完整请求、响应、分片续传、任务 SSE 与检索契约见
 [前端 API 对接文档](../docs/design/frontend-api.md)。
 
-先初始化 MySQL，再分别启动 API 与 Worker：
+先初始化 MySQL，再启动唯一常驻的 AniVAG Server：
 
 ```bash
 uv run python -m server.cli init-db
 uv run python -m server.api
-uv run python -m server.mq
 ```
 
-API 默认监听 `127.0.0.1:9621`，OpenAPI 位于 `/docs`。API 与 Worker 是两个进程；API
-写入 MySQL 中的事实和任务，Worker 从 MySQL Claim，不依赖进程内队列。
+Server 默认监听 `127.0.0.1:9621`，OpenAPI 位于 `/docs`。HTTP API 写入 MySQL 中的事实
+和任务，进程内 ParseJobConsumer 从 MySQL Claim；任务的持久性来自数据库中的 Job、
+Lease 和 Fencing，不依赖进程内内存队列。
+`GET /healthz` 会在 `components.parseConsumer.status` 返回 `running`、`stopped` 或
+`failed`；只有 Consumer 正常运行时顶层状态才是 `ok`，否则为 `degraded`。本地启动脚本
+也以这个契约判断 Server readiness，不再通过 PID 或日志文本猜测消费端是否存活。
+
+需要单步诊断领取链路时，可运行：
+
+```bash
+uv run python -m server.mq --once
+```
+
+该命令复用 Server 的统一装配并至多处理一个到期任务；它不是常驻服务，不应与
+`server.api` 并行启动。
 
 上传顺序由后端成功创建 `UploadSession` 的顺序确定。同一 Series 在行锁内分配下一个
 追加序号，新会话的 `episodeOrder` 与 `uploadSequence` 相等；不解析文件名，也不采纳
 客户端指定的序号。`uploads/create` 的两个旧序号参数仅保留兼容接收，现已可省略。
 幂等重放返回原序号；已分配序号不复用，既有视频不重新编号。
 
-Worker 按固定上传序号领取任务，更早的未过期上传、未成功解析的视频（含重试等待和
+ParseJobConsumer 按固定上传序号领取任务，更早的未过期上传、未成功解析的视频（含重试等待和
 失败）会阻塞后续任务；传输完成先后不会改变 Parse 顺序。已过期且未生成 Video 的
 上传不再占用解析队列。这一门禁负责视频的执行顺序，跨视频 Context 传递仍未实现。
 
@@ -170,7 +190,7 @@ GET  /api/agent/messages/events?conversationId={conversationId}
 已完成的整项任务，不另设 Job 删除接口。
 
 删除分两阶段执行。第一个 MySQL 事务锁定 UploadSession 及其 Video 的全部 ParseJob，
-阻止新的分片和 Worker claim，并写入 `DELETION_PENDING` 墓碑；随后幂等清理上传暂存、
+阻止新的分片和 Consumer claim，并写入 `DELETION_PENDING` 墓碑；随后幂等清理上传暂存、
 所有 Job 目录、Video 媒体目录和 Qdrant point；第二个事务删除模型调用/用量、Job、
 Checkpoint、VideoChunk/Info/Embedding/Context/IndexIntent 和 Video。成功后保留
 `EXPIRED` UploadSession 及原序号/幂等键，以拦截迟到请求和保证重复 DELETE 返回同一
@@ -183,7 +203,7 @@ Checkpoint、VideoChunk/Info/Embedding/Context/IndexIntent 和 Video。成功后
 解析主任务最终 `FAILED` 后，可按同一个 `uploadSessionId` 手动重试。请求必须携带当前
 `expectedJobVersion`；服务端按 UploadSession → ParseJob 的锁顺序校验并只把
 `UploadSession.job_id` 指向的主 Job 重新排队。重试保留 attempt 历史、Checkpoint、阶段、
-进度、用量记录和工作目录；若旧额度已用尽，只把 `maxAttempts` 扩展一个名额，Worker
+进度、用量记录和工作目录；若旧额度已用尽，只把 `maxAttempts` 扩展一个名额，Consumer
 实际领取时才增加 `attemptCount`。版本不匹配、删除中或任务已不再 FAILED 均返回 409，
 因此并发点击和响应丢失后的同版本重放不会多投递一次解析尝试。
 
@@ -204,9 +224,10 @@ started / evidence / delta / completed / failed；`messages/events` 单独恢复
 `Complete` 会在校验所有分片后流式合并、计算整文件 SHA-256、发布 Original Video、探测
 时长，并在同一个 MySQL 事务中创建 `Video + SeriesParseJob`。重复请求复用相同结果。
 Artifact URI 形如 `artifact://development/...`，test/development/production 使用独立目录；
-API/Worker 依赖 `ArtifactStore` 边界，当前 M1 adapter 是 `LocalArtifactStore`。
+Server 内的 API/Consumer 依赖同一个 `ArtifactStore` 边界，当前 M1 adapter 是
+`LocalArtifactStore`。
 
-Worker 为每个 Job 保存单调 checkpoint：
+VideoProcessingService 为 Consumer 领取的每个 Job 保存单调 checkpoint：
 
 ```text
 PREPARED → SPLIT_READY → PARSED → TEXT_EMBEDDED → VISION_EMBEDDED → INDEXED
@@ -214,37 +235,40 @@ PREPARED → SPLIT_READY → PARSED → TEXT_EMBEDDED → VISION_EMBEDDED → IN
 
 AnalysisWindow 带上下文重叠，仅供模型解析；Vision vector 始终读取无重叠的 canonical
 VideoChunk MP4。Text vector 读取同一 VideoChunk 的完整 retrieval document；两路向量以
-同一个稳定 `videoChunkId` 入库与建索引。Worker 崩溃后复用本地持久化产物续跑，旧
+同一个稳定 `videoChunkId` 入库与建索引。Server 异常退出后复用本地持久化产物续跑，旧
 `leaseVersion` 不能提交 checkpoint 或最终 MySQL 事实。SSE 只发送 MySQL 中对 UI 有意义
 的状态、阶段、进度或 checkpoint 变化，不把纯 Heartbeat 当成进度事件；断线后仍以 Job
 查询结果为准。
 
 ## 运行日志
 
-API 与 Worker 在进程启动时配置 Python logging，同时写入终端和轮转文件，默认
-`ANIVAG_LOG_LEVEL=info`；API 也可用 `python -m server.api --log-level debug` 覆盖。
-日志文件不依赖 `./start.sh`，直接启动 Python 进程也会落盘：
+AniVAG Server 在进程启动时配置 Python logging，同时写入终端和轮转文件，默认
+`ANIVAG_LOG_LEVEL=info`；也可用 `python -m server.api --log-level debug` 覆盖。
+日志文件不依赖 `./start.sh`，直接启动 Server 也会落盘：
 
 ```text
 outputs/server/logs/development/api.log
-outputs/server/logs/development/worker.log
 ```
+
+一次性运行 `python -m server.mq --once` 时会单独写入同目录的 `mq.log`；该文件只属于
+诊断入口，不代表存在常驻 MQ 或 Worker 进程。
 
 test / production 使用各自目录。`ANIVAG_LOG_DIRECTORY` 可覆盖日志根目录；
 `ANIVAG_LOG_MAX_BYTES` 默认 10485760（10 MB），`ANIVAG_LOG_BACKUP_COUNT` 默认 5。
-文件满后轮转为 `api.log.1` 到 `api.log.5`，`.1` 为最新历史文件；Worker 同理。
-通过 `./start.sh` 启动时，`outputs/local-services/api.log`、`worker.log`、`web.log`、
+文件满后轮转为 `api.log.1` 到 `api.log.5`，`.1` 为最新历史文件。
+通过 `./start.sh` 启动时，`outputs/local-services/api.log`、`web.log`、
 `mysql.log` 和 `qdrant.log` 另存进程输出，包含启动信息；这组脚本输出文件不轮转。
 
-API / Worker 业务日志包含时间、级别、模块和 `request_id`。HTTP 请求记录 method、
+Server 业务日志包含时间、级别、模块和 `request_id`。HTTP 请求记录 method、
 path、status 与响应头返回前的 `duration_ms`；上传业务日志记录 `upload_session_id`、
 序号、大小、合并/校验/媒体探测/创建任务的阶段、完成后的 `video_id` / `job_id` 和失败
 原因与各分片的确认记录。请求编号通过 `X-Request-Id` 与错误体返回，上传面板
 的错误提示会显示它。请求日志不打印 query、请求正文或认证 Header；未预期异常记录
-异常类型与调用栈。Worker 原有领取、解析进度、重试、失败和完成日志也附带时间与级别。
+异常类型与调用栈。Consumer 的领取、解析进度、重试、失败和完成日志也写入同一
+`api.log`，并附带时间与级别。
 
 ```bash
-tail -f outputs/server/logs/development/api.log outputs/server/logs/development/worker.log
+tail -f outputs/server/logs/development/api.log
 rg 'upload_session_id=会话ID|job=任务ID|request_id=请求编号' outputs/server/logs/development/*.log*
 ```
 

@@ -24,8 +24,8 @@ def configure_logging(
     environment: DatabaseEnvironment | str,
     config: LoggingConfig,
 ) -> Path:
-    if process_name not in {"api", "worker"}:
-        raise ValueError("log process name must be api or worker")
+    if process_name not in {"api", "mq"}:
+        raise ValueError("log process name must be api or mq")
     directory = config.directory.expanduser().resolve() / DatabaseEnvironment(environment).value
     directory.mkdir(parents=True, exist_ok=True)
     log_path = directory / f"{process_name}.log"

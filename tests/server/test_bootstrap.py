@@ -13,7 +13,8 @@ from server.config.retrieval import RetrievalConfig
 from server.config.agent import AgentServiceConfig
 from server.config.media import ImageUploadConfig
 from server.config.sse import SSEConfig
-from server.mq import __main__ as worker_main
+from server.database import create_schema
+from server.mq import __main__ as mq_main
 
 
 class _QdrantClient:
@@ -24,8 +25,7 @@ class _QdrantClient:
         self.closed = True
 
 
-@pytest.mark.parametrize("entrypoint", ["api", "worker"])
-def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path, entrypoint):
+def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path):
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
             monkeypatch.delenv(name, raising=False)
@@ -60,97 +60,149 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path, 
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "unexpected-env-model")
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "0.5")
     monkeypatch.setenv("ANIVAG_BACKGROUND_IMAGE_MAX_EDGE", "2048")
-    module = bootstrap if entrypoint == "api" else worker_main
-    monkeypatch.setattr(module, "QdrantClient", _QdrantClient)
+    monkeypatch.setattr(bootstrap, "QdrantClient", _QdrantClient)
     received = {}
-    real_create_engine = module.create_database_engine
+    real_create_engine = bootstrap.create_database_engine
 
     def create_engine(*args, **kwargs):
         received["pool_recycle_seconds"] = kwargs["pool_recycle_seconds"]
-        return real_create_engine(*args, **kwargs)
+        engine = real_create_engine(*args, **kwargs)
+        create_schema(engine)
+        return engine
 
-    monkeypatch.setattr(module, "create_database_engine", create_engine)
-    if entrypoint == "api":
-        real_retrieval = bootstrap.VideoRetrievalService
+    monkeypatch.setattr(bootstrap, "create_database_engine", create_engine)
+    real_retrieval = bootstrap.VideoRetrievalService
 
-        def create_retrieval(*args, **kwargs):
-            received["retrieval"] = kwargs
-            received["embedder"] = args[2]
-            return real_retrieval(*args, **kwargs)
+    def create_retrieval(*args, **kwargs):
+        received["retrieval"] = kwargs
+        received["query_embedder"] = args[2]
+        return real_retrieval(*args, **kwargs)
 
-        monkeypatch.setattr(bootstrap, "VideoRetrievalService", create_retrieval)
-        services = bootstrap.build_application_services(settings)
-        try:
-            assert services.media.image_upload_config == settings.images
-            assert received["retrieval"] == {
-                "channel_top_k": 35,
-                "rrf_k": 42,
-                "text_weight": 0.25,
-                "vision_weight": 1.5,
+    class Embedder:
+        def __init__(self, model, **kwargs):
+            received["processing_embedder"] = {
+                "model": model,
+                "fps": kwargs["fps"],
+                "dimensions": kwargs["output_dimensionality"],
             }
-            embedder = received["embedder"]
-            assert embedder._model == settings.video_embedding_model
-            assert embedder._fps == settings.video_embedding_fps
-            assert embedder._request_timeout_seconds == 90
-            runtime = services.agent._runtime
-            assert runtime._query_model.model_name == "configured-query-model"
-            assert runtime._evaluator_model.model_name == "configured-review-model"
-            assert runtime._chat_model.model_name == "configured-chat-model"
-            assert runtime._query_model.max_output_tokens == 2048
-            assert runtime._chat_model.max_output_tokens == 2048
-            assert runtime._evaluator_model.max_output_tokens == 2048
-            assert runtime._max_loop_turns == 2
-            assert runtime._max_model_calls == 4
-            assert runtime._max_tool_calls == 2
-            assert runtime._execution_timeout == 90
-            assert services.agent._executor._max_workers == 2
-            app = create_app(services, settings=settings)
-            assert app.state.sse_config == settings.sse
-        finally:
-            services.close()
-        assert services.qdrant_client.closed
-    else:
-        class Embedder:
-            def __init__(self, model, **kwargs):
-                received["model"] = model
-                received["fps"] = kwargs["fps"]
 
-        class Worker:
-            def __init__(self, _jobs, processor, **kwargs):
-                received["processor"] = processor
-                received["worker"] = kwargs
+    class Consumer:
+        running = False
+        failure = None
 
-            def run_once(self):
-                received["ran_once"] = True
+        def __init__(self, queue, processor, **kwargs):
+            received["queue"] = queue
+            received["processor"] = processor
+            received["consumer"] = kwargs
 
-        monkeypatch.setattr(worker_main, "DoubaoMultimodalEmbedder", Embedder)
-        monkeypatch.setattr(worker_main, "ParseWorker", Worker)
-        monkeypatch.setattr(
-            ServerSettings, "from_environment", classmethod(lambda _cls: settings)
-        )
-        monkeypatch.setattr(sys, "argv", ["python -m server.mq", "--once"])
-        worker_main.main()
-        assert received["model"] == settings.video_embedding_model
-        assert received["fps"] == settings.video_embedding_fps
+        def start(self):
+            self.running = True
+
+        def close(self):
+            self.running = False
+
+    monkeypatch.setattr(bootstrap, "VideoRetrievalService", create_retrieval)
+    monkeypatch.setattr(bootstrap, "DoubaoMultimodalEmbedder", Embedder)
+    monkeypatch.setattr(bootstrap, "ParseJobConsumer", Consumer)
+    services = bootstrap.build_application_services(settings)
+    try:
+        assert services.media.image_upload_config == settings.images
+        assert received["retrieval"] == {
+            "channel_top_k": 35,
+            "rrf_k": 42,
+            "text_weight": 0.25,
+            "vision_weight": 1.5,
+        }
+        embedder = received["query_embedder"]
+        assert embedder._model == settings.video_embedding_model
+        assert embedder._fps == settings.video_embedding_fps
+        assert embedder._request_timeout_seconds == 90
+        assert received["processing_embedder"] == {
+            "model": settings.video_embedding_model,
+            "fps": settings.video_embedding_fps,
+            "dimensions": settings.text_vector_dimensions,
+        }
         assert type(received["processor"]).__module__ == "server.service.video_processing"
-        assert received["worker"]["poll_interval_seconds"] == settings.worker_poll_interval_seconds
-        assert received["worker"]["lease_duration"] == settings.worker_lease_duration
-        assert received["ran_once"]
+        assert received["consumer"]["worker_id"] == settings.mq.consumer_id
+        assert received["consumer"]["poll_interval_seconds"] == settings.mq.poll_interval_seconds
+        assert received["consumer"]["lease_duration"] == settings.mq.lease_duration
+        runtime = services.agent._runtime
+        assert runtime._query_model.model_name == "configured-query-model"
+        assert runtime._evaluator_model.model_name == "configured-review-model"
+        assert runtime._chat_model.model_name == "configured-chat-model"
+        assert runtime._query_model.max_output_tokens == 2048
+        assert runtime._chat_model.max_output_tokens == 2048
+        assert runtime._evaluator_model.max_output_tokens == 2048
+        assert runtime._max_loop_turns == 2
+        assert runtime._max_model_calls == 4
+        assert runtime._max_tool_calls == 2
+        assert runtime._execution_timeout == 90
+        assert services.agent._executor._max_workers == 2
+        app = create_app(services, settings=settings)
+        assert app.state.sse_config == settings.sse
+    finally:
+        services.close()
+    assert services.qdrant_client.closed
     assert received["pool_recycle_seconds"] == settings.database_pool_recycle_seconds
 
 
-def test_application_closes_agent_tasks_before_database_and_vector_store():
+def test_mq_once_reuses_application_bootstrap(monkeypatch):
+    from types import SimpleNamespace
+
+    events = []
+    settings = SimpleNamespace(environment="test", logging=object())
+    services = SimpleNamespace(
+        parse_consumer=SimpleNamespace(
+            run_once=lambda: events.append("run_once"),
+        ),
+        close=lambda: events.append("close"),
+    )
+    monkeypatch.setattr(
+        mq_main.ServerSettings,
+        "from_environment",
+        classmethod(lambda _cls: settings),
+    )
+    monkeypatch.setattr(
+        mq_main,
+        "configure_logging",
+        lambda process, **kwargs: events.append(
+            (process, kwargs["environment"], kwargs["config"])
+        ),
+    )
+    monkeypatch.setattr(
+        mq_main,
+        "build_application_services",
+        lambda received: services if received is settings else None,
+    )
+    monkeypatch.setattr(sys, "argv", ["python -m server.mq", "--once"])
+
+    mq_main.main()
+
+    assert events == [("mq", "test", settings.logging), "run_once", "close"]
+
+
+def test_mq_entrypoint_rejects_persistent_process_mode(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["python -m server.mq"])
+
+    with pytest.raises(SystemExit) as error:
+        mq_main.main()
+
+    assert error.value.code == 2
+
+
+def test_application_stops_consumer_before_agent_database_and_vector_store():
     from server.bootstrap import ApplicationServices
     from types import SimpleNamespace
     order = []
     services = ApplicationServices(
         library=None, uploads=None, jobs=None, media=None, retrieval=None,
         agent=SimpleNamespace(close=lambda: order.append("agent")), index_sync=None,
+        parse_consumer=SimpleNamespace(close=lambda: order.append("consumer")),
         qdrant_client=SimpleNamespace(close=lambda: order.append("vectors")),
         engine=SimpleNamespace(dispose=lambda: order.append("database")),
     )
     services.close()
-    assert order == ["agent", "vectors", "database"]
+    assert order == ["consumer", "agent", "vectors", "database"]
 
 
 def test_query_embedder_uses_a_client_per_call_and_always_closes(monkeypatch):
@@ -186,11 +238,14 @@ def test_app_lifespan_closes_only_services_it_owns(monkeypatch, injected):
     from fastapi.testclient import TestClient
     from types import SimpleNamespace
     import server.api.app as app_module
-    closed = []
-    services = SimpleNamespace(close=lambda: closed.append("services"))
+    lifecycle = []
+    services = SimpleNamespace(
+        start=lambda: lifecycle.append("start"),
+        close=lambda: lifecycle.append("close"),
+    )
     settings = SimpleNamespace(sse=SSEConfig(), allowed_origins=())
     monkeypatch.setattr(app_module, "build_application_services", lambda _settings: services)
     app = create_app(services if injected else None, settings=settings)
     with TestClient(app):
         pass
-    assert closed == ([] if injected else ["services"])
+    assert lifecycle == ([] if injected else ["start", "close"])

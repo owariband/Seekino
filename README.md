@@ -12,7 +12,7 @@ AniVAG 是一个面向事件级视频检索与时间证据定位的多模态视�
 - Video-only：用户不需要上传外挂字幕文件。
 - 语音、镜头与关键帧进入查询前的异步建库链路；主路径调用 Doubao Pro，明确触发内容审核时降级为按需 Lite ASR、分组抽帧、官方 DeepSeek Flash 视觉取证与文本整理。烧录字幕 OCR 暂不阻塞第一版。
 - 在线查询融合语音文本、视觉与角色事件候选，返回时间证据。
-- V1 使用持久化 Job Store + Worker；RocketMQ 不是单用户 MVP 的前置依赖。
+- V1 使用 MySQL 持久化 Queue + AniVAG Server 进程内 Consumer；RocketMQ 不是单用户 MVP 的前置依赖。
 
 ## 快速开始
 
@@ -30,11 +30,12 @@ uv run --env-file .env.local python -m gateway.cli --help
 冒烟见 [`gateway/README.md`](gateway/README.md)，业务事实与索引同步命令见
 [`server/README.md`](server/README.md)。所有命令都从仓库根目录运行。
 
-本地验证时，可直接懒启动 MySQL、原生 Qdrant、API、视频 Worker 和 Web：
+本地验证时，可直接懒启动 MySQL、原生 Qdrant、AniVAG Server（API + 进程内
+ParseJobConsumer）和 Web：
 
 ```bash
 ./start.sh          # 已运行的服务直接复用，只启动缺少的进程
-./start.sh status   # 查看服务监听 / readiness 和 Worker 进程状态
+./start.sh status   # 查看服务监听，以及 API / ParseJobConsumer readiness
 ./start.sh stop     # 只停止本脚本启动的进程，保留数据
 ```
 
@@ -44,10 +45,11 @@ uv run --env-file .env.local python -m gateway.cli --help
 `http://127.0.0.1:6333` 的 `anivag_video_chunks_development` 集合。
 首次自建 MySQL 使用该 root 账号；复用已有认证实例时，在 `.env.local` 配置其数据库账号。
 
-需要本机已有 `uv`、Node、npm、MySQL 8、Qdrant、ffmpeg / ffprobe 和 `lsof`。
+需要本机已有 `uv`、Node、npm、MySQL 8、Qdrant 和 ffmpeg / ffprobe。
 脚本会在缺少 `.venv` / Web 依赖时执行 `uv sync` / `npm ci`。
 可通过 `ANIVAG_MYSQLD_BIN` / `ANIVAG_QDRANT_BIN` 指定二进制；也会查找 Homebrew
-MySQL 8.4 和 `~/.local/bin/qdrant`。Gateway / Engine 由 API / Worker 调用，无需额外进程。
+MySQL 8.4 和 `~/.local/bin/qdrant`。Gateway / Engine 由 AniVAG Server 进程内调用，
+无需额外进程。
 
 自建数据、PID 与日志保存在 `outputs/local-services/`，媒体仍使用
 `ANIVAG_ARTIFACT_ROOT`（默认 `outputs/server/artifacts`）。启动会创建缺失的开发库 / 表 /
@@ -81,7 +83,8 @@ AniVAG/
 ```
 
 这里列的是当前已经存在的目录，不代表最终系统只有这些文件。Server 已包含 HTTP API、
-MySQL DB Queue Worker 和环境隔离的本地 Artifact Store；Web 层独立推进。Artifact Store
+MySQL DB Queue、进程内 ParseJobConsumer 和环境隔离的本地 Artifact Store；Web 层独立推进。
+Artifact Store
 只负责媒体与其他二进制产物，Embedding 的 durable source 仍是 MySQL，不因引入
 Artifact Store 自动外置。完整目标结构与阶段记录维护在
 `docs/design/technical_solution copy.mdv.document.working.md`。
@@ -89,7 +92,7 @@ Artifact Store 自动外置。完整目标结构与阶段记录维护在
 ## 运行入口
 
 根 `pyproject.toml` 只负责依赖和工具配置，没有构建系统、分发包入口或全量公共 API。
-当前各进程使用显式模块入口：
+当前运行和调试使用以下显式模块入口：
 
 ```bash
 uv run python -m engine.parse.cli --help
@@ -99,6 +102,9 @@ uv run python -m server.cli --help
 uv run python -m server.api
 uv run python -m server.mq --once
 ```
+
+`server.api` 是唯一常驻 Backend PSM；`server.mq --once` 只用于领取至多一个到期任务的
+诊断，不是需要与 API 并行启动的常驻服务。
 
 ## 上游归属
 

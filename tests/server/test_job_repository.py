@@ -15,7 +15,7 @@ from server.model.job import (
     VideoChunkCheckpointStage,
 )
 from server.model.video import SeriesRecord, VideoRecord
-from server.model.upload import UploadSessionRecord, UploadSessionStatus
+from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.job import (
     ParseJobCheckpointConflictError,
     ParseJobLeaseLostError,
@@ -89,16 +89,22 @@ def _seed_job(
                 lease_version=0,
             )
         )
-    return ParseJobRepository(session_factory), job_id, video_id, now
+    return (
+        ParseJobRepository(session_factory),
+        MySqlParseJobQueue(session_factory),
+        job_id,
+        video_id,
+        now,
+    )
 
 
 def test_public_job_version_tracks_semantic_changes_and_not_heartbeats(repository):
-    jobs, job_id, _video_id, now = _seed_job(repository)
+    jobs, queue, job_id, _video_id, now = _seed_job(repository)
     assert jobs.get(job_id).version == 1
-    lease = jobs.claim_next("worker", lease_duration=timedelta(minutes=2), now=now)
+    lease = queue.claim_next("worker", lease_duration=timedelta(minutes=2), now=now)
     assert lease is not None
     assert jobs.get(job_id).version == 2
-    assert jobs.heartbeat(lease, lease_duration=timedelta(minutes=2), now=now + timedelta(seconds=1))
+    assert queue.heartbeat(lease, lease_duration=timedelta(minutes=2), now=now + timedelta(seconds=1))
     assert jobs.get(job_id).version == 2
     assert jobs.update_progress(lease, stage=ParseJobStage.PARSING, progress=30, now=now + timedelta(seconds=2))
     assert jobs.get(job_id).version == 3
@@ -115,20 +121,22 @@ def test_public_job_version_tracks_semantic_changes_and_not_heartbeats(repositor
     assert jobs.get(job_id).version == 4
     jobs.save_checkpoint(lease, replace(checkpoint, stage=VideoChunkCheckpointStage.TEXT_EMBEDDED.value), now=now + timedelta(seconds=6))
     assert jobs.get(job_id).version == 5
-    assert jobs.mark_succeeded(lease, now=now + timedelta(seconds=7))
+    assert queue.acknowledge(lease, now=now + timedelta(seconds=7))
     assert jobs.get(job_id).version == 6
 
 
 @pytest.mark.parametrize("expire_lease", [False, True])
 def test_terminal_failure_has_completion_time_and_safe_public_projection(repository, expire_lease):
-    jobs, job_id, _video_id, now = _seed_job(repository, max_attempts=1)
-    lease = jobs.claim_next("worker", lease_duration=timedelta(minutes=2), now=now)
+    jobs, queue, job_id, _video_id, now = _seed_job(
+        repository, max_attempts=1,
+    )
+    lease = queue.claim_next("worker", lease_duration=timedelta(minutes=2), now=now)
     assert lease is not None
     failed_at = now + timedelta(minutes=3) if expire_lease else now + timedelta(seconds=5)
     if expire_lease:
-        assert jobs.reap_expired(retry_delay=timedelta(minutes=1), now=failed_at) == 1
+        assert queue.reap_expired(retry_delay=timedelta(minutes=1), now=failed_at) == 1
     else:
-        assert jobs.mark_failed(lease, error="private key https://internal/provider", retry_at=failed_at, now=failed_at)
+        assert queue.retry(lease, error="private key https://internal/provider", retry_at=failed_at, now=failed_at)
     job = jobs.get(job_id)
     assert job.status == ParseJobStatus.FAILED
     assert job.completed_at == failed_at
@@ -146,9 +154,11 @@ def test_terminal_failure_has_completion_time_and_safe_public_projection(reposit
 
 
 def test_job_pages_and_summary_count_full_actual_scope(repository):
-    jobs, first_job_id, _first_video, now = _seed_job(repository)
-    _jobs, second_job_id, _second_video, _ = _seed_job(repository)
-    _jobs, foreign_job_id, _foreign_video, _ = _seed_job(repository, workspace_id="foreign")
+    jobs, queue, first_job_id, _first_video, now = _seed_job(repository)
+    _jobs, _queue, second_job_id, _second_video, _ = _seed_job(repository)
+    _jobs, _queue, foreign_job_id, _foreign_video, _ = _seed_job(
+        repository, workspace_id="foreign",
+    )
     engine, _video_repository = repository
     factory = create_session_factory(engine)
     with factory.begin() as session:
@@ -164,7 +174,7 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
     assert summary.counts.queued == 2
     assert summary.checkpoint_count == 0
     assert summary.version == 2
-    lease = jobs.claim_next("worker", lease_duration=timedelta(minutes=2), now=now)
+    lease = queue.claim_next("worker", lease_duration=timedelta(minutes=2), now=now)
     assert lease is not None and lease.job_id != foreign_job_id
     checkpoint = VideoChunkCheckpointState(
         job_id=lease.job_id, sequence_no=0, video_chunk_id=str(uuid4()),
@@ -196,9 +206,9 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
 
 
 def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
-    jobs, job_id, video_id, now = _seed_job(repository)
+    jobs, queue, job_id, video_id, now = _seed_job(repository)
 
-    first = jobs.claim_next(
+    first = queue.claim_next(
         "worker-a",
         lease_duration=timedelta(minutes=2),
         now=now,
@@ -209,7 +219,7 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     assert first.video_id == video_id
     assert first.lease_version == 1
     assert first.attempt_count == 1
-    assert jobs.claim_next(
+    assert queue.claim_next(
         "worker-b",
         lease_duration=timedelta(minutes=2),
         now=now,
@@ -236,7 +246,7 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     assert len(jobs.list_checkpoints(job_id)) == 1
 
     retry_at = now + timedelta(minutes=5)
-    assert jobs.mark_failed(
+    assert queue.retry(
         first,
         error="temporary provider failure",
         retry_at=retry_at,
@@ -249,7 +259,7 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     assert waiting.episode_order == 1
     assert waiting.original_filename == "episode.mp4"
 
-    second = jobs.claim_next(
+    second = queue.claim_next(
         "worker-b",
         lease_duration=timedelta(minutes=2),
         now=retry_at,
@@ -257,7 +267,7 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     assert second is not None
     assert second.lease_version == 2
     assert second.attempt_count == 2
-    assert not jobs.heartbeat(
+    assert not queue.heartbeat(
         first,
         lease_duration=timedelta(minutes=2),
         now=retry_at,
@@ -269,202 +279,16 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
             now=retry_at,
         )
 
-    assert jobs.mark_succeeded(second, now=retry_at + timedelta(seconds=30))
+    assert queue.acknowledge(second, now=retry_at + timedelta(seconds=30))
     completed = jobs.get(job_id)
     assert completed.status == ParseJobStatus.SUCCEEDED.value
     assert completed.stage == ParseJobStage.COMPLETED.value
     assert completed.progress == 100
 
 
-def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> None:
-    engine, _video_repository = repository
-    session_factory = create_session_factory(engine)
-    jobs = ParseJobRepository(session_factory)
-    now = datetime(2026, 9, 14, 10, 0, 0)
-    series_a = str(uuid4())
-    series_b = str(uuid4())
-    first_job = str(uuid4())
-    sibling_job = str(uuid4())
-    other_job = str(uuid4())
-    first_video = str(uuid4())
-    sibling_video = str(uuid4())
-    other_video = str(uuid4())
-
-    with session_factory.begin() as session:
-        for series_id in (series_a, series_b):
-            session.add(
-                SeriesRecord(
-                    series_id=series_id,
-                    workspace_id="local-default",
-                    name=f"Series {series_id}",
-                    description=None,
-                    status="INDEXING",
-                    important_extra_data=None,
-                    character_bible=[],
-                )
-            )
-        for video_id, series_id, episode_order, content_hash in (
-            (first_video, series_a, 1, "a" * 64),
-            (sibling_video, series_a, 2, "b" * 64),
-            (other_video, series_b, 1, "c" * 64),
-        ):
-            session.add(
-                VideoRecord(
-                    video_id=video_id,
-                    series_id=series_id,
-                    episode_order=episode_order,
-                    upload_sequence=episode_order,
-                    original_filename=f"episode-{episode_order}.mp4",
-                    original_source_uri=f"artifact://test/{video_id}.mp4",
-                    inference_proxy_uri=None,
-                    content_hash=content_hash,
-                    total_bytes=100,
-                    duration_ms=60_000,
-                    upload_status="COMPLETED",
-                    parse_status=ParseJobStatus.QUEUED.value,
-                    upload_progress=100,
-                    parse_progress=0,
-                )
-            )
-        for job_id, series_id, video_id, delay in (
-            (first_job, series_a, first_video, 0),
-            (sibling_job, series_a, sibling_video, 1),
-            (other_job, series_b, other_video, 2),
-        ):
-            session.add(
-                SeriesParseJobRecord(
-                    job_id=job_id,
-                    series_id=series_id,
-                    video_id=video_id,
-                    pipeline_version="pipeline-v1",
-                    status=ParseJobStatus.QUEUED.value,
-                    stage=ParseJobStage.QUEUED.value,
-                    progress=0,
-                    attempt_count=0,
-                    max_attempts=3,
-                    available_at=now + timedelta(seconds=delay),
-                    lease_version=0,
-                )
-            )
-
-    claim_at = now + timedelta(seconds=3)
-    first = jobs.claim_next(
-        "worker-a",
-        lease_duration=timedelta(minutes=2),
-        now=claim_at,
-    )
-    parallel = jobs.claim_next(
-        "worker-b",
-        lease_duration=timedelta(minutes=2),
-        now=claim_at,
-    )
-
-    assert first is not None and first.job_id == first_job
-    assert parallel is not None and parallel.job_id == other_job
-    assert jobs.claim_next(
-        "worker-c",
-        lease_duration=timedelta(minutes=2),
-        now=claim_at,
-    ) is None
-
-    assert jobs.mark_succeeded(first, now=claim_at + timedelta(seconds=1))
-    sibling = jobs.claim_next(
-        "worker-c",
-        lease_duration=timedelta(minutes=2),
-        now=claim_at + timedelta(seconds=2),
-    )
-    assert sibling is not None and sibling.job_id == sibling_job
-
-    with session_factory() as session:
-        assert session.get(SeriesRecord, series_a).status == "INDEXING"
-
-
-def test_later_upload_waits_for_earlier_video_and_its_retry(repository) -> None:
-    jobs, first_job_id, first_video_id, now = _seed_job(repository)
-    engine, _repository = repository
-    session_factory = create_session_factory(engine)
-    later_job_id = str(uuid4())
-    later_video_id = str(uuid4())
-    with session_factory.begin() as session:
-        first_video = session.get(VideoRecord, first_video_id)
-        session.add(VideoRecord(
-            video_id=later_video_id, series_id=first_video.series_id,
-            episode_order=2, upload_sequence=2,
-            original_filename="later.mp4", original_source_uri="artifact://test/later.mp4",
-            content_hash="b" * 64, total_bytes=100, duration_ms=60_000,
-            upload_status="COMPLETED", parse_status="QUEUED", upload_progress=100, parse_progress=0,
-        ))
-        session.add(SeriesParseJobRecord(
-            job_id=later_job_id, series_id=first_video.series_id, video_id=later_video_id,
-            pipeline_version="pipeline-v1", status="QUEUED", stage="QUEUED",
-            progress=0, attempt_count=0, max_attempts=3, lease_version=0,
-            available_at=now - timedelta(minutes=1),
-        ))
-
-    # The later upload finished first and has an older available_at.
-    first = jobs.claim_next("worker-a", lease_duration=timedelta(minutes=2), now=now)
-    assert first is not None and first.job_id == first_job_id
-    retry_at = now + timedelta(minutes=5)
-    assert jobs.mark_failed(first, error="temporary error", retry_at=retry_at, now=now)
-    assert jobs.claim_next(
-        "worker-b", lease_duration=timedelta(minutes=2), now=now + timedelta(seconds=1),
-    ) is None
-    retry = jobs.claim_next("worker-b", lease_duration=timedelta(minutes=2), now=retry_at)
-    assert retry is not None and retry.job_id == first_job_id
-    assert jobs.mark_succeeded(retry, now=retry_at)
-    later = jobs.claim_next("worker-c", lease_duration=timedelta(minutes=2), now=retry_at)
-    assert later is not None and later.job_id == later_job_id
-
-
-@pytest.mark.parametrize("earlier_status", ["FAILED", "RUNNING", "QUEUED"])
-def test_earlier_unfinished_video_without_due_job_blocks_later_parse(repository, earlier_status) -> None:
-    jobs, job_id, video_id, now = _seed_job(repository)
-    engine, _repository = repository
-    session_factory = create_session_factory(engine)
-    with session_factory.begin() as session:
-        candidate = session.get(VideoRecord, video_id)
-        candidate.episode_order = 2
-        candidate.upload_sequence = 2
-        # No due Job exists for this earlier video; ordering still applies.
-        session.add(VideoRecord(
-            video_id=str(uuid4()), series_id=candidate.series_id,
-            episode_order=1, upload_sequence=1,
-            original_filename="earlier.mp4", original_source_uri="artifact://test/earlier.mp4",
-            content_hash="b" * 64, total_bytes=100, duration_ms=60_000,
-            upload_status="COMPLETED", parse_status=earlier_status,
-            upload_progress=100, parse_progress=0,
-        ))
-    assert jobs.claim_next("worker", lease_duration=timedelta(minutes=2), now=now) is None
-    assert jobs.get(job_id).status == "QUEUED"
-
-
-@pytest.mark.parametrize("upload_status", [UploadSessionStatus.UPLOADING, UploadSessionStatus.COMPLETING])
-def test_earlier_upload_without_job_blocks_later_parse_until_expired(repository, upload_status) -> None:
-    jobs, job_id, video_id, now = _seed_job(repository)
-    engine, _repository = repository
-    session_factory = create_session_factory(engine)
-    with session_factory.begin() as session:
-        candidate = session.get(VideoRecord, video_id)
-        candidate.episode_order = 2
-        candidate.upload_sequence = 2
-        session.add(UploadSessionRecord(
-            upload_session_id=str(uuid4()), workspace_id="local-default", series_id=candidate.series_id,
-            episode_order=1, upload_sequence=1, original_filename="earlier.mp4",
-            media_type="video/mp4", total_size_bytes=100, preferred_segment_size_bytes=100,
-            total_segments=1, status=upload_status.value, idempotency_key="earlier-upload",
-            expires_at=now + timedelta(minutes=1),
-        ))
-    assert jobs.claim_next("worker", lease_duration=timedelta(minutes=2), now=now) is None
-    assert jobs.get(job_id).status == "QUEUED"
-    lease = jobs.claim_next(
-        "worker", lease_duration=timedelta(minutes=2), now=now + timedelta(minutes=1),
-    )
-    assert lease is not None and lease.job_id == job_id
-
-
 def test_checkpoint_cannot_move_backwards_or_change_identity(repository) -> None:
-    jobs, job_id, _video_id, now = _seed_job(repository)
-    lease = jobs.claim_next(
+    jobs, queue, job_id, _video_id, now = _seed_job(repository)
+    lease = queue.claim_next(
         "worker-a",
         lease_duration=timedelta(minutes=2),
         now=now,
@@ -507,8 +331,8 @@ def test_checkpoint_cannot_move_backwards_or_change_identity(repository) -> None
 
 
 def test_checkpoint_ranges_are_paired_bounded_and_immutable(repository) -> None:
-    jobs, job_id, _video_id, now = _seed_job(repository)
-    lease = jobs.claim_next(
+    jobs, queue, job_id, _video_id, now = _seed_job(repository)
+    lease = queue.claim_next(
         "worker-a",
         lease_duration=timedelta(minutes=2),
         now=now,
@@ -566,8 +390,8 @@ def test_checkpoint_ranges_are_paired_bounded_and_immutable(repository) -> None:
 def test_retry_can_fill_legacy_checkpoint_range_without_regressing_stage(
     repository,
 ) -> None:
-    jobs, job_id, _video_id, now = _seed_job(repository)
-    lease = jobs.claim_next(
+    jobs, queue, job_id, _video_id, now = _seed_job(repository)
+    lease = queue.claim_next(
         "worker-a",
         lease_duration=timedelta(minutes=2),
         now=now,
@@ -596,8 +420,8 @@ def test_retry_can_fill_legacy_checkpoint_range_without_regressing_stage(
 
 
 def test_checkpoint_ranges_must_be_contiguous(repository) -> None:
-    jobs, job_id, _video_id, now = _seed_job(repository)
-    lease = jobs.claim_next(
+    jobs, queue, job_id, _video_id, now = _seed_job(repository)
+    lease = queue.claim_next(
         "worker-a",
         lease_duration=timedelta(minutes=2),
         now=now,
@@ -633,10 +457,10 @@ def test_checkpoint_ranges_must_be_contiguous(repository) -> None:
 def test_progress_uses_split_gate_and_duration_weighted_parse_coverage(
     repository,
 ) -> None:
-    jobs, job_id, video_id, now = _seed_job(repository)
+    jobs, queue, job_id, video_id, now = _seed_job(repository)
     engine, _video_repository = repository
     session_factory = create_session_factory(engine)
-    lease = jobs.claim_next(
+    lease = queue.claim_next(
         "worker-a",
         lease_duration=timedelta(minutes=2),
         now=now,
@@ -704,29 +528,9 @@ def test_progress_uses_split_gate_and_duration_weighted_parse_coverage(
         assert jobs.get(job_id).progress == 99
 
 
-def test_reaper_requeues_or_exhausts_expired_leases(repository) -> None:
-    jobs, job_id, _video_id, now = _seed_job(repository, max_attempts=1)
-    lease = jobs.claim_next(
-        "worker-a",
-        lease_duration=timedelta(seconds=30),
-        now=now,
-    )
-    assert lease is not None
-
-    reaped = jobs.reap_expired(
-        retry_delay=timedelta(minutes=1),
-        now=now + timedelta(seconds=31),
-    )
-
-    assert reaped == 1
-    state = jobs.get(job_id)
-    assert state.status == ParseJobStatus.FAILED.value
-    assert state.last_error == "worker lease expired"
-
-
 def test_retry_can_replay_earlier_stages_without_regressing_progress(repository) -> None:
-    jobs, job_id, _video_id, now = _seed_job(repository)
-    first = jobs.claim_next(
+    jobs, queue, job_id, _video_id, now = _seed_job(repository)
+    first = queue.claim_next(
         "worker-a",
         lease_duration=timedelta(minutes=2),
         now=now,
@@ -743,13 +547,13 @@ def test_retry_can_replay_earlier_stages_without_regressing_progress(repository)
     jobs.save_checkpoint(first, checkpoint, now=now)
     assert jobs.update_progress(first, stage=ParseJobStage.INDEXING, now=now)
     retry_at = now + timedelta(seconds=10)
-    assert jobs.mark_failed(
+    assert queue.retry(
         first,
         error="index unavailable",
         retry_at=retry_at,
         now=now,
     )
-    second = jobs.claim_next(
+    second = queue.claim_next(
         "worker-b",
         lease_duration=timedelta(minutes=2),
         now=retry_at,

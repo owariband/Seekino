@@ -9,9 +9,11 @@ from sqlalchemy import func, select
 from server.database import create_session_factory
 from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
 from server.model.video import SeriesRecord, VideoChunkRecord, VideoRecord
-from server.repository.job import ParseJobLeaseLostError, ParseJobRepository
+from server.mq.contracts import ParseJobLeaseLostError
+from server.repository.job import ParseJobRepository
 from server.repository.video import VideoRepository
 from server.model.dto.parseDTO import PreparedEmbedding
+from server.mq.mysql_queue import MySqlParseJobQueue
 
 
 def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> None:
@@ -82,20 +84,21 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
             )
         )
     jobs = ParseJobRepository(session_factory)
-    first = jobs.claim_next(
+    queue = MySqlParseJobQueue(session_factory)
+    first = queue.claim_next(
         "worker-a",
         lease_duration=timedelta(minutes=5),
         now=now,
     )
     assert first is not None
     retry_at = now + timedelta(seconds=1)
-    assert jobs.mark_failed(
+    assert queue.retry(
         first,
         error="handoff",
         retry_at=retry_at,
         now=now,
     )
-    second = jobs.claim_next(
+    second = queue.claim_next(
         "worker-b",
         lease_duration=timedelta(minutes=5),
         now=retry_at,

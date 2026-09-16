@@ -1,162 +1,39 @@
 from __future__ import annotations
 
 import argparse
-import logging
-import signal
-import threading
 
-from engine.parse.runtime import EngineVideoParseRuntime
-from gateway.config import load_config
-from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
-from qdrant_client import QdrantClient
-
+from ..bootstrap import build_application_services
 from ..config import ServerSettings
-from ..config.video_processing import VideoProcessingConfig
-from ..config.usage import load_model_pricing
-from ..database import create_database_engine, create_schema, create_session_factory
-from ..repository.index_sync import IndexSyncRepository
-from ..repository.job import ParseJobRepository
-from ..repository.library import LibraryRepository
-from ..repository.parse_usage import ParseUsageRepository
-from ..repository.video import VideoRepository
-from ..service.index_sync import IndexSyncService
-from ..service.job import ParseJobService
-from ..service.library import LibraryService
-from ..service.parse_usage import ParseUsageService
-from ..service.qdrant_mutation_lock import QdrantMutationLock
-from ..service.video_processing import VideoProcessingService
-from ..storage.artifact import LocalArtifactStore
-from ..storage.qdrant import QdrantVideoChunkStore
 from ..utils.logging import configure_logging
-from .worker import ParseWorker
-
-_logger = logging.getLogger(__name__)
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m server.mq",
-        description="Run the durable AniVAG video parse/index Worker.",
+        description="Run at most one due AniVAG parse job for diagnostics.",
     )
     parser.add_argument(
         "--once",
         action="store_true",
         help="Claim at most one due job and then exit.",
     )
-    parser.add_argument(
-        "--init-db",
-        action="store_true",
-        help="Create missing tables before starting the Worker.",
-    )
     return parser
 
 
 def main() -> None:
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    args = parser.parse_args()
+    if not args.once:
+        parser.error("server.mq is not a persistent process; pass --once for diagnostics")
     settings = ServerSettings.from_environment()
-    configure_logging("worker", environment=settings.environment, config=settings.logging)
-    engine = create_database_engine(
-        settings.database_url,
-        environment=settings.environment,
-        pool_recycle_seconds=settings.database_pool_recycle_seconds,
-    )
-    if args.init_db:
-        create_schema(engine)
-    session_factory = create_session_factory(engine)
-    jobs = ParseJobRepository(session_factory)
-    parse_usage = ParseUsageService(
-        ParseUsageRepository(session_factory),
-        ParseJobService(jobs, LibraryService(LibraryRepository(session_factory))),
-        load_model_pricing(settings.model_pricing_path),
-    )
-    artifact_store = LocalArtifactStore(
-        settings.artifact_root,
-        environment=settings.environment,
-    )
-    qdrant_client = QdrantClient(
-        url=settings.qdrant_url,
-        api_key=settings.qdrant_api_key,
-    )
+    configure_logging("mq", environment=settings.environment, config=settings.logging)
+    services = build_application_services(settings)
     try:
-        qdrant_store = QdrantVideoChunkStore(
-            qdrant_client,
-            collection_name=settings.qdrant_collection,
-            environment=settings.environment,
-            text_dimensions=settings.text_vector_dimensions,
-            vision_dimensions=settings.vision_vector_dimensions,
-        )
-        qdrant_mutation_lock = QdrantMutationLock(
-            engine,
-            environment=settings.environment,
-            collection_name=settings.qdrant_collection,
-        )
-        index_sync = IndexSyncService(
-            IndexSyncRepository(session_factory),
-            qdrant_store,
-            mutation_lock=qdrant_mutation_lock,
-            retry_base_seconds=int(settings.worker_retry_base.total_seconds()),
-            retry_max_seconds=int(settings.worker_retry_max.total_seconds()),
-        )
-        embedding_config = load_config(
-            settings.model_config_path
-        ).multimodal_embedding
-        embedder = DoubaoMultimodalEmbedder(
-            settings.video_embedding_model or embedding_config.model,
-            output_dimensionality=settings.text_vector_dimensions,
-            fps=(
-                settings.video_embedding_fps
-                if settings.video_embedding_fps is not None
-                else embedding_config.fps
-            ),
-        )
-        processor = VideoProcessingService(
-            jobs,
-            VideoRepository(session_factory),
-            index_sync,
-            artifact_store,
-            EngineVideoParseRuntime(
-                model_config_path=settings.model_config_path,
-                config=settings.parse,
-                on_log=_log,
-            ),
-            embedder,
-            parse_usage=parse_usage,
-            config=VideoProcessingConfig(
-                embedding_dimensions=settings.text_vector_dimensions,
-                canonical_max_height=settings.parse.max_height,
-            ),
-        )
-        worker = ParseWorker(
-            jobs,
-            processor,
-            worker_id=settings.worker_id,
-            lease_duration=settings.worker_lease_duration,
-            heartbeat_interval=settings.worker_heartbeat_interval,
-            retry_base=settings.worker_retry_base,
-            retry_max=settings.worker_retry_max,
-            poll_interval_seconds=settings.worker_poll_interval_seconds,
-            on_log=_log,
-        )
-        if args.once:
-            worker.run_once()
-            return
-
-        stop = threading.Event()
-
-        def request_stop(_signum, _frame) -> None:
-            stop.set()
-
-        signal.signal(signal.SIGINT, request_stop)
-        signal.signal(signal.SIGTERM, request_stop)
-        _log(f"worker started id={settings.worker_id}")
-        worker.run_forever(stop)
+        if services.parse_consumer is None:
+            raise RuntimeError("parse consumer is not configured")
+        services.parse_consumer.run_once()
     finally:
-        qdrant_client.close()
-        engine.dispose()
-
-
-def _log(message: str) -> None:
-    _logger.info(message)
+        services.close()
 
 
 if __name__ == "__main__":

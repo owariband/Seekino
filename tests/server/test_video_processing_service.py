@@ -21,6 +21,7 @@ from server.model.video import (
     VideoChunkEmbeddingRecord,
     VideoChunkRecord,
 )
+from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.index_sync import IndexSyncRepository
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
@@ -174,7 +175,8 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
         workspace_id="local-default",
     )
     jobs = ParseJobRepository(session_factory)
-    lease = jobs.claim_next(
+    queue = MySqlParseJobQueue(session_factory)
+    lease = queue.claim_next(
         "worker-a",
         lease_duration=timedelta(minutes=5),
     )
@@ -263,7 +265,7 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
     with pytest.raises(RuntimeError, match="旧解析任务缺少背景快照"):
         processor.process(edited_lease)
     assert (snapshot_path.parent / "chunks" / "chunk-0000.json").is_file()
-    assert jobs.mark_succeeded(lease)
+    assert queue.acknowledge(lease)
     checkpoints = jobs.list_checkpoints(completed.job_id)
     assert {item.stage for item in checkpoints} == {
         VideoChunkCheckpointStage.INDEXED.value

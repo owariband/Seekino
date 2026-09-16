@@ -1,5 +1,7 @@
-"""Validated runtime configuration for API and Worker processes."""
+"""Validated runtime configuration for the AniVAG Server process."""
 
+from .index_sync import IndexSyncConfig
+from .mq import MQConsumerConfig
 from .settings import ServerSettings
 
-__all__ = ["ServerSettings"]
+__all__ = ["IndexSyncConfig", "MQConsumerConfig", "ServerSettings"]

@@ -7,8 +7,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
-import shlex
 import shutil
 import signal
 import socket
@@ -139,28 +137,6 @@ def owned_pid(name: str) -> int | None:
             return pid
     except (OSError, ValueError, KeyError):
         pass
-    return None
-
-
-def worker_pid() -> int | None:
-    pid = owned_pid("worker")
-    if pid:
-        return pid
-    # Idle workers have no lease or listening port. Also find manually started ones.
-    processes = subprocess.check_output(["ps", "-axo", "pid=,args="], text=True)
-    for line in processes.splitlines():
-        if not re.search(r"\s-m\s+server\.mq(?:\s|$)", line):
-            continue
-        pid_text, command = line.strip().split(None, 1)
-        args = shlex.split(command)
-        if "--once" in args or not Path(args[0]).name.startswith("python"):
-            continue
-        cwd = subprocess.run(
-            ["lsof", "-a", "-p", pid_text, "-d", "cwd", "-Fn"],
-            capture_output=True, text=True,
-        )
-        if f"n{ROOT}" in cwd.stdout.splitlines():
-            return int(pid_text)
     return None
 
 
@@ -295,10 +271,18 @@ def start_qdrant(settings: ServerSettings) -> None:
 
 
 def api_ready(base: str) -> bool:
-    payload = get(base + "/openapi.json")
+    payload = get(base + "/healthz")
     try:
-        return payload is not None and json.loads(payload)["info"]["title"] == "AniVAG Server"
-    except (ValueError, KeyError):
+        health = json.loads(payload) if payload is not None else None
+        return (
+            isinstance(health, dict)
+            and health.get("status") == "ok"
+            and health.get("components", {})
+            .get("parseConsumer", {})
+            .get("status")
+            == "running"
+        )
+    except (AttributeError, ValueError):
         return False
 
 
@@ -321,27 +305,19 @@ def start_applications() -> None:
     else:
         if owned_pid("api"):
             raise RuntimeError("已有脚本启动的 API 尚未就绪，请查看 api.log。")
+        if not os.environ.get("ARK_API_KEY"):
+            raise RuntimeError(
+                "请在 .env.local 填写 ARK_API_KEY，AniVAG Server 的 Parse Consumer 需要它完成启动。"
+            )
+        if not os.environ.get("DEEPSEEK_API_KEY"):
+            print(
+                "[提示] 未配置 DEEPSEEK_API_KEY；默认启用降级解析时，新视频 Parse 会失败。",
+                flush=True,
+            )
         launch("api", [sys.executable, "-u", "-m", "server.api"])
         wait_ready("api", lambda: api_ready(api_base))
     if not library_ready(api_base):
         raise RuntimeError("API 已监听但资料库查询失败，请查看 api.log。")
-
-    pid = worker_pid()
-    if pid:
-        print(f"[复用] Worker PID={pid}", flush=True)
-    else:
-        if not os.environ.get("ARK_API_KEY"):
-            raise RuntimeError("请在 .env.local 填写 ARK_API_KEY，Worker 需要它完成启动。")
-        if not os.environ.get("DEEPSEEK_API_KEY"):
-            print("[提示] 未配置 DEEPSEEK_API_KEY；默认启用降级解析时，新视频 Parse 会失败。", flush=True)
-        offset = launch("worker", [sys.executable, "-u", "-m", "server.mq"])
-
-        def worker_started() -> bool:
-            with (STATE / "worker.log").open("rb") as log:
-                log.seek(offset)
-                return b"worker started id=" in log.read()
-
-        wait_ready("worker", worker_started)
 
     web_port = port("ANIVAG_WEB_PORT")
     web_base = f"http://127.0.0.1:{web_port}"
@@ -370,8 +346,7 @@ def status(settings: ServerSettings) -> bool:
     checks = {
         "MySQL TCP": listening(database_port),
         "Qdrant readyz": get(settings.qdrant_url.rstrip("/") + "/readyz") is not None,
-        "API": api_ready(f"http://127.0.0.1:{port('ANIVAG_HTTP_PORT')}"),
-        "Worker 进程": worker_pid() is not None,
+        "API / Parse Consumer": api_ready(f"http://127.0.0.1:{port('ANIVAG_HTTP_PORT')}"),
         "Web": get(f"http://127.0.0.1:{port('ANIVAG_WEB_PORT')}/@vite/client") is not None,
     }
     for name, ready in checks.items():
@@ -380,7 +355,7 @@ def status(settings: ServerSettings) -> bool:
 
 
 def stop() -> None:
-    for name in ("web", "worker", "api", "qdrant", "mysql"):
+    for name in ("web", "api", "qdrant", "mysql"):
         pid = owned_pid(name)
         if not pid:
             print(f"[跳过] {name}：没有本脚本管理的存活进程")
@@ -412,9 +387,9 @@ def main() -> int:
         settings = configure()
         if args.command == "status":
             return 0 if status(settings) else 1
-        for tool in ("ffmpeg", "ffprobe", "node", "npm", "lsof"):
+        for tool in ("ffmpeg", "ffprobe", "node", "npm"):
             binary(tool)
-        for name in ("api", "worker", "web"):
+        for name in ("api", "web"):
             if owned_pid(name):
                 record = json.loads((STATE / f"{name}.pid.json").read_text())
                 if record.get("config") != config_digest():

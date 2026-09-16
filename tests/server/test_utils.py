@@ -62,18 +62,18 @@ logger.info("上传事件")
 request_id_context.reset(token)
 logger.info("outside_request")
 logger.debug("hidden_debug")
-configure_logging("worker", environment="test", config=config)
-logging.getLogger("server.worker").info("claimed job=job-test")
+configure_logging("mq", environment="test", config=config)
+logging.getLogger("server.mq").info("claimed job=job-test")
 logging.shutdown()
 """
     result = subprocess.run([sys.executable, "-c", script, str(tmp_path)],
         capture_output=True, text=True, check=True)
     directory = tmp_path / "test"
-    assert {path.name for path in directory.iterdir()} == {"api.log", "api.log.1", "api.log.2", "worker.log"}
+    assert {path.name for path in directory.iterdir()} == {"api.log", "api.log.1", "api.log.2", "mq.log"}
     text = (directory / "api.log").read_text(encoding="utf-8")
     assert "INFO server.test request_id=request-test 上传事件" in text
     assert "request_id=- outside_request" in text
     assert "hidden_debug" not in text
     assert "上传事件" in result.stderr
-    assert "claimed job=job-test" in (directory / "worker.log").read_text()
+    assert "claimed job=job-test" in (directory / "mq.log").read_text()
     assert not (tmp_path / "development").exists()

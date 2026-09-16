@@ -20,10 +20,10 @@ from ..model.video import (
     VideoChunkEmbeddingRecord,
     VideoChunkRecord,
 )
+from ..mq.contracts import ParseJobLeaseLostError
 from ..schema import VideoChunkEvidence
 from ..utils.time import utc_now_naive
 from .index_sync import materialize_index_sync_intents
-from .job import ParseJobLeaseLostError
 
 
 class ParseImportConflictError(RuntimeError):

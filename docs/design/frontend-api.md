@@ -605,7 +605,7 @@ Job 状态：
 
 | 状态 | 是否终态 | UI 含义 |
 | --- | --- | --- |
-| `QUEUED` | 否 | 等待 Worker |
+| `QUEUED` | 否 | 等待进程内 ParseJobConsumer 领取 |
 | `RUNNING` | 否 | 正在处理 |
 | `RETRY_WAIT` | 否 | 暂时失败，等待自动重试；展示 `lastError` 和尝试次数 |
 | `SUCCEEDED` | 是 | 完成 |
@@ -689,7 +689,7 @@ SSE 契约：
 
 - 连接后先发送当前 Job 快照。
 - 只在阶段、进度、checkpoint、错误等 UI 状态变化时发送新 `job` 事件。
-- Worker 的纯 Heartbeat 不产生 UI 进度事件。
+- ParseJobConsumer 的纯租约 Heartbeat 不产生 UI 进度事件。
 - 约 15 秒无变化时发送 SSE 注释作为 keep-alive，前端无需处理。
 - Job 进入 `SUCCEEDED` 或 `FAILED` 后发送最终快照并关闭流。
 - SSE 只是通知；断线恢复必须调用 GET，以 MySQL 返回为准。
@@ -1075,7 +1075,17 @@ interface VideoChunkSearchResult {
 ```bash
 uv run --env-file .env.local python -m server.cli init-db
 uv run --env-file .env.local python -m server.api
-uv run --env-file .env.local python -m server.mq
+```
+
+`server.api` 是唯一常驻的 AniVAG Server 进程。它同时提供 HTTP API，并在进程内启动
+ParseJobConsumer，从 MySQL DB Queue Claim ParseJob；任务持久性、Lease 和 Fencing
+仍以 MySQL 为准，不依赖进程内内存队列。
+
+只有排查单次 Claim/处理链路时才运行以下诊断命令；它至多处理一个到期任务，执行后退出，
+不能作为常驻进程与 API 并行启动：
+
+```bash
+uv run --env-file .env.local python -m server.mq --once
 ```
 
 基础检查：
@@ -1084,11 +1094,9 @@ uv run --env-file .env.local python -m server.mq
 curl -sS http://127.0.0.1:9621/healthz
 ```
 
-API 和 Worker 是两个独立进程：只启动 API 可以创建 Series 和上传视频，但 ParseJob 会
-保持 `QUEUED`，直到 Worker 启动并成功 Claim。
-
-`server.mq.worker.ParseWorker` 消费的是 MySQL 视频解析任务，不消费 Agent Message。
-聊天由 API 进程中的 AgentChatService 执行线程池运行；HTTP 订阅断开不会终止执行，但进程崩溃后的 Agent Run 恢复尚未实现。
+ParseJobConsumer 只消费 MySQL 中的视频解析任务，不消费 Agent Message。聊天由同一 API
+进程中的 AgentChatService 执行线程池运行；HTTP 订阅断开不会终止执行，但进程崩溃后的
+Agent Run 恢复尚未实现。
 `init-db` 只创建缺失表，不会迁移旧 Schema；现有数据库如含旧命名表，应先执行受控迁移，
 不要把启动命令当作自动迁移方案。
 

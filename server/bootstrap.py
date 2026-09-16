@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any
 
 from arkruntime import Ark
+from engine.parse.runtime import EngineVideoParseRuntime
 from gateway.config import load_config
 from gateway.agent_model import SDKQueryAgentModel
 from gateway.models import ArkMultimodalModel
@@ -14,8 +16,11 @@ from sqlalchemy import Engine
 
 from .config import ServerSettings
 from .config.usage import load_model_pricing
+from .config.video_processing import VideoProcessingConfig
 from .agent.runtime import AgentRuntime
 from .database import create_database_engine, create_session_factory
+from .mq.consumer import ParseJobConsumer
+from .mq.mysql_queue import MySqlParseJobQueue
 from .repository.agent import AgentRepository
 from .repository.index_sync import IndexSyncRepository
 from .repository.job import ParseJobRepository
@@ -31,9 +36,12 @@ from .service.media import MediaService
 from .service.parse_usage import ParseUsageService
 from .service.qdrant_mutation_lock import QdrantMutationLock
 from .service.upload import UploadService
+from .service.video_processing import VideoProcessingService
 from .service.video_retrieval import VideoRetrievalService
 from .storage.artifact import LocalArtifactStore
 from .storage.qdrant import QdrantVideoChunkStore
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -45,11 +53,20 @@ class ApplicationServices:
     retrieval: VideoRetrievalService
     agent: AgentChatService
     index_sync: IndexSyncService
+    parse_consumer: ParseJobConsumer | None = None
     engine: Engine | None = None
     qdrant_client: Any | None = None
     parse_usage: ParseUsageService | None = None
 
+    def start(self) -> None:
+        if self.parse_consumer is not None:
+            self.parse_consumer.start()
+
     def close(self) -> None:
+        # The Consumer and its heartbeat must release shared clients before
+        # Agent, Qdrant, or database teardown begins.
+        if self.parse_consumer is not None:
+            self.parse_consumer.close()
         try:
             self.agent.close()
         finally:
@@ -73,7 +90,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         environment=settings.environment,
     )
     library = LibraryService(LibraryRepository(session_factory), artifact_store)
-    jobs = ParseJobService(ParseJobRepository(session_factory), library)
+    job_repository = ParseJobRepository(session_factory)
+    jobs = ParseJobService(job_repository, library)
     parse_usage = ParseUsageService(
         ParseUsageRepository(session_factory), jobs,
         load_model_pricing(settings.model_pricing_path),
@@ -166,8 +184,45 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         IndexSyncRepository(session_factory),
         vector_store,
         mutation_lock=qdrant_mutation_lock,
-        retry_base_seconds=int(settings.worker_retry_base.total_seconds()),
-        retry_max_seconds=int(settings.worker_retry_max.total_seconds()),
+        retry_base_seconds=settings.index_sync.retry_base_seconds,
+        retry_max_seconds=settings.index_sync.retry_max_seconds,
+    )
+    processing_embedder = DoubaoMultimodalEmbedder(
+        settings.video_embedding_model or embedding_config.model,
+        output_dimensionality=settings.text_vector_dimensions,
+        fps=(
+            settings.video_embedding_fps
+            if settings.video_embedding_fps is not None
+            else embedding_config.fps
+        ),
+    )
+    processor = VideoProcessingService(
+        job_repository,
+        video_repository,
+        index_sync,
+        artifact_store,
+        EngineVideoParseRuntime(
+            model_config_path=settings.model_config_path,
+            config=settings.parse,
+            on_log=_logger.info,
+        ),
+        processing_embedder,
+        parse_usage=parse_usage,
+        config=VideoProcessingConfig(
+            embedding_dimensions=settings.text_vector_dimensions,
+            canonical_max_height=settings.parse.max_height,
+        ),
+    )
+    queue = MySqlParseJobQueue(session_factory)
+    parse_consumer = ParseJobConsumer(
+        queue,
+        processor,
+        worker_id=settings.mq.consumer_id,
+        lease_duration=settings.mq.lease_duration,
+        heartbeat_interval=settings.mq.heartbeat_interval,
+        retry_base=settings.mq.retry_base,
+        retry_max=settings.mq.retry_max,
+        poll_interval_seconds=settings.mq.poll_interval_seconds,
     )
     uploads.reconcile_deletions()
     return ApplicationServices(
@@ -178,6 +233,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         retrieval=retrieval,
         agent=agent,
         index_sync=index_sync,
+        parse_consumer=parse_consumer,
         engine=engine,
         qdrant_client=qdrant_client,
         parse_usage=parse_usage,
@@ -185,7 +241,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
 
 
 class _LazyQueryEmbedder:
-    """Keep upload/library APIs usable when only the Worker has model secrets."""
+    """Create one short-lived SDK client for each query embedding call."""
 
     def __init__(
         self, *, model: str, dimensions: int, fps: float,

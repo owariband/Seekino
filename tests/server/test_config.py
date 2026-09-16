@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ def _clean_anivag_environment(monkeypatch) -> None:
     )
 
 
-def test_server_settings_load_upload_parse_agent_and_worker_defaults(monkeypatch) -> None:
+def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) -> None:
     _clean_anivag_environment(monkeypatch)
 
     settings = ServerSettings.from_environment()
@@ -45,7 +46,12 @@ def test_server_settings_load_upload_parse_agent_and_worker_defaults(monkeypatch
     assert settings.agent_query_model is None
     assert settings.agent_chat_model is None
     assert settings.agent_evaluator_model is None
-    assert settings.worker_heartbeat_interval < settings.worker_lease_duration
+    assert settings.mq.heartbeat_interval < settings.mq.lease_duration
+    assert settings.mq.poll_interval_seconds == 2.0
+    assert settings.mq.retry_base == timedelta(seconds=30)
+    assert settings.mq.retry_max == timedelta(seconds=900)
+    assert settings.index_sync.retry_base_seconds == 30
+    assert settings.index_sync.retry_max_seconds == 900
     assert settings.text_vector_dimensions == settings.vision_vector_dimensions
     assert settings.sse.poll_interval_seconds == 1.0
     assert settings.sse.keepalive_interval_seconds == 15.0
@@ -92,6 +98,14 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
         "ANIVAG_LOG_LEVEL": "DEBUG",
         "ANIVAG_LOG_MAX_BYTES": "2048",
         "ANIVAG_LOG_BACKUP_COUNT": "2",
+        "ANIVAG_MQ_CONSUMER_ID": "consumer-a",
+        "ANIVAG_MQ_LEASE_SECONDS": "120",
+        "ANIVAG_MQ_HEARTBEAT_SECONDS": "30",
+        "ANIVAG_MQ_POLL_SECONDS": "0.25",
+        "ANIVAG_MQ_RETRY_BASE_SECONDS": "12",
+        "ANIVAG_MQ_RETRY_MAX_SECONDS": "120",
+        "ANIVAG_INDEX_SYNC_RETRY_BASE_SECONDS": "7",
+        "ANIVAG_INDEX_SYNC_RETRY_MAX_SECONDS": "70",
     }
     for name, value in overrides.items():
         monkeypatch.setenv(name, value)
@@ -114,6 +128,35 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
     assert settings.logging.level == "debug"
     assert settings.logging.maximum_file_size_bytes == 2048
     assert settings.logging.backup_count == 2
+    assert settings.mq.consumer_id == "consumer-a"
+    assert settings.mq.lease_duration == timedelta(seconds=120)
+    assert settings.mq.heartbeat_interval == timedelta(seconds=30)
+    assert settings.mq.poll_interval_seconds == 0.25
+    assert settings.mq.retry_base == timedelta(seconds=12)
+    assert settings.mq.retry_max == timedelta(seconds=120)
+    assert settings.index_sync.retry_base_seconds == 7
+    assert settings.index_sync.retry_max_seconds == 70
+
+
+def test_server_settings_accepts_legacy_worker_environment(monkeypatch) -> None:
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_WORKER_ID", "legacy-worker")
+    monkeypatch.setenv("ANIVAG_WORKER_LEASE_SECONDS", "180")
+    monkeypatch.setenv("ANIVAG_WORKER_HEARTBEAT_SECONDS", "45")
+    monkeypatch.setenv("ANIVAG_WORKER_POLL_SECONDS", "0.5")
+    monkeypatch.setenv("ANIVAG_WORKER_RETRY_BASE_SECONDS", "20")
+    monkeypatch.setenv("ANIVAG_WORKER_RETRY_MAX_SECONDS", "200")
+
+    settings = ServerSettings.from_environment()
+
+    assert settings.mq.consumer_id == "legacy-worker"
+    assert settings.mq.lease_duration == timedelta(seconds=180)
+    assert settings.mq.heartbeat_interval == timedelta(seconds=45)
+    assert settings.mq.poll_interval_seconds == 0.5
+    assert settings.mq.retry_base == timedelta(seconds=20)
+    assert settings.mq.retry_max == timedelta(seconds=200)
+    assert settings.index_sync.retry_base_seconds == 20
+    assert settings.index_sync.retry_max_seconds == 200
 
 
 @pytest.mark.parametrize(
@@ -134,6 +177,9 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
         ("ANIVAG_LOG_LEVEL", "invalid"),
         ("ANIVAG_LOG_MAX_BYTES", "0"),
         ("ANIVAG_LOG_BACKUP_COUNT", "-1"),
+        ("ANIVAG_MQ_POLL_SECONDS", "0"),
+        ("ANIVAG_INDEX_SYNC_RETRY_BASE_SECONDS", "0"),
+        ("ANIVAG_INDEX_SYNC_RETRY_MAX_SECONDS", "0"),
     ],
 )
 def test_server_settings_reject_invalid_runtime_tuning(monkeypatch, name, value):
@@ -141,6 +187,20 @@ def test_server_settings_reject_invalid_runtime_tuning(monkeypatch, name, value)
     monkeypatch.setenv(name, value)
 
     with pytest.raises(ValueError):
+        ServerSettings.from_environment()
+
+
+def test_server_settings_rejects_invalid_mq_and_index_retry_ranges(monkeypatch):
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_MQ_LEASE_SECONDS", "60")
+    monkeypatch.setenv("ANIVAG_MQ_HEARTBEAT_SECONDS", "60")
+    with pytest.raises(ValueError, match="heartbeat_interval"):
+        ServerSettings.from_environment()
+
+    monkeypatch.setenv("ANIVAG_MQ_HEARTBEAT_SECONDS", "30")
+    monkeypatch.setenv("ANIVAG_INDEX_SYNC_RETRY_BASE_SECONDS", "90")
+    monkeypatch.setenv("ANIVAG_INDEX_SYNC_RETRY_MAX_SECONDS", "30")
+    with pytest.raises(ValueError, match="retry_max_seconds"):
         ServerSettings.from_environment()
 
 

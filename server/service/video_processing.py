@@ -28,7 +28,8 @@ from ..identity import derive_video_chunk_id
 from ..model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
 from ..model.dto.parseDTO import PreparedEmbedding
 from ..model.job import ParseJobStage, VideoChunkCheckpointStage
-from ..repository.job import ParseJobLeaseLostError, ParseJobRepository
+from ..mq.contracts import ParseJobLeaseLostError
+from ..repository.job import ParseJobRepository
 from ..repository.video import VideoRepository
 from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
 from ..utils.files import write_json_once

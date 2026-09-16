@@ -32,7 +32,9 @@ from server.model.upload import (
     UploadSessionRecord,
     UploadSessionStatus,
 )
-from server.repository.job import ParseJobLeaseLostError, ParseJobRepository
+from server.mq.mysql_queue import MySqlParseJobQueue
+from server.mq.contracts import ParseJobLeaseLostError
+from server.repository.job import ParseJobRepository
 from server.repository.index_sync import IndexSyncRepository
 from server.model.dto.jobDTO import VideoChunkCheckpointState
 from server.repository.library import LibraryRepository
@@ -726,13 +728,14 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         workspace_id="mysql-integration",
     )
     jobs = ParseJobRepository(session_factory)
+    queue = MySqlParseJobQueue(session_factory)
     # MySQL DATETIME stores whole seconds; claim after the completed uploads.
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
     barrier = Barrier(2)
 
     def claim(worker_id: str):
         barrier.wait()
-        return jobs.claim_next(
+        return queue.claim_next(
             worker_id,
             lease_duration=timedelta(minutes=2),
             now=now,
@@ -761,19 +764,19 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
             now=now,
         )
         retry_at = now + timedelta(seconds=10)
-        assert jobs.mark_failed(
+        assert queue.retry(
             first,
             error="retry integration",
             retry_at=retry_at,
             now=now,
         )
-        sibling = jobs.claim_next(
+        sibling = queue.claim_next(
             "worker-c",
             lease_duration=timedelta(minutes=2),
             now=now + timedelta(seconds=1),
         )
         assert sibling is None
-        second = jobs.claim_next(
+        second = queue.claim_next(
             "worker-d",
             lease_duration=timedelta(minutes=2),
             now=retry_at,
@@ -783,8 +786,8 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         assert second.lease_version == first.lease_version + 1
         with pytest.raises(ParseJobLeaseLostError):
             jobs.save_checkpoint(first, checkpoint, now=retry_at)
-        assert jobs.mark_succeeded(second, now=retry_at)
-        sibling = jobs.claim_next(
+        assert queue.acknowledge(second, now=retry_at)
+        sibling = queue.claim_next(
             "worker-e", lease_duration=timedelta(minutes=2), now=retry_at,
         )
         assert sibling is not None and sibling.job_id == second_completed.job_id

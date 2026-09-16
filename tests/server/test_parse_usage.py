@@ -21,6 +21,7 @@ from server.config.video_processing import VideoProcessingConfig
 from server.database import create_database_engine, create_schema, create_session_factory
 from server.model.job import SeriesParseJobRecord
 from server.model.video import VideoRecord
+from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
 from server.repository.parse_usage import ParseUsageRepository
@@ -64,16 +65,22 @@ def accounting(tmp_path):
             available_at=now, lease_version=0,
         ))
     jobs = ParseJobRepository(factory)
+    queue = MySqlParseJobQueue(factory)
     ledger = ParseUsageRepository(factory)
     service = ParseUsageService(ledger, ParseJobService(jobs, library), _pricing())
     try:
-        yield SimpleNamespace(factory=factory, jobs=jobs, ledger=ledger, service=service, job_id=job_id, now=now)
+        yield SimpleNamespace(
+            factory=factory, jobs=jobs, queue=queue, ledger=ledger,
+            service=service, job_id=job_id, now=now,
+        )
     finally:
         engine.dispose()
 
 
 def _lease(accounting):
-    lease = accounting.jobs.claim_next("worker", lease_duration=timedelta(minutes=5), now=accounting.now)
+    lease = accounting.queue.claim_next(
+        "worker", lease_duration=timedelta(minutes=5), now=accounting.now,
+    )
     assert lease is not None
     return lease
 
@@ -144,8 +151,12 @@ def test_failed_and_stale_calls_are_retained_across_all_attempts(accounting):
     with accounting.service.capture(first):
         accounting.service.record(first, _event(usage=TokenUsage(100, 20, 120, 0, 0), status="failed"))
     retry_at = accounting.now + timedelta(seconds=2)
-    assert accounting.jobs.mark_failed(first, error="fixture", retry_at=retry_at, now=retry_at)
-    second = accounting.jobs.claim_next("replacement", lease_duration=timedelta(minutes=5), now=retry_at)
+    assert accounting.queue.retry(
+        first, error="fixture", retry_at=retry_at, now=retry_at,
+    )
+    second = accounting.queue.claim_next(
+        "replacement", lease_duration=timedelta(minutes=5), now=retry_at,
+    )
     assert second is not None and second.attempt_count == 2
     before = accounting.jobs.get(second.job_id)
     accounting.service.record(first, _event(usage=TokenUsage(50, 0, 50, 0, 0), sequence_no=None))
@@ -231,8 +242,12 @@ def test_new_attempt_after_metadata_read_is_included_in_coverage(accounting, mon
     def claims_after_metadata(*args, **kwargs):
         detail = get_job(*args, **kwargs)
         retry_at = accounting.now + timedelta(seconds=2)
-        assert accounting.jobs.mark_failed(first, error="fixture", retry_at=retry_at, now=retry_at)
-        second = accounting.jobs.claim_next("next", lease_duration=timedelta(minutes=5), now=retry_at)
+        assert accounting.queue.retry(
+            first, error="fixture", retry_at=retry_at, now=retry_at,
+        )
+        second = accounting.queue.claim_next(
+            "next", lease_duration=timedelta(minutes=5), now=retry_at,
+        )
         assert second is not None and second.attempt_count == 2
         return detail
     monkeypatch.setattr(accounting.service._jobs, "get", claims_after_metadata)

@@ -11,8 +11,10 @@ from engine.parse.runtime import VideoParseRuntimeConfig
 
 from ..database import DatabaseEnvironment
 from .agent import AgentServiceConfig
+from .index_sync import IndexSyncConfig
 from .media import ImageUploadConfig
 from .logging import LoggingConfig
+from .mq import MQConsumerConfig
 from .retrieval import RetrievalConfig
 from .sse import SSEConfig
 from .upload import UploadServiceConfig
@@ -34,12 +36,8 @@ class ServerSettings:
     agent_chat_model: str | None
     agent_evaluator_model: str | None
     agent_request_timeout_seconds: float
-    worker_id: str
-    worker_lease_duration: timedelta
-    worker_heartbeat_interval: timedelta
-    worker_poll_interval_seconds: float
-    worker_retry_base: timedelta
-    worker_retry_max: timedelta
+    mq: MQConsumerConfig
+    index_sync: IndexSyncConfig
     allowed_origins: tuple[str, ...]
     model_config_path: Path | None
     sse: SSEConfig = field(default_factory=SSEConfig)
@@ -59,6 +57,7 @@ class ServerSettings:
         agent_defaults = AgentServiceConfig()
         sse_defaults = SSEConfig()
         retrieval_defaults = RetrievalConfig()
+        index_sync_defaults = IndexSyncConfig()
         image_defaults = ImageUploadConfig()
         logging_defaults = LoggingConfig()
         environment = DatabaseEnvironment(
@@ -78,27 +77,26 @@ class ServerSettings:
             "ANIVAG_MAX_UPLOAD_SIZE_BYTES",
             upload_defaults.maximum_upload_size_bytes,
         )
-        lease_seconds = _environment_int("ANIVAG_WORKER_LEASE_SECONDS", 300)
-        heartbeat_seconds = _environment_int(
-            "ANIVAG_WORKER_HEARTBEAT_SECONDS",
-            60,
+        lease_seconds = _environment_int(
+            "ANIVAG_MQ_LEASE_SECONDS",
+            300,
+            legacy_name="ANIVAG_WORKER_LEASE_SECONDS",
         )
-        if heartbeat_seconds >= lease_seconds:
-            raise ValueError(
-                "ANIVAG_WORKER_HEARTBEAT_SECONDS must be smaller than the lease"
-            )
+        heartbeat_seconds = _environment_int(
+            "ANIVAG_MQ_HEARTBEAT_SECONDS",
+            60,
+            legacy_name="ANIVAG_WORKER_HEARTBEAT_SECONDS",
+        )
         retry_base_seconds = _environment_int(
-            "ANIVAG_WORKER_RETRY_BASE_SECONDS",
+            "ANIVAG_MQ_RETRY_BASE_SECONDS",
             30,
+            legacy_name="ANIVAG_WORKER_RETRY_BASE_SECONDS",
         )
         retry_max_seconds = _environment_int(
-            "ANIVAG_WORKER_RETRY_MAX_SECONDS",
+            "ANIVAG_MQ_RETRY_MAX_SECONDS",
             900,
+            legacy_name="ANIVAG_WORKER_RETRY_MAX_SECONDS",
         )
-        if retry_max_seconds < retry_base_seconds:
-            raise ValueError(
-                "ANIVAG_WORKER_RETRY_MAX_SECONDS must be at least the retry base"
-            )
         text_dimensions = _environment_int(
             "ANIVAG_TEXT_VECTOR_DIMENSIONS",
             1024,
@@ -252,15 +250,34 @@ class ServerSettings:
                 "ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS",
                 180,
             ),
-            worker_id=os.getenv("ANIVAG_WORKER_ID", f"local-worker-{os.getpid()}"),
-            worker_lease_duration=timedelta(seconds=lease_seconds),
-            worker_heartbeat_interval=timedelta(seconds=heartbeat_seconds),
-            worker_poll_interval_seconds=_environment_float(
-                "ANIVAG_WORKER_POLL_SECONDS",
-                2.0,
+            mq=MQConsumerConfig(
+                consumer_id=(
+                    _optional_environment("ANIVAG_MQ_CONSUMER_ID")
+                    or _optional_environment("ANIVAG_WORKER_ID")
+                    or f"local-consumer-{os.getpid()}"
+                ),
+                lease_duration=timedelta(seconds=lease_seconds),
+                heartbeat_interval=timedelta(seconds=heartbeat_seconds),
+                poll_interval_seconds=_environment_float(
+                    "ANIVAG_MQ_POLL_SECONDS",
+                    2.0,
+                    legacy_name="ANIVAG_WORKER_POLL_SECONDS",
+                ),
+                retry_base=timedelta(seconds=retry_base_seconds),
+                retry_max=timedelta(seconds=retry_max_seconds),
             ),
-            worker_retry_base=timedelta(seconds=retry_base_seconds),
-            worker_retry_max=timedelta(seconds=retry_max_seconds),
+            index_sync=IndexSyncConfig(
+                retry_base_seconds=_environment_int(
+                    "ANIVAG_INDEX_SYNC_RETRY_BASE_SECONDS",
+                    index_sync_defaults.retry_base_seconds,
+                    legacy_name="ANIVAG_WORKER_RETRY_BASE_SECONDS",
+                ),
+                retry_max_seconds=_environment_int(
+                    "ANIVAG_INDEX_SYNC_RETRY_MAX_SECONDS",
+                    index_sync_defaults.retry_max_seconds,
+                    legacy_name="ANIVAG_WORKER_RETRY_MAX_SECONDS",
+                ),
+            ),
             allowed_origins=origins,
             model_config_path=(
                 Path(model_config).expanduser() if model_config else None
@@ -318,15 +335,31 @@ def _optional_environment(name: str) -> str | None:
     return value.strip() if value and value.strip() else None
 
 
-def _environment_int(name: str, default: int) -> int:
-    value = int(os.getenv(name, str(default)))
+def _environment_int(
+    name: str,
+    default: int,
+    *,
+    legacy_name: str | None = None,
+) -> int:
+    raw = os.getenv(name)
+    if raw is None and legacy_name is not None:
+        raw = os.getenv(legacy_name)
+    value = int(raw if raw is not None else default)
     if value <= 0:
         raise ValueError(f"{name} must be greater than zero")
     return value
 
 
-def _environment_float(name: str, default: float) -> float:
-    value = float(os.getenv(name, str(default)))
+def _environment_float(
+    name: str,
+    default: float,
+    *,
+    legacy_name: str | None = None,
+) -> float:
+    raw = os.getenv(name)
+    if raw is None and legacy_name is not None:
+        raw = os.getenv(legacy_name)
+    value = float(raw if raw is not None else default)
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be finite and greater than zero")
     return value

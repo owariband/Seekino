@@ -35,11 +35,14 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if not owns_services:
+            yield
+            return
         try:
+            await run_in_threadpool(services.start)
             yield
         finally:
-            if owns_services:
-                await run_in_threadpool(services.close)
+            await run_in_threadpool(services.close)
 
     app = FastAPI(
         title="AniVAG Server",
