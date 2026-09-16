@@ -10,7 +10,14 @@ from engine.parse.checkpoints import (
     prepare_candidate_transcripts,
     stream_candidate_transcripts,
 )
-from engine.parse.schemas import AnalysisWindow, TranscriptAnalysis, VideoEvidence
+from engine.parse.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from engine.parse.schemas import (
+    AnalysisWindow,
+    ContextSnapshot,
+    TranscriptAnalysis,
+    VideoEvidence,
+    VideoTimeline,
+)
 from engine.parse.usage import capture_parse_usage, parse_chunk_scope
 from engine.parse.video_parse import ParsePipeline
 from gateway.models import ArkMultimodalModel, TextInput
@@ -158,6 +165,69 @@ def test_continuous_asr_worker_preserves_usage_scope_across_chunks(tmp_path):
     assert len(transcripts) == 3
     assert [item.sequence_no for item in ledger] == [0, 1, 2]
     assert all(item.call.status == "completed" for item in ledger)
+
+
+def test_runtime_single_chunk_calls_preserve_the_chunk_usage_scope(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video fixture")
+    window = AnalysisWindow(
+        sequence_no=0,
+        source_video=source,
+        media_path=tmp_path / "window-0.mp4",
+        chunk_start_ms=0,
+        chunk_end_ms=1000,
+        analysis_start_ms=0,
+        analysis_end_ms=1000,
+    )
+    window.media_path.write_bytes(b"analysis fixture")
+
+    class Model:
+        provider_name = "ark"
+
+        def __init__(self, model, **_kwargs):
+            self.model_name = model
+
+        def generate(self, _inputs, *, schema_name, result_type):
+            with track_model_call(
+                provider="ark",
+                model=self.model_name,
+                operation=schema_name,
+            ):
+                if result_type is TranscriptAnalysis:
+                    return TranscriptAnalysis(transcript=[])
+                return VideoTimeline(summary="summary", events=[])
+
+    monkeypatch.setattr("engine.parse.runtime.ArkMultimodalModel", Model)
+    runtime = EngineVideoParseRuntime(
+        config=VideoParseRuntimeConfig(
+            fallback_enabled=False,
+            transcript_model="lite",
+            video_model="pro",
+        )
+    )
+    compact = ContextSnapshot(
+        snapshot_id="context-initial",
+        after_chunk_sequence_no=-1,
+        compact_text="",
+        recent_events=[],
+    )
+    ledger = []
+
+    with capture_parse_usage(ledger.append):
+        transcript = runtime.transcribe_chunk(window)
+        runtime.parse_chunk(
+            compact,
+            window,
+            candidate_transcript=transcript,
+        )
+
+    assert [(item.sequence_no, item.call.operation) for item in ledger] == [
+        (0, "candidate_transcript"),
+        (0, "video_timeline"),
+    ]
 
 
 def test_pipeline_counts_each_fallback_call_and_does_not_recount_completed_chunks():

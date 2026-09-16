@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
 
@@ -18,6 +19,74 @@ from engine.parse.schemas import (
     VideoChunkParseResult,
     VideoTimeline,
 )
+
+
+def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "episode.mp4"
+    source.write_bytes(b"video fixture")
+    window = plan_analysis_windows(
+        source,
+        duration_ms=1000,
+        output_dir=tmp_path / "windows",
+        chunk_duration_ms=1000,
+        context_overlap_ms=0,
+    )[0]
+    window.media_path.parent.mkdir(parents=True)
+    window.media_path.write_bytes(b"analysis fixture")
+    constructed: list[str] = []
+
+    class Model:
+        provider_name = "ark"
+
+        def __init__(self, model, **_kwargs):
+            self.model_name = model
+            constructed.append(model)
+
+        def generate(self, _inputs, *, schema_name, result_type):
+            if schema_name == "candidate_transcript":
+                assert result_type is TranscriptAnalysis
+                return TranscriptAnalysis(transcript=[])
+            assert schema_name == "video_timeline"
+            assert result_type is VideoTimeline
+            return VideoTimeline(summary="片段完成", events=[])
+
+    monkeypatch.setattr("engine.parse.runtime.ArkMultimodalModel", Model)
+    runtime = EngineVideoParseRuntime(
+        config=VideoParseRuntimeConfig(
+            fallback_enabled=False,
+            transcript_model="test-lite",
+            video_model="test-pro",
+        )
+    )
+
+    models = runtime.describe_models("none")
+
+    assert models.transcript is None
+    assert models.fallback.transcript_model == "test-lite"
+    assert constructed == []
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        transcripts = list(executor.map(runtime.transcribe_chunk, [window] * 4))
+
+    compact = ContextSnapshot(
+        snapshot_id="context-initial",
+        after_chunk_sequence_no=-1,
+        compact_text="",
+        recent_events=[],
+    )
+    parsed = runtime.parse_chunk(
+        compact,
+        window,
+        candidate_transcript=transcripts[0],
+    )
+
+    assert all(item == TranscriptAnalysis(transcript=[]) for item in transcripts)
+    assert constructed == ["test-lite", "test-pro"]
+    assert parsed.window == window
+    assert parsed.window_summary == "片段完成"
 
 
 def test_runtime_resumes_a_fully_parsed_video_without_model_credentials(

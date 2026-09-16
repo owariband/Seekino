@@ -123,6 +123,13 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path):
             "dimensions": settings.text_vector_dimensions,
         }
         assert type(received["processor"]).__module__ == "server.service.video_processing"
+        processing_config = received["processor"]._config
+        assert processing_config.chunk_duration_ms == settings.parse.chunk_duration_ms
+        assert processing_config.context_overlap_ms == settings.parse.context_overlap_ms
+        assert processing_config.analysis_max_height == settings.parse.max_height
+        assert processing_config.canonical_max_height == settings.parse.max_height
+        assert processing_config.asr_concurrency == settings.parse.asr_concurrency
+        assert processing_config.asr_mode == settings.parse.asr_mode
         assert received["consumer"]["worker_id"] == settings.mq.consumer_id
         assert received["consumer"]["poll_interval_seconds"] == settings.mq.poll_interval_seconds
         assert received["consumer"]["lease_duration"] == settings.mq.lease_duration

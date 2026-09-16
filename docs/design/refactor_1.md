@@ -526,9 +526,55 @@ D：无
 - `VideoProcessingService` 的主流程能直接看出“取下一 Chunk → 调 Algorithm → Fence → 保存”；
 - Algorithm 接口中不存在 `job_id`、Lease、Repository、Checkpoint 或 UploadSession；
 - Server 能从现有 DB Checkpoint 恢复，不依赖 Engine 自己猜测完成进度；
-- Algorithm 调用期间 Lease 失效时，返回结果不会落盘、入库或发布索引；
+- Algorithm 调用期间 Lease 失效时，返回结果不会成为 DB 已提交、可恢复的事实，也不会入库或发布索引；
 - CLI 现有完整视频解析能力不回退；
 - Engine 与 Server 相关测试全部通过。
+
+### 实际结果（2026-09-17）
+
+阶段 2 已按“Server 编排整集、Algorithm 只解析单 Chunk”的边界完成：
+
+- `ParsePipeline.parse_chunk(...)` 成为生产解析入口，输入是 `ContextSnapshot`、
+  `AnalysisWindow` 和可选候选 ASR，输出是单个 `VideoChunkParseResult`；
+- Context 构造、事件 ownership、跨 Chunk 去重、fallback 标记和 bounded compact 仍属于
+  Engine 算法逻辑；
+- `EngineVideoParseRuntime` 只负责延迟装配模型以及提供单 Chunk parse、ASR 和模型描述能力；
+  ASR 与模型描述是 Server 编排依赖的运行时能力，不是新的 Algorithm PSM；
+- `VideoProcessingService` 已接管分析窗口规划、素材准备、DB 恢复、ASR 就绪顺序、
+  Artifact、Checkpoint、Embedding、MySQL import 和索引发布；
+- Server 恢复只相信 DB Checkpoint 中已经提交的 Artifact URI，不再从工作目录中的 JSON
+  猜测处理进度；没有 Checkpoint 背书的孤立文件会被忽略；
+- AnalysisWindow、规范 VideoChunk、Parse Chunk、pipeline manifest、text embedding 和 vision embedding 均写入
+  `leases/lease-{lease_version}` 下的执行隔离目录。不同 lease 不会覆盖同一文件，只有当前
+  lease 成功提交 DB Checkpoint 后，其 URI 才成为可恢复事实；
+- 所有模型返回结果在产生持久化副作用前都会重新检查 lease。旧 lease 即使在检查后迟到写入，
+  也只能写入自己的隔离目录，不能污染新 lease 已发布的 Artifact；
+- ASR 使用固定数量的线程消费者，未消费窗口数最多为 `asr_concurrency + 1`；Server 仍按窗口
+  序号串行调用 Parse，既允许后续 ASR 补位，也不会在首段阻塞时预取完整集；
+- 整集 `run(...)`、本地 Checkpoint 和 CLI 入口保留为 compatibility wrapper，Retrieve 边界
+  没有修改。
+
+与预计文件列表相比，本阶段还修改了 `server/config/video_processing.py`、
+`server/bootstrap.py` 和 `tests/server/test_bootstrap.py`，用于把窗口、ASR 和图像规格从 Engine
+整集运行参数映射到 Server 的编排配置。这是职责迁移所需的受控调整；本阶段仍没有新增或删除
+文件，也没有修改 Job 状态机、数据库 Schema、MQ、删除接口或前端行为。
+
+验证结果：
+
+```text
+.venv/bin/pytest -q
+606 passed, 8 skipped, 3 warnings
+```
+
+另外，阶段 2 定向测试为 `63 passed`；`python -m compileall -q engine server tests/engine tests/server`、
+CLI 两级 `--help` 和 `git diff --check` 均通过。8 个跳过项仍是因为没有配置
+`ANIVAG_TEST_DATABASE_URL` 的真实 MySQL 集成测试；SQLite Repository、恢复、Fencing、
+迟到写隔离、ASR 背压及异常关闭测试均已执行。
+
+当前有两个明确留给后续生命周期治理的事项：lease 隔离会保留未被 DB URI 引用的旧 attempt
+目录和已发布媒体，后续清理必须以 Checkpoint 引用可达性为准，不能在阶段 2 的热路径里猜测删除；
+Qdrant upsert 期间发生取消时，只能在调用返回后发现 lease 失效，第三阶段需要用 CANCELLED
+可见性过滤、DELETE desired state 和 generation reconcile 收敛迟到索引写入。
 
 ---
 
@@ -573,6 +619,7 @@ DELETE UploadSession
 → lease_version + 1
 → 清空 lease_owner / lease_expires_at / heartbeat_at
 → 清 completion token 和 active slot
+→ 为已有 VideoChunk 提升 generation 并提交 DELETE desired state
 → 提交事务
 → 正常查询立即不可见
 ```
@@ -581,7 +628,10 @@ DELETE UploadSession
 
 在途模型调用不保证能在网络层瞬间中止，但算法返回后必须经过既有 Fencing。因为 Job 已不再是 RUNNING 且 lease version 已改变，迟到 Result 必须被丢弃，不能写 Checkpoint、导入事实或发布索引。
 
-取消接口不能被 Qdrant 或文件清理阻塞。取消后立即通过 MySQL 查询过滤和 IndexSync 约束撤销检索可见性；派生索引可以异步撤销，原视频、Artifact、Checkpoint 和业务事实保留到物理清理阶段。
+取消接口不能被 Qdrant 或文件清理阻塞。取消后立即通过 MySQL 查询过滤撤销检索可见性，并由
+同一事务中的 DELETE desired state 异步删除索引；如果旧 lease 的 Qdrant upsert 在取消后迟到，
+generation reconcile 必须再次执行当前 DELETE 意图。原视频、Artifact、Checkpoint 和业务事实
+保留到物理清理阶段。
 
 ### Retention Purge
 

@@ -210,7 +210,12 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         parse_usage=parse_usage,
         config=VideoProcessingConfig(
             embedding_dimensions=settings.text_vector_dimensions,
+            chunk_duration_ms=settings.parse.chunk_duration_ms,
+            context_overlap_ms=settings.parse.context_overlap_ms,
+            analysis_max_height=settings.parse.max_height,
             canonical_max_height=settings.parse.max_height,
+            asr_concurrency=settings.parse.asr_concurrency,
+            asr_mode=settings.parse.asr_mode,
         ),
     )
     queue = MySqlParseJobQueue(session_factory)

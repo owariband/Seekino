@@ -36,6 +36,62 @@ class ParsePipeline:
         self._max_context_events = max_context_events
         self._max_context_chars = max_context_chars
 
+    def parse_chunk(
+        self,
+        compact: ContextSnapshot,
+        video_chunk: AnalysisWindow,
+        *,
+        candidate_transcript: TranscriptAnalysis | None = None,
+        series_bible: str | None = None,
+        background_images: Sequence[BackgroundImage] = (),
+    ) -> VideoChunkParseResult:
+        expected_sequence_no = compact.after_chunk_sequence_no + 1
+        if video_chunk.sequence_no != expected_sequence_no:
+            raise ValueError(
+                "context snapshot must immediately precede the video chunk; "
+                f"expected {expected_sequence_no}, got {video_chunk.sequence_no}"
+            )
+
+        model_context = self._build_model_context(
+            video_chunk,
+            compact,
+            series_bible=series_bible,
+        )
+        with parse_chunk_scope(video_chunk.sequence_no):
+            evidence = self._parser.analyze(
+                str(video_chunk.media_path),
+                context=model_context,
+                duration_ms=video_chunk.analysis_duration_ms,
+                candidate_transcript=candidate_transcript,
+                background_images=background_images,
+            )
+        observed_events, owned_events = self._merge_window_events(
+            video_chunk,
+            evidence.events,
+            duration_ms=video_chunk.analysis_end_ms,
+            existing_events=compact.recent_events,
+        )
+        context_after = self._advance_context(
+            compact,
+            owned_events,
+            after_chunk_sequence_no=video_chunk.sequence_no,
+        )
+        return VideoChunkParseResult(
+            window=video_chunk,
+            context_before=compact,
+            candidate_transcript=evidence.candidate_transcript,
+            video_parse=evidence.provenance,
+            is_fallback=(
+                evidence.provenance is not None
+                and evidence.provenance.fallback_reason is not None
+            ),
+            window_summary=evidence.summary,
+            observed_events=observed_events,
+            events=owned_events,
+            self_compact=_render_events(owned_events, max_chars=4000),
+            context_after=context_after,
+        )
+
     def run(
         self,
         *,
@@ -118,52 +174,19 @@ class ParsePipeline:
                         f"sequence; expected {window.sequence_no}, got "
                         f"{transcript_sequence_no}"
                     )
-            model_context = self._build_model_context(
-                window,
+            chunk_result = self.parse_chunk(
                 context_before,
+                window,
+                candidate_transcript=candidate_transcript,
                 series_bible=series_bible,
+                background_images=background_images,
             )
-            with parse_chunk_scope(window.sequence_no):
-                evidence = self._parser.analyze(
-                    str(window.media_path),
-                    context=model_context,
-                    duration_ms=window.analysis_duration_ms,
-                    candidate_transcript=candidate_transcript,
-                    background_images=background_images,
-                )
-            observed_events, owned_events = self._merge_window_events(
-                window,
-                evidence.events,
-                duration_ms=duration_ms,
-                existing_events=all_events,
-            )
-            all_events.extend(owned_events)
+            all_events.extend(chunk_result.events)
             all_events.sort(key=lambda event: (event.start_ms, event.end_ms))
-            self_compact = _render_events(owned_events, max_chars=4000)
-            context_after = self._advance_context(
-                context_before,
-                owned_events,
-                after_chunk_sequence_no=window.sequence_no,
-            )
-            chunk_result = VideoChunkParseResult(
-                window=window,
-                context_before=context_before,
-                candidate_transcript=evidence.candidate_transcript,
-                video_parse=evidence.provenance,
-                is_fallback=(
-                    evidence.provenance is not None
-                    and evidence.provenance.fallback_reason is not None
-                ),
-                window_summary=evidence.summary,
-                observed_events=observed_events,
-                events=owned_events,
-                self_compact=self_compact,
-                context_after=context_after,
-            )
             chunk_results.append(chunk_result)
             if on_chunk_complete is not None:
                 on_chunk_complete(chunk_result)
-            context_before = context_after
+            context_before = chunk_result.context_after
 
         if transcript_iterator is not None:
             try:
@@ -260,7 +283,7 @@ class ParsePipeline:
         events: Sequence[TimelineEvent],
         *,
         duration_ms: int,
-        existing_events: Sequence[OwnedTimelineEvent],
+        existing_events: Sequence[ContextEvent | OwnedTimelineEvent],
     ) -> tuple[list[ObservedTimelineEvent], list[OwnedTimelineEvent]]:
         observed_events: list[ObservedTimelineEvent] = []
         owned_events: list[OwnedTimelineEvent] = []
@@ -437,7 +460,7 @@ def _format_ms(value: int) -> str:
 
 def _is_duplicate(
     candidate: OwnedTimelineEvent,
-    existing_events: Sequence[OwnedTimelineEvent],
+    existing_events: Sequence[ContextEvent | OwnedTimelineEvent],
 ) -> bool:
     candidate_key = _event_key(candidate)
     candidate_midpoint = candidate.start_ms + candidate.end_ms
@@ -450,7 +473,9 @@ def _is_duplicate(
     return False
 
 
-def _event_key(event: OwnedTimelineEvent) -> tuple[str, str]:
+def _event_key(
+    event: ContextEvent | OwnedTimelineEvent,
+) -> tuple[str, str]:
     content = (
         event.text
         if event.event_type == "DIALOGUE" and event.text

@@ -1,38 +1,70 @@
 # AniVAG Engine
 
-Engine 承载 AniVAG 自有的领域算法编排；外部模型请求仍由根目录下的
-`gateway/` 负责。
+Engine 是 AniVAG 的算法边界：它负责单个 VideoChunk 的模型调用、证据解析和
+Context 演进，不负责生产 Job 的调度与持久化生命周期。外部模型请求仍由根目录下的
+`gateway/` 负责。Engine 当前与 Server 在同一进程内装配；是否独立部署不改变这个边界。
 
-算法代码按职责分为 `parse/` 和 `retrieval/` 两个目录。
+## 生产契约
 
-解析目录按业务层级拆分：
+产品层的算法契约仍然只有 Parse 和 Retrieve：
 
-- `parse/video_parse.py`：整集/整批 VideoChunk 的顺序编排、Context、ownership、去重与恢复；
-- `parse/video_chunk_parse.py`：单个已有 VideoChunk 的 Prompt、候选 ASR 融合、模型选择与审核降级；
-- `parse/frame_sampler.py`：审核 fallback 所需的帧时间规划与 FFmpeg 抽帧；
-- `parse/prompts.py`：Transcript 与事件时间线的证据约束；
-- `parse/analysis_windows.py`：仅供当前本地整集实验物化临时 AnalysisWindow，不是生产上传切段。
+```text
+parse_chunk(Compact, VideoChunk) -> VideoChunkParseResult
+retrieve(...) -> RetrievalResult
+```
 
-召回目录只保留 `retrieval/video_retrieval.py`，负责 `VideoChunkRetrievalDocument` 构造与
-Text/Vision RRF 等纯算法。正式 Qdrant 持久化由 `server/storage/` 承担；会组合
-Engine、Gateway 与实验 Qdrant 数据集的召回评测工具位于 `evals/recall/`。
+在当前 Python 实现中，Parse 对应
+`EngineVideoParseRuntime.parse_chunk(compact, video_chunk, ...)`。`Compact` 对应调用当下已确认的
+`ContextSnapshot`；候选 Transcript、SeriesBible 和背景图是该次单 Chunk 调用的显式输入。
+它不接收 Job、Lease、Repository、DB Checkpoint、工作目录或 UploadSession。
 
-`ParsePipeline` 会：
+`EngineVideoParseRuntime.describe_models(...)` 和 `transcribe_chunk(video_chunk)` 是当前模型
+Runtime 为 Server 编排候选 ASR 提供的辅助能力，不是新的 Algorithm PSM、Queue
+或任务生命周期接口。Retrieve 继续由 `retrieval/video_retrieval.py` 提供纯排序/融合算法。
 
-1. 消费预处理或导入链路已经持久化的规范 VideoChunk 与对应 AnalysisWindow；
-2. 并发预生成可独立计算的 Lite 候选 Transcript；
-3. 按 VideoChunk 顺序串行调用 Pro，并传入前一个 VideoChunk 的 ContextSnapshot；
-4. 把窗口内相对时间换算为整集绝对时间，并按事件中点唯一归属；
-5. 将已归属事件压缩为有界 `ContextSnapshot`，交给下一个 VideoChunk 辅助消歧。
+生产整集编排属于 `server/service/video_processing.py`，包括：
 
-当前 `parse-video` CLI 为了继续完成第七集实验，仍会从本地完整视频规划并物化
-临时 AnalysisWindow。正式链路不会在解析阶段再次切 VideoChunk，也不会引入第二套
-切片模型。上传断点续传使用 `Segment`，它是字节传输分片，与 VideoChunk 无关。
+- 规划整集 AnalysisWindow / VideoChunk，并决定下一个待处理 Chunk；
+- 以 MySQL Checkpoint 为任务恢复事实；
+- 管理有界 ASR 预取和按序解析；
+- 在算法调用返回后检查 Lease / Fencing；
+- 管理 Artifact、Embedding、MySQL 事实与 Index 发布。
 
-`contextAfter` 只来自当前及更早规范 VideoChunk 的已确认事件，不会吸收
-AnalysisWindow 后置重叠区里的未来事件。
+Engine 内部仍负责单个 VideoChunk 的 Prompt、候选 ASR 融合、审核 fallback、
+事件时间换算、ownership、去重和 `ContextSnapshot` 演进。`contextAfter`
+只来自当前及更早 VideoChunk 的已确认事件，不会吸收 AnalysisWindow
+后置重叠区里的未来事件。
 
-## 运行
+## 代码边界
+
+算法代码按职责分为 `parse/` 和 `retrieval/` 两个目录：
+
+- `parse/runtime.py`：装配模型，提供单 Chunk Parse 契约及候选 ASR 辅助能力；
+- `parse/video_parse.py`：实现单 Chunk 的 Context、ownership、去重与结果构造；
+- `parse/video_chunk_parse.py`：实现 Prompt、候选 ASR 融合、模型选择与审核降级；
+- `parse/frame_sampler.py`：实现审核 fallback 所需的帧时间规划与 FFmpeg 抽帧；
+- `parse/prompts.py`：实现 Transcript 与事件时间线的证据约束；
+- `parse/analysis_windows.py`：提供视频窗口规划与物化原语，由 Server 在生产整集编排中调用。
+
+Retrieve 边界保持不变：`retrieval/video_retrieval.py` 只负责
+`VideoChunkRetrievalDocument` 构造与 Text/Vision RRF 等纯算法。Query Embedding、
+Qdrant 查询和 MySQL hydrate 由 `server/service/video_retrieval.py` 负责，正式 Qdrant
+持久化由 `server/storage/` 承担；不为了形式另增 `RetrieveClient` 或空 facade。
+会组合 Engine、Gateway 与实验 Qdrant 数据集的召回评测工具位于
+`evals/recall/`。
+
+## 本地实验兼容层
+
+`ParsePipeline.run(...)`、`EngineVideoParseRuntime.run(...)`、`parse/checkpoints.py` 和
+`parse/cli.py` 继续支持本地整集实验。它们会从完整视频规划窗口、运行有界 ASR
+预取、写入 JSON Checkpoint 并从本地输出目录恢复。这些文件只是 CLI / local
+experiment 兼容能力，不是 Server 的生产任务事实，Server 也不通过整集 `run(...)`
+接口执行解析。
+
+本地 `parse-video` CLI 物化的 AnalysisWindow 不是上传传输分片。上传断点续传使用
+`Segment`，它是字节传输分片，与 VideoChunk 无关。
+
+## 本地实验运行
 
 在仓库根目录执行：
 
@@ -52,7 +84,7 @@ uv run --env-file .env.local python -m engine.parse.cli \
   --output-dir outputs/engine/episode
 ```
 
-候选 ASR 使用并发受限的生产流水线：当前 VideoChunk 的 Transcript 就绪后会立即写入
+该本地兼容入口使用并发受限的 ASR 流水线：当前 VideoChunk 的 Transcript 就绪后会立即写入
 `transcripts/chunk-XXXX.json` 并交给 Pro，同时 Lite 继续准备后续 VideoChunk；Pro 仍按
 VideoChunk 顺序串行解析并在每段完成后写入 `chunks/chunk-XXXX.json`。使用相同参数和输出目录重跑时，
 Pipeline 会验证模型、窗口和上下文链，然后从第一个未完成 VideoChunk 继续。全部完成
@@ -73,8 +105,8 @@ fallback 会复用已经生成的非空 Lite 结果。
 ## 内容审核 fallback
 
 fallback 只响应 Ark/Doubao Pro 明确返回的 `ContentFilterError`，每个 VideoChunk 最多
-执行一次。网络错误、Schema 错误和 DeepSeek 错误不会误触发或形成循环重试。当前
-正式链路为：
+执行一次。网络错误、Schema 错误和 DeepSeek 错误不会误触发或形成循环重试。单个
+VideoChunk 的算法降级链路为：
 
 1. Doubao Pro 直接解析 AnalysisWindow；
 2. Pro 被内容审核拒绝后，为当前窗口按需运行 Doubao Lite ASR；
@@ -110,7 +142,7 @@ video_parser:
 两者都不传时使用 `video_parser.fallback.enabled`（也可由
 `ANIVAG_FALLBACK_ENABLED` 覆盖）。
 
-恢复检查会核对实际 provider、model 与 input mode。fallback 成功的 VideoChunk 会在
+本地实验恢复检查会核对实际 provider、model 与 input mode。fallback 成功的 VideoChunk 会在
 `video_parse` provenance 中保存 Lite、视觉与整理模型以及抽帧时间，并写入
 `is_fallback: true`，供后续重生成和质量修复筛选；普通 Pro VideoChunk 保持
 `is_fallback: false`。

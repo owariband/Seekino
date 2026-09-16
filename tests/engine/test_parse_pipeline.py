@@ -1,9 +1,13 @@
 from collections.abc import Sequence
 from pathlib import Path
 
+import pytest
+
 from engine.parse.background import BackgroundImage
 from engine.parse.schemas import (
     AnalysisWindow,
+    ContextEvent,
+    ContextSnapshot,
     TimelineEvent,
     TranscriptAnalysis,
     VideoEvidence,
@@ -131,6 +135,92 @@ def _windows() -> list[AnalysisWindow]:
             analysis_end_ms=30_000,
         ),
     ]
+
+
+def test_parse_chunk_owns_events_and_advances_the_supplied_context() -> None:
+    parser = FakeParser()
+    compact = ContextSnapshot(
+        snapshot_id="context-initial",
+        after_chunk_sequence_no=-1,
+        compact_text="",
+        recent_events=[],
+    )
+
+    result = ParsePipeline(parser).parse_chunk(
+        compact,
+        _windows()[0],
+        series_bible="角色术语表",
+    )
+
+    assert result.context_before == compact
+    assert [event.description for event in result.events] == [
+        "第一段已确认动作"
+    ]
+    assert [event.owned_by_current_chunk for event in result.observed_events] == [
+        True,
+        False,
+    ]
+    assert result.context_after.after_chunk_sequence_no == 0
+    assert "第一段已确认动作" in result.context_after.compact_text
+    assert "角色术语表" in parser.contexts[0]
+
+
+def test_parse_chunk_deduplicates_against_recent_compact_events() -> None:
+    compact = ContextSnapshot(
+        snapshot_id="context-0000",
+        after_chunk_sequence_no=0,
+        compact_text="[00:09.000-00:11.000] ACTION 跨越第一条边界的动作",
+        recent_events=[
+            ContextEvent(
+                chunk_sequence_no=0,
+                start_ms=9000,
+                end_ms=11_000,
+                event_type="ACTION",
+                description="跨越第一条边界的动作",
+            )
+        ],
+    )
+
+    result = ParsePipeline(FakeParser()).parse_chunk(compact, _windows()[1])
+
+    assert result.events == []
+    assert result.observed_events[0].owned_by_current_chunk is True
+    assert result.observed_events[0].kept_after_deduplication is False
+    assert result.observed_events[1].owned_by_current_chunk is False
+    assert result.context_after.recent_events == compact.recent_events
+
+
+def test_parse_chunk_requires_the_immediately_preceding_compact() -> None:
+    compact = ContextSnapshot(
+        snapshot_id="context-initial",
+        after_chunk_sequence_no=-1,
+        compact_text="",
+        recent_events=[],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="context snapshot must immediately precede the video chunk",
+    ):
+        ParsePipeline(FakeParser()).parse_chunk(compact, _windows()[1])
+
+
+def test_parse_chunk_preserves_fallback_provenance() -> None:
+    compact = ContextSnapshot(
+        snapshot_id="context-initial",
+        after_chunk_sequence_no=-1,
+        compact_text="",
+        recent_events=[],
+    )
+
+    result = ParsePipeline(FakeFallbackParser()).parse_chunk(
+        compact,
+        _windows()[0],
+    )
+
+    assert result.is_fallback is True
+    assert result.video_parse is not None
+    assert result.video_parse.fallback_reason == "content_filter"
 
 
 def test_pipeline_passes_only_owned_past_events_to_the_next_chunk() -> None:

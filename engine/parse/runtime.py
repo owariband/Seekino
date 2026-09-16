@@ -4,9 +4,10 @@ import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Literal
 
-from gateway.config import load_config
+from gateway.config import VideoFallbackConfig, load_config
 from gateway.models import ArkMultimodalModel, DeepSeekMultimodalModel
 
 from .analysis_windows import materialize_analysis_windows, plan_analysis_windows
@@ -18,6 +19,8 @@ from .checkpoints import (
 )
 from .schemas import (
     AnalysisWindow,
+    ContextSnapshot,
+    TranscriptAnalysis,
     VideoChunkCheckpoint,
     VideoChunkParseResult,
     VideoFallbackModels,
@@ -31,6 +34,7 @@ from .video_chunk_parse import (
     VideoChunkParser,
 )
 from .video_parse import ParsePipeline
+from .usage import parse_chunk_scope
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +66,16 @@ class VideoParseRuntimeConfig:
             raise ValueError("request_timeout_seconds must be greater than zero")
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedRuntimeConfig:
+    transcript_model: str
+    video_model: str
+    transcript_fps: float
+    video_fps: float
+    fallback_enabled: bool
+    fallback: VideoFallbackConfig
+
+
 class EngineVideoParseRuntime:
     """Programmatic adapter over the same Engine pipeline used by the CLI."""
 
@@ -75,6 +89,67 @@ class EngineVideoParseRuntime:
         self._model_config_path = model_config_path
         self._config = config or VideoParseRuntimeConfig()
         self._on_log = on_log or (lambda _message: None)
+        self._assembly_lock = Lock()
+        self._resolved: _ResolvedRuntimeConfig | None = None
+        self._transcript_client: ArkMultimodalModel | None = None
+        self._model_parser: VideoChunkParser | None = None
+        self._pipeline: ParsePipeline | None = None
+
+    def describe_models(
+        self,
+        transcript_mode: Literal["lite", "none"],
+    ) -> VideoParseModels:
+        if transcript_mode not in {"lite", "none"}:
+            raise ValueError("transcript_mode must be lite or none")
+        resolved = self._resolve_config()
+        fallback = resolved.fallback
+        return VideoParseModels(
+            transcript=(
+                resolved.transcript_model if transcript_mode == "lite" else None
+            ),
+            transcript_mode=transcript_mode,
+            video_parser=resolved.video_model,
+            fallback=VideoFallbackModels(
+                enabled=resolved.fallback_enabled,
+                transcript_model=resolved.transcript_model,
+                provider=fallback.deepseek.provider,
+                visual_model=fallback.deepseek.model,
+                refiner_model=fallback.deepseek.model,
+                input_mode="ordered_frames",
+                frame_fps=fallback.frame_fps,
+                group_duration_ms=fallback.group_duration_ms,
+                max_frames_per_group=fallback.max_frames_per_group,
+                max_height=fallback.max_height,
+            ),
+        )
+
+    def transcribe_chunk(
+        self,
+        video_chunk: AnalysisWindow,
+    ) -> TranscriptAnalysis:
+        model_parser = self._get_model_parser()
+        with parse_chunk_scope(video_chunk.sequence_no):
+            return model_parser.transcribe(
+                video_chunk.media_path,
+                duration_ms=video_chunk.analysis_duration_ms,
+            )
+
+    def parse_chunk(
+        self,
+        compact: ContextSnapshot,
+        video_chunk: AnalysisWindow,
+        *,
+        candidate_transcript: TranscriptAnalysis | None = None,
+        series_bible: str | None = None,
+        background_images: Sequence[BackgroundImage] = (),
+    ) -> VideoChunkParseResult:
+        return self._get_pipeline().parse_chunk(
+            compact,
+            video_chunk,
+            candidate_transcript=candidate_transcript,
+            series_bible=series_bible,
+            background_images=background_images,
+        )
 
     def run(
         self,
@@ -91,31 +166,10 @@ class EngineVideoParseRuntime:
     ) -> VideoParseResult:
         video_path = Path(source_video).expanduser().resolve(strict=True)
         work_directory = Path(output_dir).expanduser().resolve()
-        gateway_config = load_config(self._model_config_path)
-        parser_config = gateway_config.video_parser
-        transcript_model = (
-            self._config.transcript_model
-            or os.getenv("ANIVAG_TRANSCRIPT_MODEL")
-            or parser_config.transcript_model
-        )
-        video_model = (
-            self._config.video_model
-            or os.getenv("ANIVAG_VIDEO_MODEL")
-            or parser_config.video_model
-        )
-        transcript_fps = self._config.transcript_fps or float(
-            os.getenv("ANIVAG_TRANSCRIPT_FPS") or parser_config.transcript_fps
-        )
-        video_fps = self._config.video_fps or float(
-            os.getenv("ANIVAG_VIDEO_FPS") or parser_config.video_fps
-        )
-        fallback_config = parser_config.fallback
-        fallback_enabled = self._config.fallback_enabled
-        if fallback_enabled is None:
-            fallback_enabled = _environment_bool(
-                "ANIVAG_FALLBACK_ENABLED",
-                fallback_config.enabled,
-            )
+        resolved = self._resolve_config()
+        transcript_model = resolved.transcript_model
+        video_model = resolved.video_model
+        fallback_config = resolved.fallback
 
         windows = plan_analysis_windows(
             video_path,
@@ -145,25 +199,7 @@ class EngineVideoParseRuntime:
             fallback_group_duration_ms=fallback_config.group_duration_ms,
             fallback_max_frames_per_group=fallback_config.max_frames_per_group,
         )
-        models = VideoParseModels(
-            transcript=(
-                transcript_model if self._config.asr_mode == "lite" else None
-            ),
-            transcript_mode=self._config.asr_mode,
-            video_parser=video_model,
-            fallback=VideoFallbackModels(
-                enabled=fallback_enabled,
-                transcript_model=transcript_model,
-                provider=deepseek.provider,
-                visual_model=deepseek.model,
-                refiner_model=deepseek.model,
-                input_mode="ordered_frames",
-                frame_fps=fallback_config.frame_fps,
-                group_duration_ms=fallback_config.group_duration_ms,
-                max_frames_per_group=fallback_config.max_frames_per_group,
-                max_height=fallback_config.max_height,
-            ),
-        )
+        models = self.describe_models(self._config.asr_mode)
         if len(completed_chunks) == len(windows):
             completed = VideoParseResult(
                 models=models,
@@ -184,61 +220,8 @@ class EngineVideoParseRuntime:
             write_json(completed, work_directory / "pipeline.parse.json")
             return completed
 
-        transcript_client = ArkMultimodalModel(
-            transcript_model,
-            request_timeout_seconds=self._config.request_timeout_seconds,
-        )
-        video_client = ArkMultimodalModel(
-            video_model,
-            request_timeout_seconds=self._config.request_timeout_seconds,
-        )
-        model_parser = VideoChunkParser(
-            transcript_client,
-            video_client,
-            transcript_fps=transcript_fps,
-            video_fps=video_fps,
-        )
-        semantic_parser: VideoChunkEvidenceParser = model_parser
-        if fallback_enabled:
-            api_key = os.getenv(deepseek.api_key_env)
-            if not api_key:
-                raise RuntimeError(
-                    "missing DeepSeek fallback credential in environment variable "
-                    f"{deepseek.api_key_env}"
-                )
-            fallback_model = DeepSeekMultimodalModel(
-                deepseek.model,
-                base_url=deepseek.base_url,
-                api_key=api_key,
-                max_output_tokens=deepseek.max_output_tokens,
-                request_timeout_seconds=deepseek.request_timeout_seconds,
-                reasoning_effort=deepseek.reasoning_effort,
-            )
-            fallback_parser = DeepSeekFallbackVideoChunkParser(
-                transcript_client,
-                fallback_model,
-                fallback_model,
-                transcript_fps=transcript_fps,
-                frame_fps=fallback_config.frame_fps,
-                group_duration_ms=fallback_config.group_duration_ms,
-                max_frames_per_group=fallback_config.max_frames_per_group,
-                max_height=fallback_config.max_height,
-            )
-            semantic_parser = ContentFilterFallbackVideoChunkParser(
-                model_parser,
-                fallback_parser,
-                primary_model=video_model,
-                on_fallback=lambda error: self._on_log(
-                    "content-filter fallback; "
-                    f"code={error.code or 'content_filter'}"
-                ),
-            )
-
-        pipeline = ParsePipeline(
-            semantic_parser,
-            max_context_events=self._config.max_context_events,
-            max_context_chars=self._config.max_context_chars,
-        )
+        model_parser = self._get_model_parser()
+        pipeline = self._get_pipeline()
 
         def checkpoint(chunk: VideoChunkParseResult) -> None:
             path = (
@@ -282,6 +265,129 @@ class EngineVideoParseRuntime:
         completed = result.model_copy(update={"models": models})
         write_json(completed, work_directory / "pipeline.parse.json")
         return completed
+
+    def _resolve_config(self) -> _ResolvedRuntimeConfig:
+        with self._assembly_lock:
+            if self._resolved is None:
+                parser_config = load_config(
+                    self._model_config_path
+                ).video_parser
+                fallback_enabled = self._config.fallback_enabled
+                if fallback_enabled is None:
+                    fallback_enabled = _environment_bool(
+                        "ANIVAG_FALLBACK_ENABLED",
+                        parser_config.fallback.enabled,
+                    )
+                self._resolved = _ResolvedRuntimeConfig(
+                    transcript_model=(
+                        self._config.transcript_model
+                        or os.getenv("ANIVAG_TRANSCRIPT_MODEL")
+                        or parser_config.transcript_model
+                    ),
+                    video_model=(
+                        self._config.video_model
+                        or os.getenv("ANIVAG_VIDEO_MODEL")
+                        or parser_config.video_model
+                    ),
+                    transcript_fps=(
+                        self._config.transcript_fps
+                        or float(
+                            os.getenv("ANIVAG_TRANSCRIPT_FPS")
+                            or parser_config.transcript_fps
+                        )
+                    ),
+                    video_fps=(
+                        self._config.video_fps
+                        or float(
+                            os.getenv("ANIVAG_VIDEO_FPS")
+                            or parser_config.video_fps
+                        )
+                    ),
+                    fallback_enabled=fallback_enabled,
+                    fallback=parser_config.fallback,
+                )
+            return self._resolved
+
+    def _get_model_parser(self) -> VideoChunkParser:
+        resolved = self._resolve_config()
+        with self._assembly_lock:
+            if self._model_parser is None:
+                transcript_client = ArkMultimodalModel(
+                    resolved.transcript_model,
+                    request_timeout_seconds=(
+                        self._config.request_timeout_seconds
+                    ),
+                )
+                video_client = ArkMultimodalModel(
+                    resolved.video_model,
+                    request_timeout_seconds=(
+                        self._config.request_timeout_seconds
+                    ),
+                )
+                self._transcript_client = transcript_client
+                self._model_parser = VideoChunkParser(
+                    transcript_client,
+                    video_client,
+                    transcript_fps=resolved.transcript_fps,
+                    video_fps=resolved.video_fps,
+                )
+            return self._model_parser
+
+    def _get_pipeline(self) -> ParsePipeline:
+        model_parser = self._get_model_parser()
+        resolved = self._resolve_config()
+        with self._assembly_lock:
+            if self._pipeline is not None:
+                return self._pipeline
+
+            semantic_parser: VideoChunkEvidenceParser = model_parser
+            if resolved.fallback_enabled:
+                deepseek = resolved.fallback.deepseek
+                api_key = os.getenv(deepseek.api_key_env)
+                if not api_key:
+                    raise RuntimeError(
+                        "missing DeepSeek fallback credential in environment "
+                        f"variable {deepseek.api_key_env}"
+                    )
+                fallback_model = DeepSeekMultimodalModel(
+                    deepseek.model,
+                    base_url=deepseek.base_url,
+                    api_key=api_key,
+                    max_output_tokens=deepseek.max_output_tokens,
+                    request_timeout_seconds=deepseek.request_timeout_seconds,
+                    reasoning_effort=deepseek.reasoning_effort,
+                )
+                transcript_client = self._transcript_client
+                if transcript_client is None:
+                    raise RuntimeError("transcript model client was not initialized")
+                fallback_parser = DeepSeekFallbackVideoChunkParser(
+                    transcript_client,
+                    fallback_model,
+                    fallback_model,
+                    transcript_fps=resolved.transcript_fps,
+                    frame_fps=resolved.fallback.frame_fps,
+                    group_duration_ms=resolved.fallback.group_duration_ms,
+                    max_frames_per_group=(
+                        resolved.fallback.max_frames_per_group
+                    ),
+                    max_height=resolved.fallback.max_height,
+                )
+                semantic_parser = ContentFilterFallbackVideoChunkParser(
+                    model_parser,
+                    fallback_parser,
+                    primary_model=resolved.video_model,
+                    on_fallback=lambda error: self._on_log(
+                        "content-filter fallback; "
+                        f"code={error.code or 'content_filter'}"
+                    ),
+                )
+
+            self._pipeline = ParsePipeline(
+                semantic_parser,
+                max_context_events=self._config.max_context_events,
+                max_context_chars=self._config.max_context_chars,
+            )
+            return self._pipeline
 
 
 def _environment_bool(name: str, default: bool) -> bool:
