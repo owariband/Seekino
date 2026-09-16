@@ -5,7 +5,7 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from threading import Barrier
+from threading import Barrier, Event
 from uuid import uuid4
 
 import pytest
@@ -25,17 +25,361 @@ from server.model.video import (
     VideoChunkEmbeddingRecord,
     VideoChunkRecord,
 )
+from server.model.job import SeriesParseJobRecord
+from server.model.parse_usage import ParseModelCallRecord, ParseUsageAttemptRecord
+from server.model.upload import (
+    UPLOAD_DELETION_PENDING_ERROR_CODE,
+    UploadSessionRecord,
+    UploadSessionStatus,
+)
 from server.repository.job import ParseJobLeaseLostError, ParseJobRepository
+from server.repository.index_sync import IndexSyncRepository
 from server.model.dto.jobDTO import VideoChunkCheckpointState
 from server.repository.library import LibraryRepository
-from server.repository.upload import UploadRepository
+from server.repository.upload import UploadConflictError, UploadRepository, UploadStateError
 from server.repository.video import VideoRepository
 from server.service.library import LibraryService
 from server.model.dto.parseDTO import PreparedEmbedding
+from server.service.qdrant_mutation_lock import (
+    QdrantMutationLock,
+    QdrantMutationLockBusyError,
+)
 from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
 
 TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(tmp_path):
+    engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    session_factory = create_session_factory(engine)
+    series = LibraryService(LibraryRepository(session_factory)).create_series(
+        workspace_id="mysql-manual-retry",
+        name=f"Manual Retry {uuid4()}",
+    )
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    uploads = UploadService(
+        UploadRepository(session_factory),
+        store,
+        config=UploadServiceConfig(
+            preferred_segment_size_bytes=4,
+            maximum_upload_size_bytes=1024,
+            pipeline_version="mysql-manual-retry-v1",
+            max_job_attempts=3,
+        ),
+        probe_duration=lambda _path: 10_000,
+    )
+    upload = uploads.create_session(
+        workspace_id="mysql-manual-retry",
+        series_id=series.series_id,
+        original_filename="episode.mp4",
+        media_type="video/mp4",
+        total_size_bytes=4,
+        idempotency_key="manual-retry",
+    )
+    uploads.upload_segment(
+        upload.upload_session_id,
+        0,
+        b"abcd",
+        workspace_id="mysql-manual-retry",
+        checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
+        start_byte=0,
+        end_byte_exclusive=4,
+        total_size_bytes=4,
+    )
+    completed = uploads.complete(
+        upload.upload_session_id,
+        workspace_id="mysql-manual-retry",
+    )
+    with session_factory.begin() as session:
+        job = session.get(SeriesParseJobRecord, completed.job_id)
+        job.status = "FAILED"
+        job.attempt_count = 3
+        job.max_attempts = 3
+        job.version = 7
+        job.last_error = "failed"
+        session.get(VideoRecord, completed.video_id).parse_status = "FAILED"
+        session.get(SeriesRecord, series.series_id).status = "FAILED"
+
+    barrier = Barrier(2)
+
+    def retry_once():
+        barrier.wait()
+        try:
+            return uploads.retry_parse(
+                upload.upload_session_id,
+                workspace_id="mysql-manual-retry",
+                expected_job_version=7,
+            )
+        except UploadConflictError as exc:
+            return exc
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(retry_once) for _ in range(2)]
+            results = [future.result(timeout=10) for future in futures]
+        assert sum(result == completed.job_id for result in results) == 1
+        assert sum(isinstance(result, UploadConflictError) for result in results) == 1
+        with session_factory() as session:
+            job = session.get(SeriesParseJobRecord, completed.job_id)
+            assert (job.status, job.attempt_count, job.max_attempts, job.version) == (
+                "QUEUED", 3, 4, 8,
+            )
+    finally:
+        with session_factory.begin() as session:
+            session.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id))
+        engine.dispose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+def test_mysql_qdrant_mutation_lock_is_shared_across_connections():
+    engine = create_database_engine(
+        TEST_DATABASE_URL or "",
+        environment=DatabaseEnvironment.TEST,
+    )
+    holder = QdrantMutationLock(
+        engine,
+        environment=DatabaseEnvironment.TEST,
+        collection_name="video_chunks_lock_test",
+    )
+    contender = QdrantMutationLock(
+        engine,
+        environment=DatabaseEnvironment.TEST,
+        collection_name="video_chunks_lock_test",
+        acquire_timeout_seconds=0,
+    )
+
+    try:
+        with holder.hold(), ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_try_qdrant_mutation_lock, contender)
+            with pytest.raises(QdrantMutationLockBusyError, match="retry"):
+                future.result(timeout=2)
+        with contender.hold():
+            pass
+    finally:
+        engine.dispose()
+
+
+def _try_qdrant_mutation_lock(lock: QdrantMutationLock) -> None:
+    with lock.hold():
+        pass
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+def test_mysql_index_sync_hides_video_while_upload_deletion_is_pending(
+    prepared_import,
+) -> None:
+    engine = create_database_engine(
+        TEST_DATABASE_URL or "",
+        environment=DatabaseEnvironment.TEST,
+    )
+    create_schema(engine)
+    session_factory = create_session_factory(engine)
+    prepared = replace(
+        prepared_import,
+        chunks=tuple(
+            replace(
+                item,
+                text_embedding=PreparedEmbedding(
+                    vector=[0.1, 0.2],
+                    metadata={"model": "text-v1"},
+                ),
+                vision_embedding=PreparedEmbedding(
+                    vector=[0.3, 0.4],
+                    metadata={"model": "vision-v1"},
+                ),
+            )
+            for item in prepared_import.chunks
+        ),
+    )
+    with engine.begin() as connection:
+        connection.execute(delete(SeriesRecord).where(
+            SeriesRecord.series_id == prepared.series_id
+        ))
+
+    try:
+        VideoRepository(session_factory).import_video_parse(prepared)
+        now = datetime.now(UTC).replace(tzinfo=None)
+        with session_factory.begin() as session:
+            session.add(UploadSessionRecord(
+                upload_session_id=str(uuid4()),
+                workspace_id=prepared.workspace_id,
+                series_id=prepared.series_id,
+                episode_order=prepared.episode_order,
+                upload_sequence=prepared.upload_sequence,
+                original_filename=prepared.original_filename,
+                media_type="video/mp4",
+                total_size_bytes=prepared.total_bytes,
+                preferred_segment_size_bytes=prepared.total_bytes,
+                total_segments=1,
+                content_sha256=prepared.content_hash,
+                version=1,
+                status=UploadSessionStatus.EXPIRED.value,
+                idempotency_key="mysql-pending-delete-crash",
+                expires_at=now,
+                completed_at=now,
+                video_id=prepared.video_id,
+                last_error_code=UPLOAD_DELETION_PENDING_ERROR_CODE,
+            ))
+
+        index_repository = IndexSyncRepository(session_factory)
+        assert index_repository.materialize_all() == 0
+        assert index_repository.list_all() == []
+    finally:
+        with engine.begin() as connection:
+            connection.execute(delete(SeriesRecord).where(
+                SeriesRecord.series_id == prepared.series_id
+            ))
+        engine.dispose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monkeypatch):
+    engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    session_factory = create_session_factory(engine)
+    series = LibraryService(LibraryRepository(session_factory)).create_series(
+        workspace_id="mysql-delete", name=f"Upload Delete {uuid4()}",
+    )
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    uploads = UploadService(UploadRepository(session_factory), store,
+        config=UploadServiceConfig(preferred_segment_size_bytes=4, maximum_upload_size_bytes=1024))
+    entered = Event()
+    release = Event()
+    put = store.put_upload_segment
+
+    def delayed_put(*args):
+        entered.set()
+        assert release.wait(10)
+        return put(*args)
+
+    try:
+        upload = uploads.create_session(
+            workspace_id="mysql-delete", series_id=series.series_id,
+            original_filename="episode.mp4", media_type="video/mp4",
+            total_size_bytes=4, idempotency_key="first",
+        )
+        monkeypatch.setattr(store, "put_upload_segment", delayed_put)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(uploads.upload_segment,
+                upload.upload_session_id, 0, b"abcd", workspace_id="mysql-delete",
+                checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
+                start_byte=0, end_byte_exclusive=4, total_size_bytes=4)
+            try:
+                assert entered.wait(10)
+                assert uploads.delete_session(upload.upload_session_id, workspace_id="mysql-delete").status == "EXPIRED"
+            finally:
+                release.set()
+            with pytest.raises(UploadStateError, match="expired"):
+                future.result(timeout=10)
+        assert not (store.base_directory / "staging" / "uploads" / upload.upload_session_id).exists()
+        assert uploads.list_sessions(workspace_id="mysql-delete") == []
+        next_upload = uploads.create_session(
+            workspace_id="mysql-delete", series_id=series.series_id,
+            original_filename="next.mp4", media_type="video/mp4",
+            total_size_bytes=4, idempotency_key="next",
+        )
+        assert next_upload.episode_order == next_upload.upload_sequence == 2
+    finally:
+        release.set()
+        with session_factory.begin() as session:
+            session.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id))
+        engine.dispose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
+    engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    session_factory = create_session_factory(engine)
+    series = LibraryService(LibraryRepository(session_factory)).create_series(
+        workspace_id="mysql-completed-delete",
+        name=f"Completed Upload Delete {uuid4()}",
+    )
+    store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    uploads = UploadService(
+        UploadRepository(session_factory),
+        store,
+        config=UploadServiceConfig(
+            preferred_segment_size_bytes=4,
+            maximum_upload_size_bytes=1024,
+            pipeline_version="mysql-delete-v1",
+        ),
+        probe_duration=lambda _path: 10_000,
+    )
+    upload = uploads.create_session(
+        workspace_id="mysql-completed-delete",
+        series_id=series.series_id,
+        original_filename="episode.mp4",
+        media_type="video/mp4",
+        total_size_bytes=4,
+        idempotency_key="completed-delete",
+    )
+    uploads.upload_segment(
+        upload.upload_session_id,
+        0,
+        b"abcd",
+        workspace_id="mysql-completed-delete",
+        checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
+        start_byte=0,
+        end_byte_exclusive=4,
+        total_size_bytes=4,
+    )
+    completed = uploads.complete(
+        upload.upload_session_id,
+        workspace_id="mysql-completed-delete",
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    call_id = str(uuid4())
+    with session_factory.begin() as session:
+        session.add(ParseUsageAttemptRecord(
+            job_id=completed.job_id,
+            attempt_count=1,
+            lease_version=1,
+            started_at=now,
+            recording_complete=True,
+        ))
+        session.add(ParseModelCallRecord(
+            call_id=call_id,
+            job_id=completed.job_id,
+            attempt_count=1,
+            lease_version=1,
+            workspace_id="mysql-completed-delete",
+            series_id=series.series_id,
+            video_id=completed.video_id,
+            provider="test",
+            model="test-model",
+            category="parse",
+            operation="parse",
+            started_at=now,
+            status="failed",
+        ))
+
+    try:
+        deleted = uploads.delete_session(
+            upload.upload_session_id,
+            workspace_id="mysql-completed-delete",
+        )
+        repeated = uploads.delete_session(
+            upload.upload_session_id,
+            workspace_id="mysql-completed-delete",
+        )
+        assert deleted.status == UploadSessionStatus.EXPIRED.value
+        assert repeated.version == deleted.version
+        with session_factory() as session:
+            tombstone = session.get(UploadSessionRecord, upload.upload_session_id)
+            assert tombstone.video_id is None and tombstone.job_id is None
+            assert tombstone.last_error_code is None
+            assert session.get(VideoRecord, completed.video_id) is None
+            assert session.get(SeriesParseJobRecord, completed.job_id) is None
+            assert session.get(ParseUsageAttemptRecord, (completed.job_id, 1, 1)) is None
+            assert session.get(ParseModelCallRecord, call_id) is None
+    finally:
+        with session_factory.begin() as session:
+            session.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id))
+        engine.dispose()
 
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")

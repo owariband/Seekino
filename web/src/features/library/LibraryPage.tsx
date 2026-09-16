@@ -4,6 +4,7 @@ import {
   Clock3,
   FolderPlus,
   RefreshCw,
+  Trash2,
   UploadCloud,
   X,
 } from "lucide-react";
@@ -35,10 +36,13 @@ export function LibraryPage() {
     isLoading,
     error,
   } = useWorkspace();
-  const { openDialog } = useUploads();
+  const { openDialog, tasks, cancel } = useUploads();
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const pendingUploads = selectedSeries?.pendingUploads.filter((upload) =>
+    !tasks.some((task) => task.session?.uploadSessionId === upload.uploadSessionId && task.status === "cancelled"),
+  ) ?? [];
 
   const submitSeries = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -139,7 +143,26 @@ export function LibraryPage() {
               </div>
             )}
           </section>
-          {selectedSeries.pendingUploads.length ? <section className={styles.episodes} aria-label="上传中的视频"><div className={styles.sectionHeader}><h2>上传中</h2></div><div className={styles.pendingUploads}>{selectedSeries.pendingUploads.map((upload) => <article key={upload.uploadSessionId}><strong>{upload.originalFilename}</strong><span>{upload.status === "COMPLETING" ? "正在确认" : upload.status === "EXPIRED" ? "已过期" : upload.status === "COMPLETED" ? "已上传" : "上传中"}</span><progress aria-label={`${upload.originalFilename} 上传进度`} value={upload.uploadedSizeBytes} max={upload.totalSizeBytes} /><small>{formatBytes(upload.uploadedSizeBytes)} / {formatBytes(upload.totalSizeBytes)}</small>{upload.lastError ? <p className={styles.error}>{upload.lastError.message}</p> : null}</article>)}</div></section> : null}
+          {pendingUploads.length ? (
+            <section className={styles.episodes} aria-label="上传中的视频">
+              <div className={styles.sectionHeader}><h2>上传中</h2></div>
+              <div className={styles.pendingUploads}>{pendingUploads.map((upload) => {
+                const task = tasks.find((item) => item.session?.uploadSessionId === upload.uploadSessionId);
+                const canDelete = upload.status !== "COMPLETING" && upload.status !== "COMPLETED" && task?.session?.status !== "COMPLETED" && !["completing", "processing", "completed"].includes(task?.status ?? "");
+                const deletionError = task?.error?.startsWith("删除失败：") ? task.error : upload.lastError?.message;
+                return (
+                  <article key={upload.uploadSessionId}>
+                    <strong>{upload.originalFilename}</strong>
+                    <span>{upload.status === "COMPLETING" ? "正在确认" : upload.status === "EXPIRED" ? "已过期" : upload.status === "COMPLETED" ? "已上传" : "上传中"}</span>
+                    <progress aria-label={`${upload.originalFilename} 上传进度`} value={upload.uploadedSizeBytes} max={upload.totalSizeBytes} />
+                    <small>{formatBytes(upload.uploadedSizeBytes)} / {formatBytes(upload.totalSizeBytes)}</small>
+                    {canDelete ? <button className="button-quiet" type="button" disabled={mode !== "live" || !task || task.status === "deleting"} onClick={() => { if (task) void cancel(task.taskId); }} aria-label={`删除上传 ${upload.originalFilename}`} title="终止上传并清理已上传的分片"><Trash2 size={14} />{task?.status === "deleting" ? "正在删除…" : "删除上传"}</button> : null}
+                    {deletionError ? <p className={styles.error} role="alert">{deletionError}</p> : null}
+                  </article>
+                );
+              })}</div>
+            </section>
+          ) : null}
         </>
       ) : null}
 

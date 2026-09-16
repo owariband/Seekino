@@ -11,7 +11,7 @@ import { summarizeUsage } from "./usage";
 
 function job(id: string, seriesId = "series-A"): ParseJobView {
   return {
-    jobId: id, workspaceId: "local-default", seriesId, videoId: `video-${id}`, seriesName: seriesId,
+    jobId: id, uploadSessionId: `upload-${id}`, workspaceId: "local-default", seriesId, videoId: `video-${id}`, seriesName: seriesId,
     episodeOrder: 1, originalFilename: `episode-${id}.mp4`, pipelineVersion: "v1", retryOfJobId: null,
     status: "SUCCEEDED", stage: "COMPLETED", progress: 100, attemptCount: 2, maxAttempts: 3,
     availableAt: null, startedAt: 1, completedAt: 2, estimatedRemainingMs: null, canRetry: false, canCancel: false,
@@ -65,15 +65,15 @@ describe("usage aggregation", () => {
   it("keeps incomplete totals unknown and retains only explicitly known subtotals", () => {
     const first = job("first");
     const second = job("second");
-    const incomplete = usage(second, { coverage: "partial", totalTokens: null, estimatedCostCny: null, missingUsageCount: 1 });
-    incomplete.items[0] = { ...incomplete.items[0]!, inputTokens: null, outputTokens: null, totalTokens: null, estimatedCostCny: null, missingUsageCount: 1 };
+    const incomplete = usage(second, { coverage: "partial", missingUsageCount: 1 });
+    incomplete.items[0] = { ...incomplete.items[0]!, missingUsageCount: 1 };
     const total = summarizeUsage([{ job: first, usage: usage(first), error: null }, { job: second, usage: incomplete, error: null }]);
     expect(total.totalTokens).toBeNull();
     expect(total.estimatedCostCny).toBeNull();
-    expect(total.knownTokens).toBe(1_200);
-    expect(total.knownCostCny).toBe("0.00000004");
-    expect(total.models[0]!.totalTokens).toBeNull();
-    expect(total.models[0]!.estimatedCostCny).toBeNull();
+    expect(total.knownTokens).toBe(2_400);
+    expect(total.knownCostCny).toBe("0.00000008");
+    expect(total.models[0]!.totalTokens).toBe(2_400);
+    expect(total.models[0]!.estimatedCostCny).toBe("0.00000008");
   });
 });
 

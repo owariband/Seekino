@@ -80,14 +80,14 @@ class ParseUsageService:
                 incomplete.set()
         except Exception:
             incomplete.set()
-            _logger.warning("Could not start Parse usage recording", extra={"job_id": lease.job_id})
+            _logger.warning("Could not start Parse usage recording job_id=%s", lease.job_id)
 
         def observe(event: ParseModelCall) -> None:
             try:
                 self.record(lease, event)
             except Exception:
                 incomplete.set()
-                _logger.warning("Could not persist Parse model usage", extra={"job_id": lease.job_id})
+                _logger.warning("Could not persist Parse model usage job_id=%s", lease.job_id)
 
         try:
             with capture_parse_usage(observe):
@@ -96,7 +96,7 @@ class ParseUsageService:
             try:
                 self._repository.finish_attempt(lease, recording_complete=not incomplete.is_set())
             except Exception:
-                _logger.warning("Could not finalize Parse usage recording", extra={"job_id": lease.job_id})
+                _logger.warning("Could not finalize Parse usage recording job_id=%s", lease.job_id)
 
     def record(self, lease: ParseJobLease, event: ParseModelCall) -> ParseModelCallState:
         usage = event.call.usage
@@ -123,10 +123,13 @@ class ParseUsageService:
         items = tuple(self._row(identity, group) for identity, group in sorted(groups.items()))
         missing = sum(item.missing_usage_count for item in items)
         unpriced = sum(item.unpriced_call_count for item in items)
+        known_tokens = [item.total_tokens for item in items if item.total_tokens is not None]
+        known_costs = [item.estimated_cost_cny for item in items if item.estimated_cost_cny is not None]
+        observed_empty = coverage == "recorded" and not calls
         return ParseUsageState(
             job=job, coverage=coverage,
-            total_tokens=sum(item.total_tokens for item in items) if not missing and coverage == "recorded" else None,
-            estimated_cost_cny=sum((item.estimated_cost_cny for item in items), Decimal(0)) if not missing and not unpriced and coverage == "recorded" else None,
+            total_tokens=sum(known_tokens) if known_tokens else 0 if observed_empty else None,
+            estimated_cost_cny=sum(known_costs, Decimal(0)) if known_costs else Decimal(0) if observed_empty else None,
             call_count=len(calls), missing_usage_count=missing, unpriced_call_count=unpriced, items=items,
         )
 
@@ -135,9 +138,10 @@ class ParseUsageService:
         missing = sum(call.usage is None for call in calls)
         unpriced = sum(call.usage is not None and call.estimated_cost_cny is None for call in calls)
         def tokens(field: str) -> int | None:
-            values = [getattr(call.usage, field) if call.usage is not None else None for call in calls]
-            return None if any(value is None for value in values) else sum(values)
-        cost = None if missing or unpriced else sum((call.estimated_cost_cny for call in calls), Decimal(0))
+            values = [getattr(call.usage, field) for call in calls if call.usage is not None]
+            return None if not values or any(value is None for value in values) else sum(values)
+        known_costs = [call.estimated_cost_cny for call in calls if call.estimated_cost_cny is not None]
+        cost = sum(known_costs, Decimal(0)) if known_costs else None
         provider, model, category, operation = identity
         return ParseUsageRowState(
             provider=provider, model=model, category=category, operation=operation, call_count=len(calls),

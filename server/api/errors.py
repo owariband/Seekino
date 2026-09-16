@@ -4,8 +4,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
-from uuid import uuid4
 import logging
+from uuid import uuid4
 
 from ..repository.agent import (
     AgentConflictError,
@@ -30,6 +30,7 @@ from ..repository.video import (
 )
 from ..agent.state import AgentModelInvocationError
 from ..service.upload import UploadChecksumMismatchError
+from ..service.qdrant_mutation_lock import QdrantMutationLockBusyError
 from ..service.video_retrieval import RetrievalIndexConsistencyError
 from ..service.media import MediaMissingError, MediaNotReadyError
 from ..storage.artifact import ArtifactIntegrityError
@@ -59,6 +60,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         SeriesNotReadyError,
         UploadCompletionInProgressError,
         UploadConflictError,
+        QdrantMutationLockBusyError,
         UploadStateError,
     )
 
@@ -122,7 +124,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
-        _logger.error("request_failed request_id=%s exception_type=%s", getattr(request.state, "request_id", None), type(exc).__name__)
+        _logger.exception("request_failed exception_type=%s", type(exc).__name__)
         return _error_response(request, 500, "INTERNAL_ERROR", "服务处理失败，请保留请求编号并重试")
 
 

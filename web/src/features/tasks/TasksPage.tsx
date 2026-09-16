@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import {
   Activity,
@@ -6,12 +6,16 @@ import {
   CircleAlert,
   Clock3,
   RefreshCw,
+  RotateCcw,
   Rows3,
+  Trash2,
+  UploadCloud,
 } from "lucide-react";
 import { useState } from "react";
 
-import { listAllJobs, shouldRetryApiRequest } from "../../api/client";
-import type { ParseJobStatus } from "../../api/contracts";
+import { deleteUploadSession, errorMessage, listAllJobs, retryUploadParse, shouldRetryApiRequest } from "../../api/client";
+import type { ParseJobStatus, ParseJobView } from "../../api/contracts";
+import { useUploads } from "../uploads/UploadProvider";
 import { episodeLabel, stageLabel } from "../../shared/format";
 import styles from "./tasks.module.css";
 import { ParseUsageDetails } from "./ParseUsageDetails";
@@ -31,21 +35,100 @@ const PIPELINE = [
 ];
 
 const statusText: Record<ParseJobStatus, string> = {
-  QUEUED: "等待",
-  RUNNING: "进行中",
+  QUEUED: "等待解析",
+  RUNNING: "正在解析",
   RETRY_WAIT: "等待重试",
-  SUCCEEDED: "已完成",
-  FAILED: "失败",
+  SUCCEEDED: "解析完成",
+  FAILED: "解析失败",
 };
 
 export function TasksPage() {
+  const { forgetDeletedSession, openDialog, syncRetriedParse } = useUploads();
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState<Filter>("all");
+  const [deletingUploadSessionIds, setDeletingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [retryingUploadSessionIds, setRetryingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [confirmingDeleteJobId, setConfirmingDeleteJobId] = useState<string | null>(null);
+  const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const jobsQuery = useQuery({
     queryKey: ["jobs"],
     queryFn: ({ signal }) => listAllJobs(signal),
     retry: shouldRetryApiRequest,
     refetchInterval: 5_000,
   });
+
+  const deleteTask = async (job: ParseJobView) => {
+    const uploadSessionId = job.uploadSessionId;
+    if (!uploadSessionId || job.status === "RUNNING" || deletingUploadSessionIds.has(uploadSessionId) || retryingUploadSessionIds.has(uploadSessionId)) return;
+    setConfirmingDeleteJobId(null);
+    setDeletingUploadSessionIds((current) => new Set(current).add(uploadSessionId));
+    setActionErrors((current) => {
+      const next = { ...current };
+      delete next[job.jobId];
+      return next;
+    });
+    try {
+      await deleteUploadSession(uploadSessionId);
+      queryClient.setQueryData<ParseJobView[]>(["jobs"], (current) =>
+        current?.filter((item) => item.uploadSessionId !== uploadSessionId),
+      );
+      forgetDeletedSession(uploadSessionId);
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+        queryClient.invalidateQueries({ queryKey: ["series"] }),
+        queryClient.invalidateQueries({ queryKey: ["series-detail"] }),
+        queryClient.invalidateQueries({ queryKey: ["usage-overview"] }),
+      ]);
+    } catch (error) {
+      setActionErrors((current) => ({
+        ...current,
+        [job.jobId]: `删除失败：${errorMessage(error)}`,
+      }));
+    } finally {
+      setDeletingUploadSessionIds((current) => {
+        const next = new Set(current);
+        next.delete(uploadSessionId);
+        return next;
+      });
+    }
+  };
+
+  const retryParse = async (job: ParseJobView) => {
+    const uploadSessionId = job.uploadSessionId;
+    if (!uploadSessionId || !job.canRetry || deletingUploadSessionIds.has(uploadSessionId) || retryingUploadSessionIds.has(uploadSessionId)) return;
+    setConfirmingDeleteJobId(null);
+    setRetryingUploadSessionIds((current) => new Set(current).add(uploadSessionId));
+    setActionErrors((current) => {
+      const next = { ...current };
+      delete next[job.jobId];
+      return next;
+    });
+    try {
+      const retried = await retryUploadParse(uploadSessionId, job.version);
+      queryClient.setQueryData<ParseJobView[]>(["jobs"], (current) =>
+        current?.map((item) => item.jobId === job.jobId ? retried : item),
+      );
+      syncRetriedParse(retried);
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+        queryClient.invalidateQueries({ queryKey: ["series"] }),
+        queryClient.invalidateQueries({ queryKey: ["series-detail"] }),
+        queryClient.invalidateQueries({ queryKey: ["parse-usage"] }),
+        queryClient.invalidateQueries({ queryKey: ["usage-overview"] }),
+      ]);
+    } catch (error) {
+      setActionErrors((current) => ({
+        ...current,
+        [job.jobId]: `重试失败：${errorMessage(error)}`,
+      }));
+    } finally {
+      setRetryingUploadSessionIds((current) => {
+        const next = new Set(current);
+        next.delete(uploadSessionId);
+        return next;
+      });
+    }
+  };
 
   const jobs = jobsQuery.data ?? [];
   const visibleJobs = jobs.filter((job) => {
@@ -64,9 +147,12 @@ export function TasksPage() {
         <div>
           <h1 className="page-title">解析任务</h1>
         </div>
-        <button className="button-secondary" type="button" disabled={jobsQuery.isFetching} onClick={() => void jobsQuery.refetch()}>
-          <RefreshCw size={15} className={jobsQuery.isFetching ? styles.spinning : undefined} />同步状态
-        </button>
+        <div className={styles.headerActions}>
+          <button className="button-secondary" type="button" onClick={openDialog}><UploadCloud size={15} />管理上传</button>
+          <button className="button-secondary" type="button" disabled={jobsQuery.isFetching} onClick={() => void jobsQuery.refetch()}>
+            <RefreshCw size={15} className={jobsQuery.isFetching ? styles.spinning : undefined} />同步状态
+          </button>
+        </div>
       </header>
 
       <section className={styles.metrics} aria-label="任务概况">
@@ -98,6 +184,9 @@ export function TasksPage() {
         ) : null}
         {visibleJobs.map((job) => {
           const currentStageIndex = Math.max(0, PIPELINE.indexOf(job.stage));
+          const deleting = job.uploadSessionId ? deletingUploadSessionIds.has(job.uploadSessionId) : false;
+          const retrying = job.uploadSessionId ? retryingUploadSessionIds.has(job.uploadSessionId) : false;
+          const running = job.status === "RUNNING";
           return (
             <article className={styles.job} key={job.jobId}>
               <header className={styles.jobHeader}>
@@ -106,11 +195,66 @@ export function TasksPage() {
                   <span className="eyebrow">{job.seriesName}</span>
                   <h2>{stageLabel(job.stage)}</h2>
                 </div>
-                <div className={styles.jobStatus} data-status={job.status}>
-                  <i />{statusText[job.status]}
+                <div className={styles.jobActions}>
+                  <div className={styles.jobStatus} data-status={job.status}>
+                    <i />{statusText[job.status]}
+                  </div>
+                  <strong className={styles.jobPercent}>{job.progress}%</strong>
                 </div>
-                <strong className={styles.jobPercent}>{job.progress}%</strong>
               </header>
+
+              <div className={styles.jobControls}>
+                <span className={styles.uploadState}><CheckCircle2 size={14} />文件已上传</span>
+                <div className={styles.controlButtons}>
+                  {job.uploadSessionId && job.canRetry ? (
+                    <button
+                      className={clsx("button-primary", styles.retryTask)}
+                      type="button"
+                      disabled={deleting || retrying}
+                      onClick={() => void retryParse(job)}
+                      aria-label={`重试解析 ${job.originalFilename}`}
+                      title="从已有检查点继续解析"
+                    >
+                      <RotateCcw size={14} />{retrying ? "正在重试…" : "重试解析"}
+                    </button>
+                  ) : null}
+                  {job.uploadSessionId ? (
+                    <button
+                      className={clsx("button-secondary", styles.deleteTask)}
+                      type="button"
+                      disabled={running || deleting || retrying}
+                      onClick={() => setConfirmingDeleteJobId(job.jobId)}
+                      aria-label={`删除任务 ${job.originalFilename}`}
+                      title={running ? "任务正在运行，等待本次执行结束后再删除" : "删除本次上传及其解析产物"}
+                    >
+                      <Trash2 size={14} />{deleting ? "正在删除…" : "删除任务"}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              {confirmingDeleteJobId === job.jobId ? (
+                <div className={styles.deleteConfirmation} role="alert">
+                  <div>
+                    <strong>确认删除这个视频任务？</strong>
+                    <p>上传文件、解析产物和检索索引都会被删除；聊天记录会保留，但旧证据无法再播放。此操作无法撤销。</p>
+                  </div>
+                  <div className={styles.confirmActions}>
+                    <button className="button-quiet" type="button" onClick={() => setConfirmingDeleteJobId(null)}>取消</button>
+                    <button
+                      className={clsx("button-secondary", styles.confirmDelete)}
+                      type="button"
+                      disabled={running || deleting || retrying}
+                      onClick={() => void deleteTask(job)}
+                      aria-label={`确认删除 ${job.originalFilename}`}
+                    >
+                      <Trash2 size={14} />确认删除
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {actionErrors[job.jobId] ? <p className={styles.actionError} role="alert">{actionErrors[job.jobId]}</p> : null}
 
               <div className={styles.pipeline}>
                 <div className={styles.pipelineLine}><span style={{ width: `${job.progress}%` }} /></div>

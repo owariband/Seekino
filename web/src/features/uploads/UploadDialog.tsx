@@ -19,10 +19,15 @@ import { mediaTypeForFile, taskProgress, taskStatusLabel } from "./upload-types"
 import styles from "./upload-dialog.module.css";
 
 function TaskRow({ task }: { task: UploadTask }) {
-  const { pause, resume, retry, cancel } = useUploads();
+  const { pause, resume, attachFile, retry, cancel } = useUploads();
+  const replacementRef = useRef<HTMLInputElement>(null);
   const progress = taskProgress(task);
   const canPause = ["queued", "creating", "uploading"].includes(task.status);
-  const canResume = task.status === "paused";
+  const canResume = task.status === "paused" && Boolean(task.file);
+  const needsOriginalFile = task.status === "paused" && !task.file;
+  const canResumeCompletion = !task.file
+    && task.session?.status === "COMPLETING"
+    && ["completing", "failed"].includes(task.status);
 
   return (
     <article className={styles.task} data-status={task.status}>
@@ -66,14 +71,36 @@ function TaskRow({ task }: { task: UploadTask }) {
             <Play size={16} />
           </button>
         ) : null}
-        {task.status === "failed" ? (
+        {needsOriginalFile ? <>
+          <input
+            ref={replacementRef}
+            type="file"
+            accept="video/mp4,video/quicktime,video/x-msvideo,.mp4,.mov,.avi"
+            className={styles.hiddenFileInput}
+            aria-label={`选择原文件继续 ${task.fileName}`}
+            onChange={(event) => {
+              const selected = event.target.files?.[0];
+              if (selected) attachFile(task.taskId, selected);
+              event.target.value = "";
+            }}
+          />
+          <button type="button" onClick={() => replacementRef.current?.click()} aria-label={`重新选择原文件继续 ${task.fileName}`} title="重新选择同一个原文件，从已确认分片继续">
+            <Play size={16} />
+          </button>
+        </> : null}
+        {canResumeCompletion ? (
+          <button type="button" onClick={() => resume(task.taskId)} aria-label={`继续合并 ${task.fileName}`} title="重新查询并继续服务端合并">
+            <RotateCcw size={16} />
+          </button>
+        ) : null}
+        {task.status === "failed" && task.file ? (
           <button type="button" onClick={() => retry(task.taskId)} aria-label={`重试 ${task.fileName}`}>
             <RotateCcw size={16} />
           </button>
         ) : null}
         {task.status === "completed" ? <CheckCircle2 size={18} aria-label="完成" /> : null}
-        {!["processing", "completed"].includes(task.status) ? (
-          <button type="button" onClick={() => cancel(task.taskId)} aria-label={`移除 ${task.fileName}`}>
+        {task.session?.status !== "COMPLETED" && task.session?.status !== "COMPLETING" && !["processing", "completed", "completing", "cancelled"].includes(task.status) ? (
+          <button type="button" disabled={task.status === "deleting"} onClick={() => void cancel(task.taskId)} aria-label={`删除 ${task.fileName}`} title="终止上传并删除已上传的分片">
             <Trash2 size={16} />
           </button>
         ) : null}

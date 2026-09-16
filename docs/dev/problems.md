@@ -23,11 +23,9 @@
 
 ### F03：解析失败后的“重试”没有重跑解析
 
-- 类型：确定的 UI 行为缺陷。
-- 现状：上传面板将 `retry` 绑定到 `resume`。若文件已经上传完成、解析 Job 最终 FAILED，点击重试会再次取得原上传完成结果并订阅原来的 FAILED Job。
-- 影响：按钮没有产生新的解析尝试，用户反复点击仍然失败。
-- 修复方向：区分上传失败与解析失败。上传失败可恢复传输；解析失败按现有 `canRetry=false` 隐藏或禁用重跑操作，并提供明确原因。新增手动重跑接口需另行开发，不能用重复 complete 冒充重跑。
-- 依据：[UploadProvider.tsx](../../web/src/features/uploads/UploadProvider.tsx)、[UploadDialog.tsx](../../web/src/features/uploads/UploadDialog.tsx)、[jobs.py](../../server/api/jobs.py)。
+- 类型：已修复。
+- 当前行为：上传传输失败仍由上传面板恢复；解析主 Job 最终 FAILED 时，任务卡调用 `uploads/retry-parse`，以 `uploadSessionId + expectedJobVersion` 将原 Job 重新排队。接口保留阶段、进度、Checkpoint、attempt 与用量历史，并以版本条件拦截并发或响应丢失后的重复投递。
+- 依据：[TasksPage.tsx](../../web/src/features/tasks/TasksPage.tsx)、[uploads.py](../../server/api/uploads.py)、[upload.py](../../server/repository/upload.py)。
 
 ### F04：刷新后缺少恢复未完成上传的完整交互
 

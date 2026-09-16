@@ -17,6 +17,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from ..database import Base
 from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampedRecord
 
+UPLOAD_DELETION_PENDING_ERROR_CODE = "DELETION_PENDING"
+
 
 class UploadSessionStatus(StrEnum):
     UPLOADING = "UPLOADING"

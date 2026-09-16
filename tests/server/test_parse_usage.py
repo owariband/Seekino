@@ -164,7 +164,7 @@ def test_failed_and_stale_calls_are_retained_across_all_attempts(accounting):
     assert public.series_name == "Actual Series" and public.original_filename == "actual-episode.mp4"
 
 
-def test_missing_usage_and_price_are_unknown_and_disjoint(accounting):
+def test_missing_usage_preserves_known_subtotals_and_price_gaps_stay_explicit(accounting):
     lease = _lease(accounting)
     with accounting.service.capture(lease):
         accounting.service.record(lease, _event(status="failed"))
@@ -172,9 +172,24 @@ def test_missing_usage_and_price_are_unknown_and_disjoint(accounting):
     state = accounting.service.get(lease.job_id, workspace_id="mine")
     assert state.coverage == "recorded"
     assert state.call_count == 2 and state.missing_usage_count == state.unpriced_call_count == 1
-    assert state.total_tokens is None and state.estimated_cost_cny is None
+    assert state.total_tokens == 3 and state.estimated_cost_cny is None
+    assert next(item for item in state.items if item.model == "unknown").total_tokens == 3
     calls = accounting.ledger.list_calls(lease.job_id, workspace_id="mine")
     assert all(call.price_snapshot is None for call in calls)
+
+
+def test_failed_call_without_usage_does_not_hide_same_models_known_subtotal(accounting):
+    lease = _lease(accounting)
+    with accounting.service.capture(lease):
+        accounting.service.record(lease, _event(status="failed"))
+        accounting.service.record(
+            lease,
+            _event(usage=TokenUsage(100, 20, 120, 0, 0)),
+        )
+    state = accounting.service.get(lease.job_id, workspace_id="mine")
+    assert state.missing_usage_count == 1
+    assert state.total_tokens == state.items[0].total_tokens == 120
+    assert state.estimated_cost_cny == state.items[0].estimated_cost_cny == Decimal("0.00036")
 
 
 def test_historical_unknown_is_distinct_from_observed_zero_calls(accounting):
@@ -202,7 +217,7 @@ def test_last_call_finishing_after_snapshot_does_not_claim_a_complete_prefix(acc
     monkeypatch.setattr(accounting.ledger, "snapshot", finishes_after_read)
     prefix = accounting.service.get(lease.job_id, workspace_id="mine")
     assert prefix.call_count == 1 and prefix.coverage == "partial"
-    assert prefix.total_tokens is None and prefix.estimated_cost_cny is None
+    assert prefix.total_tokens == 100 and prefix.estimated_cost_cny == Decimal("0.0002")
     monkeypatch.setattr(accounting.ledger, "snapshot", snapshot)
     final = accounting.service.get(lease.job_id, workspace_id="mine")
     assert final.coverage == "recorded" and final.call_count == 2 and final.total_tokens == 150
@@ -222,7 +237,8 @@ def test_new_attempt_after_metadata_read_is_included_in_coverage(accounting, mon
         return detail
     monkeypatch.setattr(accounting.service._jobs, "get", claims_after_metadata)
     state = accounting.service.get(first.job_id, workspace_id="mine")
-    assert state.coverage == "partial" and state.total_tokens is None and state.estimated_cost_cny is None
+    assert state.coverage == "partial" and state.total_tokens == 100
+    assert state.estimated_cost_cny == Decimal("0.0002")
 
 
 def test_recording_failure_preserves_model_result_and_cannot_be_hidden_by_replay(accounting, monkeypatch):
@@ -241,7 +257,7 @@ def test_recording_failure_preserves_model_result_and_cannot_be_hidden_by_replay
     with accounting.service.capture(lease):
         accounting.service.record(lease, _event(usage=TokenUsage(2, 0, 2, 0, 0)))
     state = accounting.service.get(lease.job_id, workspace_id="mine")
-    assert state.coverage == "partial" and state.estimated_cost_cny is None
+    assert state.coverage == "partial" and state.estimated_cost_cny == Decimal("0.000004")
 
 
 def test_get_usage_route_requires_workspace_and_enforces_ownership(accounting):

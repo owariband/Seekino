@@ -149,6 +149,8 @@ PUT  /api/uploads/segments/upload?uploadSessionId={uploadSessionId}&segmentNumbe
       Content-Range: bytes START-END/TOTAL
       X-Content-SHA256: <64 hex chars>
 POST /api/uploads/complete?uploadSessionId={uploadSessionId}
+POST /api/uploads/delete?uploadSessionId={uploadSessionId}&workspaceId={workspaceId}
+POST /api/uploads/retry-parse?uploadSessionId={uploadSessionId}&workspaceId={workspaceId}&expectedJobVersion={version}
 GET  /api/jobs/list?workspaceId=local-default
 GET  /api/jobs/get?jobId={jobId}
 GET  /api/jobs/events?jobId={jobId}             text/event-stream
@@ -161,6 +163,32 @@ GET  /api/agent/messages/list?conversationId={conversationId}
 POST /api/agent/messages/send?conversationId={conversationId}
 GET  /api/agent/messages/events?conversationId={conversationId}
 ```
+
+`UploadSession` 是用户任务的聚合根；`Video`、一个或多个 Pipeline 版本的
+`SeriesParseJob`、Checkpoint 和 `VideoChunk` 都是同一任务产生的内部记录。上传面板
+可删除未完成任务，解析任务页可用同一个 `uploadSessionId` 删除等待解析、解析失败或
+已完成的整项任务，不另设 Job 删除接口。
+
+删除分两阶段执行。第一个 MySQL 事务锁定 UploadSession 及其 Video 的全部 ParseJob，
+阻止新的分片和 Worker claim，并写入 `DELETION_PENDING` 墓碑；随后幂等清理上传暂存、
+所有 Job 目录、Video 媒体目录和 Qdrant point；第二个事务删除模型调用/用量、Job、
+Checkpoint、VideoChunk/Info/Embedding/Context/IndexIntent 和 Video。成功后保留
+`EXPIRED` UploadSession 及原序号/幂等键，以拦截迟到请求和保证重复 DELETE 返回同一
+结果。进程在中途退出时，API 启动会扫描持久删除标记继续清理。重新上传须使用新幂等键。
+`COMPLETING` 或存在 `RUNNING` ParseJob 时返回 409，等当前受租约保护的写入结束后再删。
+删除与 IndexSync 对同一环境和 Qdrant Collection 使用跨进程互斥锁；所有索引同步、巡检
+和重建查询也会排除 `DELETION_PENDING` 对应的视频。因此即使进程在删完 point、提交
+最终 MySQL 清理前退出，旧 UPSERT Intent 也不会把待删 point 写回来。
+
+解析主任务最终 `FAILED` 后，可按同一个 `uploadSessionId` 手动重试。请求必须携带当前
+`expectedJobVersion`；服务端按 UploadSession → ParseJob 的锁顺序校验并只把
+`UploadSession.job_id` 指向的主 Job 重新排队。重试保留 attempt 历史、Checkpoint、阶段、
+进度、用量记录和工作目录；若旧额度已用尽，只把 `maxAttempts` 扩展一个名额，Worker
+实际领取时才增加 `attemptCount`。版本不匹配、删除中或任务已不再 FAILED 均返回 409，
+因此并发点击和响应丢失后的同版本重放不会多投递一次解析尝试。
+
+Agent 对话中的既有回答和证据快照属于聊天历史，不在任务级删除范围内；删除后不能再用
+其中的 VideoChunk ID 加载实时媒体证据。
 
 创建 Conversation 的 JSON 为 `workspaceId, title`，不需要父容器 ID；
 `Idempotency-Key` 在 Workspace 内唯一。Conversation 详情直接返回 `workspaceId`，
@@ -190,6 +218,39 @@ VideoChunk MP4。Text vector 读取同一 VideoChunk 的完整 retrieval documen
 `leaseVersion` 不能提交 checkpoint 或最终 MySQL 事实。SSE 只发送 MySQL 中对 UI 有意义
 的状态、阶段、进度或 checkpoint 变化，不把纯 Heartbeat 当成进度事件；断线后仍以 Job
 查询结果为准。
+
+## 运行日志
+
+API 与 Worker 在进程启动时配置 Python logging，同时写入终端和轮转文件，默认
+`ANIVAG_LOG_LEVEL=info`；API 也可用 `python -m server.api --log-level debug` 覆盖。
+日志文件不依赖 `./start.sh`，直接启动 Python 进程也会落盘：
+
+```text
+outputs/server/logs/development/api.log
+outputs/server/logs/development/worker.log
+```
+
+test / production 使用各自目录。`ANIVAG_LOG_DIRECTORY` 可覆盖日志根目录；
+`ANIVAG_LOG_MAX_BYTES` 默认 10485760（10 MB），`ANIVAG_LOG_BACKUP_COUNT` 默认 5。
+文件满后轮转为 `api.log.1` 到 `api.log.5`，`.1` 为最新历史文件；Worker 同理。
+通过 `./start.sh` 启动时，`outputs/local-services/api.log`、`worker.log`、`web.log`、
+`mysql.log` 和 `qdrant.log` 另存进程输出，包含启动信息；这组脚本输出文件不轮转。
+
+API / Worker 业务日志包含时间、级别、模块和 `request_id`。HTTP 请求记录 method、
+path、status 与响应头返回前的 `duration_ms`；上传业务日志记录 `upload_session_id`、
+序号、大小、合并/校验/媒体探测/创建任务的阶段、完成后的 `video_id` / `job_id` 和失败
+原因与各分片的确认记录。请求编号通过 `X-Request-Id` 与错误体返回，上传面板
+的错误提示会显示它。请求日志不打印 query、请求正文或认证 Header；未预期异常记录
+异常类型与调用栈。Worker 原有领取、解析进度、重试、失败和完成日志也附带时间与级别。
+
+```bash
+tail -f outputs/server/logs/development/api.log outputs/server/logs/development/worker.log
+rg 'upload_session_id=会话ID|job=任务ID|request_id=请求编号' outputs/server/logs/development/*.log*
+```
+
+目前日志按进程本地落盘，未接入集中检索、Metrics 或 Trace。
+上传详细错误同时保存在 `upload_session.last_error`，解析错误保存在任务/checkpoint
+记录中；公开接口只返回适合用户阅读的通用提示。日志配置改动在进程重启后生效。
 
 ## 导入第七集已有产物
 

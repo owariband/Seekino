@@ -6,13 +6,15 @@ export interface UsageEntry {
   error: string | null;
 }
 
-function sumTokens(values: (number | null)[]): number | null {
-  return values.some((value) => value === null) ? null : values.reduce<number>((sum, value) => sum + value!, 0);
+function sumKnownTokens(values: (number | null)[]): number | null {
+  const known = values.filter((value): value is number => value !== null);
+  return known.length ? known.reduce((sum, value) => sum + value, 0) : null;
 }
 
-function sumCosts(values: (string | null)[]): string | null {
-  if (values.some((value) => value === null)) return null;
-  const parts = values.map((value) => value!.split("."));
+function sumKnownCosts(values: (string | null)[]): string | null {
+  const known = values.filter((value): value is string => value !== null);
+  if (!known.length) return null;
+  const parts = known.map((value) => value.split("."));
   const scale = Math.max(0, ...parts.map(([, fraction = ""]) => fraction.length));
   const total = parts.reduce((sum, [integer, fraction = ""]) => sum + BigInt(`${integer}${fraction.padEnd(scale, "0")}`), 0n);
   if (scale === 0) return total.toString();
@@ -29,12 +31,12 @@ export function summarizeUsage(entries: UsageEntry[]) {
       groups.set(key, previous ? {
         ...row,
         callCount: previous.callCount + row.callCount,
-        inputTokens: sumTokens([previous.inputTokens, row.inputTokens]),
-        outputTokens: sumTokens([previous.outputTokens, row.outputTokens]),
-        cachedInputTokens: sumTokens([previous.cachedInputTokens, row.cachedInputTokens]),
-        reasoningTokens: sumTokens([previous.reasoningTokens, row.reasoningTokens]),
-        totalTokens: sumTokens([previous.totalTokens, row.totalTokens]),
-        estimatedCostCny: sumCosts([previous.estimatedCostCny, row.estimatedCostCny]),
+        inputTokens: sumKnownTokens([previous.inputTokens, row.inputTokens]),
+        outputTokens: sumKnownTokens([previous.outputTokens, row.outputTokens]),
+        cachedInputTokens: sumKnownTokens([previous.cachedInputTokens, row.cachedInputTokens]),
+        reasoningTokens: sumKnownTokens([previous.reasoningTokens, row.reasoningTokens]),
+        totalTokens: sumKnownTokens([previous.totalTokens, row.totalTokens]),
+        estimatedCostCny: sumKnownCosts([previous.estimatedCostCny, row.estimatedCostCny]),
         missingUsageCount: previous.missingUsageCount + row.missingUsageCount,
         unpricedCallCount: previous.unpricedCallCount + row.unpricedCallCount,
       } : { ...row });
@@ -42,11 +44,18 @@ export function summarizeUsage(entries: UsageEntry[]) {
   }
   const knownTokens = entries.flatMap(({ usage }) => usage?.totalTokens !== null && usage?.totalTokens !== undefined ? [usage.totalTokens] : []);
   const knownCosts = entries.flatMap(({ usage }) => usage?.estimatedCostCny !== null && usage?.estimatedCostCny !== undefined ? [usage.estimatedCostCny] : []);
+  const completeTokens = entries.every(({ usage, error }) =>
+    !error && usage?.coverage === "recorded" && usage.missingUsageCount === 0 && usage.totalTokens !== null,
+  );
+  const completeCosts = entries.every(({ usage, error }) =>
+    !error && usage?.coverage === "recorded" && usage.missingUsageCount === 0 && usage.unpricedCallCount === 0
+      && usage.estimatedCostCny !== null,
+  );
   return {
-    totalTokens: sumTokens(entries.map(({ usage }) => usage?.totalTokens ?? null)),
-    estimatedCostCny: sumCosts(entries.map(({ usage }) => usage?.estimatedCostCny ?? null)),
-    knownTokens: knownTokens.length ? sumTokens(knownTokens) : null,
-    knownCostCny: knownCosts.length ? sumCosts(knownCosts) : null,
+    totalTokens: entries.length === 0 ? 0 : completeTokens ? sumKnownTokens(knownTokens) : null,
+    estimatedCostCny: entries.length === 0 ? "0" : completeCosts ? sumKnownCosts(knownCosts) : null,
+    knownTokens: sumKnownTokens(knownTokens),
+    knownCostCny: sumKnownCosts(knownCosts),
     callCount: entries.reduce((sum, { usage }) => sum + (usage?.callCount ?? 0), 0),
     models: [...groups.values()].sort((left, right) => left.model.localeCompare(right.model) || left.provider.localeCompare(right.provider) || left.operation.localeCompare(right.operation)),
   };

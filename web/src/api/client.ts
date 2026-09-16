@@ -33,12 +33,14 @@ export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(
 export class ApiClientError extends Error {
   readonly status: number;
   readonly code: string | undefined;
+  readonly requestId: string | undefined;
 
   constructor(status: number, payload: ApiErrorPayload | null) {
     super(payload?.message || `请求失败（HTTP ${status}）`);
     this.name = "ApiClientError";
     this.status = status;
     this.code = payload?.code;
+    this.requestId = payload?.requestId;
   }
 }
 
@@ -150,10 +152,32 @@ export function createUploadSession(
 
 export function getUploadSession(
   uploadSessionId: string,
+  signal?: AbortSignal,
 ): Promise<UploadSessionView> {
   return requestJson(
     `/api/uploads/get?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
       `&workspaceId=${WORKSPACE_QUERY}`,
+    { signal },
+  );
+}
+
+export function deleteUploadSession(uploadSessionId: string): Promise<UploadSessionView> {
+  return requestJson(
+    `/api/uploads/delete?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
+      `&workspaceId=${WORKSPACE_QUERY}`,
+    { method: "POST" },
+  );
+}
+
+export function retryUploadParse(
+  uploadSessionId: string,
+  expectedJobVersion: number,
+): Promise<ParseJobView> {
+  return requestJson(
+    `/api/uploads/retry-parse?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
+      `&workspaceId=${WORKSPACE_QUERY}` +
+      `&expectedJobVersion=${encodeURIComponent(String(expectedJobVersion))}`,
+    { method: "POST" },
   );
 }
 
@@ -472,7 +496,9 @@ export async function uploadSegment({
 }
 
 export function errorMessage(error: unknown): string {
-  if (error instanceof ApiClientError) return error.message;
+  if (error instanceof ApiClientError) {
+    return error.requestId ? `${error.message}（请求编号：${error.requestId}）` : error.message;
+  }
   if (error instanceof Error) return error.message;
   return "发生了无法识别的错误";
 }

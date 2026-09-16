@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from threading import Event
+from uuid import uuid4
 
+import pytest
 from qdrant_client import QdrantClient
 from sqlalchemy import func, select
 
 from server.database import DatabaseEnvironment, create_session_factory
-from server.model.index_sync import IndexSyncStatus
+from server.model.index_sync import IndexSyncIntentRecord, IndexSyncStatus
+from server.model.upload import (
+    UPLOAD_DELETION_PENDING_ERROR_CODE,
+    UploadSessionRecord,
+    UploadSessionStatus,
+)
 from server.model.video import SeriesRecord, VideoChunkRecord
 from server.repository.index_sync import IndexSyncRepository
-from server.service.index_sync import IndexSyncService
+from server.service.index_sync import IndexSyncInvariantError, IndexSyncService
+from server.service.qdrant_mutation_lock import QdrantMutationLock
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
 
@@ -45,6 +56,24 @@ def _store(client: QdrantClient) -> QdrantVideoChunkStore:
     )
 
 
+def _service(engine, repository, store, **kwargs) -> IndexSyncService:
+    return IndexSyncService(
+        repository,
+        store,
+        mutation_lock=QdrantMutationLock(
+            engine,
+            environment=DatabaseEnvironment.TEST,
+            collection_name="video_chunks_test",
+        ),
+        **kwargs,
+    )
+
+
+class _ImmediateLock:
+    def hold(self):
+        return nullcontext()
+
+
 def _series_status(engine, series_id: str) -> str:
     with engine.connect() as connection:
         return connection.execute(
@@ -74,6 +103,7 @@ def test_sync_captures_default_due_cutoff_after_materialization() -> None:
     report = IndexSyncService(
         OrderingRepository(),
         object(),
+        mutation_lock=_ImmediateLock(),
         clock=clock,
     ).sync_due()
 
@@ -91,7 +121,7 @@ def test_sync_is_idempotent_and_reconcile_repairs_a_deleted_point(
     index_repository = IndexSyncRepository(create_session_factory(engine))
     client = QdrantClient(":memory:")
     store = _store(client)
-    service = IndexSyncService(index_repository, store)
+    service = _service(engine, index_repository, store)
 
     first = service.sync_due()
     repeated = service.sync_due()
@@ -117,6 +147,133 @@ def test_sync_is_idempotent_and_reconcile_repairs_a_deleted_point(
     assert _series_status(engine, prepared.series_id) == "READY"
 
 
+def test_collection_lock_orders_a_stale_sync_before_concurrent_delete(
+    prepared_import,
+    repository,
+) -> None:
+    engine, video_repository = repository
+    prepared = _with_vectors(prepared_import)
+    video_repository.import_video_parse(prepared)
+    index_repository = IndexSyncRepository(create_session_factory(engine))
+    sync_lock = QdrantMutationLock(
+        engine,
+        environment=DatabaseEnvironment.TEST,
+        collection_name="video_chunks_concurrent_test",
+    )
+    delete_lock = QdrantMutationLock(
+        engine,
+        environment=DatabaseEnvironment.TEST,
+        collection_name="video_chunks_concurrent_test",
+    )
+    delete_started = Event()
+    delete_finished = Event()
+    points: set[str] = set()
+    deleted_id = prepared.chunks[0].video_chunk_id
+
+    def delete_point() -> None:
+        delete_started.set()
+        with delete_lock.hold():
+            points.discard(deleted_id)
+            delete_finished.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        delete_future = None
+
+        class Store:
+            def upsert(self, point) -> None:
+                nonlocal delete_future
+                if point.video_chunk_id == deleted_id:
+                    delete_future = executor.submit(delete_point)
+                    assert delete_started.wait(1)
+                    assert not delete_finished.wait(0.05)
+                points.add(point.video_chunk_id)
+
+            def delete(self, video_chunk_id: str) -> None:
+                points.discard(video_chunk_id)
+
+        report = IndexSyncService(
+            index_repository,
+            Store(),  # type: ignore[arg-type]
+            mutation_lock=sync_lock,
+        ).sync_due()
+        assert delete_future is not None
+        delete_future.result(timeout=1)
+
+    assert report.synced_count == 2
+    assert deleted_id not in points
+    assert delete_finished.is_set()
+
+
+def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
+    prepared_import,
+    repository,
+) -> None:
+    engine, video_repository = repository
+    prepared = _with_vectors(prepared_import)
+    video_repository.import_video_parse(prepared)
+    index_repository = IndexSyncRepository(create_session_factory(engine))
+    client = QdrantClient(":memory:")
+    store = _store(client)
+    service = _service(engine, index_repository, store)
+    service.sync_due()
+    chunk_ids = [item.video_chunk_id for item in prepared.chunks]
+    for chunk_id in chunk_ids:
+        store.delete(chunk_id)
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with create_session_factory(engine).begin() as session:
+        session.add(UploadSessionRecord(
+            upload_session_id=str(uuid4()),
+            workspace_id=prepared.workspace_id,
+            series_id=prepared.series_id,
+            episode_order=prepared.episode_order,
+            upload_sequence=prepared.upload_sequence,
+            original_filename=prepared.original_filename,
+            media_type="video/mp4",
+            total_size_bytes=prepared.total_bytes,
+            preferred_segment_size_bytes=prepared.total_bytes,
+            total_segments=1,
+            content_sha256=prepared.content_hash,
+            version=1,
+            status=UploadSessionStatus.EXPIRED.value,
+            idempotency_key="pending-delete-crash",
+            expires_at=now,
+            completed_at=now,
+            video_id=prepared.video_id,
+            last_error_code=UPLOAD_DELETION_PENDING_ERROR_CODE,
+        ))
+        intents = list(session.scalars(select(IndexSyncIntentRecord)))
+        generations = {
+            intent.video_chunk_id: intent.generation for intent in intents
+        }
+        for intent in intents:
+            intent.status = IndexSyncStatus.PENDING.value
+            intent.available_at = now
+
+    assert index_repository.materialize_all() == 0
+    assert index_repository.list_all() == []
+    sync_report = service.sync_due(now=now + timedelta(seconds=1))
+    reconcile_report = service.reconcile()
+    rebuild_report = service.rebuild()
+    with pytest.raises(IndexSyncInvariantError, match="missing index intents"):
+        service.sync_video_chunks(chunk_ids)
+
+    assert sync_report.selected_count == 0
+    assert reconcile_report.inspected_count == 0
+    assert rebuild_report.selected_count == 0
+    assert all(not state.present for state in store.inspect(chunk_ids).values())
+    with create_session_factory(engine)() as session:
+        raw_intents = list(session.scalars(select(IndexSyncIntentRecord)))
+        assert {
+            intent.video_chunk_id: intent.generation for intent in raw_intents
+        } == generations
+        assert all(
+            intent.operation == "UPSERT"
+            and intent.status == IndexSyncStatus.PENDING.value
+            for intent in raw_intents
+        )
+
+
 def test_qdrant_outage_keeps_facts_and_retries_to_convergence(
     prepared_import,
     repository,
@@ -129,7 +286,8 @@ def test_qdrant_outage_keeps_facts_and_retries_to_convergence(
     index_repository = IndexSyncRepository(create_session_factory(engine))
     unavailable = _UnavailableStore()
     run_at = datetime.now(UTC) + timedelta(seconds=1)
-    service = IndexSyncService(
+    service = _service(
+        engine,
         index_repository,
         unavailable,
         clock=lambda: run_at,
@@ -150,7 +308,7 @@ def test_qdrant_outage_keeps_facts_and_retries_to_convergence(
         ).scalar_one() == 2
 
     client = QdrantClient(":memory:")
-    recovered = IndexSyncService(index_repository, _store(client)).sync_due(
+    recovered = _service(engine, index_repository, _store(client)).sync_due(
         now=run_at + timedelta(seconds=5)
     )
 
@@ -174,7 +332,7 @@ def test_rebuild_restores_all_points_after_collection_loss(
     index_repository = IndexSyncRepository(create_session_factory(engine))
     client = QdrantClient(":memory:")
     store = _store(client)
-    service = IndexSyncService(index_repository, store)
+    service = _service(engine, index_repository, store)
     service.sync_due()
     client.delete_collection(store.collection_name)
 
@@ -197,7 +355,7 @@ def test_reconcile_replaces_a_point_with_a_stale_revision(
     index_repository = IndexSyncRepository(create_session_factory(engine))
     client = QdrantClient(":memory:")
     store = _store(client)
-    service = IndexSyncService(index_repository, store)
+    service = _service(engine, index_repository, store)
     service.sync_due()
     current = index_repository.list_all()[0]
     store.upsert(
@@ -231,7 +389,7 @@ def test_sync_delete_removes_stale_point_when_a_vector_becomes_invalid(
     index_repository = IndexSyncRepository(create_session_factory(engine))
     client = QdrantClient(":memory:")
     store = _store(client)
-    service = IndexSyncService(index_repository, store)
+    service = _service(engine, index_repository, store)
     service.sync_due()
     first = prepared_import.chunks[0]
     video_repository.import_video_parse(
@@ -269,7 +427,7 @@ def test_reconcile_deletes_a_point_that_is_no_longer_desired(
     index_repository = IndexSyncRepository(create_session_factory(engine))
     client = QdrantClient(":memory:")
     store = _store(client)
-    service = IndexSyncService(index_repository, store)
+    service = _service(engine, index_repository, store)
     service.sync_due()
     first = prepared_import.chunks[0]
     video_repository.import_video_parse(
@@ -305,10 +463,11 @@ def test_reconcile_outage_is_persisted_for_retry(
     video_repository.import_video_parse(prepared)
     index_repository = IndexSyncRepository(create_session_factory(engine))
     client = QdrantClient(":memory:")
-    IndexSyncService(index_repository, _store(client)).sync_due()
+    _service(engine, index_repository, _store(client)).sync_due()
     run_at = datetime.now(UTC)
 
-    report = IndexSyncService(
+    report = _service(
+        engine,
         index_repository,
         _UnavailableStore(),
         clock=lambda: run_at,
@@ -368,7 +527,7 @@ def test_late_old_write_invalidates_a_newer_synced_generation(
         )
 
     late_store = _LateWriteStore(actual_store, sync_new_before_old_write)
-    stale_run = IndexSyncService(index_repository, late_store).sync_due(limit=1)
+    stale_run = _service(engine, index_repository, late_store).sync_due(limit=1)
     invalidated = {
         item.video_chunk_id: item for item in index_repository.list_all()
     }[old_item.video_chunk_id]
@@ -380,7 +539,7 @@ def test_late_old_write_invalidates_a_newer_synced_generation(
         [old_item.video_chunk_id]
     )[old_item.video_chunk_id].source_revision == old_item.source_revision
 
-    recovered = IndexSyncService(index_repository, actual_store).sync_due(limit=10)
+    recovered = _service(engine, index_repository, actual_store).sync_due(limit=10)
     current = {
         item.video_chunk_id: item for item in index_repository.list_all()
     }[old_item.video_chunk_id]

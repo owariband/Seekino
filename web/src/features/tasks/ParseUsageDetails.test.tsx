@@ -52,8 +52,8 @@ describe("parse model usage details", () => {
   });
 
   it("keeps missing usage and unknown prices explicit instead of manufacturing zero totals", async () => {
-    const incomplete = usage("job-A", { coverage: "partial", totalTokens: null, estimatedCostCny: null, missingUsageCount: 1, unpricedCallCount: 1 });
-    incomplete.items[0] = { ...incomplete.items[0]!, inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, totalTokens: null, estimatedCostCny: null, missingUsageCount: 1 };
+    const incomplete = usage("job-A", { coverage: "partial", totalTokens: 1_260, estimatedCostCny: "0.00000004", missingUsageCount: 1, unpricedCallCount: 1 });
+    incomplete.items[0] = { ...incomplete.items[0]!, missingUsageCount: 1 };
     incomplete.items[1] = { ...incomplete.items[1]!, estimatedCostCny: null, unpricedCallCount: 1 };
     vi.mocked(getParseUsage).mockResolvedValue(incomplete);
     render(<ParseUsageDetails jobId="job-A" status="SUCCEEDED" />, { wrapper: wrapper() });
@@ -61,9 +61,10 @@ describe("parse model usage details", () => {
     expect(await screen.findByText(/历史未记录用量不会计为零/)).toBeInTheDocument();
     expect(screen.getByText(/1 次调用未返回完整 Token 用量/)).toBeInTheDocument();
     expect(screen.getByText(/1 次调用缺少完整计价信息/)).toBeInTheDocument();
-    expect(screen.getAllByText("未记录").length).toBeGreaterThan(1);
-    expect(screen.getAllByText("未估算").length).toBeGreaterThan(1);
-    expect(screen.queryByText(/^¥/)).not.toBeInTheDocument();
+    expect(screen.getByText("本次任务已知小计 · Token")).toBeInTheDocument();
+    expect(screen.getByText("已知预估费用（人民币）")).toBeInTheDocument();
+    expect(screen.getByText("1,260")).toBeInTheDocument();
+    expect(screen.getAllByText("¥0.00000004").length).toBeGreaterThan(0);
   });
 
   it("does not reuse another job's consumption when the selected job changes", async () => {

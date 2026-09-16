@@ -21,6 +21,7 @@ from .repository.index_sync import IndexSyncRepository
 from .repository.video import VideoRepository
 from .service.index_sync import IndexSyncService
 from .service.parse_import import prepare_video_parse_import
+from .service.qdrant_mutation_lock import QdrantMutationLock
 from .service.video_retrieval import VideoRetrievalService
 from .storage.qdrant import QdrantVideoChunkStore
 
@@ -294,6 +295,11 @@ def main() -> None:
                 service = IndexSyncService(
                     IndexSyncRepository(session_factory),
                     store,
+                    mutation_lock=QdrantMutationLock(
+                        engine,
+                        environment=environment,
+                        collection_name=args.qdrant_collection,
+                    ),
                 )
                 if args.command == "sync-index":
                     result = service.sync_due(limit=args.limit)

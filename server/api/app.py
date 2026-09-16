@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
+import time
 from typing import AsyncIterator
 from uuid import uuid4
 
@@ -14,6 +16,9 @@ from ..config.sse import SSEConfig
 from ..router import router
 from .errors import register_exception_handlers
 from ..model.vo.commonVO import ApiError
+from ..utils.logging import request_id_context
+
+_logger = logging.getLogger(__name__)
 
 
 def create_app(
@@ -47,9 +52,22 @@ def create_app(
     @app.middleware("http")
     async def request_identifier(request, call_next):
         request.state.request_id = str(uuid4())
-        response = await call_next(request)
-        response.headers["X-Request-Id"] = request.state.request_id
-        return response
+        token = request_id_context.set(request.state.request_id)
+        started_at = time.perf_counter()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            response.headers["X-Request-Id"] = request.state.request_id
+            return response
+        finally:
+            _logger.log(
+                logging.ERROR if status_code >= 500 else logging.WARNING if status_code >= 400 else logging.INFO,
+                "http_request method=%s path=%s status=%s duration_ms=%.1f",
+                request.method, request.url.path, status_code,
+                (time.perf_counter() - started_at) * 1000,
+            )
+            request_id_context.reset(token)
     origins = resolved_settings.allowed_origins if resolved_settings else ()
     if origins:
         app.add_middleware(

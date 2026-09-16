@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import argparse
 import os
+from dataclasses import replace
 
 import uvicorn
+
+from ..utils.logging import configure_logging
+from ..config import ServerSettings
 
 
 def main() -> None:
@@ -22,15 +26,20 @@ def main() -> None:
     )
     parser.add_argument(
         "--log-level",
+        type=str.casefold,
         default=os.getenv("ANIVAG_LOG_LEVEL", "info"),
     )
     args = parser.parse_args()
+    settings = ServerSettings.from_environment()
+    configure_logging("api", environment=settings.environment, config=replace(settings.logging, level=args.log_level.casefold()))
     uvicorn.run(
         "server.api.app:create_app",
         factory=True,
         host=args.host,
         port=args.port,
         log_level=args.log_level,
+        log_config=None,
+        access_log=False,
     )
 
 

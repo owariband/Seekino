@@ -29,6 +29,7 @@ from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
 from .service.parse_usage import ParseUsageService
+from .service.qdrant_mutation_lock import QdrantMutationLock
 from .service.upload import UploadService
 from .service.video_retrieval import VideoRetrievalService
 from .storage.artifact import LocalArtifactStore
@@ -72,11 +73,6 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         environment=settings.environment,
     )
     library = LibraryService(LibraryRepository(session_factory), artifact_store)
-    uploads = UploadService(
-        UploadRepository(session_factory),
-        artifact_store,
-        config=settings.upload,
-    )
     jobs = ParseJobService(ParseJobRepository(session_factory), library)
     parse_usage = ParseUsageService(
         ParseUsageRepository(session_factory), jobs,
@@ -95,6 +91,18 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         environment=settings.environment,
         text_dimensions=settings.text_vector_dimensions,
         vision_dimensions=settings.vision_vector_dimensions,
+    )
+    qdrant_mutation_lock = QdrantMutationLock(
+        engine,
+        environment=settings.environment,
+        collection_name=settings.qdrant_collection,
+    )
+    uploads = UploadService(
+        UploadRepository(session_factory),
+        artifact_store,
+        config=settings.upload,
+        video_chunk_store=vector_store,
+        qdrant_mutation_lock=qdrant_mutation_lock,
     )
     gateway_config = load_config(settings.model_config_path)
     embedding_config = gateway_config.multimodal_embedding
@@ -157,9 +165,11 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
     index_sync = IndexSyncService(
         IndexSyncRepository(session_factory),
         vector_store,
+        mutation_lock=qdrant_mutation_lock,
         retry_base_seconds=int(settings.worker_retry_base.total_seconds()),
         retry_max_seconds=int(settings.worker_retry_max.total_seconds()),
     )
+    uploads.reconcile_deletions()
     return ApplicationServices(
         library=library,
         uploads=uploads,

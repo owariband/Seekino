@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView } from "../api/contracts";
+import type { AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView } from "../api/contracts";
 import { App } from "./App";
 import { ThemeProvider } from "./theme";
 import { WorkspaceProvider } from "./workspace";
@@ -19,6 +19,15 @@ const apiSeries: SeriesView = {
   characterBible: [],
   videoCount: 0,
   videos: [], pendingUploads: [], readyVideoCount: 1, failedVideoCount: 0, pendingUploadCount: 0, cover: null, lastSearch: null, createdAt: 1, updatedAt: 1,
+};
+
+const pendingUpload: UploadSessionView = {
+  uploadSessionId: "upload/session", workspaceId: "local-default", seriesId: apiSeries.seriesId,
+  episodeOrder: 1, uploadSequence: 1, originalFilename: "unfinished.mp4", mediaType: "video/mp4",
+  totalSizeBytes: 10, contentSha256: null, preferredSegmentSizeBytes: 10, totalSegments: 1,
+  status: "UPLOADING", uploadedSegmentCount: 0, uploadedSizeBytes: 0, missingSegmentNumbers: [0],
+  completionStage: null, completionProgress: null, estimatedRemainingMs: null, expiresAt: 100,
+  videoId: null, jobId: null, lastError: null, version: 1, createdAt: 1, updatedAt: 1,
 };
 
 function jsonResponse(payload: unknown): Response {
@@ -65,6 +74,15 @@ function renderApp(availableSeries: SeriesView[] = [apiSeries]) {
       };
       availableSeries = availableSeries.map((item) => item.seriesId === updated.seriesId ? updated : item);
       return jsonResponse(updated);
+    }
+    if (url.includes("/api/uploads/delete")) {
+      const uploadSessionId = new URL(url, "http://localhost").searchParams.get("uploadSessionId");
+      const upload = availableSeries.flatMap((item) => item.pendingUploads).find((item) => item.uploadSessionId === uploadSessionId)!;
+      availableSeries = availableSeries.map((item) => ({
+        ...item, pendingUploads: item.pendingUploads.filter((entry) => entry.uploadSessionId !== uploadSessionId),
+        pendingUploadCount: item.pendingUploads.filter((entry) => entry.uploadSessionId !== uploadSessionId).length,
+      }));
+      return jsonResponse({ ...upload, status: "EXPIRED" });
     }
     if (url.includes("/api/jobs/list")) return jsonResponse({ items: [], total: 0, hasMore: false, nextCursor: null });
     if (url.includes("/api/agent/conversations/")) return jsonResponse(conversation);
@@ -164,6 +182,9 @@ describe("application shell", () => {
 
     await user.click(screen.getAllByRole("link", { name: /解析任务/ })[0]!);
     expect(await screen.findByRole("heading", { name: "解析任务", level: 1 })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "管理上传" }));
+    expect(screen.getByRole("dialog", { name: /把每一集/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "关闭上传面板" }));
 
     await user.click(screen.getAllByRole("link", { name: "模型消耗" })[0]!);
     expect(await screen.findByRole("heading", { name: "模型消耗", level: 1 })).toBeInTheDocument();
@@ -235,6 +256,57 @@ describe("application shell", () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/jobs/create"))).toBe(false);
     await user.click(screen.getByRole("button", { name: "编辑背景" }));
     expect(screen.getByRole("textbox", { name: "背景正文" })).toHaveValue("# 人物关系\n背景资料来自用户的补充。");
+  });
+
+  it("deletes a recovered upload from the library only after server confirmation and protects merging uploads", async () => {
+    const merging = { ...pendingUpload, uploadSessionId: "merging", originalFilename: "merging.mp4", status: "COMPLETING" as const };
+    const { fetchMock } = renderApp([{ ...apiSeries, pendingUploads: [pendingUpload, merging], pendingUploadCount: 2 }]);
+    const original = fetchMock.getMockImplementation()!;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/uploads/delete")) await pending;
+      return original(input, init);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("link", { name: "资料库" })[0]!);
+    const button = await screen.findByRole("button", { name: `删除上传 ${pendingUpload.originalFilename}` });
+    expect(screen.queryByRole("button", { name: `删除上传 ${merging.originalFilename}` })).not.toBeInTheDocument();
+    await user.click(button);
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("正在删除");
+    expect(screen.getByText(pendingUpload.originalFilename)).toBeInTheDocument();
+    await act(async () => release());
+    await waitFor(() => expect(screen.queryByText(pendingUpload.originalFilename)).not.toBeInTheDocument());
+    expect(screen.getByText(merging.originalFilename)).toBeInTheDocument();
+    const deletion = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/uploads/delete"));
+    expect(String(deletion?.[0])).toBe("/api/uploads/delete?uploadSessionId=upload%2Fsession&workspaceId=local-default");
+    expect(deletion?.[1]?.method).toBe("POST");
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/jobs/delete"))).toBe(false);
+  });
+
+  it.each([503, 409])("keeps an upload visible with the API error and request identifier when deletion returns %s", async (status) => {
+    const { fetchMock } = renderApp([{ ...apiSeries, pendingUploads: [pendingUpload], pendingUploadCount: 1 }]);
+    const original = fetchMock.getMockImplementation()!;
+    let rejected = false;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/uploads/delete") && !rejected) {
+        rejected = true;
+        return { ok: false, status, json: async () => ({ message: "暂时无法删除上传", requestId: "delete-request" }) } as Response;
+      }
+      return original(input, init);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("link", { name: "资料库" })[0]!);
+    await user.click(await screen.findByRole("button", { name: `删除上传 ${pendingUpload.originalFilename}` }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("删除失败：暂时无法删除上传（请求编号：delete-request）");
+    expect(screen.getByText(pendingUpload.originalFilename)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/uploads/delete"))).toHaveLength(1);
+    if (status === 503) {
+      await user.click(screen.getByRole("button", { name: `删除上传 ${pendingUpload.originalFilename}` }));
+      await waitFor(() => expect(screen.queryByText(pendingUpload.originalFilename)).not.toBeInTheDocument());
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/uploads/delete"))).toHaveLength(2);
+    }
   });
 
   it("creates a Conversation without fixed scope and renders a real delta before durable completion", async () => {

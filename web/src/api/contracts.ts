@@ -148,6 +148,7 @@ export interface VideoChunkCheckpointView {
 
 export interface ParseJobView {
   jobId: string;
+  uploadSessionId: string | null;
   workspaceId: string;
   seriesId: string;
   videoId: string;

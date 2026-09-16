@@ -72,6 +72,15 @@ class UploadSessionDetail:
     missing_segment_numbers: tuple[int, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class UploadSessionDeletion:
+    session: UploadSessionState
+    video_id: str | None
+    job_id: str | None
+    job_ids: tuple[str, ...]
+    video_chunk_ids: tuple[str, ...]
+
+
 class UploadSessionCreateRequest(ContractModel):
     workspace_id: str = Field(min_length=1, max_length=64)
     episode_order: int | None = Field(

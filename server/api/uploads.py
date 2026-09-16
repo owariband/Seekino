@@ -14,6 +14,8 @@ from ..service.pagination import decode_cursor, encode_cursor
 from ..model.vo.commonVO import Failure, Page
 from .context import get_services
 from ..model.vo.uploadVO import UploadCompleteView, UploadSegmentView, UploadSessionView
+from ..model.vo.jobVO import ParseJobView
+from .jobs import project_job
 
 _CONTENT_RANGE_PATTERN = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
 
@@ -70,6 +72,31 @@ def get_upload_session(
         workspace_id=workspace_id,
     )
     return _upload_view(detail)
+
+
+def delete_upload_session(
+    request: Request,
+    upload_session_id: str = Query(alias="uploadSessionId"),
+    workspace_id: str = Query(alias="workspaceId"),
+) -> UploadSessionView:
+    return project_upload_session(get_services(request).uploads.delete_session(
+        upload_session_id, workspace_id=workspace_id,
+    ))
+
+
+def retry_upload_parse(
+    request: Request,
+    upload_session_id: str = Query(alias="uploadSessionId"),
+    workspace_id: str = Query(alias="workspaceId"),
+    expected_job_version: int = Query(ge=1, alias="expectedJobVersion"),
+) -> ParseJobView:
+    services = get_services(request)
+    job_id = services.uploads.retry_parse(
+        upload_session_id,
+        workspace_id=workspace_id,
+        expected_job_version=expected_job_version,
+    )
+    return project_job(services.jobs.get(job_id, workspace_id=workspace_id))
 
 
 async def upload_segment(

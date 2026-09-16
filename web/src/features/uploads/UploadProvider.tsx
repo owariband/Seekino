@@ -12,6 +12,7 @@ import {
 import {
   completeUpload,
   createUploadSession,
+  deleteUploadSession,
   errorMessage,
   getJob,
   getUploadSession,
@@ -38,8 +39,11 @@ interface UploadContextValue {
   enqueue: (files: UploadInput[]) => void;
   pause: (taskId: string) => void;
   resume: (taskId: string) => void;
+  attachFile: (taskId: string, file: File) => void;
   retry: (taskId: string) => void;
-  cancel: (taskId: string) => void;
+  cancel: (taskId: string) => Promise<void>;
+  forgetDeletedSession: (uploadSessionId: string) => void;
+  syncRetriedParse: (job: ParseJobView) => void;
   dismissFinished: () => void;
 }
 
@@ -50,7 +54,9 @@ export function UploadProvider({ children }: PropsWithChildren) {
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const controllers = useRef(new Map<string, AbortController>());
-  const running = useRef(new Set<string>());
+  const running = useRef(new Map<string, Promise<void>>());
+  const sessions = useRef(new Map<string, UploadSessionView>());
+  const jobSources = useRef(new Map<string, EventSource>());
 
   const updateTask = useCallback(
     (taskId: string, updater: (task: UploadTask) => UploadTask) => {
@@ -80,14 +86,23 @@ export function UploadProvider({ children }: PropsWithChildren) {
 
   const watchJob = useCallback(
     (taskId: string, initialJob: ParseJobView | { jobId: string }) => {
+      jobSources.current.get(taskId)?.close();
       const source = new EventSource(jobEventsUrl(initialJob.jobId));
+      jobSources.current.set(taskId, source);
       let recovering = false;
+
+      const close = () => {
+        source.close();
+        if (jobSources.current.get(taskId) === source) {
+          jobSources.current.delete(taskId);
+        }
+      };
 
       source.addEventListener("job", (event) => {
         const job = JSON.parse((event as MessageEvent).data) as ParseJobView;
         acceptJob(taskId, job);
         if (job.status === "SUCCEEDED" || job.status === "FAILED") {
-          source.close();
+          close();
           void refreshSeries();
         }
       });
@@ -99,7 +114,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
           const job = await getJob(initialJob.jobId);
           acceptJob(taskId, job);
           if (job.status === "SUCCEEDED" || job.status === "FAILED") {
-            source.close();
+            close();
             void refreshSeries();
           }
         } catch {
@@ -114,15 +129,16 @@ export function UploadProvider({ children }: PropsWithChildren) {
 
   const runRealTask = useCallback(
     async (task: UploadTask, signal: AbortSignal) => {
-      if (!task.file) throw new Error("恢复上传需要重新选择原视频文件");
-      const mediaType = mediaTypeForFile(task.file);
-      if (!mediaType) throw new Error("只支持 MP4、MOV 和 AVI 视频");
       updateTask(task.taskId, (current) => ({ ...current, status: "creating", error: undefined }));
 
       let session: UploadSessionView;
-      if (task.session) {
-        session = await getUploadSession(task.session.uploadSessionId);
+      const existingSession = sessions.current.get(task.taskId) ?? task.session;
+      if (existingSession) {
+        session = await getUploadSession(existingSession.uploadSessionId, signal);
       } else {
+        if (!task.file) throw new Error("恢复上传需要重新选择原视频文件");
+        const mediaType = mediaTypeForFile(task.file);
+        if (!mediaType) throw new Error("只支持 MP4、MOV 和 AVI 视频");
         session = await createUploadSession(task.seriesId, task.idempotencyKey, {
           workspaceId: WORKSPACE_ID,
           episodeOrder: task.episodeOrder,
@@ -132,22 +148,42 @@ export function UploadProvider({ children }: PropsWithChildren) {
         });
       }
 
-      if (
-        session.seriesId !== task.seriesId ||
-        session.episodeOrder !== task.episodeOrder ||
+      sessions.current.set(task.taskId, session);
+      updateTask(task.taskId, (current) => ({ ...current, session, episodeOrder: session.episodeOrder }));
+      signal.throwIfAborted();
+      if (session.seriesId !== task.seriesId) {
+        throw new Error("上传会话不属于当前视频系列");
+      }
+      if (task.file && (
         session.originalFilename !== task.file.name ||
         session.totalSizeBytes !== task.file.size
-      ) {
+      )) {
         throw new Error("上传会话与当前文件不一致，请重新选择视频");
       }
       if (session.status === "EXPIRED") {
         throw new Error("上传会话已过期，请重新加入这个视频");
       }
       if (session.status === "COMPLETING") {
-        throw new Error("服务端正在合并视频，请稍后重试");
+        updateTask(task.taskId, (current) => ({
+          ...current,
+          session,
+          status: "completing",
+          confirmedBytes: task.totalBytes,
+          inFlightBytes: 0,
+        }));
+        const completed = await completeUpload(session.uploadSessionId);
+        signal.throwIfAborted();
+        updateTask(task.taskId, (current) => ({
+          ...current,
+          session: completed.uploadSession,
+          status: "processing",
+        }));
+        watchJob(task.taskId, { jobId: completed.jobId });
+        return;
       }
       if (session.status === "COMPLETED") {
         const completed = await completeUpload(session.uploadSessionId);
+        signal.throwIfAborted();
         updateTask(task.taskId, (current) => ({
           ...current,
           session: completed.uploadSession,
@@ -158,6 +194,8 @@ export function UploadProvider({ children }: PropsWithChildren) {
         watchJob(task.taskId, { jobId: completed.jobId });
         return;
       }
+      if (!task.file) throw new Error("恢复上传需要重新选择原视频文件");
+      if (!mediaTypeForFile(task.file)) throw new Error("只支持 MP4、MOV 和 AVI 视频");
 
       updateTask(task.taskId, (current) => ({
         ...current,
@@ -173,6 +211,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
       const inFlight = new Map<number, number>();
 
       const syncProgress = () => {
+        if (signal.aborted) return;
         const pendingBytes = [...inFlight.values()].reduce((sum, bytes) => sum + bytes, 0);
         updateTask(task.taskId, (current) => ({
           ...current,
@@ -183,6 +222,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
 
       const worker = async () => {
         while (cursor < missing.length) {
+          signal.throwIfAborted();
           const segmentNumber = missing[cursor];
           cursor += 1;
           if (segmentNumber === undefined) return;
@@ -206,7 +246,9 @@ export function UploadProvider({ children }: PropsWithChildren) {
       await Promise.all(
         Array.from({ length: Math.min(SEGMENT_WORKERS, missing.length) }, worker),
       );
-      const verified = await getUploadSession(session.uploadSessionId);
+      signal.throwIfAborted();
+      const verified = await getUploadSession(session.uploadSessionId, signal);
+      signal.throwIfAborted();
       if (verified.missingSegmentNumbers.length > 0) {
         throw new Error("仍有分片未被服务端确认，请重试上传");
       }
@@ -218,6 +260,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
         inFlightBytes: 0,
       }));
       const completed = await completeUpload(session.uploadSessionId);
+      signal.throwIfAborted();
       updateTask(task.taskId, (current) => ({
         ...current,
         session: completed.uploadSession,
@@ -229,15 +272,13 @@ export function UploadProvider({ children }: PropsWithChildren) {
   );
 
   const runTask = useCallback(
-    async (task: UploadTask) => {
+    (task: UploadTask) => {
       if (running.current.has(task.taskId)) return;
-      running.current.add(task.taskId);
       const controller = new AbortController();
       controllers.current.set(task.taskId, controller);
-      try {
-        await runRealTask(task, controller.signal);
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
+      const execution = runRealTask(task, controller.signal).catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          controller.abort();
           updateTask(task.taskId, (current) => ({
             ...current,
             status: "failed",
@@ -245,13 +286,42 @@ export function UploadProvider({ children }: PropsWithChildren) {
             error: errorMessage(error),
           }));
         }
-      } finally {
+      }).finally(() => {
         running.current.delete(task.taskId);
         controllers.current.delete(task.taskId);
-      }
+        setTasks((current) => [...current]);
+      });
+      running.current.set(task.taskId, execution);
+      return execution;
     },
     [runRealTask, updateTask],
   );
+
+  useEffect(() => {
+    if (!selectedSeries) return;
+    setTasks((current) => {
+      const known = new Set(current.map((task) =>
+        (sessions.current.get(task.taskId) ?? task.session)?.uploadSessionId,
+      ));
+      const recovered = selectedSeries.pendingUploads.filter((session) => !known.has(session.uploadSessionId));
+      const pendingIds = new Set(selectedSeries.pendingUploads.map((session) => session.uploadSessionId));
+      const retained = current.filter((task) => task.file || task.status !== "completing" || pendingIds.has(task.session!.uploadSessionId));
+      if (recovered.length === 0 && retained.length === current.length) return current;
+      return [...retained, ...recovered.map<UploadTask>((session) => ({
+        taskId: session.uploadSessionId,
+        seriesId: session.seriesId,
+        fileName: session.originalFilename,
+        episodeOrder: session.episodeOrder,
+        totalBytes: session.totalSizeBytes,
+        confirmedBytes: session.uploadedSizeBytes,
+        inFlightBytes: 0,
+        status: session.status === "COMPLETING" ? "completing" : "paused",
+        idempotencyKey: "",
+        session,
+        error: session.status === "COMPLETING" ? undefined : session.lastError?.message ?? "请重新选择同一个原视频，系统会从服务端已确认的分片继续上传",
+      }))];
+    });
+  }, [selectedSeries]);
 
   useEffect(() => {
     const active = tasks.filter(
@@ -267,6 +337,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
   useEffect(
     () => () => {
       controllers.current.forEach((controller) => controller.abort());
+      jobSources.current.forEach((source) => source.close());
     },
     [],
   );
@@ -310,12 +381,90 @@ export function UploadProvider({ children }: PropsWithChildren) {
     [updateTask],
   );
 
-  const cancel = useCallback(
-    (taskId: string) => {
-      updateTask(taskId, (task) => ({ ...task, status: "cancelled", inFlightBytes: 0 }));
-      controllers.current.get(taskId)?.abort();
+  const attachFile = useCallback(
+    (taskId: string, file: File) => {
+      updateTask(taskId, (task) => {
+        if (!mediaTypeForFile(file)) {
+          return { ...task, error: "只支持 MP4、MOV 和 AVI 视频" };
+        }
+        if (file.name !== task.fileName || file.size !== task.totalBytes) {
+          return { ...task, error: "所选文件与原上传任务的文件名或大小不一致" };
+        }
+        return { ...task, file, status: "queued", error: undefined };
+      });
     },
     [updateTask],
+  );
+
+  const cancel = useCallback(
+    async (taskId: string) => {
+      const task = tasks.find((item) => item.taskId === taskId);
+      if (!task || task.session?.status === "COMPLETED" || ["deleting", "cancelled", "completing", "processing", "completed"].includes(task.status)) return;
+      updateTask(taskId, (current) => ({ ...current, status: "deleting", inFlightBytes: 0, error: undefined }));
+      controllers.current.get(taskId)?.abort();
+      await running.current.get(taskId);
+      try {
+        let session = sessions.current.get(taskId) ?? task.session;
+        const mediaType = task.file ? mediaTypeForFile(task.file) : null;
+        if (!session && task.file && mediaType && task.status !== "queued") {
+          // Replay an uncertain creation response before removing its server session.
+          session = await createUploadSession(task.seriesId, task.idempotencyKey, {
+            workspaceId: WORKSPACE_ID, episodeOrder: task.episodeOrder,
+            originalFilename: task.file.name, mediaType, totalSizeBytes: task.file.size,
+          });
+          sessions.current.set(taskId, session);
+        }
+        if (session) await deleteUploadSession(session.uploadSessionId);
+        sessions.current.delete(taskId);
+        jobSources.current.get(taskId)?.close();
+        jobSources.current.delete(taskId);
+        setTasks((current) => current.filter((item) => item.taskId !== taskId));
+        void refreshSeries();
+      } catch (error) {
+        updateTask(taskId, (current) => ({ ...current, status: "failed", error: `删除失败：${errorMessage(error)}` }));
+      }
+    },
+    [refreshSeries, tasks, updateTask],
+  );
+
+  const forgetDeletedSession = useCallback(
+    (uploadSessionId: string) => {
+      const taskIds = new Set(
+        tasks
+          .filter((task) =>
+            (sessions.current.get(task.taskId) ?? task.session)?.uploadSessionId
+              === uploadSessionId,
+          )
+          .map((task) => task.taskId),
+      );
+      for (const taskId of taskIds) {
+        controllers.current.get(taskId)?.abort();
+        sessions.current.delete(taskId);
+        jobSources.current.get(taskId)?.close();
+        jobSources.current.delete(taskId);
+      }
+      setTasks((current) => current.filter((task) => !taskIds.has(task.taskId)));
+    },
+    [tasks],
+  );
+
+  const syncRetriedParse = useCallback(
+    (job: ParseJobView) => {
+      if (!job.uploadSessionId) return;
+      const task = tasks.find((item) =>
+        (sessions.current.get(item.taskId) ?? item.session)?.uploadSessionId
+          === job.uploadSessionId,
+      );
+      if (!task) return;
+      updateTask(task.taskId, (current) => ({
+        ...current,
+        job,
+        status: "processing",
+        error: undefined,
+      }));
+      watchJob(task.taskId, job);
+    },
+    [tasks, updateTask, watchJob],
   );
 
   const visibleTasks = tasks.filter((task) => task.status !== "cancelled");
@@ -343,14 +492,17 @@ export function UploadProvider({ children }: PropsWithChildren) {
       enqueue,
       pause,
       resume,
+      attachFile,
       retry: resume,
       cancel,
+      forgetDeletedSession,
+      syncRetriedParse,
       dismissFinished: () =>
         setTasks((current) =>
           current.filter((task) => !["completed", "cancelled"].includes(task.status)),
         ),
     }),
-    [cancel, dialogOpen, enqueue, overallProgress, pause, resume, tasks, visibleTasks],
+    [attachFile, cancel, dialogOpen, enqueue, forgetDeletedSession, overallProgress, pause, resume, syncRetriedParse, tasks, visibleTasks],
   );
 
   return <UploadContext.Provider value={value}>{children}</UploadContext.Provider>;

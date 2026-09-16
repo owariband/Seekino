@@ -47,9 +47,9 @@ export function ParseUsageDetails({ jobId, status }: { jobId: string; status: Pa
         {usage ? <>
           <p className={styles.usageSource}>{usage.seriesName} · {episodeLabel(usage.episodeOrder)} · {usage.originalFilename}</p>
           <dl className={styles.usageTotals} aria-label="本次任务模型消耗合计">
-            <div><dt>本次任务合计 · Token</dt><dd>{formatTokens(usage.totalTokens)}</dd></div>
+            <div><dt>{usage.missingUsageCount || usage.coverage === "partial" ? "本次任务已知小计 · Token" : "本次任务合计 · Token"}</dt><dd>{formatTokens(usage.totalTokens)}</dd></div>
             <div><dt>已记录调用</dt><dd>{usage.callCount.toLocaleString("zh-CN")}</dd></div>
-            <div><dt>预估费用（人民币）</dt><dd>{formatCostCny(usage.estimatedCostCny)}</dd></div>
+            <div><dt>{usage.missingUsageCount || usage.unpricedCallCount || usage.coverage === "partial" ? "已知预估费用（人民币）" : "预估费用（人民币）"}</dt><dd>{formatCostCny(usage.estimatedCostCny)}</dd></div>
           </dl>
           {usage.items.length ? <div className={styles.usageTableScroll}><table className={styles.usageTable}>
             <caption>按模型与职责统计本次任务所有执行尝试</caption>

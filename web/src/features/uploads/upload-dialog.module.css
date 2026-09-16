@@ -55,6 +55,8 @@
   background: var(--surface-raised);
 }
 
+.hiddenFileInput { display: none; }
+
 .summary {
   display: grid;
   grid-template-columns: 180px minmax(100px, 1fr) 48px;

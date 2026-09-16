@@ -13,7 +13,7 @@ from engine.parse.schemas import VideoParseResult
 from gateway.schemas import EmbeddingResult
 from sqlalchemy import select
 
-from server.database import create_session_factory
+from server.database import DatabaseEnvironment, create_session_factory
 from server.model.index_sync import IndexSyncIntentRecord, IndexSyncStatus
 from server.model.job import ParseJobStatus, VideoChunkCheckpointStage
 from server.model.video import (
@@ -27,6 +27,7 @@ from server.repository.library import LibraryRepository
 from server.repository.upload import UploadRepository
 from server.repository.video import VideoRepository
 from server.service.index_sync import IndexSyncService
+from server.service.qdrant_mutation_lock import QdrantMutationLock
 from server.service.library import LibraryService
 from server.service.media import MediaService
 from server.service.upload import UploadService, UploadServiceConfig
@@ -200,7 +201,15 @@ def test_processing_service_reuses_engine_outputs_and_reaches_ready(
     processor = VideoProcessingService(
         jobs,
         VideoRepository(session_factory),
-        IndexSyncService(IndexSyncRepository(session_factory), index_store),  # type: ignore[arg-type]
+        IndexSyncService(
+            IndexSyncRepository(session_factory),
+            index_store,  # type: ignore[arg-type]
+            mutation_lock=QdrantMutationLock(
+                engine,
+                environment=DatabaseEnvironment.TEST,
+                collection_name="video_chunks_test",
+            ),
+        ),
         artifacts,
         parser,  # type: ignore[arg-type]
         embedder,

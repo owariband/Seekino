@@ -31,6 +31,77 @@ beforeEach(() => {
 });
 
 describe("Series background editing", () => {
+  it("renders Markdown headings, images and descriptions in their original positions without a duplicate gallery", () => {
+    const content = "## `mygo.tomori` — 高松灯\n\n![高松灯官方立绘](asset://simg_tomori)\n\n- 声优：**羊宫妃那**\n- 乐队职责：主唱 `Vo.`\n\n## 千早爱音\n\n![爱音官方立绘](asset://simg_anon)\n\n- 乐队职责：吉他";
+    const view = render(<SeriesBackgroundEditor series={{ ...series, importantExtraData: { format: "markdown", content } }} />);
+    const heading = screen.getByRole("heading", { name: "mygo.tomori — 高松灯", level: 2 });
+    const tomori = screen.getByRole("img", { name: "高松灯官方立绘" });
+    const description = screen.getByText("羊宫妃那");
+    const anonHeading = screen.getByRole("heading", { name: "千早爱音", level: 2 });
+    const anon = screen.getByRole("img", { name: "爱音官方立绘" });
+    const ordered = [heading, tomori, description, anonHeading, anon];
+    ordered.slice(1).forEach((element, index) => expect(ordered[index]!.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy());
+    expect(tomori).toHaveAttribute("src", "/api/media/images/content?workspaceId=local-default&imageId=simg_tomori");
+    expect(anon).toHaveAttribute("src", "/api/media/images/content?workspaceId=local-default&imageId=simg_anon");
+    expect(tomori.closest("p")).not.toBeNull();
+    expect(description.tagName).toBe("STRONG");
+    expect(screen.getAllByRole("list")).toHaveLength(2);
+    expect(view.container.querySelectorAll("figure")).toHaveLength(0);
+    expect(view.container.textContent).not.toContain("asset://");
+    expect(mocks.updateSeries).not.toHaveBeenCalled();
+  });
+
+  it("preserves repeated and reference-style images while leaving code references as text", () => {
+    const content = "![第一次][灯]\n\n![第二次](asset://simg_tomori)\n\n[灯]: asset://simg_tomori\n\n~~~markdown\n![示例](asset://simg_code_only)\n~~~";
+    const view = render(<SeriesBackgroundEditor series={{ ...series, importantExtraData: { seriesBible: content } }} />);
+    expect(screen.getAllByRole("img")).toHaveLength(2);
+    expect(screen.getByRole("img", { name: "第一次" })).toHaveAttribute("src", "/api/media/images/content?workspaceId=local-default&imageId=simg_tomori");
+    expect(screen.getByRole("img", { name: "第二次" })).toHaveAttribute("src", "/api/media/images/content?workspaceId=local-default&imageId=simg_tomori");
+    expect(view.container.querySelector("pre code")).toHaveTextContent("![示例](asset://simg_code_only)");
+    expect(view.container.querySelectorAll("figure")).toHaveLength(0);
+  });
+
+  it("renders Markdown tables and keeps the original source unchanged when editing", async () => {
+    const content = "## 人物\n\n| 人物 | 职责 |\n| --- | --- |\n| 高松灯 | 主唱 |\n\n![立绘](asset://simg_tomori)\n";
+    render(<SeriesBackgroundEditor series={{ ...series, importantExtraData: { format: "markdown", content } }} />);
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "主唱" })).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "编辑背景" }));
+    expect(screen.getByRole("textbox", { name: "背景正文" })).toHaveValue(content);
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("img", { name: "立绘" })).toBeInTheDocument();
+    expect(mocks.updateSeries).not.toHaveBeenCalled();
+  });
+
+  it("does not interpret JSON text as Markdown and preserves its managed image previews", () => {
+    const content = '{"人物":"## 高松灯","参考图":"asset://simg_tomori"}';
+    const view = render(<SeriesBackgroundEditor series={{ ...series, importantExtraData: { format: "json", content } }} />);
+    expect(view.container.querySelector("pre")).toHaveTextContent(content);
+    expect(screen.queryByRole("heading", { name: "高松灯" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(view.container.querySelectorAll("figure")).toHaveLength(1);
+  });
+
+  it("rejects unsafe URLs and embedded HTML instead of injecting executable markup", () => {
+    const content = '<script>window.bad = true</script>\n\n![非法](javascript:evil)\n\n[危险链接](javascript:evil)\n\n![非法引用](asset://../bad)';
+    const view = render(<SeriesBackgroundEditor series={{ ...series, importantExtraData: { format: "markdown", content } }} />);
+    expect(view.container.querySelector("script")).toBeNull();
+    expect(view.container.querySelector("img")).toBeNull();
+    expect(screen.getByText("危险链接")).not.toHaveAttribute("href", "javascript:evil");
+    expect(screen.getAllByText("图片暂时无法预览")).toHaveLength(2);
+  });
+
+  it("keeps an unavailable image and its explanation at the same position in the document", () => {
+    const content = "## 高松灯\n\n![灯的立绘](asset://simg_missing)\n\n她是乐队主唱。";
+    render(<SeriesBackgroundEditor series={{ ...series, importantExtraData: { format: "markdown", content } }} />);
+    fireEvent.error(screen.getByRole("img", { name: "灯的立绘" }));
+    const fallback = screen.getByRole("img", { name: "灯的立绘" });
+    expect(fallback).toHaveTextContent("灯的立绘：图片暂时无法预览");
+    expect(fallback.closest("p")).not.toBeNull();
+    expect(fallback.compareDocumentPosition(screen.getByText("她是乐队主唱。")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("preserves legacy custom fields and omits unchanged background when only description changes", async () => {
     const old = { seriesBible: "背景", 自定义字段: { 术语: ["乐队"] } };
     const { user, body } = await openEditor(old);

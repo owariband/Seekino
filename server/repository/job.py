@@ -49,9 +49,25 @@ class ParseJobRepository:
 
     def get(self, job_id: str) -> ParseJobState:
         with self._session_factory() as session:
+            upload_session_id = (
+                select(UploadSessionRecord.upload_session_id)
+                .where(UploadSessionRecord.video_id == SeriesParseJobRecord.video_id)
+                .order_by(UploadSessionRecord.created_at)
+                .limit(1)
+                .correlate(SeriesParseJobRecord)
+                .scalar_subquery()
+            )
+            is_primary_upload_job = exists(
+                select(UploadSessionRecord.upload_session_id).where(
+                    UploadSessionRecord.job_id == SeriesParseJobRecord.job_id,
+                    UploadSessionRecord.status == UploadSessionStatus.COMPLETED.value,
+                )
+            ).correlate(SeriesParseJobRecord)
             row = session.execute(
                 select(
                     SeriesParseJobRecord,
+                    upload_session_id,
+                    is_primary_upload_job,
                     SeriesRecord.workspace_id,
                     SeriesRecord.name,
                     VideoRecord.episode_order,
@@ -69,9 +85,19 @@ class ParseJobRepository:
             ).one_or_none()
             if row is None:
                 raise ParseJobNotFoundError(f"jobId {job_id!r} does not exist")
-            record, workspace_id, series_name, episode_order, original_filename = row
+            (
+                record,
+                linked_upload_session_id,
+                linked_as_primary_job,
+                workspace_id,
+                series_name,
+                episode_order,
+                original_filename,
+            ) = row
             return self._state(
                 record,
+                upload_session_id=linked_upload_session_id,
+                is_primary_upload_job=linked_as_primary_job,
                 workspace_id=workspace_id,
                 series_name=series_name,
                 episode_order=episode_order,
@@ -91,9 +117,25 @@ class ParseJobRepository:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ValueError("limit must be a positive integer")
         with self._session_factory() as session:
+            upload_session_id = (
+                select(UploadSessionRecord.upload_session_id)
+                .where(UploadSessionRecord.video_id == SeriesParseJobRecord.video_id)
+                .order_by(UploadSessionRecord.created_at)
+                .limit(1)
+                .correlate(SeriesParseJobRecord)
+                .scalar_subquery()
+            )
+            is_primary_upload_job = exists(
+                select(UploadSessionRecord.upload_session_id).where(
+                    UploadSessionRecord.job_id == SeriesParseJobRecord.job_id,
+                    UploadSessionRecord.status == UploadSessionStatus.COMPLETED.value,
+                )
+            ).correlate(SeriesParseJobRecord)
             rows = session.execute(
                 select(
                     SeriesParseJobRecord,
+                    upload_session_id,
+                    is_primary_upload_job,
                     SeriesRecord.workspace_id,
                     SeriesRecord.name,
                     VideoRecord.episode_order,
@@ -118,12 +160,22 @@ class ParseJobRepository:
             return [
                 self._state(
                     record,
+                    upload_session_id=linked_upload_session_id,
+                    is_primary_upload_job=linked_as_primary_job,
                     workspace_id=workspace_id,
                     series_name=series_name,
                     episode_order=episode_order,
                     original_filename=original_filename,
                 )
-                for record, workspace_id, series_name, episode_order, original_filename in rows
+                for (
+                    record,
+                    linked_upload_session_id,
+                    linked_as_primary_job,
+                    workspace_id,
+                    series_name,
+                    episode_order,
+                    original_filename,
+                ) in rows
             ]
 
     def count_for_workspace(
@@ -598,6 +650,8 @@ class ParseJobRepository:
     def _state(
         record: SeriesParseJobRecord,
         *,
+        upload_session_id: str | None,
+        is_primary_upload_job: bool,
         workspace_id: str,
         series_name: str,
         episode_order: int,
@@ -605,6 +659,8 @@ class ParseJobRepository:
     ) -> ParseJobState:
         return ParseJobState(
             job_id=record.job_id,
+            upload_session_id=upload_session_id,
+            is_primary_upload_job=is_primary_upload_job,
             workspace_id=workspace_id,
             series_id=record.series_id,
             video_id=record.video_id,

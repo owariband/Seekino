@@ -11,6 +11,7 @@ from server.database import DatabaseEnvironment, create_session_factory
 from server.repository.index_sync import IndexSyncRepository
 from server.repository.video import SeriesScopeNotFoundError
 from server.service.index_sync import IndexSyncService
+from server.service.qdrant_mutation_lock import QdrantMutationLock
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.service.video_retrieval import (
     RetrievalIndexConsistencyError,
@@ -68,6 +69,11 @@ def _ready_retrieval(repository, prepared_import):
     sync_report = IndexSyncService(
         IndexSyncRepository(create_session_factory(engine)),
         store,
+        mutation_lock=QdrantMutationLock(
+            engine,
+            environment=DatabaseEnvironment.TEST,
+            collection_name=store.collection_name,
+        ),
     ).sync_due()
     assert sync_report.synced_count == 2
     embedder = FakeQueryEmbedder([1.0, 0.0])

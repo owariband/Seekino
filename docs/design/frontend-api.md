@@ -89,6 +89,8 @@ X-Content-SHA256
 | Upload | `GET` | `/api/uploads/get?uploadSessionId=...&workspaceId=...` | 查询确认进度和恢复点 |
 | Upload | `PUT` | `/api/uploads/segments/upload?uploadSessionId=...&segmentNumber=...&workspaceId=...` | 上传一个分片 |
 | Upload | `POST` | `/api/uploads/complete?uploadSessionId=...&workspaceId=...` | 完成上传并创建解析任务 |
+| Upload | `POST` | `/api/uploads/delete?uploadSessionId=...&workspaceId=...` | 删除整个 UploadSessionTask；上传中、等待解析、解析失败和已完成均可删，合并中或正在解析返回 409 |
+| Upload | `POST` | `/api/uploads/retry-parse?uploadSessionId=...&workspaceId=...&expectedJobVersion=...` | 将该 UploadSession 的 FAILED 主解析任务重新排队；保留检查点和执行历史，以 Job version 防重复提交 |
 | Job | `GET` | `/api/jobs/list?workspaceId=...&limit=100` | 查询任务列表 |
 | Job | `GET` | `/api/jobs/get?jobId=...&workspaceId=...` | 查询任务真实状态 |
 | Job | `GET` | `/api/jobs/events?jobId=...&workspaceId=...` | SSE 订阅任务变化 |
@@ -1035,6 +1037,8 @@ interface VideoChunkSearchResult {
 | 创建 UploadSession | 是，依赖相同 `Idempotency-Key` 和字段 | 使用原 Key 重试 |
 | PUT 分片 | 是，编号、范围、Hash 和内容必须一致 | GET Session，缺失时重传 |
 | Complete | 是 | GET Session；未完成时重试 Complete |
+| Delete UploadSessionTask | 是 | 原 uploadSessionId 重试；成功返回 EXPIRED 墓碑，会话序号与幂等键保留，派生数据库记录、暂存/媒体/Job 文件与向量索引清除；中断时由持久删除标记续做 |
+| Retry Parse for UploadSessionTask | 同一 expectedJobVersion 至多投递一次 | 响应不确定时先 GET Job；仍为 FAILED 且 version 未变时才用原版本重试，QUEUED / RUNNING 表示请求已生效 |
 | GET Job | 只读 | 直接重试 |
 | SSE | 通知流 | 自动重连并用 GET Job 校准 |
 | Search | 只读 | 网络错误可重试；`409` 先处理 READY 或一致性问题 |
@@ -1051,9 +1055,8 @@ interface VideoChunkSearchResult {
 
 以下接口不在当前 M1 中，前端不要假设已经存在：
 
-- 取消或删除 UploadSession；
-- 删除 Series、Video 或 VideoChunk；
-- 用户主动重跑一个已失败 ParseJob；
+- 独立按 Series、Video 或 VideoChunk ID 删除（当前只提供按 UploadSessionTask 的整任务删除）；
+- 按任意 jobId 重跑次要 Pipeline Job（当前只允许按 uploadSessionId 重试该 UploadSession 的 FAILED 主任务）；
 - 暂停 Worker 解析；
 - 登录、用户鉴权和权限管理；
 - 直接读取 `artifact://` URI 的接口。

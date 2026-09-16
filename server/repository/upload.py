@@ -5,23 +5,36 @@ import hashlib
 import json
 from uuid import uuid4
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..identity import derive_parse_job_id
 from ..model.dto.uploadDTO import (
-    CompletedUploadState, UploadCompletionClaim, UploadSegmentState, UploadSessionState,
+    CompletedUploadState, UploadCompletionClaim, UploadSegmentState,
+    UploadSessionDeletion, UploadSessionState,
 )
+from ..model.index_sync import IndexSyncIntentRecord
 from ..model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
+from ..model.job import VideoChunkCheckpointRecord
+from ..model.parse_usage import ParseModelCallRecord, ParseUsageAttemptRecord
 from ..model.upload import (
+    UPLOAD_DELETION_PENDING_ERROR_CODE,
     UploadSegmentRecord,
     UploadSessionRecord,
     UploadSessionStatus,
     UploadCompletionStage,
 )
-from ..model.video import SeriesRecord, VideoRecord
+from ..model.video import (
+    ContextSnapshotRecord,
+    SeriesRecord,
+    VideoChunkEmbeddingRecord,
+    VideoChunkInfoRecord,
+    VideoChunkRecord,
+    VideoRecord,
+)
 from ..utils.time import utc_now_naive
+from .index_sync import refresh_series_statuses
 
 
 class UploadSessionNotFoundError(LookupError):
@@ -172,6 +185,132 @@ class UploadRepository:
             self._expire_if_due(record, checked_at)
             return self._snapshot(session, record)
 
+    def video_exists(self, video_id: str) -> bool:
+        with self._session_factory() as session:
+            return session.get(VideoRecord, video_id) is not None
+
+    def retry_parse(
+        self,
+        upload_session_id: str,
+        *,
+        workspace_id: str,
+        expected_job_version: int,
+        now: datetime,
+    ) -> str:
+        """Requeue the ParseJob owned by an UploadSession.
+
+        The lock order is UploadSession -> ParseJob -> Video -> Series. The
+        version predicate also fences duplicate submissions if a caller loses
+        the successful HTTP response and retries with the same version.
+        """
+        with self._session_factory.begin() as session:
+            upload = self._locked_session(session, upload_session_id)
+            if upload.workspace_id != workspace_id:
+                raise UploadSessionNotFoundError(
+                    "upload session does not exist in this workspace"
+                )
+            if (
+                upload.status != UploadSessionStatus.COMPLETED.value
+                or upload.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
+            ):
+                raise UploadStateError(
+                    "only a completed upload session can retry parsing"
+                )
+            if upload.job_id is None or upload.video_id is None:
+                raise UploadConflictError(
+                    "completed upload session is missing its ParseJob or Video"
+                )
+
+            job = session.scalar(
+                select(SeriesParseJobRecord)
+                .where(SeriesParseJobRecord.job_id == upload.job_id)
+                .with_for_update()
+            )
+            if job is None:
+                raise UploadConflictError(
+                    "upload session ParseJob no longer exists"
+                )
+            if (
+                job.video_id != upload.video_id
+                or job.series_id != upload.series_id
+            ):
+                raise UploadConflictError(
+                    "upload session does not own its linked ParseJob"
+                )
+            if job.version != expected_job_version:
+                raise UploadConflictError(
+                    "ParseJob version changed; refresh before retrying"
+                )
+            if job.status != ParseJobStatus.FAILED.value:
+                raise UploadStateError("only a failed ParseJob can be retried")
+
+            update_result = session.execute(
+                update(SeriesParseJobRecord)
+                .where(
+                    SeriesParseJobRecord.job_id == job.job_id,
+                    SeriesParseJobRecord.version == expected_job_version,
+                    SeriesParseJobRecord.status == ParseJobStatus.FAILED.value,
+                )
+                .values(
+                    status=ParseJobStatus.QUEUED.value,
+                    max_attempts=max(job.max_attempts, job.attempt_count + 1),
+                    available_at=now,
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    heartbeat_at=None,
+                    completed_at=None,
+                    last_error=None,
+                    version=SeriesParseJobRecord.version + 1,
+                    updated_at=now,
+                )
+            )
+            if update_result.rowcount != 1:
+                raise UploadConflictError(
+                    "ParseJob version changed; refresh before retrying"
+                )
+
+            video = session.scalar(
+                select(VideoRecord)
+                .where(VideoRecord.video_id == upload.video_id)
+                .with_for_update()
+            )
+            if video is None:
+                raise UploadConflictError("upload session Video no longer exists")
+            series = session.scalar(
+                select(SeriesRecord)
+                .where(SeriesRecord.series_id == upload.series_id)
+                .with_for_update()
+            )
+            if series is None:
+                raise UploadSeriesNotFoundError(
+                    "upload session Series no longer exists"
+                )
+            video.parse_status = ParseJobStatus.QUEUED.value
+            series.status = "INDEXING"
+            return job.job_id
+
+    def list_pending_deletions(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[tuple[str, str]]:
+        with self._session_factory() as session:
+            return list(session.execute(
+                select(
+                    UploadSessionRecord.upload_session_id,
+                    UploadSessionRecord.workspace_id,
+                )
+                .where(
+                    UploadSessionRecord.last_error_code
+                    == UPLOAD_DELETION_PENDING_ERROR_CODE,
+                )
+                .order_by(
+                    UploadSessionRecord.updated_at,
+                    UploadSessionRecord.upload_session_id,
+                )
+                .limit(limit)
+            ))
+
     def list_segments(self, upload_session_id: str) -> list[UploadSegmentState]:
         with self._session_factory() as session:
             if session.get(UploadSessionRecord, upload_session_id) is None:
@@ -186,6 +325,211 @@ class UploadRepository:
                 .order_by(UploadSegmentRecord.segment_number)
             ).all()
             return [self._segment_snapshot(item) for item in records]
+
+    def begin_delete_session(
+        self,
+        upload_session_id: str,
+        *,
+        workspace_id: str,
+        now: datetime,
+    ) -> UploadSessionDeletion:
+        with self._session_factory.begin() as session:
+            upload = self._locked_session(session, upload_session_id)
+            if upload.workspace_id != workspace_id:
+                raise UploadSessionNotFoundError("upload session does not exist in this workspace")
+            if upload.status == UploadSessionStatus.COMPLETING.value:
+                raise UploadCompletionInProgressError("upload completion is already in progress")
+
+            video_id = upload.video_id
+            job_id = upload.job_id
+            if video_id is not None or job_id is not None:
+                shared_upload = session.scalar(
+                    select(UploadSessionRecord.upload_session_id)
+                    .where(
+                        UploadSessionRecord.upload_session_id != upload_session_id,
+                        or_(
+                            UploadSessionRecord.video_id == video_id
+                            if video_id is not None else False,
+                            UploadSessionRecord.job_id == job_id
+                            if job_id is not None else False,
+                        ),
+                    )
+                    .with_for_update()
+                )
+                if shared_upload is not None:
+                    raise UploadConflictError(
+                        "another upload session references this task's Video or ParseJob"
+                    )
+
+            jobs: list[SeriesParseJobRecord] = []
+            if video_id is not None:
+                jobs = list(session.scalars(
+                    select(SeriesParseJobRecord)
+                    .where(SeriesParseJobRecord.video_id == video_id)
+                    .order_by(SeriesParseJobRecord.job_id)
+                    .with_for_update()
+                ))
+            elif job_id is not None:
+                job = session.scalar(
+                    select(SeriesParseJobRecord)
+                    .where(SeriesParseJobRecord.job_id == job_id)
+                    .with_for_update()
+                )
+                if job is not None:
+                    jobs = [job]
+            if any(job.status == ParseJobStatus.RUNNING.value for job in jobs):
+                raise UploadStateError(
+                    "the upload task is being parsed and cannot be deleted"
+                )
+            for job in jobs:
+                if job.status in {
+                    ParseJobStatus.QUEUED.value,
+                    ParseJobStatus.RETRY_WAIT.value,
+                }:
+                    # Fencing every Job in the same transaction prevents a Worker
+                    # from claiming another pipeline for the deleting Video.
+                    job.status = ParseJobStatus.FAILED.value
+                    job.lease_owner = None
+                    job.lease_expires_at = None
+                    job.heartbeat_at = None
+                    job.completed_at = now
+                    job.last_error = "upload task deletion requested"
+                    job.version += 1
+                    job.updated_at = now
+            if jobs and video_id is not None:
+                video = session.get(VideoRecord, video_id)
+                if video is not None:
+                    video.parse_status = ParseJobStatus.FAILED.value
+
+            job_ids = tuple(sorted(
+                {job.job_id for job in jobs}
+                | ({job_id} if job_id is not None else set())
+            ))
+
+            video_chunk_ids: set[str] = set()
+            if video_id is not None:
+                video_chunk_ids.update(session.scalars(
+                    select(VideoChunkRecord.video_chunk_id).where(
+                        VideoChunkRecord.video_id == video_id
+                    )
+                ))
+            if job_ids:
+                video_chunk_ids.update(session.scalars(
+                    select(VideoChunkCheckpointRecord.video_chunk_id).where(
+                        VideoChunkCheckpointRecord.job_id.in_(job_ids)
+                    )
+                ))
+
+            changed = upload.status != UploadSessionStatus.EXPIRED.value
+            # Retain the allocated order and idempotency key to fence late requests.
+            upload.expires_at = min(upload.expires_at, now)
+            upload.status = UploadSessionStatus.EXPIRED.value
+            upload.completion_token = None
+            upload.completion_started_at = None
+            upload.active_slot_key = None
+            upload.completion_stage = None
+            upload.last_error = None
+            # This marker is the durable cleanup identity for both unfinished
+            # uploads (which have no Video/Job IDs) and completed ones.
+            upload.last_error_code = UPLOAD_DELETION_PENDING_ERROR_CODE
+            removed = session.execute(delete(UploadSegmentRecord).where(
+                UploadSegmentRecord.upload_session_id == upload_session_id
+            ))
+            if changed or removed.rowcount:
+                upload.version += 1
+                upload.updated_at = now
+            session.flush()
+            return UploadSessionDeletion(
+                session=self._snapshot(session, upload, segments=[]),
+                video_id=video_id,
+                job_id=job_id,
+                job_ids=job_ids,
+                video_chunk_ids=tuple(sorted(video_chunk_ids)),
+            )
+
+    def finish_delete_session(
+        self,
+        deletion: UploadSessionDeletion,
+        *,
+        now: datetime,
+    ) -> UploadSessionState:
+        with self._session_factory.begin() as session:
+            upload = self._locked_session(
+                session,
+                deletion.session.upload_session_id,
+            )
+            if upload.status != UploadSessionStatus.EXPIRED.value:
+                raise UploadStateError("upload session deletion is no longer current")
+            if upload.video_id is None and upload.job_id is None:
+                upload.last_error_code = None
+                session.flush()
+                return self._snapshot(session, upload, segments=[])
+            if (
+                upload.video_id != deletion.video_id
+                or upload.job_id != deletion.job_id
+            ):
+                raise UploadConflictError(
+                    "upload session deletion targets changed during cleanup"
+                )
+
+            if deletion.job_ids:
+                session.execute(delete(ParseModelCallRecord).where(
+                    ParseModelCallRecord.job_id.in_(deletion.job_ids)
+                ))
+                session.execute(delete(ParseUsageAttemptRecord).where(
+                    ParseUsageAttemptRecord.job_id.in_(deletion.job_ids)
+                ))
+                session.execute(delete(VideoChunkCheckpointRecord).where(
+                    VideoChunkCheckpointRecord.job_id.in_(deletion.job_ids)
+                ))
+                session.execute(delete(SeriesParseJobRecord).where(
+                    SeriesParseJobRecord.job_id.in_(deletion.job_ids)
+                ))
+            upload.job_id = None
+            upload.video_id = None
+            session.flush()
+            if deletion.video_id is not None:
+                session.execute(delete(ContextSnapshotRecord).where(
+                    ContextSnapshotRecord.video_id == deletion.video_id
+                ))
+                if deletion.video_chunk_ids:
+                    chunk_ids = deletion.video_chunk_ids
+                    session.execute(delete(IndexSyncIntentRecord).where(
+                        IndexSyncIntentRecord.video_chunk_id.in_(chunk_ids)
+                    ))
+                    session.execute(delete(VideoChunkInfoRecord).where(
+                        VideoChunkInfoRecord.video_chunk_id.in_(chunk_ids)
+                    ))
+                    session.execute(delete(VideoChunkEmbeddingRecord).where(
+                        VideoChunkEmbeddingRecord.video_chunk_id.in_(chunk_ids)
+                    ))
+                session.execute(delete(VideoChunkRecord).where(
+                    VideoChunkRecord.video_id == deletion.video_id
+                ))
+                session.execute(delete(VideoRecord).where(
+                    VideoRecord.video_id == deletion.video_id
+                ))
+            upload.version += 1
+            upload.updated_at = now
+            upload.last_error_code = None
+            session.flush()
+
+            remaining_video_count = int(session.scalar(
+                select(func.count(VideoRecord.video_id)).where(
+                    VideoRecord.series_id == upload.series_id
+                )
+            ) or 0)
+            if remaining_video_count:
+                refresh_series_statuses(session, {upload.series_id})
+            else:
+                series = session.scalar(
+                    select(SeriesRecord)
+                    .where(SeriesRecord.series_id == upload.series_id)
+                    .with_for_update()
+                )
+                if series is not None:
+                    series.status = "EMPTY"
+            return self._snapshot(session, upload, segments=[])
 
     def register_segment(
         self,

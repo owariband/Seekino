@@ -480,7 +480,7 @@ class AgentChatService:
                     public_code="AGENT_MODEL_ERROR" if isinstance(exc, AgentModelInvocationError) else "PROCESSING_FAILED",
                 )
             except Exception:
-                _logger.exception("Could not persist Agent failure", extra={"message_id": assistant_id})
+                _logger.exception("Could not persist Agent failure message_id=%s", assistant_id)
             if failed is not None:
                 execution.publish(_terminal_event(AgentMessageSendState(initial.user_message, failed)))
             else:

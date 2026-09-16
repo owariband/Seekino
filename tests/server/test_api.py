@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from io import BytesIO
 from dataclasses import dataclass
 from datetime import timedelta
@@ -16,14 +17,15 @@ from server.agent.runtime import AgentRuntime
 from server.api.jobs import _job_event_fingerprint, _job_view
 from server.bootstrap import ApplicationServices
 from server.config.media import ImageUploadConfig
+from server.utils.logging import RequestIdFilter, request_id_context
 from server.database import (
     DatabaseEnvironment,
     create_database_engine,
     create_schema,
     create_session_factory,
 )
-from server.model.job import ParseJobStage
-from server.model.video import SeriesRecord
+from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
+from server.model.video import SeriesRecord, VideoRecord
 from server.repository.agent import AgentRepository
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
@@ -173,6 +175,8 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/uploads/create",
         "/api/uploads/get",
         "/api/uploads/list",
+        "/api/uploads/delete",
+        "/api/uploads/retry-parse",
         "/api/uploads/segments/upload",
         "/api/uploads/complete",
         "/api/jobs/list",
@@ -225,6 +229,10 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         ("/api/series/images/upload", "post"): {"seriesId", "workspaceId"},
         ("/api/uploads/create", "post"): {"seriesId"},
         ("/api/uploads/get", "get"): {"uploadSessionId"},
+        ("/api/uploads/delete", "post"): {"uploadSessionId", "workspaceId"},
+        ("/api/uploads/retry-parse", "post"): {
+            "uploadSessionId", "workspaceId", "expectedJobVersion",
+        },
         ("/api/uploads/segments/upload", "put"): {
             "uploadSessionId",
             "segmentNumber",
@@ -271,6 +279,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "workspaceId", "limit", "cursor", "seriesId", "query"
     }
     assert {
+        "uploadSessionId",
         "seriesName",
         "episodeOrder",
         "originalFilename",
@@ -649,6 +658,142 @@ def test_upload_order_is_assigned_and_legacy_order_fields_are_ignored(tmp_path: 
         assert "ignored" in schema["properties"][field]["description"]
 
 
+def test_upload_delete_is_workspace_scoped_and_idempotent(tmp_path):
+    client, _retrieval, _jobs = _client(tmp_path)
+    series_id = _create_series(client)
+    upload = client.post("/api/uploads/create", params={"seriesId": series_id},
+        headers={"Idempotency-Key": "delete-upload"}, json={
+            "workspaceId": "local-default", "originalFilename": "episode.mp4",
+            "mediaType": "video/mp4", "totalSizeBytes": 4,
+        }).json()
+    params = {"workspaceId": "local-default", "uploadSessionId": upload["uploadSessionId"]}
+    assert client.post("/api/uploads/delete", params={**params, "workspaceId": "other"}).status_code == 404
+    deleted = client.post("/api/uploads/delete", params=params)
+    assert deleted.status_code == 200
+    assert deleted.json()["status"] == "EXPIRED"
+    assert deleted.headers["X-Request-Id"]
+    assert client.post("/api/uploads/delete", params=params).json()["version"] == deleted.json()["version"]
+    assert client.get("/api/uploads/list", params={"workspaceId": "local-default"}).json()["total"] == 0
+    assert client.post("/api/uploads/complete", params=params).status_code == 409
+
+
+def test_upload_parse_retry_is_version_fenced_and_returns_the_same_job(tmp_path):
+    client, _retrieval, jobs_repository = _client(tmp_path)
+    series_id = _create_series(client)
+    created = client.post(
+        "/api/uploads/create",
+        params={"seriesId": series_id},
+        headers={"Idempotency-Key": "manual-retry"},
+        json={
+            "workspaceId": "local-default",
+            "originalFilename": "episode.mp4",
+            "mediaType": "video/mp4",
+            "totalSizeBytes": 4,
+        },
+    )
+    assert created.status_code == 201, created.text
+    upload_session_id = created.json()["uploadSessionId"]
+    uploaded = client.put(
+        "/api/uploads/segments/upload",
+        params={
+            "workspaceId": "local-default",
+            "uploadSessionId": upload_session_id,
+            "segmentNumber": 0,
+        },
+        headers={
+            "Content-Range": "bytes 0-3/4",
+            "X-Content-SHA256": hashlib.sha256(b"abcd").hexdigest(),
+        },
+        content=b"abcd",
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    completed = client.post(
+        "/api/uploads/complete",
+        params={
+            "workspaceId": "local-default",
+            "uploadSessionId": upload_session_id,
+        },
+    )
+    assert completed.status_code == 200, completed.text
+    job_id = completed.json()["jobId"]
+    with jobs_repository._session_factory.begin() as session:
+        job = session.get(SeriesParseJobRecord, job_id)
+        job.status = ParseJobStatus.FAILED.value
+        job.stage = ParseJobStage.PARSING.value
+        job.progress = 18
+        job.attempt_count = 3
+        job.max_attempts = 3
+        job.version = 7
+        job.last_error = "provider timeout"
+        video = session.get(VideoRecord, job.video_id)
+        video.parse_status = ParseJobStatus.FAILED.value
+        video.parse_progress = 18
+        session.get(SeriesRecord, series_id).status = "FAILED"
+
+    failed = client.get(
+        "/api/jobs/get",
+        params={"workspaceId": "local-default", "jobId": job_id},
+    )
+    assert failed.status_code == 200
+    assert failed.json()["canRetry"] is True
+    retry_params = {
+        "workspaceId": "local-default",
+        "uploadSessionId": upload_session_id,
+        "expectedJobVersion": 7,
+    }
+    assert client.post(
+        "/api/uploads/retry-parse",
+        params={**retry_params, "workspaceId": "other-workspace"},
+    ).status_code == 404
+    retried = client.post("/api/uploads/retry-parse", params=retry_params)
+    assert retried.status_code == 200, retried.text
+    assert {
+        "jobId": job_id,
+        "uploadSessionId": upload_session_id,
+        "status": "QUEUED",
+        "stage": "PARSING",
+        "progress": 18,
+        "attemptCount": 3,
+        "maxAttempts": 4,
+        "canRetry": False,
+        "version": 8,
+    }.items() <= retried.json().items()
+    duplicate = client.post("/api/uploads/retry-parse", params=retry_params)
+    assert duplicate.status_code == 409
+    assert duplicate.json()["requestId"] == duplicate.headers["X-Request-Id"]
+    with jobs_repository._session_factory() as session:
+        job = session.get(SeriesParseJobRecord, job_id)
+        assert (job.status, job.attempt_count, job.max_attempts, job.version) == (
+            ParseJobStatus.QUEUED.value, 3, 4, 8,
+        )
+
+
+def test_http_and_upload_logs_share_request_id_without_logging_query_or_body(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="server")
+    context_filter = RequestIdFilter()
+    caplog.handler.addFilter(context_filter)
+    try:
+        client, _retrieval, _jobs = _client(tmp_path)
+        series_id = _create_series(client)
+        caplog.clear()
+        response = client.post("/api/uploads/create", params={"seriesId": series_id, "token": "private-query"},
+            headers={"Idempotency-Key": "log-upload", "Authorization": "private-header"}, json={
+                "workspaceId": "local-default", "originalFilename": "private-filename.mp4",
+                "mediaType": "video/mp4", "totalSizeBytes": 4,
+            })
+        assert response.status_code == 201
+        records = [record for record in caplog.records if record.name.startswith("server.")]
+        assert any("upload_session_created" in record.message for record in records)
+        assert any("path=/api/uploads/create status=201 duration_ms=" in record.message for record in records)
+        assert {record.request_id for record in records} == {response.headers["X-Request-Id"]}
+        assert "private-query" not in caplog.text
+        assert "private-header" not in caplog.text
+        assert "private-filename" not in caplog.text
+        assert request_id_context.get() == "-"
+    finally:
+        caplog.handler.removeFilter(context_filter)
+
+
 def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) -> None:
     client, _retrieval, jobs_repository = _client(tmp_path)
     series_id = _create_series(client)
@@ -715,6 +860,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     jobs = client.get("/api/jobs/list", params={"workspaceId": "local-default"})
     assert job.status_code == 200
     assert job.json()["status"] == "QUEUED"
+    assert job.json()["uploadSessionId"] == upload_id
     assert job.json()["progress"] == 0
     assert job.json()["seriesName"] == "Test Series"
     assert job.json()["episodeOrder"] == 1
@@ -779,6 +925,27 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert full_video.content == b"abcdefghij"
     assert ranged_video.status_code == 206
     assert ranged_video.content == b"cdef"
+
+    delete_params = {
+        "workspaceId": "local-default",
+        "uploadSessionId": upload_id,
+    }
+    deleted = client.post("/api/uploads/delete", params=delete_params)
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["status"] == "EXPIRED"
+    assert deleted.json()["videoId"] is None
+    assert deleted.json()["jobId"] is None
+    assert client.get(
+        "/api/jobs/get",
+        params={"workspaceId": "local-default", "jobId": job_id},
+    ).status_code == 404
+    assert client.get(
+        "/api/videos/content",
+        params={"workspaceId": "local-default", "videoId": video_id},
+    ).status_code == 404
+    repeated_delete = client.post("/api/uploads/delete", params=delete_params)
+    assert repeated_delete.status_code == 200
+    assert repeated_delete.json()["version"] == deleted.json()["version"]
 
 
 def test_upload_rejects_wrong_content_range_and_workspace(tmp_path: Path) -> None:

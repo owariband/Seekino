@@ -5,7 +5,7 @@ import json
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import Select, func, select, update
+from sqlalchemy import Select, exists, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..model.dto.indexSyncDTO import IndexSyncItem
@@ -15,6 +15,10 @@ from ..model.index_sync import (
     IndexSyncStatus,
 )
 from ..model.job import ParseJobStatus
+from ..model.upload import (
+    UPLOAD_DELETION_PENDING_ERROR_CODE,
+    UploadSessionRecord,
+)
 from ..model.video import (
     SeriesRecord,
     VideoRecord,
@@ -246,7 +250,7 @@ def materialize_index_sync_intents(
         VideoChunkEmbeddingRecord,
         VideoChunkEmbeddingRecord.video_chunk_id
         == VideoChunkRecord.video_chunk_id,
-    )
+    ).where(_video_is_not_pending_deletion())
     if video_chunk_ids is not None:
         chunk_ids = list(dict.fromkeys(video_chunk_ids))
         if not chunk_ids:
@@ -406,6 +410,14 @@ def _item_statement() -> Select:
         VideoChunkEmbeddingRecord,
         VideoChunkEmbeddingRecord.video_chunk_id
         == VideoChunkRecord.video_chunk_id,
+    ).where(_video_is_not_pending_deletion())
+
+
+def _video_is_not_pending_deletion():
+    return ~exists().where(
+        UploadSessionRecord.video_id == VideoRecord.video_id,
+        UploadSessionRecord.last_error_code
+        == UPLOAD_DELETION_PENDING_ERROR_CODE,
     )
 
 

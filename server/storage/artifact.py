@@ -95,6 +95,10 @@ class ArtifactStore(Protocol):
 
     def delete_upload_staging(self, upload_session_id: str) -> None: ...
 
+    def delete_job_artifacts(self, job_id: str) -> None: ...
+
+    def delete_video_artifacts(self, series_id: str, video_id: str) -> None: ...
+
 
 class LocalArtifactStore:
     """Environment-isolated durable media storage for the local M1 runtime."""
@@ -402,8 +406,27 @@ class LocalArtifactStore:
     def delete_upload_staging(self, upload_session_id: str) -> None:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
         directory = self._path(PurePosixPath("staging", "uploads", session_id))
-        if directory.exists():
-            shutil.rmtree(directory)
+
+        self._delete_tree(directory)
+
+    def delete_job_artifacts(self, job_id: str) -> None:
+        canonical_job_id = canonical_uuid(job_id, "job_id")
+        self._delete_tree(self._path(PurePosixPath("jobs", canonical_job_id)))
+
+    def delete_video_artifacts(self, series_id: str, video_id: str) -> None:
+        canonical_series_id = canonical_uuid(series_id, "series_id")
+        canonical_video_id = canonical_uuid(video_id, "video_id")
+        self._delete_tree(self._path(PurePosixPath(
+            "media", "series", canonical_series_id, "videos", canonical_video_id,
+        )))
+
+    @staticmethod
+    def _delete_tree(directory: Path) -> None:
+        def ignore_missing(_function, _path, error: OSError) -> None:
+            if not isinstance(error, FileNotFoundError):
+                raise error
+
+        shutil.rmtree(directory, onexc=ignore_missing)
 
     def _path(self, relative_path: PurePosixPath) -> Path:
         candidate = self.base_directory.joinpath(*relative_path.parts).resolve()

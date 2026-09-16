@@ -144,7 +144,8 @@ def _job_view(detail: ParseJobDetail) -> ParseJobView:
 def project_job(detail: ParseJobDetail) -> ParseJobView:
     job = detail.job
     return ParseJobView(
-        job_id=job.job_id, workspace_id=job.workspace_id, series_id=job.series_id,
+        job_id=job.job_id, upload_session_id=job.upload_session_id,
+        workspace_id=job.workspace_id, series_id=job.series_id,
         video_id=job.video_id, series_name=job.series_name, episode_order=job.episode_order,
         original_filename=job.original_filename, pipeline_version=job.pipeline_version,
         retry_of_job_id=None, status=job.status, stage=job.stage, progress=job.progress,
@@ -156,7 +157,12 @@ def project_job(detail: ParseJobDetail) -> ParseJobView:
             sequence_no=item.sequence_no, video_chunk_id=item.video_chunk_id, stage=item.stage,
             last_error=Failure(code="PROCESSING_FAILED", message="片段处理发生错误") if item.last_error else None,
         ) for item in detail.checkpoints],
-        can_retry=False, can_cancel=False, version=job.version,
+        can_retry=(
+            job.status == ParseJobStatus.FAILED.value
+            and job.is_primary_upload_job
+            and job.upload_session_id is not None
+        ),
+        can_cancel=False, version=job.version,
         created_at=job.created_at, updated_at=job.updated_at,
     )
 

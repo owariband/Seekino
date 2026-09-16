@@ -9,6 +9,7 @@ export type UploadTaskStatus =
   | "processing"
   | "completed"
   | "failed"
+  | "deleting"
   | "cancelled";
 
 export interface UploadInput {
@@ -81,6 +82,8 @@ export function taskStatusLabel(task: UploadTask): string {
     case "failed":
       return "需要处理";
     case "cancelled":
-      return "已从本地队列移除";
+      return "已删除上传任务";
+    case "deleting":
+      return "正在删除";
   }
 }

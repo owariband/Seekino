@@ -38,11 +38,13 @@ interface ApiError extends Failure {
 
 Series list 返回轻量 `SeriesSummary`，get / create 返回 `SeriesDetail`；列表不会假装包含完整剧集信息。Job list 的 total 与 jobs/summary 均从完整 SQL 范围统计，不用首屏数量冒充全局统计。索引状态由 Chunk / Embedding / Sync Intent 事实推导，不将解析完成视为索引 READY。
 
-新增的只读接口：
+新增和补充的接口：
 
 | 路由 | 参数 | 返回 |
 | --- | --- | --- |
 | GET /api/uploads/list | workspaceId；可选 seriesId、status、limit、cursor；默认非终态，status=all 或逗号分隔状态 | Page&lt;UploadSessionView&gt; |
+| POST /api/uploads/delete | workspaceId、uploadSessionId；删除整个 UploadSessionTask，包括上传分片及已产生的 Video、全部 ParseJob/Checkpoint/VideoChunk、模型用量、媒体文件和向量点；COMPLETING / RUNNING 返回 409 | UploadSessionView（EXPIRED 墓碑） |
+| POST /api/uploads/retry-parse | workspaceId、uploadSessionId、expectedJobVersion；仅重排 UploadSession.job_id 指向的 FAILED 主任务，保留 Checkpoint / attempt / 用量，版本冲突或删除中返回 409 | ParseJobView |
 | GET /api/jobs/summary | workspaceId；可选 seriesId | JobSummary |
 | GET /api/jobs/usage/get | workspaceId、jobId | ParseUsageVO：指定任务全部执行尝试，按模型与职责展示真实 Token、人民币预估费用和记录完整性；详见 [Parse 模型消耗统计](parse-model-usage.md) |
 | GET /api/agent/messages/get | workspaceId、conversationId；messageId 与 idempotencyKey 恰好一个 | 同一 USER / ASSISTANT 消息对 |
@@ -94,7 +96,7 @@ videos/content 新增 variant=playback|original，默认 playback；原文件可
 
 - 保留 JSON send 同步返回 200，没有改成首次受理 202；SSE 是真实增量输出。
 - Series 创建仍按 Workspace + name 的业务身份幂等，upload complete 仍按 uploadSessionId 幂等，未增加覆盖规格所有写入路由的通用幂等记录。
-- 没有新增取消、手动重跑、settings 写入或 system/status；jobs/events 仍是指定 jobId 的流。因此 canCancel / canRetry=false，retryOfJobId=null。
+- 没有新增取消、settings 写入或 system/status；jobs/events 仍是指定 jobId 的流。只有仍处于 COMPLETED 的 UploadSession 所关联的 FAILED 主 Job 返回 canRetry=true；canCancel=false，retryOfJobId=null。
 - contentSha256 请求暂可省略；提供时固定并在合并后真实校验全文件 SHA。历史 / 未计算值为 null，完成后保存真实值。前端没有新增全文件 Worker hash。
 - completionStage 来自真实合并步骤；无法可靠度量的 completionProgress / estimatedRemainingMs 为 null。Upload / Message / Job 的 version 由实际可见变化递增，Job 心跳不伪造新版本。
 - 当前没有新增视频转码，不将 MOV / AVI 或无法确认 codec 的原文件标为可播放。解析没有保存关键帧的原视频 atMs，Evidence.keyframes=[] / thumbnail=null，并给出明确限制；系列封面仅使用可读取的已登记真实图片。

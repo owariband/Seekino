@@ -22,6 +22,29 @@
 .backgroundHeading button { font-size: .75rem; }
 .seriesDescription { margin: 12px 0 0; color: var(--ink-faint); font-size: .8rem; }
 .backgroundText { max-height: 220px; overflow-y: auto; margin: 14px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); font: 400 .8rem/1.7 var(--sans); }
+.backgroundMarkdown { max-height: min(560px, 65dvh); overflow: auto; margin-top: 14px; padding-right: 8px; overflow-wrap: anywhere; color: var(--ink-soft); font: 400 .8rem/1.8 var(--sans); }
+.backgroundMarkdown :is(h1, h2, h3, h4, h5, h6) { margin: 24px 0 12px; color: var(--ink); font-weight: 500; line-height: 1.4; }
+.backgroundMarkdown h1 { font-size: 1.3rem; }
+.backgroundMarkdown h2 { font-size: 1.1rem; }
+.backgroundMarkdown h3 { font-size: .95rem; }
+.backgroundMarkdown :is(h4, h5, h6) { font-size: .85rem; }
+.backgroundMarkdown > :first-child { margin-top: 0; }
+.backgroundMarkdown > :last-child { margin-bottom: 0; }
+.backgroundMarkdown p { margin: 12px 0; }
+.backgroundMarkdown :is(ul, ol) { margin: 12px 0; padding-left: 22px; }
+.backgroundMarkdown li + li { margin-top: 4px; }
+.backgroundMarkdown img { display: inline-block; width: auto; height: auto; max-width: min(320px, 100%); max-height: 280px; object-fit: contain; vertical-align: middle; border-radius: 8px; background: var(--surface-muted); }
+.backgroundMarkdown code { padding: 2px 5px; border-radius: 4px; background: var(--surface-muted); font: 400 .9em/1.6 var(--mono); }
+.backgroundMarkdown pre { max-width: 100%; overflow-x: auto; padding: 12px; border-radius: 8px; background: var(--surface-raised); }
+.backgroundMarkdown pre code { padding: 0; background: transparent; }
+.backgroundMarkdown blockquote { margin: 16px 0; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--ink-faint); }
+.backgroundMarkdown a { color: var(--teal-deep); text-underline-offset: 3px; }
+.backgroundMarkdown hr { margin: 20px 0; border: 0; border-top: 1px solid var(--line); }
+.markdownTable { max-width: 100%; overflow-x: auto; }
+.markdownTable table { width: 100%; border-collapse: collapse; font-size: .75rem; }
+.markdownTable :is(th, td) { padding: 8px 12px; border: 1px solid var(--line); text-align: left; }
+.markdownTable th { color: var(--ink); font-weight: 500; background: var(--surface-muted); }
+.inlineImageUnavailable { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 14px; color: var(--ink-faint); border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); font-size: .75rem; }
 .backgroundForm { display: grid; gap: 14px; margin-top: 14px; }
 .backgroundForm > label, .editorHeading label { display: grid; gap: 6px; color: var(--ink-soft); font-size: .75rem; }
 .editorHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -74,6 +97,7 @@
 .pendingUploads span { color: var(--ink-faint); font-size: .7rem; }
 .pendingUploads progress { grid-column: 1 / -1; width: 100%; height: 5px; accent-color: var(--teal); }
 .pendingUploads small { color: var(--ink-faint); font: 400 .65rem/1.4 var(--mono); }
+.pendingUploads button { justify-self: end; min-height: 30px; padding: 0 8px; color: var(--red); font-size: .7rem; }
 .pendingUploads p { grid-column: 1 / -1; }
 
 .modalBackdrop { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, #0d1117 58%, transparent); backdrop-filter: blur(8px); }

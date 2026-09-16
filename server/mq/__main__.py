@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import signal
 import threading
 
@@ -22,10 +23,14 @@ from ..service.index_sync import IndexSyncService
 from ..service.job import ParseJobService
 from ..service.library import LibraryService
 from ..service.parse_usage import ParseUsageService
+from ..service.qdrant_mutation_lock import QdrantMutationLock
 from ..service.video_processing import VideoProcessingService
 from ..storage.artifact import LocalArtifactStore
 from ..storage.qdrant import QdrantVideoChunkStore
+from ..utils.logging import configure_logging
 from .worker import ParseWorker
+
+_logger = logging.getLogger(__name__)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -49,6 +54,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = _build_parser().parse_args()
     settings = ServerSettings.from_environment()
+    configure_logging("worker", environment=settings.environment, config=settings.logging)
     engine = create_database_engine(
         settings.database_url,
         environment=settings.environment,
@@ -79,9 +85,15 @@ def main() -> None:
             text_dimensions=settings.text_vector_dimensions,
             vision_dimensions=settings.vision_vector_dimensions,
         )
+        qdrant_mutation_lock = QdrantMutationLock(
+            engine,
+            environment=settings.environment,
+            collection_name=settings.qdrant_collection,
+        )
         index_sync = IndexSyncService(
             IndexSyncRepository(session_factory),
             qdrant_store,
+            mutation_lock=qdrant_mutation_lock,
             retry_base_seconds=int(settings.worker_retry_base.total_seconds()),
             retry_max_seconds=int(settings.worker_retry_max.total_seconds()),
         )
@@ -144,7 +156,7 @@ def main() -> None:
 
 
 def _log(message: str) -> None:
-    print(message, flush=True)
+    _logger.info(message)
 
 
 if __name__ == "__main__":

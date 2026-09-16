@@ -10,6 +10,7 @@ from ..repository.index_sync import IndexSyncRepository
 from ..storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
 from ..utils.errors import exception_summary
 from ..utils.time import utc_now
+from .qdrant_mutation_lock import QdrantMutationLock
 
 
 class IndexSyncInvariantError(RuntimeError):
@@ -24,6 +25,7 @@ class IndexSyncService:
         repository: IndexSyncRepository,
         store: QdrantVideoChunkStore,
         *,
+        mutation_lock: QdrantMutationLock,
         retry_base_seconds: int = 5,
         retry_max_seconds: int = 300,
         clock: Callable[[], datetime] | None = None,
@@ -37,6 +39,7 @@ class IndexSyncService:
             )
         self._repository = repository
         self._store = store
+        self._mutation_lock = mutation_lock
         self._retry_base_seconds = retry_base_seconds
         self._retry_max_seconds = retry_max_seconds
         self._clock = clock or utc_now
@@ -49,19 +52,20 @@ class IndexSyncService:
     ) -> IndexSyncRunReport:
         """Synchronize currently due intents without coupling fact commits to Qdrant."""
 
-        materialized_count = self._repository.materialize_all()
-        # Materialization can create PENDING intents at the current instant.
-        # Read the default cutoff afterwards so a single sync run can consume them.
-        due_at = now or self._clock()
-        items = self._repository.list_due(limit, now=due_at)
-        synced, failed, stale = self._apply_items(items)
-        return IndexSyncRunReport(
-            materialized_count=materialized_count,
-            selected_count=len(items),
-            synced_count=synced,
-            failed_count=failed,
-            stale_result_count=stale,
-        )
+        with self._mutation_lock.hold():
+            materialized_count = self._repository.materialize_all()
+            # Materialization can create PENDING intents at the current instant.
+            # Read the cutoff afterwards so one run can consume new intents.
+            due_at = now or self._clock()
+            items = self._repository.list_due(limit, now=due_at)
+            synced, failed, stale = self._apply_items(items)
+            return IndexSyncRunReport(
+                materialized_count=materialized_count,
+                selected_count=len(items),
+                synced_count=synced,
+                failed_count=failed,
+                stale_result_count=stale,
+            )
 
     def sync_video_chunks(
         self,
@@ -69,35 +73,36 @@ class IndexSyncService:
     ) -> IndexSyncRunReport:
         """Synchronize one completed ParseJob's exact VideoChunk set."""
 
-        chunk_ids = list(dict.fromkeys(video_chunk_ids))
-        if not chunk_ids:
-            raise ValueError("video_chunk_ids must not be empty")
-        materialized_count = self._repository.materialize(chunk_ids)
-        items = self._repository.list_by_video_chunk_ids(chunk_ids)
-        present = {item.video_chunk_id for item in items}
-        missing = [item for item in chunk_ids if item not in present]
-        if missing:
-            raise IndexSyncInvariantError(
-                "missing index intents for VideoChunks: " + ", ".join(missing)
+        with self._mutation_lock.hold():
+            chunk_ids = list(dict.fromkeys(video_chunk_ids))
+            if not chunk_ids:
+                raise ValueError("video_chunk_ids must not be empty")
+            materialized_count = self._repository.materialize(chunk_ids)
+            items = self._repository.list_by_video_chunk_ids(chunk_ids)
+            present = {item.video_chunk_id for item in items}
+            missing = [item for item in chunk_ids if item not in present]
+            if missing:
+                raise IndexSyncInvariantError(
+                    "missing index intents for VideoChunks: " + ", ".join(missing)
+                )
+            selected = [
+                item for item in items if item.status is not IndexSyncStatus.SYNCED
+            ]
+            synced, failed, stale = self._apply_items(selected)
+            current = self._repository.list_by_video_chunk_ids(chunk_ids)
+            if failed or stale or any(
+                item.status is not IndexSyncStatus.SYNCED for item in current
+            ):
+                raise IndexSyncInvariantError(
+                    "the ParseJob's Qdrant index did not converge to SYNCED"
+                )
+            return IndexSyncRunReport(
+                materialized_count=materialized_count,
+                selected_count=len(selected),
+                synced_count=synced,
+                failed_count=0,
+                stale_result_count=0,
             )
-        selected = [
-            item for item in items if item.status is not IndexSyncStatus.SYNCED
-        ]
-        synced, failed, stale = self._apply_items(selected)
-        current = self._repository.list_by_video_chunk_ids(chunk_ids)
-        if failed or stale or any(
-            item.status is not IndexSyncStatus.SYNCED for item in current
-        ):
-            raise IndexSyncInvariantError(
-                "the ParseJob's Qdrant index did not converge to SYNCED"
-            )
-        return IndexSyncRunReport(
-            materialized_count=materialized_count,
-            selected_count=len(selected),
-            synced_count=synced,
-            failed_count=0,
-            stale_result_count=0,
-        )
 
     def reconcile(
         self,
@@ -108,110 +113,72 @@ class IndexSyncService:
 
         if inspection_batch_size <= 0:
             raise ValueError("inspection_batch_size must be greater than zero")
-        materialized_count = self._repository.materialize_all()
-        items = self._repository.list_all()
-        consistent_count = 0
-        repair_attempted_count = 0
-        synced_count = 0
-        failed_count = 0
-        stale_result_count = 0
+        with self._mutation_lock.hold():
+            materialized_count = self._repository.materialize_all()
+            items = self._repository.list_all()
+            consistent_count = 0
+            repair_attempted_count = 0
+            synced_count = 0
+            failed_count = 0
+            stale_result_count = 0
 
-        for batch in _batches(items, inspection_batch_size):
-            try:
-                states = self._store.inspect(
-                    [item.video_chunk_id for item in batch]
-                )
-            except Exception as exc:
-                for item in batch:
-                    if self._repository.mark_failed(
-                        item.video_chunk_id,
-                        item.source_revision,
-                        item.operation,
-                        item.generation,
-                        error=exception_summary(exc),
-                        available_at=(
-                            self._clock()
-                            + self._retry_delay(item.attempt_count)
-                        ),
-                    ):
-                        failed_count += 1
-                    else:
-                        stale_result_count += 1
-                continue
-            for item in batch:
-                state = states[item.video_chunk_id]
-                is_consistent = (
-                    item.operation is IndexSyncOperation.UPSERT
-                    and state.present
-                    and state.source_revision == item.source_revision
-                ) or (
-                    item.operation is IndexSyncOperation.DELETE
-                    and not state.present
-                )
-                if is_consistent:
-                    consistent_count += 1
-                    if item.status is not IndexSyncStatus.SYNCED:
-                        if self._repository.mark_synced(
+            for batch in _batches(items, inspection_batch_size):
+                try:
+                    states = self._store.inspect(
+                        [item.video_chunk_id for item in batch]
+                    )
+                except Exception as exc:
+                    for item in batch:
+                        if self._repository.mark_failed(
                             item.video_chunk_id,
                             item.source_revision,
                             item.operation,
                             item.generation,
+                            error=exception_summary(exc),
+                            available_at=(
+                                self._clock()
+                                + self._retry_delay(item.attempt_count)
+                            ),
                         ):
-                            synced_count += 1
+                            failed_count += 1
                         else:
                             stale_result_count += 1
                     continue
+                for item in batch:
+                    state = states[item.video_chunk_id]
+                    is_consistent = (
+                        item.operation is IndexSyncOperation.UPSERT
+                        and state.present
+                        and state.source_revision == item.source_revision
+                    ) or (
+                        item.operation is IndexSyncOperation.DELETE
+                        and not state.present
+                    )
+                    if is_consistent:
+                        consistent_count += 1
+                        if item.status is not IndexSyncStatus.SYNCED:
+                            if self._repository.mark_synced(
+                                item.video_chunk_id,
+                                item.source_revision,
+                                item.operation,
+                                item.generation,
+                            ):
+                                synced_count += 1
+                            else:
+                                stale_result_count += 1
+                        continue
 
-                next_generation = self._repository.mark_pending_if_current(
-                    item.video_chunk_id,
-                    item.source_revision,
-                    item.operation,
-                    item.generation,
-                )
-                if next_generation is None:
-                    stale_result_count += 1
-                    continue
-                repair_attempted_count += 1
-                pending_item = replace(
-                    item,
-                    generation=next_generation,
-                    status=IndexSyncStatus.PENDING,
-                    attempt_count=0,
-                    last_error=None,
-                    synced_at=None,
-                )
-                synced, failed, stale = self._apply_items([pending_item])
-                synced_count += synced
-                failed_count += failed
-                stale_result_count += stale
-
-        return IndexReconcileReport(
-            materialized_count=materialized_count,
-            inspected_count=len(items),
-            consistent_count=consistent_count,
-            repair_attempted_count=repair_attempted_count,
-            synced_count=synced_count,
-            failed_count=failed_count,
-            stale_result_count=stale_result_count,
-        )
-
-    def rebuild(self) -> IndexSyncRunReport:
-        """Force every MySQL desired state back through the idempotent sync path."""
-
-        materialized_count = self._repository.materialize_all()
-        current_items = self._repository.list_all()
-        selected_items: list[IndexSyncItem] = []
-        stale_result_count = 0
-        for item in current_items:
-            next_generation = self._repository.mark_pending_if_current(
-                item.video_chunk_id,
-                item.source_revision,
-                item.operation,
-                item.generation,
-            )
-            if next_generation is not None:
-                selected_items.append(
-                    replace(
+                    next_generation = self._repository.mark_pending_if_current(
+                        item.video_chunk_id,
+                        item.source_revision,
+                        item.operation,
+                        item.generation,
+                    )
+                    if next_generation is None:
+                        stale_result_count += 1
+                        continue
+                    repair_attempted_count += 1
+                    pending_item = replace(
                         item,
                         generation=next_generation,
                         status=IndexSyncStatus.PENDING,
@@ -219,18 +186,58 @@ class IndexSyncService:
                         last_error=None,
                         synced_at=None,
                     )
-                )
-            else:
-                stale_result_count += 1
+                    synced, failed, stale = self._apply_items([pending_item])
+                    synced_count += synced
+                    failed_count += failed
+                    stale_result_count += stale
 
-        synced, failed, stale = self._apply_items(selected_items)
-        return IndexSyncRunReport(
-            materialized_count=materialized_count,
-            selected_count=len(selected_items),
-            synced_count=synced,
-            failed_count=failed,
-            stale_result_count=stale_result_count + stale,
-        )
+            return IndexReconcileReport(
+                materialized_count=materialized_count,
+                inspected_count=len(items),
+                consistent_count=consistent_count,
+                repair_attempted_count=repair_attempted_count,
+                synced_count=synced_count,
+                failed_count=failed_count,
+                stale_result_count=stale_result_count,
+            )
+
+    def rebuild(self) -> IndexSyncRunReport:
+        """Force every MySQL desired state back through the idempotent sync path."""
+
+        with self._mutation_lock.hold():
+            materialized_count = self._repository.materialize_all()
+            current_items = self._repository.list_all()
+            selected_items: list[IndexSyncItem] = []
+            stale_result_count = 0
+            for item in current_items:
+                next_generation = self._repository.mark_pending_if_current(
+                    item.video_chunk_id,
+                    item.source_revision,
+                    item.operation,
+                    item.generation,
+                )
+                if next_generation is not None:
+                    selected_items.append(
+                        replace(
+                            item,
+                            generation=next_generation,
+                            status=IndexSyncStatus.PENDING,
+                            attempt_count=0,
+                            last_error=None,
+                            synced_at=None,
+                        )
+                    )
+                else:
+                    stale_result_count += 1
+
+            synced, failed, stale = self._apply_items(selected_items)
+            return IndexSyncRunReport(
+                materialized_count=materialized_count,
+                selected_count=len(selected_items),
+                synced_count=synced,
+                failed_count=failed,
+                stale_result_count=stale_result_count + stale,
+            )
 
     def _apply_items(
         self,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -57,6 +58,10 @@ def test_server_settings_load_upload_parse_agent_and_worker_defaults(monkeypatch
     assert settings.images.maximum_upload_size_bytes == 10 * 1024 * 1024
     assert settings.images.maximum_pixels == 40_000_000
     assert settings.images.model_max_edge == 1024
+    assert settings.logging.directory == Path("outputs/server/logs")
+    assert settings.logging.level == "info"
+    assert settings.logging.maximum_file_size_bytes == 10 * 1024 * 1024
+    assert settings.logging.backup_count == 5
 
 
 def test_server_settings_reject_cross_modal_dimension_mismatch(monkeypatch) -> None:
@@ -83,6 +88,10 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
         "ANIVAG_MAX_IMAGE_UPLOAD_SIZE_BYTES": "2048",
         "ANIVAG_MAX_IMAGE_PIXELS": "1000000",
         "ANIVAG_BACKGROUND_IMAGE_MAX_EDGE": "512",
+        "ANIVAG_LOG_DIRECTORY": "outputs/test-logs",
+        "ANIVAG_LOG_LEVEL": "DEBUG",
+        "ANIVAG_LOG_MAX_BYTES": "2048",
+        "ANIVAG_LOG_BACKUP_COUNT": "2",
     }
     for name, value in overrides.items():
         monkeypatch.setenv(name, value)
@@ -101,6 +110,10 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
     assert settings.images.maximum_upload_size_bytes == 2048
     assert settings.images.maximum_pixels == 1_000_000
     assert settings.images.model_max_edge == 512
+    assert settings.logging.directory == Path("outputs/test-logs")
+    assert settings.logging.level == "debug"
+    assert settings.logging.maximum_file_size_bytes == 2048
+    assert settings.logging.backup_count == 2
 
 
 @pytest.mark.parametrize(
@@ -118,6 +131,9 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
         ("ANIVAG_MAX_IMAGE_UPLOAD_SIZE_BYTES", "0"),
         ("ANIVAG_MAX_IMAGE_PIXELS", "-1"),
         ("ANIVAG_BACKGROUND_IMAGE_MAX_EDGE", "0"),
+        ("ANIVAG_LOG_LEVEL", "invalid"),
+        ("ANIVAG_LOG_MAX_BYTES", "0"),
+        ("ANIVAG_LOG_BACKUP_COUNT", "-1"),
     ],
 )
 def test_server_settings_reject_invalid_runtime_tuning(monkeypatch, name, value):

@@ -1,5 +1,7 @@
 import { ImagePlus, Pencil } from "lucide-react";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import Markdown, { defaultUrlTransform } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { errorMessage, imageContentUrl, mediaUrl, uploadSeriesImage } from "../../api/client";
 import type { ImageAsset, SeriesBackground, SeriesUpdateRequest, SeriesView } from "../../api/contracts";
@@ -186,11 +188,36 @@ export function SeriesBackgroundEditor({ series }: { series: SeriesView }) {
       ) : (
         <>
           {series.description ? <p className={styles.seriesDescription}>{series.description}</p> : null}
-          <pre className={styles.backgroundText}>{document.content || "暂无背景资料"}</pre>
+          {document.format === "markdown" && document.content ? (
+            <div className={styles.backgroundMarkdown}>
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                skipHtml
+                urlTransform={(url, key, node) => {
+                  if (key === "src" && node.tagName === "img" && url.startsWith("asset://")) {
+                    const imageId = url.slice("asset://".length);
+                    if (!/^[A-Za-z0-9_-]+$/.test(imageId)) return "";
+                    return assets[imageId] ? mediaUrl(assets[imageId].url) ?? "" : imageContentUrl(imageId, series.workspaceId);
+                  }
+                  return defaultUrlTransform(url);
+                }}
+                components={{
+                  img: ({ src, alt, title }) => {
+                    const source = typeof src === "string" ? src : "";
+                    if (!source || failedImages.includes(source)) {
+                      return <span className={styles.inlineImageUnavailable} role="img" aria-label={alt || "背景参考图"}>{alt ? `${alt}：` : ""}<span>图片暂时无法预览</span></span>;
+                    }
+                    return <img src={source} alt={alt || "背景参考图"} title={title} loading="lazy" onError={() => setFailedImages((value) => [...new Set([...value, source])])} />;
+                  },
+                  table: ({ children }) => <div className={styles.markdownTable}><table>{children}</table></div>,
+                }}
+              >{document.content}</Markdown>
+            </div>
+          ) : <pre className={styles.backgroundText}>{document.content || "暂无背景资料"}</pre>}
           {series.characterBible.length > 0 ? <details className={styles.characters}><summary>人物资料 · {series.characterBible.length}</summary><ul>{series.characterBible.map((character, index) => <li key={`${character.name}-${index}`}><strong>{character.name}</strong>{character.aliases.length ? <span>{character.aliases.join("、")}</span> : null}</li>)}</ul></details> : null}
         </>
       )}
-      {imageIds.length ? <div className={styles.backgroundImages} aria-label="背景参考图">{imageIds.map((imageId) => (
+      {(editing || document.format === "json") && imageIds.length ? <div className={styles.backgroundImages} aria-label="背景参考图">{imageIds.map((imageId) => (
         <figure key={imageId}>
           {failedImages.includes(imageId) ? <div className={styles.imageUnavailable}>图片暂时无法预览</div> : <img src={assets[imageId] ? mediaUrl(assets[imageId].url) ?? undefined : imageContentUrl(imageId, series.workspaceId)} alt="背景参考图" loading="lazy" onError={() => setFailedImages((value) => [...new Set([...value, imageId])])} />}
           {editing && draft.format === "json" ? <label><span className="sr-only">图片引用</span><input className="field" value={`asset://${imageId}`} readOnly onFocus={(event) => event.currentTarget.select()} /></label> : null}

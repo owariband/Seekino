@@ -30,6 +30,8 @@ class ParseJobState:
     last_error: str | None
     created_at: datetime
     updated_at: datetime
+    upload_session_id: str | None = None
+    is_primary_upload_job: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,6 +16,7 @@ class VideoChunkCheckpointView(ContractModel):
 
 class ParseJobView(ContractModel):
     job_id: str
+    upload_session_id: str | None
     workspace_id: str
     series_id: str
     video_id: str

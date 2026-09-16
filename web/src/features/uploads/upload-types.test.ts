@@ -30,7 +30,7 @@ describe("upload presentation state", () => {
         task({
           status: "processing",
           job: {
-            jobId: "job-1", workspaceId: "local-default", retryOfJobId: null, version: 1, estimatedRemainingMs: null, canRetry: false, canCancel: false,
+            jobId: "job-1", uploadSessionId: "upload-1", workspaceId: "local-default", retryOfJobId: null, version: 1, estimatedRemainingMs: null, canRetry: false, canCancel: false,
             seriesId: "series-1",
             videoId: "video-1",
             seriesName: "测试系列",
