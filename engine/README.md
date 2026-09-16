@@ -52,8 +52,9 @@ uv run --env-file .env.local python -m engine.parse.cli \
   --output-dir outputs/engine/episode
 ```
 
-候选 Transcript 会先写入 `transcripts/chunk-XXXX.json`；每完成一个 VideoChunk 的 Pro
-解析，命令再写入 `chunks/chunk-XXXX.json`。使用相同参数和输出目录重跑时，
+候选 ASR 使用并发受限的生产流水线：当前 VideoChunk 的 Transcript 就绪后会立即写入
+`transcripts/chunk-XXXX.json` 并交给 Pro，同时 Lite 继续准备后续 VideoChunk；Pro 仍按
+VideoChunk 顺序串行解析并在每段完成后写入 `chunks/chunk-XXXX.json`。使用相同参数和输出目录重跑时，
 Pipeline 会验证模型、窗口和上下文链，然后从第一个未完成 VideoChunk 继续。全部完成
 后写入 `pipeline.parse.json`。每个 `VideoChunkParseResult` 包含该时间片的
 `context_before_compact → self_compact → context_after_compact`，便于直接检查

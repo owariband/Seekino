@@ -14,6 +14,7 @@ if [[ ! -x .venv/bin/python ]]; then
 fi
 
 if [[ -f .env.local ]]; then
+  unset ARK_API_KEY DEEPSEEK_API_KEY
   exec uv run --no-sync --env-file .env.local python scripts/local_services.py "$@"
 fi
 

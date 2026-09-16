@@ -39,6 +39,9 @@ CHILDREN: dict[str, subprocess.Popen] = {}
 
 def config_digest() -> str:
     values = {key: value for key, value in os.environ.items() if key.startswith(("ANIVAG_", "VITE_"))}
+    for key in ("ARK_API_KEY", "DEEPSEEK_API_KEY"):
+        value = os.environ.get(key, "")
+        values[key] = hashlib.sha256(value.encode()).hexdigest()
     for path in ("config.yaml", "config/model-pricing.yaml"):
         values[path] = hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()

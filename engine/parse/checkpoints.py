@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import deque
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from contextvars import copy_context
 from pathlib import Path
+from threading import Condition, Event, Lock
 from typing import Any
 
 from pydantic import BaseModel
@@ -128,9 +131,219 @@ def load_completed_chunks(
     return completed
 
 
+class _CandidateTranscriptStream:
+    def __init__(
+        self,
+        parser: VideoChunkParser,
+        windows: Sequence[AnalysisWindow],
+        *,
+        output_dir: Path,
+        transcript_model: str,
+        transcript_source: str,
+        concurrency: int,
+        on_log: Callable[[str], None] | None,
+    ) -> None:
+        if concurrency <= 0:
+            raise ValueError("asr_concurrency must be greater than zero")
+
+        self._parser = parser
+        self._windows = tuple(windows)
+        self._output_dir = output_dir
+        self._transcript_model = transcript_model
+        self._transcript_source = transcript_source
+        self._log = on_log or (lambda message: print(message, flush=True))
+        self._transcripts: dict[int, TranscriptAnalysis] = {}
+        self._errors: dict[int, Exception] = {}
+        self._pending: deque[AnalysisWindow] = deque()
+        self._next_index = 0
+        self._ready_count = 0
+        self._ready_lock = Lock()
+        self._state = Condition()
+        self._stop = Event()
+        self._executor: ThreadPoolExecutor | None = None
+
+        for window in self._windows:
+            path = self._checkpoint_path(window.sequence_no)
+            if not path.is_file():
+                legacy_path = (
+                    output_dir
+                    / "transcripts"
+                    / f"segment-{window.sequence_no:04d}.json"
+                )
+                if legacy_path.is_file():
+                    path = legacy_path
+                else:
+                    self._pending.append(window)
+                    continue
+            checkpoint = TranscriptCheckpoint.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            if checkpoint.transcript_model != transcript_model:
+                raise RuntimeError(
+                    f"transcript model changed for checkpoint: {path}"
+                )
+            if checkpoint.transcript_source != transcript_source:
+                raise RuntimeError(
+                    f"transcript source changed for checkpoint: {path}"
+                )
+            if not analysis_windows_match(checkpoint.window, window):
+                raise RuntimeError(
+                    f"analysis window changed for checkpoint: {path}"
+                )
+            self._transcripts[window.sequence_no] = checkpoint.analysis
+
+        self._ready_count = len(self._transcripts)
+        if not self._pending:
+            return
+        if transcript_source == "none":
+            self._prepare_empty_transcripts()
+            return
+
+        self._executor = ThreadPoolExecutor(
+            max_workers=min(concurrency, len(self._pending)),
+            thread_name_prefix="anivag-asr",
+        )
+        for _ in range(min(concurrency, len(self._pending))):
+            context = copy_context()
+            self._executor.submit(context.run, self._run_worker)
+
+    def __iter__(self) -> _CandidateTranscriptStream:
+        return self
+
+    def __next__(self) -> tuple[int, TranscriptAnalysis]:
+        if self._next_index >= len(self._windows):
+            raise StopIteration
+
+        window = self._windows[self._next_index]
+        sequence_no = window.sequence_no
+        with self._state:
+            while (
+                sequence_no not in self._transcripts
+                and sequence_no not in self._errors
+            ):
+                self._state.wait()
+            error = self._errors.get(sequence_no)
+            if error is not None:
+                raise RuntimeError(
+                    f"candidate ASR failed for chunk {sequence_no}"
+                ) from error
+            analysis = self._transcripts[sequence_no]
+
+        self._next_index += 1
+        return sequence_no, analysis
+
+    def close(self) -> None:
+        if self._executor is None:
+            return
+        self._stop.set()
+        with self._state:
+            self._pending.clear()
+            self._state.notify_all()
+        self._executor.shutdown(wait=True, cancel_futures=True)
+        self._executor = None
+
+    def _run_worker(self) -> None:
+        while True:
+            with self._state:
+                if self._stop.is_set() or not self._pending:
+                    return
+                window = self._pending.popleft()
+            try:
+                analysis = self._transcribe_and_checkpoint(window)
+            except Exception as exc:
+                with self._state:
+                    self._errors[window.sequence_no] = exc
+                    self._state.notify_all()
+                continue
+            with self._state:
+                self._transcripts[window.sequence_no] = analysis
+                self._state.notify_all()
+
+    def _transcribe_and_checkpoint(
+        self,
+        window: AnalysisWindow,
+    ) -> TranscriptAnalysis:
+        with parse_chunk_scope(window.sequence_no):
+            analysis = self._parser.transcribe(
+                window.media_path,
+                duration_ms=window.analysis_duration_ms,
+            )
+        write_json(
+            TranscriptCheckpoint(
+                transcript_model=self._transcript_model,
+                transcript_source=self._transcript_source,
+                window=window,
+                analysis=analysis,
+            ),
+            self._checkpoint_path(window.sequence_no),
+        )
+        with self._ready_lock:
+            self._ready_count += 1
+            ready_count = self._ready_count
+            self._log(
+                f"ASR ready {ready_count}/{len(self._windows)}; "
+                f"chunk={window.sequence_no}; cues={len(analysis.transcript)}"
+            )
+        return analysis
+
+    def _prepare_empty_transcripts(self) -> None:
+        pending_count = len(self._pending)
+        while self._pending:
+            window = self._pending.popleft()
+            analysis = TranscriptAnalysis(transcript=[])
+            write_json(
+                TranscriptCheckpoint(
+                    transcript_model=self._transcript_model,
+                    transcript_source=self._transcript_source,
+                    window=window,
+                    analysis=analysis,
+                ),
+                self._checkpoint_path(window.sequence_no),
+            )
+            self._transcripts[window.sequence_no] = analysis
+        self._ready_count = len(self._transcripts)
+        self._log(
+            f"candidate ASR disabled for {pending_count} pending chunks; "
+            "Pro will use video audio and hard subtitles"
+        )
+
+    def _checkpoint_path(self, sequence_no: int) -> Path:
+        return (
+            self._output_dir
+            / "transcripts"
+            / f"chunk-{sequence_no:04d}.json"
+        )
+
+
+@contextmanager
+def stream_candidate_transcripts(
+    parser: VideoChunkParser,
+    windows: Sequence[AnalysisWindow],
+    *,
+    output_dir: Path,
+    transcript_model: str,
+    transcript_source: str,
+    concurrency: int,
+    on_log: Callable[[str], None] | None = None,
+) -> Iterator[Iterator[tuple[int, TranscriptAnalysis]]]:
+    stream = _CandidateTranscriptStream(
+        parser,
+        windows,
+        output_dir=output_dir,
+        transcript_model=transcript_model,
+        transcript_source=transcript_source,
+        concurrency=concurrency,
+        on_log=on_log,
+    )
+    try:
+        yield stream
+    finally:
+        stream.close()
+
+
 def prepare_candidate_transcripts(
     parser: VideoChunkParser,
-    windows: list[AnalysisWindow],
+    windows: Sequence[AnalysisWindow],
     *,
     output_dir: Path,
     transcript_model: str,
@@ -138,100 +351,13 @@ def prepare_candidate_transcripts(
     concurrency: int,
     on_log: Callable[[str], None] | None = None,
 ) -> dict[int, TranscriptAnalysis]:
-    if concurrency <= 0:
-        raise ValueError("asr_concurrency must be greater than zero")
-    log = on_log or (lambda message: print(message, flush=True))
-
-    transcripts: dict[int, TranscriptAnalysis] = {}
-    pending: list[AnalysisWindow] = []
-    for window in windows:
-        path = output_dir / "transcripts" / f"chunk-{window.sequence_no:04d}.json"
-        if not path.is_file():
-            legacy_path = (
-                output_dir
-                / "transcripts"
-                / f"segment-{window.sequence_no:04d}.json"
-            )
-            if legacy_path.is_file():
-                path = legacy_path
-            else:
-                pending.append(window)
-                continue
-        checkpoint = TranscriptCheckpoint.model_validate_json(
-            path.read_text(encoding="utf-8")
-        )
-        if checkpoint.transcript_model != transcript_model:
-            raise RuntimeError(f"transcript model changed for checkpoint: {path}")
-        if checkpoint.transcript_source != transcript_source:
-            raise RuntimeError(f"transcript source changed for checkpoint: {path}")
-        if not analysis_windows_match(checkpoint.window, window):
-            raise RuntimeError(f"analysis window changed for checkpoint: {path}")
-        transcripts[window.sequence_no] = checkpoint.analysis
-
-    if not pending:
-        return transcripts
-
-    if transcript_source == "none":
-        for window in pending:
-            analysis = TranscriptAnalysis(transcript=[])
-            checkpoint = TranscriptCheckpoint(
-                transcript_model=transcript_model,
-                transcript_source=transcript_source,
-                window=window,
-                analysis=analysis,
-            )
-            path = (
-                output_dir
-                / "transcripts"
-                / f"chunk-{window.sequence_no:04d}.json"
-            )
-            write_json(checkpoint, path)
-            transcripts[window.sequence_no] = analysis
-        log(
-            f"candidate ASR disabled for {len(pending)} pending chunks; "
-            "Pro will use video audio and hard subtitles"
-        )
-        return transcripts
-
-    errors: list[tuple[AnalysisWindow, Exception]] = []
-
-    def transcribe(window: AnalysisWindow) -> TranscriptAnalysis:
-        with parse_chunk_scope(window.sequence_no):
-            return parser.transcribe(window.media_path, duration_ms=window.analysis_duration_ms)
-
-    with ThreadPoolExecutor(max_workers=min(concurrency, len(pending))) as executor:
-        futures = {
-            executor.submit(copy_context().run, transcribe, window): window
-            for window in pending
-        }
-        for future in as_completed(futures):
-            window = futures[future]
-            try:
-                analysis = future.result()
-            except Exception as exc:
-                errors.append((window, exc))
-                continue
-            checkpoint = TranscriptCheckpoint(
-                transcript_model=transcript_model,
-                transcript_source=transcript_source,
-                window=window,
-                analysis=analysis,
-            )
-            path = (
-                output_dir
-                / "transcripts"
-                / f"chunk-{window.sequence_no:04d}.json"
-            )
-            write_json(checkpoint, path)
-            transcripts[window.sequence_no] = analysis
-            log(
-                f"ASR ready {len(transcripts)}/{len(windows)}; "
-                f"chunk={window.sequence_no}; cues={len(analysis.transcript)}"
-            )
-    if errors:
-        window, error = errors[0]
-        raise RuntimeError(
-            f"candidate ASR failed for chunk {window.sequence_no}; "
-            f"{len(errors)} chunk(s) failed"
-        ) from error
-    return transcripts
+    with stream_candidate_transcripts(
+        parser,
+        windows,
+        output_dir=output_dir,
+        transcript_model=transcript_model,
+        transcript_source=transcript_source,
+        concurrency=concurrency,
+        on_log=on_log,
+    ) as transcripts:
+        return dict(transcripts)

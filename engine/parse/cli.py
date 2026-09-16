@@ -14,7 +14,7 @@ from .analysis_windows import (
 )
 from .checkpoints import (
     load_completed_chunks as _load_completed_chunks,
-    prepare_candidate_transcripts as _prepare_candidate_transcripts,
+    stream_candidate_transcripts as _stream_candidate_transcripts,
     write_json as _write_json,
 )
 from .video_chunk_parse import (
@@ -159,7 +159,8 @@ def main() -> None:
     materialize_analysis_windows(windows, max_height=args.max_height)
     print(
         f"prepared {len(windows)} temporary analysis windows for {duration_ms} ms; "
-        "ASR can run concurrently and semantic parsing will run serially",
+        f"ASR runs with up to {args.asr_concurrency} workers while semantic "
+        "parsing runs serially",
         flush=True,
     )
 
@@ -242,14 +243,6 @@ def main() -> None:
             "completed chunks",
             flush=True,
         )
-    candidate_transcripts = _prepare_candidate_transcripts(
-        model_parser,
-        windows[len(completed_chunks) :],
-        output_dir=output_dir,
-        transcript_model=transcript_model,
-        transcript_source=args.asr_mode,
-        concurrency=args.asr_concurrency,
-    )
     pipeline = ParsePipeline(
         semantic_parser,
         max_context_events=args.max_context_events,
@@ -278,17 +271,25 @@ def main() -> None:
             flush=True,
         )
 
-    result = pipeline.run(
-        source_video=str(video_path),
-        duration_ms=duration_ms,
-        chunk_duration_ms=args.chunk_duration_ms,
-        context_overlap_ms=args.context_overlap_ms,
-        windows=windows,
-        series_bible=_read_series_bible(args),
-        candidate_transcripts=candidate_transcripts,
-        completed_chunks=completed_chunks,
-        on_chunk_complete=checkpoint,
-    )
+    with _stream_candidate_transcripts(
+        model_parser,
+        windows[len(completed_chunks) :],
+        output_dir=output_dir,
+        transcript_model=transcript_model,
+        transcript_source=args.asr_mode,
+        concurrency=args.asr_concurrency,
+    ) as candidate_transcripts:
+        result = pipeline.run(
+            source_video=str(video_path),
+            duration_ms=duration_ms,
+            chunk_duration_ms=args.chunk_duration_ms,
+            context_overlap_ms=args.context_overlap_ms,
+            windows=windows,
+            series_bible=_read_series_bible(args),
+            candidate_transcripts=candidate_transcripts,
+            completed_chunks=completed_chunks,
+            on_chunk_complete=checkpoint,
+        )
     final_output = output_dir / "pipeline.parse.json"
     models = VideoParseModels(
         transcript=transcript_model if args.asr_mode == "lite" else None,

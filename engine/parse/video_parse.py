@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 from .background import BackgroundImage
 from .schemas import (
@@ -46,7 +46,11 @@ class ParsePipeline:
         windows: Sequence[AnalysisWindow],
         series_bible: str | None = None,
         background_images: Sequence[BackgroundImage] = (),
-        candidate_transcripts: Mapping[int, TranscriptAnalysis] | None = None,
+        candidate_transcripts: (
+            Mapping[int, TranscriptAnalysis]
+            | Iterable[tuple[int, TranscriptAnalysis]]
+            | None
+        ) = None,
         completed_chunks: Sequence[VideoChunkParseResult] = (),
         on_chunk_complete: Callable[[VideoChunkParseResult], None] | None = None,
     ) -> VideoParseResult:
@@ -61,6 +65,17 @@ class ParsePipeline:
         )
         chunk_results: list[VideoChunkParseResult] = []
         all_events: list[OwnedTimelineEvent] = []
+        transcript_mapping = (
+            candidate_transcripts
+            if isinstance(candidate_transcripts, Mapping)
+            else None
+        )
+        transcript_iterator = (
+            iter(candidate_transcripts)
+            if candidate_transcripts is not None
+            and transcript_mapping is None
+            else None
+        )
 
         for window in windows:
             if window.sequence_no < len(completed_chunks):
@@ -81,13 +96,28 @@ class ParsePipeline:
                 continue
 
             candidate_transcript = None
-            if candidate_transcripts is not None:
+            if transcript_mapping is not None:
                 try:
-                    candidate_transcript = candidate_transcripts[window.sequence_no]
+                    candidate_transcript = transcript_mapping[window.sequence_no]
                 except KeyError as exc:
                     raise ValueError(
                         f"candidate transcript missing for chunk {window.sequence_no}"
                     ) from exc
+            elif transcript_iterator is not None:
+                try:
+                    transcript_sequence_no, candidate_transcript = next(
+                        transcript_iterator
+                    )
+                except StopIteration as exc:
+                    raise ValueError(
+                        f"candidate transcript missing for chunk {window.sequence_no}"
+                    ) from exc
+                if transcript_sequence_no != window.sequence_no:
+                    raise ValueError(
+                        "candidate transcripts must match unfinished chunks in "
+                        f"sequence; expected {window.sequence_no}, got "
+                        f"{transcript_sequence_no}"
+                    )
             model_context = self._build_model_context(
                 window,
                 context_before,
@@ -134,6 +164,17 @@ class ParsePipeline:
             if on_chunk_complete is not None:
                 on_chunk_complete(chunk_result)
             context_before = context_after
+
+        if transcript_iterator is not None:
+            try:
+                extra_sequence_no, _ = next(transcript_iterator)
+            except StopIteration:
+                pass
+            else:
+                raise ValueError(
+                    "candidate transcript has no matching unfinished chunk: "
+                    f"{extra_sequence_no}"
+                )
 
         return VideoParseResult(
             source_video=source_video,

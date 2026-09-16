@@ -1,12 +1,15 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event, Lock
 from types import SimpleNamespace
 
 import pytest
 
-from engine.parse.checkpoints import prepare_candidate_transcripts
+from engine.parse.checkpoints import (
+    prepare_candidate_transcripts,
+    stream_candidate_transcripts,
+)
 from engine.parse.schemas import AnalysisWindow, TranscriptAnalysis, VideoEvidence
 from engine.parse.usage import capture_parse_usage, parse_chunk_scope
 from engine.parse.video_parse import ParsePipeline
@@ -14,13 +17,13 @@ from gateway.models import ArkMultimodalModel, TextInput
 from gateway.usage import capture_model_usage, track_model_call
 
 
-def _windows():
+def _windows(count=2):
     return [
         AnalysisWindow(sequence_no=sequence, source_video=Path("video.mp4"),
                        media_path=Path(f"window-{sequence}.mp4"), chunk_start_ms=sequence * 1000,
                        chunk_end_ms=(sequence + 1) * 1000, analysis_start_ms=sequence * 1000,
                        analysis_end_ms=(sequence + 1) * 1000)
-        for sequence in range(2)
+        for sequence in range(count)
     ]
 
 
@@ -56,9 +59,9 @@ class Transcriber:
         return self.model.generate([TextInput(str(sequence))], schema_name="candidate_transcript", result_type=TranscriptAnalysis)
 
 
-def _prepare(parser, output_dir):
-    return prepare_candidate_transcripts(parser, _windows(), output_dir=output_dir,
-                                         transcript_model="lite", transcript_source="lite", concurrency=2,
+def _prepare(parser, output_dir, *, count=2, concurrency=2):
+    return prepare_candidate_transcripts(parser, _windows(count), output_dir=output_dir,
+                                         transcript_model="lite", transcript_source="lite", concurrency=concurrency,
                                          on_log=lambda message: None)
 
 
@@ -96,6 +99,65 @@ def test_asr_failed_request_is_recorded_and_checkpoint_resume_only_counts_new_re
     assert len(ledger) == 1
     assert ledger[0].sequence_no == 1
     assert len(provider.requests) == 3
+
+
+def test_candidate_asr_continues_without_waiting_for_consumption(tmp_path):
+    started: list[int] = []
+    started_lock = Lock()
+    started_events = [Event() for _ in range(4)]
+    release_second = Event()
+
+    class Parser:
+        def transcribe(self, path, *, duration_ms):
+            sequence_no = int(path.stem.rsplit("-", 1)[1])
+            with started_lock:
+                started.append(sequence_no)
+            started_events[sequence_no].set()
+            if sequence_no == 1:
+                assert release_second.wait(timeout=5)
+            return TranscriptAnalysis(transcript=[])
+
+    with stream_candidate_transcripts(
+        Parser(),
+        _windows(4),
+        output_dir=tmp_path,
+        transcript_model="lite",
+        transcript_source="lite",
+        concurrency=1,
+        on_log=lambda _message: None,
+    ) as transcripts:
+        assert started_events[0].wait(timeout=5)
+        assert started_events[1].wait(timeout=5)
+        assert not started_events[2].is_set()
+
+        release_second.set()
+        assert started_events[2].wait(timeout=5)
+        assert started_events[3].wait(timeout=5)
+        assert [sequence_no for sequence_no, _ in transcripts] == [0, 1, 2, 3]
+        assert started == [0, 1, 2, 3]
+
+    assert sorted(path.name for path in (tmp_path / "transcripts").iterdir()) == [
+        "chunk-0000.json",
+        "chunk-0001.json",
+        "chunk-0002.json",
+        "chunk-0003.json",
+    ]
+
+
+def test_continuous_asr_worker_preserves_usage_scope_across_chunks(tmp_path):
+    ledger = []
+    provider = Responses("lite")
+    with capture_parse_usage(ledger.append):
+        transcripts = _prepare(
+            Transcriber(provider),
+            tmp_path,
+            count=3,
+            concurrency=1,
+        )
+
+    assert len(transcripts) == 3
+    assert [item.sequence_no for item in ledger] == [0, 1, 2]
+    assert all(item.call.status == "completed" for item in ledger)
 
 
 def test_pipeline_counts_each_fallback_call_and_does_not_recount_completed_chunks():

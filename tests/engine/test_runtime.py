@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
+
+import pytest
 
 from gateway.models import ImageInput, TextInput, VideoInput
 
@@ -10,6 +13,7 @@ from engine.parse.checkpoints import write_json
 from engine.parse.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
 from engine.parse.schemas import (
     ContextSnapshot,
+    TranscriptAnalysis,
     VideoChunkCheckpoint,
     VideoChunkParseResult,
     VideoTimeline,
@@ -155,3 +159,143 @@ def test_runtime_passes_background_images_to_each_video_model_call(
         assert inputs[1].path == portrait
         assert isinstance(inputs[2], VideoInput)
         assert "完整背景正文 asset://tomori_01" in inputs[3].text
+
+
+def test_runtime_pipelines_candidate_asr_ahead_of_serial_parse(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "episode.mp4"
+    source.write_bytes(b"video fixture")
+    asr_started = [Event() for _ in range(3)]
+    pro_started = Event()
+    pro_sequences: list[int] = []
+
+    class Model:
+        provider_name = "ark"
+
+        def __init__(self, model, **_kwargs):
+            self.model_name = model
+
+        def generate(self, inputs, *, schema_name, result_type):
+            video = next(item for item in inputs if isinstance(item, VideoInput))
+            sequence_no = int(Path(video.path).name.split("-", 2)[1].split(".")[0])
+            if schema_name == "candidate_transcript":
+                assert result_type is TranscriptAnalysis
+                asr_started[sequence_no].set()
+                if sequence_no == 1:
+                    assert pro_started.wait(timeout=5)
+                return TranscriptAnalysis(transcript=[])
+
+            assert schema_name == "video_timeline"
+            assert result_type is VideoTimeline
+            pro_sequences.append(sequence_no)
+            if sequence_no == 0:
+                pro_started.set()
+                assert asr_started[1].wait(timeout=5)
+            return VideoTimeline(summary=f"chunk {sequence_no}", events=[])
+
+    def materialize(windows, **_kwargs):
+        for window in windows:
+            window.media_path.parent.mkdir(parents=True, exist_ok=True)
+            window.media_path.write_bytes(b"analysis fixture")
+
+    monkeypatch.setattr("engine.parse.runtime.ArkMultimodalModel", Model)
+    monkeypatch.setattr(
+        "engine.parse.runtime.materialize_analysis_windows",
+        materialize,
+    )
+    output = tmp_path / "job"
+
+    result = EngineVideoParseRuntime(
+        config=VideoParseRuntimeConfig(
+            chunk_duration_ms=1000,
+            context_overlap_ms=0,
+            asr_concurrency=1,
+            fallback_enabled=False,
+            transcript_model="test-lite",
+            video_model="test-pro",
+        )
+    ).run(
+        source,
+        duration_ms=3000,
+        output_dir=output,
+    )
+
+    assert len(result.chunks) == 3
+    assert pro_sequences == [0, 1, 2]
+    assert all(event.is_set() for event in asr_started)
+    assert sorted(path.name for path in (output / "transcripts").iterdir()) == [
+        "chunk-0000.json",
+        "chunk-0001.json",
+        "chunk-0002.json",
+    ]
+
+
+def test_runtime_resumes_each_stage_after_later_asr_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "episode.mp4"
+    source.write_bytes(b"video fixture")
+    calls: list[tuple[str, int]] = []
+    fail_second_asr = True
+
+    class Model:
+        provider_name = "ark"
+
+        def __init__(self, model, **_kwargs):
+            self.model_name = model
+
+        def generate(self, inputs, *, schema_name, result_type):
+            video = next(item for item in inputs if isinstance(item, VideoInput))
+            sequence_no = int(Path(video.path).name.split("-", 2)[1].split(".")[0])
+            calls.append((schema_name, sequence_no))
+            if schema_name == "candidate_transcript":
+                if sequence_no == 1 and fail_second_asr:
+                    raise RuntimeError("transient ASR failure")
+                return TranscriptAnalysis(transcript=[])
+            return VideoTimeline(summary=f"chunk {sequence_no}", events=[])
+
+    def materialize(windows, **_kwargs):
+        for window in windows:
+            window.media_path.parent.mkdir(parents=True, exist_ok=True)
+            window.media_path.write_bytes(b"analysis fixture")
+
+    monkeypatch.setattr("engine.parse.runtime.ArkMultimodalModel", Model)
+    monkeypatch.setattr(
+        "engine.parse.runtime.materialize_analysis_windows",
+        materialize,
+    )
+    output = tmp_path / "job"
+    runtime = EngineVideoParseRuntime(
+        config=VideoParseRuntimeConfig(
+            chunk_duration_ms=1000,
+            context_overlap_ms=0,
+            asr_concurrency=1,
+            fallback_enabled=False,
+            transcript_model="test-lite",
+            video_model="test-pro",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="candidate ASR failed for chunk 1"):
+        runtime.run(source, duration_ms=2000, output_dir=output)
+
+    assert (output / "transcripts" / "chunk-0000.json").is_file()
+    assert not (output / "transcripts" / "chunk-0001.json").exists()
+    assert (output / "chunks" / "chunk-0000.json").is_file()
+    assert not (output / "chunks" / "chunk-0001.json").exists()
+    assert calls.count(("candidate_transcript", 0)) == 1
+    assert calls.count(("video_timeline", 0)) == 1
+    assert calls.count(("candidate_transcript", 1)) == 1
+    assert calls.count(("video_timeline", 1)) == 0
+
+    fail_second_asr = False
+    result = runtime.run(source, duration_ms=2000, output_dir=output)
+
+    assert len(result.chunks) == 2
+    assert calls.count(("candidate_transcript", 0)) == 1
+    assert calls.count(("video_timeline", 0)) == 1
+    assert calls.count(("candidate_transcript", 1)) == 2
+    assert calls.count(("video_timeline", 1)) == 1

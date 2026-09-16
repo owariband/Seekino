@@ -219,6 +219,25 @@ def test_pipeline_resumes_after_the_last_completed_chunk() -> None:
     assert "第一段已确认动作" in resumed_parser.contexts[0]
 
 
+def test_pipeline_keeps_candidate_transcript_mapping_compatibility() -> None:
+    windows = _windows()
+    transcripts = {
+        window.sequence_no: TranscriptAnalysis(transcript=[])
+        for window in windows
+    }
+
+    result = ParsePipeline(FakeParser()).run(
+        source_video="episode.mp4",
+        duration_ms=30_000,
+        chunk_duration_ms=10_000,
+        context_overlap_ms=2_000,
+        windows=windows,
+        candidate_transcripts=transcripts,
+    )
+
+    assert len(result.chunks) == 3
+
+
 def test_pipeline_passes_complete_background_and_images_to_every_window(tmp_path) -> None:
     images = (
         BackgroundImage(image_id="tomori_01", path=tmp_path / "tomori.png"),

@@ -13,7 +13,7 @@ from .analysis_windows import materialize_analysis_windows, plan_analysis_window
 from .background import BackgroundImage
 from .checkpoints import (
     load_completed_chunks,
-    prepare_candidate_transcripts,
+    stream_candidate_transcripts,
     write_json,
 )
 from .schemas import (
@@ -234,15 +234,6 @@ class EngineVideoParseRuntime:
                 ),
             )
 
-        candidate_transcripts = prepare_candidate_transcripts(
-            model_parser,
-            windows[len(completed_chunks) :],
-            output_dir=work_directory,
-            transcript_model=transcript_model,
-            transcript_source=self._config.asr_mode,
-            concurrency=self._config.asr_concurrency,
-            on_log=self._on_log,
-        )
         pipeline = ParsePipeline(
             semantic_parser,
             max_context_events=self._config.max_context_events,
@@ -267,18 +258,27 @@ class EngineVideoParseRuntime:
             if on_chunk_complete is not None:
                 on_chunk_complete(chunk, path)
 
-        result = pipeline.run(
-            source_video=str(video_path),
-            duration_ms=duration_ms,
-            chunk_duration_ms=self._config.chunk_duration_ms,
-            context_overlap_ms=self._config.context_overlap_ms,
-            windows=windows,
-            series_bible=series_bible,
-            background_images=background_images,
-            candidate_transcripts=candidate_transcripts,
-            completed_chunks=completed_chunks,
-            on_chunk_complete=checkpoint,
-        )
+        with stream_candidate_transcripts(
+            model_parser,
+            windows[len(completed_chunks) :],
+            output_dir=work_directory,
+            transcript_model=transcript_model,
+            transcript_source=self._config.asr_mode,
+            concurrency=self._config.asr_concurrency,
+            on_log=self._on_log,
+        ) as candidate_transcripts:
+            result = pipeline.run(
+                source_video=str(video_path),
+                duration_ms=duration_ms,
+                chunk_duration_ms=self._config.chunk_duration_ms,
+                context_overlap_ms=self._config.context_overlap_ms,
+                windows=windows,
+                series_bible=series_bible,
+                background_images=background_images,
+                candidate_transcripts=candidate_transcripts,
+                completed_chunks=completed_chunks,
+                on_chunk_complete=checkpoint,
+            )
         completed = result.model_copy(update={"models": models})
         write_json(completed, work_directory / "pipeline.parse.json")
         return completed

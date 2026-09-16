@@ -39,7 +39,7 @@ uv run --env-file .env.local python -m gateway.cli --help
 ```
 
 默认 Web 为 `http://127.0.0.1:5173`，API 文档为 `http://127.0.0.1:9621/docs`。
-脚本读取根目录 `.env.local`，保留显式环境配置。缺少数据库配置时，默认连接
+脚本读取根目录 `.env.local`；模型 API Key 以该文件为准，其它显式环境配置会保留。缺少数据库配置时，默认连接
 `root` / 空密码的 `127.0.0.1:3306/anivag_development` 和
 `http://127.0.0.1:6333` 的 `anivag_video_chunks_development` 集合。
 首次自建 MySQL 使用该 root 账号；复用已有认证实例时，在 `.env.local` 配置其数据库账号。
