@@ -232,6 +232,9 @@ class ServerSettings:
                 max_output_tokens=_environment_int(
                     "ANIVAG_AGENT_MAX_OUTPUT_TOKENS", agent_defaults.max_output_tokens,
                 ),
+                max_prompt_chars=_environment_int(
+                    "ANIVAG_AGENT_MAX_PROMPT_CHARS", agent_defaults.max_prompt_chars,
+                ),
                 execution_timeout_seconds=_environment_float(
                     "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS",
                     agent_defaults.execution_timeout_seconds,

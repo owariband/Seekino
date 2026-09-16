@@ -10,7 +10,9 @@ from time import monotonic
 from uuid import uuid4
 
 from ..agent.runtime import AgentRuntime
-from ..agent.state import AgentModelInvocationError, AgentToolInvocationError, RunInputs
+from ..agent.state import (
+    AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError, RunInputs,
+)
 from ..config.agent import AgentServiceConfig
 from ..identity import canonical_uuid
 from ..model.dto.agentDTO import (
@@ -468,6 +470,21 @@ class AgentChatService:
             execution.publish(_terminal_event(result))
             return result
         except Exception as exc:
+            if isinstance(exc, AgentContextBudgetError):
+                public_code = "AGENT_CONTEXT_BUDGET_EXCEEDED"
+                public_message = (
+                    "本次上下文较多，请缩小系列范围、减少候选、精简系列背景或新建对话后重试。"
+                )
+            elif isinstance(exc, AgentModelInvocationError):
+                public_code = "AGENT_MODEL_ERROR"
+                public_message = "这次对话未能完成，请稍后重试。"
+            else:
+                public_code = "PROCESSING_FAILED"
+                public_message = "这次对话未能完成，请稍后重试。"
+            _logger.exception(
+                "Agent execution failed conversation_id=%s message_id=%s code=%s",
+                conversation_id, assistant_id, public_code,
+            )
             failed = None
             try:
                 if chunks:
@@ -477,7 +494,8 @@ class AgentChatService:
                 failed = self._repository.fail_assistant_message(
                     assistant_id, error=f"{type(exc).__name__}: {str(exc).strip()}"[:8192],
                     now=utc_now_naive(),
-                    public_code="AGENT_MODEL_ERROR" if isinstance(exc, AgentModelInvocationError) else "PROCESSING_FAILED",
+                    public_code=public_code,
+                    public_message=public_message,
                 )
             except Exception:
                 _logger.exception("Could not persist Agent failure message_id=%s", assistant_id)

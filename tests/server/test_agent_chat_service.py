@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from server.agent.runtime import AgentRuntime
-from server.agent.state import AgentModelInvocationError
+from server.agent.state import AgentContextBudgetError, AgentModelInvocationError
 from server.database import (
     DatabaseEnvironment, create_database_engine, create_schema, create_session_factory,
 )
@@ -97,7 +97,7 @@ class _ChatModel:
 def build_service(tmp_path):
     resources = []
 
-    def build(*, query=None, evaluator=None, chat=None):
+    def build(*, query=None, evaluator=None, chat=None, runtime_kwargs=None):
         engine = create_database_engine(
             f"sqlite+pysqlite:///{tmp_path / f'agent-{len(resources)}.sqlite'}",
             environment=DatabaseEnvironment.TEST,
@@ -109,7 +109,10 @@ def build_service(tmp_path):
         retrieval = _RetrievalStub()
         query, evaluator, chat = query or _QueryModel(), evaluator or _EvaluatorModel(), chat or _ChatModel()
         service = AgentChatService(
-            repository, library, AgentRuntime(query, evaluator, chat, retrieval.search),
+            repository, library,
+            AgentRuntime(
+                query, evaluator, chat, retrieval.search, **(runtime_kwargs or {}),
+            ),
         )
         resources.append((service, engine))
         series = library.create_series(workspace_id="local-default", name="Test Series")
@@ -330,19 +333,48 @@ def test_third_continue_persists_failure_and_never_calls_chat(build_service):
     assert messages[1].search_result is None and messages[1].model_name == "chat-test"
 
 
+def test_context_budget_failure_is_persisted_with_a_specific_public_error(build_service):
+    service, conversation, _, _, query, evaluator, chat = build_service(
+        runtime_kwargs={"max_prompt_chars": 100},
+    )
+
+    with pytest.raises(AgentContextBudgetError, match="context character budget"):
+        _send(service, conversation)
+
+    messages = service.list_all_messages(
+        conversation.conversation_id, workspace_id="local-default",
+    )
+    assert messages[-1].status == "FAILED"
+    assert messages[-1].last_error.code == "AGENT_CONTEXT_BUDGET_EXCEEDED"
+    assert "精简系列背景" in messages[-1].last_error.message
+    assert query.prompts == [] and evaluator.calls == 0 and chat.prompts == []
+
+
 def test_next_kick_reads_only_completed_conversation_history(build_service):
     service, conversation, _, _, query, _, _ = build_service()
     first = _send(service, conversation)
     _send(service, conversation, key="second", content="再找一段")
     context = json.loads(query.prompts[1].split("\n\n", 1)[1])
     assert context["turn_number"] == 1 and context["turns"] == []
-    assert context["inputs"]["history"] == [
-        {"role": "USER", "content": first.user_message.content, "seriesIds": list(first.user_message.series_ids),
-         "messageId": first.user_message.message_id, "status": "COMPLETED", "reference": None, "searchResult": None},
-        {"role": "ASSISTANT", "content": first.assistant_message.content, "seriesIds": list(first.assistant_message.series_ids),
-         "messageId": first.assistant_message.message_id, "status": "COMPLETED", "reference": None,
-         "searchResult": first.assistant_message.search_result},
-    ]
+    history = context["inputs"]["history"]
+    assert history[0] == {
+        "role": "USER", "content": first.user_message.content,
+        "seriesIds": list(first.user_message.series_ids),
+        "messageId": first.user_message.message_id, "status": "COMPLETED",
+        "reference": None, "searchResult": None,
+    }
+    assert history[1] == {
+        "role": "ASSISTANT", "content": first.assistant_message.content,
+        "seriesIds": list(first.assistant_message.series_ids),
+        "messageId": first.assistant_message.message_id, "status": "COMPLETED",
+        "reference": None,
+        "searchResult": {
+            "query": first.assistant_message.search_result["query"],
+            "seriesIds": first.assistant_message.search_result["seriesIds"],
+            "resultCount": 0, "hits": [], "partial": False, "warnings": [],
+        },
+    }
+    assert "agentReply" in first.assistant_message.search_result
     with pytest.raises(AgentConversationNotFoundError):
         service.send_message(conversation.conversation_id, workspace_id="other-workspace", content="隔离", idempotency_key="other")
 

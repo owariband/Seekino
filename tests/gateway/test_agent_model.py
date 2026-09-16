@@ -8,7 +8,7 @@ from langchain_core.tools import StructuredTool
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict
 
-from gateway.agent_model import SDKQueryAgentModel
+from gateway.agent_model import ModelInputTooLargeError, SDKQueryAgentModel
 
 
 class QueryDraft(BaseModel):
@@ -106,6 +106,41 @@ def test_sdk_query_runs_actual_tool_round_trip_over_ark_transport() -> None:
     assert result.selected_video_chunk_ids == ["chunk-real"]
     assert searches == ["摔杯子"]
     assert len(requests) == 2
+    client.close()
+
+
+def test_sdk_query_checks_complete_messages_before_second_model_request() -> None:
+    requests = []
+    searches = []
+    large_query = "下雨场景" + "x" * 3_000
+
+    def retrieve(query: str) -> dict:
+        searches.append(query)
+        return {"query": query, "hits": []}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json=_completion("search_video_chunk_evidence", {"query": large_query}),
+        )
+
+    client = Ark(
+        api_key="test-ark-key",
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    model = SDKQueryAgentModel(
+        "ark-test", request_timeout_seconds=3, max_output_tokens=400,
+        max_input_chars=5_000, client=client,
+    )
+
+    with pytest.raises(ModelInputTooLargeError, match="message character budget"):
+        model.run_query(
+            "检索", tools=[_tool(retrieve)], result_type=QueryDraft, max_model_calls=3,
+        )
+
+    assert len(requests) == 1
+    assert searches == [large_query]
     client.close()
 
 

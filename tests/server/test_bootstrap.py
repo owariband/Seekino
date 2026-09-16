@@ -53,6 +53,7 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path):
         agent=AgentServiceConfig(
             max_loop_turns=2, max_model_calls_per_turn=4,
             max_tool_calls_per_turn=2, max_output_tokens=2048,
+            max_prompt_chars=120_000,
             execution_timeout_seconds=90, maximum_concurrent_kicks=2,
         ),
     )
@@ -138,11 +139,13 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path):
         assert runtime._evaluator_model.model_name == "configured-review-model"
         assert runtime._chat_model.model_name == "configured-chat-model"
         assert runtime._query_model.max_output_tokens == 2048
+        assert runtime._query_model.max_input_chars == 120_000
         assert runtime._chat_model.max_output_tokens == 2048
         assert runtime._evaluator_model.max_output_tokens == 2048
         assert runtime._max_loop_turns == 2
         assert runtime._max_model_calls == 4
         assert runtime._max_tool_calls == 2
+        assert runtime._max_prompt_chars == 120_000
         assert runtime._execution_timeout == 90
         assert services.agent._executor._max_workers == 2
         app = create_app(services, settings=settings)

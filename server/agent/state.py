@@ -26,6 +26,10 @@ class AgentModelInvocationError(RuntimeError):
     """A bounded execution could not produce an approved, valid answer."""
 
 
+class AgentContextBudgetError(AgentModelInvocationError):
+    """Model context exceeded the Server's explicit character budget."""
+
+
 class AgentToolInvocationError(RuntimeError):
     """An injected tool failed; the application owns its cause's error mapping."""
 
@@ -75,7 +79,11 @@ class RetrievalCall:
         return {
             "query": self.query,
             "top_k": self.top_k,
-            "result": self.result.model_dump(mode="json", by_alias=True),
+            "video_chunk_ids": [
+                hit.candidate.video_chunk_id for hit in self.result.hits
+            ],
+            "partial": self.result.partial,
+            "warnings": list(self.result.warnings),
         }
 
 
@@ -98,10 +106,8 @@ class LoopTurn:
             "status": self.status,
             "plan_context": self.plan_context,
             "retrieval_calls": [call.context() for call in self.retrieval_calls],
-            "retrieval_result": self.retrieval_result.model_dump(mode="json", by_alias=True),
             "evidence_source_turns": self.evidence_source_turns,
             "query_draft": self.query_draft.model_dump(mode="json"),
-            "draft_output": self.draft_output.model_dump(mode="json", by_alias=True),
             "review": self.review.model_dump(mode="json"),
         }
 
@@ -126,6 +132,29 @@ class ExecutionControl:
                 "messageId": inputs["assistant_message_id"],
                 **event,
             })
+
+
+@dataclass(slots=True)
+class ModelContextBudget:
+    maximum_chars: int
+    consumed_chars: int = 0
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.maximum_chars, bool)
+            or not isinstance(self.maximum_chars, int)
+            or self.maximum_chars <= 0
+        ):
+            raise ValueError("maximum context characters must be a positive integer")
+
+    def consume(self, label: str, value: str) -> None:
+        next_total = self.consumed_chars + len(value)
+        if next_total > self.maximum_chars:
+            raise AgentContextBudgetError(
+                f"Agent context character budget exceeded while adding {label}: "
+                f"{next_total} > {self.maximum_chars}"
+            )
+        self.consumed_chars = next_total
 
 
 class RunState(TypedDict):

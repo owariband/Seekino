@@ -28,7 +28,7 @@ from ..repository.video import (
     SeriesScopeNotFoundError,
     VideoChunkNotFoundError,
 )
-from ..agent.state import AgentModelInvocationError
+from ..agent.state import AgentContextBudgetError, AgentModelInvocationError
 from ..service.upload import UploadChecksumMismatchError
 from ..service.qdrant_mutation_lock import QdrantMutationLockBusyError
 from ..service.video_retrieval import RetrievalIndexConsistencyError
@@ -103,6 +103,16 @@ def register_exception_handlers(app: FastAPI) -> None:
                 code,
                 "请求与当前资源状态冲突，请刷新状态后重试",
             ),
+        )
+
+    @app.exception_handler(AgentContextBudgetError)
+    async def agent_context_budget_error_handler(
+        request: Request,
+        exc: AgentContextBudgetError,
+    ) -> JSONResponse:
+        return _error_response(
+            request, 422, "AGENT_CONTEXT_BUDGET_EXCEEDED",
+            "本次上下文较多，请缩小系列范围、减少候选、精简系列背景或新建对话后重试",
         )
 
     @app.exception_handler(AgentModelInvocationError)

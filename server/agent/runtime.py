@@ -16,7 +16,10 @@ from .chat import render_chat
 from .evaluator import evaluate
 from .output import bind_draft, finalize_output
 from .query import run_query
-from .state import AgentModelInvocationError, AnswerPhase, ExecutionControl, LoopTurn, RunInputs, RunState
+from .state import (
+    AgentModelInvocationError, AnswerPhase, ExecutionControl, LoopTurn,
+    ModelContextBudget, RunInputs, RunState,
+)
 from .tools import build_retrieval_tool
 
 
@@ -38,6 +41,7 @@ class AgentRuntime:
         max_model_calls_per_turn: int = 6,
         max_tool_calls_per_turn: int = 4,
         maximum_top_k: int = 20,
+        max_prompt_chars: int = 200_000,
         execution_timeout_seconds: float = 180,
     ) -> None:
         for name, value, maximum in [
@@ -45,6 +49,7 @@ class AgentRuntime:
             ("max_model_calls_per_turn", max_model_calls_per_turn, None),
             ("max_tool_calls_per_turn", max_tool_calls_per_turn, None),
             ("maximum_top_k", maximum_top_k, 100),
+            ("max_prompt_chars", max_prompt_chars, None),
         ]:
             if (isinstance(value, bool) or not isinstance(value, int) or value < 1
                 or (maximum is not None and value > maximum)):
@@ -61,6 +66,7 @@ class AgentRuntime:
         self._max_model_calls = max_model_calls_per_turn
         self._max_tool_calls = max_tool_calls_per_turn
         self._maximum_top_k = maximum_top_k
+        self._max_prompt_chars = max_prompt_chars
         self._execution_timeout = execution_timeout_seconds
         builder = StateGraph(RunState)
         builder.add_node("turn", self.turn)
@@ -105,15 +111,17 @@ class AgentRuntime:
             raise AgentModelInvocationError("Query / Evaluator loop-turn budget exceeded")
         control.publish(inputs, {"type": "answer.progress", "phase": AnswerPhase.RETRIEVING})
         calls = []
+        context_budget = ModelContextBudget(self._max_prompt_chars)
         tool = build_retrieval_tool(
             self._retrieve, inputs=inputs, control=control, calls=calls,
             maximum_top_k=self._maximum_top_k, max_tool_calls=self._max_tool_calls,
+            context_budget=context_budget,
         )
         selection_limit = min(inputs["requested_top_k"], self._maximum_top_k)
         draft = run_query(
             self._query_model, inputs, previous,
             tools=[tool], max_model_calls=self._max_model_calls, control=control,
-            selection_limit=selection_limit,
+            selection_limit=selection_limit, context_budget=context_budget,
         )
         control.check()
         available, selected, sources = bind_draft(
@@ -121,7 +129,8 @@ class AgentRuntime:
         )
         control.publish(inputs, {"type": "answer.progress", "phase": AnswerPhase.EVALUATING})
         review = evaluate(
-            self._evaluator_model, inputs, previous, draft, available, selected, calls, sources,
+            self._evaluator_model, inputs, previous, draft, available, calls, sources,
+            self._max_prompt_chars,
         )
         control.check()
         current = LoopTurn(
@@ -145,7 +154,10 @@ class AgentRuntime:
         state["control"].publish(state["inputs"], {
             "type": "answer.progress", "phase": AnswerPhase.RESPONDING,
         })
-        text = render_chat(self._chat_model, state["inputs"], current, state["control"])
+        text = render_chat(
+            self._chat_model, state["inputs"], current, state["control"],
+            self._max_prompt_chars,
+        )
         return {"turns": [*state["turns"][:-1], replace(current, rendered_text=text)]}
 
     @staticmethod

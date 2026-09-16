@@ -158,6 +158,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             model=query_model_name,
             request_timeout_seconds=request_timeout,
             max_output_tokens=settings.agent.max_output_tokens,
+            max_input_chars=settings.agent.max_prompt_chars,
         ),
         ArkMultimodalModel(
             model=evaluator_model_name,
@@ -174,6 +175,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         max_model_calls_per_turn=settings.agent.max_model_calls_per_turn,
         max_tool_calls_per_turn=settings.agent.max_tool_calls_per_turn,
         maximum_top_k=settings.agent.maximum_top_k,
+        max_prompt_chars=settings.agent.max_prompt_chars,
         execution_timeout_seconds=settings.agent.execution_timeout_seconds,
     )
     agent = AgentChatService(

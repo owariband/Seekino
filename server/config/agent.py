@@ -13,6 +13,7 @@ class AgentServiceConfig:
     max_model_calls_per_turn: int = 6
     max_tool_calls_per_turn: int = 4
     max_output_tokens: int = 4096
+    max_prompt_chars: int = 200_000
     execution_timeout_seconds: float = 180
     maximum_concurrent_kicks: int = 4
 
@@ -29,7 +30,7 @@ class AgentServiceConfig:
             raise ValueError("max_loop_turns must be between 1 and 3")
         for name in (
             "max_model_calls_per_turn", "max_tool_calls_per_turn",
-            "max_output_tokens", "maximum_concurrent_kicks",
+            "max_output_tokens", "max_prompt_chars", "maximum_concurrent_kicks",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be greater than zero")

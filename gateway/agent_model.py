@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from typing import Any, Protocol, TypeVar
@@ -9,12 +10,17 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import BaseMessage, message_to_dict
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from openai import OpenAI
 from pydantic import BaseModel
 
 _ResultModel = TypeVar("_ResultModel", bound=BaseModel)
+
+
+class ModelInputTooLargeError(RuntimeError):
+    """The complete model message state exceeded an application character budget."""
 
 
 class QueryAgentModel(Protocol):
@@ -65,6 +71,29 @@ class _ExecutionControlMiddleware(AgentMiddleware):
         self._check()
 
 
+class _InputCharacterLimitMiddleware(AgentMiddleware):
+    def __init__(self, maximum_chars: int, contract_chars: int) -> None:
+        super().__init__()
+        self._maximum_chars = maximum_chars
+        self._contract_chars = contract_chars
+
+    def before_model(self, state: Any, runtime: Any) -> None:
+        messages = state.get("messages", [])
+        payload = [
+            message_to_dict(message) if isinstance(message, BaseMessage) else message
+            for message in messages
+        ]
+        message_chars = len(json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":"), default=str,
+        ))
+        total_chars = message_chars + self._contract_chars
+        if total_chars > self._maximum_chars:
+            raise ModelInputTooLargeError(
+                "Query model message character budget exceeded: "
+                f"{total_chars} > {self._maximum_chars}"
+            )
+
+
 class SDKQueryAgentModel:
     """Let LangChain own the inner model/tool loop, with a fresh state per call."""
 
@@ -74,6 +103,7 @@ class SDKQueryAgentModel:
         *,
         request_timeout_seconds: float,
         max_output_tokens: int,
+        max_input_chars: int | None = None,
         provider: str = "ark",
         base_url: str | None = None,
         api_key: str | None = None,
@@ -84,12 +114,19 @@ class SDKQueryAgentModel:
             raise ValueError("model must not be empty")
         if request_timeout_seconds <= 0 or max_output_tokens <= 0:
             raise ValueError("model timeout and max_output_tokens must be positive")
+        if max_input_chars is not None and (
+            isinstance(max_input_chars, bool)
+            or not isinstance(max_input_chars, int)
+            or max_input_chars <= 0
+        ):
+            raise ValueError("max_input_chars must be positive when provided")
         if provider not in {"ark", "deepseek", "ollama", "llama_cpp"}:
             raise ValueError(f"unsupported Query provider: {provider}")
         self.model_name = model
         self.provider_name = provider
         self.request_timeout_seconds = request_timeout_seconds
         self.max_output_tokens = max_output_tokens
+        self.max_input_chars = max_input_chars
         self.base_url = base_url
         self.api_key = api_key
         self._client = client
@@ -150,6 +187,11 @@ class SDKQueryAgentModel:
             ]
             if check_control is not None:
                 middleware.append(_ExecutionControlMiddleware(check_control))
+            if self.max_input_chars is not None:
+                middleware.append(_InputCharacterLimitMiddleware(
+                    self.max_input_chars,
+                    _model_contract_chars(tools, result_type),
+                ))
             agent = create_agent(
                 model,
                 tools=list(tools),
@@ -167,3 +209,20 @@ class SDKQueryAgentModel:
             if not isinstance(result, result_type):
                 raise RuntimeError("Query Agent ended without its structured draft")
             return result
+
+
+def _model_contract_chars(
+    tools: Sequence[BaseTool],
+    result_type: type[BaseModel],
+) -> int:
+    contracts = {
+        "tools": [{
+            "name": tool.name,
+            "description": tool.description,
+            "input_schema": tool.get_input_schema().model_json_schema(),
+        } for tool in tools],
+        "structured_output": result_type.model_json_schema(),
+    }
+    return len(json.dumps(
+        contracts, ensure_ascii=False, separators=(",", ":"), default=str,
+    ))

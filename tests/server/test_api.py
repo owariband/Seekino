@@ -1365,6 +1365,25 @@ def test_rejected_loop_sends_failed_event_and_json_maps_harness_error(tmp_path):
     client.app.state.services.agent.close()
 
 
+def test_agent_context_budget_error_is_actionable_before_provider_call(tmp_path):
+    client, _, _ = _client(tmp_path)
+    _create_series(client)
+    conversation_id = _create_agent_conversation(client)
+    runtime = client.app.state.services.agent._runtime
+    runtime._max_prompt_chars = 100
+
+    response = client.post(
+        "/api/agent/messages/send",
+        params={"workspaceId": "local-default", "conversationId": conversation_id},
+        headers={"Idempotency-Key": "context-budget"},
+        json={"workspaceId": "local-default", "content": "找摔杯子的画面"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "AGENT_CONTEXT_BUDGET_EXCEEDED"
+    client.app.state.services.agent.close()
+
+
 def test_asgi_delivers_first_delta_before_provider_finishes(tmp_path):
     import asyncio
     import json

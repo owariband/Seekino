@@ -41,6 +41,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.max_model_calls_per_turn == 6
     assert settings.agent.max_tool_calls_per_turn == 4
     assert settings.agent.max_output_tokens == 4096
+    assert settings.agent.max_prompt_chars == 200_000
     assert settings.agent.execution_timeout_seconds == 180
     assert settings.agent.maximum_concurrent_kicks == 4
     assert settings.agent_query_model is None
@@ -232,6 +233,7 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
         "ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN": "5",
         "ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN": "3",
         "ANIVAG_AGENT_MAX_OUTPUT_TOKENS": "2048",
+        "ANIVAG_AGENT_MAX_PROMPT_CHARS": "120000",
         "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS": "90",
         "ANIVAG_AGENT_MAX_CONCURRENT_KICKS": "2",
     }
@@ -243,6 +245,7 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
     assert settings.agent.max_model_calls_per_turn == 5
     assert settings.agent.max_tool_calls_per_turn == 3
     assert settings.agent.max_output_tokens == 2048
+    assert settings.agent.max_prompt_chars == 120_000
     assert settings.agent.execution_timeout_seconds == 90
     assert settings.agent.maximum_concurrent_kicks == 2
 
@@ -252,6 +255,7 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
     ("ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN", "0"),
     ("ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN", "0"),
     ("ANIVAG_AGENT_MAX_OUTPUT_TOKENS", "0"),
+    ("ANIVAG_AGENT_MAX_PROMPT_CHARS", "0"),
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "nan"),
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_MAX_CONCURRENT_KICKS", "0"),
