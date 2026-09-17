@@ -13,11 +13,14 @@ from ..model.agent import (
     AgentMessageRecord,
     AgentMessageRole,
     AgentMessageStatus,
+    AgentMessageTimingRecord,
 )
 from ..model.dto.agentDTO import (
     AgentConversationState,
     AgentFailure,
     AgentMessageState,
+    AgentMessageTimingState,
+    AgentStageTimingState,
     StartedAgentMessageState,
 )
 
@@ -302,6 +305,7 @@ class AgentRepository:
     def checkpoint_assistant_message(
         self, message_id: str, *, now: datetime, phase: str | None = None,
         content: str | None = None, search_result: dict | None = None,
+        timing: AgentMessageTimingState | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
             record = session.get(AgentMessageRecord, message_id, with_for_update=True)
@@ -319,6 +323,9 @@ class AgentRepository:
                     setattr(record, name, value)
                 record.version += 1
                 record.updated_at = now
+            if timing is not None:
+                self._apply_timing(record, timing)
+            if changes or timing is not None:
                 session.flush()
             return self._message_state(record)
 
@@ -398,6 +405,12 @@ class AgentRepository:
                 model_name=model_name,
                 reply_to_message_id=user_message_id,
             )
+            assistant.timing = AgentMessageTimingRecord(
+                message_id=assistant_message_id,
+                started_at=now,
+                total_duration_ms=None,
+                stages=[],
+            )
             conversation.next_message_sequence += 2
             if user_sequence == 0 and conversation.title_is_auto:
                 conversation.title = content.splitlines()[0][:40]
@@ -420,6 +433,7 @@ class AgentRepository:
         retrieval_query: str,
         search_result: dict,
         now: datetime,
+        timing: AgentMessageTimingState | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
             record = session.get(AgentMessageRecord, message_id, with_for_update=True)
@@ -434,6 +448,7 @@ class AgentRepository:
                 raise AgentConflictError(
                     "assistant message is not in PROCESSING state"
                 )
+            current_phase = record.phase
             record.content = content
             record.retrieval_query = retrieval_query
             record.search_result = search_result
@@ -443,6 +458,12 @@ class AgentRepository:
             record.last_error = None
             record.last_error_code = None
             record.last_error_message = None
+            self._finish_timing(
+                record,
+                current_phase=current_phase,
+                now=now,
+                timing=timing,
+            )
             conversation = session.get(
                 AgentConversationRecord,
                 record.conversation_id,
@@ -461,6 +482,7 @@ class AgentRepository:
         now: datetime,
         public_code: str = "PROCESSING_FAILED",
         public_message: str = "这次对话未能完成，请稍后重试。",
+        timing: AgentMessageTimingState | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
             record = session.get(AgentMessageRecord, message_id, with_for_update=True)
@@ -469,12 +491,19 @@ class AgentRepository:
                     f"messageId {message_id!r} does not exist"
                 )
             if record.status == AgentMessageStatus.PROCESSING.value:
+                current_phase = record.phase
                 record.status = AgentMessageStatus.FAILED.value
                 record.phase = None
                 record.version += 1
                 record.last_error = error[:8192]
                 record.last_error_code = public_code
                 record.last_error_message = public_message
+                self._finish_timing(
+                    record,
+                    current_phase=current_phase,
+                    now=now,
+                    timing=timing,
+                )
                 conversation = session.get(
                     AgentConversationRecord,
                     record.conversation_id,
@@ -593,6 +622,125 @@ class AgentRepository:
             phase=AnswerPhase(record.phase) if record.phase is not None else None,
             version=record.version,
             reference=record.reference,
+            timing=AgentRepository._timing_state(record.timing),
+        )
+
+    @staticmethod
+    def _apply_timing(
+        record: AgentMessageRecord,
+        timing: AgentMessageTimingState,
+    ) -> None:
+        if (
+            timing.total_duration_ms is not None
+            and (
+                isinstance(timing.total_duration_ms, bool)
+                or not isinstance(timing.total_duration_ms, int)
+                or timing.total_duration_ms < 0
+            )
+        ):
+            raise ValueError("total_duration_ms must be nonnegative")
+        if any(
+            isinstance(stage.duration_ms, bool)
+            or not isinstance(stage.duration_ms, int)
+            or stage.duration_ms < 0
+            for stage in timing.stages
+        ):
+            raise ValueError("stage duration_ms must be nonnegative")
+        if (
+            timing.total_duration_ms is not None
+            and timing.total_duration_ms
+            != sum(stage.duration_ms for stage in timing.stages)
+        ):
+            raise ValueError("total_duration_ms must equal the stage duration sum")
+        if record.timing is None:
+            record.timing = AgentMessageTimingRecord(
+                message_id=record.message_id,
+                started_at=timing.started_at,
+                total_duration_ms=timing.total_duration_ms,
+                stages=[],
+            )
+        record.timing.total_duration_ms = timing.total_duration_ms
+        record.timing.stages = [
+            {"phase": stage.phase.value, "durationMs": stage.duration_ms}
+            for stage in timing.stages
+        ]
+
+    @staticmethod
+    def _finish_timing(
+        record: AgentMessageRecord,
+        *,
+        current_phase: str | None,
+        now: datetime,
+        timing: AgentMessageTimingState | None,
+    ) -> None:
+        if timing is not None:
+            AgentRepository._apply_timing(record, timing)
+            return
+        if record.timing is None:
+            return
+        stages = AgentRepository._timing_state(record.timing).stages
+        elapsed_ms = max(
+            0,
+            int((now - record.timing.started_at).total_seconds() * 1000),
+        )
+        recorded_ms = sum(stage.duration_ms for stage in stages)
+        remaining_ms = max(0, elapsed_ms - recorded_ms)
+        if current_phase is not None:
+            stages = (
+                *stages,
+                AgentStageTimingState(AnswerPhase(current_phase), remaining_ms),
+            )
+        record.timing.stages = [
+            {"phase": stage.phase.value, "durationMs": stage.duration_ms}
+            for stage in stages
+        ]
+        record.timing.total_duration_ms = sum(
+            stage.duration_ms for stage in stages
+        )
+
+    @staticmethod
+    def _timing_state(
+        record: AgentMessageTimingRecord | None,
+    ) -> AgentMessageTimingState | None:
+        if record is None:
+            return None
+        if not isinstance(record.stages, list):
+            raise ValueError("stored Agent stage timing is invalid")
+        if (
+            record.total_duration_ms is not None
+            and (
+                isinstance(record.total_duration_ms, bool)
+                or not isinstance(record.total_duration_ms, int)
+                or record.total_duration_ms < 0
+            )
+        ):
+            raise ValueError("stored Agent total timing is invalid")
+        if any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("phase"), str)
+            or isinstance(item.get("durationMs"), bool)
+            or not isinstance(item.get("durationMs"), int)
+            or item["durationMs"] < 0
+            for item in record.stages
+        ):
+            raise ValueError("stored Agent stage timing is invalid")
+        stages = tuple(
+            AgentStageTimingState(
+                phase=AnswerPhase(item["phase"]),
+                duration_ms=item["durationMs"],
+            )
+            for item in record.stages
+        )
+        if (
+            record.total_duration_ms is not None
+            and record.total_duration_ms
+            != sum(stage.duration_ms for stage in stages)
+        ):
+            raise ValueError("stored Agent total timing does not match its stages")
+        return AgentMessageTimingState(
+            started_at=record.started_at,
+            total_duration_ms=record.total_duration_ms,
+            stages=stages,
         )
 
     @staticmethod

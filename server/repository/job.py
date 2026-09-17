@@ -283,7 +283,7 @@ class ParseJobRepository:
             if changed:
                 job.version += 1
             video = session.get(VideoRecord, lease.video_id)
-            if video is not None:
+            if video is not None and not lease.preserve_existing_result:
                 video.parse_status = ParseJobStatus.RUNNING.value
             return True
 
@@ -373,7 +373,7 @@ class ParseJobRepository:
             )
             if derived_progress is not None:
                 video = session.get(VideoRecord, lease.video_id)
-                if video is not None:
+                if video is not None and not lease.preserve_existing_result:
                     video.parse_progress = derived_progress
                     video.parse_status = ParseJobStatus.RUNNING.value
             if derived_progress is not None and job.progress != derived_progress:

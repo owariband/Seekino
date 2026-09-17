@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, LoaderCircle, MessageCircleMore, ScanSearch, X } from "lucide-react";
+import { ArrowUp, ChevronDown, LoaderCircle, MessageCircleMore, Play, ScanSearch, X } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -127,7 +127,14 @@ export function SearchPage() {
                                 <span>{hit.evidence.seriesName} · {episodeLabel(hit.evidence.episodeOrder)}</span>
                                 <time>{formatTimeRange(hit.evidence.startMs, hit.evidence.endMs)}</time>
                               </div>
-                              {thumbnailUrl ? <img className={styles.candidateThumbnail} src={thumbnailUrl} alt={hit.evidence.thumbnail?.alt || `${hit.evidence.seriesName} 视频片段首帧`} loading="lazy" /> : null}
+                              {thumbnailUrl ? (
+                                <img className={styles.candidateThumbnail} src={thumbnailUrl} alt={hit.evidence.thumbnail?.alt || `${hit.evidence.seriesName} 视频片段首帧`} loading="lazy" />
+                              ) : (
+                                <span className={styles.candidateThumbnailFallback} role="img" aria-label="该片段暂无首帧缩略图">
+                                  <Play size={22} fill="currentColor" aria-hidden="true" />
+                                  <span>{hit.evidence.playbackStatus === "READY" ? "暂无首帧 · 点击加载视频" : "暂无可用预览"}</span>
+                                </span>
+                              )}
                               <strong>{clipText(hit.evidence.videoCompact || hit.evidence.windowSummary, 78)}</strong>
                               <blockquote>{clipText(readableTranscript(hit), 66)}</blockquote>
                               <div className={styles.whyLine}><MessageCircleMore size={14} aria-hidden="true" /><span>{explanation.summary}</span></div>

@@ -147,35 +147,62 @@ class MediaService:
     ) -> tuple[KeyframeImageReference, ...]:
         if evidence.workspace_id != workspace_id:
             raise SeriesNotFoundError("片段资源不存在")
-        projected: list[KeyframeImageReference] = []
-        for index, keyframe in enumerate(evidence.keyframe_uris):
-            if (
-                keyframe.at_ms is None
-                or not evidence.start_ms <= keyframe.at_ms < evidence.end_ms
-                or keyframe.at_ms >= evidence.duration_ms
-            ):
-                continue
-            try:
-                path = self._artifact_store.resolve(keyframe.uri)
-                if image_media_type(path) is None:
+        for refresh in (False, True):
+            projected: list[KeyframeImageReference] = []
+            for index, keyframe in enumerate(evidence.keyframe_uris):
+                if (
+                    keyframe.at_ms is None
+                    or not evidence.start_ms <= keyframe.at_ms < evidence.end_ms
+                    or keyframe.at_ms >= evidence.duration_ms
+                ):
                     continue
-            except (OSError, ValueError):
-                continue
-            image_id = encode_chunk_keyframe_image_id(
-                evidence.video_chunk_id,
-                index,
-            )
-            projected.append(
-                KeyframeImageReference(
-                    image_id=image_id,
-                    url="/api/media/images/content?" + urlencode({
-                        "workspaceId": workspace_id,
-                        "imageId": image_id,
-                    }),
-                    at_ms=keyframe.at_ms,
+                try:
+                    path = self._artifact_store.resolve(keyframe.uri)
+                    if image_media_type(path) is None:
+                        continue
+                except (OSError, ValueError):
+                    continue
+                image_id = encode_chunk_keyframe_image_id(
+                    evidence.video_chunk_id,
+                    index,
                 )
-            )
-        return tuple(projected)
+                projected.append(
+                    KeyframeImageReference(
+                        image_id=image_id,
+                        url="/api/media/images/content?" + urlencode({
+                            "workspaceId": workspace_id,
+                            "imageId": image_id,
+                        }),
+                        at_ms=keyframe.at_ms,
+                    )
+                )
+            if (
+                projected
+                or refresh
+                or evidence.keyframe_uris
+                or self._video_repository is None
+            ):
+                return tuple(projected)
+
+            # Agent messages persist an evidence snapshot. A later, safe
+            # keyframe backfill updates the canonical VideoChunk rather than
+            # rewriting every historical message JSON, so retry projection
+            # once with the current registered media facts.
+            try:
+                current = self.get_chunk_evidence(
+                    evidence.video_chunk_id,
+                    workspace_id=workspace_id,
+                )
+            except (LookupError, ValueError):
+                return ()
+            if (
+                current.video_id != evidence.video_id
+                or current.start_ms != evidence.start_ms
+                or current.end_ms != evidence.end_ms
+            ):
+                return ()
+            evidence = current
+        raise AssertionError("unreachable")
 
     def get_image(self, image_id: str, *, workspace_id: str) -> VideoMedia:
         if isinstance(image_id, str) and image_id.startswith(SERIES_IMAGE_ID_PREFIX):

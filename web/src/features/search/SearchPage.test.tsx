@@ -232,4 +232,17 @@ describe("Search assistant presentation", () => {
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
     expect(screen.getAllByRole("img")).toHaveLength(2);
   });
+
+  it("keeps a playable card understandable when a historical chunk has no thumbnail", async () => {
+    const hit = searchHit("chunk-without-thumbnail", 1, "不会显示的首帧");
+    hit.evidence.thumbnail = null;
+    renderPage(assistantMessage("找到一个可播放片段。", [hit]));
+    const user = userEvent.setup();
+
+    expect(screen.getByRole("img", { name: "该片段暂无首帧缩略图" })).toHaveTextContent("暂无首帧 · 点击加载视频");
+    expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("img", { name: "该片段暂无首帧缩略图" }));
+    expect(screen.getByLabelText("视频证据")).toHaveAttribute("preload", "metadata");
+  });
 });

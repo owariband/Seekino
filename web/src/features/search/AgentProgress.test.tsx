@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AgentMessageView } from "../../api/contracts";
 import { AgentProgress } from "./AgentProgress";
@@ -57,5 +57,59 @@ describe("Agent execution timeline", () => {
     view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
     expect(screen.getByText(/完整执行步骤暂不可回放/)).toBeInTheDocument();
+  });
+
+  it("shows persisted total timing and every repeated phase in order", () => {
+    render(<AgentProgress message={{
+      ...message,
+      status: "COMPLETED",
+      phase: null,
+      timing: {
+        startedAt: Date.parse("2026-09-15T00:00:00Z"),
+        totalDurationMs: 4_700,
+        stages: [
+          { phase: "QUEUED", durationMs: 100 },
+          { phase: "RETRIEVING", durationMs: 1_000 },
+          { phase: "EVALUATING", durationMs: 200 },
+          { phase: "RETRIEVING", durationMs: 1_200 },
+          { phase: "EVALUATING", durationMs: 300 },
+          { phase: "RESPONDING", durationMs: 1_900 },
+        ],
+      },
+    }} steps={[]} />);
+
+    expect(screen.getByText("已完成 · 总耗时 4.7 秒")).toBeInTheDocument();
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(6);
+    expect(rows[0]).toHaveTextContent("等待执行");
+    expect(rows[0]).toHaveTextContent("100 毫秒");
+    expect(screen.getAllByText("检索片段")).toHaveLength(2);
+    expect(rows[5]).toHaveTextContent("生成回答");
+    expect(rows[5]).toHaveTextContent("1.9 秒");
+  });
+
+  it("shows live total and current phase duration from a reconnect snapshot", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-15T00:00:03.500Z"));
+    const view = render(<AgentProgress message={{
+      ...message,
+      phase: "EVALUATING",
+      timing: {
+        startedAt: Date.parse("2026-09-15T00:00:00Z"),
+        totalDurationMs: null,
+        stages: [
+          { phase: "QUEUED", durationMs: 100 },
+          { phase: "RETRIEVING", durationMs: 1_000 },
+        ],
+      },
+    }} steps={[]} />);
+
+    expect(screen.getByText("核验候选 · 已用 3.5 秒")).toBeInTheDocument();
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    expect(rows[2]).toHaveAttribute("data-state", "active");
+    expect(rows[2]).toHaveTextContent("进行中 · 2.4 秒");
+    view.unmount();
+    vi.useRealTimers();
   });
 });

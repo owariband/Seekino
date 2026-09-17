@@ -213,6 +213,14 @@ def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(
         workspace_id=prepared_import.workspace_id,
     ) == ()
 
+    historical_snapshot = evidence.model_copy(update={"keyframe_uris": []})
+    refreshed = service.keyframe_views(
+        historical_snapshot,
+        workspace_id=prepared_import.workspace_id,
+    )
+    assert len(refreshed) == 1
+    assert refreshed[0].at_ms == evidence.start_ms
+
 
 def test_nonempty_search_route_returns_public_projection(repository, prepared_import, tmp_path):
     raw = domain_result(repository, prepared_import)

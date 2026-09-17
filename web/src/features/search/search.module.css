@@ -106,6 +106,8 @@
 .candidateTop > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rank { display: grid; grid-row: 1 / span 2; width: 24px; height: 24px; place-items: center; border-radius: 6px; background: var(--surface-muted); font: 500 .68rem/1 var(--mono); }
 .candidateThumbnail { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: var(--surface-muted); }
+.candidateThumbnailFallback { display: grid; width: 100%; aspect-ratio: 16 / 9; place-content: center; justify-items: center; gap: 9px; color: var(--ink-faint); border-radius: 8px; background: var(--surface-muted); }
+.candidateThumbnailFallback > span { font-size: .68rem; }
 .candidate > strong, .candidateSelected > strong { font: 500 .83rem/1.65 var(--sans); }
 .candidate blockquote, .candidateSelected blockquote { margin: 0; padding-left: 10px; color: var(--ink-soft); border-left: 2px solid var(--line); font-size: .76rem; line-height: 1.65; }
 .whyLine { display: flex; gap: 8px; align-items: flex-start; color: var(--ink-soft); }

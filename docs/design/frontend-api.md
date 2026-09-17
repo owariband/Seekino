@@ -91,6 +91,7 @@ X-Content-SHA256
 | Upload | `POST` | `/api/uploads/complete?uploadSessionId=...&workspaceId=...` | 完成上传并创建解析任务 |
 | Upload | `POST` | `/api/uploads/delete?uploadSessionId=...&workspaceId=...` | 删除整个 UploadSessionTask；上传中、等待解析、解析失败和已完成均可删，合并中或正在解析返回 409 |
 | Upload | `POST` | `/api/uploads/retry-parse?uploadSessionId=...&workspaceId=...&expectedJobVersion=...` | 将该 UploadSession 的 FAILED 主解析任务重新排队；保留检查点和执行历史，以 Job version 防重复提交 |
+| Upload | `POST` | `/api/uploads/reparse?uploadSessionId=...&workspaceId=...&expectedJobVersion=...` | 将该 UploadSession 的终态主任务清空检查点后从整集开头重新排队；保留旧成功快照到新结果导入，以 Job version 防重复提交 |
 | Job | `GET` | `/api/jobs/list?workspaceId=...&limit=100` | 查询任务列表 |
 | Job | `GET` | `/api/jobs/get?jobId=...&workspaceId=...` | 查询任务真实状态 |
 | Job | `GET` | `/api/jobs/events?jobId=...&workspaceId=...` | SSE 订阅任务变化 |

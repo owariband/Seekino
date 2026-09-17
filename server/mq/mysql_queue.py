@@ -108,6 +108,10 @@ class MySqlParseJobQueue:
                 return None
 
             job, video, series = row
+            preserve_existing_result = video.parse_status in {
+                ParseJobStatus.SUCCEEDED.value,
+                "COMPLETED",
+            }
             expires_at = claimed_at + lease_duration
             job.status = ParseJobStatus.RUNNING.value
             if job.stage == ParseJobStage.QUEUED.value:
@@ -120,8 +124,9 @@ class MySqlParseJobQueue:
             job.started_at = job.started_at or claimed_at
             job.last_error = None
             job.version += 1
-            video.parse_status = ParseJobStatus.RUNNING.value
-            series.status = "INDEXING"
+            if not preserve_existing_result:
+                video.parse_status = ParseJobStatus.RUNNING.value
+                series.status = "INDEXING"
             session.flush()
             return ParseJobLease(
                 job_id=job.job_id,
@@ -145,6 +150,7 @@ class MySqlParseJobQueue:
                 series_description=series.description,
                 important_extra_data=series.important_extra_data,
                 character_bible=series.character_bible,
+                preserve_existing_result=preserve_existing_result,
             )
 
     def heartbeat(
@@ -235,7 +241,7 @@ class MySqlParseJobQueue:
             job.version += 1
             job.completed_at = failed_at if exhausted else None
             video = session.get(VideoRecord, lease.video_id)
-            if video is not None:
+            if video is not None and not lease.preserve_existing_result:
                 video.parse_status = job.status
             return True
 
@@ -277,7 +283,10 @@ class MySqlParseJobQueue:
                 job.version += 1
                 job.completed_at = reaped_at if exhausted else None
                 video = session.get(VideoRecord, job.video_id)
-                if video is not None:
+                if video is not None and video.parse_status not in {
+                    ParseJobStatus.SUCCEEDED.value,
+                    "COMPLETED",
+                }:
                     video.parse_status = job.status
             return len(jobs)
 

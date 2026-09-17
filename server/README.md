@@ -171,6 +171,7 @@ PUT  /api/uploads/segments/upload?uploadSessionId={uploadSessionId}&segmentNumbe
 POST /api/uploads/complete?uploadSessionId={uploadSessionId}
 POST /api/uploads/delete?uploadSessionId={uploadSessionId}&workspaceId={workspaceId}
 POST /api/uploads/retry-parse?uploadSessionId={uploadSessionId}&workspaceId={workspaceId}&expectedJobVersion={version}
+POST /api/uploads/reparse?uploadSessionId={uploadSessionId}&workspaceId={workspaceId}&expectedJobVersion={version}
 GET  /api/jobs/list?workspaceId=local-default
 GET  /api/jobs/get?jobId={jobId}
 GET  /api/jobs/events?jobId={jobId}             text/event-stream
@@ -188,6 +189,11 @@ GET  /api/agent/messages/events?conversationId={conversationId}
 `SeriesParseJob`、Checkpoint 和 `VideoChunk` 都是同一任务产生的内部记录。上传面板
 可删除未完成任务，解析任务页可用同一个 `uploadSessionId` 删除等待解析、解析失败或
 已完成的整项任务，不另设 Job 删除接口。
+
+解析失败后的 `retry-parse` 从现有 Checkpoint 继续；`reparse` 则仅允许已完成上传的
+终态主任务，清空该 Job 的 Checkpoint 并从整集开头重跑。二者都复用原 Job 并以
+`expectedJobVersion` 防止重复提交，attempt 和模型用量历史不会清零。已有成功结果在
+新解析完成 MySQL 导入前保持可检索，旧媒体与向量不会在重跑前被删除。
 
 删除分两阶段执行。第一个 MySQL 事务锁定 UploadSession 及其 Video 的全部 ParseJob，
 阻止新的分片和 Consumer claim，并写入 `DELETION_PENDING` 墓碑；随后幂等清理上传暂存、

@@ -14,6 +14,7 @@ import {
 import type {
   AgentAnswerEvent,
   AgentConversationView,
+  AgentMessageTiming,
   AgentMessageView,
   AgentRenderBlock,
   EvidenceReference,
@@ -81,6 +82,17 @@ async function loadMessages(conversationId: string): Promise<AgentMessageView[]>
   }
 }
 
+function richerTiming(
+  previous: AgentMessageTiming | null | undefined,
+  next: AgentMessageTiming | null | undefined,
+): AgentMessageTiming | null | undefined {
+  if (!previous) return next;
+  if (!next) return previous;
+  if (next.totalDurationMs !== null) return next;
+  if (previous.totalDurationMs !== null) return previous;
+  return next.stages.length >= previous.stages.length ? next : previous;
+}
+
 function mergeMessages(
   current: AgentMessageView[], incoming: AgentMessageView[], conversationId: string,
   streamedMessageId: string | null = null,
@@ -99,6 +111,7 @@ function mergeMessages(
           phase: next.messageId === streamedMessageId ? previous.phase : next.phase,
           content: next.messageId === streamedMessageId ? previous.content : next.content ?? previous.content,
           searchResult: previous.searchResult ?? next.searchResult,
+          timing: richerTiming(previous.timing, next.timing),
           renderBlocks: next.messageId === streamedMessageId
             ? previous.renderBlocks
             : next.renderBlocks ?? previous.renderBlocks,
@@ -196,7 +209,7 @@ export function useAgentConversation(requestedId: string | null = null) {
         if (event.type === "answer.started" || event.type === "answer.completed") {
           const phase = event.assistantMessage.phase;
           const progress = event.type === "answer.started" && phase && !current.progress[event.messageId]
-            ? { ...current.progress, [event.messageId]: [{ type: "answer.progress" as const, conversationId, messageId: event.messageId, sequence: event.sequence, occurredAt: event.occurredAt, phase }] }
+            ? { ...current.progress, [event.messageId]: [{ type: "answer.progress" as const, conversationId, messageId: event.messageId, sequence: event.sequence, occurredAt: event.occurredAt, phase, timing: event.assistantMessage.timing }] }
             : current.progress;
           return { ...current, progress, messages: mergeMessages(current.messages, [event.userMessage, event.assistantMessage], conversationId) };
         }
@@ -215,7 +228,11 @@ export function useAgentConversation(requestedId: string | null = null) {
           if (event.type === "answer.delta") return { ...message, content: deltaBuffer };
           if (event.type === "answer.block") return { ...message, renderBlocks: blockBuffer };
           if (event.type === "answer.evidence") return { ...message, searchResult: event.searchResult };
-          if (event.type === "answer.progress") return { ...message, phase: event.phase };
+          if (event.type === "answer.progress") return {
+            ...message,
+            phase: event.phase,
+            timing: event.timing ?? message.timing,
+          };
           return message;
         }) };
       });

@@ -38,6 +38,12 @@ router.add_api_route(
     response_model=ParseJobView,
 )
 router.add_api_route(
+    "/api/uploads/reparse",
+    uploads.reparse_upload,
+    methods=["POST"],
+    response_model=ParseJobView,
+)
+router.add_api_route(
     "/api/uploads/segments/upload",
     uploads.upload_segment,
     methods=["PUT"],

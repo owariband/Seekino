@@ -13,7 +13,14 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { deleteUploadSession, errorMessage, listAllJobs, retryUploadParse, shouldRetryApiRequest } from "../../api/client";
+import {
+  deleteUploadSession,
+  errorMessage,
+  listAllJobs,
+  reparseUpload,
+  retryUploadParse,
+  shouldRetryApiRequest,
+} from "../../api/client";
 import type { ParseJobStatus, ParseJobView } from "../../api/contracts";
 import { useUploads } from "../uploads/UploadProvider";
 import { episodeLabel, formatTimecode, formatTimeRange } from "../../shared/format";
@@ -45,12 +52,14 @@ const statusText: Record<ParseJobStatus, string> = {
 };
 
 export function TasksPage() {
-  const { forgetDeletedSession, openDialog, syncRetriedParse } = useUploads();
+  const { forgetDeletedSession, openDialog, syncRequeuedParse } = useUploads();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<Filter>("all");
   const [deletingUploadSessionIds, setDeletingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [retryingUploadSessionIds, setRetryingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [reparsingUploadSessionIds, setReparsingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [confirmingDeleteJobId, setConfirmingDeleteJobId] = useState<string | null>(null);
+  const [confirmingReparseJobId, setConfirmingReparseJobId] = useState<string | null>(null);
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const jobsQuery = useQuery({
     queryKey: ["jobs"],
@@ -61,8 +70,9 @@ export function TasksPage() {
 
   const deleteTask = async (job: ParseJobView) => {
     const uploadSessionId = job.uploadSessionId;
-    if (!uploadSessionId || job.status === "RUNNING" || deletingUploadSessionIds.has(uploadSessionId) || retryingUploadSessionIds.has(uploadSessionId)) return;
+    if (!uploadSessionId || job.status === "RUNNING" || deletingUploadSessionIds.has(uploadSessionId) || retryingUploadSessionIds.has(uploadSessionId) || reparsingUploadSessionIds.has(uploadSessionId)) return;
     setConfirmingDeleteJobId(null);
+    setConfirmingReparseJobId(null);
     setDeletingUploadSessionIds((current) => new Set(current).add(uploadSessionId));
     setActionErrors((current) => {
       const next = { ...current };
@@ -97,8 +107,9 @@ export function TasksPage() {
 
   const retryParse = async (job: ParseJobView) => {
     const uploadSessionId = job.uploadSessionId;
-    if (!uploadSessionId || !job.canRetry || deletingUploadSessionIds.has(uploadSessionId) || retryingUploadSessionIds.has(uploadSessionId)) return;
+    if (!uploadSessionId || !job.canRetry || deletingUploadSessionIds.has(uploadSessionId) || retryingUploadSessionIds.has(uploadSessionId) || reparsingUploadSessionIds.has(uploadSessionId)) return;
     setConfirmingDeleteJobId(null);
+    setConfirmingReparseJobId(null);
     setRetryingUploadSessionIds((current) => new Set(current).add(uploadSessionId));
     setActionErrors((current) => {
       const next = { ...current };
@@ -110,7 +121,7 @@ export function TasksPage() {
       queryClient.setQueryData<ParseJobView[]>(["jobs"], (current) =>
         current?.map((item) => item.jobId === job.jobId ? retried : item),
       );
-      syncRetriedParse(retried);
+      syncRequeuedParse(retried);
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: ["jobs"] }),
         queryClient.invalidateQueries({ queryKey: ["series"] }),
@@ -125,6 +136,44 @@ export function TasksPage() {
       }));
     } finally {
       setRetryingUploadSessionIds((current) => {
+        const next = new Set(current);
+        next.delete(uploadSessionId);
+        return next;
+      });
+    }
+  };
+
+  const reparse = async (job: ParseJobView) => {
+    const uploadSessionId = job.uploadSessionId;
+    if (!uploadSessionId || !job.canReparse || deletingUploadSessionIds.has(uploadSessionId) || retryingUploadSessionIds.has(uploadSessionId) || reparsingUploadSessionIds.has(uploadSessionId)) return;
+    setConfirmingDeleteJobId(null);
+    setConfirmingReparseJobId(null);
+    setReparsingUploadSessionIds((current) => new Set(current).add(uploadSessionId));
+    setActionErrors((current) => {
+      const next = { ...current };
+      delete next[job.jobId];
+      return next;
+    });
+    try {
+      const reparsed = await reparseUpload(uploadSessionId, job.version);
+      queryClient.setQueryData<ParseJobView[]>(["jobs"], (current) =>
+        current?.map((item) => item.jobId === job.jobId ? reparsed : item),
+      );
+      syncRequeuedParse(reparsed);
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+        queryClient.invalidateQueries({ queryKey: ["series"] }),
+        queryClient.invalidateQueries({ queryKey: ["series-detail"] }),
+        queryClient.invalidateQueries({ queryKey: ["parse-usage"] }),
+        queryClient.invalidateQueries({ queryKey: ["usage-overview"] }),
+      ]);
+    } catch (error) {
+      setActionErrors((current) => ({
+        ...current,
+        [job.jobId]: `整集重新解析失败：${errorMessage(error)}`,
+      }));
+    } finally {
+      setReparsingUploadSessionIds((current) => {
         const next = new Set(current);
         next.delete(uploadSessionId);
         return next;
@@ -193,6 +242,7 @@ export function TasksPage() {
             : userStageLabel;
           const deleting = job.uploadSessionId ? deletingUploadSessionIds.has(job.uploadSessionId) : false;
           const retrying = job.uploadSessionId ? retryingUploadSessionIds.has(job.uploadSessionId) : false;
+          const reparsing = job.uploadSessionId ? reparsingUploadSessionIds.has(job.uploadSessionId) : false;
           const running = job.status === "RUNNING";
           return (
             <article className={styles.job} key={job.jobId}>
@@ -221,7 +271,7 @@ export function TasksPage() {
                       <button
                         className={clsx("button-primary", styles.retryTask)}
                         type="button"
-                        disabled={deleting || retrying}
+                        disabled={deleting || retrying || reparsing}
                         onClick={() => void retryParse(job)}
                         aria-label={`重试解析 ${job.originalFilename}`}
                         title="从已有检查点继续解析"
@@ -229,11 +279,29 @@ export function TasksPage() {
                         <RotateCcw size={14} />{retrying ? "正在重试…" : "重试解析"}
                       </button>
                     ) : null}
+                    {job.canReparse ? (
+                      <button
+                        className={clsx("button-secondary", styles.reparseTask)}
+                        type="button"
+                        disabled={deleting || retrying || reparsing}
+                        onClick={() => {
+                          setConfirmingDeleteJobId(null);
+                          setConfirmingReparseJobId(job.jobId);
+                        }}
+                        aria-label={`整集重新解析 ${job.originalFilename}`}
+                        title="清空本集解析检查点，从视频开头重新解析"
+                      >
+                        <RefreshCw size={14} />{reparsing ? "正在重新解析…" : "整集重新解析"}
+                      </button>
+                    ) : null}
                     <button
                       className={clsx("button-secondary", styles.deleteTask)}
                       type="button"
-                      disabled={running || deleting || retrying}
-                      onClick={() => setConfirmingDeleteJobId(job.jobId)}
+                      disabled={running || deleting || retrying || reparsing}
+                      onClick={() => {
+                        setConfirmingReparseJobId(null);
+                        setConfirmingDeleteJobId(job.jobId);
+                      }}
                       aria-label={`删除任务 ${job.originalFilename}`}
                       title={running ? "任务正在运行，等待本次执行结束后再删除" : "删除本次上传及其解析产物"}
                     >
@@ -242,6 +310,27 @@ export function TasksPage() {
                   </div>
                 ) : null}
               </div>
+
+              {confirmingReparseJobId === job.jobId ? (
+                <div className={styles.reparseConfirmation} role="alert">
+                  <div>
+                    <strong>从头重新解析这一整集？</strong>
+                    <p>本任务的切片检查点会被清空，并从视频开头重新运行。当前可检索结果会保留到新结果导入成功；新的模型调用会计入用量。</p>
+                  </div>
+                  <div className={styles.confirmActions}>
+                    <button className="button-quiet" type="button" onClick={() => setConfirmingReparseJobId(null)}>取消</button>
+                    <button
+                      className={clsx("button-primary", styles.confirmReparse)}
+                      type="button"
+                      disabled={running || deleting || retrying || reparsing}
+                      onClick={() => void reparse(job)}
+                      aria-label={`确认整集重新解析 ${job.originalFilename}`}
+                    >
+                      <RefreshCw size={14} />确认从头解析
+                    </button>
+                  </div>
+                </div>
+              ) : null}
 
               {confirmingDeleteJobId === job.jobId ? (
                 <div className={styles.deleteConfirmation} role="alert">
@@ -254,7 +343,7 @@ export function TasksPage() {
                     <button
                       className={clsx("button-secondary", styles.confirmDelete)}
                       type="button"
-                      disabled={running || deleting || retrying}
+                      disabled={running || deleting || retrying || reparsing}
                       onClick={() => void deleteTask(job)}
                       aria-label={`确认删除 ${job.originalFilename}`}
                     >

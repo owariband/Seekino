@@ -369,11 +369,10 @@ class VideoRepository:
                 )
                 session.add(existing_video)
             else:
-                existing_video.parse_status = (
-                    ParseJobStatus.RUNNING.value
-                    if lease is not None
-                    else "COMPLETED"
-                )
+                if lease is None:
+                    existing_video.parse_status = "COMPLETED"
+                elif not lease.preserve_existing_result:
+                    existing_video.parse_status = ParseJobStatus.RUNNING.value
                 if lease is None:
                     existing_video.parse_progress = 100
 
@@ -589,7 +588,8 @@ class VideoRepository:
                 if job.stage != ParseJobStage.INDEXING.value:
                     job.version += 1
                 job.stage = ParseJobStage.INDEXING.value
-                existing_video.parse_status = ParseJobStatus.RUNNING.value
+                if not lease.preserve_existing_result:
+                    existing_video.parse_status = ParseJobStatus.RUNNING.value
 
     def hydrate_video_chunks(
         self,

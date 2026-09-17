@@ -37,6 +37,19 @@ class AgentFailure:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentStageTimingState:
+    phase: AnswerPhase
+    duration_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class AgentMessageTimingState:
+    started_at: datetime
+    total_duration_ms: int | None
+    stages: tuple[AgentStageTimingState, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class AgentConversationState:
     conversation_id: str
     workspace_id: str
@@ -67,6 +80,7 @@ class AgentMessageState:
     phase: AnswerPhase | None = None
     version: int = 1
     reference: dict[str, str] | None = None
+    timing: AgentMessageTimingState | None = None
 
 
 @dataclass(frozen=True, slots=True)

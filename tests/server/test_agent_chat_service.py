@@ -130,7 +130,10 @@ class _ChatModel:
 def build_service(tmp_path):
     resources = []
 
-    def build(*, query=None, evaluator=None, chat=None, runtime_kwargs=None):
+    def build(
+        *, query=None, evaluator=None, chat=None, runtime_kwargs=None,
+        service_kwargs=None,
+    ):
         engine = create_database_engine(
             f"sqlite+pysqlite:///{tmp_path / f'agent-{len(resources)}.sqlite'}",
             environment=DatabaseEnvironment.TEST,
@@ -146,6 +149,7 @@ def build_service(tmp_path):
             AgentRuntime(
                 query, evaluator, chat, retrieval.search, **(runtime_kwargs or {}),
             ),
+            **(service_kwargs or {}),
         )
         resources.append((service, engine))
         series = library.create_series(workspace_id="local-default", name="Test Series")
@@ -346,6 +350,21 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
     assert messages[1].model_name == "chat-test"
     assert messages[1].content == "目前没有足够的候选画面，建议补充人物或动作。"
     assert messages[1].search_result["hits"] == []
+    timing = messages[1].timing
+    assert timing is not None and timing == first.assistant_message.timing
+    assert timing == repeated.assistant_message.timing
+    assert [stage.phase.value for stage in timing.stages] == [
+        "QUEUED", "RETRIEVING", "EVALUATING", "RETRIEVING",
+        "EVALUATING", "RESPONDING",
+    ]
+    assert all(
+        type(stage.duration_ms) is int and stage.duration_ms >= 0
+        for stage in timing.stages
+    )
+    assert timing.total_duration_ms == sum(
+        stage.duration_ms for stage in timing.stages
+    )
+    assert messages[0].timing is None
     assert [call[0] for call in retrieval.calls] == ["第一次改写"] + ([second_query] if second_query else [])
     assert evaluator.calls == 2 and len(chat.prompts) == 1
     context = json.loads(query.prompts[1].split("\n\n", 1)[1])
@@ -364,6 +383,11 @@ def test_third_continue_persists_failure_and_never_calls_chat(build_service):
     messages = service.list_all_messages(conversation.conversation_id, workspace_id="local-default")
     assert [m.status for m in messages] == ["COMPLETED", "FAILED"]
     assert messages[1].search_result is None and messages[1].model_name == "chat-test"
+    assert messages[1].timing is not None
+    assert [stage.phase.value for stage in messages[1].timing.stages] == [
+        "QUEUED", "RETRIEVING", "EVALUATING", "RETRIEVING",
+        "EVALUATING", "RETRIEVING", "EVALUATING",
+    ]
 
 
 def test_context_budget_failure_is_persisted_with_a_specific_public_error(build_service):
@@ -490,10 +514,33 @@ def test_tool_answer_is_atomic_and_disconnect_does_not_cancel(build_service):
         assert all(event["conversationId"] == conversation.conversation_id for event in events)
         assert [event["sequence"] for event in events] == list(range(1, 5))
         assert all(isinstance(event["occurredAt"], int) for event in events)
+        progress_events = [
+            event for event in events if event["type"] == "answer.progress"
+        ]
+        assert [
+            [stage["phase"].value for stage in event["timing"]["stages"]]
+            for event in progress_events
+        ] == [
+            ["QUEUED"],
+            ["QUEUED", "RETRIEVING"],
+            ["QUEUED", "RETRIEVING", "EVALUATING"],
+        ]
+        assert all(
+            event["timing"]["total_duration_ms"] is None
+            for event in progress_events
+        )
         assert not execution.future.done()
         with pytest.raises(Empty):
             execution.next_event(timeout=0.05)
-        assert service.list_all_messages(conversation.conversation_id, workspace_id="local-default")[-1].status == "PROCESSING"
+        processing = service.list_all_messages(
+            conversation.conversation_id, workspace_id="local-default",
+        )[-1]
+        assert processing.status == "PROCESSING"
+        assert processing.timing is not None
+        assert processing.timing.total_duration_ms is None
+        assert [stage.phase.value for stage in processing.timing.stages] == [
+            "QUEUED", "RETRIEVING", "EVALUATING",
+        ]
         with pytest.raises(AgentMessageInProgressError):
             service.start_message(conversation.conversation_id, workspace_id="local-default", content="找到杯子", idempotency_key="stream")
         with pytest.raises(AgentMessageInProgressError):
@@ -550,6 +597,11 @@ def test_failure_has_no_completed_event_and_never_persists_unvalidated_chat_text
     assert [event for event in events if event["type"] == "answer.evidence"] == []
     assert [event for event in events if event["type"] == "answer.block"] == []
     assert failed.phase is None and failed.version > 1
+    assert failed.timing is not None
+    assert failed.timing.total_duration_ms == sum(
+        stage.duration_ms for stage in failed.timing.stages
+    )
+    assert failed.timing.stages[-1].phase.value == "RESPONDING"
     assert asdict(failed.last_error) == events[-1]["error"]
     assert "private upstream failure" not in events[-1]["error"]["message"]
     failure_log = next(
@@ -702,11 +754,12 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
             content="answer",
             retrieval_query="query",
             search_result={"hits": []},
-            now=now,
+            now=datetime(2026, 9, 15, 11, 59, 59),
         )
     else:
         repository.fail_assistant_message(
-            started.assistant_message.message_id, error="failed", now=now
+            started.assistant_message.message_id, error="failed",
+            now=datetime(2026, 9, 15, 11, 59, 59),
         )
     final = service.list_all_messages(
         conversation.conversation_id, workspace_id="workspace-1"
@@ -716,6 +769,10 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
     assert final[-1].sequence_no == 501
     assert final[-1].status == final_status
     assert final[-1].model_name == "current-model"
+    assert final[-1].timing is not None
+    assert final[-1].timing.total_duration_ms == 0
+    assert [stage.phase.value for stage in final[-1].timing.stages] == ["QUEUED"]
+    assert all(message.timing is None for message in final[:-1])
     with pytest.raises(AgentConversationNotFoundError):
         service.list_all_messages(
             conversation.conversation_id, workspace_id="another-workspace"

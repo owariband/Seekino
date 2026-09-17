@@ -26,7 +26,13 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
+from server.model.job import (
+    ParseJobStage,
+    ParseJobStatus,
+    SeriesParseJobRecord,
+    VideoChunkCheckpointRecord,
+    VideoChunkCheckpointStage,
+)
 from server.model.dto.agentDTO import AgentMessageState
 from server.model.video import SeriesRecord, VideoRecord
 from server.mq.mysql_queue import MySqlParseJobQueue
@@ -261,6 +267,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/uploads/list",
         "/api/uploads/delete",
         "/api/uploads/retry-parse",
+        "/api/uploads/reparse",
         "/api/uploads/segments/upload",
         "/api/uploads/complete",
         "/api/jobs/list",
@@ -315,6 +322,9 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         ("/api/uploads/get", "get"): {"uploadSessionId"},
         ("/api/uploads/delete", "post"): {"uploadSessionId", "workspaceId"},
         ("/api/uploads/retry-parse", "post"): {
+            "uploadSessionId", "workspaceId", "expectedJobVersion",
+        },
+        ("/api/uploads/reparse", "post"): {
             "uploadSessionId", "workspaceId", "expectedJobVersion",
         },
         ("/api/uploads/segments/upload", "put"): {
@@ -375,6 +385,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "completedChunkCount",
         "totalChunkCount",
         "currentChunk",
+        "canReparse",
     } <= set(schemas["ParseJobView"]["required"])
     parse_progress = schemas["VideoSummary"]["properties"]["parseProgress"]
     assert "parseProgress" in schemas["VideoSummary"]["required"]
@@ -869,6 +880,96 @@ def test_upload_parse_retry_is_version_fenced_and_returns_the_same_job(tmp_path)
         assert (job.status, job.attempt_count, job.max_attempts, job.version) == (
             ParseJobStatus.QUEUED.value, 3, 4, 8,
         )
+
+
+def test_upload_full_reparse_is_distinct_version_fenced_and_starts_at_zero(tmp_path):
+    client, _retrieval, jobs_repository = _client(tmp_path)
+    series_id = _create_series(client)
+    created = client.post(
+        "/api/uploads/create",
+        params={"seriesId": series_id},
+        headers={"Idempotency-Key": "full-reparse"},
+        json={
+            "workspaceId": "local-default",
+            "originalFilename": "episode.mp4",
+            "mediaType": "video/mp4",
+            "totalSizeBytes": 4,
+        },
+    )
+    upload_session_id = created.json()["uploadSessionId"]
+    assert client.put(
+        "/api/uploads/segments/upload",
+        params={
+            "workspaceId": "local-default",
+            "uploadSessionId": upload_session_id,
+            "segmentNumber": 0,
+        },
+        headers={
+            "Content-Range": "bytes 0-3/4",
+            "X-Content-SHA256": hashlib.sha256(b"abcd").hexdigest(),
+        },
+        content=b"abcd",
+    ).status_code == 200
+    completed = client.post(
+        "/api/uploads/complete",
+        params={
+            "workspaceId": "local-default",
+            "uploadSessionId": upload_session_id,
+        },
+    ).json()
+    job_id = completed["jobId"]
+    with jobs_repository._session_factory.begin() as session:
+        job = session.get(SeriesParseJobRecord, job_id)
+        job.status = ParseJobStatus.SUCCEEDED.value
+        job.stage = ParseJobStage.COMPLETED.value
+        job.progress = 100
+        job.attempt_count = 1
+        job.version = 6
+        job.completed_at = datetime(2026, 9, 17, 10, 0)
+        video = session.get(VideoRecord, job.video_id)
+        video.parse_status = ParseJobStatus.SUCCEEDED.value
+        video.parse_progress = 100
+        session.get(SeriesRecord, series_id).status = "READY"
+        session.add(VideoChunkCheckpointRecord(
+            job_id=job_id,
+            sequence_no=0,
+            video_chunk_id="reparse-checkpoint",
+            stage=VideoChunkCheckpointStage.INDEXED.value,
+            chunk_start_ms=0,
+            chunk_end_ms=12_345,
+        ))
+
+    before = client.get(
+        "/api/jobs/get",
+        params={"workspaceId": "local-default", "jobId": job_id},
+    ).json()
+    assert before["canRetry"] is False
+    assert before["canReparse"] is True
+    params = {
+        "workspaceId": "local-default",
+        "uploadSessionId": upload_session_id,
+        "expectedJobVersion": 6,
+    }
+    assert client.post(
+        "/api/uploads/reparse",
+        params={**params, "workspaceId": "other-workspace"},
+    ).status_code == 404
+    reparsed = client.post("/api/uploads/reparse", params=params)
+    assert reparsed.status_code == 200, reparsed.text
+    assert {
+        "jobId": job_id,
+        "uploadSessionId": upload_session_id,
+        "status": "QUEUED",
+        "stage": "QUEUED",
+        "progress": 0,
+        "attemptCount": 1,
+        "canRetry": False,
+        "canReparse": False,
+        "version": 7,
+    }.items() <= reparsed.json().items()
+    assert reparsed.json()["checkpoints"] == []
+    duplicate = client.post("/api/uploads/reparse", params=params)
+    assert duplicate.status_code == 409
 
 
 def test_http_and_upload_logs_share_request_id_without_logging_query_or_body(tmp_path, caplog):
@@ -1419,11 +1520,29 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     assert len({event["messageId"] for event in events}) == 1
     assert events[0]["assistantMessage"]["status"] == "PROCESSING"
     assert events[0]["assistantMessage"]["content"] is None
+    assert events[0]["assistantMessage"]["timing"]["totalDurationMs"] is None
+    assert events[0]["assistantMessage"]["timing"]["stages"] == []
+    assert type(events[0]["assistantMessage"]["timing"]["startedAt"]) is int
+    progress = [event for event in events if event["type"] == "answer.progress"]
+    assert [
+        [stage["phase"] for stage in event["timing"]["stages"]]
+        for event in progress
+    ] == [
+        ["QUEUED"],
+        ["QUEUED", "RETRIEVING"],
+        ["QUEUED", "RETRIEVING", "EVALUATING"],
+    ]
     assert events[0]["userMessage"]["modelName"] is None
     assert events[0]["userMessage"]["seriesIds"] == [series_id]
     assert events[0]["assistantMessage"]["seriesIds"] == [series_id]
     final = events[-1]["assistantMessage"]
     assert final["status"] == "COMPLETED"
+    assert final["timing"]["totalDurationMs"] == sum(
+        stage["durationMs"] for stage in final["timing"]["stages"]
+    )
+    assert [stage["phase"] for stage in final["timing"]["stages"]] == [
+        "QUEUED", "RETRIEVING", "EVALUATING", "RESPONDING",
+    ]
     assert final["content"] == "".join(event["delta"] for event in events if event["type"] == "answer.delta")
     assert final["renderBlocks"] == [
         event["block"] for event in events if event["type"] == "answer.block"
@@ -1433,6 +1552,7 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     replay = _answer_payloads(client.post("/api/agent/messages/send", **kwargs).text)
     assert [event["type"] for event in replay] == ["answer.started", "answer.completed"]
     assert replay[-1]["messageId"] == final["messageId"]
+    assert replay[-1]["assistantMessage"]["timing"] == final["timing"]
     assert len(retrieval.calls) == 1
     content = client.get("/openapi.json").json()["paths"]["/api/agent/messages/send"]["post"]["responses"]["200"]["content"]
     assert {"application/json", "text/event-stream"}.issubset(content)

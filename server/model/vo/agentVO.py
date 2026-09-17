@@ -27,6 +27,17 @@ AgentRenderBlockView = Annotated[
 ]
 
 
+class AgentStageTimingView(ContractModel):
+    phase: AnswerPhase
+    duration_ms: int = Field(ge=0)
+
+
+class AgentMessageTimingView(ContractModel):
+    started_at: UnixTimeMs
+    total_duration_ms: int | None = Field(ge=0)
+    stages: list[AgentStageTimingView]
+
+
 class AgentConversationView(ContractModel):
     conversation_id: str
     workspace_id: str
@@ -54,6 +65,7 @@ class AgentMessageView(ContractModel):
     retrieval_query: str | None
     search_result: SearchEvidenceView | None
     render_blocks: list[AgentRenderBlockView] = Field(default_factory=list)
+    timing: AgentMessageTimingView | None
     last_error: Failure | None
     created_at: UnixTimeMs
     updated_at: UnixTimeMs
@@ -85,6 +97,7 @@ class AgentAnswerStartedView(AgentAnswerEventView, AgentMessageSendView):
 class AgentAnswerProgressView(AgentAnswerEventView):
     type: Literal["answer.progress"] = "answer.progress"
     phase: AnswerPhase
+    timing: AgentMessageTimingView | None = None
 
 
 class AgentAnswerEvidenceView(AgentAnswerEventView):

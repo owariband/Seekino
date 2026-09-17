@@ -99,6 +99,21 @@ def retry_upload_parse(
     return project_job(services.jobs.get(job_id, workspace_id=workspace_id))
 
 
+def reparse_upload(
+    request: Request,
+    upload_session_id: str = Query(alias="uploadSessionId"),
+    workspace_id: str = Query(alias="workspaceId"),
+    expected_job_version: int = Query(ge=1, alias="expectedJobVersion"),
+) -> ParseJobView:
+    services = get_services(request)
+    job_id = services.uploads.reparse(
+        upload_session_id,
+        workspace_id=workspace_id,
+        expected_job_version=expected_job_version,
+    )
+    return project_job(services.jobs.get(job_id, workspace_id=workspace_id))
+
+
 async def upload_segment(
     request: Request,
     upload_session_id: str = Query(alias="uploadSessionId"),

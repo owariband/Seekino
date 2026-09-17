@@ -471,6 +471,197 @@ def test_manual_parse_retry_requires_the_uploads_failed_primary_job(repository, 
     assert secondary.upload_session_id == upload.upload_session_id
 
 
+def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
+    repository,
+    tmp_path,
+):
+    reparsed_at = datetime(2026, 9, 17, 12, 0)
+    current_time = [reparsed_at]
+    engine, store, _upload_repository, service = _upload_service(
+        repository,
+        tmp_path,
+        clock=lambda: current_time[0],
+    )
+    upload = _create(service)
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(
+        upload.upload_session_id,
+        workspace_id="local-default",
+    )
+    video_chunk_id = str(uuid4())
+    with create_session_factory(engine).begin() as session:
+        job = session.get(SeriesParseJobRecord, completed.job_id)
+        job.status = ParseJobStatus.SUCCEEDED.value
+        job.stage = ParseJobStage.COMPLETED.value
+        job.progress = 100
+        job.attempt_count = 3
+        job.max_attempts = 3
+        job.version = 7
+        job.started_at = reparsed_at - timedelta(hours=1)
+        job.completed_at = reparsed_at - timedelta(minutes=30)
+        video = session.get(VideoRecord, completed.video_id)
+        video.parse_status = ParseJobStatus.SUCCEEDED.value
+        video.parse_progress = 100
+        session.get(SeriesRecord, upload.series_id).status = "READY"
+        session.add(VideoChunkRecord(
+            video_chunk_id=video_chunk_id,
+            video_id=completed.video_id,
+            sequence_no=0,
+            start_ms=0,
+            end_ms=12_345,
+            analysis_window_start_ms=0,
+            analysis_window_end_ms=12_345,
+            chunk_media_ref="artifact://test/old-chunk.mp4",
+            analysis_window_media_ref="artifact://test/old-window.mp4",
+            transcript=[],
+            baseline_visual_caption=None,
+            keyframe_uris=[],
+        ))
+        session.add(VideoChunkEmbeddingRecord(
+            video_chunk_id=video_chunk_id,
+            text_input="old searchable facts",
+            text_vector=[0.1],
+            vision_vector=[0.2],
+        ))
+        session.add(IndexSyncIntentRecord(
+            video_chunk_id=video_chunk_id,
+            operation=IndexSyncOperation.UPSERT.value,
+            source_revision="old-revision",
+            generation=1,
+            status=IndexSyncStatus.SYNCED.value,
+            attempt_count=0,
+            available_at=reparsed_at,
+            synced_at=reparsed_at,
+        ))
+        session.add(VideoChunkCheckpointRecord(
+            job_id=completed.job_id,
+            sequence_no=0,
+            video_chunk_id=video_chunk_id,
+            stage=VideoChunkCheckpointStage.INDEXED.value,
+            chunk_start_ms=0,
+            chunk_end_ms=12_345,
+        ))
+        session.add(ParseUsageAttemptRecord(
+            job_id=completed.job_id,
+            attempt_count=3,
+            lease_version=3,
+            started_at=reparsed_at - timedelta(hours=1),
+            recording_complete=True,
+        ))
+    old_attempt_artifact = (
+        store.work_directory(completed.job_id) / "old-attempt.json"
+    )
+    old_attempt_artifact.write_text("keep", encoding="utf-8")
+
+    assert service.reparse(
+        upload.upload_session_id,
+        workspace_id="local-default",
+        expected_job_version=7,
+    ) == completed.job_id
+
+    session_factory = create_session_factory(engine)
+    jobs = ParseJobRepository(session_factory)
+    queue = MySqlParseJobQueue(session_factory)
+    reset = jobs.get(completed.job_id)
+    assert (reset.status, reset.stage, reset.progress, reset.version) == (
+        ParseJobStatus.QUEUED.value,
+        ParseJobStage.QUEUED.value,
+        0,
+        8,
+    )
+    assert (reset.attempt_count, reset.max_attempts) == (3, 6)
+    assert reset.started_at is None and reset.completed_at is None
+    assert jobs.list_checkpoints(completed.job_id) == []
+    public = project_job(ParseJobDetail(reset, ()))
+    assert public.can_retry is False
+    assert public.can_reparse is False
+    with session_factory() as session:
+        assert session.get(VideoChunkRecord, video_chunk_id) is not None
+        assert session.get(VideoChunkEmbeddingRecord, video_chunk_id) is not None
+        intent = session.get(IndexSyncIntentRecord, video_chunk_id)
+        assert intent.status == IndexSyncStatus.SYNCED.value
+        assert session.get(
+            ParseUsageAttemptRecord,
+            (completed.job_id, 3, 3),
+        ) is not None
+        video = session.get(VideoRecord, completed.video_id)
+        assert (video.parse_status, video.parse_progress) == (
+            ParseJobStatus.SUCCEEDED.value,
+            100,
+        )
+        assert session.get(SeriesRecord, upload.series_id).status == "READY"
+    assert old_attempt_artifact.read_text(encoding="utf-8") == "keep"
+
+    lease = queue.claim_next(
+        "reparse-worker",
+        lease_duration=timedelta(minutes=5),
+        now=reparsed_at,
+    )
+    assert lease is not None
+    assert lease.preserve_existing_result is True
+    assert (lease.attempt_count, lease.max_attempts) == (4, 6)
+    assert queue.retry(
+        lease,
+        error="replacement parse failed",
+        retry_at=reparsed_at + timedelta(minutes=1),
+        now=reparsed_at + timedelta(seconds=10),
+    )
+    with session_factory() as session:
+        video = session.get(VideoRecord, completed.video_id)
+        assert video.parse_status == ParseJobStatus.SUCCEEDED.value
+        assert session.get(SeriesRecord, upload.series_id).status == "READY"
+
+    second_lease = queue.claim_next(
+        "reparse-worker",
+        lease_duration=timedelta(minutes=5),
+        now=reparsed_at + timedelta(minutes=1),
+    )
+    assert second_lease is not None
+    assert second_lease.preserve_existing_result is True
+    assert queue.reap_expired(
+        retry_delay=timedelta(minutes=1),
+        now=reparsed_at + timedelta(minutes=7),
+    ) == 1
+    with session_factory() as session:
+        video = session.get(VideoRecord, completed.video_id)
+        assert video.parse_status == ParseJobStatus.SUCCEEDED.value
+        assert session.get(SeriesRecord, upload.series_id).status == "READY"
+
+    final_lease = queue.claim_next(
+        "reparse-worker",
+        lease_duration=timedelta(minutes=5),
+        now=reparsed_at + timedelta(minutes=8),
+    )
+    assert final_lease is not None
+    assert final_lease.attempt_count == 6
+    assert queue.retry(
+        final_lease,
+        error="replacement parse exhausted",
+        retry_at=reparsed_at + timedelta(minutes=9),
+        now=reparsed_at + timedelta(minutes=8, seconds=10),
+    )
+    failed_reparse = jobs.get(completed.job_id)
+    assert failed_reparse.status == ParseJobStatus.FAILED.value
+    current_time[0] = reparsed_at + timedelta(minutes=9)
+    service.retry_parse(
+        upload.upload_session_id,
+        workspace_id="local-default",
+        expected_job_version=failed_reparse.version,
+    )
+    with session_factory() as session:
+        video = session.get(VideoRecord, completed.video_id)
+        assert video.parse_status == ParseJobStatus.SUCCEEDED.value
+        assert session.get(SeriesRecord, upload.series_id).status == "READY"
+
+    with pytest.raises(UploadConflictError, match="version changed"):
+        service.reparse(
+            upload.upload_session_id,
+            workspace_id="local-default",
+            expected_job_version=7,
+        )
+
+
 def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_path):
     engine, store, upload_repository, service = _upload_service(repository, tmp_path)
     upload = _create(service)

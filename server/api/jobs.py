@@ -257,6 +257,15 @@ def project_job(detail: ParseJobDetail) -> ParseJobView:
             and job.is_primary_upload_job
             and job.upload_session_id is not None
         ),
+        can_reparse=(
+            job.status
+            in {
+                ParseJobStatus.SUCCEEDED.value,
+                ParseJobStatus.FAILED.value,
+            }
+            and job.is_primary_upload_job
+            and job.upload_session_id is not None
+        ),
         can_cancel=False, version=job.version,
         created_at=job.created_at, updated_at=job.updated_at,
     )

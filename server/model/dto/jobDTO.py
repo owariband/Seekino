@@ -58,6 +58,7 @@ class ParseJobLease:
     series_description: str | None
     important_extra_data: dict | None
     character_bible: list[dict]
+    preserve_existing_result: bool = False
 
 
 @dataclass(frozen=True, slots=True)

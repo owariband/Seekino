@@ -13,6 +13,7 @@ from server.database import (
 from server.model.agent import (
     AgentConversationRecord,
     AgentMessageRecord,
+    AgentMessageTimingRecord,
 )
 from server.model.video import VideoChunkInfoRecord, VideoChunkRecord
 from server.model.job import VideoChunkCheckpointRecord
@@ -88,6 +89,11 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
     message_ddl = str(
         CreateTable(AgentMessageRecord.__table__).compile(dialect=mysql.dialect())
     )
+    timing_ddl = str(
+        CreateTable(AgentMessageTimingRecord.__table__).compile(
+            dialect=mysql.dialect()
+        )
+    )
 
     assert "ENGINE=InnoDB" in conversation_ddl
     assert "workspace_id VARCHAR(64) NOT NULL" in conversation_ddl
@@ -99,6 +105,9 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
     assert "model_name VARCHAR(255)" in message_ddl
     assert "search_result JSON" in message_ddl
     assert "requested_top_k INTEGER" in message_ddl
+    assert "total_duration_ms BIGINT" in timing_ddl
+    assert "stages JSON NOT NULL" in timing_ddl
+    assert "ck_agent_message_timing_total_duration" in timing_ddl
 
 
 def test_create_schema_refuses_to_shadow_a_legacy_video_segment_schema() -> None:
@@ -224,6 +233,12 @@ def test_create_schema_accepts_current_message_scope_schema_repeatedly() -> None
     }
     assert "series_ids" not in conversation_columns
     assert {"series_ids", "requested_series_ids"} <= message_columns
+    assert {
+        "message_id", "started_at", "total_duration_ms", "stages",
+    } == {
+        column["name"]
+        for column in inspector.get_columns("agent_message_timing")
+    }
 
 
 def test_create_schema_requires_ui_view_migration_and_preserves_existing_rows() -> None:

@@ -285,8 +285,146 @@ class UploadRepository:
                 raise UploadSeriesNotFoundError(
                     "upload session Series no longer exists"
                 )
-            video.parse_status = ParseJobStatus.QUEUED.value
-            series.status = "INDEXING"
+            if video.parse_status not in {
+                ParseJobStatus.SUCCEEDED.value,
+                "COMPLETED",
+            }:
+                video.parse_status = ParseJobStatus.QUEUED.value
+                series.status = "INDEXING"
+            return job.job_id
+
+    def reparse(
+        self,
+        upload_session_id: str,
+        *,
+        workspace_id: str,
+        expected_job_version: int,
+        additional_attempts: int,
+        now: datetime,
+    ) -> str:
+        """Restart one UploadSession's terminal ParseJob from its source Video.
+
+        Unlike ``retry_parse``, this deliberately removes every checkpoint so
+        the worker cannot resume prior model output. A previously successful
+        Video remains searchable until the replacement parse is atomically
+        imported; usage rows and published artifacts are retained as history.
+        """
+
+        if (
+            isinstance(additional_attempts, bool)
+            or not isinstance(additional_attempts, int)
+            or additional_attempts <= 0
+        ):
+            raise ValueError("additional_attempts must be a positive integer")
+
+        with self._session_factory.begin() as session:
+            upload = self._locked_session(session, upload_session_id)
+            if upload.workspace_id != workspace_id:
+                raise UploadSessionNotFoundError(
+                    "upload session does not exist in this workspace"
+                )
+            if (
+                upload.status != UploadSessionStatus.COMPLETED.value
+                or upload.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
+            ):
+                raise UploadStateError(
+                    "only a completed upload session can be fully reparsed"
+                )
+            if upload.job_id is None or upload.video_id is None:
+                raise UploadConflictError(
+                    "completed upload session is missing its ParseJob or Video"
+                )
+
+            job = session.scalar(
+                select(SeriesParseJobRecord)
+                .where(SeriesParseJobRecord.job_id == upload.job_id)
+                .with_for_update()
+            )
+            if job is None:
+                raise UploadConflictError(
+                    "upload session ParseJob no longer exists"
+                )
+            if (
+                job.video_id != upload.video_id
+                or job.series_id != upload.series_id
+            ):
+                raise UploadConflictError(
+                    "upload session does not own its linked ParseJob"
+                )
+            if job.version != expected_job_version:
+                raise UploadConflictError(
+                    "ParseJob version changed; refresh before reparsing"
+                )
+            terminal_statuses = {
+                ParseJobStatus.SUCCEEDED.value,
+                ParseJobStatus.FAILED.value,
+            }
+            if job.status not in terminal_statuses:
+                raise UploadStateError(
+                    "only a completed or failed ParseJob can be fully reparsed"
+                )
+
+            previous_status = job.status
+            update_result = session.execute(
+                update(SeriesParseJobRecord)
+                .where(
+                    SeriesParseJobRecord.job_id == job.job_id,
+                    SeriesParseJobRecord.version == expected_job_version,
+                    SeriesParseJobRecord.status == previous_status,
+                )
+                .values(
+                    status=ParseJobStatus.QUEUED.value,
+                    stage=ParseJobStage.QUEUED.value,
+                    progress=0,
+                    max_attempts=max(
+                        job.max_attempts,
+                        job.attempt_count + additional_attempts,
+                    ),
+                    available_at=now,
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    heartbeat_at=None,
+                    started_at=None,
+                    completed_at=None,
+                    last_error=None,
+                    version=SeriesParseJobRecord.version + 1,
+                    updated_at=now,
+                )
+            )
+            if update_result.rowcount != 1:
+                raise UploadConflictError(
+                    "ParseJob version changed; refresh before reparsing"
+                )
+
+            session.execute(
+                delete(VideoChunkCheckpointRecord).where(
+                    VideoChunkCheckpointRecord.job_id == job.job_id
+                )
+            )
+            video = session.scalar(
+                select(VideoRecord)
+                .where(VideoRecord.video_id == upload.video_id)
+                .with_for_update()
+            )
+            if video is None:
+                raise UploadConflictError("upload session Video no longer exists")
+            series = session.scalar(
+                select(SeriesRecord)
+                .where(SeriesRecord.series_id == upload.series_id)
+                .with_for_update()
+            )
+            if series is None:
+                raise UploadSeriesNotFoundError(
+                    "upload session Series no longer exists"
+                )
+
+            if video.parse_status not in {
+                ParseJobStatus.SUCCEEDED.value,
+                "COMPLETED",
+            }:
+                video.parse_status = ParseJobStatus.QUEUED.value
+                video.parse_progress = 0
+                series.status = "INDEXING"
             return job.job_id
 
     def list_pending_deletions(

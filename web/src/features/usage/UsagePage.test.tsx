@@ -16,7 +16,7 @@ function job(id: string, seriesId = "series-A"): ParseJobView {
     status: "SUCCEEDED", stage: "COMPLETED", progress: 100, overallProgress: 100, stageProgress: 100,
     completedDurationMs: 60_000, completedThroughMs: 60_000, totalDurationMs: 60_000,
     completedChunkCount: 1, totalChunkCount: 1, currentChunk: null, attemptCount: 2, maxAttempts: 3,
-    availableAt: null, startedAt: 1, completedAt: 2, estimatedRemainingMs: null, canRetry: false, canCancel: false,
+    availableAt: null, startedAt: 1, completedAt: 2, estimatedRemainingMs: null, canRetry: false, canReparse: true, canCancel: false,
     lastError: null, version: 1, checkpoints: [], createdAt: 1, updatedAt: 2,
   };
 }

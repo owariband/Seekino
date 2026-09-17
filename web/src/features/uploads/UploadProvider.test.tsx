@@ -47,7 +47,7 @@ const retriedJob: ParseJobView = {
   completedChunkCount: null, totalChunkCount: 1, currentChunk: null,
   attemptCount: 3, maxAttempts: 4, availableAt: 1,
   startedAt: 1, completedAt: null, estimatedRemainingMs: null,
-  canRetry: false, canCancel: false, lastError: null, version: 8,
+  canRetry: false, canReparse: false, canCancel: false, lastError: null, version: 8,
   checkpoints: [], createdAt: 1, updatedAt: 2,
 };
 
@@ -56,13 +56,13 @@ function Controls() {
     enqueue,
     forgetDeletedSession,
     openDialog,
-    syncRetriedParse,
+    syncRequeuedParse,
   } = useUploads();
   return <>
     <button onClick={() => { enqueue([{ file, episodeOrder: 99 }]); openDialog(); }}>开始</button>
     <button onClick={openDialog}>上传面板</button>
     <button onClick={() => forgetDeletedSession(session.uploadSessionId)}>同步外部删除</button>
-    <button onClick={() => syncRetriedParse(retriedJob)}>同步解析重试</button>
+    <button onClick={() => syncRequeuedParse(retriedJob)}>同步解析重试</button>
     <UploadDialog />
   </>;
 }

@@ -43,7 +43,7 @@ interface UploadContextValue {
   retry: (taskId: string) => void;
   cancel: (taskId: string) => Promise<void>;
   forgetDeletedSession: (uploadSessionId: string) => void;
-  syncRetriedParse: (job: ParseJobView) => void;
+  syncRequeuedParse: (job: ParseJobView) => void;
   dismissFinished: () => void;
 }
 
@@ -448,7 +448,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
     [tasks],
   );
 
-  const syncRetriedParse = useCallback(
+  const syncRequeuedParse = useCallback(
     (job: ParseJobView) => {
       if (!job.uploadSessionId) return;
       const task = tasks.find((item) =>
@@ -496,13 +496,13 @@ export function UploadProvider({ children }: PropsWithChildren) {
       retry: resume,
       cancel,
       forgetDeletedSession,
-      syncRetriedParse,
+      syncRequeuedParse,
       dismissFinished: () =>
         setTasks((current) =>
           current.filter((task) => !["completed", "cancelled"].includes(task.status)),
         ),
     }),
-    [attachFile, cancel, dialogOpen, enqueue, forgetDeletedSession, overallProgress, pause, resume, syncRetriedParse, tasks, visibleTasks],
+    [attachFile, cancel, dialogOpen, enqueue, forgetDeletedSession, overallProgress, pause, resume, syncRequeuedParse, tasks, visibleTasks],
   );
 
   return <UploadContext.Provider value={value}>{children}</UploadContext.Provider>;

@@ -147,6 +147,7 @@ def test_terminal_failure_has_completion_time_and_safe_public_projection(reposit
     assert public["estimatedRemainingMs"] is None
     assert public["retryOfJobId"] is None
     assert public["canRetry"] is False
+    assert public["canReparse"] is False
     assert public["canCancel"] is False
     assert public["lastError"]["code"] == "PROCESSING_FAILED"
     assert "internal/provider" not in public["lastError"]["message"]

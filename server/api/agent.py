@@ -36,6 +36,7 @@ from ..model.vo.agentVO import (
     AgentAnswerInterruptedView,
     AgentMessageEventView,
     AgentMessageSendView,
+    AgentMessageTimingView,
     AgentMessageView,
     AgentMarkdownRenderBlockView,
     AgentRenderBlockView,
@@ -263,6 +264,10 @@ def _agent_message_view(
         reference=state.reference, content=state.content, model_name=state.model_name,
         reply_to_message_id=state.reply_to_message_id, retrieval_query=state.retrieval_query,
         search_result=result, render_blocks=render_blocks,
+        timing=(
+            AgentMessageTimingView.model_validate(state.timing)
+            if state.timing is not None else None
+        ),
         last_error=state.last_error, created_at=state.created_at,
         updated_at=state.updated_at,
     )

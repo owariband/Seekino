@@ -183,6 +183,7 @@ export interface ParseJobView {
   completedAt: UnixTimeMs | null;
   estimatedRemainingMs: number | null;
   canRetry: boolean;
+  canReparse: boolean;
   canCancel: boolean;
   lastError: Failure | null;
   version: number;
@@ -338,6 +339,12 @@ export interface AgentConversationView {
 
 export type AnswerPhase = "QUEUED" | "RETRIEVING" | "EVALUATING" | "RESPONDING";
 export interface EvidenceReference { messageId: string; videoChunkId: string }
+export interface AgentStageTiming { phase: AnswerPhase; durationMs: number }
+export interface AgentMessageTiming {
+  startedAt: UnixTimeMs;
+  totalDurationMs: number | null;
+  stages: AgentStageTiming[];
+}
 export type AgentRenderBlock =
   | { type: "markdown"; markdown: string }
   | { type: "video"; videoChunkId: string };
@@ -358,6 +365,7 @@ export interface AgentMessageView {
   retrievalQuery: string | null;
   searchResult: VideoChunkSearchEvidence | null;
   renderBlocks?: AgentRenderBlock[];
+  timing?: AgentMessageTiming | null;
   lastError: Failure | null;
   createdAt: UnixTimeMs;
   updatedAt: UnixTimeMs;
@@ -391,7 +399,7 @@ export type AgentAnswerEvent =
       searchResult: VideoChunkSearchEvidence;
     })
   | (AgentAnswerEventBase & { type: "answer.block"; block: AgentRenderBlock })
-  | (AgentAnswerEventBase & { type: "answer.progress"; phase: AnswerPhase })
+  | (AgentAnswerEventBase & { type: "answer.progress"; phase: AnswerPhase; timing?: AgentMessageTiming | null })
   | (AgentAnswerEventBase & { type: "answer.delta"; delta: string })
   | (AgentAnswerEventBase & AgentMessageSendView & {
       type: "answer.failed";

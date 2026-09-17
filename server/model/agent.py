@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -15,7 +16,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
 from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampedRecord
@@ -137,3 +138,36 @@ class AgentMessageRecord(TimestampedRecord, Base):
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
     last_error_code: Mapped[str | None] = mapped_column(String(64))
     last_error_message: Mapped[str | None] = mapped_column(LONG_TEXT)
+    timing: Mapped[AgentMessageTimingRecord | None] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        uselist=False,
+    )
+
+
+class AgentMessageTimingRecord(Base):
+    __tablename__ = "agent_message_timing"
+    __table_args__ = (
+        CheckConstraint(
+            "total_duration_ms IS NULL OR total_duration_ms >= 0",
+            name="ck_agent_message_timing_total_duration",
+        ),
+        MYSQL_TABLE_OPTIONS,
+    )
+
+    message_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_message.message_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+    )
+    total_duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+    stages: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    message: Mapped[AgentMessageRecord] = relationship(back_populates="timing")

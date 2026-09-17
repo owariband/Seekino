@@ -47,6 +47,7 @@ ParseJob 的 overallProgress 以语义解析为主：canonical VideoChunk 全部
 | GET /api/uploads/list | workspaceId；可选 seriesId、status、limit、cursor；默认非终态，status=all 或逗号分隔状态 | Page&lt;UploadSessionView&gt; |
 | POST /api/uploads/delete | workspaceId、uploadSessionId；删除整个 UploadSessionTask，包括上传分片及已产生的 Video、全部 ParseJob/Checkpoint/VideoChunk、模型用量、媒体文件和向量点；COMPLETING / RUNNING 返回 409 | UploadSessionView（EXPIRED 墓碑） |
 | POST /api/uploads/retry-parse | workspaceId、uploadSessionId、expectedJobVersion；仅重排 UploadSession.job_id 指向的 FAILED 主任务，保留 Checkpoint / attempt / 用量，版本冲突或删除中返回 409 | ParseJobView |
+| POST /api/uploads/reparse | workspaceId、uploadSessionId、expectedJobVersion；对 SUCCEEDED / FAILED 主任务清空 Checkpoint 后整集从头解析，保留 attempt / 用量历史及已成功的可检索快照，版本冲突或活动任务返回 409 | ParseJobView |
 | GET /api/jobs/summary | workspaceId；可选 seriesId | JobSummary |
 | GET /api/jobs/usage/get | workspaceId、jobId | ParseUsageVO：指定任务全部执行尝试，按模型与职责展示真实 Token、人民币预估费用和记录完整性；详见 [Parse 模型消耗统计](parse-model-usage.md) |
 | GET /api/agent/messages/get | workspaceId、conversationId；messageId 与 idempotencyKey 恰好一个 | 同一 USER / ASSISTANT 消息对 |

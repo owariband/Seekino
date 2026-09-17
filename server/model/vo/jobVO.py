@@ -53,6 +53,7 @@ class ParseJobView(ContractModel):
     last_error: Failure | None
     checkpoints: list[VideoChunkCheckpointView]
     can_retry: bool
+    can_reparse: bool
     can_cancel: bool
     version: int = Field(ge=1)
     created_at: UnixTimeMs

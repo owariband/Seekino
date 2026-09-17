@@ -181,6 +181,18 @@ export function retryUploadParse(
   );
 }
 
+export function reparseUpload(
+  uploadSessionId: string,
+  expectedJobVersion: number,
+): Promise<ParseJobView> {
+  return requestJson(
+    `/api/uploads/reparse?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
+      `&workspaceId=${WORKSPACE_QUERY}` +
+      `&expectedJobVersion=${encodeURIComponent(String(expectedJobVersion))}`,
+    { method: "POST" },
+  );
+}
+
 export function completeUpload(
   uploadSessionId: string,
 ): Promise<UploadCompleteView> {

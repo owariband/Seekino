@@ -30,7 +30,7 @@ describe("upload presentation state", () => {
         task({
           status: "processing",
           job: {
-            jobId: "job-1", uploadSessionId: "upload-1", workspaceId: "local-default", retryOfJobId: null, version: 1, estimatedRemainingMs: null, canRetry: false, canCancel: false,
+            jobId: "job-1", uploadSessionId: "upload-1", workspaceId: "local-default", retryOfJobId: null, version: 1, estimatedRemainingMs: null, canRetry: false, canReparse: false, canCancel: false,
             seriesId: "series-1",
             videoId: "video-1",
             seriesName: "测试系列",
@@ -64,7 +64,7 @@ describe("upload presentation state", () => {
     expect(taskStatusLabel(task({
       status: "processing",
       job: {
-        jobId: "job-1", uploadSessionId: "upload-1", workspaceId: "local-default", retryOfJobId: null, version: 1, estimatedRemainingMs: null, canRetry: false, canCancel: false,
+        jobId: "job-1", uploadSessionId: "upload-1", workspaceId: "local-default", retryOfJobId: null, version: 1, estimatedRemainingMs: null, canRetry: false, canReparse: false, canCancel: false,
         seriesId: "series-1", videoId: "video-1", seriesName: "测试系列", episodeOrder: 1,
         originalFilename: "episode-01.mp4", pipelineVersion: "m1", status: "RUNNING", stage: "TEXT_EMBEDDING",
         progress: 99, overallProgress: 99, stageProgress: 20, completedDurationMs: 100_000,
@@ -86,7 +86,7 @@ describe("upload presentation state", () => {
       completedThroughMs: 37_000, totalDurationMs: 100_000, completedChunkCount: 1,
       totalChunkCount: 3, currentChunk: { sequenceNo: 1, startMs: 37_000, endMs: 74_000 },
       attemptCount: 3, maxAttempts: 3, availableAt: null, startedAt: 1, completedAt: 2,
-      estimatedRemainingMs: null, canRetry: true, canCancel: false,
+      estimatedRemainingMs: null, canRetry: true, canReparse: true, canCancel: false,
       lastError: { code: "PARSE_FAILED", message: "解析失败" }, version: 3, checkpoints: [],
       createdAt: 1, updatedAt: 2,
     } }))).toBe(100);

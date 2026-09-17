@@ -19,6 +19,7 @@ import {
   listSeries,
   listAgentConversations,
   listAgentMessages,
+  reparseUpload,
   retryUploadParse,
   searchVideos,
   shouldRetryApiRequest,
@@ -297,6 +298,7 @@ describe("current API routes", () => {
     });
     await deleteUploadSession("upload/id");
     await retryUploadParse("upload/id", 7);
+    await reparseUpload("upload/id", 8);
 
     const calls = fetchMock.mock.calls;
     expect(String(calls[0]?.[0])).toBe("/api/series/list?workspaceId=local-default&limit=100");
@@ -332,6 +334,8 @@ describe("current API routes", () => {
     expect(calls[9]?.[1]?.method).toBe("POST");
     expect(String(calls[10]?.[0])).toBe("/api/uploads/retry-parse?uploadSessionId=upload%2Fid&workspaceId=local-default&expectedJobVersion=7");
     expect(calls[10]?.[1]?.method).toBe("POST");
+    expect(String(calls[11]?.[0])).toBe("/api/uploads/reparse?uploadSessionId=upload%2Fid&workspaceId=local-default&expectedJobVersion=8");
+    expect(calls[11]?.[1]?.method).toBe("POST");
     expect(jobEventsUrl("job/id")).toBe(
       "/api/jobs/events?jobId=job%2Fid&workspaceId=local-default",
     );

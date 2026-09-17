@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict
-from datetime import UTC
+from datetime import UTC, datetime
 from queue import Empty, Full, Queue
 from threading import Event, Lock
+from time import monotonic_ns
 from uuid import uuid4
 
 from ..agent.runtime import AgentRuntime
 from ..agent.state import (
-    AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError, RunInputs,
+    AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
+    AnswerPhase, RunInputs,
 )
 from ..config.agent import AgentServiceConfig
 from ..identity import canonical_uuid
@@ -18,7 +21,9 @@ from ..model.dto.agentDTO import (
     AgentConversationState,
     AgentMessageSendState,
     AgentMessageState,
+    AgentMessageTimingState,
     AgentPageState,
+    AgentStageTimingState,
 )
 from ..repository.agent import (
     AgentMessageInProgressError,
@@ -33,10 +38,80 @@ from .pagination import decode_cursor, encode_cursor
 _logger = logging.getLogger(__name__)
 
 
+class _AgentExecutionTimer:
+    def __init__(
+        self,
+        *,
+        started_at: datetime,
+        started_ns: int,
+        monotonic_clock: Callable[[], int],
+    ) -> None:
+        self.started_at = started_at
+        self._monotonic_clock = monotonic_clock
+        self._phase = AnswerPhase.QUEUED
+        self._phase_started_ns = started_ns
+        self._stages_ns: list[tuple[AnswerPhase, int]] = []
+        self._finished: AgentMessageTimingState | None = None
+
+    def transition(self, phase: AnswerPhase) -> AgentMessageTimingState:
+        if self._finished is not None:
+            raise RuntimeError("Agent execution timing is already complete")
+        if phase != self._phase:
+            self._close_current(self._monotonic_clock())
+            self._phase = phase
+        return self.snapshot()
+
+    def finish(self) -> AgentMessageTimingState:
+        if self._finished is None:
+            self._close_current(self._monotonic_clock())
+            stages = self._stage_states()
+            self._finished = AgentMessageTimingState(
+                started_at=self.started_at,
+                total_duration_ms=sum(stage.duration_ms for stage in stages),
+                stages=stages,
+            )
+        return self._finished
+
+    def snapshot(self) -> AgentMessageTimingState:
+        if self._finished is not None:
+            return self._finished
+        return AgentMessageTimingState(
+            started_at=self.started_at,
+            total_duration_ms=None,
+            stages=self._stage_states(),
+        )
+
+    def _close_current(self, ended_ns: int) -> None:
+        duration_ns = max(0, ended_ns - self._phase_started_ns)
+        self._stages_ns.append((self._phase, duration_ns))
+        self._phase_started_ns = ended_ns
+
+    def _stage_states(self) -> tuple[AgentStageTimingState, ...]:
+        if not self._stages_ns:
+            return ()
+        total_ms = sum(duration for _, duration in self._stages_ns) // 1_000_000
+        durations_ms = [duration // 1_000_000 for _, duration in self._stages_ns]
+        durations_ms[-1] += total_ms - sum(durations_ms)
+        return tuple(
+            AgentStageTimingState(phase=phase, duration_ms=duration_ms)
+            for (phase, _), duration_ms in zip(
+                self._stages_ns,
+                durations_ms,
+                strict=True,
+            )
+        )
+
+
 class AgentMessageExecution:
     """A Service-owned task with an optional, detachable HTTP event consumer."""
 
-    def __init__(self, initial: AgentMessageSendState, *, stream: bool) -> None:
+    def __init__(
+        self,
+        initial: AgentMessageSendState,
+        *,
+        stream: bool,
+        timing: _AgentExecutionTimer | None = None,
+    ) -> None:
         self.initial = initial
         self.cancellation = Event()
         self.future: Future[AgentMessageSendState] | None = None
@@ -45,6 +120,7 @@ class AgentMessageExecution:
         self._attached = stream
         self._sequence = 0
         self.reference_context: dict | None = None
+        self.timing = timing
 
     def publish(self, event: dict) -> None:
         with self._lock:
@@ -119,11 +195,15 @@ class AgentChatService:
         runtime: AgentRuntime,
         *,
         config: AgentServiceConfig | None = None,
+        clock: Callable[[], datetime] = utc_now_naive,
+        monotonic_clock: Callable[[], int] = monotonic_ns,
     ) -> None:
         self._repository = repository
         self._library = library
         self._runtime = runtime
         self._config = config or AgentServiceConfig()
+        self._clock = clock
+        self._monotonic_clock = monotonic_clock
         self._executor = ThreadPoolExecutor(
             max_workers=self._config.maximum_concurrent_kicks,
             thread_name_prefix="anivag-agent",
@@ -286,6 +366,8 @@ class AgentChatService:
         ):
             raise ValueError(f"top_k must be between 1 and {self._config.maximum_top_k}")
         normalized_key = require_nonempty_text(idempotency_key, "idempotency_key", maximum=128)
+        timing_started_at: datetime | None = None
+        timing_started_ns: int | None = None
         with self._lock:
             if self._closed:
                 raise AgentMessageInProgressError("the Agent service is shutting down")
@@ -301,6 +383,8 @@ class AgentChatService:
                 reference_context = self._load_reference(
                     normalized_reference, normalized_conversation_id, normalized_workspace, scope,
                 )
+                timing_started_at = self._clock()
+                timing_started_ns = self._monotonic_clock()
                 started = self._repository.start_message(
                     conversation_id=normalized_conversation_id,
                     workspace_id=normalized_workspace, content=normalized_content,
@@ -308,13 +392,21 @@ class AgentChatService:
                     requested_top_k=requested_top_k, idempotency_key=normalized_key,
                     series_ids=scope, requested_series_ids=requested_scope,
                     user_message_id=str(uuid4()), assistant_message_id=str(uuid4()),
-                    now=utc_now_naive(),
+                    now=timing_started_at,
                     reference=normalized_reference,
                 )
             if started.reused and started.assistant_message.status == "PROCESSING":
                 raise AgentMessageInProgressError("the idempotent message is still being processed")
             initial = AgentMessageSendState(started.user_message, started.assistant_message)
-            execution = AgentMessageExecution(initial, stream=stream)
+            timer = None
+            if not started.reused:
+                assert timing_started_at is not None and timing_started_ns is not None
+                timer = _AgentExecutionTimer(
+                    started_at=timing_started_at,
+                    started_ns=timing_started_ns,
+                    monotonic_clock=self._monotonic_clock,
+                )
+            execution = AgentMessageExecution(initial, stream=stream, timing=timer)
             if not started.reused:
                 execution.reference_context = reference_context
             execution.publish({"type": "answer.started", **_message_pair(initial)})
@@ -331,9 +423,10 @@ class AgentChatService:
                 )
             except Exception:
                 self._executions.pop(started.assistant_message.message_id, None)
+                assert execution.timing is not None
                 self._repository.fail_assistant_message(
                     started.assistant_message.message_id, error="Agent task could not start",
-                    now=utc_now_naive(),
+                    now=self._clock(), timing=execution.timing.finish(),
                 )
                 raise
             return execution
@@ -402,15 +495,21 @@ class AgentChatService:
         pending_answer_events: list[dict] = []
         last_phase = initial.assistant_message.phase
         evidence_hit_count = 0
+        timer = execution.timing
+        assert timer is not None
+        terminal_timing: AgentMessageTimingState | None = None
 
         def publish_runtime(event):
             nonlocal last_phase
             event_type = event["type"]
             if event_type == "answer.progress":
                 last_phase = event["phase"]
+                timing = timer.transition(AnswerPhase(event["phase"]))
                 self._repository.checkpoint_assistant_message(
-                    assistant_id, phase=event["phase"], now=utc_now_naive(),
+                    assistant_id, phase=event["phase"], now=self._clock(),
+                    timing=timing,
                 )
+                event = {**event, "timing": asdict(timing)}
             elif event_type in {"answer.evidence", "answer.block", "answer.delta"}:
                 pending_answer_events.append(event)
                 return
@@ -458,9 +557,11 @@ class AgentChatService:
                 if exc.__cause__ is None:
                     raise
                 raise exc.__cause__ from None
+            terminal_timing = timer.finish()
             assistant = self._repository.complete_assistant_message(
                 assistant_id, content=final.agent_reply.message, retrieval_query=final.query,
-                search_result=final.model_dump(mode="json", by_alias=True), now=utc_now_naive(),
+                search_result=final.model_dump(mode="json", by_alias=True), now=self._clock(),
+                timing=terminal_timing,
             )
             for event in pending_answer_events:
                 if event["type"] == "answer.evidence":
@@ -469,8 +570,9 @@ class AgentChatService:
                 execution.publish(event)
             _logger.info(
                 "agent_execution_completed conversation_id=%s message_id=%s "
-                "phase=%s output_chars=%s evidence_hits=%s",
+                "phase=%s duration_ms=%s stage_count=%s output_chars=%s evidence_hits=%s",
                 conversation_id, assistant_id, last_phase,
+                terminal_timing.total_duration_ms, len(terminal_timing.stages),
                 len(final.agent_reply.message), evidence_hit_count,
             )
             result = AgentMessageSendState(initial.user_message, assistant)
@@ -496,11 +598,14 @@ class AgentChatService:
                 if isinstance(exc, AgentModelInvocationError)
                 else _logger.exception
             )
+            terminal_timing = terminal_timing or timer.finish()
             log_failure(
                 "agent_execution_failed conversation_id=%s message_id=%s code=%s "
-                "phase=%s partial_chars=%s evidence_hits=%s error_type=%s "
+                "phase=%s duration_ms=%s stage_count=%s partial_chars=%s "
+                "evidence_hits=%s error_type=%s "
                 "root_error_type=%s",
                 conversation_id, assistant_id, public_code, last_phase,
+                terminal_timing.total_duration_ms, len(terminal_timing.stages),
                 0, evidence_hit_count,
                 type(exc).__name__, type(root_error).__name__,
             )
@@ -508,7 +613,7 @@ class AgentChatService:
             try:
                 failed = self._repository.fail_assistant_message(
                     assistant_id, error=f"{type(exc).__name__}: {str(exc).strip()}"[:8192],
-                    now=utc_now_naive(),
+                    now=self._clock(), timing=terminal_timing,
                     public_code=public_code,
                     public_message=public_message,
                 )

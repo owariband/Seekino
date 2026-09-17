@@ -191,7 +191,13 @@
   white-space: nowrap;
 }
 
-.deleteConfirmation {
+.reparseTask,
+.confirmReparse {
+  white-space: nowrap;
+}
+
+.deleteConfirmation,
+.reparseConfirmation {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -205,7 +211,15 @@
 }
 
 .deleteConfirmation strong { font-size: .66rem; }
-.deleteConfirmation p { margin: 4px 0 0; color: var(--ink-soft); font-size: .61rem; }
+.deleteConfirmation p,
+.reparseConfirmation p { margin: 4px 0 0; color: var(--ink-soft); font-size: .61rem; }
+
+.reparseConfirmation {
+  border-color: color-mix(in srgb, var(--teal) 32%, var(--line));
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface-raised));
+}
+
+.reparseConfirmation strong { font-size: .66rem; }
 
 .confirmDelete {
   color: var(--red);

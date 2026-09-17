@@ -9,7 +9,10 @@ import type {
   AgentAnswerEvent, AgentConversationView, AgentMessageEventView,
   AgentMessageView, VideoChunkSearchHit,
 } from "../../api/contracts";
-import { useAgentConversation } from "./useAgentConversation";
+import {
+  type AgentProgressEvent,
+  useAgentConversation,
+} from "./useAgentConversation";
 
 vi.mock("../../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../api/client")>(),
@@ -75,19 +78,57 @@ describe("Conversation state", () => {
     const stream = await send(result);
     const phases = ["RETRIEVING", "EVALUATING", "RETRIEVING", "EVALUATING", "RESPONDING"] as const;
     act(() => {
-      phases.forEach((phase, index) => stream.emit({ type: "answer.progress", occurredAt: now + index, conversationId: "conv-A", messageId: "assistant", sequence: index + 2, phase }));
+      phases.forEach((phase, index) => stream.emit({
+        type: "answer.progress", occurredAt: now + index,
+        conversationId: "conv-A", messageId: "assistant",
+        sequence: index + 2, phase,
+        timing: {
+          startedAt: now,
+          totalDurationMs: null,
+          stages: ["QUEUED", ...phases.slice(0, index)].map((stage) => ({
+            phase: stage as AgentProgressEvent["phase"], durationMs: 1,
+          })),
+        },
+      }));
       stream.emit({ type: "answer.progress", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 6, phase: "RESPONDING" });
       stream.emit({ type: "answer.progress", occurredAt: now, conversationId: "conv-B", messageId: "assistant", sequence: 7, phase: "RETRIEVING" });
     });
     expect(result.current.progress.assistant?.map((step) => step.phase)).toEqual(["QUEUED", ...phases]);
     expect(result.current.progress.assistant?.map((step) => step.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(result.current.messages[1]?.timing?.stages.map((stage) => stage.phase)).toEqual([
+      "QUEUED", "RETRIEVING", "EVALUATING", "RETRIEVING", "EVALUATING",
+    ]);
+    act(() => snapshots.get("conv-A")!({
+      type: "messages", occurredAt: now, conversationId: "conv-A",
+      messages: [message("conv-A", {
+        timing: {
+          startedAt: now, totalDurationMs: null,
+          stages: [{ phase: "QUEUED", durationMs: 1 }],
+        },
+      })],
+    }));
+    expect(result.current.messages[1]?.timing?.stages.map((stage) => stage.phase)).toEqual([
+      "QUEUED", "RETRIEVING", "EVALUATING", "RETRIEVING", "EVALUATING",
+    ]);
     act(() => {
-      stream.emit({ ...started("conv-A"), type: "answer.completed", sequence: 7, assistantMessage: message("conv-A", { status: "COMPLETED", phase: null, content: "最终回答" }) } as AgentAnswerEvent);
+      stream.emit({
+        ...started("conv-A"), type: "answer.completed", sequence: 7,
+        assistantMessage: message("conv-A", {
+          status: "COMPLETED", phase: null, content: "最终回答",
+          timing: {
+            startedAt: now, totalDurationMs: 6,
+            stages: ["QUEUED", ...phases].map((phase) => ({
+              phase: phase as AgentProgressEvent["phase"], durationMs: 1,
+            })),
+          },
+        }),
+      } as AgentAnswerEvent);
       stream.emit({ type: "answer.progress", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 8, phase: "RETRIEVING" });
       stream.finish();
     });
     await waitFor(() => expect(result.current.searching).toBe(false));
     expect(result.current.progress.assistant?.map((step) => step.phase)).toEqual(["QUEUED", ...phases]);
+    expect(result.current.messages[1]?.timing?.totalDurationMs).toBe(6);
   });
 
   it("snapshots a multi-series scope without changing Conversation or interrupting the running stream", async () => {

@@ -9,7 +9,7 @@ import { TasksPage } from "./TasksPage";
 const uploadActions = vi.hoisted(() => ({
   forgetDeletedSession: vi.fn(),
   openDialog: vi.fn(),
-  syncRetriedParse: vi.fn(),
+  syncRequeuedParse: vi.fn(),
 }));
 
 vi.mock("../uploads/UploadProvider", () => ({
@@ -50,6 +50,7 @@ function job(status: ParseJobView["status"], id = status.toLowerCase()): ParseJo
     completedAt: status === "FAILED" ? 2 : null,
     estimatedRemainingMs: null,
     canRetry: status === "FAILED",
+    canReparse: status === "FAILED" || status === "SUCCEEDED",
     canCancel: false,
     lastError: status === "FAILED" ? { code: "PARSE_FAILED", message: "解析失败" } : null,
     version: 1,
@@ -75,7 +76,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   uploadActions.forgetDeletedSession.mockReset();
   uploadActions.openDialog.mockReset();
-  uploadActions.syncRetriedParse.mockReset();
+  uploadActions.syncRequeuedParse.mockReset();
 });
 
 describe("task deletion", () => {
@@ -157,6 +158,7 @@ describe("manual parse retry", () => {
       maxAttempts: 4,
       version: 8,
       canRetry: false,
+      canReparse: false,
       completedAt: null,
       lastError: null,
     };
@@ -187,7 +189,7 @@ describe("manual parse retry", () => {
     release();
 
     await waitFor(() => expect(screen.queryByRole("button", { name: `重试解析 ${failed.originalFilename}` })).not.toBeInTheDocument());
-    expect(uploadActions.syncRetriedParse).toHaveBeenCalledWith(retried);
+    expect(uploadActions.syncRequeuedParse).toHaveBeenCalledWith(retried);
     expect(screen.getByText("等待解析")).toBeInTheDocument();
     expect(screen.getByText("3 / 4")).toBeInTheDocument();
     const retry = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/uploads/retry-parse"));
@@ -212,6 +214,74 @@ describe("manual parse retry", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("重试失败：任务状态已变化，请刷新（请求编号：retry-request）");
     expect(button).toBeEnabled();
+  });
+});
+
+describe("full episode reparse", () => {
+  it("confirms the destructive checkpoint reset and requeues the same job", async () => {
+    const completed = {
+      ...job("SUCCEEDED"),
+      stage: "COMPLETED",
+      progress: 100,
+      overallProgress: 100,
+      version: 11,
+    };
+    const reparsed: ParseJobView = {
+      ...completed,
+      status: "QUEUED",
+      stage: "QUEUED",
+      progress: 0,
+      overallProgress: null,
+      completedDurationMs: null,
+      completedThroughMs: null,
+      completedChunkCount: null,
+      startedAt: null,
+      completedAt: null,
+      version: 12,
+      canReparse: false,
+      checkpoints: [],
+    };
+    let jobs: ParseJobView[] = [completed];
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/jobs/list") return response({ items: jobs, hasMore: false, nextCursor: null });
+      if (url.pathname === "/api/uploads/reparse") {
+        await pending;
+        jobs = [reparsed];
+        return response(reparsed);
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPage();
+    const user = userEvent.setup();
+
+    const reparseButton = await screen.findByRole("button", {
+      name: `整集重新解析 ${completed.originalFilename}`,
+    });
+    await user.click(reparseButton);
+    expect(screen.getByText("从头重新解析这一整集？")).toBeInTheDocument();
+    expect(screen.getByText(/当前可检索结果会保留到新结果导入成功/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/uploads/reparse"))).toBe(false);
+
+    await user.click(screen.getByRole("button", {
+      name: `确认整集重新解析 ${completed.originalFilename}`,
+    }));
+    expect(reparseButton).toBeDisabled();
+    expect(reparseButton).toHaveTextContent("正在重新解析");
+    expect(screen.getByRole("button", {
+      name: `删除任务 ${completed.originalFilename}`,
+    })).toBeDisabled();
+    release();
+
+    await waitFor(() => expect(screen.queryByRole("button", {
+      name: `整集重新解析 ${completed.originalFilename}`,
+    })).not.toBeInTheDocument());
+    expect(uploadActions.syncRequeuedParse).toHaveBeenCalledWith(reparsed);
+    const call = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/uploads/reparse"));
+    expect(String(call?.[0])).toBe("/api/uploads/reparse?uploadSessionId=upload-succeeded&workspaceId=local-default&expectedJobVersion=11");
   });
 });
 

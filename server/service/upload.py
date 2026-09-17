@@ -192,6 +192,35 @@ class UploadService:
         )
         return job_id
 
+    def reparse(
+        self,
+        upload_session_id: str,
+        *,
+        workspace_id: str,
+        expected_job_version: int,
+    ) -> str:
+        if (
+            isinstance(expected_job_version, bool)
+            or not isinstance(expected_job_version, int)
+            or expected_job_version < 1
+        ):
+            raise ValueError("expected_job_version must be a positive integer")
+        session_id = canonical_uuid(upload_session_id, "upload_session_id")
+        job_id = self._repository.reparse(
+            session_id,
+            workspace_id=require_nonempty_text(workspace_id, "workspace_id"),
+            expected_job_version=expected_job_version,
+            additional_attempts=self._config.max_job_attempts,
+            now=self._clock(),
+        )
+        _logger.info(
+            "upload_full_reparse_requested upload_session_id=%s job_id=%s expected_job_version=%s",
+            session_id,
+            job_id,
+            expected_job_version,
+        )
+        return job_id
+
     def delete_session(self, upload_session_id: str, *, workspace_id: str) -> UploadSessionState:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
         mutation_scope = (
