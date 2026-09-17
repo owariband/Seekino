@@ -8,8 +8,48 @@
   padding-bottom: 26px;
 }
 
-.pageHeader { display: flex; min-height: 36px; flex: 0 0 auto; align-items: center; margin-bottom: 20px; }
+.pageHeader { display: flex; min-height: 36px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+.chatHeading { display: flex; min-width: 0; align-items: baseline; gap: 12px; }
 .chatTitle { margin: 0; color: var(--ink); font: 500 1.05rem/1.4 var(--sans); }
+.chatHeading > span { max-width: min(38vw, 360px); overflow: hidden; color: var(--ink-soft); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.conversationActions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.conversationPicker { position: relative; }
+.conversationPicker > summary, .newConversation { display: flex; min-height: 34px; align-items: center; gap: 8px; padding: 0 11px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 9px; cursor: pointer; background: var(--surface); font-size: .7rem; list-style: none; }
+.conversationPicker > summary::-webkit-details-marker { display: none; }
+.conversationPicker > summary:hover, .conversationPicker[open] > summary, .newConversation:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); background: var(--surface-muted); }
+.conversationPicker[open] > summary svg:last-child { transform: rotate(180deg); }
+.newConversation { color: var(--teal-deep); }
+.newConversation:disabled { opacity: .45; cursor: not-allowed; }
+.conversationPicker > summary:focus-visible, .newConversation:focus-visible, .conversationMenuClose:focus-visible, .conversationChoice:focus-visible, .deleteConversation:focus-visible, .deleteConfirmation button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.conversationMenu { position: absolute; z-index: 50; top: calc(100% + 9px); right: 0; width: min(390px, calc(100vw - 40px)); max-height: min(540px, calc(100dvh - 130px)); overflow-y: auto; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-raised); box-shadow: var(--shadow); }
+.conversationMenu > header { display: flex; min-height: 42px; align-items: center; gap: 8px; padding: 4px 5px 10px; border-bottom: 1px solid var(--line); }
+.conversationMenu > header > div { display: grid; gap: 3px; margin-right: auto; }
+.conversationMenu > header strong { color: var(--ink); font-size: .76rem; font-weight: 500; }
+.conversationMenu > header small { color: var(--ink-soft); font-size: .7rem; }
+.conversationMenuClose { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; color: var(--ink-soft); border-radius: 8px; cursor: pointer; background: transparent; }
+.conversationMenuClose:hover { color: var(--ink); background: var(--surface-muted); }
+.conversationList { display: grid; gap: 5px; margin: 8px 0 0; padding: 0; list-style: none; }
+.conversationList > li { display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: start; gap: 5px; padding: 5px; border: 1px solid transparent; border-radius: 10px; }
+.conversationList > li:hover { background: var(--surface-muted); }
+.conversationList > .conversationCurrent { border-color: color-mix(in srgb, var(--teal) 30%, var(--line)); background: var(--teal-wash); }
+.conversationChoice { display: grid; min-width: 0; gap: 5px; padding: 5px 6px; color: var(--ink-soft); cursor: pointer; background: transparent; text-align: left; }
+.conversationChoice:disabled { cursor: wait; }
+.conversationChoice > span { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 12px; }
+.conversationChoice strong { min-width: 0; overflow: hidden; color: var(--ink); font-size: .73rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.conversationChoice time { flex: 0 0 auto; color: var(--ink-soft); font-size: .7rem; }
+.conversationChoice > small { overflow: hidden; color: var(--ink-soft); font-size: .7rem; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.deleteConversation { display: grid; width: 30px; height: 30px; place-items: center; color: var(--ink-soft); border-radius: 8px; cursor: pointer; background: transparent; }
+.deleteConversation:hover:not(:disabled) { color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
+.deleteConversation:disabled { opacity: .38; cursor: not-allowed; }
+.deleteHint { grid-column: 1 / -1; padding: 0 6px 4px; color: var(--ink-soft); font-size: .72rem; }
+.deleteConfirmation { display: grid; grid-column: 1 / -1; gap: 9px; margin: 2px; padding: 10px; border: 1px solid color-mix(in srgb, var(--red) 25%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--red) 5%, var(--surface)); }
+.deleteConfirmation p { margin: 0; color: var(--ink-soft); font-size: .72rem; line-height: 1.55; }
+.deleteConfirmation > div { display: flex; justify-content: flex-end; gap: 7px; }
+.deleteConfirmation button { min-height: 30px; padding: 0 9px; color: var(--ink-soft); border-radius: 7px; cursor: pointer; background: var(--surface-muted); font-size: .7rem; }
+.deleteConfirmation button:last-child { color: var(--ink); border: 1px solid color-mix(in srgb, var(--red) 62%, var(--line)); }
+.deleteConfirmation button:disabled { opacity: .45; cursor: wait; }
+.conversationError { margin: 8px 4px 0; padding-left: 8px; color: var(--ink); border-left: 2px solid var(--red); font-size: .72rem; line-height: 1.55; overflow-wrap: anywhere; }
+.conversationEmpty { margin: 16px 5px 10px; color: var(--ink-soft); font-size: .72rem; text-align: center; }
 .workspace { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1fr); gap: 24px; }
 .withEvidence { grid-template-columns: minmax(0, 1fr) minmax(340px, .618fr); }
 .agentPanel { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
@@ -41,7 +81,8 @@
 .userMessage > div { max-width: 80%; padding: 14px 20px; border-radius: 22px 22px 5px 22px; background: var(--surface-raised); }
 .userMessage p { margin: 0; color: var(--ink); font-size: .9rem; line-height: 1.7; white-space: pre-wrap; }
 .messageScope { display: block; margin-top: 8px; color: var(--ink-faint); font-size: .65rem; line-height: 1.5; }
-.messageError { margin: 10px 0; color: var(--red) !important; font-size: .78rem; line-height: 1.6; overflow-wrap: anywhere; }
+.messageError { margin: 10px 0; padding-left: 9px; color: var(--ink) !important; border-left: 2px solid var(--red); font-size: .78rem; line-height: 1.6; overflow-wrap: anywhere; }
+.messageError:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
 .welcome { display: grid; justify-items: center; gap: 16px; margin: auto; padding: 32px 0; color: var(--ink-faint); text-align: center; }
 .welcome p { margin: 0; color: var(--ink-soft); font-size: .95rem; }
 .connectionState { display: flex; width: min(100%, 880px); align-self: center; align-items: center; gap: 9px; margin: 0; color: var(--ink-faint); font-size: .8rem; }
@@ -418,8 +459,17 @@
 
 @media (max-width: 760px) {
   .page { height: calc(100dvh - 64px); padding: 20px 18px 90px; }
-  .pageHeader { min-height: 30px; margin-bottom: 12px; }
+  .pageHeader { min-height: 30px; align-items: flex-start; margin-bottom: 12px; }
+  .chatHeading { display: grid; gap: 2px; }
+  .chatHeading > span { max-width: 42vw; }
   .chatTitle { font-size: 1rem; }
+  .conversationPicker > summary span, .newConversation span { display: none; }
+  .conversationPicker > summary, .newConversation { width: 44px; min-height: 44px; justify-content: center; padding: 0; }
+  .conversationPicker > summary svg:last-child { display: none; }
+  .conversationMenu { position: fixed; top: 138px; right: 12px; bottom: 12px; left: 12px; width: auto; max-height: none; }
+  .conversationMenuClose, .deleteConversation { width: 44px; height: 44px; }
+  .conversationList > li { grid-template-columns: minmax(0, 1fr) 44px; }
+  .deleteConfirmation button { min-height: 44px; padding-inline: 13px; }
   .thread { gap: 24px; padding: 8px 0 18px; }
   .userMessage > div { max-width: 92%; padding: 12px 16px; }
   .messageScope { font-size: .6rem; }
@@ -441,4 +491,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .spinning { animation: none; }
+  .conversationPicker > summary svg, .conversationChoice, .deleteConversation, .conversationMenuClose { transition: none; }
 }

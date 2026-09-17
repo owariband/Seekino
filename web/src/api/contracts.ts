@@ -75,6 +75,7 @@ export interface SeriesSummary {
 }
 
 export interface SeriesView extends SeriesSummary {
+  transcriptLanguageHint: string | null;
   importantExtraData: Record<string, unknown> | null;
   characterBible: Character[];
   videos: VideoSummary[];
@@ -85,6 +86,7 @@ export interface SeriesCreateRequest {
   workspaceId: string;
   name: string;
   description?: string | null;
+  transcriptLanguageHint?: string | null;
   importantExtraData?: Record<string, unknown> | null;
   characterBible?: Character[];
 }
@@ -98,6 +100,7 @@ export interface SeriesUpdateRequest {
   workspaceId: string;
   seriesId: string;
   description?: string | null;
+  transcriptLanguageHint?: string | null;
   importantExtraData?: SeriesBackground | null;
 }
 
@@ -238,6 +241,8 @@ export interface VideoChunkCandidate {
   rank: number;
   fusedRank: number;
   fusedScore: number;
+  transcriptRank: number | null;
+  transcriptScore: number | null;
   textRank: number | null;
   textScore: number | null;
   visionRank: number | null;
@@ -325,6 +330,26 @@ export interface VideoChunkSearchResult extends VideoChunkSearchEvidence {
   agentReply: AgentReply;
 }
 
+export interface RetrievalChannelWeights {
+  transcript: number;
+  semantic: number;
+  visual: number;
+}
+
+export interface RetrievalTraceEntry {
+  query: string;
+  topK: number;
+  strategyVersion: string;
+  requestedWeights: RetrievalChannelWeights;
+  effectiveWeights: RetrievalChannelWeights;
+  resultCount: number;
+  videoChunkIds: string[];
+}
+
+export interface AgentSearchEvidence extends VideoChunkSearchEvidence {
+  retrievalTrace?: RetrievalTraceEntry[];
+}
+
 export interface VideoSearchRequest {
   workspaceId: string;
   query: string;
@@ -369,7 +394,7 @@ export interface AgentMessageView {
   modelName: string | null;
   replyToMessageId: string | null;
   retrievalQuery: string | null;
-  searchResult: VideoChunkSearchEvidence | null;
+  searchResult: AgentSearchEvidence | null;
   renderBlocks?: AgentRenderBlock[];
   timing?: AgentMessageTiming | null;
   lastError: Failure | null;
@@ -402,7 +427,7 @@ export type AgentAnswerEvent =
     })
   | (AgentAnswerEventBase & {
       type: "answer.evidence";
-      searchResult: VideoChunkSearchEvidence;
+      searchResult: AgentSearchEvidence;
     })
   | (AgentAnswerEventBase & { type: "answer.block"; block: AgentRenderBlock })
   | (AgentAnswerEventBase & { type: "answer.progress"; phase: AnswerPhase; timing?: AgentMessageTiming | null })

@@ -270,6 +270,27 @@ class AgentChatService:
             require_nonempty_text(workspace_id, "workspace_id", maximum=64),
         )
 
+    def delete_conversation(
+        self,
+        conversation_id: str,
+        *,
+        workspace_id: str,
+    ) -> AgentConversationState:
+        normalized_conversation_id = canonical_uuid(
+            conversation_id,
+            "conversation_id",
+        )
+        normalized_workspace = require_nonempty_text(
+            workspace_id,
+            "workspace_id",
+            maximum=64,
+        )
+        with self._lock:
+            return self._repository.delete_conversation(
+                normalized_conversation_id,
+                normalized_workspace,
+            )
+
     def page_conversations(
         self, *, workspace_id: str, cursor: str | None = None, limit: int = 50,
         series_id: str | None = None, query: str | None = None,
@@ -540,6 +561,7 @@ class AgentChatService:
                 series_context=[{
                     "seriesId": item.series_id, "name": item.name,
                     "description": item.description,
+                    "transcriptLanguageHint": item.transcript_language_hint,
                     "importantExtraData": item.important_extra_data,
                     "characterBible": item.character_bible,
                     "videos": [{

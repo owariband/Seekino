@@ -9,6 +9,8 @@ const hit: VideoChunkSearchHit = {
     rank: 1,
     fusedRank: 1,
     fusedScore: 0.032,
+    transcriptRank: 1,
+    transcriptScore: 1,
     textRank: 1,
     textScore: 0.91,
     visionRank: 2,
@@ -75,7 +77,11 @@ describe("search evidence explanations", () => {
     expect(explanation.summary).toContain("雨伞");
     expect(explanation.matchedFacts).toContain("我们在门口等你。");
     expect(explanation.sources).toEqual(
-      expect.arrayContaining(["对白文本 · 文本召回第 1", "画面事件 · 视觉召回第 2"]),
+      expect.arrayContaining([
+        "ASR 原话 · 词法召回第 1",
+        "剧情语义 · 语义召回第 1",
+        "画面事件 · 视觉召回第 2",
+      ]),
     );
     expect(readableTranscript(hit)).toContain("我们在门口等你");
   });

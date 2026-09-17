@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from fastapi.routing import APIRoute
@@ -60,7 +61,23 @@ from server.storage.artifact import LocalArtifactStore
 class _RetrievalStub:
     calls: list[tuple[str, list[str], int, str]]
 
-    def search(self, query: str, *, workspace_id: str, series_ids, top_k: int):
+    def search(
+        self,
+        query: str,
+        *,
+        workspace_id: str,
+        series_ids,
+        top_k: int,
+        transcript_weight: float | None = None,
+        text_weight: float | None = None,
+        vision_weight: float | None = None,
+    ):
+        if any(
+            weight is not None
+            for weight in (transcript_weight, text_weight, vision_weight)
+        ):
+            assert None not in (transcript_weight, text_weight, vision_weight)
+            assert transcript_weight + text_weight + vision_weight == pytest.approx(1.0)
         scope = list(series_ids)
         self.calls.append((query, scope, top_k, workspace_id))
         return VideoChunkSearchResult(
@@ -126,7 +143,11 @@ class _AgentModelStub:
     provider_name: str = "test"
 
     def run_query(self, _prompt, *, tools, result_type, max_model_calls, **_kwargs):
-        tools[0].invoke({"query": "她为什么哭", "top_k": 5})
+        tools[0].invoke({
+            "query": "她为什么哭",
+            "top_k": 5,
+            "channel_weights": {"transcript": 0.1, "semantic": 0.7, "visual": 0.2},
+        })
         return result_type.model_validate({
             "plan_context": "召回哭泣的片段并检查画面和对白。",
             "message": "没有找到可以核验的候选画面。",
@@ -283,6 +304,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/conversations/create",
         "/api/agent/conversations/list",
         "/api/agent/conversations/get",
+        "/api/agent/conversations/delete",
         "/api/agent/messages/list",
         "/api/agent/messages/get",
         "/api/agent/messages/send",
@@ -338,6 +360,9 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         ("/api/jobs/events", "get"): {"jobId"},
         ("/api/videos/content", "get"): {"videoId"},
         ("/api/agent/conversations/get", "get"): {"conversationId"},
+        ("/api/agent/conversations/delete", "post"): {
+            "conversationId", "workspaceId",
+        },
         ("/api/agent/messages/list", "get"): {"conversationId"},
         ("/api/agent/messages/send", "post"): {"conversationId"},
         ("/api/agent/messages/events", "get"): {"conversationId"},
@@ -373,6 +398,11 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
     assert {parameter["name"] for parameter in conversation_list_parameters} == {
         "workspaceId", "limit", "cursor", "seriesId", "query"
     }
+    assert openapi_paths["/api/agent/conversations/delete"]["post"][
+        "responses"
+    ]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/AgentConversationView"
+    }
     assert {
         "uploadSessionId",
         "seriesName",
@@ -395,9 +425,10 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "null",
     }
     assert "agentReply" in schemas["SearchResultView"]["required"]
-    assert "agentReply" not in schemas["SearchEvidenceView"]["properties"]
+    assert "agentReply" not in schemas["AgentSearchEvidenceView"]["properties"]
+    assert "retrievalTrace" in schemas["AgentSearchEvidenceView"]["required"]
     assert schemas["AgentMessageView"]["properties"]["searchResult"]["anyOf"][0] == {
-        "$ref": "#/components/schemas/SearchEvidenceView",
+        "$ref": "#/components/schemas/AgentSearchEvidenceView",
     }
     assert "selectionReason" in schemas["SearchHitView"]["required"]
     assert {
@@ -476,6 +507,45 @@ def test_series_background_json_patch_and_clear(tmp_path: Path) -> None:
     assert cleared_background.status_code == 200
     assert cleared_background.json()["importantExtraData"] is None
     assert cleared_background.json()["description"] is None
+
+
+def test_series_transcript_language_hint_create_update_and_clear(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    created = client.post(
+        "/api/series/create",
+        json={
+            "workspaceId": "local-default",
+            "name": "Japanese Series",
+            "transcriptLanguageHint": "ja-jp",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["transcriptLanguageHint"] == "ja-JP"
+    scope = {
+        "workspaceId": "local-default",
+        "seriesId": created.json()["seriesId"],
+    }
+
+    omitted = client.post("/api/series/update", json=scope)
+    assert omitted.json()["transcriptLanguageHint"] == "ja-JP"
+    updated = client.post(
+        "/api/series/update",
+        json={**scope, "transcriptLanguageHint": "zh-hans"},
+    )
+    assert updated.json()["transcriptLanguageHint"] == "zh-Hans"
+    rejected = client.post(
+        "/api/series/update",
+        json={**scope, "transcriptLanguageHint": "not a language"},
+    )
+    assert rejected.status_code == 400
+    assert client.get("/api/series/get", params=scope).json()[
+        "transcriptLanguageHint"
+    ] == "zh-Hans"
+    cleared = client.post(
+        "/api/series/update",
+        json={**scope, "transcriptLanguageHint": None},
+    )
+    assert cleared.json()["transcriptLanguageHint"] is None
 
 
 @pytest.mark.parametrize("document,expected_status", [
@@ -625,6 +695,117 @@ def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:
     assert len(listed_conversations.json()["items"]) == 1
     assert listed_conversations.json()["items"][0]["messageCount"] == 2
     assert [item["role"] for item in messages_after_user.json()["items"]] == ["ASSISTANT"]
+
+
+def test_agent_conversation_delete_is_workspace_scoped_and_removes_messages(
+    tmp_path: Path,
+) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    _create_series(client)
+    conversation_id = _create_agent_conversation(client)
+    sent = client.post(
+        "/api/agent/messages/send",
+        params={
+            "workspaceId": "local-default",
+            "conversationId": conversation_id,
+        },
+        headers={"Idempotency-Key": "message-before-delete"},
+        json={"workspaceId": "local-default", "content": "找画面"},
+    )
+    assert sent.status_code == 200, sent.text
+
+    outside = client.post(
+        "/api/agent/conversations/delete",
+        params={
+            "workspaceId": "another-workspace",
+            "conversationId": conversation_id,
+        },
+    )
+    assert outside.status_code == 404
+
+    deleted = client.post(
+        "/api/agent/conversations/delete",
+        params={
+            "workspaceId": "local-default",
+            "conversationId": conversation_id,
+        },
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["conversationId"] == conversation_id
+    assert deleted.json()["messageCount"] == 2
+    assert client.get(
+        "/api/agent/conversations/get",
+        params={
+            "workspaceId": "local-default",
+            "conversationId": conversation_id,
+        },
+    ).status_code == 404
+    assert client.get(
+        "/api/agent/messages/list",
+        params={
+            "workspaceId": "local-default",
+            "conversationId": conversation_id,
+        },
+    ).status_code == 404
+    assert client.post(
+        "/api/agent/conversations/delete",
+        params={
+            "workspaceId": "local-default",
+            "conversationId": conversation_id,
+        },
+    ).status_code == 404
+
+
+def test_agent_conversation_delete_rejects_processing_answer(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    series_id = _create_series(client)
+    conversation_id = _create_agent_conversation(client)
+    service = client.app.state.services.agent
+    service._repository.start_message(
+        conversation_id=conversation_id,
+        workspace_id="local-default",
+        content="找画面",
+        model_name=service.model_name,
+        requested_top_k=service.default_top_k,
+        idempotency_key="processing-delete",
+        series_ids=[series_id],
+        requested_series_ids=[series_id],
+        user_message_id=str(uuid4()),
+        assistant_message_id=str(uuid4()),
+        now=datetime(2026, 9, 17),
+    )
+
+    response = client.post(
+        "/api/agent/conversations/delete",
+        params={
+            "workspaceId": "local-default",
+            "conversationId": conversation_id,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "MESSAGE_IN_PROGRESS"
+    assert client.get(
+        "/api/agent/conversations/get",
+        params={
+            "workspaceId": "local-default",
+            "conversationId": conversation_id,
+        },
+    ).status_code == 200
+    assert client.get(
+        "/api/agent/messages/list",
+        params={
+            "workspaceId": "local-default",
+            "conversationId": conversation_id,
+        },
+    ).status_code == 200
+    assert client.post(
+        "/api/agent/conversations/delete",
+        params={
+            "workspaceId": "local-default",
+            "conversationId": conversation_id,
+        },
+    ).status_code == 409
 
 
 def test_agent_conversations_are_created_and_listed_within_workspace(tmp_path: Path) -> None:
@@ -1484,9 +1665,19 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         session.get(SeriesRecord, prepared_import.series_id).status = "READY"
     conversation_id = _create_agent_conversation(client)
 
-    def joined_search(query, *, workspace_id, series_ids, top_k):
+    def joined_search(
+        query,
+        *,
+        workspace_id,
+        series_ids,
+        top_k,
+        transcript_weight,
+        text_weight,
+        vision_weight,
+    ):
         assert workspace_id == prepared_import.workspace_id
         assert series_ids == [prepared_import.series_id]
+        assert transcript_weight + text_weight + vision_weight == pytest.approx(1.0)
         evidence = video_repository.hydrate_video_chunks(report.video_chunk_ids)
         hits = [
             VideoChunkSearchHit(
@@ -1507,7 +1698,15 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
 
     class QueryWithEvidence(_AgentModelStub):
         def run_query(self, _prompt, *, tools, result_type, **_kwargs):
-            result = tools[0].invoke({"query": "找动作片段", "top_k": 5})
+            result = tools[0].invoke({
+                "query": "找动作片段",
+                "top_k": 5,
+                "channel_weights": {
+                    "transcript": 0.2,
+                    "semantic": 0.2,
+                    "visual": 0.6,
+                },
+            })
             return result_type.model_validate({
                 "plan_context": "召回动作并检查片段来源。",
                 "message": "这些片段包含动作。",
@@ -1554,6 +1753,19 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         else:
             final = response.json()["assistantMessage"]
         assert "agentReply" not in final["searchResult"]
+        assert final["searchResult"]["retrievalTrace"] == [{
+            "query": "找动作片段",
+            "topK": 5,
+            "strategyVersion": "query-adaptive-three-channel-rrf-v2",
+            "requestedWeights": {"transcript": 0.2, "semantic": 0.2, "visual": 0.6},
+            "effectiveWeights": {"transcript": 0.2, "semantic": 0.2, "visual": 0.6},
+            "resultCount": len(report.video_chunk_ids),
+            "videoChunkIds": list(report.video_chunk_ids),
+        }]
+        if accept == "text/event-stream":
+            assert evidence_event["searchResult"]["retrievalTrace"] == (
+                final["searchResult"]["retrievalTrace"]
+            )
         hits = final["searchResult"]["hits"]
         assert len(hits) == len(report.video_chunk_ids) == 2
         assert final["renderBlocks"] == [

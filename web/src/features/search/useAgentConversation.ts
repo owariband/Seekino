@@ -22,6 +22,7 @@ import type {
 
 interface StoredIdentity { key: string; id?: string }
 const conversations = new Map<string, Promise<AgentConversationView>>();
+const conversationStorageKey = `anivag-agent-conversation:${WORKSPACE_ID}`;
 
 function storedIdentity(storageKey: string): StoredIdentity {
   const saved = localStorage.getItem(storageKey);
@@ -37,7 +38,7 @@ function storedIdentity(storageKey: string): StoredIdentity {
 }
 
 async function ensureConversation(): Promise<AgentConversationView> {
-  const storageKey = `anivag-agent-conversation:${WORKSPACE_ID}`;
+  const storageKey = conversationStorageKey;
   const pending = conversations.get(storageKey);
   if (pending) return pending;
   const promise = (async () => {
@@ -61,13 +62,19 @@ async function ensureConversation(): Promise<AgentConversationView> {
       identity = { key: crypto.randomUUID() };
       localStorage.setItem(storageKey, JSON.stringify(identity));
     }
-    const conversation = await createAgentConversation(identity.key);
-    localStorage.setItem(storageKey, JSON.stringify({ ...identity, id: conversation.conversationId }));
-    return conversation;
+    return createAgentConversation(identity.key);
   })();
   conversations.set(storageKey, promise);
   try { return await promise; }
   finally { conversations.delete(storageKey); }
+}
+
+function rememberConversation(conversationId: string): void {
+  const identity = storedIdentity(conversationStorageKey);
+  localStorage.setItem(conversationStorageKey, JSON.stringify({
+    key: !identity.id || identity.id === conversationId ? identity.key : crypto.randomUUID(),
+    id: conversationId,
+  }));
 }
 
 async function loadMessages(conversationId: string): Promise<AgentMessageView[]> {
@@ -134,6 +141,7 @@ export type AgentProgressEvent = Extract<AgentAnswerEvent, { type: "answer.progr
 interface ActiveConversation {
   conversationId: string | null;
   controller: AbortController;
+  unsubscribe?: () => void;
   sending: boolean;
   recoveryMessageId: string | null;
   streamedMessageId: string | null;
@@ -148,18 +156,18 @@ export function useAgentConversation(requestedId: string | null = null) {
   useEffect(() => {
     const active: ActiveConversation = { conversationId: null, controller: new AbortController(), sending: false, recoveryMessageId: null, streamedMessageId: null };
     activeRef.current = active;
-    let unsubscribe: (() => void) | undefined;
     setState({ requestedId, conversationId: null, messages: [], progress: {}, loading: true, sending: false, error: null });
     void (async () => {
       try {
         const conversation = requestedId ? await getAgentConversation(requestedId) : await ensureConversation();
         if (conversation.workspaceId !== WORKSPACE_ID) throw new Error("对话不属于当前工作区");
         if (activeRef.current !== active) return;
+        rememberConversation(conversation.conversationId);
         active.conversationId = conversation.conversationId;
         const messages = await loadMessages(conversation.conversationId);
         if (activeRef.current !== active) return;
         setState((current) => ({ ...current, conversationId: conversation.conversationId, messages, loading: false }));
-        unsubscribe = subscribeAgentMessages(conversation.conversationId, (snapshot) => {
+        active.unsubscribe = subscribeAgentMessages(conversation.conversationId, (snapshot) => {
           if (activeRef.current !== active) return;
           const recovered = snapshot.messages.some((message) => message.messageId === active.recoveryMessageId && message.status !== "PROCESSING");
           if (recovered) active.recoveryMessageId = null;
@@ -172,9 +180,29 @@ export function useAgentConversation(requestedId: string | null = null) {
     return () => {
       if (activeRef.current === active) activeRef.current = null;
       active.controller.abort();
-      unsubscribe?.();
+      active.unsubscribe?.();
+      active.unsubscribe = undefined;
     };
   }, [requestedId]);
+
+  const clear = useCallback(() => {
+    const active = activeRef.current;
+    if (active) {
+      activeRef.current = null;
+      active.controller.abort();
+      active.unsubscribe?.();
+      active.unsubscribe = undefined;
+    }
+    setState((current) => ({
+      requestedId: current.requestedId,
+      conversationId: null,
+      messages: [],
+      progress: {},
+      loading: false,
+      sending: false,
+      error: null,
+    }));
+  }, []);
 
   const send = useCallback(async (content: string, seriesIds: string[] = [], reference: EvidenceReference | null = null) => {
     const active = activeRef.current;
@@ -279,6 +307,7 @@ export function useAgentConversation(requestedId: string | null = null) {
   return {
     ...visible,
     searching: visible.sending || visible.messages.some((message) => message.status === "PROCESSING"),
+    clear,
     send,
   };
 }

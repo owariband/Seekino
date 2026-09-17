@@ -105,9 +105,11 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
     assert "model_name VARCHAR(255)" in message_ddl
     assert "search_result JSON" in message_ddl
     assert "requested_top_k INTEGER" in message_ddl
+    assert "ON DELETE CASCADE" in message_ddl
     assert "total_duration_ms BIGINT" in timing_ddl
     assert "stages JSON NOT NULL" in timing_ddl
     assert "ck_agent_message_timing_total_duration" in timing_ddl
+    assert "ON DELETE CASCADE" in timing_ddl
 
 
 def test_create_schema_refuses_to_shadow_a_legacy_video_segment_schema() -> None:
@@ -274,3 +276,24 @@ def test_create_schema_requires_checkpoint_range_migration() -> None:
         create_schema(engine)
 
     assert set(inspect(engine).get_table_names()) == {"video_chunk_checkpoint"}
+
+
+def test_create_schema_requires_series_language_hint_migration() -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE series "
+                "(series_id TEXT, workspace_id TEXT, name TEXT, description TEXT)"
+            )
+        )
+
+    with pytest.raises(
+        SchemaUpgradeRequiredError,
+        match="series.transcript_language_hint",
+    ):
+        create_schema(engine)
+
+    assert set(inspect(engine).get_table_names()) == {"series"}

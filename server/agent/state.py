@@ -8,8 +8,11 @@ from threading import Event
 from time import monotonic
 from typing import Annotated, Literal, NotRequired, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator,
+)
 
+from ..constants.retrieval import AGENT_RETRIEVAL_STRATEGY_VERSION
 from ..schema import ContractModel, VideoChunkSearchResult
 
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
@@ -49,6 +52,54 @@ class QueryDraft(BaseModel):
     plan_context: _Text
     message: _Text
     selected_video_chunk_ids: list[_VideoChunkId] = Field(max_length=100)
+
+
+class RetrievalChannelWeights(BaseModel):
+    """Agent-selected relative weights for the currently available channels."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    transcript: float = Field(
+        default=0.0,
+        ge=0,
+        le=1,
+        allow_inf_nan=False,
+        description=(
+            "Relative weight of literal ASR phrase ranking. Raise it for exact "
+            "quotes, distinctive wording, names and short spoken phrases."
+        ),
+    )
+    semantic: float = Field(
+        ge=0,
+        le=1,
+        allow_inf_nan=False,
+        description=(
+            "Relative weight of the Pro Semantic text-vector ranking. "
+            "Raise it for plot, events, relationships and dialogue meaning."
+        ),
+    )
+    visual: float = Field(
+        ge=0,
+        le=1,
+        allow_inf_nan=False,
+        description=(
+            "Relative weight of the Video Vision ranking. Raise it for visible "
+            "objects, actions, colors, locations and shot composition."
+        ),
+    )
+
+    @field_validator("transcript", "semantic", "visual", mode="before")
+    @classmethod
+    def reject_boolean_weights(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("channel weights must be numbers, not booleans")
+        return value
+
+    @model_validator(mode="after")
+    def require_enabled_channel(self) -> "RetrievalChannelWeights":
+        if self.transcript == 0 and self.semantic == 0 and self.visual == 0:
+            raise ValueError("at least one channel weight must be greater than zero")
+        return self
 
 
 class ChatVideoItem(BaseModel):
@@ -119,8 +170,19 @@ class ChatRenderDraft(BaseModel):
         ]
 
 
+class RetrievalTraceEntry(ContractModel):
+    query: _Text
+    top_k: int = Field(ge=1, le=100)
+    strategy_version: str = Field(min_length=1, max_length=255)
+    requested_weights: RetrievalChannelWeights
+    effective_weights: RetrievalChannelWeights
+    result_count: int = Field(ge=0)
+    video_chunk_ids: list[_VideoChunkId] = Field(max_length=100)
+
+
 class AgentFinalOutput(VideoChunkSearchResult):
     render_blocks: list[FinalRenderBlock] = Field(min_length=1, max_length=200)
+    retrieval_trace: list[RetrievalTraceEntry] = Field(min_length=1)
 
 
 class EvalDecision(BaseModel):
@@ -152,12 +214,20 @@ class RunInputs(TypedDict):
 class RetrievalCall:
     query: str
     top_k: int
+    requested_weights: RetrievalChannelWeights
+    effective_weights: RetrievalChannelWeights
     result: VideoChunkSearchResult
+    strategy_version: str = AGENT_RETRIEVAL_STRATEGY_VERSION
 
     def context(self) -> dict:
         return {
             "query": self.query,
             "top_k": self.top_k,
+            "retrieval_strategy": {
+                "version": self.strategy_version,
+                "requested_weights": self.requested_weights.model_dump(mode="json"),
+                "effective_weights": self.effective_weights.model_dump(mode="json"),
+            },
             "video_chunk_ids": [
                 hit.candidate.video_chunk_id for hit in self.result.hits
             ],

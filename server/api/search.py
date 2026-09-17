@@ -141,10 +141,13 @@ def search_result_view(
 def _validated_search_result(
     result: VideoChunkSearchResult | dict,
 ) -> VideoChunkSearchResult:
-    if isinstance(result, dict) and ({"renderBlocks", "render_blocks"} & result.keys()):
+    agent_only_fields = {
+        "renderBlocks", "render_blocks", "retrievalTrace", "retrieval_trace",
+    }
+    if isinstance(result, dict) and (agent_only_fields & result.keys()):
         result = {
             key: value
             for key, value in result.items()
-            if key not in {"renderBlocks", "render_blocks"}
+            if key not in agent_only_fields
         }
     return VideoChunkSearchResult.model_validate(result)

@@ -281,6 +281,12 @@ export function getAgentConversation(conversationId: string): Promise<AgentConve
   return requestJson(`/api/agent/conversations/get?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}`);
 }
 
+export function deleteAgentConversation(conversationId: string): Promise<AgentConversationView> {
+  return requestJson(`/api/agent/conversations/delete?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}`, {
+    method: "POST",
+  });
+}
+
 export function listAgentMessages(conversationId: string, afterSequenceNo = -1, cursor?: string): Promise<Page<AgentMessageView>> {
   return requestJson(`/api/agent/messages/list?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}&afterSequenceNo=${afterSequenceNo}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
 }

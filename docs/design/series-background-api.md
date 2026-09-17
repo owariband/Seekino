@@ -23,6 +23,7 @@
   "workspaceId": "local-default",
   "seriesId": "<series UUID>",
   "description": "系列简介",
+  "transcriptLanguageHint": "ja",
   "importantExtraData": {
     "format": "markdown",
     "content": "# 背景\n\n## 角色A\n![角色A](asset://<imageId>)\n\n角色说明。"
@@ -30,7 +31,9 @@
 }
 ```
 
-`workspaceId` 和 `seriesId` 必填。`description`、`importantExtraData` 可分别更新：省略表示保留原值，显式 `null` 表示清空。只有 `description` 和 `importantExtraData` 是可更新字段；该接口不修改 Series 名称、视频的集数或上传顺序。简介去除首尾空白，空简介按 `null` 保存；背景正文按原文保存。
+`workspaceId` 和 `seriesId` 必填。`description`、`transcriptLanguageHint`、`importantExtraData` 可分别更新：省略表示保留原值，显式 `null` 表示清空。只有这三个字段可更新；该接口不修改 Series 名称、视频的集数或上传顺序。简介去除首尾空白，空简介按 `null` 保存；背景正文按原文保存。
+
+`transcriptLanguageHint` 使用常见 BCP-47 形式，例如日语 `ja`、简体中文 `zh-Hans`。它立即用于 Query Agent 组织同语言 Transcript-heavy 检索，不会改变已保存 ASR、触发重新解析或证明具体原台词存在。
 
 `importantExtraData.format` 支持 `markdown`、`json`，省略时使用 `markdown`；`content` 必须为字符串。容器只接受这两个字段。任意自定义字段应该放到 JSON 正文内：
 

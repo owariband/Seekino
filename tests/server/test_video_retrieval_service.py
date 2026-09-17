@@ -4,6 +4,7 @@ from dataclasses import replace
 from uuid import uuid4
 
 import pytest
+from engine.parse.schemas import TranscriptCue
 from gateway.schemas import EmbeddingResult
 from qdrant_client import QdrantClient
 
@@ -34,9 +35,15 @@ class FakeQueryEmbedder:
         )
 
 
-def _ready_retrieval(repository, prepared_import):
+def _ready_retrieval(
+    repository,
+    prepared_import,
+    *,
+    vectors=None,
+    channel_top_k: int = 2,
+):
     engine, video_repository = repository
-    vectors = (
+    vectors = vectors or (
         ([0.8, 0.6], [0.8, 0.6]),
         ([0.0, 1.0], [0.0, 1.0]),
     )
@@ -81,7 +88,7 @@ def _ready_retrieval(repository, prepared_import):
         video_repository,
         store,
         embedder,
-        channel_top_k=2,
+        channel_top_k=channel_top_k,
         exact=True,
     )
     return service, store, client, embedder, prepared, report
@@ -151,6 +158,151 @@ def test_formal_retrieval_closes_qdrant_rrf_and_joined_hydrate(
     )
     assert "textVector" not in payload["hits"][0]["evidence"]
     client.close()
+
+
+def test_per_call_weights_change_fused_order_without_mutating_service_defaults(
+    repository,
+    prepared_import,
+) -> None:
+    service, _store, client, _embedder, prepared, report = _ready_retrieval(
+        repository,
+        prepared_import,
+        vectors=(
+            ([1.0, 0.0], [0.0, 1.0]),
+            ([0.0, 1.0], [1.0, 0.0]),
+        ),
+    )
+    try:
+        defaults_before = service.search(
+            "find the strongest channel",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=2,
+        )
+        semantic = service.search(
+            "find the strongest channel",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=2,
+            text_weight=0.8,
+            vision_weight=0.2,
+        )
+        visual = service.search(
+            "find the strongest channel",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=2,
+            text_weight=0.2,
+            vision_weight=0.8,
+        )
+        defaults_after = service.search(
+            "find the strongest channel",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=2,
+        )
+
+        assert semantic.hits[0].candidate.video_chunk_id == report.video_chunk_ids[0]
+        assert visual.hits[0].candidate.video_chunk_id == report.video_chunk_ids[1]
+        assert [hit.candidate.video_chunk_id for hit in defaults_after.hits] == [
+            hit.candidate.video_chunk_id for hit in defaults_before.hits
+        ]
+    finally:
+        client.close()
+
+
+def test_zero_weight_skips_the_disabled_channel(
+    repository,
+    prepared_import,
+    monkeypatch,
+) -> None:
+    service, store, client, _embedder, prepared, _report = _ready_retrieval(
+        repository,
+        prepared_import,
+    )
+    vision_calls = 0
+    original_search_vision = store.search_vision
+
+    def count_vision_calls(*args, **kwargs):
+        nonlocal vision_calls
+        vision_calls += 1
+        return original_search_vision(*args, **kwargs)
+
+    monkeypatch.setattr(store, "search_vision", count_vision_calls)
+    try:
+        result = service.search(
+            "semantic only",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=2,
+            text_weight=1.0,
+            vision_weight=0.0,
+        )
+
+        assert vision_calls == 0
+        assert all(hit.candidate.vision_rank is None for hit in result.hits)
+        assert all(
+            any(
+                limitation == "本次检索策略未启用视觉通道。"
+                for limitation in hit.selection_reason.limitations
+            )
+            for hit in result.hits
+        )
+        assert all(
+            not any(
+                "视觉通道已启用" in limitation
+                for limitation in hit.selection_reason.limitations
+            )
+            for hit in result.hits
+        )
+    finally:
+        client.close()
+
+
+def test_enabled_channel_miss_is_distinct_from_disabled_channel(
+    repository,
+    prepared_import,
+) -> None:
+    service, _store, client, _embedder, prepared, _report = _ready_retrieval(
+        repository,
+        prepared_import,
+        vectors=(
+            ([1.0, 0.0], [0.0, 1.0]),
+            ([0.0, 1.0], [1.0, 0.0]),
+        ),
+        channel_top_k=1,
+    )
+    try:
+        result = service.search(
+            "find both modalities",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=2,
+            text_weight=0.5,
+            vision_weight=0.5,
+        )
+
+        assert len(result.hits) == 2
+        assert any(
+            "视觉通道已启用，但该片段未进入该通道候选"
+            in limitation
+            for hit in result.hits
+            for limitation in hit.selection_reason.limitations
+        )
+        assert any(
+            "文本语义通道已启用，但该片段未进入该通道候选"
+            in limitation
+            for hit in result.hits
+            for limitation in hit.selection_reason.limitations
+        )
+        assert all(
+            "未启用文本语义通道" not in limitation
+            and "未启用视觉通道" not in limitation
+            for hit in result.hits
+            for limitation in hit.selection_reason.limitations
+        )
+    finally:
+        client.close()
 
 
 def test_retrieval_reports_a_qdrant_orphan_instead_of_dropping_it(
@@ -240,6 +392,166 @@ def test_retrieval_checks_ready_scope_before_calling_the_embedder(
             series_ids=[prepared_import.series_id],
         )
     assert embedder.calls == []
+
+
+def test_transcript_only_retrieval_matches_real_asr_without_embedding(
+    repository,
+    prepared_import,
+) -> None:
+    transcript_chunks = []
+    for index, chunk in enumerate(prepared_import.chunks):
+        cues = (
+            [
+                TranscriptCue(start_ms=1_000, end_ms=2_000, text="别把责任"),
+                TranscriptCue(start_ms=2_000, end_ms=3_000, text="推给别人。"),
+            ]
+            if index == 0
+            else [TranscriptCue(start_ms=1_000, end_ms=2_000, text="其他对白")]
+        )
+        transcript_chunks.append(
+            replace(
+                chunk,
+                parse_result=chunk.parse_result.model_copy(
+                    update={"candidate_transcript": cues}
+                ),
+            )
+        )
+    prepared_import = replace(
+        prepared_import,
+        chunks=tuple(transcript_chunks),
+    )
+    service, _store, client, embedder, prepared, report = _ready_retrieval(
+        repository,
+        prepared_import,
+    )
+    try:
+        result = service.search(
+            "『别把责任，推给别人！』",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=2,
+            transcript_weight=1.0,
+            text_weight=0.0,
+            vision_weight=0.0,
+        )
+
+        assert embedder.calls == []
+        assert [hit.candidate.video_chunk_id for hit in result.hits] == [
+            report.video_chunk_ids[0]
+        ]
+        hit = result.hits[0]
+        assert hit.candidate.transcript_rank == 1
+        assert hit.candidate.transcript_score == 1.0
+        assert hit.candidate.text_rank is None
+        assert hit.candidate.vision_rank is None
+        assert hit.selection_reason.matched_evidence[0].model_dump() == {
+            "kind": "TRANSCRIPT",
+            "text": "别把责任 推给别人。",
+            "start_ms": 1_000,
+            "end_ms": 3_000,
+        }
+    finally:
+        client.close()
+
+
+def test_transcript_only_miss_is_a_normal_empty_result(
+    repository,
+    prepared_import,
+) -> None:
+    service, _store, client, embedder, prepared, _report = _ready_retrieval(
+        repository,
+        prepared_import,
+    )
+    try:
+        result = service.search(
+            "不存在的原话",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=2,
+            transcript_weight=1.0,
+            text_weight=0.0,
+            vision_weight=0.0,
+        )
+
+        assert embedder.calls == []
+        assert result.hits == []
+        assert result.agent_reply.result_count == 0
+    finally:
+        client.close()
+
+
+def test_transcript_retrieval_assigns_overlap_cue_to_canonical_owner(
+    repository,
+    prepared_import,
+) -> None:
+    first, second = prepared_import.chunks
+    first_window = first.parse_result.window.model_copy(
+        update={"analysis_end_ms": 13_000, "analysis_duration_ms": 13_000}
+    )
+    second_window = second.parse_result.window.model_copy(
+        update={
+            "analysis_start_ms": 7_000,
+            "analysis_duration_ms": 13_000,
+            "relative_chunk_start_ms": 3_000,
+        }
+    )
+    phrase = "边界处的同一句台词"
+    prepared_import = replace(
+        prepared_import,
+        chunks=(
+            replace(
+                first,
+                parse_result=first.parse_result.model_copy(
+                    update={
+                        "window": first_window,
+                        "candidate_transcript": [
+                            TranscriptCue(
+                                start_ms=10_500,
+                                end_ms=11_500,
+                                text=phrase,
+                            )
+                        ],
+                    }
+                ),
+            ),
+            replace(
+                second,
+                parse_result=second.parse_result.model_copy(
+                    update={
+                        "window": second_window,
+                        "candidate_transcript": [
+                            TranscriptCue(
+                                start_ms=3_500,
+                                end_ms=4_500,
+                                text=phrase,
+                            )
+                        ],
+                    }
+                ),
+            ),
+        ),
+    )
+    service, _store, client, _embedder, prepared, report = _ready_retrieval(
+        repository,
+        prepared_import,
+    )
+    try:
+        result = service.search(
+            phrase,
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=2,
+            transcript_weight=1.0,
+            text_weight=0.0,
+            vision_weight=0.0,
+        )
+
+        assert [hit.candidate.video_chunk_id for hit in result.hits] == [
+            report.video_chunk_ids[1]
+        ]
+        assert result.hits[0].selection_reason.matched_evidence[0].start_ms == 10_500
+    finally:
+        client.close()
 
 
 def test_retrieval_checks_workspace_before_calling_the_embedder(

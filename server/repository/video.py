@@ -7,6 +7,11 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from engine.retrieval.video_retrieval import (
+    TranscriptChunkDocument,
+    TranscriptCueDocument,
+)
+
 from ..identity import canonical_uuid
 from ..model.dto.keyframeDTO import KeyframeBackfillCandidate
 from ..model.dto.jobDTO import ParseJobLease
@@ -664,6 +669,98 @@ class VideoRepository:
         )
         with self._session_factory() as session:
             return list(session.scalars(statement))
+
+    def list_searchable_transcripts(
+        self,
+        series_ids: Sequence[str],
+        *,
+        workspace_id: str,
+    ) -> list[TranscriptChunkDocument]:
+        """Load ASR cues only for chunks whose current index snapshot is searchable."""
+
+        if isinstance(series_ids, (str, bytes)):
+            raise ValueError("series_ids must be a sequence of IDs")
+        ordered_series_ids = list(
+            dict.fromkeys(
+                canonical_uuid(series_id, "series_id") for series_id in series_ids
+            )
+        )
+        if not ordered_series_ids:
+            raise ValueError("series_ids must not be empty")
+        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        statement = (
+            select(
+                VideoChunkRecord.video_chunk_id,
+                VideoChunkRecord.start_ms,
+                VideoChunkRecord.end_ms,
+                VideoChunkRecord.analysis_window_start_ms,
+                VideoChunkRecord.transcript,
+            )
+            .join(VideoRecord, VideoRecord.video_id == VideoChunkRecord.video_id)
+            .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
+            .join(
+                IndexSyncIntentRecord,
+                IndexSyncIntentRecord.video_chunk_id
+                == VideoChunkRecord.video_chunk_id,
+            )
+            .where(
+                SeriesRecord.workspace_id == normalized_workspace,
+                SeriesRecord.series_id.in_(ordered_series_ids),
+                IndexSyncIntentRecord.status == IndexSyncStatus.SYNCED.value,
+                IndexSyncIntentRecord.operation == IndexSyncOperation.UPSERT.value,
+            )
+            .order_by(
+                VideoRecord.episode_order,
+                VideoChunkRecord.sequence_no,
+                VideoChunkRecord.video_chunk_id,
+            )
+        )
+        with self._session_factory() as session:
+            rows = session.execute(statement).all()
+
+        documents: list[TranscriptChunkDocument] = []
+        for row in rows:
+            cues: list[TranscriptCueDocument] = []
+            for cue in row.transcript:
+                if not isinstance(cue, dict):
+                    raise ValueError(
+                        f"VideoChunk {row.video_chunk_id} has a malformed transcript cue"
+                    )
+                text = cue.get("text")
+                cue_start_ms = cue.get("start_ms")
+                cue_end_ms = cue.get("end_ms")
+                if not isinstance(text, str) or not text.strip():
+                    continue
+                if (
+                    isinstance(cue_start_ms, bool)
+                    or not isinstance(cue_start_ms, int)
+                    or isinstance(cue_end_ms, bool)
+                    or not isinstance(cue_end_ms, int)
+                ):
+                    raise ValueError(
+                        f"VideoChunk {row.video_chunk_id} has invalid transcript times"
+                    )
+                start_ms = row.analysis_window_start_ms + cue_start_ms
+                end_ms = row.analysis_window_start_ms + cue_end_ms
+                document_cue = TranscriptCueDocument(
+                    text=text,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                )
+                # Analysis windows overlap. Assign each repeated cue to the
+                # canonical chunk containing its midpoint before ranking it.
+                midpoint_ms = start_ms + (end_ms - start_ms) // 2
+                if not row.start_ms <= midpoint_ms < row.end_ms:
+                    continue
+                cues.append(document_cue)
+            if cues:
+                documents.append(
+                    TranscriptChunkDocument(
+                        video_chunk_id=row.video_chunk_id,
+                        cues=cues,
+                    )
+                )
+        return documents
 
     def hydrate_video_chunk_states(
         self,

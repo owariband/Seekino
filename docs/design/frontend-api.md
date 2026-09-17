@@ -123,6 +123,7 @@ Content-Type: application/json
   "workspaceId": "local-default",
   "name": "BanG Dream! It's MyGO!!!!!",
   "description": "动画正片",
+  "transcriptLanguageHint": "ja",
   "importantExtraData": {
     "seriesBible": "可选的作品背景信息"
   },
@@ -139,7 +140,8 @@ Content-Type: application/json
 
 - `workspaceId`：可省略，默认 `local-default`，最大 64 字符。
 - `name`：必填，1～255 字符。
-- `description`、`importantExtraData` 可为空。
+- `description`、`importantExtraData`、`transcriptLanguageHint` 可为空。
+- `transcriptLanguageHint` 是 ASR 原文检索语言提示，使用常见 BCP-47 形式，例如日语 `ja`；它不改变回答语言，也不会触发重新解析。
 - `characterBible` 可省略，默认空数组。
 - Series ID 由 `workspaceId + 规范化名称` 稳定生成。
 - 完全相同的创建请求是幂等的；同名但字段不同返回 `409`。
@@ -152,6 +154,7 @@ Content-Type: application/json
   "workspaceId": "local-default",
   "name": "BanG Dream! It's MyGO!!!!!",
   "description": "动画正片",
+  "transcriptLanguageHint": "ja",
   "status": "EMPTY",
   "importantExtraData": {
     "seriesBible": "可选的作品背景信息"

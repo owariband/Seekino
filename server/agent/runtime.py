@@ -14,7 +14,7 @@ from langgraph.graph import END, START, StateGraph
 from ..schema import VideoChunkSearchResult
 from .chat import render_chat
 from .evaluator import evaluate
-from .output import bind_draft, finalize_output
+from .output import bind_draft, build_retrieval_trace, finalize_output
 from .query import run_query
 from .state import (
     AgentFinalOutput, AgentModelInvocationError, AnswerPhase, ExecutionControl,
@@ -157,6 +157,7 @@ class AgentRuntime:
         rendered = render_chat(
             self._chat_model, state["inputs"], current, state["control"],
             self._max_prompt_chars, self._max_model_calls,
+            build_retrieval_trace(state["turns"]),
         )
         return {
             "turns": [
@@ -168,4 +169,4 @@ class AgentRuntime:
     @staticmethod
     def _output(state: RunState) -> dict:
         state["control"].check()
-        return {"final_output": finalize_output(state["turns"][-1], state["inputs"])}
+        return {"final_output": finalize_output(state["turns"], state["inputs"])}

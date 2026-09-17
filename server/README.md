@@ -3,7 +3,7 @@
 Server 当前实现 M1 的 Upload-to-Search 纵向闭环：分片上传与断点续传、环境隔离的
 Artifact Store、MySQL 事实与 DB Queue、带 Lease/Heartbeat/Retry/Reaper 的进程内
 ParseJobConsumer、VideoChunk checkpoint、持久化 Index Sync Intent、Qdrant 派生索引，
-以及按 `seriesIds` 限定的双路召回、RRF 和 `videoChunkId[]` 批量回源。模型协议仍由
+以及按 `seriesIds` 限定的 ASR/Semantic/Vision 三路召回、RRF 和 `videoChunkId[]` 批量回源。模型协议仍由
 Gateway 实现，AniVAG Server 进程内直接复用 Engine 的解析链路。
 
 Multi-Agent 对话作为独立领域建立在正式检索之上：Workspace 直接拥有
@@ -63,7 +63,7 @@ ServerSettings` 保持可用。Upload、Agent、VideoProcessing、Retrieval 和 
 
 部署调优项已补到 `.env.example`：`ANIVAG_SSE_POLL_SECONDS`、
 `ANIVAG_SSE_KEEPALIVE_SECONDS`、`ANIVAG_DATABASE_POOL_RECYCLE_SECONDS`、
-`ANIVAG_RETRIEVAL_CHANNEL_TOP_K`、`ANIVAG_RETRIEVAL_RRF_K` 和双路权重
+`ANIVAG_RETRIEVAL_CHANNEL_TOP_K`、`ANIVAG_RETRIEVAL_RRF_K` 和非 Agent 向量双路默认权重
 `ANIVAG_RETRIEVAL_TEXT_WEIGHT` / `ANIVAG_RETRIEVAL_VISION_WEIGHT`。
 Embedding 模型与 FPS 覆盖值由 Settings 读取，API 与进程内 Consumer 使用同一套配置。
 Consumer 的 Lease、Heartbeat、Poll 和 Retry 分别使用 `ANIVAG_MQ_*` 配置；旧的
@@ -376,8 +376,10 @@ uv run python -m server.cli rebuild-index
 ## 正式检索闭环
 
 `search` 只接受完整、已进入 `READY` 的 Series Scope。每个 named vector 都把
-`seriesId` 的 Qdrant filter 放在 TopK 查询内执行；随后由 Engine 做确定性 RRF，并保留
-Text/Vision 各自的 rank 与 score。最终 `videoChunkId[]` 通过一条联表 SQL 同时 Hydrate
+`seriesId` 的 Qdrant filter 放在 TopK 查询内执行；Transcript-enabled 调用同时从当前
+READY + SYNCED + UPSERT Scope 读取原始 ASR，通过规范化连续短语匹配形成第三份排行榜。
+随后由 Engine 做确定性 Weighted RRF，并保留 Transcript/Text/Vision 各自的 rank 与
+score。最终 `videoChunkId[]` 通过一条联表 SQL 同时 Hydrate
 Evidence 和当前 Index Sync revision，若发现 Qdrant 孤儿 Point、旧 revision、跨 Series/
 Video 或 payload 契约不一致，会明确抛出一致性错误，不会静默丢弃。
 
@@ -388,9 +390,10 @@ uv run python -m server.cli search \
   --top-k 5
 ```
 
-多 Series 检索时重复传入 `--series-id`。默认使用 Text/Vision `1:1` 权重、每路 Top 20、
-`rrfK=60`；`--exact` 只用于确定性诊断。输出的每个 `hit` 包含一个
-`VideoChunkCandidate`（融合与双路分数）和一个同 ID 的 `VideoChunkEvidence`（Series、
+多 Series 检索时重复传入 `--series-id`。CLI 与普通 `/api/search` 默认保持 Transcript
+关闭、Text/Vision `1:1` 权重；Query Agent 则为每次 Tool Call 自主提交三路连续权重。
+每路 Top 20、`rrfK=60`；`--exact` 只用于向量检索的确定性诊断。输出的每个 `hit` 包含一个
+`VideoChunkCandidate`（融合与三路 rank/score）和一个同 ID 的 `VideoChunkEvidence`（Series、
 集数、时间范围、媒体引用、解析正文，以及生成 Text 向量时使用的完整
 `retrievalText`），不包含只供 ANN 计算使用的原始浮点向量。
 

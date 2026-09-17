@@ -1,15 +1,14 @@
 # 项目问题清单
 
-更新日期：2026-09-15。依据当前源码和本轮审查，区分确定缺陷、功能缺失和待联调项。本文件记录问题及拟修复方案，不表示方案已经实现，也不扩展当前开发范围。
+更新日期：2026-09-17。依据当前源码和本轮审查，区分确定缺陷、功能缺失和待联调项。本文件记录问题及拟修复方案，不表示方案已经实现，也不扩展当前开发范围。
 
 ## frontend
 
-### F01：缺少新建聊天和历史对话切换
+### F01：新建聊天、历史对话切换与删除
 
-- 类型：功能缺失。
-- 现状：SearchPage 调用 `useAgentConversation()`，自动创建或恢复浏览器保存的当前 Workspace 对话。后端支持多条 Conversation，客户端也有列表方法，但页面没有新建聊天、历史列表和切换入口。
-- 影响：用户只能使用当前对话，不能通过 UI 管理多条聊天。
-- 修复方向：消费现有 conversations/create、list、get；由页面传入选中的 conversationId，复用 Hook 已有的切换、订阅清理与旧回调隔离。
+- 类型：已修复。
+- 当前行为：SearchPage 显示 Workspace 内的 Conversation 列表，支持新建、切换和二次确认删除；刷新后恢复最后选中的 Conversation。切换时复用原 Hook 的订阅清理与迟到事件隔离，不另建 SSE 管理器。
+- 删除语义：终态 Conversation 在事务中物理删除，Message 和 Timing 由 MySQL 外键级联清理。存在 `PROCESSING` 回答时返回 `409 MESSAGE_IN_PROGRESS`，不与运行中的 checkpoint / complete / fail 回写竞态。
 - 依据：[SearchPage.tsx](../../web/src/features/search/SearchPage.tsx)、[useAgentConversation.ts](../../web/src/features/search/useAgentConversation.ts)、[client.ts](../../web/src/api/client.ts)。
 
 ### F02：前端允许 PARTIAL，后端只接受 READY

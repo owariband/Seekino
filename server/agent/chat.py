@@ -7,7 +7,7 @@ from .output import build_chat_output
 from .state import (
     AgentModelInvocationError, ChatRenderDraft, ChatVideoBlock, ChatVideoItem,
     ExecutionControl, LoopTurn, MarkdownRenderBlock, ModelContextBudget,
-    RunInputs, context_json,
+    RetrievalTraceEntry, RunInputs, context_json,
 )
 
 
@@ -18,6 +18,7 @@ def render_chat(
     control: ExecutionControl,
     max_prompt_chars: int,
     max_model_calls: int,
+    retrieval_trace: list[RetrievalTraceEntry],
 ) -> ChatRenderDraft:
     if turn.review.action != "complete":
         raise AgentModelInvocationError("Chat requires Evaluator approval")
@@ -90,7 +91,7 @@ def render_chat(
         )
         control.check()
         rendered = ChatRenderDraft(blocks=blocks)
-        output = build_chat_output(turn.draft_output, rendered)
+        output = build_chat_output(turn.draft_output, rendered, retrieval_trace)
         control.publish(inputs, {
             "type": "answer.evidence",
             "searchResult": output.model_dump(mode="json", by_alias=True),

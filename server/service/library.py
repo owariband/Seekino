@@ -6,7 +6,7 @@ from ..identity import canonical_uuid, derive_series_id
 from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
 from ..repository.library import LibraryRepository
 from ..storage.artifact import ArtifactStore
-from ..utils.validation import require_nonempty_text
+from ..utils.validation import normalize_language_tag_hint, require_nonempty_text
 
 
 class LibraryService:
@@ -22,6 +22,7 @@ class LibraryService:
         workspace_id: str,
         name: str,
         description: str | None = None,
+        transcript_language_hint: str | None = None,
         important_extra_data: dict | None = None,
         character_bible: list[dict] | None = None,
     ) -> SeriesState:
@@ -30,6 +31,9 @@ class LibraryService:
         normalized_description = None
         if description is not None:
             normalized_description = description.strip() or None
+        normalized_language_hint = normalize_language_tag_hint(
+            transcript_language_hint
+        )
         series_id = derive_series_id(normalized_workspace, normalized_name)
         self._validate_background_images(
             series_id, prepare_background_text(character_bible or [], important_extra_data),
@@ -39,6 +43,7 @@ class LibraryService:
             workspace_id=normalized_workspace,
             name=normalized_name,
             description=normalized_description,
+            transcript_language_hint=normalized_language_hint,
             important_extra_data=important_extra_data,
             character_bible=character_bible or [],
         )
@@ -48,14 +53,23 @@ class LibraryService:
         self, series_id: str, *, workspace_id: str, changes: dict,
     ) -> SeriesState:
         series = self.get_series(series_id, workspace_id=workspace_id)
-        if changes.keys() - {"description", "important_extra_data"}:
-            raise ValueError("only description and important_extra_data can be updated")
+        if changes.keys() - {
+            "description", "transcript_language_hint", "important_extra_data",
+        }:
+            raise ValueError(
+                "only description, transcript_language_hint and "
+                "important_extra_data can be updated"
+            )
         normalized = dict(changes)
         if "description" in normalized and normalized["description"] is not None:
             description = normalized["description"]
             if not isinstance(description, str):
                 raise ValueError("description must be text or null")
             normalized["description"] = description.strip() or None
+        if "transcript_language_hint" in normalized:
+            normalized["transcript_language_hint"] = normalize_language_tag_hint(
+                normalized["transcript_language_hint"]
+            )
         if "important_extra_data" in normalized and normalized["important_extra_data"] is not None:
             document = normalized["important_extra_data"]
             if not isinstance(document, dict) or document.keys() - {"format", "content"}:

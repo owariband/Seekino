@@ -17,6 +17,7 @@ from server.model.dto.jobDTO import (
     ParseJobState,
     VideoChunkCheckpointState,
 )
+from server.repository.agent import AgentConversationNotFoundError
 
 _NOW = datetime(2026, 9, 15, 12)
 _CONVERSATION_ID = "conversation-1"
@@ -194,6 +195,32 @@ def test_agent_sse_keepalive_uses_elapsed_time_not_poll_count(
     assert len([event for event in events if event.startswith("event: messages")]) == 1
     assert events.count(": keep-alive\n\n") == 1
     assert clock.sleeps == [poll_seconds] * (polls - 1)
+
+
+def test_agent_sse_ends_normally_when_conversation_is_deleted(monkeypatch) -> None:
+    clock = _Clock()
+    _patch_runtime(monkeypatch, agent_api, clock)
+
+    class _DeletedConversationService:
+        @staticmethod
+        def list_all_messages(conversation_id: str, *, workspace_id: str):
+            raise AgentConversationNotFoundError(
+                f"conversationId {conversation_id!r} does not exist in {workspace_id!r}"
+            )
+
+    events = asyncio.run(
+        _collect(
+            agent_api._agent_message_events(
+                _Request(1),
+                _DeletedConversationService(),
+                _CONVERSATION_ID,
+                _WORKSPACE_ID,
+                SSEConfig(),
+            )
+        )
+    )
+
+    assert events == []
 
 
 def _job_detail() -> ParseJobDetail:

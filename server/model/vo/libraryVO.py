@@ -57,6 +57,7 @@ class SeriesSummary(ContractModel):
 
 
 class SeriesDetail(SeriesSummary):
+    transcript_language_hint: str | None
     important_extra_data: dict | None
     character_bible: list[Character]
     videos: list[VideoSummary]

@@ -20,6 +20,7 @@ class SeriesCreateRequest(ContractModel):
     workspace_id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
+    transcript_language_hint: str | None = Field(default=None, max_length=64)
     important_extra_data: dict | None = None
     character_bible: list[Character] = Field(default_factory=list)
 
@@ -33,6 +34,7 @@ class SeriesUpdateRequest(ContractModel):
     workspace_id: str = Field(min_length=1, max_length=64)
     series_id: str = Field(min_length=1)
     description: str | None = None
+    transcript_language_hint: str | None = Field(default=None, max_length=64)
     important_extra_data: SeriesBackground | None = None
 
 
@@ -78,6 +80,7 @@ class SeriesState:
     workspace_id: str
     name: str
     description: str | None
+    transcript_language_hint: str | None
     status: str
     important_extra_data: dict | None
     character_bible: list[dict]

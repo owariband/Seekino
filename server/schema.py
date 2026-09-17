@@ -97,6 +97,8 @@ class VideoChunkCandidate(ContractModel):
     video_chunk_id: str
     fused_rank: int = Field(gt=0)
     fused_score: float = Field(gt=0, allow_inf_nan=False)
+    transcript_rank: int | None = Field(default=None, gt=0)
+    transcript_score: float | None = Field(default=None, allow_inf_nan=False)
     text_rank: int | None = Field(default=None, gt=0)
     text_score: float | None = Field(default=None, allow_inf_nan=False)
     vision_rank: int | None = Field(default=None, gt=0)

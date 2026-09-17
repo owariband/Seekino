@@ -448,3 +448,32 @@ def test_create_preserves_legacy_freeform_background_and_validates_managed_refs(
             important_extra_data={"arbitrary": {"image": "asset://missing"}},
         )
     assert library.count_series(workspace_id="local-default") == 1
+
+
+def test_series_transcript_language_hint_is_normalized_updated_and_cleared(repository):
+    _factory, _videos, library = _library(repository)
+    created = library.create_series(
+        workspace_id="local-default",
+        name="Japanese audio",
+        transcript_language_hint="  ja-jp  ",
+    )
+    assert created.transcript_language_hint == "ja-JP"
+
+    updated = library.update_series(
+        created.series_id,
+        workspace_id="local-default",
+        changes={"transcript_language_hint": "zh-hans"},
+    )
+    assert updated.transcript_language_hint == "zh-Hans"
+    assert library.update_series(
+        created.series_id,
+        workspace_id="local-default",
+        changes={"transcript_language_hint": None},
+    ).transcript_language_hint is None
+
+    with pytest.raises(ValueError, match="BCP-47"):
+        library.update_series(
+            created.series_id,
+            workspace_id="local-default",
+            changes={"transcript_language_hint": "Japanese language"},
+        )

@@ -47,6 +47,7 @@ class LibraryRepository:
         workspace_id: str,
         name: str,
         description: str | None,
+        transcript_language_hint: str | None,
         important_extra_data: dict | None,
         character_bible: list[dict],
     ) -> SeriesState:
@@ -67,6 +68,8 @@ class LibraryRepository:
                             or existing.workspace_id != workspace_id
                             or existing.name.casefold() != name.casefold()
                             or existing.description != description
+                            or existing.transcript_language_hint
+                            != transcript_language_hint
                             or existing.important_extra_data != important_extra_data
                             or existing.character_bible != character_bible
                         ):
@@ -89,6 +92,7 @@ class LibraryRepository:
                         workspace_id=workspace_id,
                         name=name,
                         description=description,
+                        transcript_language_hint=transcript_language_hint,
                         status="EMPTY",
                         important_extra_data=important_extra_data,
                         character_bible=character_bible,
@@ -111,7 +115,9 @@ class LibraryRepository:
             )
             if record is None:
                 raise SeriesNotFoundError("Series does not exist in this workspace")
-            for field in ("description", "important_extra_data"):
+            for field in (
+                "description", "transcript_language_hint", "important_extra_data",
+            ):
                 if field in changes:
                     setattr(record, field, changes[field])
 
@@ -465,6 +471,7 @@ class LibraryRepository:
             workspace_id=record.workspace_id,
             name=record.name,
             description=record.description,
+            transcript_language_hint=record.transcript_language_hint,
             status=record.status,
             important_extra_data=record.important_extra_data,
             character_bible=record.character_bible,

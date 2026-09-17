@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from ...schema import ContractModel
-from ...agent.state import AnswerPhase
+from ...agent.state import AnswerPhase, RetrievalTraceEntry
 from ..dto.agentDTO import EvidenceReference
 from .commonVO import Failure, UnixTimeMs
 from .searchVO import SearchEvidenceView
@@ -49,6 +49,10 @@ class AgentConversationView(ContractModel):
     updated_at: UnixTimeMs
 
 
+class AgentSearchEvidenceView(SearchEvidenceView):
+    retrieval_trace: list[RetrievalTraceEntry]
+
+
 class AgentMessageView(ContractModel):
     message_id: str
     conversation_id: str
@@ -63,7 +67,7 @@ class AgentMessageView(ContractModel):
     model_name: str | None
     reply_to_message_id: str | None
     retrieval_query: str | None
-    search_result: SearchEvidenceView | None
+    search_result: AgentSearchEvidenceView | None
     render_blocks: list[AgentRenderBlockView] = Field(default_factory=list)
     timing: AgentMessageTimingView | None
     last_error: Failure | None
@@ -102,7 +106,7 @@ class AgentAnswerProgressView(AgentAnswerEventView):
 
 class AgentAnswerEvidenceView(AgentAnswerEventView):
     type: Literal["answer.evidence"] = "answer.evidence"
-    search_result: SearchEvidenceView
+    search_result: AgentSearchEvidenceView
 
 
 class AgentAnswerBlockView(AgentAnswerEventView):

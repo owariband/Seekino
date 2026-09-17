@@ -33,6 +33,7 @@ def create_series(request: Request, body: SeriesCreateRequest) -> SeriesView:
         workspace_id=body.workspace_id,
         name=body.name,
         description=body.description,
+        transcript_language_hint=body.transcript_language_hint,
         important_extra_data=body.important_extra_data,
         character_bible=[item.model_dump() for item in body.character_bible],
     )
@@ -174,6 +175,7 @@ def project_series_summary(state: SeriesState, media: MediaService) -> SeriesSum
 def project_series_detail(state: SeriesState, media: MediaService) -> SeriesDetail:
     return SeriesDetail(
         **project_series_summary(state, media).model_dump(),
+        transcript_language_hint=state.transcript_language_hint,
         important_extra_data=state.important_extra_data,
         character_bible=[Character(name=item["name"], aliases=item.get("aliases", [])) for item in state.character_bible],
         videos=[project_video(video, media) for video in state.videos],

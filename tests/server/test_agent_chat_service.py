@@ -9,13 +9,18 @@ from threading import Event
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import event, func, select, text
 
 from server.agent.runtime import AgentRuntime
 from server.agent.state import AgentContextBudgetError, AgentModelInvocationError
 from server.database import (
     DatabaseEnvironment, create_database_engine, create_schema, create_session_factory,
 )
-from server.model.agent import AgentConversationRecord, AgentMessageRecord
+from server.model.agent import (
+    AgentConversationRecord,
+    AgentMessageRecord,
+    AgentMessageTimingRecord,
+)
 from server.model.video import SeriesRecord
 from server.repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
@@ -35,7 +40,23 @@ class _RetrievalStub:
     calls: list[tuple[str, list[str], int, str]] = field(default_factory=list)
     hits: list[VideoChunkSearchHit] = field(default_factory=list)
 
-    def search(self, query, *, workspace_id, series_ids, top_k):
+    def search(
+        self,
+        query,
+        *,
+        workspace_id,
+        series_ids,
+        top_k,
+        transcript_weight=None,
+        text_weight=None,
+        vision_weight=None,
+    ):
+        if any(
+            weight is not None
+            for weight in (transcript_weight, text_weight, vision_weight)
+        ):
+            assert None not in (transcript_weight, text_weight, vision_weight)
+            assert transcript_weight + text_weight + vision_weight == pytest.approx(1.0)
         self.calls.append((query, list(series_ids), top_k, workspace_id))
         return VideoChunkSearchResult(
             query=query, series_ids=list(series_ids),
@@ -55,7 +76,15 @@ class _QueryModel:
         number = json.loads(prompt.split("\n\n", 1)[1])["turn_number"]
         query = self.queries[min(number - 1, len(self.queries) - 1)]
         if query is not None:
-            tools[0].invoke({"query": query, "top_k": 8})
+            tools[0].invoke({
+                "query": query,
+                "top_k": 8,
+                "channel_weights": {
+                    "transcript": 0.1,
+                    "semantic": 0.5,
+                    "visual": 0.4,
+                },
+            })
         return result_type.model_validate({
             "plan_context": f"第 {number} 轮检索并核验动作。",
             "message": f"第 {number} 轮待审核草稿。", "selected_video_chunk_ids": list(self.selected_ids),
@@ -132,12 +161,14 @@ def build_service(tmp_path):
 
     def build(
         *, query=None, evaluator=None, chat=None, runtime_kwargs=None,
-        service_kwargs=None,
+        service_kwargs=None, enforce_foreign_keys=False,
     ):
         engine = create_database_engine(
             f"sqlite+pysqlite:///{tmp_path / f'agent-{len(resources)}.sqlite'}",
             environment=DatabaseEnvironment.TEST,
         )
+        if enforce_foreign_keys:
+            event.listen(engine, "connect", _enable_sqlite_foreign_keys)
         create_schema(engine)
         factory = create_session_factory(engine)
         repository = AgentRepository(factory)
@@ -165,6 +196,14 @@ def build_service(tmp_path):
     for service, engine in resources:
         service.close()
         engine.dispose()
+
+
+def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
 
 
 def _send(service, conversation, *, key="message", content="寻找摔杯子的片段", series_ids=None, reference=None):
@@ -215,6 +254,18 @@ def test_first_question_titles_only_default_conversations_and_creation_replay_is
     assert service.create_conversation(workspace_id="local-default", idempotency_key="default-title") == updated
     _send(service, custom, key="custom-message", content=question)
     assert service.get_conversation(custom.conversation_id, workspace_id="local-default").title == "测试对话"
+
+
+def test_query_agent_receives_series_transcript_language_hint(build_service):
+    service, conversation, _retrieval, repository, query, *_ = build_service()
+    with repository._session_factory.begin() as session:
+        session.scalar(select(SeriesRecord)).transcript_language_hint = "ja"
+
+    _send(service, conversation, content="她当时的原话是什么？")
+
+    context = json.loads(query.prompts[-1].split("\n\n", 1)[1])["inputs"]
+    assert context["series_context"][0]["transcriptLanguageHint"] == "ja"
+    assert "日语 ASR 必须使用日语原文" in query.prompts[-1]
 
 
 def test_read_only_message_recovery_by_user_assistant_or_request_key(build_service):
@@ -316,6 +367,89 @@ def test_conversation_creation_is_idempotent_within_workspace(build_service):
         service.create_conversation(
             workspace_id="local-default", title="另一条对话",
             idempotency_key="conversation",
+        )
+
+
+def test_repository_deletes_terminal_conversation_and_returns_snapshot(build_service):
+    service, conversation, _, repository, *_ = build_service(
+        enforce_foreign_keys=True
+    )
+    _send(service, conversation)
+    with repository._session_factory() as session:
+        assert session.execute(text("PRAGMA foreign_keys")).scalar_one() == 1
+        assert session.scalar(
+            select(func.count()).select_from(AgentMessageRecord)
+        ) == 2
+        assert session.scalar(
+            select(func.count()).select_from(AgentMessageTimingRecord)
+        ) == 1
+    before = repository.get_conversation(
+        conversation.conversation_id,
+        "local-default",
+    )
+
+    deleted = repository.delete_conversation(
+        conversation.conversation_id,
+        "local-default",
+    )
+
+    assert deleted == before
+    assert deleted.message_count == 2
+    with pytest.raises(AgentConversationNotFoundError):
+        repository.get_conversation(
+            conversation.conversation_id,
+            "local-default",
+        )
+    with repository._session_factory() as session:
+        assert session.scalar(
+            select(func.count()).select_from(AgentMessageRecord)
+        ) == 0
+        assert session.scalar(
+            select(func.count()).select_from(AgentMessageTimingRecord)
+        ) == 0
+
+
+def test_service_delete_is_workspace_scoped_and_rejects_processing_answer(build_service):
+    release = Event()
+    service, conversation, _, _, _, _, _ = build_service(
+        chat=_ChatModel(release=release)
+    )
+    execution = service.start_message(
+        conversation.conversation_id,
+        workspace_id="local-default",
+        content="找到杯子",
+        idempotency_key="processing-delete",
+        stream=True,
+    )
+    try:
+        with pytest.raises(AgentConversationNotFoundError):
+            service.delete_conversation(
+                conversation.conversation_id,
+                workspace_id="another-workspace",
+            )
+        with pytest.raises(AgentMessageInProgressError):
+            service.delete_conversation(
+                conversation.conversation_id,
+                workspace_id="local-default",
+            )
+        assert service.get_conversation(
+            conversation.conversation_id,
+            workspace_id="local-default",
+        ).message_count == 2
+    finally:
+        release.set()
+    execution.result()
+
+    deleted = service.delete_conversation(
+        conversation.conversation_id,
+        workspace_id="local-default",
+    )
+    assert deleted.conversation_id == conversation.conversation_id
+    assert deleted.message_count == 2
+    with pytest.raises(AgentConversationNotFoundError):
+        service.get_conversation(
+            conversation.conversation_id,
+            workspace_id="local-default",
         )
 
 
@@ -564,6 +698,15 @@ def test_completed_event_observes_committed_snapshot(build_service):
     assert [event["type"] for event in events].count("answer.evidence") == 1
     evidence = next(event for event in events if event["type"] == "answer.evidence")
     assert evidence["searchResult"] == completed.search_result
+    assert completed.search_result["retrievalTrace"] == [{
+        "query": "第一次改写",
+        "topK": 8,
+        "strategyVersion": "query-adaptive-three-channel-rrf-v2",
+        "requestedWeights": {"transcript": 0.1, "semantic": 0.5, "visual": 0.4},
+        "effectiveWeights": {"transcript": 0.1, "semantic": 0.5, "visual": 0.4},
+        "resultCount": 0,
+        "videoChunkIds": [],
+    }]
     blocks = [event["block"] for event in events if event["type"] == "answer.block"]
     assert blocks == completed.search_result["renderBlocks"]
     assert [event["type"] for event in events[-4:]] == [

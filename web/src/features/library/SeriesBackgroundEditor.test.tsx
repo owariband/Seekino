@@ -12,6 +12,7 @@ vi.mock("../../api/client", async (importOriginal) => ({ ...await importOriginal
 
 const series: SeriesView = {
   seriesId: "series-a", workspaceId: "local-default", name: "MyGO", description: "现有简介", status: "EMPTY",
+  transcriptLanguageHint: null,
   importantExtraData: null, characterBible: [], videos: [], pendingUploads: [], videoCount: 0, readyVideoCount: 0,
   failedVideoCount: 0, pendingUploadCount: 0, cover: null, lastSearch: null, createdAt: 1, updatedAt: 1,
 };
@@ -110,6 +111,28 @@ describe("Series background editing", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "简介" }), { target: { value: "新简介" } });
     await user.click(screen.getByRole("button", { name: "保存背景" }));
     await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({ seriesId: "series-a", description: "新简介" }));
+  });
+
+  it("updates and clears the ASR transcript language independently", async () => {
+    const { user, rerender } = await openEditor();
+    const language = screen.getByRole("combobox", { name: "ASR 原文语言" });
+    await user.type(language, "ja");
+    await user.click(screen.getByRole("button", { name: "保存背景" }));
+    await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({
+      seriesId: "series-a",
+      transcriptLanguageHint: "ja",
+    }));
+
+    mocks.updateSeries.mockClear();
+    rerender(<SeriesBackgroundEditor series={{ ...series, transcriptLanguageHint: "ja" }} />);
+    expect(screen.getByText("ASR 原文语言：ja")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "编辑背景" }));
+    await user.clear(screen.getByRole("combobox", { name: "ASR 原文语言" }));
+    await user.click(screen.getByRole("button", { name: "保存背景" }));
+    await waitFor(() => expect(mocks.updateSeries).toHaveBeenCalledWith({
+      seriesId: "series-a",
+      transcriptLanguageHint: null,
+    }));
   });
 
   it.each([' \n[ { "任意字段" : true } ]\n ', '"普通字符串"', "null", "42", "true"])("saves any JSON value without rewriting the original text: %s", async (content) => {

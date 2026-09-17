@@ -21,7 +21,6 @@ from ..service.agent_chat import AgentChatService, AgentMessageExecution
 from ..service.media import MediaService
 from ..utils.time import utc_now_naive
 from ..model.vo.commonVO import Page
-from ..model.vo.searchVO import SearchEvidenceView
 from .search import search_evidence_view
 from .context import get_services, get_sse_config
 from ..model.vo.agentVO import (
@@ -38,10 +37,12 @@ from ..model.vo.agentVO import (
     AgentMessageSendView,
     AgentMessageTimingView,
     AgentMessageView,
+    AgentSearchEvidenceView,
     AgentMarkdownRenderBlockView,
     AgentRenderBlockView,
     AgentVideoRenderBlockView,
 )
+from ..repository.agent import AgentConversationNotFoundError
 
 _logger = logging.getLogger(__name__)
 
@@ -82,6 +83,18 @@ def get_agent_conversation(
     workspace_id: str = Query(alias="workspaceId"),
 ) -> AgentConversationView:
     state = get_services(request).agent.get_conversation(
+        conversation_id,
+        workspace_id=workspace_id,
+    )
+    return AgentConversationView.model_validate(state)
+
+
+def delete_agent_conversation(
+    request: Request,
+    conversation_id: str = Query(alias="conversationId"),
+    workspace_id: str = Query(alias="workspaceId"),
+) -> AgentConversationView:
+    state = get_services(request).agent.delete_conversation(
         conversation_id,
         workspace_id=workspace_id,
     )
@@ -220,11 +233,14 @@ async def _agent_message_events(
     previous_fingerprint: str | None = None
     last_event_at = time.monotonic()
     while True:
-        states = await run_in_threadpool(
-            service.list_all_messages,
-            conversation_id,
-            workspace_id=workspace_id,
-        )
+        try:
+            states = await run_in_threadpool(
+                service.list_all_messages,
+                conversation_id,
+                workspace_id=workspace_id,
+            )
+        except AgentConversationNotFoundError:
+            return
         view = AgentMessageEventView(
             conversation_id=conversation_id,
             messages=[_agent_message_view(item, media=media, workspace_id=workspace_id) for item in states],
@@ -253,7 +269,7 @@ def _agent_message_view(
     if state.search_result is not None:
         if media is None or workspace_id is None:
             raise ValueError("evidence projection requires the owning Workspace and media service")
-        result = search_evidence_view(
+        result = _agent_search_evidence_view(
             state.search_result, media, workspace_id=workspace_id,
         )
     render_blocks = _agent_render_blocks(state, result)
@@ -275,7 +291,7 @@ def _agent_message_view(
 
 def _agent_render_blocks(
     state: AgentMessageState,
-    result: SearchEvidenceView | None,
+    result: AgentSearchEvidenceView | None,
 ) -> list[AgentRenderBlockView]:
     if state.role != "ASSISTANT":
         return []
@@ -327,6 +343,20 @@ def _agent_render_blocks(
     return blocks
 
 
+def _agent_search_evidence_view(
+    result: dict,
+    media: MediaService,
+    *,
+    workspace_id: str,
+) -> AgentSearchEvidenceView:
+    evidence = search_evidence_view(result, media, workspace_id=workspace_id)
+    raw_trace = result.get("retrievalTrace", result.get("retrieval_trace", []))
+    return AgentSearchEvidenceView(
+        **evidence.model_dump(),
+        retrieval_trace=raw_trace if isinstance(raw_trace, list) else [],
+    )
+
+
 _ANSWER_EVENT_MODELS = {
     "answer.started": AgentAnswerStartedView,
     "answer.evidence": AgentAnswerEvidenceView,
@@ -371,7 +401,7 @@ async def _answer_events(
             if event_type == "answer.evidence":
                 if media is None or workspace_id is None:
                     raise ValueError("evidence projection requires the owning Workspace and media service")
-                projected = search_evidence_view(
+                projected = _agent_search_evidence_view(
                     data["searchResult"], media, workspace_id=workspace_id,
                 )
                 data["searchResult"] = projected

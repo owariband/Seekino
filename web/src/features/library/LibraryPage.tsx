@@ -60,12 +60,20 @@ export function LibraryPage() {
     const data = new FormData(event.currentTarget);
     const name = String(data.get("name") ?? "").trim();
     const description = String(data.get("description") ?? "").trim();
+    const transcriptLanguageHint = String(data.get("transcriptLanguageHint") ?? "").trim();
     const seriesBible = String(data.get("seriesBible") ?? "");
     if (!name) return;
     setSaving(true);
     setFormError(null);
     try {
-      await createSeries({ name, description: description || null, importantExtraData: seriesBible.trim() ? { format: "markdown", content: seriesBible } : null });
+      await createSeries({
+        name,
+        description: description || null,
+        transcriptLanguageHint: transcriptLanguageHint || null,
+        importantExtraData: seriesBible.trim()
+          ? { format: "markdown", content: seriesBible }
+          : null,
+      });
       setCreating(false);
     } catch (creationError) {
       setFormError(creationError instanceof Error ? creationError.message : "创建视频系列失败");
@@ -239,6 +247,8 @@ export function LibraryPage() {
             <h2>新建视频系列</h2>
             <label><span>视频系列名称</span><input className="field" name="name" required autoFocus placeholder="例如：城市漫游第一季" /></label>
             <label><span>简介（选填）</span><input className="field" name="description" placeholder="简单介绍这个视频系列" /></label>
+            <label><span>ASR 原文语言（选填）</span><input className="field" name="transcriptLanguageHint" list="transcript-language-options" maxLength={64} placeholder="例如：ja（日语）" /></label>
+            <datalist id="transcript-language-options"><option value="ja">日语</option><option value="zh-Hans">简体中文</option><option value="en">英语</option><option value="ko">韩语</option></datalist>
             <label><span>背景资料（选填）</span><textarea className="field" name="seriesBible" rows={5} placeholder="人物关系、别名、剧情背景等，帮助解析与检索。" /></label>
             {formError ? <p className={styles.error}>{formError}</p> : null}
             <div className={styles.modalActions}>

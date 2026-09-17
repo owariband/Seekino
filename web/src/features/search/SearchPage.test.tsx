@@ -39,6 +39,8 @@ function searchHit(videoChunkId: string, rank: number, alt: string): VideoChunkS
       rank,
       fusedRank: rank,
       fusedScore: 0.032,
+      transcriptRank: rank,
+      transcriptScore: 1,
       textRank: rank,
       textScore: 0.91,
       visionRank: rank,

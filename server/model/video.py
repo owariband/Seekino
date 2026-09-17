@@ -63,6 +63,7 @@ class SeriesRecord(TimestampedRecord, Base):
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(LONG_TEXT)
+    transcript_language_hint: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     important_extra_data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     character_bible: Mapped[list[dict[str, Any]]] = mapped_column(

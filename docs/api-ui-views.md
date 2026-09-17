@@ -11,7 +11,7 @@ VO 按 `commonVO.py`、`libraryVO.py`、`uploadVO.py`、`jobVO.py`、`agentVO.py
 | 类型分组 | 公开模型 | UI 使用的数据 |
 | --- | --- | --- |
 | common | Page、Failure、FieldError、ApiError、ImageAsset | 全范围 total、下一页游标、稳定错误 code、请求编号、公开图片 URL |
-| library | Character、SeriesSummary、SeriesDetail、VideoSummary、LastSearchView | 视频 ready / failed 数量、待完成上传、最近检索、视频索引与播放状态、实际 latestJobId |
+| library | Character、SeriesSummary、SeriesDetail、VideoSummary、LastSearchView | 视频 ready / failed 数量、待完成上传、最近检索、ASR 原文语言提示、视频索引与播放状态、实际 latestJobId |
 | upload | UploadSessionCreateRequest、UploadSessionView、UploadSegmentView、UploadCompleteView | 完整上传确认点、缺失分段、真实合并阶段、源 SHA、后续 Job、资源 version |
 | job | ParseJobView、VideoChunkCheckpointView、JobCounts、JobSummary | 实际阶段 / 进度 / 检查点、结构化错误、单调 version、全范围权威统计 |
 | parseUsage | ParseUsageVO、ParseUsageRowVO | 真实视频与动画身份、按模型和职责汇总的 Token／调用数、人民币预估金额、消耗记录完整性 |
@@ -38,6 +38,8 @@ interface ApiError extends Failure {
 
 Series list 返回轻量 `SeriesSummary`，get / create 返回 `SeriesDetail`；列表不会假装包含完整剧集信息。Job list 的 total 与 jobs/summary 均从完整 SQL 范围统计，不用首屏数量冒充全局统计。索引状态由 Chunk / Embedding / Sync Intent 事实推导，不将解析完成视为索引 READY。
 
+`SeriesDetail.transcriptLanguageHint` 是用户配置的 ASR 原文语言提示，例如日语 `ja`。它进入 Query Agent 的 `series_context`，用于判断 Transcript-heavy Query 应采用哪种语言和脚本；它不是界面 locale，不证明具体台词存在，更新后也不会重新解析视频。
+
 ParseJob 的 overallProgress 以语义解析为主：canonical VideoChunk 全部完成媒体准备后到 1%，随后按已 PARSED 的真实视频时长从 1% 推进到 99%；文本/视觉向量化、持久化和索引同步不再额外瓜分权重，所有片段完成语义解析后保持 99%，只有任务成功并可检索时才到 100%。completedDurationMs、completedThroughMs、completedChunkCount 和 currentChunk 始终描述 PARSED 覆盖：前者是全部已解析片段的时长和，连续水位只统计从零开始无缺口的已解析范围，两者不能混用。stageProgress 仅保留为内部阶段诊断字段，任务页不再展示第二个百分比。范围缺失或不连续的历史任务返回 null，不回退到旧的估算百分比。
 
 新增和补充的接口：
@@ -50,6 +52,7 @@ ParseJob 的 overallProgress 以语义解析为主：canonical VideoChunk 全部
 | POST /api/uploads/reparse | workspaceId、uploadSessionId、expectedJobVersion；对 SUCCEEDED / FAILED 主任务清空 Checkpoint 后整集从头解析，保留 attempt / 用量历史及已成功的可检索快照，版本冲突或活动任务返回 409 | ParseJobView |
 | GET /api/jobs/summary | workspaceId；可选 seriesId | JobSummary |
 | GET /api/jobs/usage/get | workspaceId、jobId | ParseUsageVO：指定任务全部执行尝试，按模型与职责展示真实 Token、人民币预估费用和记录完整性；详见 [Parse 模型消耗统计](parse-model-usage.md) |
+| POST /api/agent/conversations/delete | workspaceId、conversationId；存在 PROCESSING 回答时返回 409 | 删除前的 AgentConversationView；终态对话及 Message / Timing 级联删除 |
 | GET /api/agent/messages/get | workspaceId、conversationId；messageId 与 idempotencyKey 恰好一个 | 同一 USER / ASSISTANT 消息对 |
 | GET /api/video-chunks/get | workspaceId、videoChunkId | 可刷新媒体状态的事实 Evidence |
 | GET /api/media/images/content | workspaceId、imageId | 经过资源归属与受管路径验证的真实图片 |
@@ -87,7 +90,7 @@ Content-Type: application/json
 
 reference 可省略 / 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
 
-SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits。消息快照有 phase 与单调 version，前端拒绝旧版本覆盖新状态。phase 仅有 QUEUED / RETRIEVING / EVALUATING / RESPONDING，终态为 null，不包含私有推理。
+SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits，还包含可审计的 retrievalTrace（每次 Query、受限 topK、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID）。候选同时暴露 transcriptRank/transcriptScore、textRank/textScore、visionRank/visionScore；Transcript 命中说明使用真正匹配的 ASR cue 与绝对时间。消息快照有 phase 与单调 version，前端拒绝旧版本覆盖新状态。phase 仅有 QUEUED / RETRIEVING / EVALUATING / RESPONDING，终态为 null，不包含私有推理。
 
 持久化 FAILED 时，answer.failed 返回公开 error 与真实消息对，并保留已经确认的证据 / 部分正文。队列溢出或无法确认终态提交时返回 answer.interrupted，不谎称后台 FAILED。恢复时读取 messages/get / list / events。断开流不取消后台任务。不同 Conversation 的流、上下文和候选引用隔离。
 
@@ -110,6 +113,7 @@ videos/content 新增 variant=playback|original，默认 playback；原文件可
 
 | 表 | 新增列 |
 | --- | --- |
+| series | transcript_language_hint VARCHAR(64) NULL |
 | agent_conversation | title_is_auto BOOLEAN NOT NULL DEFAULT FALSE |
 | agent_message | phase VARCHAR(16) NULL、version INT NOT NULL DEFAULT 1、reference JSON NULL、last_error_code VARCHAR(64) NULL、last_error_message LONGTEXT NULL |
 | series_parse_job | version INT NOT NULL DEFAULT 1 |
@@ -121,3 +125,5 @@ videos/content 新增 variant=playback|original，默认 playback；原文件可
 request_fingerprint 只保存原始规范化创建请求的摘要，不包含服务端分段配置、后续分配的顺序或计算出的实际 SHA；因此同键不同可选参数会冲突。历史上传无法从结果反推原始可选参数意图时保留 null，继续按旧字段校验；不填伪造指纹。新增上传均固定真实请求指纹。
 
 video_chunk_checkpoint 的 chunk_start_ms / chunk_end_ms 保存 canonical VideoChunk 的绝对时间范围，用于按真实视频时长计算解析进度。AnalysisWindow 允许重叠，不能用于累计完成时长。两列必须同时为空或同时有值；已有值不可改写。已持久化的历史任务从 video_chunk.start_ms / end_ms 确定性回填，无法确认的旧任务保持 null，并在下次从检查点恢复时补齐。对应受控 SQL 见 `docs/migrations/20260916_video_chunk_checkpoint_ranges.sql`。
+
+Series 的 `transcript_language_hint` 由用户确认并用于 Query Agent 的 Transcript 检索改写；已有行保持 null，不从作品名或文件名猜测。对应受控 SQL 见 `docs/migrations/20260917_series_transcript_language_hint.sql`。

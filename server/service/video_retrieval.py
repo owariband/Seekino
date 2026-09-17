@@ -4,8 +4,11 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from engine.retrieval.video_retrieval import (
+    RankedTranscriptMatch,
     RankedVideoChunkMatch,
     fuse_video_chunk_rankings,
+    normalize_hybrid_retrieval_weights,
+    rank_transcript_chunks,
 )
 from gateway.schemas import EmbeddingResult
 
@@ -36,11 +39,11 @@ class QueryEmbedder(Protocol):
 
 
 class RetrievalIndexConsistencyError(RuntimeError):
-    """Qdrant candidates do not match the current MySQL index facts."""
+    """Retrieved candidates do not match the current MySQL index facts."""
 
 
 class VideoRetrievalService:
-    """Run scoped dual-channel retrieval and hydrate formal video evidence."""
+    """Run scoped hybrid retrieval and hydrate formal video evidence."""
 
     def __init__(
         self,
@@ -64,6 +67,7 @@ class VideoRetrievalService:
         fuse_video_chunk_rankings(
             [],
             [],
+            transcript_weight=0.0,
             text_weight=text_weight,
             vision_weight=vision_weight,
             channel_top_k=channel_top_k,
@@ -85,6 +89,9 @@ class VideoRetrievalService:
         workspace_id: str,
         series_ids: Sequence[str],
         top_k: int = 10,
+        transcript_weight: float | None = None,
+        text_weight: float | None = None,
+        vision_weight: float | None = None,
     ) -> VideoChunkSearchResult:
         if (
             not isinstance(workspace_id, str)
@@ -96,50 +103,108 @@ class VideoRetrievalService:
             raise ValueError("query must not be empty")
         if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
             raise ValueError("top_k must be a positive integer")
+        if (text_weight is None) != (vision_weight is None):
+            raise ValueError("text_weight and vision_weight must be provided together")
+        if transcript_weight is not None and text_weight is None:
+            raise ValueError(
+                "text_weight and vision_weight are required with transcript_weight"
+            )
+
+        requested_transcript_weight = (
+            0.0 if transcript_weight is None else transcript_weight
+        )
+        requested_text_weight = self._text_weight if text_weight is None else text_weight
+        requested_vision_weight = (
+            self._vision_weight if vision_weight is None else vision_weight
+        )
+        (
+            effective_transcript_weight,
+            effective_text_weight,
+            effective_vision_weight,
+        ) = normalize_hybrid_retrieval_weights(
+            requested_transcript_weight,
+            requested_text_weight,
+            requested_vision_weight,
+        )
 
         normalized_query = query.strip()
         scope = self._repository.require_ready_series(
             series_ids,
             workspace_id=workspace_id,
         )
-        searched_video_ids = self._repository.list_indexed_video_ids(scope, workspace_id=workspace_id)
-        embedding = self._embedder.embed_query(normalized_query)
-        if embedding.modality != "text":
-            raise RuntimeError("query embedder returned a non-text embedding")
-
-        try:
-            text_matches = self._store.search_text(
-                embedding.vector,
-                series_ids=scope,
+        searched_video_ids = self._repository.list_indexed_video_ids(
+            scope,
+            workspace_id=workspace_id,
+        )
+        transcript_matches = (
+            rank_transcript_chunks(
+                normalized_query,
+                self._repository.list_searchable_transcripts(
+                    scope,
+                    workspace_id=workspace_id,
+                ),
                 limit=self._channel_top_k,
-                exact=self._exact,
             )
-            vision_matches = self._store.search_vision(
-                embedding.vector,
-                series_ids=scope,
-                limit=self._channel_top_k,
-                exact=self._exact,
-            )
-        except QdrantPointConsistencyError as exc:
-            raise RetrievalIndexConsistencyError(str(exc)) from exc
+            if effective_transcript_weight > 0
+            else []
+        )
 
-        if not text_matches or not vision_matches:
+        text_matches: list[VideoChunkIndexMatch] = []
+        vision_matches: list[VideoChunkIndexMatch] = []
+        if effective_text_weight > 0 or effective_vision_weight > 0:
+            embedding = self._embedder.embed_query(normalized_query)
+            if embedding.modality != "text":
+                raise RuntimeError("query embedder returned a non-text embedding")
+
+            try:
+                text_matches = (
+                    self._store.search_text(
+                        embedding.vector,
+                        series_ids=scope,
+                        limit=self._channel_top_k,
+                        exact=self._exact,
+                    )
+                    if effective_text_weight > 0
+                    else []
+                )
+                vision_matches = (
+                    self._store.search_vision(
+                        embedding.vector,
+                        series_ids=scope,
+                        limit=self._channel_top_k,
+                        exact=self._exact,
+                    )
+                    if effective_vision_weight > 0
+                    else []
+                )
+            except QdrantPointConsistencyError as exc:
+                raise RetrievalIndexConsistencyError(str(exc)) from exc
+
+        if (
+            (effective_text_weight > 0 and not text_matches)
+            or (effective_vision_weight > 0 and not vision_matches)
+        ):
             raise RetrievalIndexConsistencyError(
-                "a READY Series scope returned no candidate in one or more "
-                "Qdrant channels"
+                "a READY Series scope returned no candidate in an enabled Qdrant channel"
             )
         index_state = _merge_index_state(text_matches, vision_matches)
         fused = fuse_video_chunk_rankings(
             _engine_rankings(text_matches),
             _engine_rankings(vision_matches),
-            text_weight=self._text_weight,
-            vision_weight=self._vision_weight,
+            transcript_rankings=transcript_matches,
+            transcript_weight=effective_transcript_weight,
+            text_weight=effective_text_weight,
+            vision_weight=effective_vision_weight,
             channel_top_k=self._channel_top_k,
             rrf_k=self._rrf_k,
         )[:top_k]
         if not fused:
-            raise RetrievalIndexConsistencyError(
-                "Qdrant candidates could not produce an enabled RRF result"
+            return VideoChunkSearchResult(
+                query=normalized_query,
+                series_ids=scope,
+                searched_video_ids=searched_video_ids,
+                agent_reply=_agent_reply([]),
+                hits=[],
             )
 
         candidate_ids = [item.video_chunk_id for item in fused]
@@ -147,7 +212,7 @@ class VideoRetrievalService:
             hydrated = self._repository.hydrate_video_chunk_states(candidate_ids)
         except VideoChunkNotFoundError as exc:
             raise RetrievalIndexConsistencyError(
-                "Qdrant returned VideoChunk IDs missing from MySQL"
+                "retrieval returned VideoChunk IDs missing from MySQL"
             ) from exc
         if len(hydrated) != len(fused):
             raise RetrievalIndexConsistencyError(
@@ -155,14 +220,26 @@ class VideoRetrievalService:
             )
 
         hits: list[VideoChunkSearchHit] = []
+        transcript_matches_by_id = {
+            match.video_chunk_id: match for match in transcript_matches
+        }
         for ranking, state in zip(fused, hydrated, strict=True):
-            match = index_state[ranking.video_chunk_id]
+            match = index_state.get(ranking.video_chunk_id)
             _validate_hydrated_state(match, state, scope)
             candidate = VideoChunkCandidate.model_validate(ranking.model_dump())
             hits.append(
                 VideoChunkSearchHit(
                     candidate=candidate,
-                    selection_reason=_selection_reason(candidate, state.evidence),
+                    selection_reason=_selection_reason(
+                        candidate,
+                        state.evidence,
+                        transcript_match=transcript_matches_by_id.get(
+                            ranking.video_chunk_id
+                        ),
+                        transcript_enabled=effective_transcript_weight > 0,
+                        text_enabled=effective_text_weight > 0,
+                        vision_enabled=effective_vision_weight > 0,
+                    ),
                     evidence=state.evidence,
                 )
             )
@@ -215,29 +292,32 @@ def _point_identity(match: VideoChunkIndexMatch) -> tuple[str, str, str, str, bo
 
 
 def _validate_hydrated_state(
-    match: VideoChunkIndexMatch,
+    match: VideoChunkIndexMatch | None,
     state: HydratedVideoChunkState,
     scope: Sequence[str],
 ) -> None:
     evidence = state.evidence
     mismatches: list[str] = []
-    if evidence.video_chunk_id != match.video_chunk_id:
-        mismatches.append("videoChunkId")
-    if evidence.series_id != match.series_id or evidence.series_id not in scope:
+    if evidence.series_id not in scope:
         mismatches.append("seriesId")
-    if evidence.video_id != match.video_id:
-        mismatches.append("videoId")
-    if evidence.is_fallback != match.is_fallback:
-        mismatches.append("isFallback")
-    if state.source_revision != match.source_revision:
-        mismatches.append("sourceRevision")
+    if match is not None:
+        if evidence.video_chunk_id != match.video_chunk_id:
+            mismatches.append("videoChunkId")
+        if evidence.series_id != match.series_id:
+            mismatches.append("seriesId")
+        if evidence.video_id != match.video_id:
+            mismatches.append("videoId")
+        if evidence.is_fallback != match.is_fallback:
+            mismatches.append("isFallback")
+        if state.source_revision != match.source_revision:
+            mismatches.append("sourceRevision")
     if state.index_operation != IndexSyncOperation.UPSERT.value:
         mismatches.append("indexOperation")
     if state.index_status != IndexSyncStatus.SYNCED.value:
         mismatches.append("indexStatus")
     if mismatches:
         raise RetrievalIndexConsistencyError(
-            f"Qdrant point {match.video_chunk_id} disagrees with MySQL fields: "
+            f"retrieval candidate {evidence.video_chunk_id} disagrees with MySQL fields: "
             + ", ".join(mismatches)
         )
 
@@ -245,27 +325,38 @@ def _validate_hydrated_state(
 def _selection_reason(
     candidate: VideoChunkCandidate,
     evidence: VideoChunkEvidence,
+    *,
+    transcript_match: RankedTranscriptMatch | None,
+    transcript_enabled: bool,
+    text_enabled: bool,
+    vision_enabled: bool,
 ) -> SelectionReason:
+    has_transcript = candidate.transcript_rank is not None
     has_text = candidate.text_rank is not None
     has_vision = candidate.vision_rank is not None
     matched: list[MatchedEvidence] = []
 
-    if has_text:
-        if evidence.transcript:
-            cue = evidence.transcript[0]
-            matched.append(
-                MatchedEvidence(
-                    kind="TRANSCRIPT",
-                    text=cue.text,
-                    start_ms=cue.start_ms,
-                    end_ms=cue.end_ms,
-                )
+    if has_transcript:
+        if transcript_match is None:
+            raise RetrievalIndexConsistencyError(
+                "fused Transcript rank has no matching ASR evidence"
             )
-        elif evidence.video_compact.strip():
+        matched.append(
+            MatchedEvidence(
+                kind="TRANSCRIPT",
+                text=transcript_match.matched_text,
+                start_ms=transcript_match.start_ms,
+                end_ms=transcript_match.end_ms,
+            )
+        )
+
+    if has_text:
+        semantic_text = evidence.video_compact.strip() or evidence.retrieval_text.strip()
+        if semantic_text:
             matched.append(
                 MatchedEvidence(
                     kind="CONTEXT",
-                    text=evidence.video_compact.strip(),
+                    text=semantic_text,
                     start_ms=evidence.start_ms,
                     end_ms=evidence.end_ms,
                 )
@@ -294,31 +385,37 @@ def _selection_reason(
         )
         for item in matched[:2]
     )
-    if has_text and has_vision:
-        summary = (
-            "该片段同时进入文本与视觉召回，并在融合排序中位列第 "
-            f"{candidate.fused_rank}；返回证据包含 {fact_summary}，"
-            "因此保留它用于联合核验。"
+    channel_labels = [
+        label
+        for present, label in (
+            (has_transcript, "ASR 原话"),
+            (has_text, "文本语义"),
+            (has_vision, "视觉"),
         )
-    elif has_text:
-        summary = (
-            f"该片段由文本通道召回，融合排序第 {candidate.fused_rank}；"
-            f"返回证据包含 {fact_summary}，保留它用于核验对白和事件语义。"
-        )
-    else:
-        summary = (
-            f"该片段由视觉通道召回，融合排序第 {candidate.fused_rank}；"
-            f"返回证据包含 {fact_summary}，保留它用于核验画面和相邻语境。"
-        )
+        if present
+    ]
+    summary = (
+        f"该片段进入{'、'.join(channel_labels)}通道，融合排序第 "
+        f"{candidate.fused_rank}；返回证据包含 {fact_summary}，保留它用于核验。"
+    )
 
     limitations = [
         message
         for condition, message in (
-            (not has_text, "文本通道未召回，需要重点核验对白与语义。"),
-            (not has_vision, "视觉通道未召回，需要重点核验实际画面。"),
+            (not transcript_enabled, "本次检索策略未启用 ASR 原话通道。"),
             (
-                has_text and not evidence.transcript,
-                "当前片段没有可展示的对白，文本证据来自事件与上下文摘要。",
+                transcript_enabled and not has_transcript,
+                "ASR 原话通道已启用，但该片段未命中规范化后的连续原话。",
+            ),
+            (not text_enabled, "本次检索策略未启用文本语义通道。"),
+            (
+                text_enabled and not has_text,
+                "文本语义通道已启用，但该片段未进入该通道候选，需要重点核验对白与语义。",
+            ),
+            (not vision_enabled, "本次检索策略未启用视觉通道。"),
+            (
+                vision_enabled and not has_vision,
+                "视觉通道已启用，但该片段未进入该通道候选，需要重点核验实际画面。",
             ),
             (evidence.is_fallback, "该片段来自降级解析，证据粒度可能较粗。"),
         )

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView, VideoEpisodeUpdateRequest, VideoSummary } from "../api/contracts";
+import type { AgentConversationView, AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView, VideoEpisodeUpdateRequest, VideoSummary } from "../api/contracts";
 import { App } from "./App";
 import { ThemeProvider } from "./theme";
 import { WorkspaceProvider } from "./workspace";
@@ -14,6 +14,7 @@ const apiSeries: SeriesView = {
   workspaceId: "local-default",
   name: "接口返回的系列",
   description: "这条资料来自 Series API。",
+  transcriptLanguageHint: null,
   status: "READY",
   importantExtraData: null,
   characterBible: [],
@@ -60,12 +61,18 @@ function jsonResponse(payload: unknown): Response {
   } as Response;
 }
 
-function renderApp(availableSeries: SeriesView[] = [apiSeries]) {
+function renderApp(
+  availableSeries: SeriesView[] = [apiSeries],
+  options: { failAgentSend?: boolean; failConversationList?: boolean; failInitialConversationCreation?: boolean } = {},
+) {
   let createdSeries: SeriesView | null = null;
   let finishAnswer: (() => void) | undefined;
   let messageSends = 0;
+  let conversationCreates = 0;
   const now = Date.parse("2026-09-15T00:00:00Z");
-  const conversation = { conversationId: "conversation", workspaceId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
+  const conversation: AgentConversationView = { conversationId: "conversation", workspaceId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
+  let conversations: AgentConversationView[] = [conversation];
+  const conversationMessages = new Map<string, AgentMessageView[]>();
   const assistantMessage: AgentMessageView = {
     messageId: "assistant", conversationId: "conversation", seriesIds: [apiSeries.seriesId], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", phase: "QUEUED", version: 1, reference: null, content: null,
     modelName: null, replyToMessageId: "user", retrievalQuery: null, searchResult: null, lastError: null, createdAt: now, updatedAt: now,
@@ -121,23 +128,79 @@ function renderApp(availableSeries: SeriesView[] = [apiSeries]) {
       return jsonResponse({ ...upload, status: "EXPIRED" });
     }
     if (url.includes("/api/jobs/list")) return jsonResponse({ items: [], total: 0, hasMore: false, nextCursor: null });
-    if (url.includes("/api/agent/conversations/")) return jsonResponse(conversation);
-    if (url.includes("/api/agent/messages/list")) return jsonResponse({ items: [], total: 0, hasMore: false, nextCursor: null });
+    if (url.includes("/api/agent/conversations/create")) {
+      conversationCreates += 1;
+      if (conversationCreates === 1 && options.failInitialConversationCreation) {
+        return new Response(JSON.stringify({ code: "UNAVAILABLE", message: "暂时无法恢复当前对话" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (conversationCreates === 1) return jsonResponse(conversation);
+      const created = { ...conversation, conversationId: `conversation-${conversationCreates}`, title: "新对话", createdAt: now + conversationCreates, updatedAt: now + conversationCreates };
+      conversations = [created, ...conversations];
+      return jsonResponse(created);
+    }
+    if (url.includes("/api/agent/conversations/list")) {
+      if (options.failConversationList) {
+        return new Response(JSON.stringify({ code: "UNAVAILABLE", message: "暂时无法读取对话列表" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return jsonResponse({ items: conversations, total: conversations.length, hasMore: false, nextCursor: null });
+    }
+    if (url.includes("/api/agent/conversations/get")) {
+      const conversationId = new URL(url, "http://localhost").searchParams.get("conversationId");
+      return jsonResponse(conversations.find((item) => item.conversationId === conversationId) ?? conversation);
+    }
+    if (url.includes("/api/agent/conversations/delete")) {
+      const conversationId = new URL(url, "http://localhost").searchParams.get("conversationId");
+      const deleted = conversations.find((item) => item.conversationId === conversationId) ?? conversation;
+      conversations = conversations.filter((item) => item.conversationId !== conversationId);
+      conversationMessages.delete(String(conversationId));
+      return jsonResponse(deleted);
+    }
+    if (url.includes("/api/agent/messages/list")) {
+      const conversationId = new URL(url, "http://localhost").searchParams.get("conversationId")!;
+      const items = conversationMessages.get(conversationId) ?? [];
+      return jsonResponse({ items, total: items.length, hasMore: false, nextCursor: null });
+    }
     if (url.includes("/api/agent/messages/send")) {
-      const requestedIds = (JSON.parse(String(_init?.body)) as { seriesIds: string[] }).seriesIds;
+      if (options.failAgentSend) {
+        return new Response(JSON.stringify({ code: "UNAVAILABLE", message: "模型暂时不可用" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const conversationId = new URL(url, "http://localhost").searchParams.get("conversationId")!;
+      const request = JSON.parse(String(_init?.body)) as { content: string; seriesIds: string[] };
+      const requestedIds = request.seriesIds;
       const seriesIds = requestedIds.length ? requestedIds : availableSeries.filter((item) => item.status === "READY").map((item) => item.seriesId);
       const index = messageSends++;
-      const userSnapshot = { ...userMessage, messageId: `user-${index}`, sequenceNo: index * 2, seriesIds };
-      const assistantSnapshot = { ...assistantMessage, messageId: `assistant-${index}`, replyToMessageId: userSnapshot.messageId, sequenceNo: index * 2 + 1, seriesIds };
+      const existingMessages = conversationMessages.get(conversationId) ?? [];
+      const userSnapshot: AgentMessageView = { ...userMessage, conversationId, messageId: `user-${index}`, sequenceNo: existingMessages.length, role: "USER", status: "COMPLETED", content: request.content, seriesIds };
+      const assistantSnapshot: AgentMessageView = { ...assistantMessage, conversationId, messageId: `assistant-${index}`, replyToMessageId: userSnapshot.messageId, sequenceNo: existingMessages.length + 1, seriesIds };
+      conversationMessages.set(conversationId, [...existingMessages, userSnapshot, assistantSnapshot]);
+      conversations = conversations.map((item) => item.conversationId === conversationId ? {
+        ...item,
+        title: item.messageCount === 0 ? request.content.slice(0, 40) : item.title,
+        messageCount: item.messageCount + 2,
+        lastMessagePreview: request.content,
+        lastMessageAt: now + index + 1,
+        updatedAt: now + index + 1,
+      } : item);
       const body = new ReadableStream<Uint8Array>({ start(controller) {
         const emit = (type: string, payload: unknown) => controller.enqueue(new TextEncoder().encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`));
-        const base = { occurredAt: now, conversationId: "conversation", messageId: assistantSnapshot.messageId };
+        const base = { occurredAt: now, conversationId, messageId: assistantSnapshot.messageId };
         emit("answer.started", { ...base, sequence: 1, userMessage: userSnapshot, assistantMessage: assistantSnapshot });
         emit("answer.evidence", { ...base, sequence: 2, searchResult: { query: "雨天门口", seriesIds, searchedVideoIds: [], partial: false, warnings: [], hits: [] } });
         emit("answer.delta", { ...base, sequence: 3, delta: "这是 Agent Chat" });
         finishAnswer = () => {
+          const completed: AgentMessageView = { ...assistantSnapshot, version: 2, phase: null, status: "COMPLETED", content: "这是 Agent Chat 保存的完整回答。" };
+          conversationMessages.set(conversationId, [...existingMessages, userSnapshot, completed]);
           emit("answer.delta", { ...base, sequence: 4, delta: " 保存的完整回答。" });
-          emit("answer.completed", { ...base, sequence: 5, userMessage: userSnapshot, assistantMessage: { ...assistantSnapshot, version: 2, phase: null, status: "COMPLETED", content: "这是 Agent Chat 保存的完整回答。" } });
+          emit("answer.completed", { ...base, sequence: 5, userMessage: userSnapshot, assistantMessage: completed });
           controller.close();
         };
       } });
@@ -274,6 +337,7 @@ describe("application shell", () => {
       workspaceId: "local-default",
       name: "MyGO",
       description: null,
+      transcriptLanguageHint: null,
       importantExtraData: { format: "markdown", content: "灯与爱音是乐队成员。这里记录人物关系与剧情背景。" },
     });
   });
@@ -460,6 +524,7 @@ describe("application shell", () => {
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
     act(finishAnswer);
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
+    expect(await screen.findByText("回答已完成")).toHaveAttribute("role", "status");
     const creation = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/conversations/create"));
     expect(String(creation?.[0])).toBe("/api/agent/conversations/create");
     expect(JSON.parse(String(creation?.[1]?.body))).toEqual({ workspaceId: "local-default" });
@@ -475,6 +540,321 @@ describe("application shell", () => {
       seriesIds: [],
       topK: 10, reference: null,
     });
+  });
+
+  it("announces an unfinished answer when sending fails before the stream starts", async () => {
+    renderApp([apiSeries], { failAgentSend: true });
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    expect(await screen.findByText("模型暂时不可用")).toHaveAttribute("role", "alert");
+    expect(await screen.findByText("回答未完成")).toHaveAttribute("role", "status");
+    expect(screen.queryByText("回答已完成")).not.toBeInTheDocument();
+  });
+
+  it("creates, lists, and switches between Conversations without duplicating an empty one", async () => {
+    const { fetchMock, finishAnswer } = renderApp();
+    const user = userEvent.setup();
+    const composer = await screen.findByRole("textbox", { name: "向名场面检索助手提问" });
+
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
+
+    await user.type(composer, "雨天门口");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
+    act(finishAnswer);
+    expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(2));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    expect(await screen.findByText("描述你记得的对白、人物或动作。")).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
+    expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation"));
+  });
+
+  it("reuses the recovered empty Conversation when the history list is unavailable", async () => {
+    const { fetchMock } = renderApp([apiSeries], { failConversationList: true });
+    const user = userEvent.setup();
+    await screen.findByRole("textbox", { name: "向名场面检索助手提问" });
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
+    expect(screen.getByRole("textbox", { name: "向名场面检索助手提问" })).toHaveFocus();
+  });
+
+  it("loads Conversation history on mount even when automatic creation fails", async () => {
+    renderApp([apiSeries], { failInitialConversationCreation: true });
+    const user = userEvent.setup();
+    expect(await screen.findByText("暂时无法恢复当前对话")).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(await screen.findByRole("button", { name: /^打开对话 Test，/ }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation"));
+    expect(screen.getByRole("textbox", { name: "向名场面检索助手提问" })).toBeEnabled();
+  });
+
+  it("focuses the readable error when an explicit Conversation switch fails", async () => {
+    const { fetchMock } = renderApp([apiSeries], { failInitialConversationCreation: true });
+    const user = userEvent.setup();
+    await screen.findByText("暂时无法恢复当前对话");
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/agent/conversations/get")) {
+        return new Response(JSON.stringify({ code: "UNAVAILABLE", message: "无法打开选中的对话" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return original(input, init);
+    });
+
+    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(await screen.findByRole("button", { name: /^打开对话 Test，/ }));
+    const failure = await screen.findByText("无法打开选中的对话");
+    await waitFor(() => expect(failure).toHaveFocus());
+    expect(screen.getByRole("status")).toHaveTextContent("打开对话失败：无法打开选中的对话");
+  });
+
+  it("closes history accessibly and restores focus when cancelling deletion", async () => {
+    renderApp();
+    const user = userEvent.setup();
+    const history = await screen.findByLabelText("打开对话记录");
+    await user.click(history);
+    await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
+    const confirmation = screen.getByRole("button", { name: /^确认删除对话 Test，/ });
+    const cancellation = screen.getByRole("button", { name: "取消" });
+    expect(cancellation).toHaveFocus();
+    expect(confirmation).toHaveAttribute("aria-describedby");
+    expect(document.getElementById(confirmation.getAttribute("aria-describedby")!)).toHaveTextContent("全部消息都无法恢复");
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: /^确认删除对话 Test，/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^删除对话 Test，/ })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(history).toHaveFocus();
+
+    await user.click(history);
+    await user.click(screen.getByRole("button", { name: "关闭对话记录" }));
+    expect(history).toHaveFocus();
+  });
+
+  it("keeps current deletion disabled while an answer is running", async () => {
+    const { finishAnswer } = renderApp();
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("打开对话记录"));
+    const deletion = await screen.findByRole("button", { name: /^删除对话 雨天门口，/ });
+    expect(deletion).toBeDisabled();
+    expect(deletion).toHaveAttribute("title", "当前回答进行中，完成后才能删除");
+    expect(screen.getByText("回答完成后可删除")).toBeInTheDocument();
+    act(finishAnswer);
+    await waitFor(() => expect(deletion).toBeEnabled());
+  });
+
+  it("locks deletion while a new Conversation request is in flight", async () => {
+    const { fetchMock, finishAnswer } = renderApp();
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await screen.findByText("这是 Agent Chat");
+    act(finishAnswer);
+    await screen.findByText("这是 Agent Chat 保存的完整回答。");
+
+    const original = fetchMock.getMockImplementation()!;
+    let releaseCreation!: () => void;
+    let markCreationStarted!: () => void;
+    const creationRelease = new Promise<void>((resolve) => { releaseCreation = resolve; });
+    const creationStarted = new Promise<void>((resolve) => { markCreationStarted = resolve; });
+    let holdCreation = true;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (holdCreation && String(input).includes("/api/agent/conversations/create")) {
+        holdCreation = false;
+        const response = await original(input, init);
+        markCreationStarted();
+        await creationRelease;
+        return response;
+      }
+      return original(input, init);
+    });
+
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await creationStarted;
+    await user.click(screen.getByLabelText("打开对话记录"));
+    const deletion = await screen.findByRole("button", { name: /^删除对话 雨天门口，/ });
+    expect(deletion).toBeDisabled();
+    expect(deletion).toHaveAttribute("title", "请等待当前对话操作完成");
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/conversations/delete"))).toBe(false);
+
+    act(releaseCreation);
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+  });
+
+  it("locks every deletion target while an explicitly selected Conversation is loading", async () => {
+    const { fetchMock, finishAnswer } = renderApp();
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await screen.findByText("这是 Agent Chat");
+    act(finishAnswer);
+    await screen.findByText("这是 Agent Chat 保存的完整回答。");
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+
+    const original = fetchMock.getMockImplementation()!;
+    let releaseSelection!: () => void;
+    let markSelectionStarted!: () => void;
+    const selectionRelease = new Promise<void>((resolve) => { releaseSelection = resolve; });
+    const selectionStarted = new Promise<void>((resolve) => { markSelectionStarted = resolve; });
+    let holdSelection = true;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (holdSelection && url.includes("/api/agent/conversations/get") && new URL(url, "http://localhost").searchParams.get("conversationId") === "conversation") {
+        holdSelection = false;
+        markSelectionStarted();
+        await selectionRelease;
+      }
+      return original(input, init);
+    });
+
+    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
+    await selectionStarted;
+    await user.click(screen.getByLabelText("打开对话记录"));
+    expect(screen.getByRole("button", { name: /^删除对话 雨天门口，/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^删除对话 新对话，/ })).toBeDisabled();
+
+    act(releaseSelection);
+    await waitFor(() => expect(screen.getByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument());
+  });
+
+  it("deletes only after confirmation and replaces the final active Conversation", async () => {
+    const { fetchMock, finishAnswer } = renderApp();
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
+    act(finishAnswer);
+    expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+
+    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(await screen.findByRole("button", { name: /^删除对话 雨天门口，/ }));
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/conversations/delete"))).toBe(false);
+    await user.click(screen.getByRole("button", { name: /^确认删除对话 雨天门口，/ }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^删除对话 雨天门口，/ })).not.toBeInTheDocument());
+    expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2");
+
+    await user.click(screen.getByRole("button", { name: /^删除对话 新对话，/ }));
+    await user.click(screen.getByRole("button", { name: /^确认删除对话 新对话，/ }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(3));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-3"));
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/delete"))).toHaveLength(2);
+  });
+
+  it("does not restore a deleted Conversation from an older list response", async () => {
+    const { fetchMock, finishAnswer } = renderApp();
+    const original = fetchMock.getMockImplementation()!;
+    let holdNextList = false;
+    let releaseList!: () => void;
+    let markListStarted!: () => void;
+    const listRelease = new Promise<void>((resolve) => { releaseList = resolve; });
+    const listStarted = new Promise<void>((resolve) => { markListStarted = resolve; });
+    fetchMock.mockImplementation(async (input, init) => {
+      if (holdNextList && String(input).includes("/api/agent/conversations/list")) {
+        holdNextList = false;
+        const staleResponse = await original(input, init);
+        markListStarted();
+        await listRelease;
+        return staleResponse;
+      }
+      return original(input, init);
+    });
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
+    act(finishAnswer);
+    await screen.findByText("这是 Agent Chat 保存的完整回答。");
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+
+    holdNextList = true;
+    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
+    await listStarted;
+    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(screen.getByRole("button", { name: /^删除对话 雨天门口，/ }));
+    await user.click(screen.getByRole("button", { name: /^确认删除对话 雨天门口，/ }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    act(releaseList);
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^删除对话 雨天门口，/ })).not.toBeInTheDocument());
+  });
+
+  it("keeps a Conversation visible when deletion is rejected", async () => {
+    const { fetchMock } = renderApp();
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/agent/conversations/delete")) {
+        return new Response(JSON.stringify({ code: "MESSAGE_IN_PROGRESS", message: "对话仍在处理消息", requestId: "conversation-delete" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return original(input, init);
+    });
+    const user = userEvent.setup();
+    await screen.findByRole("textbox", { name: "向名场面检索助手提问" });
+    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
+    await user.click(screen.getByRole("button", { name: /^确认删除对话 Test，/ }));
+
+    expect(await screen.findByText("删除对话失败：对话仍在处理消息（请求编号：conversation-delete）")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^删除对话 Test，/ })).toBeInTheDocument();
+  });
+
+  it("can create again when replacing the deleted final Conversation fails once", async () => {
+    const { fetchMock } = renderApp();
+    const original = fetchMock.getMockImplementation()!;
+    let failReplacement = false;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/agent/conversations/delete")) {
+        const response = await original(input, init);
+        failReplacement = true;
+        return response;
+      }
+      if (failReplacement && String(input).includes("/api/agent/conversations/create")) {
+        failReplacement = false;
+        return new Response(JSON.stringify({ code: "UNAVAILABLE", message: "暂时无法新建对话" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return original(input, init);
+    });
+    const user = userEvent.setup();
+    await screen.findByRole("textbox", { name: "向名场面检索助手提问" });
+    await user.click(screen.getByLabelText("打开对话记录"));
+    await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
+    await user.click(screen.getByRole("button", { name: /^确认删除对话 Test，/ }));
+    expect(await screen.findByText("对话已删除，但新对话创建失败：暂时无法新建对话")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^删除对话 Test，/ })).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "不能发给已删除的对话");
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
+    expect(await screen.findByText("描述你记得的对白、人物或动作。")).toBeInTheDocument();
   });
 
   it("allows multi-selection and keeps a running answer and its scope when the next selection changes", async () => {

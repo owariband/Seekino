@@ -7,20 +7,43 @@ from typing import Annotated
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from engine.retrieval.video_retrieval import normalize_hybrid_retrieval_weights
+
+from ..constants.retrieval import AGENT_RETRIEVAL_STRATEGY_VERSION
 from ..schema import VideoChunkSearchResult
 from .context import project_search_result
 from .output import validate_result
 from .state import (
     AgentModelInvocationError, AgentToolInvocationError, ExecutionControl,
-    ModelContextBudget, RetrievalCall, RunInputs, context_json,
+    ModelContextBudget, RetrievalCall, RetrievalChannelWeights, RunInputs, context_json,
 )
 
 
 class RetrievalArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
-    top_k: int = Field(ge=1, le=100)
+    query: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000),
+        Field(
+            description=(
+                "Standalone semantic/visual description, or a literal quote or "
+                "distinctive phrase in the stored transcript language for a "
+                "Transcript-heavy call."
+            )
+        ),
+    ]
+    top_k: int = Field(
+        ge=1,
+        le=100,
+        description="Maximum fused candidates requested for this call; Server limits still apply.",
+    )
+    channel_weights: RetrievalChannelWeights = Field(
+        description=(
+            "Relative Transcript, Semantic and Visual influence for this call. "
+            "Values are normalized by the Server before Weighted RRF fusion."
+        ),
+    )
 
 
 def build_retrieval_tool(
@@ -37,22 +60,42 @@ def build_retrieval_tool(
     attempts = 0
     invocation_lock = Lock()
 
-    def retrieve(query: str, top_k: int) -> dict:
+    def retrieve(
+        query: str,
+        top_k: int,
+        channel_weights: RetrievalChannelWeights,
+    ) -> dict:
         nonlocal attempts
         # One model response may request several tools concurrently. Serializing
         # only this Turn's retrieval keeps the budget and record order consistent.
         with invocation_lock:
             control.check()
+            channel_weights = RetrievalChannelWeights.model_validate(channel_weights)
             attempts += 1
             if attempts > max_tool_calls:
                 raise AgentModelInvocationError("Query Agent tool-call budget exceeded")
             bounded_top_k = min(top_k, inputs["requested_top_k"], maximum_top_k)
+            transcript_weight, semantic_weight, visual_weight = (
+                normalize_hybrid_retrieval_weights(
+                    channel_weights.transcript,
+                    channel_weights.semantic,
+                    channel_weights.visual,
+                )
+            )
+            effective_weights = RetrievalChannelWeights(
+                transcript=transcript_weight,
+                semantic=semantic_weight,
+                visual=visual_weight,
+            )
             try:
                 result = search(
                     query,
                     workspace_id=inputs["workspace_id"],
                     series_ids=list(inputs["series_ids"]),
                     top_k=bounded_top_k,
+                    transcript_weight=transcript_weight,
+                    text_weight=semantic_weight,
+                    vision_weight=visual_weight,
                 )
             except AgentModelInvocationError:
                 raise
@@ -66,8 +109,19 @@ def build_retrieval_tool(
             if len(result.hits) > bounded_top_k:
                 raise AgentModelInvocationError("Retrieval result exceeds its top_k budget")
             projected = project_search_result(result)
+            projected["retrievalStrategy"] = {
+                "version": AGENT_RETRIEVAL_STRATEGY_VERSION,
+                "requestedWeights": channel_weights.model_dump(mode="json"),
+                "effectiveWeights": effective_weights.model_dump(mode="json"),
+            }
             context_budget.consume("retrieval tool result", context_json(projected))
-            calls.append(RetrievalCall(query=query, top_k=bounded_top_k, result=result))
+            calls.append(RetrievalCall(
+                query=query,
+                top_k=bounded_top_k,
+                requested_weights=channel_weights.model_copy(deep=True),
+                effective_weights=effective_weights,
+                result=result,
+            ))
             return projected
 
     return StructuredTool.from_function(
@@ -76,6 +130,10 @@ def build_retrieval_tool(
         description=(
             "Search the fixed Series Scope of the current Kick for video evidence. "
             "Use query for characters, dialogue, actions and constraints; top_k limits hits. "
+            "Choose channel_weights for every call: transcript is literal ASR wording, "
+            "semantic is Pro-parsed event/dialogue meaning, and visual is actual video "
+            "appearance and action. Use a quote or distinctive phrase for transcript-heavy "
+            "calls, written in the stored ASR language indicated by the Series context. "
             "Returns real videoChunkId/videoId, startMs/endMs and compact evidence. "
             "The scope cannot be changed. First turn must call this tool at least once."
         ),

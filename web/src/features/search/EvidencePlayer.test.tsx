@@ -10,6 +10,8 @@ const hit: VideoChunkSearchHit = {
     rank: 1,
     fusedRank: 1,
     fusedScore: 0.032,
+    transcriptRank: 1,
+    transcriptScore: 1,
     textRank: 1,
     textScore: 0.91,
     visionRank: 2,

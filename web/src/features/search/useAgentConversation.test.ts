@@ -260,6 +260,45 @@ describe("Conversation state", () => {
     expect(result.current.messages).toEqual([]);
   });
 
+  it("persists an explicitly selected Conversation for the next mount", async () => {
+    const selected = await ready("conv-B");
+    const stored = JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!);
+    expect(stored).toMatchObject({ id: "conv-B" });
+    expect(stored.key).toEqual(expect.any(String));
+    selected.unmount();
+
+    const restored = renderHook(() => useAgentConversation());
+    await waitFor(() => expect(restored.result.current.conversationId).toBe("conv-B"));
+    expect(getAgentConversation).toHaveBeenLastCalledWith("conv-B");
+    expect(createAgentConversation).not.toHaveBeenCalled();
+  });
+
+  it("does not let a superseded automatic creation overwrite an explicit selection", async () => {
+    let finishAutomaticCreation!: (value: AgentConversationView) => void;
+    vi.mocked(createAgentConversation).mockImplementationOnce(() => new Promise((resolve) => {
+      finishAutomaticCreation = resolve;
+    }));
+    const rendered = renderHook(({ id }) => useAgentConversation(id), { initialProps: { id: null as string | null } });
+    await waitFor(() => expect(createAgentConversation).toHaveBeenCalledOnce());
+
+    rendered.rerender({ id: "conv-B" });
+    await waitFor(() => expect(rendered.result.current.conversationId).toBe("conv-B"));
+    expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!)).toMatchObject({ id: "conv-B" });
+
+    act(() => finishAutomaticCreation(conversation("conv-A")));
+    await waitFor(() => expect(createAgentConversation).toHaveBeenCalledOnce());
+    expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!)).toMatchObject({ id: "conv-B" });
+  });
+
+  it("clears a deleted active Conversation and closes its subscription", async () => {
+    const { result } = await ready();
+    act(() => result.current.clear());
+    expect(result.current.conversationId).toBeNull();
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.loading).toBe(false);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it("restores a saved Conversation on remount and waits for a running Kick snapshot", async () => {
     localStorage.setItem("anivag-agent-session:local-default", JSON.stringify({ key: "legacy-key", id: "legacy" }));
     const first = await ready(); first.unmount();

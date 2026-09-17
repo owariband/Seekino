@@ -3,7 +3,8 @@ from __future__ import annotations
 from ..schema import AgentReply, VideoChunkSearchHit, VideoChunkSearchResult
 from .state import (
     AgentFinalOutput, AgentModelInvocationError, ChatRenderDraft, LoopTurn,
-    MarkdownRenderBlock, QueryDraft, RetrievalCall, RunInputs, VideoRenderBlock,
+    MarkdownRenderBlock, QueryDraft, RetrievalCall, RetrievalTraceEntry, RunInputs,
+    VideoRenderBlock,
 )
 
 
@@ -105,6 +106,7 @@ def bind_draft(
 def build_chat_output(
     draft: VideoChunkSearchResult,
     rendered: ChatRenderDraft,
+    retrieval_trace: list[RetrievalTraceEntry],
 ) -> AgentFinalOutput:
     approved_hits = {
         hit.candidate.video_chunk_id: hit
@@ -146,11 +148,37 @@ def build_chat_output(
             else VideoRenderBlock(video_chunk_id=block.video_chunk_id)
             for block in rendered.blocks
         ],
+        retrieval_trace=[entry.model_copy(deep=True) for entry in retrieval_trace],
     )
 
 
-def finalize_output(turn: LoopTurn, inputs: RunInputs) -> AgentFinalOutput:
+def build_retrieval_trace(turns: list[LoopTurn]) -> list[RetrievalTraceEntry]:
+    return [
+        RetrievalTraceEntry(
+            query=call.query,
+            top_k=call.top_k,
+            strategy_version=call.strategy_version,
+            requested_weights=call.requested_weights.model_copy(deep=True),
+            effective_weights=call.effective_weights.model_copy(deep=True),
+            result_count=len(call.result.hits),
+            video_chunk_ids=[
+                hit.candidate.video_chunk_id for hit in call.result.hits
+            ],
+        )
+        for turn in turns
+        for call in turn.retrieval_calls
+    ]
+
+
+def finalize_output(turns: list[LoopTurn], inputs: RunInputs) -> AgentFinalOutput:
+    if not turns:
+        raise AgentModelInvocationError("Output requires at least one Query turn")
+    turn = turns[-1]
     if turn.review.action != "complete" or turn.rendered_answer is None:
         raise AgentModelInvocationError("Output requires approved evidence and nonempty Chat text")
     validate_result(turn.draft_output, inputs)
-    return build_chat_output(turn.draft_output, turn.rendered_answer)
+    return build_chat_output(
+        turn.draft_output,
+        turn.rendered_answer,
+        build_retrieval_trace(turns),
+    )

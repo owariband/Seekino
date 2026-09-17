@@ -18,10 +18,12 @@ Workspace
     └── AgentMessage
         ├── USER（本次实际 seriesIds）
         └── ASSISTANT（同一 seriesIds + modelName + retrievalQuery + searchResult + renderBlocks）
+            └── AgentMessageTiming（执行阶段与总耗时）
 ```
 
 - `AgentConversation`：直接属于 Workspace 的连续对话线程，保存标题和历史，不保存固定检索范围。
 - `AgentMessage`：MySQL 中的消息事实，USER / ASSISTANT 都保存本次发送解析后的实际 `seriesIds`。同一 Conversation 可以在后续发送选择不同动画；一次 Kick 内范围保持不变。ASSISTANT 用有序 `renderBlocks` 保存 Markdown 和视频窗口的交错关系；GET 快照和列表接口可完整恢复该顺序。
+- `AgentMessageTiming`：MySQL 中的助手回答耗时事实，保存开始时间、总耗时和各阶段耗时，与 Message 一对一。
 - LangGraph checkpoint 不是产品聊天记录；本轮产品状态全部由上述 MySQL 表持久化。
 
 ## 2. Multi-Agent 协作图
@@ -69,6 +71,7 @@ Markdown 与视频窗口的交错顺序；Server 拒绝重复或未获批 ID，�
 | `POST` | `/api/agent/conversations/create` | 在 Workspace 中创建 Conversation |
 | `GET` | `/api/agent/conversations/list?workspaceId=...` | 列出 Workspace 的 Conversation |
 | `GET` | `/api/agent/conversations/get?conversationId=...` | 获取 Conversation |
+| `POST` | `/api/agent/conversations/delete?conversationId=...&workspaceId=...` | 删除终态 Conversation |
 | `GET` | `/api/agent/messages/list?conversationId=...` | 列出 Message |
 | `POST` | `/api/agent/messages/send?conversationId=...` | 发送用户消息 |
 | `GET` | `/api/agent/messages/events?conversationId=...` | 订阅 Message 状态快照 |
@@ -114,6 +117,18 @@ Content-Type: application/json
 GET /api/agent/conversations/list?workspaceId=local-default&limit=100
 GET /api/agent/conversations/get?conversationId={conversationId}&workspaceId=local-default
 ```
+
+### 4.3 删除
+
+```http
+POST /api/agent/conversations/delete?conversationId={conversationId}&workspaceId=local-default
+```
+
+删除使用 Workspace 归属校验。Conversation 没有运行中的 ASSISTANT Message 时，
+事务物理删除 Conversation，MySQL 级联删除其 Message 与 Message Timing，并返回
+删除前的 `AgentConversationView`。存在 `PROCESSING` 回答时返回
+`409 MESSAGE_IN_PROGRESS`；该门禁用于避免删除与 checkpoint / complete / fail 回写竞态。
+删除 Conversation 不会删除视频、VideoChunk、Artifact 或 Qdrant 索引。
 
 ## 5. Message
 
@@ -186,6 +201,17 @@ ASSISTANT Message 处于 `PROCESSING`。
       "searchedVideoIds": ["2a150753-..."],
       "partial": false,
       "warnings": [],
+      "retrievalTrace": [
+        {
+          "query": "人物突然哭泣，结合上一轮第二个候选的前后语境",
+          "topK": 8,
+          "strategyVersion": "query-adaptive-three-channel-rrf-v2",
+          "requestedWeights": {"transcript": 0.1, "semantic": 0.7, "visual": 0.2},
+          "effectiveWeights": {"transcript": 0.1, "semantic": 0.7, "visual": 0.2},
+          "resultCount": 0,
+          "videoChunkIds": []
+        }
+      ],
       "hits": []
     },
     "renderBlocks": [
@@ -202,7 +228,9 @@ ASSISTANT Message 处于 `PROCESSING`。
 ```
 
 上面是合法的“无可信候选”响应。Agent Message 的公开 `searchResult` 是 evidence-only 投影，
-不包含独立 `/api/search` 才有的 `agentReply`。`renderBlocks` 是最终显示顺序：Markdown 块携带
+不包含独立 `/api/search` 才有的 `agentReply`。`retrievalTrace` 按实际调用顺序记录 Query Agent
+每次检索的受限 `topK`、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID，
+供调权实验复现；普通 `/api/search` 不返回该 Agent 专属字段。`renderBlocks` 是最终显示顺序：Markdown 块携带
 `markdown`，视频块只携带 `videoChunkId`，前端必须将它与同一消息的可信
 `searchResult.hits` 关联，不得从块或正文自行构造媒体 URI。`content` 保留为所有 Markdown 块
 的兼容汇总。存在候选时，`hits`
@@ -286,7 +314,7 @@ Content-Type: application/json
 | --- | --- | --- |
 | `answer.started` | USER / PROCESSING ASSISTANT 已提交 | `userMessage`、`assistantMessage` |
 | `answer.progress` | Query / Evaluator / Chat 阶段切换 | `phase`：RETRIEVING / EVALUATING / RESPONDING |
-| `answer.evidence` | 最终结果校验并提交后 | `searchResult`：由可信获批 Evidence 补齐的视频窗口，不含 `agentReply`；兼容旧客户端 |
+| `answer.evidence` | 最终结果校验并提交后 | `searchResult`：由可信获批 Evidence 补齐的视频窗口，不含 `agentReply`，包含 `retrievalTrace`；兼容旧客户端 |
 | `answer.block` | Evidence 之后按 Chat 逻辑顺序发送 | `block`：Markdown 块或只含 `videoChunkId` 的视频块 |
 | `answer.delta` | 最终结果校验并提交后 | `delta`：所有 Markdown 块的一次性兼容汇总 |
 | `answer.completed` | 最终结果成功提交后 | `userMessage`、`assistantMessage`：持久化快照 |
@@ -354,13 +382,13 @@ Chat 是 text-only、非 token 流式的自主工具循环，并设置
 
 ## 8. 已有数据库升级
 
-新数据库只创建 `agent_conversation` 和 `agent_message` 两张 Agent 表。已有数据库需要停写并
+新数据库创建 `agent_conversation`、`agent_message` 和 `agent_message_timing` 三张 Agent 表。已有数据库需要停写并
 备份后受控升级，不能依赖 `create_all()` 自动删表或改列；MySQL DDL 也不能靠事务自动回滚。
 `create_schema()` 检测到旧 `agent_session`、Conversation 的 `session_id` 或缺失的
 `workspace_id` 时拒绝初始化；Conversation 仍有 `series_ids`，或 Message 缺少 `series_ids`
 / `requested_series_ids` 时也拒绝初始化，要求受控 message-scope migration。
 
-先用 `SHOW CREATE TABLE` 核对两张 Agent 表。下文按最早的 Session + 固定 Conversation
+先用 `SHOW CREATE TABLE` 核对三张 Agent 表。下文按最早的 Session + 固定 Conversation
 Scope 结构写迁移顺序；已完成 Session 删除的数据库跳过归属复制、Session 外键 / 列 / 表
 和旧唯一键操作，只做消息 Scope 回填及 Conversation Scope 删除。字段或约束已存在时
 不重复添加，不能将整段 SQL 未经核对直接执行。

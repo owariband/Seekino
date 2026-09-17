@@ -164,6 +164,52 @@ class AgentRepository:
                 last_message_preview=session.scalar(self._preview_query(conversation_id)),
             )
 
+    def delete_conversation(
+        self,
+        conversation_id: str,
+        workspace_id: str,
+    ) -> AgentConversationState:
+        with self._session_factory.begin() as session:
+            record = self._require_conversation(
+                session,
+                conversation_id,
+                workspace_id,
+                for_update=True,
+            )
+            # The Conversation row is the lifecycle mutex. Completion locks the
+            # Message before this row, so deletion must not lock them in reverse.
+            processing = session.scalar(
+                select(AgentMessageRecord.message_id)
+                .where(
+                    AgentMessageRecord.conversation_id == conversation_id,
+                    AgentMessageRecord.role == AgentMessageRole.ASSISTANT.value,
+                    AgentMessageRecord.status == AgentMessageStatus.PROCESSING.value,
+                )
+                .limit(1)
+            )
+            if processing is not None:
+                raise AgentMessageInProgressError(
+                    "this conversation has an assistant message in progress"
+                )
+            message_count = int(
+                session.scalar(
+                    select(func.count(AgentMessageRecord.message_id)).where(
+                        AgentMessageRecord.conversation_id == conversation_id
+                    )
+                )
+                or 0
+            )
+            state = self._conversation_state(
+                record,
+                message_count=message_count,
+                last_message_preview=session.scalar(
+                    self._preview_query(conversation_id)
+                ),
+            )
+            session.delete(record)
+            session.flush()
+            return state
+
     def list_conversation_page(
         self, workspace_id: str, *, offset: int, limit: int,
         series_id: str | None = None, query: str | None = None,

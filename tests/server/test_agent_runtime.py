@@ -11,7 +11,8 @@ from gateway.agent_model import ModelInputTooLargeError
 from server.agent import AgentContextBudgetError, AgentModelInvocationError, AgentRuntime
 from server.agent.context import project_search_result
 from server.agent.state import (
-    ExecutionControl, ModelContextBudget, RetrievalCall, RunInputs, context_json,
+    ExecutionControl, ModelContextBudget, RetrievalCall, RetrievalChannelWeights,
+    RunInputs, context_json,
 )
 from server.agent.tools import build_retrieval_tool
 from server.schema import (
@@ -30,6 +31,25 @@ def _inputs(name="conversation", *, workspace="workspace", series="series") -> R
         "conversation_id": name, "assistant_message_id": f"{name}-answer",
         "workspace_id": workspace, "series_ids": [series], "series_context": [],
         "user_message": f"{name}: find the broken cup", "history": [], "requested_top_k": 8,
+    }
+
+
+def _retrieval_args(
+    query: str,
+    top_k: int,
+    *,
+    transcript: float = 0.0,
+    semantic: float = 0.5,
+    visual: float = 0.5,
+) -> dict:
+    return {
+        "query": query,
+        "top_k": top_k,
+        "channel_weights": {
+            "transcript": transcript,
+            "semantic": semantic,
+            "visual": visual,
+        },
     }
 
 
@@ -61,9 +81,21 @@ class Retrieval:
     def __init__(self, hits=None):
         self.hits = hits if hits is not None else [_hit(), _hit("chunk-2")]
         self.calls = []
+        self.weights = []
 
-    def search(self, query, *, workspace_id, series_ids, top_k):
+    def search(
+        self,
+        query,
+        *,
+        workspace_id,
+        series_ids,
+        top_k,
+        transcript_weight,
+        text_weight,
+        vision_weight,
+    ):
         self.calls.append((query, workspace_id, series_ids, top_k))
+        self.weights.append((transcript_weight, text_weight, vision_weight))
         hits = [hit.model_copy(deep=True) for hit in self.hits[:top_k]]
         return VideoChunkSearchResult(
             query=query, series_ids=series_ids,
@@ -75,10 +107,18 @@ class Query:
     model_name = "query-test"
     provider_name = "fake"
 
-    def __init__(self, *, search_rounds=(1,), selected=("chunk-1",), searches_per_round=1):
+    def __init__(
+        self,
+        *,
+        search_rounds=(1,),
+        selected=("chunk-1",),
+        searches_per_round=1,
+        channel_weights=(0.0, 0.5, 0.5),
+    ):
         self.search_rounds = search_rounds
         self.selected = selected
         self.searches_per_round = searches_per_round
+        self.channel_weights = channel_weights
         self.contexts = []
         self.tool_results = []
         self.budgets = []
@@ -91,7 +131,13 @@ class Query:
         if number in self.search_rounds:
             for index in range(self.searches_per_round):
                 self.tool_results.append(
-                    tools[0].invoke({"query": f"query-{number}-{index}", "top_k": 8})
+                    tools[0].invoke(_retrieval_args(
+                        f"query-{number}-{index}",
+                        8,
+                        transcript=self.channel_weights[0],
+                        semantic=self.channel_weights[1],
+                        visual=self.channel_weights[2],
+                    ))
                 )
         return result_type.model_validate({
             "plan_context": f"plan-{number}", "message": f"draft-{number}",
@@ -245,6 +291,30 @@ def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
         assert "draft_output" not in record
     assert third["turns"][1]["evidence_source_turns"] == {"chunk-1": 2}
     assert result.query == "query-2-1"
+    assert [
+        entry.model_dump(mode="json", by_alias=True)
+        for entry in result.retrieval_trace
+    ] == [
+        {
+            "query": f"query-{turn}-{call}",
+            "topK": 8,
+            "strategyVersion": "query-adaptive-three-channel-rrf-v2",
+            "requestedWeights": {
+                "transcript": 0.0,
+                "semantic": 0.5,
+                "visual": 0.5,
+            },
+            "effectiveWeights": {
+                "transcript": 0.0,
+                "semantic": 0.5,
+                "visual": 0.5,
+            },
+            "resultCount": 2,
+            "videoChunkIds": ["chunk-1", "chunk-2"],
+        }
+        for turn in (1, 2)
+        for call in (0, 1)
+    ]
     assert len(retrieval.calls) == 4
     assert len(evaluator.contexts[1]["retrieval_calls"]) == 2
     assert evaluator.contexts[1]["retrieval_calls"][0]["video_chunk_ids"] == [
@@ -290,8 +360,8 @@ def test_unknown_selected_id_fails_before_evaluator_or_chat():
 
 def test_mismatched_candidate_and_evidence_ids_cannot_reach_evaluator():
     class MismatchedRetrieval(Retrieval):
-        def search(self, query, *, workspace_id, series_ids, top_k):
-            result = super().search(query, workspace_id=workspace_id, series_ids=series_ids, top_k=top_k)
+        def search(self, query, **options):
+            result = super().search(query, **options)
             result.hits[0].candidate.video_chunk_id = "another-id"
             return result
 
@@ -467,8 +537,8 @@ def test_multi_turn_context_keeps_one_canonical_evidence_copy():
 ])
 def test_retrieval_contract_corruption_is_rejected_before_evaluation(mutation, expected):
     class CorruptedRetrieval(Retrieval):
-        def search(self, query, *, workspace_id, series_ids, top_k):
-            result = super().search(query, workspace_id=workspace_id, series_ids=series_ids, top_k=top_k)
+        def search(self, query, **options):
+            result = super().search(query, **options)
             mutation(result)
             return result
 
@@ -480,8 +550,8 @@ def test_retrieval_contract_corruption_is_rejected_before_evaluation(mutation, e
 
 def test_duplicate_chunk_in_one_retrieval_is_rejected():
     class DuplicateRetrieval(Retrieval):
-        def search(self, query, *, workspace_id, series_ids, top_k):
-            result = super().search(query, workspace_id=workspace_id, series_ids=series_ids, top_k=top_k)
+        def search(self, query, **options):
+            result = super().search(query, **options)
             result.hits[1] = result.hits[0].model_copy(deep=True)
             return result
 
@@ -512,7 +582,10 @@ def test_empty_real_retrieval_can_deliver_an_approved_uncertain_answer():
 def test_tool_scope_is_not_an_exposed_model_argument_and_top_k_is_bounded():
     class InspectQuery(Query):
         def run_query(self, prompt, *, tools, result_type, max_model_calls, check_control=None):
-            assert set(tools[0].args_schema.model_fields) == {"query", "top_k"}
+            assert "# Video Retrieval Skill" in prompt
+            assert set(tools[0].args_schema.model_fields) == {
+                "query", "top_k", "channel_weights",
+            }
             return super().run_query(prompt, tools=tools, result_type=result_type, max_model_calls=max_model_calls)
 
     runtime, query, _evaluator, _chat, retrieval = _runtime(
@@ -520,7 +593,80 @@ def test_tool_scope_is_not_an_exposed_model_argument_and_top_k_is_bounded():
     )
     runtime.kick(_inputs())
     assert retrieval.calls == [("query-1-0", "workspace", ["series"], 2)]
+    assert retrieval.weights == [(0.0, 0.5, 0.5)]
     assert query.budgets == [5]
+
+
+def test_model_selected_weights_are_normalized_recorded_and_returned_to_agent():
+    runtime, query, evaluator, _chat, retrieval = _runtime(
+        query=Query(channel_weights=(0.6, 0.3, 0.1)),
+    )
+
+    result = runtime.kick(_inputs())
+
+    assert retrieval.weights[0] == pytest.approx((0.6, 0.3, 0.1))
+    strategy = query.tool_results[0]["retrievalStrategy"]
+    assert strategy["requestedWeights"] == {
+        "transcript": 0.6,
+        "semantic": 0.3,
+        "visual": 0.1,
+    }
+    assert strategy["effectiveWeights"] == pytest.approx({
+        "transcript": 0.6,
+        "semantic": 0.3,
+        "visual": 0.1,
+    })
+    recorded = evaluator.contexts[0]["retrieval_calls"][0]["retrieval_strategy"]
+    assert recorded["requested_weights"] == strategy["requestedWeights"]
+    assert recorded["effective_weights"] == pytest.approx(
+        strategy["effectiveWeights"]
+    )
+    trace = result.model_dump(mode="json", by_alias=True)["retrievalTrace"]
+    assert trace == [{
+        "query": "query-1-0",
+        "topK": 8,
+        "strategyVersion": "query-adaptive-three-channel-rrf-v2",
+        "requestedWeights": {
+            "transcript": 0.6,
+            "semantic": 0.3,
+            "visual": 0.1,
+        },
+        "effectiveWeights": pytest.approx({
+            "transcript": 0.6,
+            "semantic": 0.3,
+            "visual": 0.1,
+        }),
+        "resultCount": 2,
+        "videoChunkIds": ["chunk-1", "chunk-2"],
+    }]
+
+
+@pytest.mark.parametrize(
+    "weights",
+    [
+        {"transcript": True, "semantic": 0.25, "visual": 0.25},
+        {"transcript": 0.25, "semantic": True, "visual": 0.25},
+        {"transcript": 0.25, "semantic": 0.25, "visual": False},
+        {"transcript": -0.1, "semantic": 0.1, "visual": 1.0},
+        {"transcript": 0.0, "semantic": 0.0, "visual": 0.0},
+        {"transcript": 0.5, "semantic": 0.25, "visual": 0.25, "unknown": 1.0},
+    ],
+)
+def test_agent_channel_weights_reject_invalid_values(weights):
+    with pytest.raises(ValueError):
+        RetrievalChannelWeights.model_validate(weights)
+
+
+def test_legacy_two_channel_trace_weights_default_transcript_to_zero():
+    weights = RetrievalChannelWeights.model_validate(
+        {"semantic": 0.6, "visual": 0.4}
+    )
+
+    assert weights.model_dump() == {
+        "transcript": 0.0,
+        "semantic": 0.6,
+        "visual": 0.4,
+    }
 
 
 def test_tool_budget_stops_before_an_extra_search_or_evaluation():
@@ -559,10 +705,23 @@ def test_tool_context_uses_the_same_cumulative_character_budget():
     hit = _hit()
     retrieval = Retrieval([hit])
     preview = retrieval.search(
-        "same-query", workspace_id="workspace", series_ids=["series"], top_k=1,
+        "same-query",
+        workspace_id="workspace",
+        series_ids=["series"],
+        top_k=1,
+        transcript_weight=0.0,
+        text_weight=0.5,
+        vision_weight=0.5,
     )
     retrieval.calls.clear()
-    result_chars = len(context_json(project_search_result(preview)))
+    retrieval.weights.clear()
+    projected_preview = project_search_result(preview)
+    projected_preview["retrievalStrategy"] = {
+        "version": "query-adaptive-three-channel-rrf-v2",
+        "requestedWeights": {"transcript": 0.0, "semantic": 0.5, "visual": 0.5},
+        "effectiveWeights": {"transcript": 0.0, "semantic": 0.5, "visual": 0.5},
+    }
+    result_chars = len(context_json(projected_preview))
     context_budget = ModelContextBudget(result_chars * 2 - 1)
     calls: list[RetrievalCall] = []
     tool = build_retrieval_tool(
@@ -571,9 +730,9 @@ def test_tool_context_uses_the_same_cumulative_character_budget():
         context_budget=context_budget,
     )
 
-    tool.invoke({"query": "same-query", "top_k": 1})
+    tool.invoke(_retrieval_args("same-query", 1))
     with pytest.raises(AgentModelInvocationError, match="retrieval tool result"):
-        tool.invoke({"query": "same-query", "top_k": 1})
+        tool.invoke(_retrieval_args("same-query", 1))
 
     assert len(retrieval.calls) == 2
     assert len(calls) == 1
@@ -583,7 +742,10 @@ def test_parallel_tool_calls_share_one_turn_budget_and_keep_actual_records():
     class ParallelQuery(Query):
         def run_query(self, prompt, *, tools, result_type, max_model_calls, check_control=None):
             with ThreadPoolExecutor(max_workers=2) as executor:
-                futures = [executor.submit(tools[0].invoke, {"query": f"parallel-{i}", "top_k": 2})
+                futures = [executor.submit(
+                    tools[0].invoke,
+                    _retrieval_args(f"parallel-{i}", 2),
+                )
                            for i in range(2)]
                 for future in futures:
                     future.result(timeout=5)
@@ -605,8 +767,8 @@ def test_current_turn_cannot_change_the_scope_even_to_a_subset():
     inputs["series_ids"] = ["series", "second-series"]
 
     class NarrowRetrieval(Retrieval):
-        def search(self, query, *, workspace_id, series_ids, top_k):
-            return super().search(query, workspace_id=workspace_id, series_ids=["series"], top_k=top_k)
+        def search(self, query, **options):
+            return super().search(query, **{**options, "series_ids": ["series"]})
 
     runtime, _query, evaluator, chat, _retrieval = _runtime(retrieval=NarrowRetrieval())
     with pytest.raises(AgentModelInvocationError, match="changed the fixed Series scope"):
@@ -807,7 +969,7 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
             assert context["turns"] == []
             name = context["inputs"]["conversation_id"]
             rendezvous.wait(timeout=5)
-            result = tools[0].invoke({"query": name, "top_k": 1})
+            result = tools[0].invoke(_retrieval_args(name, 1))
             return result_type.model_validate({
                 "plan_context": name, "message": name,
                 "selected_video_chunk_ids": [result["hits"][0]["candidate"]["videoChunkId"]],
@@ -839,9 +1001,19 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
                     "claim": f"Evidence for {chunk_id}",
                 }))
 
-    def search(query, *, workspace_id, series_ids, top_k):
+    def search(
+        query,
+        *,
+        workspace_id,
+        series_ids,
+        top_k,
+        transcript_weight,
+        text_weight,
+        vision_weight,
+    ):
         assert workspace_id == f"workspace-{query}"
         assert series_ids == [f"series-{query}"]
+        assert (transcript_weight, text_weight, vision_weight) == (0.0, 0.5, 0.5)
         hit = _hit(f"chunk-{query}", workspace=workspace_id, series=series_ids[0])
         return VideoChunkSearchResult(query=query, series_ids=series_ids,
             agent_reply=AgentReply(message=query, result_count=1), hits=[hit])
@@ -864,9 +1036,9 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
 
 
 class DisjointRetrieval(Retrieval):
-    def search(self, query, *, workspace_id, series_ids, top_k):
+    def search(self, query, **options):
         self.hits = [_hit(f"chunk-{len(self.calls) + 1}")]
-        return super().search(query, workspace_id=workspace_id, series_ids=series_ids, top_k=top_k)
+        return super().search(query, **options)
 
 
 @pytest.mark.parametrize("requested,maximum", [(1, 8), (8, 1)])
