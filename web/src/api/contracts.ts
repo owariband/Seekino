@@ -305,14 +305,17 @@ export interface AgentReply {
   resultCount: number;
 }
 
-export interface VideoChunkSearchResult {
+export interface VideoChunkSearchEvidence {
   query: string;
   seriesIds: string[];
   searchedVideoIds: string[];
   partial: boolean;
   warnings: string[];
-  agentReply: AgentReply;
   hits: VideoChunkSearchHit[];
+}
+
+export interface VideoChunkSearchResult extends VideoChunkSearchEvidence {
+  agentReply: AgentReply;
 }
 
 export interface VideoSearchRequest {
@@ -335,6 +338,9 @@ export interface AgentConversationView {
 
 export type AnswerPhase = "QUEUED" | "RETRIEVING" | "EVALUATING" | "RESPONDING";
 export interface EvidenceReference { messageId: string; videoChunkId: string }
+export type AgentRenderBlock =
+  | { type: "markdown"; markdown: string }
+  | { type: "video"; videoChunkId: string };
 
 export interface AgentMessageView {
   messageId: string;
@@ -350,7 +356,8 @@ export interface AgentMessageView {
   modelName: string | null;
   replyToMessageId: string | null;
   retrievalQuery: string | null;
-  searchResult: VideoChunkSearchResult | null;
+  searchResult: VideoChunkSearchEvidence | null;
+  renderBlocks?: AgentRenderBlock[];
   lastError: Failure | null;
   createdAt: UnixTimeMs;
   updatedAt: UnixTimeMs;
@@ -381,8 +388,9 @@ export type AgentAnswerEvent =
     })
   | (AgentAnswerEventBase & {
       type: "answer.evidence";
-      searchResult: VideoChunkSearchResult;
+      searchResult: VideoChunkSearchEvidence;
     })
+  | (AgentAnswerEventBase & { type: "answer.block"; block: AgentRenderBlock })
   | (AgentAnswerEventBase & { type: "answer.progress"; phase: AnswerPhase })
   | (AgentAnswerEventBase & { type: "answer.delta"; delta: string })
   | (AgentAnswerEventBase & AgentMessageSendView & {

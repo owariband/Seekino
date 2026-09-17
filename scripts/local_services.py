@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import socket
@@ -26,6 +27,7 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from gateway.config import load_config
 from server.config import ServerSettings
 from server.database import create_database_engine, create_schema
 from server.storage.qdrant import QdrantVideoChunkStore
@@ -33,15 +35,42 @@ from server.storage.qdrant import QdrantVideoChunkStore
 STATE = ROOT / "outputs/local-services"
 HTTP = build_opener(ProxyHandler({}))
 CHILDREN: dict[str, subprocess.Popen] = {}
+_DOTENV_ASSIGNMENT = re.compile(
+    r"^[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*="
+)
+
+
+def dotenv_variable_names(path: str | Path) -> tuple[str, ...]:
+    """Return assignment names without evaluating or exposing dotenv values."""
+
+    names: dict[str, None] = {}
+    for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
+        match = _DOTENV_ASSIGNMENT.match(line)
+        if match is not None:
+            names.setdefault(match.group(1), None)
+    return tuple(names)
 
 
 def config_digest() -> str:
     values = {key: value for key, value in os.environ.items() if key.startswith(("ANIVAG_", "VITE_"))}
-    for key in ("ARK_API_KEY", "DEEPSEEK_API_KEY"):
+    model_config = load_config()
+    api_key_names = {"ARK_API_KEY", model_config.agent_chat.api_key_env}
+    if model_config.video_parser.fallback.enabled:
+        api_key_names.add(model_config.video_parser.fallback.deepseek.api_key_env)
+    for key in sorted(api_key_names):
         value = os.environ.get(key, "")
         values[key] = hashlib.sha256(value.encode()).hexdigest()
-    for path in ("config.yaml", "config/model-pricing.yaml"):
-        values[path] = hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+    configured_model_path = Path(
+        os.environ.get("ANIVAG_MODEL_CONFIG", str(ROOT / "config.yaml"))
+    ).expanduser().resolve()
+    configured_pricing_path = Path(
+        os.environ.get(
+            "ANIVAG_MODEL_PRICING_CONFIG",
+            str(ROOT / "config/model-pricing.yaml"),
+        )
+    ).expanduser().resolve()
+    for path in (configured_model_path, configured_pricing_path):
+        values[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 
@@ -141,6 +170,7 @@ def owned_pid(name: str) -> int | None:
 
 
 def launch(name: str, args: list[str], *, cwd: Path = ROOT, env: dict | None = None) -> int:
+    digest = config_digest()
     log_path = STATE / f"{name}.log"
     with log_path.open("ab") as log:
         offset = log.tell()
@@ -149,7 +179,7 @@ def launch(name: str, args: list[str], *, cwd: Path = ROOT, env: dict | None = N
             stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
         )
     CHILDREN[name] = child
-    record = {"pid": child.pid, "signature": signature(child.pid), "config": config_digest()}
+    record = {"pid": child.pid, "signature": signature(child.pid), "config": digest}
     (STATE / f"{name}.pid.json").write_text(json.dumps(record))
     print(f"[启动] {name} PID={child.pid}，日志 {log_path.relative_to(ROOT)}", flush=True)
     return offset
@@ -309,10 +339,20 @@ def start_applications() -> None:
             raise RuntimeError(
                 "请在 .env.local 填写 ARK_API_KEY，AniVAG Server 的 Parse Consumer 需要它完成启动。"
             )
-        if not os.environ.get("DEEPSEEK_API_KEY"):
-            print(
-                "[提示] 未配置 DEEPSEEK_API_KEY；默认启用降级解析时，新视频 Parse 会失败。",
-                flush=True,
+        model_config = load_config()
+        deepseek_key_names = {model_config.agent_chat.api_key_env}
+        if model_config.video_parser.fallback.enabled:
+            deepseek_key_names.add(
+                model_config.video_parser.fallback.deepseek.api_key_env
+            )
+        missing_deepseek_keys = [
+            key for key in sorted(deepseek_key_names) if not os.environ.get(key)
+        ]
+        if missing_deepseek_keys:
+            raise RuntimeError(
+                "请在 .env.local 填写 "
+                + "、".join(missing_deepseek_keys)
+                + "；Chat Agent 与已启用的 DeepSeek 解析需要它完成启动。"
             )
         launch("api", [sys.executable, "-u", "-m", "server.api"])
         wait_ready("api", lambda: api_ready(api_base))
@@ -372,8 +412,20 @@ def stop() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="懒启动 AniVAG 全部 localhost 服务。")
-    parser.add_argument("command", choices=("start", "status", "stop"), nargs="?", default="start")
+    parser.add_argument(
+        "command",
+        choices=("start", "status", "stop", "_env-names"),
+        nargs="?",
+        default="start",
+    )
+    parser.add_argument("--env-file", type=Path)
     args = parser.parse_args()
+    if args.command == "_env-names":
+        if args.env_file is None:
+            raise ValueError("_env-names requires --env-file")
+        for name in dotenv_variable_names(args.env_file):
+            print(name)
+        return 0
     os.chdir(ROOT)
     STATE.mkdir(parents=True, exist_ok=True)
     with (STATE / "startup.lock").open("a") as lock:

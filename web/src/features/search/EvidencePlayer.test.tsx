@@ -111,7 +111,7 @@ describe("Evidence range playback", () => {
     expect(video.currentTime).toBe(12);
   });
 
-  it("replaces the range on the same video and preserves playback during equivalent snapshots", () => {
+  it("preserves equivalent snapshots and remounts media when another chunk is selected", () => {
     const view = render(<EvidencePlayer hit={hit} />);
     const video = screen.getByLabelText<HTMLVideoElement>("视频证据");
     metadata(video);
@@ -121,13 +121,16 @@ describe("Evidence range playback", () => {
     expect(video.currentTime).toBe(13.2);
     expect(pause).not.toHaveBeenCalled();
     view.rerender(<EvidencePlayer hit={nextHit({ videoChunkId: "chunk-2", startMs: 25000, endMs: 28000 })} />);
-    expect(screen.getByLabelText("视频证据")).toBe(video);
-    expect(video.currentTime).toBe(25);
+    const nextVideo = screen.getByLabelText<HTMLVideoElement>("视频证据");
+    expect(nextVideo).not.toBe(video);
+    expect(nextVideo.currentTime).toBe(0);
+    metadata(nextVideo);
+    expect(nextVideo.currentTime).toBe(25);
     pause.mockClear();
-    video.currentTime = 26; fireEvent.timeUpdate(video);
+    nextVideo.currentTime = 26; fireEvent.timeUpdate(nextVideo);
     expect(pause).not.toHaveBeenCalled();
-    video.currentTime = 28.5; fireEvent.timeUpdate(video);
-    expect(video.currentTime).toBe(28);
+    nextVideo.currentTime = 28.5; fireEvent.timeUpdate(nextVideo);
+    expect(nextVideo.currentTime).toBe(28);
     expect(pause).toHaveBeenCalledOnce();
   });
 

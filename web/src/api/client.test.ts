@@ -178,6 +178,27 @@ describe("POST answer stream", () => {
     expect(body.locked).toBe(false);
   });
 
+  it("delivers ordered render blocks without resolving video references in the client", async () => {
+    const payloads = [
+      { sequence: 2, block: { type: "markdown", markdown: "第一段" } },
+      { sequence: 3, block: { type: "video", videoChunkId: "chunk-1" } },
+    ];
+    const body = new ReadableStream<Uint8Array>({ start(controller) {
+      for (const payload of payloads) {
+        controller.enqueue(encoder.encode(
+          `event: answer.block\ndata: ${JSON.stringify({ conversationId: "conversation/id", messageId: "assistant", ...payload })}\n\n`,
+        ));
+      }
+      controller.close();
+    } });
+    vi.stubGlobal("fetch", vi.fn(async () => response(body)));
+    const received = vi.fn();
+
+    await streamAgentMessage("conversation/id", "query", "key", received, new AbortController().signal);
+
+    expect(received.mock.calls.map(([event]) => event.block)).toEqual(payloads.map(({ block }) => block));
+  });
+
   it("handles split UTF-8, CRLF, multiple data lines, comments, and a final frame", async () => {
     const bytes = encoder.encode(': heartbeat\r\nid: 3\r\nevent: answer.delta\r\ndata: {"conversationId":"conversation/id",\r\ndata: "messageId":"assistant","sequence":2,"delta":"你好"}\r\n\r\n' + frame("foreign", "other") + frame("最后一段").trimEnd());
     const body = new ReadableStream<Uint8Array>({ start(controller) {

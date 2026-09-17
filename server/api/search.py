@@ -5,7 +5,15 @@ from fastapi import Request
 from .context import get_services
 from ..model.dto.mediaDTO import PlaybackMedia
 from ..model.dto.searchDTO import VideoSearchRequest
-from ..model.vo.searchVO import (SearchResultView, VideoChunkEvidenceView, VisualEventView, SearchHitView, VideoChunkCandidateView)
+from ..model.vo.searchVO import (
+    Keyframe,
+    SearchEvidenceView,
+    SearchHitView,
+    SearchResultView,
+    VideoChunkCandidateView,
+    VideoChunkEvidenceView,
+    VisualEventView,
+)
 from ..schema import VideoChunkEvidence, VideoChunkSearchResult
 from ..service.media import MediaService
 
@@ -35,9 +43,18 @@ def evidence_view(
     warnings: list[str] = []
     if playback.status != "READY":
         warnings.append("原视频文件已丢失" if playback.status == "MISSING" else "尚无可确认兼容浏览器的播放媒体")
-    # SQL currently records frame URIs without their original-video offsets.
-    # An arbitrary URI or guessed time cannot become a public Keyframe.
-    warnings.append("缺少带原视频时间位置的已登记关键帧")
+    keyframes = [
+        Keyframe(
+            image_id=item.image_id,
+            url=item.url,
+            expires_at=item.expires_at,
+            at_ms=item.at_ms,
+            alt=evidence.baseline_visual_caption or evidence.window_summary or None,
+        )
+        for item in media.keyframe_views(evidence, workspace_id=workspace_id)
+    ]
+    if not keyframes:
+        warnings.append("缺少带原视频时间位置的已登记关键帧")
     events: list[VisualEventView] = []
     for item in evidence.all_time_events:
         start = item.get("start_ms", item.get("startMs"))
@@ -63,7 +80,9 @@ def evidence_view(
         analysis_window_start_ms=evidence.analysis_window_start_ms,
         analysis_window_end_ms=evidence.analysis_window_end_ms,
         playback_status=playback.status, playback_url=playback.url,
-        playback_url_expires_at=playback.expires_at, thumbnail=None, keyframes=[],
+        playback_url_expires_at=playback.expires_at,
+        thumbnail=keyframes[0] if keyframes else None,
+        keyframes=keyframes,
         transcript=transcript, baseline_visual_caption=evidence.baseline_visual_caption,
         all_time_events=events, all_time_event_text=evidence.all_time_event_text,
         video_compact=evidence.video_compact,
@@ -75,10 +94,10 @@ def evidence_view(
     ), list(dict.fromkeys(warnings))
 
 
-def search_result_view(
+def search_evidence_view(
     result: VideoChunkSearchResult | dict, media: MediaService, *, workspace_id: str,
-) -> SearchResultView:
-    result = VideoChunkSearchResult.model_validate(result)
+) -> SearchEvidenceView:
+    result = _validated_search_result(result)
     warnings = list(getattr(result, "warnings", []))
     searched_video_ids = result.searched_video_ids
     if searched_video_ids is None:
@@ -101,9 +120,31 @@ def search_result_view(
             candidate=VideoChunkCandidateView(**hit.candidate.model_dump(), rank=rank),
             selection_reason=reason, evidence=evidence,
         ))
-    return SearchResultView(
+    return SearchEvidenceView(
         query=result.query, series_ids=result.series_ids,
         searched_video_ids=list(searched_video_ids or []),
         partial=bool(getattr(result, "partial", False) or warnings),
-        warnings=list(dict.fromkeys(warnings)), agent_reply=result.agent_reply, hits=hits,
+        warnings=list(dict.fromkeys(warnings)), hits=hits,
     )
+
+
+def search_result_view(
+    result: VideoChunkSearchResult | dict, media: MediaService, *, workspace_id: str,
+) -> SearchResultView:
+    result = _validated_search_result(result)
+    evidence = search_evidence_view(result, media, workspace_id=workspace_id)
+    return SearchResultView(
+        **evidence.model_dump(), agent_reply=result.agent_reply,
+    )
+
+
+def _validated_search_result(
+    result: VideoChunkSearchResult | dict,
+) -> VideoChunkSearchResult:
+    if isinstance(result, dict) and ({"renderBlocks", "render_blocks"} & result.keys()):
+        result = {
+            key: value
+            for key, value in result.items()
+            if key not in {"renderBlocks", "render_blocks"}
+        }
+    return VideoChunkSearchResult.model_validate(result)

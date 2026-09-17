@@ -23,6 +23,7 @@ from engine.parse.background import (
     extract_background_image_ids,
     prepare_background_text,
 )
+from engine.parse.frame_sampler import extract_video_frames
 from engine.parse.schemas import (
     AnalysisWindow,
     ContextSnapshot,
@@ -47,6 +48,7 @@ from ..model.job import ParseJobStage, VideoChunkCheckpointStage
 from ..mq.contracts import ParseJobLeaseLostError
 from ..repository.job import ParseJobRepository
 from ..repository.video import VideoRepository
+from ..schema import VideoChunkKeyframeReference
 from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
 from ..utils.files import write_json_once
 from .index_sync import IndexSyncService
@@ -125,6 +127,10 @@ class VideoProcessingService:
 
         chunk_media_refs: dict[int, str] = {}
         analysis_media_refs: dict[int, str] = {}
+        keyframes_by_sequence: dict[
+            int,
+            tuple[VideoChunkKeyframeReference, ...],
+        ] = {}
         self._advance_stage(lease, ParseJobStage.PREPARING)
         windows = plan_analysis_windows(
             source_video,
@@ -158,6 +164,18 @@ class VideoProcessingService:
         for window, canonical_path in zip(windows, canonical_paths, strict=True):
             sequence_no = window.sequence_no
             self._jobs.assert_current_lease(lease)
+            [(relative_at_ms, keyframe_path)] = extract_video_frames(
+                canonical_path,
+                [0],
+                output_dir=(
+                    attempt_directory
+                    / "keyframes"
+                    / f"chunk-{sequence_no:04d}"
+                ),
+                max_height=self._config.canonical_max_height,
+            )
+            if not 0 <= relative_at_ms < window.chunk_end_ms - window.chunk_start_ms:
+                raise RuntimeError("canonical keyframe position is outside its VideoChunk")
             chunk_artifact = self._artifacts.publish_video_artifact(
                 canonical_path,
                 series_id=lease.series_id,
@@ -172,8 +190,24 @@ class VideoProcessingService:
                 category="analysis-windows",
                 filename=f"{published_filename_prefix}-{window.media_path.name}",
             )
+            keyframe_artifact = self._artifacts.publish_video_artifact(
+                keyframe_path,
+                series_id=lease.series_id,
+                video_id=lease.video_id,
+                category="keyframes",
+                filename=(
+                    f"{published_filename_prefix}-chunk-{sequence_no:04d}-"
+                    f"{keyframe_path.name}"
+                ),
+            )
             chunk_media_refs[sequence_no] = chunk_artifact.uri
             analysis_media_refs[sequence_no] = analysis_artifact.uri
+            keyframes_by_sequence[sequence_no] = (
+                VideoChunkKeyframeReference(
+                    uri=keyframe_artifact.uri,
+                    at_ms=window.chunk_start_ms + relative_at_ms,
+                ),
+            )
             checkpoints[sequence_no] = self._save_checkpoint(
                 lease,
                 checkpoints.get(sequence_no),
@@ -298,6 +332,7 @@ class VideoProcessingService:
             pipeline_version=lease.pipeline_version,
             chunk_media_refs=chunk_media_refs,
             analysis_window_media_refs=analysis_media_refs,
+            keyframes_by_sequence=keyframes_by_sequence,
             text_embeddings=text_embeddings,
             vision_embeddings=vision_embeddings,
         )

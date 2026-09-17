@@ -294,6 +294,17 @@ def _materialize_canonical(windows, *, output_dir, **_kwargs):
     return paths
 
 
+def _extract_frames(video_path, timestamps_ms, *, output_dir, **_kwargs):
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    frames = []
+    for index, timestamp_ms in enumerate(timestamps_ms):
+        path = directory / f"frame-{index:03d}-{timestamp_ms:08d}ms.jpg"
+        path.write_bytes(b"\xff\xd8\xff" + Path(video_path).read_bytes())
+        frames.append((timestamp_ms, path))
+    return frames
+
+
 class _VideoSink:
     def __init__(self) -> None:
         self.called = False
@@ -354,6 +365,10 @@ def _unit_processor(
     monkeypatch.setattr(
         "server.service.video_processing.materialize_canonical_chunks",
         _materialize_canonical,
+    )
+    monkeypatch.setattr(
+        "server.service.video_processing.extract_video_frames",
+        _extract_frames,
     )
     return processor, artifacts, videos, index
 
@@ -451,6 +466,10 @@ def test_processing_service_ignores_stray_json_restores_db_prefix_and_reaches_re
     monkeypatch.setattr(
         "server.service.video_processing.materialize_canonical_chunks",
         materialize_canonical,
+    )
+    monkeypatch.setattr(
+        "server.service.video_processing.extract_video_frames",
+        _extract_frames,
     )
     embedder = _Embedder()
     index_store = _IndexStore()
@@ -603,6 +622,11 @@ def test_processing_service_ignores_stray_json_restores_db_prefix_and_reaches_re
     )
     assert video.parse_status == ParseJobStatus.SUCCEEDED.value
     assert len(chunks) == len(embeddings) == len(intents) == 2
+    assert [item.keyframe_uris[0]["at_ms"] for item in chunks] == [0, 10_000]
+    assert all(
+        "/keyframes/" in item.keyframe_uris[0]["uri"]
+        for item in chunks
+    )
     assert all(item.text_vector == [1.0, 2.0, 3.0] for item in embeddings)
     assert all(item.vision_vector == [3.0, 2.0, 1.0] for item in embeddings)
     assert all(item.status == IndexSyncStatus.SYNCED.value for item in intents)
@@ -1010,6 +1034,10 @@ def test_late_old_lease_media_materialization_cannot_pollute_new_media_pointer(
     monkeypatch.setattr(
         "server.service.video_processing.materialize_canonical_chunks",
         materialize_canonical,
+    )
+    monkeypatch.setattr(
+        "server.service.video_processing.extract_video_frames",
+        _extract_frames,
     )
     first_lease = _lease()
     second_lease = replace(

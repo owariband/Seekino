@@ -15,6 +15,7 @@ import type {
   AgentAnswerEvent,
   AgentConversationView,
   AgentMessageView,
+  AgentRenderBlock,
   EvidenceReference,
 } from "../../api/contracts";
 
@@ -93,7 +94,15 @@ function mergeMessages(
       if (next.status === "PROCESSING") continue;
     }
     messages.set(next.messageId, previous?.status === "PROCESSING" && next.status === "PROCESSING"
-      ? { ...next, phase: next.messageId === streamedMessageId ? previous.phase : next.phase, content: next.messageId === streamedMessageId ? previous.content : next.content ?? previous.content, searchResult: previous.searchResult ?? next.searchResult }
+      ? {
+          ...next,
+          phase: next.messageId === streamedMessageId ? previous.phase : next.phase,
+          content: next.messageId === streamedMessageId ? previous.content : next.content ?? previous.content,
+          searchResult: previous.searchResult ?? next.searchResult,
+          renderBlocks: next.messageId === streamedMessageId
+            ? previous.renderBlocks
+            : next.renderBlocks ?? previous.renderBlocks,
+        }
       : next);
   }
   return [...messages.values()].sort((left, right) => left.sequenceNo - right.sequenceNo);
@@ -165,6 +174,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     setState((current) => ({ ...current, sending: true, error: null }));
     let messageId: string | null = null;
     let deltaBuffer = "";
+    let blockBuffer: AgentRenderBlock[] = [];
     const idempotencyKey = crypto.randomUUID();
     let sequence = -1;
     const onEvent = (event: AgentAnswerEvent) => {
@@ -175,9 +185,11 @@ export function useAgentConversation(requestedId: string | null = null) {
         if (event.assistantMessage.messageId !== event.messageId) return;
         messageId = event.messageId;
         active.streamedMessageId = messageId;
+        blockBuffer = [...(event.assistantMessage.renderBlocks ?? [])];
       } else if (event.messageId !== messageId) return;
       sequence = event.sequence;
       if (event.type === "answer.delta") deltaBuffer += event.delta;
+      if (event.type === "answer.block") blockBuffer = [...blockBuffer, event.block];
       if (event.type === "answer.interrupted") active.recoveryMessageId = event.messageId;
       setState((current) => {
         if (current.conversationId !== conversationId) return current;
@@ -201,6 +213,7 @@ export function useAgentConversation(requestedId: string | null = null) {
         return { ...current, progress, messages: current.messages.map((message) => {
           if (message.messageId !== event.messageId || message.status !== "PROCESSING") return message;
           if (event.type === "answer.delta") return { ...message, content: deltaBuffer };
+          if (event.type === "answer.block") return { ...message, renderBlocks: blockBuffer };
           if (event.type === "answer.evidence") return { ...message, searchResult: event.searchResult };
           if (event.type === "answer.progress") return { ...message, phase: event.phase };
           return message;

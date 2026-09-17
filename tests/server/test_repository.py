@@ -26,6 +26,7 @@ from server.repository.video import (
     VideoChunkNotFoundError,
 )
 from server.model.dto.parseDTO import PreparedEmbedding
+from server.schema import VideoChunkKeyframeReference
 from server.service.parse_import import _load_embedding, prepare_video_parse_import
 
 
@@ -99,6 +100,75 @@ def test_import_is_idempotent_and_maps_video_compact(
     assert video_compact == prepared_import.chunks[0].parse_result.self_compact
     assert text_vector is None
     assert vision_vector is None
+
+
+def test_import_persists_keyframes_with_original_video_offsets(
+    prepared_import,
+    repository,
+) -> None:
+    engine, video_repository = repository
+    prepared = replace(
+        prepared_import,
+        chunks=tuple(
+            replace(
+                item,
+                keyframes=(
+                    VideoChunkKeyframeReference(
+                        uri=(
+                            "artifact://test/keyframes/"
+                            f"chunk-{item.parse_result.window.sequence_no:04d}.jpg"
+                        ),
+                        at_ms=item.parse_result.window.chunk_start_ms,
+                    ),
+                ),
+            )
+            for item in prepared_import.chunks
+        ),
+    )
+
+    report = video_repository.import_video_parse(prepared)
+    legacy_uri = "artifact://test/keyframes/legacy-untimed.jpg"
+    with engine.begin() as connection:
+        connection.execute(
+            update(VideoChunkRecord)
+            .where(
+                VideoChunkRecord.video_chunk_id == report.video_chunk_ids[0]
+            )
+            .values(keyframe_uris=[legacy_uri])
+        )
+    retried = replace(
+        prepared,
+        chunks=tuple(
+            replace(
+                item,
+                keyframes=(
+                    VideoChunkKeyframeReference(
+                        uri=(
+                            "artifact://test/keyframes/retry-"
+                            f"chunk-{item.parse_result.window.sequence_no:04d}.jpg"
+                        ),
+                        at_ms=item.parse_result.window.chunk_start_ms,
+                    ),
+                ),
+            )
+            for item in prepared.chunks
+        ),
+    )
+    video_repository.import_video_parse(retried)
+    evidence = video_repository.hydrate_video_chunks(report.video_chunk_ids)
+
+    with engine.connect() as connection:
+        stored = connection.execute(
+            select(
+                VideoChunkRecord.sequence_no,
+                VideoChunkRecord.keyframe_uris,
+            ).order_by(VideoChunkRecord.sequence_no)
+        ).all()
+    assert [value[0]["at_ms"] for _, value in stored] == [0, 10_000]
+    assert [item.keyframe_uris[0].at_ms for item in evidence] == [0, 10_000]
+    assert [len(value) for _, value in stored] == [2, 1]
+    assert all("/retry-chunk-" in value[0]["uri"] for _, value in stored)
+    assert stored[0][1][1] == legacy_uri
 
 
 def test_default_video_id_does_not_change_with_episode_order(
@@ -399,6 +469,11 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
         "curated visual caption",
         ["s3://artifacts/keyframe.webp"],
     )
+    legacy_keyframe = video_repository.hydrate_video_chunks(
+        [first_chunk_id]
+    )[0].keyframe_uris[0]
+    assert legacy_keyframe.uri == "s3://artifacts/keyframe.webp"
+    assert legacy_keyframe.at_ms is None
     assert embedding == (
         [0.1, 0.2],
         [0.3, 0.4],

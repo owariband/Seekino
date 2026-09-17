@@ -1,14 +1,45 @@
 import { ArrowUp, ChevronDown, LoaderCircle, MessageCircleMore, ScanSearch, X } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import Markdown, { defaultUrlTransform } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { useWorkspace } from "../../app/workspace";
-import type { EvidenceReference } from "../../api/contracts";
+import { mediaUrl } from "../../api/client";
+import type { AgentMessageView, AgentRenderBlock, EvidenceReference } from "../../api/contracts";
 import { clipText, episodeLabel, formatTimeRange } from "../../shared/format";
 import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
 import { explainHit, readableTranscript } from "./explain";
 import { useAgentConversation } from "./useAgentConversation";
 import styles from "./search.module.css";
+
+function messageRenderBlocks(message: AgentMessageView): AgentRenderBlock[] {
+  if (message.renderBlocks !== undefined) return message.renderBlocks;
+  return [
+    ...(message.content ? [{ type: "markdown" as const, markdown: message.content }] : []),
+    ...(message.searchResult?.hits.map((hit) => ({
+      type: "video" as const,
+      videoChunkId: hit.evidence.videoChunkId,
+    })) ?? []),
+  ];
+}
+
+function MarkdownAnswer({ markdown }: { markdown: string }) {
+  return (
+    <div className={styles.answerText}>
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        skipHtml
+        urlTransform={defaultUrlTransform}
+        components={{
+          a: ({ children, href, title }) => href ? <a href={href} title={title} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
+          img: ({ alt }) => <span className={styles.answerImageBlocked}>{alt ? `[图片：${alt}]` : "[图片]"}</span>,
+          table: ({ children }) => <div className={styles.answerTable}><table>{children}</table></div>,
+        }}
+      >{markdown}</Markdown>
+    </div>
+  );
+}
 
 export function SearchPage() {
   const { mode, series } = useWorkspace();
@@ -70,43 +101,42 @@ export function SearchPage() {
                 ) : (
                   <div>
                     <AgentProgress message={message} steps={progress[message.messageId] ?? []} />
-                    {message.content ? <p className={styles.answerText}>{message.content}</p> : null}
                     {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || "本次回答未完成"}</p> : null}
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>未生成回答</p> : null}
-                    {message.searchResult ? (
-                      <section className={styles.candidatesPanel} aria-label="检索助手召回的候选片段">
-                        <div className={styles.candidateHeading}>
-                          <h2>候选片段</h2><span>{message.searchResult.hits.length} 段</span>
-                        </div>
-                        {message.searchResult.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
-                        {message.searchResult.hits.length ? (
+                    {message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
+                    {messageRenderBlocks(message).map((block, index, blocks) => {
+                      if (block.type === "markdown") return <MarkdownAnswer key={`markdown:${index}`} markdown={block.markdown} />;
+                      const hit = message.searchResult?.hits.find((item) => item.evidence.videoChunkId === block.videoChunkId);
+                      if (!hit) return null;
+                      const explanation = explainHit(hit);
+                      const selected = selection?.messageId === message.messageId && selectedHit?.evidence.videoChunkId === hit.evidence.videoChunkId;
+                      const thumbnailUrl = hit.evidence.thumbnail ? mediaUrl(hit.evidence.thumbnail.url) : null;
+                      const firstVideo = !blocks.slice(0, index).some((item) => item.type === "video" && message.searchResult?.hits.some((candidate) => candidate.evidence.videoChunkId === item.videoChunkId));
+                      return (
+                        <section key={`video:${block.videoChunkId}:${index}`} className={`${styles.candidatesPanel} ${styles.renderVideoBlock}`} aria-label="检索助手提交的视频片段">
+                          {firstVideo ? <div className={styles.candidateHeading}><h2>视频片段</h2><span>{message.searchResult?.hits.length ?? 0} 段</span></div> : null}
                           <div className={styles.candidateList}>
-                            {message.searchResult.hits.map((hit) => {
-                              const explanation = explainHit(hit);
-                              const selected = selection?.messageId === message.messageId && selectedHit?.evidence.videoChunkId === hit.evidence.videoChunkId;
-                              return (
-                                <button
-                                  type="button"
-                                  key={hit.evidence.videoChunkId}
-                                  className={selected ? styles.candidateSelected : styles.candidate}
-                                  onClick={() => setSelection({ conversationId: message.conversationId, messageId: message.messageId, chunkId: hit.evidence.videoChunkId })}
-                                  aria-pressed={selected}
-                                >
-                                  <div className={styles.candidateTop}>
-                                    <span className={styles.rank}>{hit.candidate.rank}</span>
-                                    <span>{hit.evidence.seriesName} · {episodeLabel(hit.evidence.episodeOrder)}</span>
-                                    <time>{formatTimeRange(hit.evidence.startMs, hit.evidence.endMs)}</time>
-                                  </div>
-                                  <strong>{clipText(hit.evidence.videoCompact || hit.evidence.windowSummary, 78)}</strong>
-                                  <blockquote>{clipText(readableTranscript(hit), 66)}</blockquote>
-                                  <div className={styles.whyLine}><MessageCircleMore size={14} aria-hidden="true" /><span>{explanation.summary}</span></div>
-                                </button>
-                              );
-                            })}
+                            <button
+                              type="button"
+                              className={selected ? styles.candidateSelected : styles.candidate}
+                              onClick={() => setSelection({ conversationId: message.conversationId, messageId: message.messageId, chunkId: hit.evidence.videoChunkId })}
+                              aria-pressed={selected}
+                            >
+                              <div className={styles.candidateTop}>
+                                <span className={styles.rank}>{hit.candidate.rank}</span>
+                                <span>{hit.evidence.seriesName} · {episodeLabel(hit.evidence.episodeOrder)}</span>
+                                <time>{formatTimeRange(hit.evidence.startMs, hit.evidence.endMs)}</time>
+                              </div>
+                              {thumbnailUrl ? <img className={styles.candidateThumbnail} src={thumbnailUrl} alt={hit.evidence.thumbnail?.alt || `${hit.evidence.seriesName} 视频片段首帧`} loading="lazy" /> : null}
+                              <strong>{clipText(hit.evidence.videoCompact || hit.evidence.windowSummary, 78)}</strong>
+                              <blockquote>{clipText(readableTranscript(hit), 66)}</blockquote>
+                              <div className={styles.whyLine}><MessageCircleMore size={14} aria-hidden="true" /><span>{explanation.summary}</span></div>
+                            </button>
                           </div>
-                        ) : <p className={styles.candidateEmpty}>没有找到相关片段，试试换个描述。</p>}
-                      </section>
-                    ) : null}
+                        </section>
+                      );
+                    })}
+                    {message.searchResult && !message.searchResult.hits.length ? <p className={styles.candidateEmpty}>没有可展示的视频片段，试试换个描述。</p> : null}
                   </div>
                 )}
               </article>

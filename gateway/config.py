@@ -2,12 +2,38 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
+
+
+def _https_base_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError(
+            "DeepSeek base_url must be an HTTPS URL without credentials, "
+            "query, or fragment"
+        )
+    return value.rstrip("/")
+
+
+_HttpsBaseUrl = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+    AfterValidator(_https_base_url),
+]
 
 
 class DeepSeekModelConfig(BaseModel):
@@ -15,11 +41,33 @@ class DeepSeekModelConfig(BaseModel):
 
     provider: Literal["deepseek"] = "deepseek"
     model: str = Field(min_length=1)
-    base_url: str = Field(min_length=1)
+    base_url: _HttpsBaseUrl
     api_key_env: str = Field(min_length=1)
     reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     max_output_tokens: int = Field(ge=256, le=32_768)
     request_timeout_seconds: float = Field(gt=0)
+
+
+class AgentChatModelConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["deepseek"] = "deepseek"
+    model: str = Field(min_length=1)
+    base_url: _HttpsBaseUrl
+    api_key_env: str = Field(min_length=1)
+    reasoning_effort: Literal["none"] = "none"
+    max_output_tokens: int = Field(ge=256, le=32_768)
+    request_timeout_seconds: float = Field(gt=0)
+
+
+def _default_agent_chat_config() -> AgentChatModelConfig:
+    return AgentChatModelConfig(
+        model="deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key_env="DEEPSEEK_API_KEY",
+        max_output_tokens=8192,
+        request_timeout_seconds=180,
+    )
 
 
 class VideoFallbackConfig(BaseModel):
@@ -54,7 +102,12 @@ class MultimodalEmbeddingConfig(BaseModel):
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # Keep the YAML key stable for the existing CLI and local run configuration.
+    # Keep parse-only custom configs compatible; Server startup still validates
+    # the resolved Chat API key before opening database or Qdrant resources.
+    agent_chat: AgentChatModelConfig = Field(
+        default_factory=_default_agent_chat_config,
+    )
+    # Keep the parser YAML key stable for the existing CLI and local run configuration.
     video_parser: VideoParseConfig
     multimodal_embedding: MultimodalEmbeddingConfig
 

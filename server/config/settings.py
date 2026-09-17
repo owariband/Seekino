@@ -33,7 +33,7 @@ class ServerSettings:
     upload: UploadServiceConfig
     parse: VideoParseRuntimeConfig
     agent: AgentServiceConfig
-    agent_chat_model: str | None
+    agent_deepseek_chat_model: str | None
     agent_evaluator_model: str | None
     agent_request_timeout_seconds: float
     mq: MQConsumerConfig
@@ -245,7 +245,9 @@ class ServerSettings:
                 ),
             ),
             agent_query_model=_optional_environment("ANIVAG_AGENT_QUERY_MODEL"),
-            agent_chat_model=_optional_environment("ANIVAG_AGENT_CHAT_MODEL"),
+            agent_deepseek_chat_model=_optional_environment(
+                "ANIVAG_DEEPSEEK_CHAT_MODEL"
+            ),
             agent_evaluator_model=_optional_environment(
                 "ANIVAG_AGENT_EVALUATOR_MODEL"
             ),

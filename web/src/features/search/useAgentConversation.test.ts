@@ -19,7 +19,7 @@ vi.mock("../../api/client", async (importOriginal) => ({
 
 const now = Date.parse("2026-09-15T00:00:00Z");
 function page<T>(items: T[]) { return { items, total: items.length, hasMore: false, nextCursor: null }; }
-function searchResult(seriesIds = ["A", "B"], hits: VideoChunkSearchHit[] = []) { return { query: "query", seriesIds, searchedVideoIds: ["video"], partial: false, warnings: [], agentReply: { message: "", resultCount: hits.length }, hits }; }
+function searchResult(seriesIds = ["A", "B"], hits: VideoChunkSearchHit[] = []) { return { query: "query", seriesIds, searchedVideoIds: ["video"], partial: false, warnings: [], hits }; }
 function conversation(conversationId = "conv-A"): AgentConversationView {
   return { conversationId, workspaceId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
 }
@@ -132,6 +132,25 @@ describe("Conversation state", () => {
     });
     expect(vi.mocked(streamAgentMessage).mock.calls[0]![5]).toEqual([]);
     expect(result.current.messages[1]?.searchResult?.seriesIds).toEqual(["A", "B"]);
+  });
+
+  it("keeps ordered blocks that arrive before evidence and across processing snapshots", async () => {
+    const { result } = await ready();
+    const stream = await send(result);
+    const hit = { candidate: { videoChunkId: "chunk" }, evidence: { videoId: "video", videoChunkId: "chunk", startMs: 12_000, endMs: 15_000 } } as VideoChunkSearchHit;
+
+    act(() => {
+      stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, block: { type: "video", videoChunkId: "chunk" } });
+      stream.emit({ type: "answer.evidence", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, searchResult: searchResult(["A"], [hit]) });
+      stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 4, block: { type: "markdown", markdown: "片段后的说明" } });
+      snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A")] });
+    });
+
+    expect(result.current.messages[1]?.renderBlocks).toEqual([
+      { type: "video", videoChunkId: "chunk" },
+      { type: "markdown", markdown: "片段后的说明" },
+    ]);
+    expect(result.current.messages[1]?.searchResult?.hits).toEqual([hit]);
   });
 
   it("migrates the previous selected series' saved Conversation once and restores its messages", async () => {

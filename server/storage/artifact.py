@@ -108,6 +108,7 @@ class LocalArtifactStore:
         root: str | Path,
         *,
         environment: DatabaseEnvironment | str,
+        create_base_directory: bool = True,
     ) -> None:
         configured_root = Path(root).expanduser().resolve()
         if configured_root == Path(configured_root.anchor):
@@ -115,7 +116,8 @@ class LocalArtifactStore:
         self.environment = DatabaseEnvironment(environment)
         self.root = configured_root
         self.base_directory = configured_root / self.environment.value
-        self.base_directory.mkdir(parents=True, exist_ok=True)
+        if create_base_directory:
+            self.base_directory.mkdir(parents=True, exist_ok=True)
 
     def put_upload_segment(
         self,

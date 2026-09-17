@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import subprocess
 from collections.abc import Callable
@@ -12,13 +11,24 @@ from ..config.media import ImageUploadConfig
 from ..constants.media import SERIES_IMAGE_ID_PREFIX
 from ..identity import canonical_uuid
 from ..model.dto.libraryDTO import VideoSummaryState
-from ..model.dto.mediaDTO import ImageReference, PlaybackMedia, VideoMedia
+from ..model.dto.mediaDTO import (
+    ImageReference,
+    KeyframeImageReference,
+    PlaybackMedia,
+    VideoMedia,
+)
 from ..repository.library import SeriesNotFoundError
 from ..repository.video import VideoRepository
 from ..schema import VideoChunkEvidence
 from ..storage.artifact import ArtifactStore
 from ..utils.images import prepare_series_image
-from ..utils.media import decode_series_image_id, image_media_type
+from ..utils.media import (
+    decode_keyframe_image_id,
+    decode_series_image_id,
+    encode_chunk_keyframe_image_id,
+    encode_video_keyframe_image_id,
+    image_media_type,
+)
 from .library import LibraryService
 
 
@@ -123,11 +133,49 @@ class MediaService:
                     continue
             except (OSError, ValueError):
                 continue
-            image_id = base64.urlsafe_b64encode(json.dumps([video_id, index]).encode()).decode().rstrip("=")
+            image_id = encode_video_keyframe_image_id(video_id, index)
             return ImageReference(image_id, "/api/media/images/content?" + urlencode({
                 "workspaceId": workspace_id, "imageId": image_id,
             }))
         return None
+
+    def keyframe_views(
+        self,
+        evidence: VideoChunkEvidence,
+        *,
+        workspace_id: str,
+    ) -> tuple[KeyframeImageReference, ...]:
+        if evidence.workspace_id != workspace_id:
+            raise SeriesNotFoundError("片段资源不存在")
+        projected: list[KeyframeImageReference] = []
+        for index, keyframe in enumerate(evidence.keyframe_uris):
+            if (
+                keyframe.at_ms is None
+                or not evidence.start_ms <= keyframe.at_ms < evidence.end_ms
+                or keyframe.at_ms >= evidence.duration_ms
+            ):
+                continue
+            try:
+                path = self._artifact_store.resolve(keyframe.uri)
+                if image_media_type(path) is None:
+                    continue
+            except (OSError, ValueError):
+                continue
+            image_id = encode_chunk_keyframe_image_id(
+                evidence.video_chunk_id,
+                index,
+            )
+            projected.append(
+                KeyframeImageReference(
+                    image_id=image_id,
+                    url="/api/media/images/content?" + urlencode({
+                        "workspaceId": workspace_id,
+                        "imageId": image_id,
+                    }),
+                    at_ms=keyframe.at_ms,
+                )
+            )
+        return tuple(projected)
 
     def get_image(self, image_id: str, *, workspace_id: str) -> VideoMedia:
         if isinstance(image_id, str) and image_id.startswith(SERIES_IMAGE_ID_PREFIX):
@@ -148,14 +196,18 @@ class MediaService:
                 raise MediaNotReadyError("背景资源不是可确认的图片")
             return VideoMedia(path, media_type, size)
         try:
-            video_id, index = json.loads(base64.urlsafe_b64decode(image_id + "=" * (-len(image_id) % 4)))
-            video_id = canonical_uuid(video_id, "image_id")
-            if isinstance(index, bool) or not isinstance(index, int) or index < 0:
-                raise ValueError("invalid image index")
-        except (TypeError, ValueError) as exc:
+            scope, identifier, index = decode_keyframe_image_id(image_id)
+        except ValueError as exc:
             raise SeriesNotFoundError("图片资源不存在") from exc
-        video = self._library.get_video(video_id, workspace_id=workspace_id)
-        sources = getattr(video, "keyframe_uris", ())
+        if scope == "video":
+            video = self._library.get_video(identifier, workspace_id=workspace_id)
+            sources = getattr(video, "keyframe_uris", ())
+        else:
+            evidence = self.get_chunk_evidence(
+                identifier,
+                workspace_id=workspace_id,
+            )
+            sources = tuple(item.uri for item in evidence.keyframe_uris)
         if index >= len(sources):
             raise SeriesNotFoundError("图片资源不存在")
         try:

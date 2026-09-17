@@ -24,3 +24,11 @@ class ImageReference:
     image_id: str
     url: str
     expires_at: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class KeyframeImageReference:
+    image_id: str
+    url: str
+    at_ms: int
+    expires_at: int | None = None

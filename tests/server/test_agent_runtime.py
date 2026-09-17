@@ -123,11 +123,50 @@ class Chat:
 
     def __init__(self):
         self.contexts = []
+        self.request_timeouts = []
+        self.model_call_budgets = []
+        self.text_blocks = []
+        self.video_items = []
+        self.tool_results = []
 
-    def stream_text(self, inputs):
-        self.contexts.append(json.loads(inputs[0].text.rsplit("\n\n", 1)[1]))
-        yield "final "
-        yield "answer"
+    def run_agent_loop(
+        self, prompt, *, function_name, function_description, result_type,
+        max_model_calls, handle_text, handle_tool_call,
+        request_timeout_seconds=None, check_control=None,
+    ):
+        assert function_name == "submit_video_item"
+        assert function_description
+        context = json.loads(prompt.rsplit("\n\n", 1)[1])
+        self.contexts.append(context)
+        assert request_timeout_seconds is not None
+        assert request_timeout_seconds > 0
+        self.request_timeouts.append(request_timeout_seconds)
+        assert max_model_calls > 0
+        self.model_call_budgets.append(max_model_calls)
+        assert check_control is not None
+        chunk_ids = [
+            hit["candidate"]["videoChunkId"]
+            for hit in context["approved_turn"]["selected_evidence"]["hits"]
+        ]
+        text_blocks = (
+            ["## Final answer", "Grounded answer."]
+            if chunk_ids else ["## Final answer\n\nGrounded answer."]
+        )
+        check_control()
+        self.text_blocks.append(text_blocks[0])
+        handle_text(text_blocks[0])
+        for chunk_id in chunk_ids:
+            check_control()
+            item = result_type.model_validate({
+                "video_chunk_id": chunk_id,
+                "claim": f"Grounded evidence for {chunk_id}.",
+            })
+            self.video_items.append(item)
+            self.tool_results.append(json.loads(handle_tool_call(item)))
+        if len(text_blocks) == 2:
+            check_control()
+            self.text_blocks.append(text_blocks[1])
+            handle_text(text_blocks[1])
 
 
 def _runtime(query=None, evaluator=None, chat=None, retrieval=None, **kwargs):
@@ -144,7 +183,9 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     result = runtime.kick(_inputs(), emit=events.append)
     assert len(query.contexts) == len(evaluator.contexts) == approve_at
     assert len(chat.contexts) == len(retrieval.calls) == 1
-    assert result.agent_reply.message == "final answer"
+    assert 0 < chat.request_timeouts[0] <= 180
+    assert chat.model_call_budgets == [6]
+    assert result.agent_reply.message == "## Final answer\n\nGrounded answer."
     assert result.agent_reply.result_count == 1
     assert result.hits[0].evidence.start_ms == 1000
     assert result.hits[0].evidence.end_ms == 2000
@@ -152,9 +193,22 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
         *(["RETRIEVING", "EVALUATING"] * approve_at), "RESPONDING",
     ]
     delivery = [event for event in events if event["type"] != "answer.progress"]
-    assert [event["type"] for event in delivery] == ["answer.evidence", "answer.delta", "answer.delta"]
-    assert delivery[0]["searchResult"]["hits"] == result.model_dump(mode="json", by_alias=True)["hits"]
-    assert delivery[1]["delta"] == "final "
+    assert [event["type"] for event in delivery] == [
+        "answer.evidence", "answer.block", "answer.block", "answer.block",
+        "answer.delta",
+    ]
+    assert delivery[0]["searchResult"] == result.model_dump(mode="json", by_alias=True)
+    assert [event["block"] for event in delivery[1:4]] == [
+        block.model_dump(mode="json", by_alias=True)
+        for block in result.render_blocks
+    ]
+    assert [event["block"]["type"] for event in delivery[1:4]] == [
+        "markdown", "video", "markdown",
+    ]
+    assert result.hits[0].selection_reason.summary == "Grounded evidence for chunk-1."
+    assert delivery[-1]["delta"] == "## Final answer\n\nGrounded answer."
+    assert [item.video_chunk_id for item in chat.video_items] == ["chunk-1"]
+    assert chat.tool_results == [{"accepted": True, "video_chunk_id": "chunk-1"}]
     assert all(event["conversationId"] == "conversation" for event in events)
     assert all(event["messageId"] == "conversation-answer" for event in events)
     assert runtime.model_name == "chat-test"
@@ -254,8 +308,12 @@ def test_selection_order_and_duplicate_ids_keep_exact_real_evidence():
     result = runtime.kick(_inputs())
     assert [hit.candidate.video_chunk_id for hit in result.hits] == ["chunk-2", "chunk-1"]
     assert result.agent_reply.result_count == 2
-    assert result.hits[0] == retrieval.hits[1]
-    assert result.hits[1] == retrieval.hits[0]
+    assert result.hits[0].candidate == retrieval.hits[1].candidate
+    assert result.hits[0].evidence == retrieval.hits[1].evidence
+    assert result.hits[0].selection_reason.summary == "Grounded evidence for chunk-2."
+    assert result.hits[1].candidate == retrieval.hits[0].candidate
+    assert result.hits[1].evidence == retrieval.hits[0].evidence
+    assert result.hits[1].selection_reason.summary == "Grounded evidence for chunk-1."
 
 
 def test_series_background_is_injected_once_without_leaking_into_each_hit():
@@ -448,6 +506,7 @@ def test_empty_real_retrieval_can_deliver_an_approved_uncertain_answer():
     assert len(retrieval.calls) == 1
     assert result.hits == []
     assert result.agent_reply.result_count == 0
+    assert [block.type for block in result.render_blocks] == ["markdown"]
 
 
 def test_tool_scope_is_not_an_exposed_model_argument_and_top_k_is_bounded():
@@ -555,70 +614,156 @@ def test_current_turn_cannot_change_the_scope_even_to_a_subset():
     assert evaluator.contexts == chat.contexts == []
 
 
-def test_first_delta_is_observable_while_provider_is_still_blocked():
-    received, release = Event(), Event()
+def test_chat_publishes_no_output_until_tools_and_final_text_are_ready():
+    started, release = Event(), Event()
 
     class BlockedChat(Chat):
-        def stream_text(self, inputs):
-            yield "first"
+        def run_agent_loop(self, prompt, **kwargs):
+            started.set()
             assert release.wait(5)
-            yield "second"
+            return super().run_agent_loop(prompt, **kwargs)
 
     runtime, *_ = _runtime(chat=BlockedChat())
     events = []
 
-    def emit(event):
-        events.append(event)
-        if event["type"] == "answer.delta":
-            received.set()
-
     with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(runtime.kick, _inputs(), emit=emit)
+        future = executor.submit(runtime.kick, _inputs(), emit=events.append)
         try:
-            assert received.wait(5)
+            assert started.wait(5)
             assert not future.done()
-            assert events[-1]["delta"] == "first"
+            assert [event for event in events if event["type"] != "answer.progress"] == []
         finally:
             release.set()
-        assert future.result(timeout=5).agent_reply.message == "firstsecond"
+        result = future.result(timeout=5)
+    assert result.agent_reply.message == "## Final answer\n\nGrounded answer."
+    assert [event["delta"] for event in events if event["type"] == "answer.delta"] == [
+        "## Final answer\n\nGrounded answer.",
+    ]
 
 
-def test_chat_failure_leaves_partial_deltas_without_output_or_completed_event():
+def test_chat_failure_emits_no_unvalidated_evidence_or_text():
     class FailedChat(Chat):
-        def stream_text(self, inputs):
-            yield "partial"
+        def run_agent_loop(self, prompt, **kwargs):
+            super().run_agent_loop(prompt, **kwargs)
             raise RuntimeError("provider lost")
 
-    runtime, *_ = _runtime(chat=FailedChat())
+    chat = FailedChat()
+    runtime, *_ = _runtime(chat=chat)
     events = []
     with pytest.raises(AgentModelInvocationError, match="Chat Agent model"):
         runtime.kick(_inputs(), emit=events.append)
-    assert [event["type"] for event in events if event["type"] != "answer.progress"] == ["answer.evidence", "answer.delta"]
+    assert [item.video_chunk_id for item in chat.video_items] == ["chunk-1"]
+    assert [event for event in events if event["type"] != "answer.progress"] == []
 
 
-def test_cancel_between_deltas_closes_provider_and_stops_output():
-    cancellation, closed = Event(), Event()
+def test_chat_cannot_submit_unapproved_evidence_ids() -> None:
+    class InventedEvidenceChat(Chat):
+        def run_agent_loop(
+            self, prompt, *, result_type, handle_tool_call, **kwargs,
+        ):
+            handle_tool_call(result_type.model_validate({
+                "video_chunk_id": "invented-chunk",
+                "claim": "Invented evidence.",
+            }))
+
+    runtime, *_ = _runtime(chat=InventedEvidenceChat())
+    events = []
+
+    with pytest.raises(
+        AgentModelInvocationError,
+        match="outside approved evidence",
+    ):
+        runtime.kick(_inputs(), emit=events.append)
+
+    assert [event for event in events if event["type"] != "answer.progress"] == []
+
+
+def test_chat_cannot_submit_the_same_approved_id_twice() -> None:
+    class DuplicateEvidenceChat(Chat):
+        def run_agent_loop(
+            self, prompt, *, result_type, handle_text, handle_tool_call, **kwargs,
+        ):
+            handle_text("Grounded answer.")
+            item = result_type.model_validate({
+                "video_chunk_id": "chunk-1",
+                "claim": "Grounded evidence.",
+            })
+            handle_tool_call(item)
+            handle_tool_call(item)
+
+    runtime, *_ = _runtime(chat=DuplicateEvidenceChat())
+    events = []
+
+    with pytest.raises(AgentModelInvocationError, match="more than once"):
+        runtime.kick(_inputs(), emit=events.append)
+
+    assert [event for event in events if event["type"] != "answer.progress"] == []
+
+
+def test_chat_requires_nonempty_markdown_even_when_video_was_submitted() -> None:
+    class VideoOnlyChat(Chat):
+        def run_agent_loop(
+            self, prompt, *, result_type, handle_tool_call, **kwargs,
+        ):
+            handle_tool_call(result_type.model_validate({
+                "video_chunk_id": "chunk-1",
+                "claim": "Grounded evidence.",
+            }))
+
+    runtime, *_ = _runtime(chat=VideoOnlyChat())
+    events = []
+
+    with pytest.raises(AgentModelInvocationError, match="Chat Agent model"):
+        runtime.kick(_inputs(), emit=events.append)
+
+    assert [event for event in events if event["type"] != "answer.progress"] == []
+
+
+@pytest.mark.parametrize("submitted_ids", [("chunk-1",), ("chunk-1", "chunk-2")])
+def test_chat_may_choose_an_approved_subset_in_any_order(submitted_ids) -> None:
+    class ChoosingChat(Chat):
+        def run_agent_loop(
+            self, prompt, *, result_type, handle_text, handle_tool_call, **kwargs,
+        ):
+            handle_text("Before video.")
+            for chunk_id in submitted_ids:
+                handle_tool_call(result_type.model_validate({
+                    "video_chunk_id": chunk_id,
+                    "claim": f"Chosen {chunk_id}.",
+                }))
+            handle_text("After video.")
+
+    runtime, *_ = _runtime(
+        query=Query(selected=("chunk-2", "chunk-1")),
+        chat=ChoosingChat(),
+    )
+
+    result = runtime.kick(_inputs())
+
+    assert [hit.candidate.video_chunk_id for hit in result.hits] == list(submitted_ids)
+    assert [hit.selection_reason.summary for hit in result.hits] == [
+        f"Chosen {chunk_id}." for chunk_id in submitted_ids
+    ]
+    assert [block.type for block in result.render_blocks] == [
+        "markdown", *(["video"] * len(submitted_ids)), "markdown",
+    ]
+    assert result.agent_reply.message == "Before video.\n\nAfter video."
+
+
+def test_cancel_after_agent_loop_stops_before_output():
+    cancellation = Event()
 
     class CancelChat(Chat):
-        def stream_text(self, inputs):
-            try:
-                yield "first"
-                yield "second"
-            finally:
-                closed.set()
+        def run_agent_loop(self, prompt, **kwargs):
+            super().run_agent_loop(prompt, **kwargs)
+            cancellation.set()
 
     runtime, *_ = _runtime(chat=CancelChat())
     events = []
 
-    def emit(event):
-        events.append(event)
-        if event["type"] == "answer.delta":
-            cancellation.set()
-
     with pytest.raises(AgentModelInvocationError, match="cancelled"):
-        runtime.kick(_inputs(), emit=emit, cancellation=cancellation)
-    assert closed.is_set()
-    assert [event.get("delta") for event in events if event["type"] == "answer.delta"] == ["first"]
+        runtime.kick(_inputs(), emit=events.append, cancellation=cancellation)
+    assert [event for event in events if event["type"] != "answer.progress"] == []
 
 
 def test_deadline_after_a_model_call_stops_before_chat(monkeypatch):
@@ -677,9 +822,22 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
     class EchoChat:
         model_name = "echo"
 
-        def stream_text(self, inputs):
-            context = json.loads(inputs[0].text.rsplit("\n\n", 1)[1])
-            yield context["approved_turn"]["plan_context"]
+        def run_agent_loop(
+            self, prompt, *, function_name, function_description, result_type,
+            max_model_calls, handle_text, handle_tool_call,
+            request_timeout_seconds=None, check_control=None,
+        ):
+            context = json.loads(prompt.rsplit("\n\n", 1)[1])
+            chunk_ids = [
+                hit["candidate"]["videoChunkId"]
+                for hit in context["approved_turn"]["selected_evidence"]["hits"]
+            ]
+            handle_text(context["approved_turn"]["plan_context"])
+            for chunk_id in chunk_ids:
+                handle_tool_call(result_type.model_validate({
+                    "video_chunk_id": chunk_id,
+                    "claim": f"Evidence for {chunk_id}",
+                }))
 
     def search(query, *, workspace_id, series_ids, top_k):
         assert workspace_id == f"workspace-{query}"

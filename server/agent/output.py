@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from ..schema import AgentReply, VideoChunkSearchHit, VideoChunkSearchResult
-from .state import AgentModelInvocationError, LoopTurn, QueryDraft, RetrievalCall, RunInputs
+from .state import (
+    AgentFinalOutput, AgentModelInvocationError, ChatRenderDraft, LoopTurn,
+    MarkdownRenderBlock, QueryDraft, RetrievalCall, RunInputs, VideoRenderBlock,
+)
 
 
 def validate_result(result: VideoChunkSearchResult, inputs: RunInputs) -> None:
@@ -99,15 +102,55 @@ def bind_draft(
     return available, bound, {key: sources[key] for key in selected_ids}
 
 
-def finalize_output(turn: LoopTurn, inputs: RunInputs) -> VideoChunkSearchResult:
-    if turn.review.action != "complete" or not turn.rendered_text.strip():
+def build_chat_output(
+    draft: VideoChunkSearchResult,
+    rendered: ChatRenderDraft,
+) -> AgentFinalOutput:
+    approved_hits = {
+        hit.candidate.video_chunk_id: hit
+        for hit in draft.hits
+    }
+    if any(
+        item.video_chunk_id not in approved_hits
+        for item in rendered.video_items
+    ):
+        raise AgentModelInvocationError(
+            "Chat video items must come from approved evidence"
+        )
+    hits: list[VideoChunkSearchHit] = []
+    for item in rendered.video_items:
+        approved = approved_hits[item.video_chunk_id]
+        hits.append(
+            approved.model_copy(
+                update={
+                    "selection_reason": approved.selection_reason.model_copy(
+                        update={"summary": item.claim},
+                    ),
+                },
+                deep=True,
+            )
+        )
+    return AgentFinalOutput(
+        query=draft.query,
+        series_ids=list(draft.series_ids),
+        agent_reply=AgentReply(
+            message=rendered.answer_markdown,
+            result_count=len(hits),
+        ),
+        hits=hits,
+        searched_video_ids=draft.searched_video_ids,
+        partial=draft.partial, warnings=list(draft.warnings),
+        render_blocks=[
+            block.model_copy(deep=True)
+            if isinstance(block, MarkdownRenderBlock)
+            else VideoRenderBlock(video_chunk_id=block.video_chunk_id)
+            for block in rendered.blocks
+        ],
+    )
+
+
+def finalize_output(turn: LoopTurn, inputs: RunInputs) -> AgentFinalOutput:
+    if turn.review.action != "complete" or turn.rendered_answer is None:
         raise AgentModelInvocationError("Output requires approved evidence and nonempty Chat text")
     validate_result(turn.draft_output, inputs)
-    return VideoChunkSearchResult(
-        query=turn.draft_output.query,
-        series_ids=list(turn.draft_output.series_ids),
-        agent_reply=AgentReply(message=turn.rendered_text, result_count=len(turn.draft_output.hits)),
-        hits=[hit.model_copy(deep=True) for hit in turn.draft_output.hits],
-        searched_video_ids=turn.draft_output.searched_video_ids,
-        partial=turn.draft_output.partial, warnings=list(turn.draft_output.warnings),
-    )
+    return build_chat_output(turn.draft_output, turn.rendered_answer)

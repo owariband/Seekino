@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from copy import deepcopy
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..identity import canonical_uuid
+from ..model.dto.keyframeDTO import KeyframeBackfillCandidate
 from ..model.dto.jobDTO import ParseJobLease
 from ..model.dto.parseDTO import ParseImportReport, PreparedVideoParseImport
 from ..model.dto.videoDTO import HydratedVideoChunkState
@@ -21,8 +23,10 @@ from ..model.video import (
     VideoChunkRecord,
 )
 from ..mq.contracts import ParseJobLeaseLostError
-from ..schema import VideoChunkEvidence
+from ..schema import VideoChunkEvidence, VideoChunkKeyframeReference
+from ..utils.media import merge_keyframe_uri_values
 from ..utils.time import utc_now_naive
+from ..utils.validation import require_nonempty_text
 from .index_sync import materialize_index_sync_intents
 
 
@@ -45,6 +49,148 @@ class SeriesNotReadyError(RuntimeError):
 class VideoRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+
+    def list_keyframe_backfill_candidates(
+        self,
+        *,
+        limit: int,
+        workspace_id: str | None = None,
+        series_id: str | None = None,
+        video_id: str | None = None,
+        after: KeyframeBackfillCandidate | None = None,
+    ) -> list[KeyframeBackfillCandidate]:
+        """Page through scoped chunks for service-level media inspection."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        normalized_workspace = (
+            require_nonempty_text(workspace_id, "workspace_id")
+            if workspace_id is not None
+            else None
+        )
+        normalized_series = (
+            canonical_uuid(series_id, "series_id")
+            if series_id is not None
+            else None
+        )
+        normalized_video = (
+            canonical_uuid(video_id, "video_id")
+            if video_id is not None
+            else None
+        )
+        statement = (
+            select(
+                SeriesRecord.workspace_id,
+                SeriesRecord.series_id,
+                VideoRecord.video_id,
+                VideoRecord.episode_order,
+                VideoRecord.duration_ms,
+                VideoChunkRecord.video_chunk_id,
+                VideoChunkRecord.sequence_no,
+                VideoChunkRecord.start_ms,
+                VideoChunkRecord.end_ms,
+                VideoChunkRecord.chunk_media_ref,
+                VideoChunkRecord.keyframe_uris,
+            )
+            .join(VideoRecord, VideoRecord.series_id == SeriesRecord.series_id)
+            .join(
+                VideoChunkRecord,
+                VideoChunkRecord.video_id == VideoRecord.video_id,
+            )
+            .order_by(
+                SeriesRecord.series_id,
+                VideoRecord.episode_order,
+                VideoChunkRecord.sequence_no,
+                VideoChunkRecord.video_chunk_id,
+            )
+        )
+        if normalized_workspace is not None:
+            statement = statement.where(
+                SeriesRecord.workspace_id == normalized_workspace
+            )
+        if normalized_series is not None:
+            statement = statement.where(
+                SeriesRecord.series_id == normalized_series
+            )
+        if normalized_video is not None:
+            statement = statement.where(VideoRecord.video_id == normalized_video)
+        if after is not None:
+            statement = statement.where(
+                or_(
+                    SeriesRecord.series_id > after.series_id,
+                    and_(
+                        SeriesRecord.series_id == after.series_id,
+                        VideoRecord.episode_order > after.episode_order,
+                    ),
+                    and_(
+                        SeriesRecord.series_id == after.series_id,
+                        VideoRecord.episode_order == after.episode_order,
+                        VideoChunkRecord.sequence_no > after.sequence_no,
+                    ),
+                    and_(
+                        SeriesRecord.series_id == after.series_id,
+                        VideoRecord.episode_order == after.episode_order,
+                        VideoChunkRecord.sequence_no == after.sequence_no,
+                        VideoChunkRecord.video_chunk_id > after.video_chunk_id,
+                    ),
+                )
+            )
+
+        with self._session_factory() as session:
+            rows = session.execute(statement.limit(limit)).all()
+        return [
+            KeyframeBackfillCandidate(
+                workspace_id=row.workspace_id,
+                series_id=row.series_id,
+                video_id=row.video_id,
+                episode_order=row.episode_order,
+                duration_ms=row.duration_ms,
+                video_chunk_id=row.video_chunk_id,
+                sequence_no=row.sequence_no,
+                start_ms=row.start_ms,
+                end_ms=row.end_ms,
+                chunk_media_ref=row.chunk_media_ref,
+                keyframe_snapshot=tuple(deepcopy(row.keyframe_uris)),
+            )
+            for row in rows
+        ]
+
+    def set_keyframe_if_missing(
+        self,
+        candidate: KeyframeBackfillCandidate,
+        keyframe: VideoChunkKeyframeReference,
+    ) -> bool:
+        """Write a generated frame only while the scanned chunk snapshot is current."""
+
+        if (
+            keyframe.at_ms is None
+            or not candidate.start_ms <= keyframe.at_ms < candidate.end_ms
+        ):
+            raise ValueError("keyframe must use an absolute time inside the VideoChunk")
+        with self._session_factory.begin() as session:
+            chunk = session.scalar(
+                select(VideoChunkRecord)
+                .where(
+                    VideoChunkRecord.video_chunk_id == candidate.video_chunk_id
+                )
+                .with_for_update()
+            )
+            if chunk is None or (
+                chunk.video_id != candidate.video_id
+                or chunk.start_ms != candidate.start_ms
+                or chunk.end_ms != candidate.end_ms
+                or chunk.chunk_media_ref != candidate.chunk_media_ref
+            ):
+                return False
+            if chunk.keyframe_uris != list(candidate.keyframe_snapshot):
+                return False
+            chunk.keyframe_uris = merge_keyframe_uri_values(
+                [keyframe.model_dump(mode="json")],
+                chunk.keyframe_uris,
+                start_ms=chunk.start_ms,
+                end_ms=chunk.end_ms,
+            )
+            return True
 
     def import_video_parse(
         self,
@@ -286,6 +432,16 @@ class VideoRepository:
                         cue.model_dump(mode="json")
                         for cue in chunk.candidate_transcript
                     ]
+                    if item.keyframes:
+                        existing_chunk.keyframe_uris = merge_keyframe_uri_values(
+                            [
+                                keyframe.model_dump(mode="json")
+                                for keyframe in item.keyframes
+                            ],
+                            existing_chunk.keyframe_uris,
+                            start_ms=window.chunk_start_ms,
+                            end_ms=window.chunk_end_ms,
+                        )
                     continue
                 session.add(
                     VideoChunkRecord(
@@ -303,7 +459,10 @@ class VideoRepository:
                             for cue in chunk.candidate_transcript
                         ],
                         baseline_visual_caption=None,
-                        keyframe_uris=[],
+                        keyframe_uris=[
+                            keyframe.model_dump(mode="json")
+                            for keyframe in item.keyframes
+                        ],
                     )
                 )
             session.flush()

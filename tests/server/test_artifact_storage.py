@@ -18,6 +18,19 @@ from server.utils.images import prepare_series_image
 from server.utils.media import decode_series_image_id
 
 
+def test_local_artifact_store_can_open_without_creating_directories(tmp_path) -> None:
+    root = tmp_path / "read-only-artifacts"
+
+    store = LocalArtifactStore(
+        root,
+        environment="test",
+        create_base_directory=False,
+    )
+
+    assert store.base_directory == root / "test"
+    assert not root.exists()
+
+
 def test_local_artifact_store_assembles_and_publishes_upload(tmp_path) -> None:
     store = LocalArtifactStore(
         tmp_path / "artifacts",

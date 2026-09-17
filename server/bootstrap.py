@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 from typing import Any
 
 from arkruntime import Ark
 from engine.parse.runtime import EngineVideoParseRuntime
 from gateway.config import load_config
-from gateway.agent_model import SDKQueryAgentModel
+from gateway.agent_model import DeepSeekFunctionCallingModel, SDKQueryAgentModel
 from gateway.models import ArkMultimodalModel
 from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
 from gateway.schemas import EmbeddingResult
@@ -79,6 +80,20 @@ class ApplicationServices:
 
 
 def build_application_services(settings: ServerSettings) -> ApplicationServices:
+    legacy_chat_model = os.getenv("ANIVAG_AGENT_CHAT_MODEL", "").strip()
+    if legacy_chat_model:
+        raise RuntimeError(
+            "ANIVAG_AGENT_CHAT_MODEL is no longer provider-neutral; remove it "
+            "or migrate it to ANIVAG_DEEPSEEK_CHAT_MODEL"
+        )
+    gateway_config = load_config(settings.model_config_path)
+    chat_config = gateway_config.agent_chat
+    chat_api_key = os.getenv(chat_config.api_key_env, "").strip()
+    if not chat_api_key:
+        raise RuntimeError(
+            "DeepSeek Chat requires API key environment variable "
+            f"{chat_config.api_key_env}"
+        )
     engine = create_database_engine(
         settings.database_url,
         environment=settings.environment,
@@ -122,7 +137,6 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         video_chunk_store=vector_store,
         qdrant_mutation_lock=qdrant_mutation_lock,
     )
-    gateway_config = load_config(settings.model_config_path)
     embedding_config = gateway_config.multimodal_embedding
     embedder = _LazyQueryEmbedder(
         model=settings.video_embedding_model or embedding_config.model,
@@ -145,11 +159,10 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         text_weight=settings.retrieval.text_weight,
         vision_weight=settings.retrieval.vision_weight,
     )
-    chat_model_name = (
-        settings.agent_chat_model or gateway_config.video_parser.transcript_model
-    )
-    evaluator_model_name = settings.agent_evaluator_model or chat_model_name
-    query_model_name = settings.agent_query_model or chat_model_name
+    ark_agent_model = gateway_config.video_parser.transcript_model
+    query_model_name = settings.agent_query_model or ark_agent_model
+    evaluator_model_name = settings.agent_evaluator_model or ark_agent_model
+    chat_model_name = settings.agent_deepseek_chat_model or chat_config.model
     request_timeout = min(
         settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
     )
@@ -165,10 +178,16 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             request_timeout_seconds=request_timeout,
             max_output_tokens=settings.agent.max_output_tokens,
         ),
-        ArkMultimodalModel(
+        DeepSeekFunctionCallingModel(
             model=chat_model_name,
-            request_timeout_seconds=request_timeout,
-            max_output_tokens=settings.agent.max_output_tokens,
+            base_url=chat_config.base_url,
+            api_key=chat_api_key,
+            request_timeout_seconds=min(
+                request_timeout, chat_config.request_timeout_seconds,
+            ),
+            max_output_tokens=min(
+                settings.agent.max_output_tokens, chat_config.max_output_tokens,
+            ),
         ),
         retrieval.search,
         max_loop_turns=settings.agent.max_loop_turns,

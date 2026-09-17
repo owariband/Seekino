@@ -119,7 +119,7 @@ function renderApp(availableSeries: SeriesView[] = [apiSeries]) {
         const emit = (type: string, payload: unknown) => controller.enqueue(new TextEncoder().encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`));
         const base = { occurredAt: now, conversationId: "conversation", messageId: assistantSnapshot.messageId };
         emit("answer.started", { ...base, sequence: 1, userMessage: userSnapshot, assistantMessage: assistantSnapshot });
-        emit("answer.evidence", { ...base, sequence: 2, searchResult: { query: "雨天门口", seriesIds, searchedVideoIds: [], partial: false, warnings: [], agentReply: { message: "", resultCount: 0 }, hits: [] } });
+        emit("answer.evidence", { ...base, sequence: 2, searchResult: { query: "雨天门口", seriesIds, searchedVideoIds: [], partial: false, warnings: [], hits: [] } });
         emit("answer.delta", { ...base, sequence: 3, delta: "这是 Agent Chat" });
         finishAnswer = () => {
           emit("answer.delta", { ...base, sequence: 4, delta: " 保存的完整回答。" });

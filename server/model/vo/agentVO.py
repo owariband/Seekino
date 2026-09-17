@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -8,7 +8,23 @@ from ...schema import ContractModel
 from ...agent.state import AnswerPhase
 from ..dto.agentDTO import EvidenceReference
 from .commonVO import Failure, UnixTimeMs
-from .searchVO import SearchResultView
+from .searchVO import SearchEvidenceView
+
+
+class AgentMarkdownRenderBlockView(ContractModel):
+    type: Literal["markdown"] = "markdown"
+    markdown: str = Field(min_length=1, max_length=20_000)
+
+
+class AgentVideoRenderBlockView(ContractModel):
+    type: Literal["video"] = "video"
+    video_chunk_id: str = Field(min_length=1, max_length=36)
+
+
+AgentRenderBlockView = Annotated[
+    AgentMarkdownRenderBlockView | AgentVideoRenderBlockView,
+    Field(discriminator="type"),
+]
 
 
 class AgentConversationView(ContractModel):
@@ -36,7 +52,8 @@ class AgentMessageView(ContractModel):
     model_name: str | None
     reply_to_message_id: str | None
     retrieval_query: str | None
-    search_result: SearchResultView | None
+    search_result: SearchEvidenceView | None
+    render_blocks: list[AgentRenderBlockView] = Field(default_factory=list)
     last_error: Failure | None
     created_at: UnixTimeMs
     updated_at: UnixTimeMs
@@ -72,7 +89,12 @@ class AgentAnswerProgressView(AgentAnswerEventView):
 
 class AgentAnswerEvidenceView(AgentAnswerEventView):
     type: Literal["answer.evidence"] = "answer.evidence"
-    search_result: SearchResultView
+    search_result: SearchEvidenceView
+
+
+class AgentAnswerBlockView(AgentAnswerEventView):
+    type: Literal["answer.block"] = "answer.block"
+    block: AgentRenderBlockView
 
 
 class AgentAnswerDeltaView(AgentAnswerEventView):

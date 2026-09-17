@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import logging
 from io import BytesIO
-from dataclasses import dataclass
-from datetime import timedelta
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.routing import APIRoute
@@ -14,6 +15,7 @@ from PIL import Image
 
 from server.api.app import create_app
 from server.agent.runtime import AgentRuntime
+from server.api.agent import _agent_render_blocks
 from server.api.jobs import _job_event_fingerprint, _job_view
 from server.bootstrap import ApplicationServices
 from server.config.media import ImageUploadConfig
@@ -25,6 +27,7 @@ from server.database import (
     create_session_factory,
 )
 from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
+from server.model.dto.agentDTO import AgentMessageState
 from server.model.video import SeriesRecord, VideoRecord
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.agent import AgentRepository
@@ -66,6 +69,51 @@ class _RetrievalStub:
         )
 
 
+def test_agent_render_blocks_preserve_order_join_known_hits_and_support_legacy() -> None:
+    state = AgentMessageState(
+        message_id="assistant",
+        conversation_id="conversation",
+        sequence_no=1,
+        role="ASSISTANT",
+        status="COMPLETED",
+        content="兼容完整正文",
+        series_ids=("series",),
+        model_name="chat-model",
+        reply_to_message_id="user",
+        retrieval_query="query",
+        search_result={
+            "renderBlocks": [
+                {"type": "markdown", "markdown": "第一段"},
+                {"type": "video", "videoChunkId": "known-2"},
+                {"type": "video", "videoChunkId": "unknown"},
+                {"type": "markdown", "markdown": "第二段"},
+                {"type": "video", "videoChunkId": "known-1"},
+            ],
+        },
+        last_error=None,
+        created_at=datetime(2026, 9, 17),
+        updated_at=datetime(2026, 9, 17),
+    )
+    projected = SimpleNamespace(hits=[
+        SimpleNamespace(candidate=SimpleNamespace(video_chunk_id="known-1")),
+        SimpleNamespace(candidate=SimpleNamespace(video_chunk_id="known-2")),
+    ])
+
+    blocks = _agent_render_blocks(state, projected)
+
+    assert [block.model_dump(mode="json", by_alias=True) for block in blocks] == [
+        {"type": "markdown", "markdown": "第一段"},
+        {"type": "video", "videoChunkId": "known-2"},
+        {"type": "markdown", "markdown": "第二段"},
+        {"type": "video", "videoChunkId": "known-1"},
+    ]
+    legacy = _agent_render_blocks(
+        replace(state, search_result={}),
+        projected,
+    )
+    assert [block.type for block in legacy] == ["markdown", "video", "video"]
+
+
 @dataclass
 class _AgentModelStub:
     model_name: str
@@ -79,9 +127,32 @@ class _AgentModelStub:
             "selected_video_chunk_ids": [],
         })
 
-    def stream_text(self, _inputs):
-        yield "没有找到"
-        yield "可以核验的候选画面。"
+    def run_agent_loop(
+        self, prompt, *, function_name, function_description, result_type,
+        max_model_calls, handle_text, handle_tool_call,
+        request_timeout_seconds=None, check_control=None,
+    ):
+        import json
+
+        assert function_name == "submit_video_item"
+        assert function_description
+        assert max_model_calls > 0
+        assert request_timeout_seconds is not None
+        assert request_timeout_seconds > 0
+        context = json.loads(prompt.rsplit("\n\n", 1)[1])
+        approved = context["approved_turn"]
+        hits = approved["selected_evidence"]["hits"]
+        if not hits:
+            handle_text(approved["draft"]["message"])
+            return
+        handle_text("以下片段支持这个结论。")
+        for hit in hits:
+            check_control and check_control()
+            handle_tool_call(result_type.model_validate({
+                "video_chunk_id": hit["candidate"]["videoChunkId"],
+                "claim": hit["selectionReason"]["summary"],
+            }))
+        handle_text(approved["draft"]["message"])
 
     def generate(self, _inputs, *, schema_name: str, result_type):
         assert schema_name == "anivag_answer_evaluation"
@@ -312,6 +383,10 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "null",
     }
     assert "agentReply" in schemas["SearchResultView"]["required"]
+    assert "agentReply" not in schemas["SearchEvidenceView"]["properties"]
+    assert schemas["AgentMessageView"]["properties"]["searchResult"]["anyOf"][0] == {
+        "$ref": "#/components/schemas/SearchEvidenceView",
+    }
     assert "selectionReason" in schemas["SearchHitView"]["required"]
     assert {
         "speaker",
@@ -534,6 +609,7 @@ def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:
     assert listed.json()["items"][1]["status"] == "COMPLETED"
     assert all(message["seriesIds"] == [series_id] for message in listed.json()["items"])
     assert listed.json()["items"][1]["searchResult"]["seriesIds"] == [series_id]
+    assert "agentReply" not in listed.json()["items"][1]["searchResult"]
     assert len(listed_conversations.json()["items"]) == 1
     assert listed_conversations.json()["items"][0]["messageCount"] == 2
     assert [item["role"] for item in messages_after_user.json()["items"]] == ["ASSISTANT"]
@@ -1216,7 +1292,10 @@ def test_explicit_non_ready_series_is_rejected_before_starting_message(tmp_path)
 
 
 @pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])
-def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(tmp_path, prepared_import, accept):
+def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
+    tmp_path, prepared_import, caplog, accept,
+):
+    caplog.set_level(logging.INFO, logger="server.api.agent")
     client, _, _ = _client(tmp_path)
     service = client.app.state.services.agent
     video_repository = VideoRepository(service._repository._session_factory)
@@ -1266,13 +1345,45 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(tmp_pat
         assert response.status_code == 200, response.text
         if accept == "text/event-stream":
             events = _answer_payloads(response.text)
-            evidence_hits = next(event["searchResult"]["hits"] for event in events if event["type"] == "answer.evidence")
+            evidence_event = next(event for event in events if event["type"] == "answer.evidence")
+            evidence_hits = evidence_event["searchResult"]["hits"]
+            assert "agentReply" not in evidence_event["searchResult"]
             final = events[-1]["assistantMessage"]
             assert evidence_hits == final["searchResult"]["hits"]
+            block_events = [
+                event for event in events if event["type"] == "answer.block"
+            ]
+            assert [event["block"] for event in block_events] == final["renderBlocks"]
+            event_types = [event["type"] for event in events]
+            assert event_types.index("answer.evidence") < event_types.index("answer.block")
+            assert max(
+                index for index, value in enumerate(event_types)
+                if value == "answer.block"
+            ) < event_types.index("answer.delta")
+            projection_log = next(
+                record.getMessage() for record in caplog.records
+                if record.name == "server.api.agent"
+                and record.getMessage().startswith("agent_evidence_projected ")
+            )
+            assert f"conversation_id={conversation_id}" in projection_log
+            assert "hit_count=2" in projection_log
+            assert "playable_hits=0" in projection_log
+            assert "thumbnail_hits=0" in projection_log
+            assert "partial=True" in projection_log
+            assert "warning_count=5" in projection_log
         else:
             final = response.json()["assistantMessage"]
+        assert "agentReply" not in final["searchResult"]
         hits = final["searchResult"]["hits"]
         assert len(hits) == len(report.video_chunk_ids) == 2
+        assert final["renderBlocks"] == [
+            {"type": "markdown", "markdown": "以下片段支持这个结论。"},
+            *[
+                {"type": "video", "videoChunkId": hit["candidate"]["videoChunkId"]}
+                for hit in hits
+            ],
+            {"type": "markdown", "markdown": "这些片段包含动作。"},
+        ]
         assert final["seriesIds"] == [prepared_import.series_id]
         for hit in hits:
             evidence = hit["evidence"]
@@ -1301,7 +1412,7 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     events = _answer_payloads(response.text)
     assert [event["type"] for event in events] == [
         "answer.started", "answer.progress", "answer.progress", "answer.progress",
-        "answer.evidence", "answer.delta", "answer.delta", "answer.completed",
+        "answer.evidence", "answer.block", "answer.delta", "answer.completed",
     ]
     assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
     assert all(event["conversationId"] == conversation_id for event in events)
@@ -1314,6 +1425,9 @@ def test_same_send_path_supports_live_events_and_idempotent_replay(tmp_path):
     final = events[-1]["assistantMessage"]
     assert final["status"] == "COMPLETED"
     assert final["content"] == "".join(event["delta"] for event in events if event["type"] == "answer.delta")
+    assert final["renderBlocks"] == [
+        event["block"] for event in events if event["type"] == "answer.block"
+    ]
     persisted = client.get("/api/agent/messages/list", params={"workspaceId": "local-default", "conversationId": conversation_id}).json()["items"]
     assert final == persisted[-1]
     replay = _answer_payloads(client.post("/api/agent/messages/send", **kwargs).text)
@@ -1337,9 +1451,9 @@ def test_rejected_loop_sends_failed_event_and_json_maps_harness_error(tmp_path):
             return result_type.model_validate({"action": "continue", "advice": "需要重新找摔杯子的片段。"})
 
     runtime._evaluator_model = RejectModel()
-    def forbidden_chat(_inputs):
+    def forbidden_chat(*_args, **_kwargs):
         raise AssertionError("rejected draft reached final Chat")
-    runtime._chat_model.stream_text = forbidden_chat
+    runtime._chat_model.run_agent_loop = forbidden_chat
     response = client.post(
         "/api/agent/messages/send", params={"workspaceId": "local-default", "conversationId": conversation_id},
         headers={"Accept": "text/event-stream", "Idempotency-Key": "rejected-stream"},
@@ -1384,7 +1498,7 @@ def test_agent_context_budget_error_is_actionable_before_provider_call(tmp_path)
     client.app.state.services.agent.close()
 
 
-def test_asgi_delivers_first_delta_before_provider_finishes(tmp_path):
+def test_asgi_publishes_only_after_tools_and_final_text_succeed(tmp_path):
     import asyncio
     import json
     from threading import Event
@@ -1393,17 +1507,18 @@ def test_asgi_delivers_first_delta_before_provider_finishes(tmp_path):
     _create_series(client)
     conversation_id = _create_agent_conversation(client)
     service = client.app.state.services.agent
+    provider_entered = Event()
     release = Event()
+    original_call = service._runtime._chat_model.run_agent_loop
 
-    def blocked_provider(_inputs):
-        yield "第一段"
+    def blocked_provider(*args, **kwargs):
+        provider_entered.set()
         assert release.wait(5), "test did not release Provider"
-        yield "第二段"
-    service._runtime._chat_model.stream_text = blocked_provider
+        return original_call(*args, **kwargs)
+    service._runtime._chat_model.run_agent_loop = blocked_provider
     body = json.dumps({"workspaceId": "local-default", "content": "找画面"}).encode()
 
     async def exercise():
-        first_delta = asyncio.Event()
         request_done = False
         never_disconnected = asyncio.Event()
         output = []
@@ -1418,8 +1533,6 @@ def test_asgi_delivers_first_delta_before_provider_finishes(tmp_path):
 
         async def send(message):
             output.append(message)
-            if message["type"] == "http.response.body" and b"event: answer.delta" in message.get("body", b""):
-                first_delta.set()
 
         scope = {
             "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
@@ -1431,15 +1544,25 @@ def test_asgi_delivers_first_delta_before_provider_finishes(tmp_path):
         }
         task = asyncio.create_task(client.app(scope, receive, send))
         try:
-            await asyncio.wait_for(first_delta.wait(), timeout=3)
-            assert not release.is_set() and not task.done()
+            entered = await asyncio.wait_for(
+                asyncio.to_thread(provider_entered.wait, 3), timeout=4,
+            )
+            assert entered and not release.is_set() and not task.done()
+            streamed = b"".join(
+                message.get("body", b"")
+                for message in output
+                if message["type"] == "http.response.body"
+            )
+            assert b"event: answer.delta" not in streamed
+            assert b"event: answer.evidence" not in streamed
             assert service.list_all_messages(conversation_id, workspace_id="local-default")[-1].status == "PROCESSING"
         finally:
             release.set()
         await asyncio.wait_for(task, timeout=3)
         events = _answer_payloads(b"".join(message.get("body", b"") for message in output if message["type"] == "http.response.body").decode())
-        assert [event["delta"] for event in events if event["type"] == "answer.delta"] == ["第一段", "第二段"]
-        assert events[-1]["assistantMessage"]["content"] == "第一段第二段"
+        deltas = [event["delta"] for event in events if event["type"] == "answer.delta"]
+        assert len(deltas) == 1
+        assert events[-1]["assistantMessage"]["content"] == deltas[0]
 
     try:
         asyncio.run(exercise())

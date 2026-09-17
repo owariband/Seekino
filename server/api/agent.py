@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import time
 from queue import Empty
 from typing import AsyncIterator
@@ -20,12 +21,14 @@ from ..service.agent_chat import AgentChatService, AgentMessageExecution
 from ..service.media import MediaService
 from ..utils.time import utc_now_naive
 from ..model.vo.commonVO import Page
-from .search import search_result_view
+from ..model.vo.searchVO import SearchEvidenceView
+from .search import search_evidence_view
 from .context import get_services, get_sse_config
 from ..model.vo.agentVO import (
     AgentConversationView,
     AgentAnswerStartedView,
     AgentAnswerEvidenceView,
+    AgentAnswerBlockView,
     AgentAnswerDeltaView,
     AgentAnswerCompletedView,
     AgentAnswerFailedView,
@@ -34,7 +37,12 @@ from ..model.vo.agentVO import (
     AgentMessageEventView,
     AgentMessageSendView,
     AgentMessageView,
+    AgentMarkdownRenderBlockView,
+    AgentRenderBlockView,
+    AgentVideoRenderBlockView,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def create_agent_conversation(
@@ -244,21 +252,80 @@ def _agent_message_view(
     if state.search_result is not None:
         if media is None or workspace_id is None:
             raise ValueError("evidence projection requires the owning Workspace and media service")
-        result = search_result_view(state.search_result, media, workspace_id=workspace_id)
+        result = search_evidence_view(
+            state.search_result, media, workspace_id=workspace_id,
+        )
+    render_blocks = _agent_render_blocks(state, result)
     return AgentMessageView(
         message_id=state.message_id, conversation_id=state.conversation_id,
         series_ids=list(state.series_ids), sequence_no=state.sequence_no,
         role=state.role, status=state.status, phase=state.phase, version=state.version,
         reference=state.reference, content=state.content, model_name=state.model_name,
         reply_to_message_id=state.reply_to_message_id, retrieval_query=state.retrieval_query,
-        search_result=result, last_error=state.last_error, created_at=state.created_at,
+        search_result=result, render_blocks=render_blocks,
+        last_error=state.last_error, created_at=state.created_at,
         updated_at=state.updated_at,
     )
+
+
+def _agent_render_blocks(
+    state: AgentMessageState,
+    result: SearchEvidenceView | None,
+) -> list[AgentRenderBlockView]:
+    if state.role != "ASSISTANT":
+        return []
+    raw_blocks = (
+        state.search_result.get("renderBlocks")
+        if isinstance(state.search_result, dict)
+        else None
+    )
+    if not isinstance(raw_blocks, list):
+        blocks = []
+        if state.content:
+            blocks.append(AgentMarkdownRenderBlockView(markdown=state.content))
+        if result is not None:
+            blocks.extend(
+                AgentVideoRenderBlockView(
+                    video_chunk_id=hit.candidate.video_chunk_id,
+                )
+                for hit in result.hits
+            )
+        return blocks
+
+    hits_by_id = {
+        hit.candidate.video_chunk_id: hit
+        for hit in result.hits
+    } if result is not None else {}
+    blocks = []
+    seen_video_ids: set[str] = set()
+    for raw in raw_blocks:
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("type") == "markdown":
+            markdown = raw.get("markdown")
+            if isinstance(markdown, str) and markdown.strip():
+                blocks.append(AgentMarkdownRenderBlockView(markdown=markdown))
+            continue
+        if raw.get("type") == "video":
+            video_chunk_id = raw.get("videoChunkId")
+            if (
+                isinstance(video_chunk_id, str)
+                and video_chunk_id in hits_by_id
+                and video_chunk_id not in seen_video_ids
+            ):
+                seen_video_ids.add(video_chunk_id)
+                blocks.append(AgentVideoRenderBlockView(
+                    video_chunk_id=video_chunk_id,
+                ))
+    if not any(block.type == "markdown" for block in blocks) and state.content:
+        blocks.insert(0, AgentMarkdownRenderBlockView(markdown=state.content))
+    return blocks
 
 
 _ANSWER_EVENT_MODELS = {
     "answer.started": AgentAnswerStartedView,
     "answer.evidence": AgentAnswerEvidenceView,
+    "answer.block": AgentAnswerBlockView,
     "answer.delta": AgentAnswerDeltaView,
     "answer.completed": AgentAnswerCompletedView,
     "answer.failed": AgentAnswerFailedView,
@@ -299,7 +366,20 @@ async def _answer_events(
             if event_type == "answer.evidence":
                 if media is None or workspace_id is None:
                     raise ValueError("evidence projection requires the owning Workspace and media service")
-                data["searchResult"] = search_result_view(data["searchResult"], media, workspace_id=workspace_id)
+                projected = search_evidence_view(
+                    data["searchResult"], media, workspace_id=workspace_id,
+                )
+                data["searchResult"] = projected
+                _logger.info(
+                    "agent_evidence_projected conversation_id=%s message_id=%s "
+                    "hit_count=%s playable_hits=%s thumbnail_hits=%s partial=%s "
+                    "warning_count=%s",
+                    event.get("conversationId"), event.get("messageId"),
+                    len(projected.hits),
+                    sum(hit.evidence.playback_status == "READY" for hit in projected.hits),
+                    sum(hit.evidence.thumbnail is not None for hit in projected.hits),
+                    projected.partial, len(projected.warnings),
+                )
             view = model.model_validate(data)
             last_event_at = time.monotonic()
             payload = view.model_dump_json(

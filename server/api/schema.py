@@ -23,10 +23,13 @@ from ..model.vo.agentVO import (
     AgentAnswerStartedView,
     AgentAnswerProgressView,
     AgentAnswerEvidenceView,
+    AgentAnswerBlockView,
     AgentAnswerDeltaView,
     AgentAnswerCompletedView,
     AgentAnswerFailedView,
     AgentAnswerInterruptedView,
+    AgentMarkdownRenderBlockView,
+    AgentVideoRenderBlockView,
 )
 from ..model.vo.systemVO import HealthView
 

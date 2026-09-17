@@ -9,13 +9,25 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+# Preserve the executable outside the shell-variable namespace. The dotenv
+# parser below may legitimately return any valid environment variable name.
+set -- "$(command -v uv)" "$@"
+
 if [[ ! -x .venv/bin/python ]]; then
-  uv sync
+  "$1" sync
 fi
 
 if [[ -f .env.local ]]; then
-  unset ARK_API_KEY DEEPSEEK_API_KEY
-  exec uv run --no-sync --env-file .env.local python scripts/local_services.py "$@"
+  env_names="$(
+    .venv/bin/python scripts/local_services.py _env-names --env-file .env.local
+  )"
+  while IFS= read -r env_name; do
+    if [[ -n "${env_name}" ]]; then
+      unset -v "${env_name}" || true
+    fi
+  done <<< "${env_names}"
+  unset -v env_name env_names
+  exec "$1" run --no-sync --env-file .env.local python scripts/local_services.py "${@:2}"
 fi
 
-exec uv run --no-sync python scripts/local_services.py "$@"
+exec "$1" run --no-sync python scripts/local_services.py "${@:2}"

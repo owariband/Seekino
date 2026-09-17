@@ -2,7 +2,7 @@
 
 > 状态：首个可运行纵向闭环
 >
-> 更新时间：2026-09-15
+> 更新时间：2026-09-17
 >
 > 面向对象：WebUI 对话、历史会话与 Agent 状态联调
 
@@ -17,11 +17,11 @@ Workspace
 └── AgentConversation（聊天历史）
     └── AgentMessage
         ├── USER（本次实际 seriesIds）
-        └── ASSISTANT（同一 seriesIds + modelName + retrievalQuery + searchResult）
+        └── ASSISTANT（同一 seriesIds + modelName + retrievalQuery + searchResult + renderBlocks）
 ```
 
 - `AgentConversation`：直接属于 Workspace 的连续对话线程，保存标题和历史，不保存固定检索范围。
-- `AgentMessage`：MySQL 中的消息事实，USER / ASSISTANT 都保存本次发送解析后的实际 `seriesIds`。同一 Conversation 可以在后续发送选择不同动画；一次 Kick 内范围保持不变。POST SSE 交付实时正文；GET 快照和列表接口恢复持久化状态。
+- `AgentMessage`：MySQL 中的消息事实，USER / ASSISTANT 都保存本次发送解析后的实际 `seriesIds`。同一 Conversation 可以在后续发送选择不同动画；一次 Kick 内范围保持不变。ASSISTANT 用有序 `renderBlocks` 保存 Markdown 和视频窗口的交错关系；GET 快照和列表接口可完整恢复该顺序。
 - LangGraph checkpoint 不是产品聊天记录；本轮产品状态全部由上述 MySQL 表持久化。
 
 ## 2. Multi-Agent 协作图
@@ -33,9 +33,15 @@ Workspace
     Evaluator Agent：complete / continue + advice
         ├── continue 且尚未满 3 轮 → 下一轮 Query，读取原计划和全部工作记录
         ├── 第 3 轮仍 continue → FAILED，最终 Chat 不调用
-        └── complete → 最终 Chat 只根据获批材料实时整理正文
-                            ↓
-                     确定性 Output Node：正文 + 相同获批 Evidence
+        └── complete → Chat 自主循环（tool_choice=auto）
+                            ├── 输出一段普通 Markdown
+                            ├── 调用 submit_video_item(video_chunk_id, claim)
+                            ├── 继续输出 Markdown 或再提交视频
+                            └── 自主结束
+                                      ↓
+                     Server 校验每个 ID，生成有序 renderBlocks
+                                      ↓
+                     确定性 Output Node 补齐可信媒体信息
                             ↓
                      Service 原子保存 Assistant Message
                             ↓
@@ -47,9 +53,13 @@ Retrieve Tool 是进程内工具，直接调用注入的 `VideoRetrievalService.
 草稿、审核意见和复用来源保存在各 `LoopTurn`，下一轮显式获得这些信息。
 
 代码职责：`server/service/agent_chat.py` 管会话与消息事务；`server/agent/` 是独立于 HTTP 的
-Harness；`gateway/agent_model.py` 使用 LangChain `create_agent` / `ToolStrategy` 管内层
-工具循环，`langgraph` 管外层审核循环。最终 Chat 使用 Gateway 的 `stream_text` 读取
-原始 Provider delta。审核通过只代表允许进入 Chat，消息完成还要求正文正常结束并成功落库。
+Harness；`gateway/agent_model.py` 使用 LangChain `create_agent` / `ToolStrategy` 管 Query
+内层工具循环，`langgraph` 管外层审核循环。最终 Chat 通过 DeepSeek 的文本 Chat Completions
+运行有边界的自主工具循环；每轮可输出 Markdown、调用一个或多个
+`submit_video_item({video_chunk_id, claim})`，或结束。Chat 可以使用零个或任意获批 Evidence 子集，并自主决定
+Markdown 与视频窗口的交错顺序；Server 拒绝重复或未获批 ID，且视频 URI、原视频时间、
+标题等始终从可信 Evidence 补齐。逻辑块顺序保存在 `renderBlocks`；整个循环和数据库提交
+成功后才原子交付给前端，不暴露失败运行的半成品。
 
 ## 3. 接口总览
 
@@ -136,7 +146,7 @@ Retrieve Tool 的闭包只使用当前 Kick 的 Scope，模型、advice 和前�
 `topK` 可省略，默认 `8`；当前服务端上限默认 `20`，同时限制每次召回和最终选中的不同片段数量。
 多次召回可以累积更多内部证据，交付结果仍遵守本次 TopK。一次发送先提交 USER Message 和
 `PROCESSING` ASSISTANT Message，再由 Service 拥有的执行任务运行 Harness。Query 草稿通过审核后，
-最终 Chat 整理正文；Provider 正常结束且数据库事务成功，才更新同一个 ASSISTANT 为 `COMPLETED`。同一 Conversation 同时只允许一个
+最终 Chat 整理正文；DeepSeek 函数调用完整返回、校验通过且数据库事务成功，才更新同一个 ASSISTANT 为 `COMPLETED`。同一 Conversation 同时只允许一个
 ASSISTANT Message 处于 `PROCESSING`。
 
 响应 `200`：
@@ -167,18 +177,23 @@ ASSISTANT Message 处于 `PROCESSING`。
     "status": "COMPLETED",
     "content": "当前范围内没有找到足够可信、值得播放核验的候选画面。",
     "seriesIds": ["77285f16-..."],
-    "modelName": "doubao-seed-2-0-lite-260428",
+    "modelName": "deepseek-flash",
     "replyToMessageId": "5f744756-...",
     "retrievalQuery": "人物突然哭泣，结合上一轮第二个候选的前后语境",
     "searchResult": {
       "query": "人物突然哭泣，结合上一轮第二个候选的前后语境",
       "seriesIds": ["77285f16-..."],
-      "agentReply": {
-        "message": "当前范围内没有找到足够可信、值得播放核验的候选画面。",
-        "resultCount": 0
-      },
+      "searchedVideoIds": ["2a150753-..."],
+      "partial": false,
+      "warnings": [],
       "hits": []
     },
+    "renderBlocks": [
+      {
+        "type": "markdown",
+        "markdown": "当前范围内没有找到足够可信、值得播放核验的候选画面。"
+      }
+    ],
     "lastError": null,
     "createdAt": "2026-09-15T01:02:00",
     "updatedAt": "2026-09-15T01:02:04"
@@ -186,8 +201,12 @@ ASSISTANT Message 处于 `PROCESSING`。
 }
 ```
 
-上面是合法的“无可信候选”响应。存在候选时，`resultCount` 必须始终等于 `hits.length`，
-且 `hits` 包含选中的完整 Candidate、SelectionReason 和 VideoChunkEvidence。
+上面是合法的“无可信候选”响应。Agent Message 的公开 `searchResult` 是 evidence-only 投影，
+不包含独立 `/api/search` 才有的 `agentReply`。`renderBlocks` 是最终显示顺序：Markdown 块携带
+`markdown`，视频块只携带 `videoChunkId`，前端必须将它与同一消息的可信
+`searchResult.hits` 关联，不得从块或正文自行构造媒体 URI。`content` 保留为所有 Markdown 块
+的兼容汇总。存在候选时，`hits`
+包含选中的完整 Candidate、SelectionReason 和可安全交付给前端的 VideoChunkEvidence。
 每个 `hits[].evidence.seriesId` 都必填，来自 MySQL 对 Series / Video / VideoChunk 的批量
 join 回源，必须属于本次消息实际 `seriesIds`，不是由模型生成或从正文推断。
 
@@ -244,10 +263,10 @@ Message 新增，或同一 ASSISTANT Message 从 `PROCESSING` 变成 `COMPLETED/
 轮询与保活间隔由 `ANIVAG_SSE_POLL_SECONDS`（默认 1 秒）和
 `ANIVAG_SSE_KEEPALIVE_SECONDS`（默认 15 秒）配置，保活按经过时间计算。
 
-GET SSE 只恢复数据库快照，不再次启动 Kick，也不回放未持久化的正文增量。刷新或断线后，
+GET SSE 只恢复数据库快照，不再次启动 Kick，也不回放未持久化的正文交付事件。刷新或断线后，
 正在执行的消息仍显示 PROCESSING，任务正常完成后从快照得到完整结果。
 
-### 5.4 POST 正文增量 SSE
+### 5.4 POST 回答交付 SSE
 
 在同一发送接口增加 `Accept: text/event-stream`，Body 和 `Idempotency-Key` 与 JSON 调用一致：
 
@@ -261,22 +280,25 @@ Content-Type: application/json
 ```
 
 每帧有 `event`、`id: {messageId}:{sequence}` 和 JSON `data`；所有事件包含
-`conversationId`、助手 `messageId`、本次流内递增的整数 `sequence`。
+`conversationId`、助手 `messageId`、本次流内递增的整数 `sequence` 和 `occurredAt`。
 
 | event | 时机 | 附加字段 |
 | --- | --- | --- |
 | `answer.started` | USER / PROCESSING ASSISTANT 已提交 | `userMessage`、`assistantMessage` |
-| `answer.evidence` | 审核 complete 后、正文生成前 | `hits`：获批完整 VideoChunkSearchHit |
-| `answer.delta` | Provider 仍在生成时 | `delta`：收到的原始正文增量 |
-| `answer.completed` | 正常收流且最终结果成功提交后 | `userMessage`、`assistantMessage`：持久化快照 |
-| `answer.failed` | 执行或提交失败 | `code`、`message`，以及可取得的消息快照 |
+| `answer.progress` | Query / Evaluator / Chat 阶段切换 | `phase`：RETRIEVING / EVALUATING / RESPONDING |
+| `answer.evidence` | 最终结果校验并提交后 | `searchResult`：由可信获批 Evidence 补齐的视频窗口，不含 `agentReply`；兼容旧客户端 |
+| `answer.block` | Evidence 之后按 Chat 逻辑顺序发送 | `block`：Markdown 块或只含 `videoChunkId` 的视频块 |
+| `answer.delta` | 最终结果校验并提交后 | `delta`：所有 Markdown 块的一次性兼容汇总 |
+| `answer.completed` | 最终结果成功提交后 | `userMessage`、`assistantMessage`：持久化快照 |
+| `answer.failed` | 执行失败且 FAILED 状态已保存 | `error`、`userMessage`、`assistantMessage` |
+| `answer.interrupted` | 当前订阅缓冲溢出或终态无法确认 | `error`；任务可能继续，转用 GET 快照恢复 |
 
 已失败的任务没有 completed。SSE 已开始后，模型 / 提交错误通过 failed 帧报告；开始之前的
 参数、归属、幂等冲突仍按 HTTP 错误返回。相同 Key 重放已完成消息只返回 started 和 completed；
 相同 Key 对 PROCESSING 请求返回 409，不重复启动执行。
 
 连接断开仅关闭订阅，Service 的任务继续执行。慢消费者导致缓冲溢出时返回
-`STREAM_INTERRUPTED` 并停止该订阅；这表示传输中断，不能据此将消息改为 FAILED。
+`answer.interrupted`（`error.code=STREAM_INTERRUPTED`）并停止该订阅；这表示传输中断，不能据此将消息改为 FAILED。
 前端继续用 GET 快照等待真正终态。事件序号不是持久化重放游标；本阶段没有跨 Worker
 增量回放或进程崩溃后的 PROCESSING 执行恢复。
 
@@ -284,8 +306,8 @@ Content-Type: application/json
 
 Message 状态：
 
-- `PROCESSING`：执行任务正在进行 Query 工具循环、审核、最终 Chat 生成或结果提交。
-- `COMPLETED`：`content`、`retrievalQuery`、`searchResult` 已保存。
+- `PROCESSING`：执行任务正在进行 Query 工具循环、审核、最终 Chat 结构化调用或结果提交。
+- `COMPLETED`：`content`、`retrievalQuery`、`searchResult` 与有序 `renderBlocks` 已保存。
 - `FAILED`：失败事实和 `lastError` 已保存；使用新 Idempotency-Key 重试。
 
 | HTTP | code | 含义 |
@@ -313,11 +335,22 @@ ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS=180
 ANIVAG_AGENT_MAX_CONCURRENT_KICKS=4
 ```
 
-Chat 模型名省略时使用 `config.yaml` 的 `video_parser.transcript_model`；Query 和 Evaluator
-省略时各自继承 Chat 模型名。三个角色可以单独配置，消息 `modelName` 仍记录最终 Chat 模型。
-模型和检索调用在执行边界检查总 deadline / 取消，SDK 每次模型调用前后也检查；正在阻塞的同步
-Provider 请求需要等待其网络超时，执行 deadline 不代表线程会被硬终止。生产装配保持 Ark Provider，
-Query / Evaluator / Chat 以及召回 Embedding 的 SDK Client 按调用隔离并关闭。
+Query 和 Evaluator 的默认模型都是 `config.yaml` 的 `video_parser.transcript_model`，并通过 Ark
+调用；`ANIVAG_AGENT_QUERY_MODEL`、`ANIVAG_AGENT_EVALUATOR_MODEL` 可分别覆盖。Chat 默认读取
+`config.yaml` 的 `agent_chat`：Provider 固定为 DeepSeek，默认模型 `deepseek-flash`，API Key
+环境变量名由 `agent_chat.api_key_env` 指定（默认 `DEEPSEEK_API_KEY`）；
+`ANIVAG_DEEPSEEK_CHAT_MODEL` 只覆盖模型名；旧的 Provider 中立变量
+`ANIVAG_AGENT_CHAT_MODEL` 会在启动时给出迁移错误。消息 `modelName` 记录实际 Chat 模型，不继承或冒充
+Query / Evaluator 模型。
+
+Chat 是 text-only、非 token 流式的自主工具循环，并设置
+`thinking.type=disabled`。Gateway 每轮使用 `tool_choice=auto`；DeepSeek 可以输出普通
+`message.content`、调用一个或多个 `submit_video_item`，或以 `finish_reason=stop` 结束。
+工具结果以 `role=tool` acknowledgement 送回模型，然后由模型自主决定下一步。
+每个工具调用的参数只允许 `video_chunk_id` 和 `claim`；Server 允许获批 hits 的零个或子集，
+但拒绝重复、未获批或 Schema 不合法的调用。完成的循环必须至少生成一段非空 Markdown，
+并受统一的模型调用次数与 Kick deadline 约束。循环或持久化任一失败，都不会向前端
+交付视频窗口或正文；已进入同步 Provider 请求后的取消仍需等待请求返回或超时。
 
 ## 8. 已有数据库升级
 

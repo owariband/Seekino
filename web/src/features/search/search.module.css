@@ -17,7 +17,26 @@
 .thread { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 28px; overflow-y: auto; overscroll-behavior: contain; padding: 20px 8px 28px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .agentMessage, .userMessage { width: min(100%, 880px); min-width: 0; align-self: center; overflow-wrap: anywhere; }
 .agentMessage > div { display: grid; min-width: 0; }
-.answerText { margin: 0; color: var(--ink); font-size: .9rem; line-height: 1.85; white-space: pre-wrap; }
+.answerText { min-width: 0; color: var(--ink); font-size: .9rem; line-height: 1.85; }
+.answerText > :first-child { margin-top: 0; }
+.answerText > :last-child { margin-bottom: 0; }
+.answerText :is(h1, h2, h3, h4) { margin: 1.35em 0 .55em; color: var(--ink); font-weight: 600; line-height: 1.45; }
+.answerText h1 { font-size: 1.18rem; }
+.answerText h2 { font-size: 1.05rem; }
+.answerText :is(h3, h4) { font-size: .94rem; }
+.answerText :is(p, ul, ol, blockquote, pre) { margin: .7em 0; }
+.answerText :is(ul, ol) { padding-left: 1.45rem; }
+.answerText li + li { margin-top: .28em; }
+.answerText blockquote { padding-left: 12px; color: var(--ink-soft); border-left: 2px solid var(--line-strong); }
+.answerText a { color: var(--teal-deep); text-decoration: underline; text-underline-offset: 3px; }
+.answerText code { padding: .1em .35em; border-radius: 5px; background: var(--surface-muted); font: .86em/1.6 var(--mono); }
+.answerText pre { max-width: 100%; overflow-x: auto; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
+.answerText pre code { padding: 0; background: transparent; }
+.answerTable { max-width: 100%; overflow-x: auto; margin: .8em 0; }
+.answerTable table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.answerTable :is(th, td) { padding: 8px 10px; border: 1px solid var(--line); text-align: left; }
+.answerTable th { background: var(--surface-muted); font-weight: 600; }
+.answerImageBlocked { color: var(--ink-faint); font-size: .82em; }
 .userMessage { display: flex; justify-content: flex-end; }
 .userMessage > div { max-width: 80%; padding: 14px 20px; border-radius: 22px 22px 5px 22px; background: var(--surface-raised); }
 .userMessage p { margin: 0; color: var(--ink); font-size: .9rem; line-height: 1.7; white-space: pre-wrap; }
@@ -78,12 +97,15 @@
 .candidateHeading h2 { margin: 0; font-size: .8rem; font-weight: 500; }
 .candidateHeading > span { color: var(--ink-faint); font-size: .7rem; }
 .candidateList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.renderVideoBlock .candidateList { grid-template-columns: minmax(0, 1fr); }
+.renderVideoBlock + .answerText { margin-top: 24px; }
 .candidate, .candidateSelected { display: grid; width: 100%; min-width: 0; align-content: start; gap: 12px; padding: 16px; color: var(--ink); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--surface); text-align: left; transition: border-color 160ms ease; }
 .candidate:hover, .candidateSelected { border-color: var(--teal-deep); }
 .candidateTop { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 5px 9px; align-items: center; color: var(--ink-faint); font-size: .65rem; }
 .candidateTop time { grid-column: 2; }
 .candidateTop > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rank { display: grid; grid-row: 1 / span 2; width: 24px; height: 24px; place-items: center; border-radius: 6px; background: var(--surface-muted); font: 500 .68rem/1 var(--mono); }
+.candidateThumbnail { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: var(--surface-muted); }
 .candidate > strong, .candidateSelected > strong { font: 500 .83rem/1.65 var(--sans); }
 .candidate blockquote, .candidateSelected blockquote { margin: 0; padding-left: 10px; color: var(--ink-soft); border-left: 2px solid var(--line); font-size: .76rem; line-height: 1.65; }
 .whyLine { display: flex; gap: 8px; align-items: flex-start; color: var(--ink-soft); }

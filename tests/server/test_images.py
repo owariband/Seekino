@@ -11,7 +11,13 @@ from PIL import Image
 from server.config.media import ImageUploadConfig
 from server.constants.media import SERIES_IMAGE_ID_PREFIX
 from server.utils.images import prepare_series_image
-from server.utils.media import decode_series_image_id, encode_series_image_id
+from server.utils.media import (
+    decode_keyframe_image_id,
+    decode_series_image_id,
+    encode_chunk_keyframe_image_id,
+    encode_series_image_id,
+    encode_video_keyframe_image_id,
+)
 
 
 def image_bytes(*, size=(32, 24), mode="RGB", image_format="PNG", color="red"):
@@ -100,6 +106,24 @@ def test_series_image_ids_require_canonical_scope_hash_and_extension():
     for invalid in (identifier + "=", identifier + "/", "simg_", "artifact://test/private", None):
         with pytest.raises(ValueError, match="invalid Series image ID"):
             decode_series_image_id(invalid)
+
+
+def test_keyframe_image_ids_distinguish_video_and_chunk_scopes():
+    video_id = str(uuid4())
+    chunk_id = str(uuid4())
+
+    video_image_id = encode_video_keyframe_image_id(video_id, 2)
+    chunk_image_id = encode_chunk_keyframe_image_id(chunk_id, 0)
+
+    assert decode_keyframe_image_id(video_image_id) == ("video", video_id, 2)
+    assert decode_keyframe_image_id(chunk_image_id) == (
+        "video_chunk",
+        chunk_id,
+        0,
+    )
+    for invalid in ("", "artifact://test/frame.jpg", video_image_id + "="):
+        with pytest.raises(ValueError, match="invalid keyframe image ID"):
+            decode_keyframe_image_id(invalid)
 
 
 @pytest.mark.parametrize("field", ["maximum_upload_size_bytes", "maximum_pixels", "model_max_edge"])

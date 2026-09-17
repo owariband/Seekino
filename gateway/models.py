@@ -13,6 +13,7 @@ from arkruntime import Ark
 from openai import APIError, OpenAI
 from pydantic import BaseModel
 
+from .schema_utils import inline_schema_refs
 from .sse_proxy import request_sse_json, request_sse_text
 from .usage import track_model_call
 
@@ -277,7 +278,7 @@ class DeepSeekMultimodalModel:
                 }
             )
 
-        schema = _inline_schema_refs(result_type.model_json_schema())
+        schema = inline_schema_refs(result_type.model_json_schema())
         with track_model_call(provider=self.provider_name, model=self.model_name, operation=schema_name) as call:
             try:
                 response = self._client.responses.create(
@@ -398,7 +399,7 @@ class OllamaMultimodalModel:
                 }
             )
 
-        schema = _inline_schema_refs(result_type.model_json_schema())
+        schema = inline_schema_refs(result_type.model_json_schema())
         with track_model_call(provider=self.provider_name, model=self.model_name, operation=schema_name) as call:
             try:
                 response = self._client.post(
@@ -537,7 +538,7 @@ class LlamaCppMultimodalModel:
                 }
             )
 
-        schema = _inline_schema_refs(result_type.model_json_schema())
+        schema = inline_schema_refs(result_type.model_json_schema())
         with track_model_call(provider=self.provider_name, model=self.model_name, operation=schema_name) as call:
             try:
                 response = self._client.post(
@@ -739,34 +740,3 @@ def _read_media_file(
 
     media_bytes = path.read_bytes()
     return mime_type, media_bytes
-
-
-def _inline_schema_refs(schema: Mapping[str, Any]) -> dict[str, Any]:
-    definitions = schema.get("$defs", {})
-
-    def expand(value: Any) -> Any:
-        if isinstance(value, list):
-            return [expand(item) for item in value]
-        if not isinstance(value, dict):
-            return value
-        reference = value.get("$ref")
-        if isinstance(reference, str) and reference.startswith("#/$defs/"):
-            name = reference.rsplit("/", 1)[-1]
-            target = definitions.get(name)
-            if not isinstance(target, dict):
-                raise ValueError(f"unresolved local JSON schema reference: {reference}")
-            merged = {
-                **target,
-                **{key: item for key, item in value.items() if key != "$ref"},
-            }
-            return expand(merged)
-        return {
-            key: expand(item)
-            for key, item in value.items()
-            if key != "$defs"
-        }
-
-    expanded = expand(dict(schema))
-    if not isinstance(expanded, dict):
-        raise ValueError("JSON schema root must be an object")
-    return expanded

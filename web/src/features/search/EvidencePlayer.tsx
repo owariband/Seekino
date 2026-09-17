@@ -103,7 +103,7 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
   return (
     <aside className={styles.evidencePanel}>
       <div className={styles.viewer}>
-        {playbackUrl ? <video key={`${evidence.workspaceId}:${evidence.videoId}:${playbackUrl}`} ref={videoRef} controls preload="metadata" src={playbackUrl} poster={evidence.thumbnail && failedImage !== evidence.thumbnail.imageId ? mediaUrl(evidence.thumbnail.url) ?? undefined : undefined} onError={() => setPlayError("视频媒体无法读取，请刷新媒体状态后重试。")} aria-label="视频证据" />
+        {playbackUrl ? <video key={`${evidence.workspaceId}:${evidence.videoId}:${evidence.videoChunkId}:${playbackUrl}`} ref={videoRef} controls preload="metadata" src={playbackUrl} poster={evidence.thumbnail && failedImage !== evidence.thumbnail.imageId ? mediaUrl(evidence.thumbnail.url) ?? undefined : undefined} onError={() => setPlayError("视频媒体无法读取，请刷新媒体状态后重试。")} aria-label="视频证据" />
           : <p role="status">{evidence.playbackStatus === "MISSING" ? "原视频文件已丢失，仍可查看文字证据。" : evidence.playbackStatus === "PREPARING" ? "播放媒体正在准备，仍可查看文字证据。" : "暂无可播放媒体，仍可查看文字证据。"}</p>}
         <div className={styles.frameMeta}>
           <span>{episodeLabel(evidence.episodeOrder)}</span>

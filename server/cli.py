@@ -20,9 +20,11 @@ from .database import (
 from .repository.index_sync import IndexSyncRepository
 from .repository.video import VideoRepository
 from .service.index_sync import IndexSyncService
+from .service.keyframe_backfill import KeyframeBackfillService
 from .service.parse_import import prepare_video_parse_import
 from .service.qdrant_mutation_lock import QdrantMutationLock
 from .service.video_retrieval import VideoRetrievalService
+from .storage.artifact import LocalArtifactStore
 from .storage.qdrant import QdrantVideoChunkStore
 
 
@@ -80,6 +82,64 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_database_arguments(hydrate)
     hydrate.add_argument("video_chunk_ids", nargs="+")
+
+    backfill_keyframes = subparsers.add_parser(
+        "backfill-keyframes",
+        help=(
+            "Generate timed first-frame images for historical VideoChunks "
+            "without rerunning model parsing."
+        ),
+    )
+    _add_database_arguments(backfill_keyframes)
+    backfill_keyframes.add_argument(
+        "--artifact-root",
+        type=Path,
+        default=Path(
+            os.getenv("ANIVAG_ARTIFACT_ROOT", "outputs/server/artifacts")
+        ),
+        help="Managed Artifact Store root; defaults to ANIVAG_ARTIFACT_ROOT.",
+    )
+    backfill_keyframes.add_argument(
+        "--workspace-id",
+        default=DEFAULT_LOCAL_WORKSPACE_ID,
+        help="Only inspect this workspace; defaults to local-default.",
+    )
+    backfill_keyframes.add_argument(
+        "--series-id",
+        help="Only inspect this Series UUID.",
+    )
+    backfill_keyframes.add_argument(
+        "--video-id",
+        help="Only inspect this Video UUID.",
+    )
+    backfill_keyframes.add_argument(
+        "--limit",
+        type=_positive_int,
+        default=100,
+        help=(
+            "Maximum successful writes for --apply, or missing candidates "
+            "inspected for --dry-run."
+        ),
+    )
+    backfill_keyframes.add_argument(
+        "--max-height",
+        type=_positive_int,
+        default=os.getenv("ANIVAG_PARSE_MAX_HEIGHT", "720"),
+        help="Maximum generated JPEG height; defaults to ANIVAG_PARSE_MAX_HEIGHT.",
+    )
+    backfill_mode = backfill_keyframes.add_mutually_exclusive_group(
+        required=True
+    )
+    backfill_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Inspect candidates and managed media without writing images or MySQL.",
+    )
+    backfill_mode.add_argument(
+        "--apply",
+        action="store_true",
+        help="Explicitly publish first-frame images and conditionally update MySQL.",
+    )
 
     sync_index = subparsers.add_parser(
         "sync-index",
@@ -237,6 +297,28 @@ def main() -> None:
                 ensure_ascii=False,
             )
         )
+        return
+
+    if args.command == "backfill-keyframes":
+        report = KeyframeBackfillService(
+            VideoRepository(create_session_factory(engine)),
+            LocalArtifactStore(
+                args.artifact_root,
+                environment=environment,
+                create_base_directory=args.apply,
+            ),
+            max_height=args.max_height,
+        ).backfill(
+            limit=args.limit,
+            dry_run=not args.apply,
+            workspace_id=args.workspace_id,
+            series_id=args.series_id,
+            video_id=args.video_id,
+        )
+        print(json.dumps(
+            report.model_dump(mode="json", by_alias=True),
+            ensure_ascii=False,
+        ))
         return
 
     if args.command in {

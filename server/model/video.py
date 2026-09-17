@@ -154,7 +154,14 @@ class VideoChunkRecord(TimestampedRecord, Base):
         default=list,
     )
     baseline_visual_caption: Mapped[str | None] = mapped_column(LONG_TEXT)
-    keyframe_uris: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    # The legacy column name is retained for schema compatibility. New values
+    # are {"uri": str, "at_ms": int} objects; historical URI strings remain
+    # readable through VideoChunkKeyframeReference.
+    keyframe_uris: Mapped[list[str | dict[str, Any]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
 
 
 class VideoChunkInfoRecord(Base):

@@ -7,8 +7,8 @@ from math import isfinite
 from threading import Event
 from time import monotonic
 
-from gateway.agent_model import QueryAgentModel
-from gateway.models import StreamingChatModel, StructuredAgentModel
+from gateway.agent_model import AgentLoopModel, QueryAgentModel
+from gateway.models import StructuredAgentModel
 from langgraph.graph import END, START, StateGraph
 
 from ..schema import VideoChunkSearchResult
@@ -17,8 +17,8 @@ from .evaluator import evaluate
 from .output import bind_draft, finalize_output
 from .query import run_query
 from .state import (
-    AgentModelInvocationError, AnswerPhase, ExecutionControl, LoopTurn,
-    ModelContextBudget, RunInputs, RunState,
+    AgentFinalOutput, AgentModelInvocationError, AnswerPhase, ExecutionControl,
+    LoopTurn, ModelContextBudget, RunInputs, RunState,
 )
 from .tools import build_retrieval_tool
 
@@ -34,7 +34,7 @@ class AgentRuntime:
         self,
         query_model: QueryAgentModel,
         evaluator_model: StructuredAgentModel,
-        chat_model: StreamingChatModel,
+        chat_model: AgentLoopModel,
         retrieve: Callable[..., VideoChunkSearchResult],
         *,
         max_loop_turns: int = 3,
@@ -88,7 +88,7 @@ class AgentRuntime:
         *,
         emit: Callable[[dict], None] | None = None,
         cancellation: Event | None = None,
-    ) -> VideoChunkSearchResult:
+    ) -> AgentFinalOutput:
         if (not inputs["workspace_id"].strip() or not inputs["user_message"].strip()
             or not inputs["series_ids"] or any(not value.strip() for value in inputs["series_ids"])):
             raise ValueError("Kick requires user input and fixed workspace / Series scope")
@@ -154,11 +154,16 @@ class AgentRuntime:
         state["control"].publish(state["inputs"], {
             "type": "answer.progress", "phase": AnswerPhase.RESPONDING,
         })
-        text = render_chat(
+        rendered = render_chat(
             self._chat_model, state["inputs"], current, state["control"],
-            self._max_prompt_chars,
+            self._max_prompt_chars, self._max_model_calls,
         )
-        return {"turns": [*state["turns"][:-1], replace(current, rendered_text=text)]}
+        return {
+            "turns": [
+                *state["turns"][:-1],
+                replace(current, rendered_answer=rendered),
+            ]
+        }
 
     @staticmethod
     def _output(state: RunState) -> dict:

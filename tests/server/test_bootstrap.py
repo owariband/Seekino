@@ -25,7 +25,65 @@ class _QdrantClient:
         self.closed = True
 
 
-def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path):
+def test_process_assembly_requires_chat_key_before_opening_resources(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(
+        bootstrap,
+        "create_database_engine",
+        lambda *_args, **_kwargs: pytest.fail("database opened before config validation"),
+    )
+
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        bootstrap.build_application_services(
+            SimpleNamespace(model_config_path=None),
+        )
+
+
+def test_process_assembly_rejects_legacy_provider_neutral_chat_override(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("ANIVAG_AGENT_CHAT_MODEL", "doubao-old-chat")
+    monkeypatch.setattr(
+        bootstrap,
+        "create_database_engine",
+        lambda *_args, **_kwargs: pytest.fail(
+            "database opened before legacy config validation"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="ANIVAG_DEEPSEEK_CHAT_MODEL"):
+        bootstrap.build_application_services(
+            SimpleNamespace(model_config_path=None),
+        )
+
+
+@pytest.mark.parametrize(
+    ("configured_models", "expected_models"),
+    [
+        (
+            ("configured-query-model", "configured-review-model", "configured-chat-model"),
+            ("configured-query-model", "configured-review-model", "configured-chat-model"),
+        ),
+        (
+            (None, None, None),
+            (
+                "doubao-seed-2-0-lite-260428",
+                "doubao-seed-2-0-lite-260428",
+                "deepseek-flash",
+            ),
+        ),
+    ],
+)
+def test_process_assembly_receives_runtime_configuration(
+    monkeypatch,
+    tmp_path,
+    configured_models,
+    expected_models,
+):
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
             monkeypatch.delenv(name, raising=False)
@@ -36,6 +94,7 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path):
     monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
     monkeypatch.setenv("ANIVAG_QDRANT_URL", "http://127.0.0.1:6333")
     monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "bootstrap_test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     settings = replace(
         ServerSettings.from_environment(),
         sse=SSEConfig(poll_interval_seconds=0.5, keepalive_interval_seconds=9),
@@ -45,9 +104,9 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path):
         database_pool_recycle_seconds=1200,
         video_embedding_model="configured-embedding-model",
         video_embedding_fps=2.0,
-        agent_query_model="configured-query-model",
-        agent_evaluator_model="configured-review-model",
-        agent_chat_model="configured-chat-model",
+        agent_query_model=configured_models[0],
+        agent_evaluator_model=configured_models[1],
+        agent_deepseek_chat_model=configured_models[2],
         agent_request_timeout_seconds=120,
         images=ImageUploadConfig(maximum_upload_size_bytes=2048, maximum_pixels=1_000_000, model_max_edge=512),
         agent=AgentServiceConfig(
@@ -135,9 +194,9 @@ def test_process_assembly_receives_runtime_configuration(monkeypatch, tmp_path):
         assert received["consumer"]["poll_interval_seconds"] == settings.mq.poll_interval_seconds
         assert received["consumer"]["lease_duration"] == settings.mq.lease_duration
         runtime = services.agent._runtime
-        assert runtime._query_model.model_name == "configured-query-model"
-        assert runtime._evaluator_model.model_name == "configured-review-model"
-        assert runtime._chat_model.model_name == "configured-chat-model"
+        assert runtime._query_model.model_name == expected_models[0]
+        assert runtime._evaluator_model.model_name == expected_models[1]
+        assert runtime._chat_model.model_name == expected_models[2]
         assert runtime._query_model.max_output_tokens == 2048
         assert runtime._query_model.max_input_chars == 120_000
         assert runtime._chat_model.max_output_tokens == 2048

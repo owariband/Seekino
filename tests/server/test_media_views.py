@@ -11,12 +11,19 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from server.api.errors import register_exception_handlers
-from server.api.search import search_result_view
+from server.api.search import evidence_view, search_result_view
 from server.config.media import ImageUploadConfig
 from server.repository.library import SeriesNotFoundError
 from server.router.media import router as media_router
 from server.router.search import router as search_router
-from server.schema import AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult
+from server.schema import (
+    AgentReply,
+    SelectionReason,
+    VideoChunkCandidate,
+    VideoChunkKeyframeReference,
+    VideoChunkSearchHit,
+    VideoChunkSearchResult,
+)
 from server.service.media import MediaService
 from server.storage.artifact import LocalArtifactStore
 
@@ -153,6 +160,58 @@ def test_search_view_preserves_actual_scope_rank_and_reports_unknown_frames(repo
     assert "原始记录缺少检索视频范围" in old_view.warnings
     with pytest.raises(SeriesNotFoundError):
         search_result_view(raw, service, workspace_id="foreign")
+
+
+def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(
+    repository,
+    prepared_import,
+    tmp_path,
+):
+    _engine, video_repository = repository
+    video_repository.import_video_parse(prepared_import)
+    evidence = video_repository.hydrate_video_chunks(
+        [prepared_import.chunks[1].video_chunk_id]
+    )[0]
+    service, client, _source, frame, _state, _probe = media_fixture(tmp_path)
+    evidence = evidence.model_copy(update={
+        "keyframe_uris": [
+            VideoChunkKeyframeReference(
+                uri=service._artifact_store.uri_for_path(frame),
+                at_ms=evidence.start_ms,
+            )
+        ]
+    })
+    service._video_repository = Mock(
+        hydrate_video_chunk_states=Mock(
+            return_value=[SimpleNamespace(evidence=evidence)]
+        )
+    )
+
+    view, limitations = evidence_view(
+        evidence,
+        service,
+        workspace_id=prepared_import.workspace_id,
+    )
+
+    assert view.thumbnail == view.keyframes[0]
+    assert view.keyframes[0].at_ms == 10_000
+    assert "缺少带原视频时间位置的已登记关键帧" not in limitations
+    response = client.get(view.keyframes[0].url)
+    assert response.status_code == 200
+    assert response.content == frame.read_bytes()
+
+    relative_time = evidence.model_copy(update={
+        "keyframe_uris": [
+            VideoChunkKeyframeReference(
+                uri=service._artifact_store.uri_for_path(frame),
+                at_ms=0,
+            )
+        ]
+    })
+    assert service.keyframe_views(
+        relative_time,
+        workspace_id=prepared_import.workspace_id,
+    ) == ()
 
 
 def test_nonempty_search_route_returns_public_projection(repository, prepared_import, tmp_path):

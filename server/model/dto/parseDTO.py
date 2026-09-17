@@ -9,7 +9,7 @@ from pydantic import Field
 from engine.parse.schemas import VideoChunkParseResult, VideoParseResult
 from engine.retrieval.video_retrieval import VideoChunkRetrievalDocument
 
-from ...schema import ContractModel
+from ...schema import ContractModel, VideoChunkKeyframeReference
 
 
 class ParseImportReport(ContractModel):
@@ -34,6 +34,7 @@ class PreparedVideoChunk:
     retrieval_document: VideoChunkRetrievalDocument
     chunk_media_ref: str
     analysis_window_media_ref: str
+    keyframes: tuple[VideoChunkKeyframeReference, ...]
     text_embedding: PreparedEmbedding | None
     vision_embedding: PreparedEmbedding | None
 

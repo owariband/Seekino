@@ -10,9 +10,18 @@ from typing import Annotated, Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from ..schema import VideoChunkSearchResult
+from ..schema import ContractModel, VideoChunkSearchResult
 
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
+_EvidenceClaim = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000),
+]
+_VideoChunkId = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=36),
+]
+_Markdown = Annotated[str, StringConstraints(min_length=1, max_length=20_000)]
 
 
 class AnswerPhase(StrEnum):
@@ -39,9 +48,79 @@ class QueryDraft(BaseModel):
 
     plan_context: _Text
     message: _Text
-    selected_video_chunk_ids: list[
-        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
-    ] = Field(max_length=100)
+    selected_video_chunk_ids: list[_VideoChunkId] = Field(max_length=100)
+
+
+class ChatVideoItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_chunk_id: _VideoChunkId
+    claim: _EvidenceClaim
+
+
+class MarkdownRenderBlock(ContractModel):
+    type: Literal["markdown"] = "markdown"
+    markdown: _Markdown
+
+
+class VideoRenderBlock(ContractModel):
+    type: Literal["video"] = "video"
+    video_chunk_id: _VideoChunkId
+
+
+class ChatVideoBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["video"] = "video"
+    video_chunk_id: _VideoChunkId
+    claim: _EvidenceClaim
+
+
+ChatRenderBlock = Annotated[
+    MarkdownRenderBlock | ChatVideoBlock,
+    Field(discriminator="type"),
+]
+FinalRenderBlock = Annotated[
+    MarkdownRenderBlock | VideoRenderBlock,
+    Field(discriminator="type"),
+]
+
+
+class ChatRenderDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    blocks: list[ChatRenderBlock] = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_blocks(self) -> ChatRenderDraft:
+        answer_markdown = self.answer_markdown
+        if not answer_markdown.strip():
+            raise ValueError("Chat render requires at least one nonempty Markdown block")
+        if len(answer_markdown) > 20_000:
+            raise ValueError("Chat Markdown exceeds 20000 characters")
+        ids = [item.video_chunk_id for item in self.video_items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("video_items must not contain duplicate video_chunk_id values")
+        return self
+
+    @property
+    def answer_markdown(self) -> str:
+        return "\n\n".join(
+            block.markdown
+            for block in self.blocks
+            if isinstance(block, MarkdownRenderBlock)
+        )
+
+    @property
+    def video_items(self) -> list[ChatVideoBlock]:
+        return [
+            block for block in self.blocks
+            if isinstance(block, ChatVideoBlock)
+        ]
+
+
+class AgentFinalOutput(VideoChunkSearchResult):
+    render_blocks: list[FinalRenderBlock] = Field(min_length=1, max_length=200)
 
 
 class EvalDecision(BaseModel):
@@ -98,7 +177,7 @@ class LoopTurn:
     draft_output: VideoChunkSearchResult
     review: EvalDecision
     status: Literal["complete", "continue"]
-    rendered_text: str = ""
+    rendered_answer: ChatRenderDraft | None = None
 
     def context(self) -> dict:
         return {
@@ -123,6 +202,16 @@ class ExecutionControl:
             raise AgentModelInvocationError("Agent execution cancelled")
         if monotonic() >= self.deadline:
             raise AgentModelInvocationError("Agent execution deadline exceeded")
+
+    def remaining_seconds(self) -> float:
+        """Return the current Provider budget without extending the Kick deadline."""
+
+        if self.cancellation is not None and self.cancellation.is_set():
+            raise AgentModelInvocationError("Agent execution cancelled")
+        remaining = self.deadline - monotonic()
+        if remaining <= 0:
+            raise AgentModelInvocationError("Agent execution deadline exceeded")
+        return remaining
 
     def publish(self, inputs: RunInputs, event: dict) -> None:
         self.check()
@@ -161,7 +250,7 @@ class RunState(TypedDict):
     inputs: RunInputs
     turns: list[LoopTurn]
     control: ExecutionControl
-    final_output: VideoChunkSearchResult
+    final_output: AgentFinalOutput
 
 
 def context_json(value: object) -> str:

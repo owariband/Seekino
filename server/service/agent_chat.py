@@ -6,7 +6,6 @@ from dataclasses import asdict
 from datetime import UTC
 from queue import Empty, Full, Queue
 from threading import Event, Lock
-from time import monotonic
 from uuid import uuid4
 
 from ..agent.runtime import AgentRuntime
@@ -400,24 +399,21 @@ class AgentChatService:
         initial = execution.initial
         assistant_id = initial.assistant_message.message_id
         conversation_id = initial.assistant_message.conversation_id
-        chunks: list[str] = []
-        last_checkpoint = monotonic()
+        pending_answer_events: list[dict] = []
+        last_phase = initial.assistant_message.phase
+        evidence_hit_count = 0
 
         def publish_runtime(event):
-            nonlocal last_checkpoint
+            nonlocal last_phase
             event_type = event["type"]
-            checkpoint = {}
             if event_type == "answer.progress":
-                checkpoint["phase"] = event["phase"]
-            elif event_type == "answer.evidence":
-                checkpoint["search_result"] = event["searchResult"]
-            elif event_type == "answer.delta":
-                chunks.append(event["delta"])
-                if monotonic() - last_checkpoint >= 1:
-                    checkpoint["content"] = "".join(chunks)
-            if checkpoint:
-                self._repository.checkpoint_assistant_message(assistant_id, now=utc_now_naive(), **checkpoint)
-                last_checkpoint = monotonic()
+                last_phase = event["phase"]
+                self._repository.checkpoint_assistant_message(
+                    assistant_id, phase=event["phase"], now=utc_now_naive(),
+                )
+            elif event_type in {"answer.evidence", "answer.block", "answer.delta"}:
+                pending_answer_events.append(event)
+                return
             execution.publish(event)
         try:
             history = self._repository.list_recent_completed_messages(
@@ -466,6 +462,17 @@ class AgentChatService:
                 assistant_id, content=final.agent_reply.message, retrieval_query=final.query,
                 search_result=final.model_dump(mode="json", by_alias=True), now=utc_now_naive(),
             )
+            for event in pending_answer_events:
+                if event["type"] == "answer.evidence":
+                    hits = event["searchResult"].get("hits")
+                    evidence_hit_count = len(hits) if isinstance(hits, list) else 0
+                execution.publish(event)
+            _logger.info(
+                "agent_execution_completed conversation_id=%s message_id=%s "
+                "phase=%s output_chars=%s evidence_hits=%s",
+                conversation_id, assistant_id, last_phase,
+                len(final.agent_reply.message), evidence_hit_count,
+            )
             result = AgentMessageSendState(initial.user_message, assistant)
             execution.publish(_terminal_event(result))
             return result
@@ -481,16 +488,24 @@ class AgentChatService:
             else:
                 public_code = "PROCESSING_FAILED"
                 public_message = "这次对话未能完成，请稍后重试。"
-            _logger.exception(
-                "Agent execution failed conversation_id=%s message_id=%s code=%s",
-                conversation_id, assistant_id, public_code,
+            root_error = exc
+            while root_error.__cause__ is not None:
+                root_error = root_error.__cause__
+            log_failure = (
+                _logger.error
+                if isinstance(exc, AgentModelInvocationError)
+                else _logger.exception
+            )
+            log_failure(
+                "agent_execution_failed conversation_id=%s message_id=%s code=%s "
+                "phase=%s partial_chars=%s evidence_hits=%s error_type=%s "
+                "root_error_type=%s",
+                conversation_id, assistant_id, public_code, last_phase,
+                0, evidence_hit_count,
+                type(exc).__name__, type(root_error).__name__,
             )
             failed = None
             try:
-                if chunks:
-                    self._repository.checkpoint_assistant_message(
-                        assistant_id, content="".join(chunks), now=utc_now_naive(),
-                    )
                 failed = self._repository.fail_assistant_message(
                     assistant_id, error=f"{type(exc).__name__}: {str(exc).strip()}"[:8192],
                     now=utc_now_naive(),

@@ -28,6 +28,7 @@ from ..model.dto.parseDTO import (
     PreparedVideoChunk,
     PreparedVideoParseImport,
 )
+from ..schema import VideoChunkKeyframeReference
 
 
 def prepare_completed_video_parse_import(
@@ -49,6 +50,10 @@ def prepare_completed_video_parse_import(
     pipeline_version: str,
     chunk_media_refs: Mapping[int, str],
     analysis_window_media_refs: Mapping[int, str],
+    keyframes_by_sequence: Mapping[
+        int,
+        tuple[VideoChunkKeyframeReference, ...],
+    ],
     text_embeddings: Mapping[int, PreparedEmbedding],
     vision_embeddings: Mapping[int, PreparedEmbedding],
     parsed_at: datetime | None = None,
@@ -80,6 +85,7 @@ def prepare_completed_video_parse_import(
     for name, values in (
         ("chunk_media_refs", chunk_media_refs),
         ("analysis_window_media_refs", analysis_window_media_refs),
+        ("keyframes_by_sequence", keyframes_by_sequence),
         ("text_embeddings", text_embeddings),
         ("vision_embeddings", vision_embeddings),
     ):
@@ -107,6 +113,7 @@ def prepare_completed_video_parse_import(
                 retrieval_document=retrieval_documents[sequence_no],
                 chunk_media_ref=chunk_media_ref,
                 analysis_window_media_ref=analysis_media_ref,
+                keyframes=keyframes_by_sequence[sequence_no],
                 text_embedding=text_embeddings[sequence_no],
                 vision_embedding=vision_embeddings[sequence_no],
             )
@@ -282,6 +289,7 @@ def prepare_video_parse_import(
                 retrieval_document=retrieval_documents[sequence_no],
                 chunk_media_ref=chunk_media.as_uri(),
                 analysis_window_media_ref=analysis_window_media.as_uri(),
+                keyframes=(),
                 text_embedding=text_embedding,
                 vision_embedding=vision_embedding,
             )

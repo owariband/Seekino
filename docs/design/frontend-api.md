@@ -2,7 +2,7 @@
 
 > 状态：Upload-to-Search M1 与 Agent Chat 基础接口已实现；真实模型聊天联调与异常恢复仍待验收/补齐
 >
-> 更新时间：2026-09-15
+> 更新时间：2026-09-17
 >
 > 面向对象：WebUI、前端状态管理与联调开发
 >
@@ -100,7 +100,7 @@ X-Content-SHA256
 | Agent Conversation | `GET` | `/api/agent/conversations/list?workspaceId=...&limit=100` | Workspace 下的 Conversation 列表 |
 | Agent Conversation | `GET` | `/api/agent/conversations/get?conversationId=...&workspaceId=...` | Conversation 详情 |
 | Agent Message | `GET` | `/api/agent/messages/list?conversationId=...&workspaceId=...&afterSequenceNo=-1&limit=200` | 按序查询持久化消息，包含 `modelName` 和完整结果 |
-| Agent Message | `POST` | `/api/agent/messages/send?conversationId=...` | Query/Evaluator 最多 3 轮，通过后由 Chat 交付；按 Accept 返回 JSON 或实时正文 SSE |
+| Agent Message | `POST` | `/api/agent/messages/send?conversationId=...` | Query/Evaluator 最多 3 轮；通过后 DeepSeek Chat 自主交错产生 Markdown 和视频窗口；按 Accept 返回 JSON 或交付 SSE |
 | Agent Message | `GET` | `/api/agent/messages/events?conversationId=...&workspaceId=...` | SSE 订阅消息状态快照，不是 token 流 |
 
 共 19 个路径。不存在 `/api/agent/sessions/*` 或 `/api/agent/turns`；内部 Retrieval Tool 直接调用检索 Service，
@@ -762,6 +762,11 @@ Content-Type: application/json
   "seriesIds": [
     "77285f16-3e5b-592e-ba15-8b224b619806"
   ],
+  "searchedVideoIds": [
+    "2a150753-57ae-58c3-a996-d552734bc640"
+  ],
+  "partial": false,
+  "warnings": [],
   "agentReply": {
     "message": "我保留了 1 段备选。第一段同时进入文本与视觉召回，可联合核验对白、画面事件与上下文。",
     "resultCount": 1
@@ -770,6 +775,7 @@ Content-Type: application/json
     {
       "candidate": {
         "videoChunkId": "75f5...",
+        "rank": 1,
         "fusedRank": 1,
         "fusedScore": 0.0325,
         "textRank": 1,
@@ -796,30 +802,39 @@ Content-Type: application/json
         "limitations": []
       },
       "evidence": {
-        "seriesId": "77285f16-3e5b-592e-ba15-8b224b619806",
         "workspaceId": "local-default",
+        "seriesId": "77285f16-3e5b-592e-ba15-8b224b619806",
         "seriesName": "BanG Dream! It's MyGO!!!!!",
-        "seriesDescription": "动画正片",
         "seriesStatus": "READY",
-        "importantExtraData": null,
-        "characterBible": [],
         "videoId": "2a150753-57ae-58c3-a996-d552734bc640",
         "episodeOrder": 7,
         "originalFilename": "episode-07.mp4",
-        "originalSourceUri": "artifact://development/media/.../episode-07.mp4",
-        "inferenceProxyUri": null,
-        "contentHash": "64-character-sha256",
         "durationMs": 1435520,
-        "uploadStatus": "COMPLETED",
-        "parseStatus": "SUCCEEDED",
         "videoChunkId": "75f5...",
         "sequenceNo": 20,
         "startMs": 1200000,
         "endMs": 1260000,
         "analysisWindowStartMs": 1197000,
         "analysisWindowEndMs": 1263000,
-        "chunkMediaRef": "artifact://development/media/.../chunk-0020.mp4",
-        "analysisWindowMediaRef": "artifact://development/media/.../window-0020.mp4",
+        "playbackStatus": "READY",
+        "playbackUrl": "/api/videos/content?videoId=2a150753-57ae-58c3-a996-d552734bc640&workspaceId=local-default",
+        "playbackUrlExpiresAt": null,
+        "thumbnail": {
+          "imageId": "WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
+          "url": "/api/media/images/content?workspaceId=local-default&imageId=WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
+          "expiresAt": null,
+          "atMs": 1200000,
+          "alt": "爽世眼含泪水冲向成员并质问。"
+        },
+        "keyframes": [
+          {
+            "imageId": "WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
+            "url": "/api/media/images/content?workspaceId=local-default&imageId=WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
+            "expiresAt": null,
+            "atMs": 1200000,
+            "alt": "爽世眼含泪水冲向成员并质问。"
+          }
+        ],
         "transcript": [
           {
             "speaker": null,
@@ -829,10 +844,14 @@ Content-Type: application/json
           }
         ],
         "baselineVisualCaption": null,
-        "keyframeUris": [],
-        "allTimeEvents": [],
+        "allTimeEvents": [
+          {
+            "description": "爽世眼含泪水冲向成员并质问。",
+            "startMs": 1252000,
+            "endMs": 1259000
+          }
+        ],
         "allTimeEventText": "该 VideoChunk 自有事件文本",
-        "retrievalText": "生成 Text vector 时使用的完整检索正文",
         "videoCompact": "该 VideoChunk 的紧凑事实摘要",
         "contextBeforeCompact": "前文上下文",
         "contextAfterCompact": "更新后的上下文",
@@ -841,8 +860,7 @@ Content-Type: application/json
         "modelName": "ep-model",
         "pipelineVersion": "m1",
         "isFallback": false,
-        "parseProvenance": null,
-        "parsedAt": "2026-09-14T10:35:00"
+        "parsedAt": 1789343700000
       }
     }
   ]
@@ -854,11 +872,11 @@ Content-Type: application/json
 - `candidate` 是 Qdrant Text/Vision 双路召回和 RRF 的排序信息。
 - `/api/search` 的 `agentReply` 是确定性生成的检索摘要，`resultCount` 始终等于 `hits.length`；它不是 Chat Agent 回答或持久化对话记录。
 - 当前 `selectionReason` 是根据通道排名和候选 Evidence 生成的公开摘要，不是模型按 Query 作出的逐候选审核结论，也不包含私有思维链。Agent 选择候选后沿用该字段，前端不要自行编造额外理由。
-- `evidence` 是按照 `videoChunkId` 从 MySQL 一次联表 Hydrate 的完整事实。
-- `retrievalText` 是生成该 Text vector 时实际使用的完整文本，可供上层回答与分析能力使用。
+- `evidence` 是按照 `videoChunkId` 从 MySQL 联表 Hydrate 后生成的公开投影；内部存储 URI、媒体引用、Hash 和原始检索正文不会交给浏览器。
 - Vision vector 绑定的是无重叠 canonical VideoChunk MP4，不是 caption。
 - 响应不返回原始 Text/Vision 浮点向量。
-- 播放使用 `videoId + startMs/endMs`，不要从模型正文反解析时间。
+- 新解析的 canonical VideoChunk 会生成首帧 keyframe；`thumbnail` 是第一张有效关键帧，`keyframes[].atMs` 是原视频绝对时间。`imageId` 是服务端生成的 opaque URL-safe base64 标识，前端只能透传，不能按 `videoChunkId:index` 拼接。旧数据缺失有效关键帧时可返回 `thumbnail: null` 并在 `warnings` 中说明。
+- 候选列表只加载 `thumbnail.url` 的懒加载图片；用户点击候选后再挂载 `playbackUrl` 对应的 `<video preload="metadata">`。播放定位仍使用 `startMs/endMs`，不要从模型正文反解析时间。
 
 ## 8. 建议前端类型
 
@@ -951,47 +969,53 @@ interface TranscriptCue {
   endMs: number;
 }
 
+type PlaybackStatus = "PREPARING" | "READY" | "FAILED" | "MISSING";
+type UnixTimeMs = number;
+
+interface ImageAsset {
+  imageId: string;
+  url: string;
+  expiresAt: UnixTimeMs | null;
+}
+
+interface Keyframe extends ImageAsset {
+  atMs: number;
+  alt: string | null;
+}
+
 interface VideoChunkEvidence {
-  seriesId: string;
   workspaceId: string;
+  seriesId: string;
   seriesName: string;
-  seriesDescription: string | null;
   seriesStatus: SeriesStatus;
-  importantExtraData: Record<string, unknown> | null;
-  characterBible: Array<Record<string, unknown>>;
   videoId: string;
   episodeOrder: number;
   originalFilename: string;
-  originalSourceUri: string;
-  inferenceProxyUri: string | null;
-  contentHash: string;
   durationMs: number;
-  uploadStatus: string;
-  parseStatus: string;
   videoChunkId: string;
   sequenceNo: number;
   startMs: number;
   endMs: number;
   analysisWindowStartMs: number;
   analysisWindowEndMs: number;
-  chunkMediaRef: string;
-  analysisWindowMediaRef: string;
+  playbackStatus: PlaybackStatus;
+  playbackUrl: string | null;
+  playbackUrlExpiresAt: UnixTimeMs | null;
+  thumbnail: Keyframe | null;
+  keyframes: Keyframe[];
   transcript: TranscriptCue[];
   baselineVisualCaption: string | null;
-  keyframeUris: string[];
-  allTimeEvents: Array<Record<string, unknown>>;
+  allTimeEvents: Array<{ description: string; startMs: number; endMs: number }>;
   allTimeEventText: string;
-  retrievalText: string;
   videoCompact: string;
-  contextBeforeCompact: string;
-  contextAfterCompact: string;
+  contextBeforeCompact: string | null;
+  contextAfterCompact: string | null;
   windowSummary: string;
+  isFallback: boolean;
   modelProvider: string | null;
   modelName: string | null;
   pipelineVersion: string;
-  isFallback: boolean;
-  parseProvenance: Record<string, unknown> | null;
-  parsedAt: string;
+  parsedAt: UnixTimeMs;
 }
 
 interface MatchedEvidence {
@@ -1018,13 +1042,23 @@ interface VideoChunkSearchHit {
   evidence: VideoChunkEvidence;
 }
 
-interface VideoChunkSearchResult {
+interface VideoChunkSearchEvidence {
   query: string;
   seriesIds: string[];
-  agentReply: AgentReply;
+  searchedVideoIds: string[];
+  partial: boolean;
+  warnings: string[];
   hits: VideoChunkSearchHit[];
 }
+
+interface VideoChunkSearchResult extends VideoChunkSearchEvidence {
+  agentReply: AgentReply;
+}
 ```
+
+`POST /api/search` 返回 `VideoChunkSearchResult`；Agent Message 与 `answer.evidence` 只返回
+`VideoChunkSearchEvidence`。前端不要在 Agent 结果里等待或重建 `agentReply`，最终回答来自
+`AgentMessageView.content`。
 
 建议前端从 `/openapi.json` 生成基础 HTTP DTO，再在 UI 层对状态枚举做窄化，不要维护
 第二套手写且无法校验的完整 DTO。
@@ -1119,8 +1153,11 @@ Agent Run 恢复尚未实现。
   → Evaluator：基于草稿与召回证据返回 complete / continue
       ├── continue：advice 连同逐轮计划、召回、草稿和审核记录交回 Query
       │    → Query 可以重新召回或复用已有候选，再交 Evaluator
-      └── complete：Chat 基于获批草稿与证据实时输出正文
-           → Output 校验证据并封装结果 → 提交 ASSISTANT → 交付 completed
+      └── complete：Chat 进入 tool_choice=auto 的自主循环
+           → 每轮可输出 Markdown、调用一个或多个 submit_video_item，或结束
+           → Server 逐项校验 ID，并从可信 Evidence 补齐 URI / 标题 / 时间
+           → Output 保留 Markdown / video 逻辑顺序
+           → 原子提交 ASSISTANT → block / evidence / delta / completed
 ```
 
 Query/Evaluator 默认最多迭代 3 轮，包含首轮。任一轮通过即进入 Chat；第三轮仍要求
@@ -1200,7 +1237,7 @@ Conversation 创建和消息发送必须带 `Idempotency-Key`，最长 128 字�
 
 ### 12.3 消息模型与当前模型名
 
-以下摘录复用第 8 节的 `VideoChunkSearchResult`：
+以下摘录复用第 8 节的 `VideoChunkSearchEvidence`：
 
 ```ts
 interface AgentConversationView {
@@ -1208,26 +1245,38 @@ interface AgentConversationView {
   workspaceId: string;
   title: string;
   messageCount: number;
-  lastMessageAt: string | null;
-  createdAt: string;
-  updatedAt: string;
+  lastMessagePreview: string | null;
+  lastMessageAt: UnixTimeMs | null;
+  createdAt: UnixTimeMs;
+  updatedAt: UnixTimeMs;
 }
+
+type AnswerPhase = "QUEUED" | "RETRIEVING" | "EVALUATING" | "RESPONDING";
+interface Failure { code: string; message: string }
+interface EvidenceReference { messageId: string; videoChunkId: string }
+type AgentRenderBlock =
+  | { type: "markdown"; markdown: string }
+  | { type: "video"; videoChunkId: string };
 
 interface AgentMessageView {
   messageId: string;
   conversationId: string;
+  seriesIds: string[];
   sequenceNo: number;
   role: "USER" | "ASSISTANT";
   status: "PROCESSING" | "COMPLETED" | "FAILED";
+  phase: AnswerPhase | null;
+  version: number;
+  reference: EvidenceReference | null;
   content: string | null;
-  seriesIds: string[];
   modelName: string | null;
   replyToMessageId: string | null;
   retrievalQuery: string | null;
-  searchResult: VideoChunkSearchResult | null;
-  lastError: string | null;
-  createdAt: string;
-  updatedAt: string;
+  searchResult: VideoChunkSearchEvidence | null;
+  renderBlocks: AgentRenderBlock[];
+  lastError: Failure | null;
+  createdAt: UnixTimeMs;
+  updatedAt: UnixTimeMs;
 }
 
 interface AgentMessageSendView {
@@ -1236,14 +1285,17 @@ interface AgentMessageSendView {
 }
 
 interface AgentMessageEventView {
+  type: "messages";
   conversationId: string;
   messages: AgentMessageView[];
+  occurredAt: UnixTimeMs;
 }
 
 interface AgentAnswerEventBase {
   conversationId: string;
   messageId: string;
   sequence: number;
+  occurredAt: UnixTimeMs;
 }
 
 type AgentAnswerEvent =
@@ -1252,19 +1304,25 @@ type AgentAnswerEvent =
     })
   | (AgentAnswerEventBase & {
       type: "answer.evidence";
-      hits: VideoChunkSearchHit[];
+      searchResult: VideoChunkSearchEvidence;
     })
-  | (AgentAnswerEventBase & { type: "answer.delta"; delta: string })
   | (AgentAnswerEventBase & {
+      type: "answer.block";
+      block: AgentRenderBlock;
+    })
+  | (AgentAnswerEventBase & { type: "answer.progress"; phase: AnswerPhase })
+  | (AgentAnswerEventBase & { type: "answer.delta"; delta: string })
+  | (AgentAnswerEventBase & AgentMessageSendView & {
       type: "answer.failed";
-      code: string;
-      message: string;
-      userMessage?: AgentMessageView;
-      assistantMessage?: AgentMessageView;
+      error: Failure;
+    })
+  | (AgentAnswerEventBase & {
+      type: "answer.interrupted";
+      error: Failure;
     });
 ```
 
-POST SSE 的 `type` 来自 SSE `event:` 行，DTO data 为对应载荷；不要假定 data 自带 `type`。
+POST SSE 的事件名来自 SSE `event:` 行，JSON data 也包含相同的 `type`；两者不一致时应拒绝该帧。
 `messageId` 始终指向该次发送的 ASSISTANT，`sequence` 是该流内正整数事件序号，与消息的
 `sequenceNo` 不同。命名流的精确 Schema 见 `server/api/schema.py`。
 
@@ -1278,15 +1336,26 @@ join 回源，必须属于当前消息范围；视频卡片不能从当前多选
 完成或失败后保留。它不是 Query/Evaluator 模型名，也不是 `evidence.modelName`；配置切换
 不会重写历史记录。页面可显示最近一条 ASSISTANT 的模型名，无记录时显示“尚未调用”。
 
-Chat 使用 `ANIVAG_AGENT_CHAT_MODEL`，未设置时使用 Gateway `config.yaml` 的
-`video_parser.transcript_model`；Query 和 Evaluator 分别使用 `ANIVAG_AGENT_QUERY_MODEL`、
-`ANIVAG_AGENT_EVALUATOR_MODEL`，未设置时沿用实际 Chat 模型。三个角色可以使用同一模型。
+Query 和 Evaluator 分别使用 `ANIVAG_AGENT_QUERY_MODEL`、
+`ANIVAG_AGENT_EVALUATOR_MODEL`；未设置时都使用 Gateway `config.yaml` 的 Ark
+`video_parser.transcript_model`。Chat 使用 `ANIVAG_DEEPSEEK_CHAT_MODEL` 覆盖模型名；未设置时
+读取独立 `agent_chat` 配置，默认是 text-only `deepseek-flash`，API Key 默认来自
+`DEEPSEEK_API_KEY`。旧 `ANIVAG_AGENT_CHAT_MODEL` 会触发明确的启动迁移错误；Chat 不继承 Ark 模型。
+
+Chat 对 DeepSeek 发起 text-only、非 token 流式的有边界自主工具循环，并设置
+`thinking.type=disabled`。每轮使用 `tool_choice=auto`；模型可以输出普通 Markdown、调用一个或多个
+`submit_video_item({video_chunk_id, claim})`，或自主结束。tool acknowledgement 返回 DeepSeek 后，由它决定
+下一步，不存在“必须先提交全部视频，再统一输出文本”的固定两阶段。Server 允许获批
+Evidence 的零个或子集，但拒绝重复/未获批 ID；URI、时间和标题仍只从可信 Evidence 填充。
+完成后按发生顺序得到 `renderBlocks`，且至少有一个非空 Markdown 块。全部块与数据库提交
+都成功后，SSE 才原子释放 evidence、有序 block、兼容 delta 与 completed；各轮 HTTP 请求共享
+当前 Kick 剩余 deadline 和模型调用次数上限。
 
 ### 12.4 发送、状态机与幂等恢复
 
 服务先在 MySQL 写入已完成 USER 与 `PROCESSING` ASSISTANT，再由 AgentChatService 的
 执行线程池运行 Harness，最终更新同一条 ASSISTANT。JSON 请求等待结果；POST SSE
-实时消费输出，两者均不返回 `202`。HTTP 订阅断开不会停止服务持有的 Kick。
+消费执行事件，两者均不返回 `202`。HTTP 订阅断开不会停止服务持有的 Kick。
 
 ```text
 USER：COMPLETED
@@ -1307,30 +1376,40 @@ ASSISTANT：PROCESSING → COMPLETED / FAILED
 - 用户明确重新尝试使用新 Key，新增消息对。进程硬退出可能遗留 PROCESSING，目前没有
   Agent Reaper，不能用新 Key 循环发送绕过此状态。
 
-收到 `answer.evidence` 后可渲染获批视频卡片，收到 delta 后显示逐段正文，此时消息仍为
-PROCESSING；只有 completed 或持久化 COMPLETED 快照代表完整交付成功。最终候选从
-`assistantMessage.searchResult.hits` 读取，播放使用 `evidence.videoId + startMs/endMs`。
-不要从模型正文反解析视频时间，也不要把 `/api/search` 摘要当作获批后的 Chat 回答。
+新客户端按 `assistantMessage.renderBlocks` 渲染最终顺序。Markdown 块通过禁用原始 HTML、
+限制 URL 协议的 Markdown 渲染器展示；视频块的 `videoChunkId` 只能与同一消息的
+`searchResult.hits` 关联，找不到可信 hit 时不渲染。`content` 和 `answer.delta` 是所有 Markdown 块
+的兼容汇总，`answer.evidence` 是完整可信证据的兼容交付；它们不能用来重建新的交错顺序。
+旧历史消息没有 `renderBlocks` 时，前端回退为先渲染 `content`，再按 `searchResult.hits` 渲染视频。
+只有 completed 或持久化 COMPLETED 快照代表完整交付成功。播放使用
+`evidence.videoId + startMs/endMs`；不要从模型正文反解析视频时间。
+
+候选卡优先显示 `evidence.thumbnail`，图片可使用原生 lazy loading；不要在卡片列表中预先挂载
+所有视频。用户点击某个候选后，再创建使用 `evidence.playbackUrl` 的 video 元素，并以
+`preload="metadata"` 加载、按 `startMs/endMs` 控制范围播放。
 
 ### 12.5 POST 正文 SSE、GET 快照与页面恢复
 
 同一 POST 的正常事件顺序为：
 
 ```text
-answer.started → answer.evidence → answer.delta（多段）→ answer.completed
+answer.started → answer.progress（可多次）→ answer.evidence → answer.block（可多次）→ answer.delta → answer.completed
 ```
 
 | 事件 | 载荷与前端处理 |
 | --- | --- |
 | `answer.started` | 已落库的 USER/PROCESSING ASSISTANT 消息对；按 ID 创建或合并消息 |
-| `answer.evidence` | Evaluator 放行后的完整 `hits`；渲染视频证据卡片 |
-| `answer.delta` | 最终 Chat Provider 的原始文本增量；追加到该 ASSISTANT 正文 |
-| `answer.completed` | Provider 正常结束且数据库提交成功后的完整消息对；确认完成 |
-| `answer.failed` | `code/message` 与可选持久化消息对；失败后不会发送 completed |
+| `answer.progress` | 当前 `phase`（RETRIEVING / EVALUATING / RESPONDING）；用于文字状态，不代表百分比 |
+| `answer.evidence` | 由 Server 可信 Evidence 补齐的 `searchResult`；不含 `agentReply`，为视频 block 提供唯一可信媒体来源，同时兼容旧客户端 |
+| `answer.block` | Evidence 之后按模型决定的顺序发送一个逻辑块；可为 Markdown，或只含 `videoChunkId` 的视频引用 |
+| `answer.delta` | 所有 Markdown block 的完整兼容汇总；一次性设置该 ASSISTANT `content` |
+| `answer.completed` | 数据库提交成功后的完整消息对；确认完成 |
+| `answer.failed` | `error` 与持久化消息对；执行失败后不会发送 completed |
+| `answer.interrupted` | 当前订阅的 `error`；任务可继续，改由 GET 快照恢复终态 |
 
 每帧包含 `conversationId/messageId/sequence`，SSE `id:` 为 `messageId:sequence`。按
 Conversation、ASSISTANT ID 和单调事件序号拒绝迟到、重复或不相关事件；不把 Query 草稿
-或 Evaluator advice 展示为最终正文。终态幂等重试读回原结果，不重放原始 delta。
+或 Evaluator advice 展示为最终正文。终态幂等重试读回原结果，不重放正文 delta。
 
 GET `/api/agent/messages/events` 则发送独立的完整持久化状态快照：
 
@@ -1342,7 +1421,7 @@ data: {"conversationId":"...","messages":[...]}
 用 `EventSource.addEventListener("messages", ...)` 接收命名事件，首次连接也发送快照，
 包括空数组。GET 快照不会启动新 Kick，也不重放 Chat 增量。
 
-- 按 `messageId` 合并并按 `sequenceNo` 排序；PROCESSING 快照不能抹掉已收到的实时正文
+- 按 `messageId` 合并并按 `sequenceNo` 排序；PROCESSING 快照不能抹掉已收到的正文
   和卡片，旧 PROCESSING 状态不能覆盖已完成/失败状态。
 - PROCESSING 到终态不改变消息 sequence，仅用 `afterSequenceNo` 拉新消息会漏掉状态
   变化，需要完整快照或重新拉取覆盖已有消息。

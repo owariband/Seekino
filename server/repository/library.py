@@ -19,6 +19,7 @@ from ..model.video import (
     VideoChunkRecord,
     VideoChunkEmbeddingRecord,
 )
+from ..utils.media import stored_keyframe_uri
 from ..utils.time import utc_now_naive
 from .upload import UploadRepository
 
@@ -356,7 +357,10 @@ class LibraryRepository:
                 ),
                 last_error=error or index_error,
                 keyframe_uris=tuple(dict.fromkeys(
-                    uri for chunk in video_chunks for uri in chunk.keyframe_uris
+                    uri
+                    for chunk in video_chunks
+                    for value in chunk.keyframe_uris
+                    if (uri := stored_keyframe_uri(value)) is not None
                 )),
             ))
         return states

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from queue import Empty
@@ -80,17 +81,49 @@ class _EvaluatorModel:
 class _ChatModel:
     model_name: str = "chat-test"
     prompts: list[str] = field(default_factory=list)
+    submitted_items: list[dict] = field(default_factory=list)
     release: Event | None = None
     fail: bool = False
 
-    def stream_text(self, inputs):
-        self.prompts.append(inputs[0].text)
-        yield "目前没有足够的候选画面，"
+    def run_agent_loop(
+        self, prompt, *, function_name, function_description, result_type,
+        max_model_calls, handle_text, handle_tool_call,
+        request_timeout_seconds=None, check_control=None,
+    ):
+        assert function_name == "submit_video_item"
+        assert function_description
+        assert set(result_type.model_fields) == {"video_chunk_id", "claim"}
+        self.prompts.append(prompt)
+        assert request_timeout_seconds is not None
+        assert request_timeout_seconds > 0
+        assert max_model_calls > 0
+        assert check_control is not None
         if self.release is not None:
             assert self.release.wait(5), "test did not release provider"
         if self.fail:
             raise RuntimeError("private upstream failure")
-        yield "建议补充人物或动作。"
+        context = json.loads(prompt.rsplit("\n\n", 1)[1])
+        chunk_ids = [
+            hit["candidate"]["videoChunkId"]
+            for hit in context["approved_turn"]["selected_evidence"]["hits"]
+        ]
+        check_control()
+        handle_text(
+            "目前没有足够的候选画面，"
+            if chunk_ids else "目前没有足够的候选画面，建议补充人物或动作。"
+        )
+        for chunk_id in chunk_ids:
+            item = result_type.model_validate({
+                "video_chunk_id": chunk_id,
+                "claim": f"片段 {chunk_id} 支持回答。",
+            })
+            self.submitted_items.append(item.model_dump())
+            assert json.loads(handle_tool_call(item)) == {
+                "accepted": True,
+                "video_chunk_id": chunk_id,
+            }
+        if chunk_ids:
+            handle_text("建议补充人物或动作。")
 
 
 @pytest.fixture
@@ -312,7 +345,7 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
     assert messages[0].model_name is None
     assert messages[1].model_name == "chat-test"
     assert messages[1].content == "目前没有足够的候选画面，建议补充人物或动作。"
-    assert messages[1].search_result["agentReply"]["message"] == messages[1].content
+    assert messages[1].search_result["hits"] == []
     assert [call[0] for call in retrieval.calls] == ["第一次改写"] + ([second_query] if second_query else [])
     assert evaluator.calls == 2 and len(chat.prompts) == 1
     context = json.loads(query.prompts[1].split("\n\n", 1)[1])
@@ -374,7 +407,6 @@ def test_next_kick_reads_only_completed_conversation_history(build_service):
             "resultCount": 0, "hits": [], "partial": False, "warnings": [],
         },
     }
-    assert "agentReply" in first.assistant_message.search_result
     with pytest.raises(AgentConversationNotFoundError):
         service.send_message(conversation.conversation_id, workspace_id="other-workspace", content="隔离", idempotency_key="other")
 
@@ -443,22 +475,24 @@ def test_next_message_can_choose_another_scope_without_reusing_old_evidence(buil
         _send(service, conversation, series_ids=[added.series_id])
 
 
-def test_live_delta_precedes_commit_and_disconnect_does_not_cancel(build_service):
+def test_tool_answer_is_atomic_and_disconnect_does_not_cancel(build_service):
     release = Event()
     service, conversation, _, _, _, _, _ = build_service(chat=_ChatModel(release=release))
     execution = service.start_message(conversation.conversation_id, workspace_id="local-default", content="找到杯子", idempotency_key="stream", stream=True)
     try:
-        events = [execution.next_event(timeout=2) for _ in range(6)]
+        events = [execution.next_event(timeout=2) for _ in range(4)]
         assert [event["type"] for event in events] == [
-            "answer.started", "answer.progress", "answer.progress", "answer.progress", "answer.evidence", "answer.delta",
+            "answer.started", "answer.progress", "answer.progress", "answer.progress",
         ]
         assert [event["phase"] for event in events if event["type"] == "answer.progress"] == [
             "RETRIEVING", "EVALUATING", "RESPONDING",
         ]
         assert all(event["conversationId"] == conversation.conversation_id for event in events)
-        assert [event["sequence"] for event in events] == list(range(1, 7))
+        assert [event["sequence"] for event in events] == list(range(1, 5))
         assert all(isinstance(event["occurredAt"], int) for event in events)
         assert not execution.future.done()
+        with pytest.raises(Empty):
+            execution.next_event(timeout=0.05)
         assert service.list_all_messages(conversation.conversation_id, workspace_id="local-default")[-1].status == "PROCESSING"
         with pytest.raises(AgentMessageInProgressError):
             service.start_message(conversation.conversation_id, workspace_id="local-default", content="找到杯子", idempotency_key="stream")
@@ -481,10 +515,22 @@ def test_completed_event_observes_committed_snapshot(build_service):
     assert persisted == completed
     assert events[-1]["assistantMessage"]["status"] == "COMPLETED"
     assert [event["type"] for event in events].count("answer.evidence") == 1
+    evidence = next(event for event in events if event["type"] == "answer.evidence")
+    assert evidence["searchResult"] == completed.search_result
+    blocks = [event["block"] for event in events if event["type"] == "answer.block"]
+    assert blocks == completed.search_result["renderBlocks"]
+    assert [event["type"] for event in events[-4:]] == [
+        "answer.evidence", "answer.block", "answer.delta", "answer.completed",
+    ]
+    deltas = [event["delta"] for event in events if event["type"] == "answer.delta"]
+    assert deltas == [completed.content]
 
 
 @pytest.mark.parametrize("failure", ["chat", "commit"])
-def test_failure_has_no_completed_event_and_preserves_reviewed_evidence_and_real_partial_text(build_service, monkeypatch, failure):
+def test_failure_has_no_completed_event_and_never_persists_unvalidated_chat_text(
+    build_service, monkeypatch, caplog, failure,
+):
+    caplog.set_level(logging.ERROR, logger="server.service.agent_chat")
     service, conversation, _, repository, _, _, _ = build_service(chat=_ChatModel(fail=failure == "chat"))
     if failure == "commit":
         def fail_commit(*_args, **_kwargs):
@@ -497,12 +543,32 @@ def test_failure_has_no_completed_event_and_preserves_reviewed_evidence_and_real
     assert events[-1]["type"] == "answer.failed"
     assert "answer.completed" not in [event["type"] for event in events]
     failed = service.list_all_messages(conversation.conversation_id, workspace_id="local-default")[-1]
-    assert failed.status == "FAILED" and failed.search_result is not None
-    assert "候选画面" in failed.content
-    assert failed.content == "".join(event["delta"] for event in events if event["type"] == "answer.delta")
+    assert failed.status == "FAILED"
+    assert failed.content is None
+    assert failed.search_result is None
+    assert [event for event in events if event["type"] == "answer.delta"] == []
+    assert [event for event in events if event["type"] == "answer.evidence"] == []
+    assert [event for event in events if event["type"] == "answer.block"] == []
     assert failed.phase is None and failed.version > 1
     assert asdict(failed.last_error) == events[-1]["error"]
     assert "private upstream failure" not in events[-1]["error"]["message"]
+    failure_log = next(
+        record for record in caplog.records
+        if record.name == "server.service.agent_chat"
+        and record.getMessage().startswith("agent_execution_failed ")
+    )
+    failure_message = failure_log.getMessage()
+    assert f"conversation_id={conversation.conversation_id}" in failure_message
+    assert f"message_id={failed.message_id}" in failure_message
+    assert "phase=RESPONDING" in failure_message
+    assert "partial_chars=0" in failure_message
+    assert "evidence_hits=0" in failure_message
+    assert "root_error_type=RuntimeError" in failure_message
+    if failure == "chat":
+        assert failure_log.exc_info is None
+        assert "private upstream failure" not in caplog.text
+    else:
+        assert failure_log.exc_info is not None
 
 
 def test_unconfirmed_terminal_write_emits_interrupted_and_recovers_processing_snapshot(build_service, monkeypatch):
@@ -520,24 +586,26 @@ def test_unconfirmed_terminal_write_emits_interrupted_and_recovers_processing_sn
     assert not {"answer.completed", "answer.failed"} & {event["type"] for event in events}
     recovered = service.get_message(conversation.conversation_id, workspace_id="local-default",
                                     idempotency_key="unknown-terminal").assistant_message
-    assert recovered.status == "PROCESSING" and recovered.search_result is not None
-    assert recovered.content == "".join(event["delta"] for event in events if event["type"] == "answer.delta")
+    assert recovered.status == "PROCESSING" and recovered.search_result is None
+    assert (recovered.content or "") == "".join(
+        event["delta"] for event in events if event["type"] == "answer.delta"
+    )
 
 
-def test_slow_consumer_receives_transport_interruption_while_business_completes(build_service, monkeypatch):
+def test_slow_consumer_receives_one_atomic_tool_answer(build_service):
     service, conversation, *_ = build_service()
-    def many_deltas(_inputs):
-        for _ in range(300):
-            yield "真实增量"
-    monkeypatch.setattr(service._runtime._chat_model, "stream_text", many_deltas)
     execution = service.start_message(conversation.conversation_id, workspace_id="local-default",
                                       content="找画面", idempotency_key="slow-reader", stream=True)
     result = execution.result()
     events = _collect(execution)
-    assert [event["type"] for event in events] == ["answer.interrupted"]
-    assert events[0]["error"]["code"] == "STREAM_INTERRUPTED"
+    assert [event["type"] for event in events].count("answer.delta") == 1
+    assert [event["type"] for event in events].count("answer.block") == 1
+    assert [event["delta"] for event in events if event["type"] == "answer.delta"] == [
+        result.assistant_message.content,
+    ]
+    assert events[-1]["type"] == "answer.completed"
     assert result.assistant_message.status == "COMPLETED"
-    assert result.assistant_message.content == "真实增量" * 300
+    assert result.assistant_message.content == "目前没有足够的候选画面，建议补充人物或动作。"
     assert service.get_message(conversation.conversation_id, workspace_id="local-default",
                                idempotency_key="slow-reader") == result
 
@@ -547,7 +615,7 @@ def test_shutdown_requests_stop_and_waits_before_resources_close(build_service):
     service, conversation, _, _, _, _, _ = build_service(chat=_ChatModel(release=release))
     execution = service.start_message(conversation.conversation_id, workspace_id="local-default", content="找杯子", idempotency_key="shutdown", stream=True)
     try:
-        for _ in range(6):
+        for _ in range(4):
             execution.next_event(timeout=2)
         execution.cancellation.set()
     finally:

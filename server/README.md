@@ -309,6 +309,26 @@ Artifact Store 负责原视频、Proxy、VideoChunk、AnalysisWindow、关键帧
 二进制产物；当前实现是按环境隔离的本地文件 adapter。Text/Vision 向量仍持久化在
 MySQL `VideoChunkEmbedding`，未来是否外置及外置到哪类存储是独立决策。
 
+历史 VideoChunk 缺少首帧时，先按 workspace/Series 做只读检查，再显式执行回填：
+
+```bash
+uv run python -m server.cli backfill-keyframes \
+  --workspace-id local-default \
+  --series-id 77285f16-3e5b-592e-ba15-8b224b619806 \
+  --limit 100 \
+  --dry-run
+
+uv run python -m server.cli backfill-keyframes \
+  --workspace-id local-default \
+  --series-id 77285f16-3e5b-592e-ba15-8b224b619806 \
+  --limit 100 \
+  --apply
+```
+
+该命令没有模型调用，不重跑解析或向量，只从已有受管 canonical VideoChunk 提取并补充
+缺失的带原视频绝对时间首帧。找不到 canonical 媒体时默认跳过；不会由 API 请求或服务
+启动自动触发。
+
 事实与对应的 `IndexSyncIntent` 在同一个 MySQL 事务中提交。双向量完整时意图为
 `UPSERT`；向量不完整或新事实要求清除旧索引时为 `DELETE`。导入不直接访问 Qdrant，
 因此 Qdrant 故障不会回滚已经提交的业务事实。

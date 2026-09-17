@@ -32,6 +32,21 @@ class TranscriptCueView(ContractModel):
             raise ValueError("end_ms must be greater than start_ms")
         return self
 
+
+class VideoChunkKeyframeReference(ContractModel):
+    """A managed keyframe plus its absolute position in the original Video."""
+
+    uri: str = Field(min_length=1)
+    at_ms: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_uri(cls, value: Any) -> Any:
+        # Historical rows stored URI strings without timeline positions. They
+        # remain readable as media, but cannot be projected as timed evidence.
+        return {"uri": value, "at_ms": None} if isinstance(value, str) else value
+
+
 class VideoChunkEvidence(ContractModel):
     series_id: str
     workspace_id: str
@@ -61,7 +76,7 @@ class VideoChunkEvidence(ContractModel):
     analysis_window_media_ref: str
     transcript: list[TranscriptCueView]
     baseline_visual_caption: str | None
-    keyframe_uris: list[str]
+    keyframe_uris: list[VideoChunkKeyframeReference]
 
     all_time_events: list[dict[str, Any]]
     all_time_event_text: str
