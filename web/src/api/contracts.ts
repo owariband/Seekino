@@ -52,6 +52,12 @@ export interface VideoSummary {
   lastError: Failure | null;
 }
 
+export interface VideoEpisodeUpdateRequest {
+  workspaceId: string;
+  videoId: string;
+  episodeOrder: number;
+}
+
 export interface SeriesSummary {
   seriesId: string;
   workspaceId: string;

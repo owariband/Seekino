@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView, VideoSummary } from "../api/contracts";
+import type { AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView, VideoEpisodeUpdateRequest, VideoSummary } from "../api/contracts";
 import { App } from "./App";
 import { ThemeProvider } from "./theme";
 import { WorkspaceProvider } from "./workspace";
@@ -95,6 +95,20 @@ function renderApp(availableSeries: SeriesView[] = [apiSeries]) {
         importantExtraData: request.importantExtraData === undefined ? original.importantExtraData : request.importantExtraData === null ? null : { ...request.importantExtraData },
       };
       availableSeries = availableSeries.map((item) => item.seriesId === updated.seriesId ? updated : item);
+      return jsonResponse(updated);
+    }
+    if (url.includes("/api/videos/update_episode")) {
+      const request = JSON.parse(String(_init?.body)) as VideoEpisodeUpdateRequest;
+      let updated: VideoSummary | undefined;
+      availableSeries = availableSeries.map((series) => ({
+        ...series,
+        videos: series.videos.map((video) => {
+          if (video.videoId !== request.videoId) return video;
+          updated = { ...video, episodeOrder: request.episodeOrder };
+          return updated;
+        }),
+      }));
+      if (!updated) throw new Error(`Unknown video in test: ${request.videoId}`);
       return jsonResponse(updated);
     }
     if (url.includes("/api/uploads/delete")) {
@@ -281,6 +295,85 @@ describe("application shell", () => {
     expect(unavailable).toBeInTheDocument();
     expect(unavailable.closest("div")?.querySelector("em")).toBeNull();
     expect(screen.queryByText("34%")).not.toBeInTheDocument();
+  });
+
+  it("edits a video episode in place and applies the server result without reparsing", async () => {
+    const series = {
+      ...apiSeries,
+      status: "INDEXING" as const,
+      videoCount: 1,
+      readyVideoCount: 0,
+      videos: [videoWithoutProgress],
+    };
+    const { fetchMock } = renderApp([series]);
+    const original = fetchMock.getMockImplementation()!;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/videos/update_episode")) await pending;
+      return original(input, init);
+    });
+    const user = userEvent.setup();
+
+    await user.click(screen.getAllByRole("link", { name: "资料库" })[0]!);
+    const edit = await screen.findByRole("button", { name: `编辑 ${videoWithoutProgress.originalFilename} 集数` });
+    await user.click(edit);
+    const input = screen.getByRole("spinbutton", { name: `${videoWithoutProgress.originalFilename} 集数` });
+    const save = screen.getByRole("button", { name: `保存 ${videoWithoutProgress.originalFilename} 集数` });
+    expect(input).toHaveValue(1);
+    expect(save).toBeDisabled();
+
+    await user.clear(input);
+    await user.type(input, "0");
+    expect(save).toBeDisabled();
+    await user.clear(input);
+    await user.type(input, "7");
+    await user.click(save);
+
+    expect(screen.getByRole("button", { name: `正在保存 ${videoWithoutProgress.originalFilename} 集数` })).toBeDisabled();
+    act(release);
+    expect(await screen.findByText("EP 07")).toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: `${videoWithoutProgress.originalFilename} 集数` })).not.toBeInTheDocument();
+
+    const update = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/videos/update_episode"));
+    expect(String(update?.[0])).toBe("/api/videos/update_episode");
+    expect(JSON.parse(String(update?.[1]?.body))).toEqual({
+      workspaceId: "local-default",
+      videoId: videoWithoutProgress.videoId,
+      episodeOrder: 7,
+    });
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/uploads/reparse"))).toBe(false);
+  });
+
+  it("keeps the episode draft open when the server rejects the change", async () => {
+    const { fetchMock } = renderApp([{
+      ...apiSeries,
+      videoCount: 1,
+      videos: [videoWithoutProgress],
+    }]);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/videos/update_episode")) {
+        return new Response(JSON.stringify({ code: "CONFLICT", message: "这个集数已被占用" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return original(input, init);
+    });
+    const user = userEvent.setup();
+
+    await user.click(screen.getAllByRole("link", { name: "资料库" })[0]!);
+    await user.click(await screen.findByRole("button", { name: `编辑 ${videoWithoutProgress.originalFilename} 集数` }));
+    const input = screen.getByRole("spinbutton", { name: `${videoWithoutProgress.originalFilename} 集数` });
+    await user.clear(input);
+    await user.type(input, "2");
+    await user.click(screen.getByRole("button", { name: `保存 ${videoWithoutProgress.originalFilename} 集数` }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("保存失败：这个集数已被占用");
+    expect(input).toHaveValue(2);
+    await user.click(screen.getByRole("button", { name: `取消编辑 ${videoWithoutProgress.originalFilename} 集数` }));
+    expect(screen.getByText("EP 01")).toBeInTheDocument();
   });
 
   it("edits an existing Series through the update API and displays the returned detail", async () => {

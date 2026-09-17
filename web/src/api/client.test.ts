@@ -28,6 +28,7 @@ import {
   subscribeAgentMessages,
   videoContentUrl,
   updateSeries,
+  updateVideoEpisode,
   uploadSeriesImage,
 } from "./client";
 
@@ -67,6 +68,27 @@ describe("Series background routes", () => {
   it("surfaces background validation errors without replacing them with fake success", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "INVALID_REQUEST", message: "background image does not exist in this Series" }), { status: 400 })));
     await expect(updateSeries({ workspaceId: "local-default", seriesId: "series/id", importantExtraData: { format: "markdown", content: "![参考](asset://invalid)" } })).rejects.toMatchObject({ status: 400, code: "INVALID_REQUEST", message: "background image does not exist in this Series" });
+  });
+});
+
+describe("Video episode route", () => {
+  it("updates only the episode order through the underscore action route", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await updateVideoEpisode({
+      workspaceId: "local-default",
+      videoId: "video/id",
+      episodeOrder: 7,
+    });
+
+    expect(String(fetchMock.mock.calls[0]![0])).toBe("/api/videos/update_episode");
+    expect(fetchMock.mock.calls[0]![1]?.method).toBe("POST");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toEqual({
+      workspaceId: "local-default",
+      videoId: "video/id",
+      episodeOrder: 7,
+    });
   });
 });
 

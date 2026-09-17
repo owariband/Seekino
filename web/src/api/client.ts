@@ -17,8 +17,10 @@ import type {
   UploadCompleteView,
   UploadSessionCreateRequest,
   UploadSessionView,
+  VideoEpisodeUpdateRequest,
   VideoChunkSearchResult,
   VideoChunkEvidence,
+  VideoSummary,
   VideoSearchRequest,
 } from "./contracts";
 
@@ -125,6 +127,14 @@ export function uploadSeriesImage(seriesId: string, file: File, signal?: AbortSi
     headers: { "Content-Type": file.type || "application/octet-stream" },
     body: file,
     signal,
+  });
+}
+
+export function updateVideoEpisode(body: VideoEpisodeUpdateRequest): Promise<VideoSummary> {
+  return requestJson("/api/videos/update_episode", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 }
 

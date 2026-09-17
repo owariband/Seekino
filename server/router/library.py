@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from ..api import library
 from ..model.vo.commonVO import ImageAsset, Page
-from ..model.vo.libraryVO import SeriesView, SeriesSummary
+from ..model.vo.libraryVO import SeriesView, SeriesSummary, VideoSummary
 
 router = APIRouter()
 router.add_api_route(
@@ -19,6 +19,12 @@ router.add_api_route(
     library.update_series,
     methods=["POST"],
     response_model=SeriesView,
+)
+router.add_api_route(
+    "/api/videos/update_episode",
+    library.update_video_episode,
+    methods=["POST"],
+    response_model=VideoSummary,
 )
 router.add_api_route(
     "/api/series/images/upload",

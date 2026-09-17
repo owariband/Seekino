@@ -14,6 +14,7 @@ import {
   getSeries,
   listSeries,
   updateSeries as updateSeriesRequest,
+  updateVideoEpisode as updateVideoEpisodeRequest,
   shouldRetryApiRequest,
   WORKSPACE_ID,
 } from "../api/client";
@@ -23,6 +24,8 @@ import type {
   SeriesUpdateRequest,
   SeriesView,
   SeriesSummary,
+  VideoEpisodeUpdateRequest,
+  VideoSummary,
 } from "../api/contracts";
 const SERIES_STORAGE_KEY = "anivag-selected-series";
 
@@ -36,6 +39,7 @@ interface WorkspaceContextValue {
   selectSeries: (seriesId: string) => void;
   createSeries: (input: Omit<SeriesCreateRequest, "workspaceId">) => Promise<SeriesView>;
   updateSeries: (input: Omit<SeriesUpdateRequest, "workspaceId">) => Promise<SeriesView>;
+  updateVideoEpisode: (input: Omit<VideoEpisodeUpdateRequest, "workspaceId">) => Promise<VideoSummary>;
   refreshSeries: () => Promise<void>;
 }
 
@@ -133,6 +137,17 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
       updateSeries: async (input) => {
         const updated = await updateSeriesRequest({ ...input, workspaceId: WORKSPACE_ID });
         queryClient.setQueryData(["series-detail", updated.seriesId], updated);
+        await queryClient.invalidateQueries({ queryKey: ["series"] });
+        return updated;
+      },
+      updateVideoEpisode: async (input) => {
+        const updated = await updateVideoEpisodeRequest({ ...input, workspaceId: WORKSPACE_ID });
+        queryClient.setQueryData<SeriesView>(["series-detail", updated.seriesId], (current) => current ? {
+          ...current,
+          videos: current.videos
+            .map((video) => video.videoId === updated.videoId ? updated : video)
+            .sort((left, right) => left.episodeOrder - right.episodeOrder),
+        } : current);
         await queryClient.invalidateQueries({ queryKey: ["series"] });
         return updated;
       },

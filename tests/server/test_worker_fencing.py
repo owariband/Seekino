@@ -11,7 +11,8 @@ from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
 from server.model.video import SeriesRecord, VideoChunkRecord, VideoRecord
 from server.mq.contracts import ParseJobLeaseLostError
 from server.repository.job import ParseJobRepository
-from server.repository.video import VideoRepository
+from server.repository.library import LibraryRepository
+from server.repository.video import ParseImportConflictError, VideoRepository
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.mq.mysql_queue import MySqlParseJobQueue
 
@@ -104,6 +105,13 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
         now=retry_at,
     )
     assert second is not None
+    assert second.episode_order == prepared.episode_order
+
+    LibraryRepository(session_factory).update_video_episode_order(
+        prepared.video_id,
+        workspace_id=prepared.workspace_id,
+        episode_order=prepared.episode_order + 1,
+    )
 
     with pytest.raises(ParseJobLeaseLostError):
         video_repository.import_video_parse_for_job(prepared, first)
@@ -117,3 +125,14 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
 
     assert report.chunk_count == len(prepared.chunks)
     assert jobs.get(job_id).stage == ParseJobStage.INDEXING.value
+    with session_factory() as session:
+        assert session.get(VideoRecord, prepared.video_id).episode_order == (
+            prepared.episode_order + 1
+        )
+    with pytest.raises(ParseImportConflictError):
+        video_repository.import_video_parse_for_job(
+            replace(prepared, episode_order=prepared.episode_order + 2),
+            second,
+        )
+    with pytest.raises(ParseImportConflictError):
+        video_repository.import_video_parse(prepared)

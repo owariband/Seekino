@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -29,6 +29,10 @@ class SeriesNotFoundError(LookupError):
 
 
 class SeriesConflictError(RuntimeError):
+    pass
+
+
+class VideoEpisodeOrderConflictError(RuntimeError):
     pass
 
 
@@ -110,6 +114,85 @@ class LibraryRepository:
             for field in ("description", "important_extra_data"):
                 if field in changes:
                     setattr(record, field, changes[field])
+
+    def update_video_episode_order(
+        self,
+        video_id: str,
+        *,
+        workspace_id: str,
+        episode_order: int,
+    ) -> None:
+        try:
+            with self._session_factory.begin() as session:
+                # Upload mutations lock Upload before Video elsewhere. Keep the
+                # same order so an episode edit can safely race retry/delete.
+                uploads = list(session.scalars(
+                    select(UploadSessionRecord)
+                    .where(UploadSessionRecord.video_id == video_id)
+                    .order_by(UploadSessionRecord.upload_session_id)
+                    .with_for_update()
+                ))
+                video = session.scalar(
+                    select(VideoRecord)
+                    .where(VideoRecord.video_id == video_id)
+                    .with_for_update()
+                )
+                if video is None:
+                    raise SeriesNotFoundError(
+                        f"videoId {video_id!r} does not exist in this workspace"
+                    )
+                series_workspace = session.scalar(
+                    select(SeriesRecord.workspace_id).where(
+                        SeriesRecord.series_id == video.series_id,
+                    )
+                )
+                if series_workspace != workspace_id:
+                    raise SeriesNotFoundError(
+                        f"videoId {video_id!r} does not exist in this workspace"
+                    )
+
+                occupied_video_id = session.scalar(
+                    select(VideoRecord.video_id).where(
+                        VideoRecord.series_id == video.series_id,
+                        VideoRecord.episode_order == episode_order,
+                        VideoRecord.video_id != video.video_id,
+                    )
+                )
+                active_slot_key = f"{video.series_id}:{episode_order}"
+                occupied_upload_id = session.scalar(
+                    select(UploadSessionRecord.upload_session_id).where(
+                        UploadSessionRecord.active_slot_key == active_slot_key,
+                        or_(
+                            UploadSessionRecord.video_id.is_(None),
+                            UploadSessionRecord.video_id != video.video_id,
+                        ),
+                    )
+                )
+                if occupied_video_id is not None or occupied_upload_id is not None:
+                    raise VideoEpisodeOrderConflictError(
+                        "episode order is already occupied in this Series"
+                    )
+
+                video.episode_order = episode_order
+                for upload in uploads:
+                    next_active_slot_key = (
+                        active_slot_key
+                        if upload.active_slot_key is not None
+                        else None
+                    )
+                    if (
+                        upload.episode_order == episode_order
+                        and upload.active_slot_key == next_active_slot_key
+                    ):
+                        continue
+                    upload.episode_order = episode_order
+                    upload.active_slot_key = next_active_slot_key
+                    upload.version += 1
+                session.flush()
+        except IntegrityError as exc:
+            raise VideoEpisodeOrderConflictError(
+                "episode order is already occupied in this Series"
+            ) from exc
 
     def list_series(
         self,

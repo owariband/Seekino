@@ -261,6 +261,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/series/list",
         "/api/series/get",
         "/api/series/update",
+        "/api/videos/update_episode",
         "/api/series/images/upload",
         "/api/uploads/create",
         "/api/uploads/get",
@@ -733,6 +734,84 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
         "hits": [],
     }
     assert retrieval.calls == [("她为什么哭", [series_id], 5, "local-default")]
+
+
+def test_video_episode_update_contract_and_conflict(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    series_id = _create_series(client)
+    first_video_id = "0ce9a0c8-69aa-4cdf-97e5-837e9b552a35"
+    second_video_id = "e6109e20-6233-4a5c-a1d4-acaa23cc8e13"
+    with client.app.state.services.library._repository._session_factory.begin() as session:
+        for video_id, episode_order, content_hash in (
+            (first_video_id, 1, "a" * 64),
+            (second_video_id, 2, "b" * 64),
+        ):
+            session.add(VideoRecord(
+                video_id=video_id,
+                series_id=series_id,
+                episode_order=episode_order,
+                upload_sequence=episode_order,
+                original_filename=f"episode-{episode_order}.mp4",
+                original_source_uri=f"artifact://test/{video_id}.mp4",
+                inference_proxy_uri=None,
+                content_hash=content_hash,
+                total_bytes=10,
+                duration_ms=1_000,
+                upload_status="COMPLETED",
+                parse_status="SUCCEEDED",
+                upload_progress=100,
+                parse_progress=100,
+            ))
+
+    updated = client.post(
+        "/api/videos/update_episode",
+        json={
+            "workspaceId": "local-default",
+            "videoId": first_video_id,
+            "episodeOrder": 3,
+        },
+    )
+    conflict = client.post(
+        "/api/videos/update_episode",
+        json={
+            "workspaceId": "local-default",
+            "videoId": first_video_id,
+            "episodeOrder": 2,
+        },
+    )
+    outside_workspace = client.post(
+        "/api/videos/update_episode",
+        json={
+            "workspaceId": "another-workspace",
+            "videoId": first_video_id,
+            "episodeOrder": 4,
+        },
+    )
+    invalid = client.post(
+        "/api/videos/update_episode",
+        json={
+            "workspaceId": "local-default",
+            "videoId": first_video_id,
+            "episodeOrder": 0,
+        },
+    )
+    too_large = client.post(
+        "/api/videos/update_episode",
+        json={
+            "workspaceId": "local-default",
+            "videoId": first_video_id,
+            "episodeOrder": 2_147_483_648,
+        },
+    )
+
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["episodeOrder"] == 3
+    assert updated.json()["uploadSequence"] == 1
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "CONFLICT"
+    assert outside_workspace.status_code == 404
+    assert invalid.status_code == 422
+    assert too_large.status_code == 422
 
 
 def test_upload_order_is_assigned_and_legacy_order_fields_are_ignored(tmp_path: Path) -> None:

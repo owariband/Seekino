@@ -10,6 +10,7 @@ from ..model.dto.libraryDTO import (
     SeriesCreateRequest,
     SeriesState,
     SeriesUpdateRequest,
+    VideoEpisodeUpdateRequest,
     VideoSummaryState,
 )
 from ..model.job import ParseJobStatus
@@ -45,6 +46,19 @@ def update_series(request: Request, body: SeriesUpdateRequest) -> SeriesView:
         body.series_id, workspace_id=body.workspace_id, changes=changes,
     )
     return _series_view(state, services.media)
+
+
+def update_video_episode(
+    request: Request,
+    body: VideoEpisodeUpdateRequest,
+) -> VideoSummary:
+    services = get_services(request)
+    state = services.library.update_video_episode_order(
+        body.video_id,
+        workspace_id=body.workspace_id,
+        episode_order=body.episode_order,
+    )
+    return project_video(state, services.media)
 
 
 async def upload_series_image(

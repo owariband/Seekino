@@ -75,6 +75,34 @@ class LibraryService:
         )
         return self._repository.get_series(series.series_id, series.workspace_id)
 
+    def update_video_episode_order(
+        self,
+        video_id: str,
+        *,
+        workspace_id: str,
+        episode_order: int,
+    ) -> VideoSummaryState:
+        if (
+            isinstance(episode_order, bool)
+            or not isinstance(episode_order, int)
+            or episode_order <= 0
+            or episode_order > 2_147_483_647
+        ):
+            raise ValueError(
+                "episode_order must be a positive 32-bit signed integer"
+            )
+        normalized_video_id = canonical_uuid(video_id, "video_id")
+        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        self._repository.update_video_episode_order(
+            normalized_video_id,
+            workspace_id=normalized_workspace,
+            episode_order=episode_order,
+        )
+        return self._repository.get_video(
+            normalized_video_id,
+            normalized_workspace,
+        )
+
     def _validate_background_images(self, series_id: str, text: str | None) -> None:
         image_ids = extract_background_image_ids(text or "")
         if image_ids and self._artifact_store is None:

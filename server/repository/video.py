@@ -234,6 +234,7 @@ class VideoRepository:
             prepared.series_id != lease.series_id
             or prepared.video_id != lease.video_id
             or prepared.pipeline_version != lease.pipeline_version
+            or prepared.episode_order != lease.episode_order
             or prepared.original_source_uri != lease.original_source_uri
             or prepared.content_hash != lease.content_hash
         ):
@@ -326,7 +327,10 @@ class VideoRepository:
             existing_video = session.get(VideoRecord, prepared.video_id)
             if existing_video is not None and (
                 existing_video.series_id != prepared.series_id
-                or existing_video.episode_order != prepared.episode_order
+                or (
+                    lease is None
+                    and existing_video.episode_order != prepared.episode_order
+                )
                 or existing_video.content_hash != prepared.content_hash
                 or existing_video.duration_ms != prepared.parse_result.duration_ms
             ):

@@ -16,8 +16,13 @@ from server.database import DatabaseEnvironment, create_session_factory
 from server.model.agent import AgentConversationRecord, AgentMessageRecord
 from server.model.index_sync import IndexSyncIntentRecord
 from server.model.job import SeriesParseJobRecord, VideoChunkCheckpointRecord
+from server.model.upload import UploadSessionRecord
 from server.model.video import VideoChunkEmbeddingRecord, VideoRecord
-from server.repository.library import LibraryRepository, SeriesNotFoundError
+from server.repository.library import (
+    LibraryRepository,
+    SeriesNotFoundError,
+    VideoEpisodeOrderConflictError,
+)
 from server.model.video import VideoIndexStatus
 from server.repository.upload import UploadRepository
 from server.service.library import LibraryService
@@ -261,6 +266,175 @@ def test_background_edit_preserves_video_order_and_character_metadata(repository
     assert [(video.video_id, video.episode_order, video.upload_sequence) for video in edited.videos] == [
         (video.video_id, video.episode_order, video.upload_sequence) for video in before.videos
     ]
+
+
+def test_episode_edit_updates_linked_upload_without_changing_execution_order(
+    repository,
+    prepared_import,
+) -> None:
+    factory, videos, library = _library(repository)
+    report = videos.import_video_parse(prepared_import)
+    upload_session_id = str(uuid4())
+    inactive_upload_session_id = str(uuid4())
+    now = utc_now_naive()
+    with factory.begin() as session:
+        session.add_all([
+            UploadSessionRecord(
+                upload_session_id=upload_session_id,
+                workspace_id=prepared_import.workspace_id,
+                series_id=report.series_id,
+                episode_order=prepared_import.episode_order,
+                upload_sequence=prepared_import.upload_sequence,
+                original_filename=prepared_import.original_filename,
+                media_type="video/mp4",
+                total_size_bytes=prepared_import.total_bytes,
+                preferred_segment_size_bytes=prepared_import.total_bytes,
+                total_segments=1,
+                status="COMPLETED",
+                idempotency_key="episode-edit-linked-upload",
+                active_slot_key=f"{report.series_id}:{prepared_import.episode_order}",
+                expires_at=now + timedelta(days=1),
+                completed_at=now,
+                video_id=report.video_id,
+            ),
+            UploadSessionRecord(
+                upload_session_id=inactive_upload_session_id,
+                workspace_id=prepared_import.workspace_id,
+                series_id=report.series_id,
+                episode_order=prepared_import.episode_order,
+                upload_sequence=prepared_import.upload_sequence,
+                original_filename=prepared_import.original_filename,
+                media_type="video/mp4",
+                total_size_bytes=prepared_import.total_bytes,
+                preferred_segment_size_bytes=prepared_import.total_bytes,
+                total_segments=1,
+                status="EXPIRED",
+                idempotency_key="episode-edit-inactive-upload",
+                active_slot_key=None,
+                expires_at=now,
+                completed_at=now,
+                video_id=report.video_id,
+            ),
+        ])
+
+    edited = library.update_video_episode_order(
+        report.video_id,
+        workspace_id=prepared_import.workspace_id,
+        episode_order=9,
+    )
+    replay = library.update_video_episode_order(
+        report.video_id,
+        workspace_id=prepared_import.workspace_id,
+        episode_order=9,
+    )
+
+    assert edited.episode_order == replay.episode_order == 9
+    assert edited.upload_sequence == replay.upload_sequence == prepared_import.upload_sequence
+    with factory() as session:
+        video = session.get(VideoRecord, report.video_id)
+        upload = session.get(UploadSessionRecord, upload_session_id)
+        inactive_upload = session.get(
+            UploadSessionRecord,
+            inactive_upload_session_id,
+        )
+        assert video.episode_order == 9
+        assert video.upload_sequence == prepared_import.upload_sequence
+        assert upload.episode_order == 9
+        assert upload.upload_sequence == prepared_import.upload_sequence
+        assert upload.active_slot_key == f"{report.series_id}:9"
+        assert upload.version == 2
+        assert inactive_upload.episode_order == 9
+        assert inactive_upload.upload_sequence == prepared_import.upload_sequence
+        assert inactive_upload.active_slot_key is None
+        assert inactive_upload.version == 2
+
+
+def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
+    repository,
+    prepared_import,
+) -> None:
+    factory, videos, library = _library(repository)
+    report = videos.import_video_parse(prepared_import)
+    now = utc_now_naive()
+    linked_upload_id = str(uuid4())
+    reserved_upload_id = str(uuid4())
+    occupied_video_id = str(uuid4())
+    with factory.begin() as session:
+        session.add_all([
+            UploadSessionRecord(
+                upload_session_id=linked_upload_id,
+                workspace_id=prepared_import.workspace_id,
+                series_id=report.series_id,
+                episode_order=prepared_import.episode_order,
+                upload_sequence=prepared_import.upload_sequence,
+                original_filename=prepared_import.original_filename,
+                media_type="video/mp4",
+                total_size_bytes=prepared_import.total_bytes,
+                preferred_segment_size_bytes=prepared_import.total_bytes,
+                total_segments=1,
+                status="COMPLETED",
+                idempotency_key="episode-edit-conflict-linked",
+                active_slot_key=f"{report.series_id}:{prepared_import.episode_order}",
+                expires_at=now + timedelta(days=1),
+                completed_at=now,
+                video_id=report.video_id,
+            ),
+            UploadSessionRecord(
+                upload_session_id=reserved_upload_id,
+                workspace_id=prepared_import.workspace_id,
+                series_id=report.series_id,
+                episode_order=10,
+                upload_sequence=10,
+                original_filename="reserved.mp4",
+                media_type="video/mp4",
+                total_size_bytes=1,
+                preferred_segment_size_bytes=1,
+                total_segments=1,
+                status="UPLOADING",
+                idempotency_key="episode-edit-reserved-slot",
+                active_slot_key=f"{report.series_id}:10",
+                expires_at=now + timedelta(days=1),
+            ),
+            VideoRecord(
+                video_id=occupied_video_id,
+                series_id=report.series_id,
+                episode_order=11,
+                upload_sequence=11,
+                original_filename="occupied.mp4",
+                original_source_uri="artifact://test/occupied.mp4",
+                inference_proxy_uri=None,
+                content_hash="f" * 64,
+                total_bytes=1,
+                duration_ms=1,
+                upload_status="COMPLETED",
+                parse_status="SUCCEEDED",
+                upload_progress=100,
+                parse_progress=100,
+            ),
+        ])
+
+    for occupied_episode in (10, 11):
+        with pytest.raises(
+            VideoEpisodeOrderConflictError,
+            match="already occupied",
+        ):
+            library.update_video_episode_order(
+                report.video_id,
+                workspace_id=prepared_import.workspace_id,
+                episode_order=occupied_episode,
+            )
+
+    with factory() as session:
+        video = session.get(VideoRecord, report.video_id)
+        upload = session.get(UploadSessionRecord, linked_upload_id)
+        assert video.episode_order == prepared_import.episode_order
+        assert video.upload_sequence == prepared_import.upload_sequence
+        assert upload.episode_order == prepared_import.episode_order
+        assert upload.upload_sequence == prepared_import.upload_sequence
+        assert upload.active_slot_key == (
+            f"{report.series_id}:{prepared_import.episode_order}"
+        )
+        assert upload.version == 1
 
 
 def test_create_preserves_legacy_freeform_background_and_validates_managed_refs(repository):

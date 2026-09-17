@@ -77,7 +77,18 @@
 .episodeList { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .episode { display: grid; grid-template-columns: 48px minmax(160px, 1.5fr) minmax(130px, 1fr) minmax(130px, 1fr) minmax(110px, .8fr); gap: 16px; align-items: center; min-height: 82px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .episode:last-child { border-bottom: 0; }
-.episodeOrder { color: var(--ink-faint); font: 500 .67rem/1.4 var(--mono); }
+.episodeOrder { min-width: 0; color: var(--ink-faint); font: 500 .67rem/1.4 var(--mono); }
+.episodeEditButton { display: flex; align-items: center; gap: 3px; padding: 3px 0; color: inherit; border: 0; background: transparent; cursor: pointer; font: inherit; white-space: nowrap; }
+.episodeEditButton:disabled { opacity: .5; cursor: default; }
+.episodeEditor { display: grid; width: 48px; gap: 4px; }
+.episodeEditor label, .episodeEditor input { width: 48px; min-width: 0; }
+.episodeEditor input { height: 26px; padding: 3px 4px; font: 500 .67rem/1.4 var(--mono); }
+.episodeEditor > div { display: flex; gap: 4px; }
+.episodeEditor button { display: grid; width: 22px; height: 22px; padding: 0; place-items: center; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.episodeEditor button:disabled { opacity: .45; cursor: default; }
+.episodeError { grid-column: 1 / -1; margin: -4px 0 0; }
+.spinning { animation: episodeSpin .9s linear infinite; }
+@keyframes episodeSpin { to { transform: rotate(360deg); } }
 .episodeName { display: flex; min-width: 0; gap: 9px; align-items: center; color: var(--ink-faint); }
 .episodeName > div { display: grid; min-width: 0; gap: 5px; }
 .episodeName strong { overflow: hidden; color: var(--ink); font-size: .75rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
@@ -125,4 +136,8 @@
   .imageUploadControls > input:not([type="file"]) { width: 100%; }
   .episode { padding: 14px 12px; grid-template-columns: 30px minmax(0, 1fr) 88px; gap: 8px; }
   .createDialog { padding: 24px 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinning { animation: none; }
 }

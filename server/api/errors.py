@@ -15,7 +15,11 @@ from ..repository.agent import (
     AgentReferenceInvalidError,
 )
 from ..repository.job import ParseJobNotFoundError
-from ..repository.library import SeriesConflictError, SeriesNotFoundError
+from ..repository.library import (
+    SeriesConflictError,
+    SeriesNotFoundError,
+    VideoEpisodeOrderConflictError,
+)
 from ..repository.upload import (
     UploadCompletionInProgressError,
     UploadConflictError,
@@ -57,6 +61,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         ArtifactIntegrityError,
         RetrievalIndexConsistencyError,
         SeriesConflictError,
+        VideoEpisodeOrderConflictError,
         SeriesNotReadyError,
         UploadCompletionInProgressError,
         UploadConflictError,

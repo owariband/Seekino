@@ -1,8 +1,10 @@
 import {
+  Check,
   CheckCircle2,
   Clapperboard,
   Clock3,
   FolderPlus,
+  Pencil,
   RefreshCw,
   Trash2,
   UploadCloud,
@@ -10,6 +12,8 @@ import {
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
+import { errorMessage } from "../../api/client";
+import type { VideoSummary } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import { useUploads } from "../uploads/UploadProvider";
 import { episodeLabel, formatBytes, formatTimecode } from "../../shared/format";
@@ -24,6 +28,8 @@ const parseStatusLabels: Record<string, string> = {
   FAILED: "解析失败",
 };
 
+const MAX_EPISODE_ORDER = 2_147_483_647;
+
 export function LibraryPage() {
   const {
     mode,
@@ -32,6 +38,7 @@ export function LibraryPage() {
     selectedSeriesId,
     selectSeries,
     createSeries,
+    updateVideoEpisode,
     refreshSeries,
     isLoading,
     error,
@@ -40,6 +47,10 @@ export function LibraryPage() {
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [editingVideoId, setEditingVideoId] = useState<string | null>(null);
+  const [episodeDraft, setEpisodeDraft] = useState("");
+  const [episodeSaving, setEpisodeSaving] = useState(false);
+  const [episodeError, setEpisodeError] = useState<{ videoId: string; message: string } | null>(null);
   const pendingUploads = selectedSeries?.pendingUploads.filter((upload) =>
     !tasks.some((task) => task.session?.uploadSessionId === upload.uploadSessionId && task.status === "cancelled"),
   ) ?? [];
@@ -60,6 +71,33 @@ export function LibraryPage() {
       setFormError(creationError instanceof Error ? creationError.message : "创建视频系列失败");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const cancelEpisodeEditing = () => {
+    setEditingVideoId(null);
+    setEpisodeDraft("");
+    setEpisodeError(null);
+  };
+
+  const saveEpisode = async (event: FormEvent<HTMLFormElement>, video: VideoSummary) => {
+    event.preventDefault();
+    const episodeOrder = Number(episodeDraft);
+    if (!Number.isSafeInteger(episodeOrder) || episodeOrder <= 0 || episodeOrder > MAX_EPISODE_ORDER) {
+      setEpisodeError({ videoId: video.videoId, message: "集数必须是有效的正整数" });
+      return;
+    }
+    if (episodeSaving || mode !== "live" || episodeOrder === video.episodeOrder) return;
+    setEpisodeSaving(true);
+    setEpisodeError(null);
+    try {
+      await updateVideoEpisode({ videoId: video.videoId, episodeOrder });
+      setEditingVideoId(null);
+      setEpisodeDraft("");
+    } catch (failure) {
+      setEpisodeError({ videoId: video.videoId, message: `保存失败：${errorMessage(failure)}` });
+    } finally {
+      setEpisodeSaving(false);
     }
   };
 
@@ -117,7 +155,32 @@ export function LibraryPage() {
               <div className={styles.episodeList}>
                 {selectedSeries.videos.map((video) => (
                   <article className={styles.episode} key={video.videoId}>
-                    <div className={styles.episodeOrder}>{episodeLabel(video.episodeOrder)}</div>
+                    <div className={styles.episodeOrder}>
+                      {editingVideoId === video.videoId ? (
+                        <form className={styles.episodeEditor} onSubmit={(event) => void saveEpisode(event, video)} onKeyDown={(event) => {
+                          if (event.key === "Escape" && !episodeSaving) { event.preventDefault(); cancelEpisodeEditing(); }
+                        }}>
+                          <label>
+                            <span className="sr-only">{video.originalFilename} 集数</span>
+                            <input className="field" type="number" min={1} max={MAX_EPISODE_ORDER} step={1} required autoFocus disabled={episodeSaving} value={episodeDraft} onChange={(event) => { setEpisodeDraft(event.target.value); setEpisodeError(null); }} />
+                          </label>
+                          <div>
+                            <button type="submit" disabled={episodeSaving || mode !== "live" || !Number.isSafeInteger(Number(episodeDraft)) || Number(episodeDraft) <= 0 || Number(episodeDraft) > MAX_EPISODE_ORDER || Number(episodeDraft) === video.episodeOrder} aria-label={episodeSaving ? `正在保存 ${video.originalFilename} 集数` : `保存 ${video.originalFilename} 集数`} title="保存集数">
+                              {episodeSaving ? <RefreshCw className={styles.spinning} size={12} /> : <Check size={12} />}
+                            </button>
+                            <button type="button" disabled={episodeSaving} onClick={cancelEpisodeEditing} aria-label={`取消编辑 ${video.originalFilename} 集数`} title="取消编辑"><X size={12} /></button>
+                          </div>
+                        </form>
+                      ) : (
+                        <button className={styles.episodeEditButton} type="button" disabled={mode !== "live" || episodeSaving} onClick={() => {
+                          setEditingVideoId(video.videoId);
+                          setEpisodeDraft(String(video.episodeOrder));
+                          setEpisodeError(null);
+                        }} aria-label={`编辑 ${video.originalFilename} 集数`} title="编辑集数">
+                          <span>{episodeLabel(video.episodeOrder)}</span><Pencil size={11} />
+                        </button>
+                      )}
+                    </div>
                     <div className={styles.episodeName}>
                       <Clapperboard size={16} />
                       <div><strong>{video.originalFilename}</strong><span>{formatBytes(video.totalBytes)} · <Clock3 size={11} /> {formatTimecode(video.durationMs)}</span></div>
@@ -134,6 +197,7 @@ export function LibraryPage() {
                       <small>{video.playbackStatus === "READY" ? "可播放" : video.playbackStatus === "MISSING" ? "原视频已丢失" : "播放未就绪"}</small>
                       {video.lastError ? <small>{video.lastError.message}</small> : null}
                     </div>
+                    {episodeError?.videoId === video.videoId ? <p className={`${styles.error} ${styles.episodeError}`} role="alert">{episodeError.message}</p> : null}
                   </article>
                 ))}
               </div>

@@ -36,6 +36,12 @@ class SeriesUpdateRequest(ContractModel):
     important_extra_data: SeriesBackground | None = None
 
 
+class VideoEpisodeUpdateRequest(ContractModel):
+    workspace_id: str = Field(min_length=1, max_length=64)
+    video_id: str = Field(min_length=1)
+    episode_order: int = Field(gt=0, le=2_147_483_647, strict=True)
+
+
 @dataclass(frozen=True, slots=True)
 class VideoSummaryState:
     video_id: str
