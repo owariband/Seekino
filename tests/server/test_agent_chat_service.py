@@ -837,7 +837,7 @@ def test_completed_event_observes_committed_snapshot(build_service):
     assert evidence["searchResult"] == completed.search_result
     assert completed.search_result["retrievalTrace"] == [{
         "query": "第一次改写",
-        "topK": 8,
+        "topK": service.default_top_k,
         "strategyVersion": "query-adaptive-three-channel-rrf-v2",
         "requestedWeights": {"transcript": 0.1, "semantic": 0.5, "visual": 0.4},
         "effectiveWeights": {"transcript": 0.1, "semantic": 0.5, "visual": 0.4},

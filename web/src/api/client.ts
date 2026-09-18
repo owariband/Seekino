@@ -329,13 +329,12 @@ export function sendAgentMessage(
   content: string,
   idempotencyKey: string,
   seriesIds: string[] = [],
-  topK = 10,
   reference: EvidenceReference | null = null,
 ): Promise<AgentMessageSendView> {
   return requestJson(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, topK, reference }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, reference }),
   });
 }
 
@@ -346,13 +345,12 @@ export async function streamAgentMessage(
   onEvent: (event: AgentAnswerEvent) => void,
   signal: AbortSignal,
   seriesIds: string[] = [],
-  topK = 10,
   reference: EvidenceReference | null = null,
 ): Promise<void> {
   const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`), {
     method: "POST",
     headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, topK, reference }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, reference }),
     signal,
   });
   if (!response.ok) throw new ApiClientError(response.status, await readError(response));

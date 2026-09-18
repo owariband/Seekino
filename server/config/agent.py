@@ -7,7 +7,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class AgentServiceConfig:
     history_message_limit: int = 12
-    default_top_k: int = 8
+    default_top_k: int = 3
     maximum_top_k: int = 20
     max_loop_turns: int = 3
     max_model_calls_per_turn: int = 6

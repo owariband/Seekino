@@ -157,7 +157,7 @@ describe("Agent Chat routes", () => {
     expect(String(calls[5]![0])).toBe("/api/agent/messages/list?conversationId=conversation%2Fid&workspaceId=local-default&afterSequenceNo=499&limit=100");
     expect(String(calls[6]![0])).toBe("/api/agent/messages/send?conversationId=conversation%2Fid");
     expect(new Headers(calls[6]![1]?.headers).get("Accept")).toBe("application/json");
-    expect(JSON.parse(String(calls[6]![1]?.body))).toEqual({ workspaceId: "local-default", content: "找摔杯子的画面", seriesIds: ["series/id", "another/id"], topK: 10, reference: null });
+    expect(JSON.parse(String(calls[6]![1]?.body))).toEqual({ workspaceId: "local-default", content: "找摔杯子的画面", seriesIds: ["series/id", "another/id"], reference: null });
     expect(JSON.parse(String(calls[7]![1]?.body)).seriesIds).toEqual([]);
     expect(agentMessagesEventsUrl("conversation/id")).toBe("/api/agent/messages/events?conversationId=conversation%2Fid&workspaceId=local-default");
     expect(videoContentUrl("video/id", "workspace/id")).toBe("/api/videos/content?videoId=video%2Fid&workspaceId=workspace%2Fid");
@@ -199,7 +199,12 @@ describe("POST answer stream", () => {
     expect(finished).toBe(false);
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
     expect(new Headers(init?.headers).get("Accept")).toBe("text/event-stream");
-    expect(JSON.parse(String(init?.body)).seriesIds).toEqual(["A", "B"]);
+    expect(JSON.parse(String(init?.body))).toEqual({
+      workspaceId: "local-default",
+      content: "query",
+      seriesIds: ["A", "B"],
+      reference: null,
+    });
     controller.close();
     await pending;
     expect(body.locked).toBe(false);

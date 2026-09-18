@@ -154,7 +154,7 @@ describe("Conversation state", () => {
       snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A")] });
     });
     expect(vi.mocked(streamAgentMessage).mock.calls[0]![5]).toEqual(["A", "B"]);
-    expect(vi.mocked(streamAgentMessage).mock.calls[0]![7]).toEqual({ messageId: "previous", videoChunkId: "selected-chunk" });
+    expect(vi.mocked(streamAgentMessage).mock.calls[0]![6]).toEqual({ messageId: "previous", videoChunkId: "selected-chunk" });
     expect(stream.signal.aborted).toBe(false);
     expect(close).not.toHaveBeenCalled();
     expect(createAgentConversation).toHaveBeenCalledOnce();

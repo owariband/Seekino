@@ -266,7 +266,7 @@ export function useAgentConversation(requestedId: string | null = null) {
       });
     };
     try {
-      await streamAgentMessage(conversationId, content.trim(), idempotencyKey, onEvent, active.controller.signal, scope, 10, frozenReference);
+      await streamAgentMessage(conversationId, content.trim(), idempotencyKey, onEvent, active.controller.signal, scope, frozenReference);
     } catch (error) {
       if (activeRef.current === active && !active.controller.signal.aborted) {
         active.recoveryMessageId = messageId;

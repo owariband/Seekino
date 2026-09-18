@@ -35,7 +35,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.parse.chunk_duration_ms == 60_000
     assert settings.parse.context_overlap_ms == 3_000
     assert settings.agent.history_message_limit == 12
-    assert settings.agent.default_top_k == 8
+    assert settings.agent.default_top_k == 3
     assert settings.agent.maximum_top_k == 20
     assert settings.agent.max_loop_turns == 3
     assert settings.agent.max_model_calls_per_turn == 6

@@ -1855,7 +1855,7 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         assert "agentReply" not in final["searchResult"]
         assert final["searchResult"]["retrievalTrace"] == [{
             "query": "找动作片段",
-            "topK": 5,
+            "topK": min(5, service.default_top_k),
             "strategyVersion": "query-adaptive-three-channel-rrf-v2",
             "requestedWeights": {"transcript": 0.2, "semantic": 0.2, "visual": 0.6},
             "effectiveWeights": {"transcript": 0.2, "semantic": 0.2, "visual": 0.6},
