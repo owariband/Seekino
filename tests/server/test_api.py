@@ -92,7 +92,10 @@ class _RetrievalStub:
         )
 
 
-def test_agent_render_blocks_preserve_order_join_known_hits_and_support_legacy() -> None:
+def test_agent_render_blocks_preserve_order_join_known_hits_and_support_legacy(
+    caplog,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="server.api.agent")
     state = AgentMessageState(
         message_id="assistant",
         conversation_id="conversation",
@@ -107,7 +110,12 @@ def test_agent_render_blocks_preserve_order_join_known_hits_and_support_legacy()
         search_result={
             "renderBlocks": [
                 {"type": "markdown", "markdown": "第一段"},
-                {"type": "video", "videoChunkId": "known-2"},
+                {
+                    "type": "video",
+                    "videoChunkId": "known-2",
+                    "startMs": 1200,
+                    "endMs": 1800,
+                },
                 {"type": "video", "videoChunkId": "unknown"},
                 {"type": "markdown", "markdown": "第二段"},
                 {"type": "video", "videoChunkId": "known-1"},
@@ -118,23 +126,112 @@ def test_agent_render_blocks_preserve_order_join_known_hits_and_support_legacy()
         updated_at=datetime(2026, 9, 17),
     )
     projected = SimpleNamespace(hits=[
-        SimpleNamespace(candidate=SimpleNamespace(video_chunk_id="known-1")),
-        SimpleNamespace(candidate=SimpleNamespace(video_chunk_id="known-2")),
+        SimpleNamespace(
+            candidate=SimpleNamespace(video_chunk_id="known-1"),
+            evidence=SimpleNamespace(start_ms=1000, end_ms=2000),
+        ),
+        SimpleNamespace(
+            candidate=SimpleNamespace(video_chunk_id="known-2"),
+            evidence=SimpleNamespace(start_ms=1000, end_ms=2000),
+        ),
     ])
 
     blocks = _agent_render_blocks(state, projected)
 
     assert [block.model_dump(mode="json", by_alias=True) for block in blocks] == [
         {"type": "markdown", "markdown": "第一段"},
-        {"type": "video", "videoChunkId": "known-2"},
+        {
+            "type": "video",
+            "videoChunkId": "known-2",
+            "startMs": 1200,
+            "endMs": 1800,
+        },
         {"type": "markdown", "markdown": "第二段"},
-        {"type": "video", "videoChunkId": "known-1"},
+        {
+            "type": "video",
+            "videoChunkId": "known-1",
+            "startMs": 1000,
+            "endMs": 2000,
+        },
     ]
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("event=agent_video_range_fallback ")
+    ]
+    assert len(warnings) == 2
+    assert "video_chunk_id=unknown" in warnings[0]
+    assert "action=drop_unknown_chunk" in warnings[0]
+    assert "video_chunk_id=known-1" in warnings[1]
+    assert "proposed_start_ms=None proposed_end_ms=None" in warnings[1]
+    assert "canonical_start_ms=1000 canonical_end_ms=2000" in warnings[1]
+    assert "action=fallback_to_canonical" in warnings[1]
     legacy = _agent_render_blocks(
         replace(state, search_result={}),
         projected,
     )
     assert [block.type for block in legacy] == ["markdown", "video", "video"]
+
+
+@pytest.mark.parametrize(("start_ms", "end_ms"), [
+    (1500, 1500),
+    (1500, 1400),
+    (999, 1800),
+    (1200, 2001),
+    (True, 1800),
+])
+def test_agent_render_blocks_falls_back_for_invalid_known_chunk_range(
+    caplog, start_ms, end_ms,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="server.api.agent")
+    state = AgentMessageState(
+        message_id="assistant",
+        conversation_id="conversation",
+        sequence_no=1,
+        role="ASSISTANT",
+        status="COMPLETED",
+        content="正文",
+        series_ids=("series",),
+        model_name="chat-model",
+        reply_to_message_id="user",
+        retrieval_query="query",
+        search_result={
+            "renderBlocks": [{
+                "type": "video",
+                "videoChunkId": "known",
+                "startMs": start_ms,
+                "endMs": end_ms,
+            }],
+        },
+        last_error=None,
+        created_at=datetime(2026, 9, 17),
+        updated_at=datetime(2026, 9, 17),
+    )
+    projected = SimpleNamespace(hits=[SimpleNamespace(
+        candidate=SimpleNamespace(video_chunk_id="known"),
+        evidence=SimpleNamespace(start_ms=1000, end_ms=2000),
+    )])
+
+    blocks = _agent_render_blocks(state, projected)
+
+    assert [block.model_dump(mode="json", by_alias=True) for block in blocks] == [{
+        "type": "markdown",
+        "markdown": "正文",
+    }, {
+        "type": "video",
+        "videoChunkId": "known",
+        "startMs": 1000,
+        "endMs": 2000,
+    }]
+    warning = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("event=agent_video_range_fallback ")
+    )
+    assert "conversation_id=conversation message_id=assistant" in warning
+    assert "video_chunk_id=known" in warning
+    assert "canonical_start_ms=1000 canonical_end_ms=2000" in warning
+    assert "action=fallback_to_canonical" in warning
 
 
 @dataclass
@@ -151,32 +248,45 @@ class _AgentModelStub:
         return result_type.model_validate({
             "plan_context": "召回哭泣的片段并检查画面和对白。",
             "message": "没有找到可以核验的候选画面。",
-            "selected_video_chunk_ids": [],
+            "selected_video_ranges": [],
         })
 
     def run_agent_loop(
         self, prompt, *, function_name, function_description, result_type,
         max_model_calls, handle_text, handle_tool_call,
+        require_tool_call=False,
         request_timeout_seconds=None, check_control=None,
     ):
         import json
 
         assert function_name == "submit_video_item"
         assert function_description
+        assert set(result_type.model_fields) == {
+            "video_chunk_id", "start_ms", "end_ms", "claim",
+        }
         assert max_model_calls > 0
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
         context = json.loads(prompt.rsplit("\n\n", 1)[1])
         approved = context["approved_turn"]
         hits = approved["selected_evidence"]["hits"]
+        assert require_tool_call is bool(hits)
+        ranges_by_id = {
+            item["video_chunk_id"]: item
+            for item in approved["draft"]["selected_video_ranges"]
+        }
         if not hits:
             handle_text(approved["draft"]["message"])
             return
         handle_text("以下片段支持这个结论。")
         for hit in hits:
             check_control and check_control()
+            video_chunk_id = hit["candidate"]["videoChunkId"]
+            selected_range = ranges_by_id[video_chunk_id]
             handle_tool_call(result_type.model_validate({
-                "video_chunk_id": hit["candidate"]["videoChunkId"],
+                "video_chunk_id": video_chunk_id,
+                "start_ms": selected_range["start_ms"],
+                "end_ms": selected_range["end_ms"],
                 "claim": hit["selectionReason"]["summary"],
             }))
         handle_text(approved["draft"]["message"])
@@ -1710,7 +1820,14 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
             return result_type.model_validate({
                 "plan_context": "召回动作并检查片段来源。",
                 "message": "这些片段包含动作。",
-                "selected_video_chunk_ids": [hit["evidence"]["videoChunkId"] for hit in result["hits"]],
+                "selected_video_ranges": [
+                    {
+                        "video_chunk_id": hit["evidence"]["videoChunkId"],
+                        "start_ms": hit["evidence"]["startMs"],
+                        "end_ms": hit["evidence"]["endMs"],
+                    }
+                    for hit in result["hits"]
+                ],
             })
 
     service._runtime._retrieve = joined_search
@@ -1771,7 +1888,12 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         assert final["renderBlocks"] == [
             {"type": "markdown", "markdown": "以下片段支持这个结论。"},
             *[
-                {"type": "video", "videoChunkId": hit["candidate"]["videoChunkId"]}
+                {
+                    "type": "video",
+                    "videoChunkId": hit["candidate"]["videoChunkId"],
+                    "startMs": hit["evidence"]["startMs"],
+                    "endMs": hit["evidence"]["endMs"],
+                }
                 for hit in hits
             ],
             {"type": "markdown", "markdown": "这些片段包含动作。"},

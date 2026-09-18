@@ -46,12 +46,26 @@ class AgentToolInvocationError(RuntimeError):
     """An injected tool failed; the application owns its cause's error mapping."""
 
 
+class SelectedVideoRange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_chunk_id: _VideoChunkId
+    start_ms: int = Field(strict=True, ge=0)
+    end_ms: int = Field(strict=True, gt=0)
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> SelectedVideoRange:
+        if self.end_ms <= self.start_ms:
+            raise ValueError("end_ms must be greater than start_ms")
+        return self
+
+
 class QueryDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plan_context: _Text
     message: _Text
-    selected_video_chunk_ids: list[_VideoChunkId] = Field(max_length=100)
+    selected_video_ranges: list[SelectedVideoRange] = Field(max_length=100)
 
 
 class RetrievalChannelWeights(BaseModel):
@@ -106,7 +120,15 @@ class ChatVideoItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     video_chunk_id: _VideoChunkId
+    start_ms: int = Field(strict=True, ge=0)
+    end_ms: int = Field(strict=True, gt=0)
     claim: _EvidenceClaim
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> ChatVideoItem:
+        if self.end_ms <= self.start_ms:
+            raise ValueError("end_ms must be greater than start_ms")
+        return self
 
 
 class MarkdownRenderBlock(ContractModel):
@@ -117,6 +139,14 @@ class MarkdownRenderBlock(ContractModel):
 class VideoRenderBlock(ContractModel):
     type: Literal["video"] = "video"
     video_chunk_id: _VideoChunkId
+    start_ms: int = Field(strict=True, ge=0)
+    end_ms: int = Field(strict=True, gt=0)
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> VideoRenderBlock:
+        if self.end_ms <= self.start_ms:
+            raise ValueError("end_ms must be greater than start_ms")
+        return self
 
 
 class ChatVideoBlock(BaseModel):
@@ -124,7 +154,15 @@ class ChatVideoBlock(BaseModel):
 
     type: Literal["video"] = "video"
     video_chunk_id: _VideoChunkId
+    start_ms: int = Field(strict=True, ge=0)
+    end_ms: int = Field(strict=True, gt=0)
     claim: _EvidenceClaim
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> ChatVideoBlock:
+        if self.end_ms <= self.start_ms:
+            raise ValueError("end_ms must be greater than start_ms")
+        return self
 
 
 ChatRenderBlock = Annotated[

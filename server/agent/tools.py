@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from threading import Lock
 from typing import Annotated
 
@@ -55,6 +55,7 @@ def build_retrieval_tool(
     maximum_top_k: int,
     max_tool_calls: int,
     context_budget: ModelContextBudget,
+    previously_returned_video_chunk_ids: Collection[str] = (),
 ) -> StructuredTool:
     """Bind fixed scope and records to one Turn, never to shared model state."""
     attempts = 0
@@ -108,7 +109,15 @@ def build_retrieval_tool(
                 raise AgentModelInvocationError("Retrieval result query does not match the actual call")
             if len(result.hits) > bounded_top_k:
                 raise AgentModelInvocationError("Retrieval result exceeds its top_k budget")
-            projected = project_search_result(result)
+            previously_returned_ids = set(previously_returned_video_chunk_ids) | {
+                hit.candidate.video_chunk_id
+                for call in calls
+                for hit in call.result.hits
+            }
+            projected = project_search_result(
+                result,
+                previously_returned_video_chunk_ids=previously_returned_ids,
+            )
             projected["retrievalStrategy"] = {
                 "version": AGENT_RETRIEVAL_STRATEGY_VERSION,
                 "requestedWeights": channel_weights.model_dump(mode="json"),
@@ -135,6 +144,8 @@ def build_retrieval_tool(
             "appearance and action. Use a quote or distinctive phrase for transcript-heavy "
             "calls, written in the stored ASR language indicated by the Series context. "
             "Returns real videoChunkId/videoId, startMs/endMs and compact evidence. "
+            "Later calls return full evidence only for new chunks; reusedHits identifies "
+            "chunks whose full evidence is already present in an earlier Tool result. "
             "The scope cannot be changed. First turn must call this tool at least once."
         ),
         args_schema=RetrievalArguments,

@@ -1153,13 +1153,14 @@ Agent Run 恢复尚未实现。
 
 ```text
 当前消息 + 当前 Conversation 近期已完成消息（各自 seriesIds）+ 本次消息固定 Scope
-  → Query：规划，调用内部 Retrieval Tool，生成草稿并选择证据
+  → Query：规划，调用内部 Retrieval Tool，生成草稿并提出候选播放范围
   → Evaluator：基于草稿与召回证据返回 complete / continue
       ├── continue：advice 连同逐轮计划、召回、草稿和审核记录交回 Query
       │    → Query 可以重新召回或复用已有候选，再交 Evaluator
-      └── complete：Chat 进入 tool_choice=auto 的自主循环
-           → 每轮可输出 Markdown、调用一个或多个 submit_video_item，或结束
-           → Server 逐项校验 ID，并从可信 Evidence 补齐 URI / 标题 / 时间
+      └── complete：Chat 进入自主循环
+           → 有获批 Evidence 时首次 tool_choice=required，否则为 auto
+           → 成功提交片段后恢复 auto，可继续输出 Markdown、调用工具或结束
+           → Server 逐项校验 ID，归一化播放范围，并从可信 Evidence 补齐 URI / 标题
            → Output 保留 Markdown / video 逻辑顺序
            → 原子提交 ASSISTANT → block / evidence / delta / completed
 ```
@@ -1168,6 +1169,8 @@ Query/Evaluator 默认最多迭代 3 轮，包含首轮。任一轮通过即进�
 continue 则消息 `FAILED`，不能把跑满轮数当作审核通过。Query 可以选择当前 Kick 已验证
 召回记录中的候选，最终片段数量仍受有效 `topK` 限制，ID、时间范围和 Scope 必须合法。
 Evaluator 读取结构化文本 Evidence，并非重新观看原视频；重新召回不等于相邻片段补查。
+候选范围越出 canonical Chunk 时不影响 retrieve 已返回 Chunk 的真实性；Evaluator 应返回
+`continue + advice` 交由 Query 修订，而不是在 Evaluator 之前让整轮回答失败。
 
 ### 12.2 最小请求顺序
 
@@ -1260,7 +1263,7 @@ interface Failure { code: string; message: string }
 interface EvidenceReference { messageId: string; videoChunkId: string }
 type AgentRenderBlock =
   | { type: "markdown"; markdown: string }
-  | { type: "video"; videoChunkId: string };
+  | { type: "video"; videoChunkId: string; startMs: number; endMs: number };
 
 interface AgentMessageView {
   messageId: string;
@@ -1336,21 +1339,27 @@ POST SSE 的事件名来自 SSE `event:` 行，JSON data 也包含相同的 `typ
 证据不能直接作为本次新召回。每个获批 `hits[].evidence.seriesId` 也必填，来自真实 MySQL
 join 回源，必须属于当前消息范围；视频卡片不能从当前多选项推测历史结果来源。
 
-`modelName` 始终返回：USER 为 `null`，ASSISTANT 从 PROCESSING 开始保存实际 Chat 模型名，
+`modelName` 始终返回：USER 为 `null`，ASSISTANT 从 PROCESSING 开始保存 Chat 主模型名，
 完成或失败后保留。它不是 Query/Evaluator 模型名，也不是 `evidence.modelName`；配置切换
-不会重写历史记录。页面可显示最近一条 ASSISTANT 的模型名，无记录时显示“尚未调用”。
+不会重写历史记录。发生 Lite fallback 时只记结构化 warning，不改写该字段。页面可显示最近
+一条 ASSISTANT 的主模型名，无记录时显示“尚未调用”。
 
-Query 和 Evaluator 分别使用 `ANIVAG_AGENT_QUERY_MODEL`、
-`ANIVAG_AGENT_EVALUATOR_MODEL`；未设置时都使用 Gateway `config.yaml` 的 Ark
-`video_parser.transcript_model`。Chat 使用 `ANIVAG_DEEPSEEK_CHAT_MODEL` 覆盖模型名；未设置时
-读取独立 `agent_chat` 配置，默认是 text-only `deepseek-flash`，API Key 默认来自
-`DEEPSEEK_API_KEY`。旧 `ANIVAG_AGENT_CHAT_MODEL` 会触发明确的启动迁移错误；Chat 不继承 Ark 模型。
+Query、Evaluator 和 Chat 可分别使用 `ANIVAG_AGENT_QUERY_MODEL`、
+`ANIVAG_AGENT_EVALUATOR_MODEL`、`ANIVAG_AGENT_CHAT_MODEL` 覆盖；未设置时都使用 Gateway
+`config.yaml` 的 `agent_model.model`（DeepSeek Flash）。`ANIVAG_AGENT_FALLBACK_MODEL`
+默认取 `video_parser.transcript_model`（Ark Doubao Lite）。Provider 请求失败或响应结构非法时，
+失败的单次模型调用在当前消息 / Tool 状态上原位降级；已完成的业务 Tool 和 acknowledgement
+继续复用，不重新执行。业务 Tool 错误、取消 / deadline / 预算等控制错误和本地输入校验错误
+不会触发 fallback。
 
-Chat 对 DeepSeek 发起 text-only、非 token 流式的有边界自主工具循环，并设置
-`thinking.type=disabled`。每轮使用 `tool_choice=auto`；模型可以输出普通 Markdown、调用一个或多个
-`submit_video_item({video_chunk_id, claim})`，或自主结束。tool acknowledgement 返回 DeepSeek 后，由它决定
-下一步，不存在“必须先提交全部视频，再统一输出文本”的固定两阶段。Server 允许获批
-Evidence 的零个或子集，但拒绝重复/未获批 ID；URI、时间和标题仍只从可信 Evidence 填充。
+Chat 默认对 DeepSeek 发起 text-only、非 token 流式的有边界自主工具循环。有获批 Evidence 时首次使用
+`tool_choice=required`，成功提交至少一个片段后恢复 `auto`；没有获批 Evidence 时从 `auto` 开始。
+模型可以输出普通 Markdown、调用一个或多个
+`submit_video_item({video_chunk_id, start_ms, end_ms, claim})`，或自主结束。tool acknowledgement 返回模型后，由它决定
+下一步，不存在“必须先提交全部视频，再统一输出文本”的固定两阶段。Server 拒绝重复/未获批 ID；
+URI 和标题仍只从可信 Evidence 填充。
+Chat 应提交 Evaluator 审批的 Query 范围；不一致或越界时 Server 回退到合法的审批范围，
+审批范围也非法时回退 canonical Chunk 并记录 warning，不使整条文字回答失败。
 完成后按发生顺序得到 `renderBlocks`，且至少有一个非空 Markdown 块。全部块与数据库提交
 都成功后，SSE 才原子释放 evidence、有序 block、兼容 delta 与 completed；各轮 HTTP 请求共享
 当前 Kick 剩余 deadline 和模型调用次数上限。
@@ -1381,16 +1390,18 @@ ASSISTANT：PROCESSING → COMPLETED / FAILED
   Agent Reaper，不能用新 Key 循环发送绕过此状态。
 
 新客户端按 `assistantMessage.renderBlocks` 渲染最终顺序。Markdown 块通过禁用原始 HTML、
-限制 URL 协议的 Markdown 渲染器展示；视频块的 `videoChunkId` 只能与同一消息的
+限制 URL 协议的 Markdown 渲染器展示；视频块的 `videoChunkId` 及已审批 `startMs/endMs` 只能与同一消息的
 `searchResult.hits` 关联，找不到可信 hit 时不渲染。`content` 和 `answer.delta` 是所有 Markdown 块
 的兼容汇总，`answer.evidence` 是完整可信证据的兼容交付；它们不能用来重建新的交错顺序。
-旧历史消息没有 `renderBlocks` 时，前端回退为先渲染 `content`，再按 `searchResult.hits` 渲染视频。
+旧历史消息没有 `renderBlocks` 时，前端回退为先渲染 `content`，再按 `searchResult.hits` 渲染视频；
+历史视频块缺少时间字段或范围越出对应 Chunk 时使用 canonical Chunk 范围；
+视频块的 Chunk ID 在同一消息 hits 中不存在时不渲染。
 只有 completed 或持久化 COMPLETED 快照代表完整交付成功。播放使用
-`evidence.videoId + startMs/endMs`；不要从模型正文反解析视频时间。
+`evidence.videoId + renderBlock.startMs/endMs`；不要从模型正文反解析视频时间。
 
 候选卡优先显示 `evidence.thumbnail`，图片可使用原生 lazy loading；不要在卡片列表中预先挂载
 所有视频。用户点击某个候选后，再创建使用 `evidence.playbackUrl` 的 video 元素，并以
-`preload="metadata"` 加载、按 `startMs/endMs` 控制范围播放。
+`preload="metadata"` 加载。自定义进度条的总长为 `endMs - startMs`，用户的相对 seek 映射回原视频绝对时间，到达 `endMs` 时停止。
 
 ### 12.5 POST 正文 SSE、GET 快照与页面恢复
 
@@ -1405,7 +1416,7 @@ answer.started → answer.progress（可多次）→ answer.evidence → answer.
 | `answer.started` | 已落库的 USER/PROCESSING ASSISTANT 消息对；按 ID 创建或合并消息 |
 | `answer.progress` | 当前 `phase`（RETRIEVING / EVALUATING / RESPONDING）；用于文字状态，不代表百分比 |
 | `answer.evidence` | 由 Server 可信 Evidence 补齐的 `searchResult`；不含 `agentReply`，为视频 block 提供唯一可信媒体来源，同时兼容旧客户端 |
-| `answer.block` | Evidence 之后按模型决定的顺序发送一个逻辑块；可为 Markdown，或只含 `videoChunkId` 的视频引用 |
+| `answer.block` | Evidence 之后按模型决定的顺序发送一个逻辑块；可为 Markdown，或含 `videoChunkId` 及已审批 `startMs/endMs` 的视频引用 |
 | `answer.delta` | 所有 Markdown block 的完整兼容汇总；一次性设置该 ASSISTANT `content` |
 | `answer.completed` | 数据库提交成功后的完整消息对；确认完成 |
 | `answer.failed` | `error` 与持久化消息对；执行失败后不会发送 completed |

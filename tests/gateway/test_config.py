@@ -9,9 +9,9 @@ from gateway.config import load_config
 
 def _config_payload() -> dict[str, object]:
     return {
-        "agent_chat": {
+        "agent_model": {
             "provider": "deepseek",
-            "model": "test-chat",
+            "model": "test-agent",
             "base_url": "https://api.deepseek.test",
             "api_key_env": "TEST_DEEPSEEK_API_KEY",
             "reasoning_effort": "none",
@@ -58,13 +58,13 @@ def _write_config(path: Path, payload: dict[str, object]) -> None:
 def test_default_config_uses_selected_models() -> None:
     config = load_config()
 
-    assert config.agent_chat.model == "deepseek-flash"
-    assert config.agent_chat.provider == "deepseek"
-    assert config.agent_chat.base_url == "https://api.deepseek.com"
-    assert config.agent_chat.api_key_env == "DEEPSEEK_API_KEY"
-    assert config.agent_chat.reasoning_effort == "none"
-    assert config.agent_chat.max_output_tokens == 8192
-    assert config.agent_chat.request_timeout_seconds == 180
+    assert config.agent_model.model == "deepseek-flash"
+    assert config.agent_model.provider == "deepseek"
+    assert config.agent_model.base_url == "https://api.deepseek.com"
+    assert config.agent_model.api_key_env == "DEEPSEEK_API_KEY"
+    assert config.agent_model.reasoning_effort == "none"
+    assert config.agent_model.max_output_tokens == 8192
+    assert config.agent_model.request_timeout_seconds == 180
     assert config.video_parser.transcript_model == "doubao-seed-2-0-lite-260428"
     assert config.video_parser.video_model == "doubao-seed-2-1-pro-260628"
     assert config.multimodal_embedding.model == "doubao-embedding-vision-251215"
@@ -87,17 +87,29 @@ def test_default_config_uses_selected_models() -> None:
     assert deepseek.request_timeout_seconds == 1200
 
 
-def test_parse_only_config_uses_compatible_chat_defaults(tmp_path: Path) -> None:
+def test_parse_only_config_uses_compatible_agent_defaults(tmp_path: Path) -> None:
     payload = _config_payload()
-    del payload["agent_chat"]
+    del payload["agent_model"]
     config_path = tmp_path / "parse-only.yaml"
     _write_config(config_path, payload)
 
     config = load_config(config_path)
 
-    assert config.agent_chat.model == "deepseek-flash"
-    assert config.agent_chat.base_url == "https://api.deepseek.com"
-    assert config.agent_chat.api_key_env == "DEEPSEEK_API_KEY"
+    assert config.agent_model.model == "deepseek-flash"
+    assert config.agent_model.base_url == "https://api.deepseek.com"
+    assert config.agent_model.api_key_env == "DEEPSEEK_API_KEY"
+
+
+def test_legacy_agent_chat_config_is_still_accepted(tmp_path: Path) -> None:
+    payload = _config_payload()
+    payload["agent_chat"] = payload.pop("agent_model")
+    config_path = tmp_path / "legacy-agent-chat.yaml"
+    _write_config(config_path, payload)
+
+    config = load_config(config_path)
+
+    assert config.agent_model.model == "test-agent"
+    assert config.agent_model.api_key_env == "TEST_DEEPSEEK_API_KEY"
 
 
 def test_config_rejects_unknown_fields(tmp_path: Path) -> None:
@@ -114,10 +126,10 @@ def test_config_rejects_unknown_fields(tmp_path: Path) -> None:
 
 def test_environment_can_select_config(monkeypatch, tmp_path: Path) -> None:
     payload = _config_payload()
-    agent_chat = payload["agent_chat"]
-    assert isinstance(agent_chat, dict)
-    agent_chat["model"] = "custom-chat"
-    agent_chat["api_key_env"] = "CUSTOM_CHAT_API_KEY"
+    agent_model = payload["agent_model"]
+    assert isinstance(agent_model, dict)
+    agent_model["model"] = "custom-agent"
+    agent_model["api_key_env"] = "CUSTOM_AGENT_API_KEY"
     video_parser = payload["video_parser"]
     assert isinstance(video_parser, dict)
     video_parser["transcript_model"] = "custom-transcript"
@@ -139,8 +151,8 @@ def test_environment_can_select_config(monkeypatch, tmp_path: Path) -> None:
 
     config = load_config()
 
-    assert config.agent_chat.model == "custom-chat"
-    assert config.agent_chat.api_key_env == "CUSTOM_CHAT_API_KEY"
+    assert config.agent_model.model == "custom-agent"
+    assert config.agent_model.api_key_env == "CUSTOM_AGENT_API_KEY"
     assert config.video_parser.transcript_model == "custom-transcript"
     assert config.video_parser.video_model == "custom-video"
     assert config.video_parser.fallback.group_duration_ms == 15_000
@@ -204,27 +216,27 @@ def test_fallback_rejects_non_deepseek_provider(tmp_path: Path) -> None:
     "missing_field",
     ["model", "base_url", "api_key_env", "max_output_tokens", "request_timeout_seconds"],
 )
-def test_agent_chat_requires_connection_fields(
+def test_agent_model_requires_connection_fields(
     missing_field: str,
     tmp_path: Path,
 ) -> None:
     payload = _config_payload()
-    agent_chat = payload["agent_chat"]
-    assert isinstance(agent_chat, dict)
-    del agent_chat[missing_field]
-    config_path = tmp_path / "missing-agent-chat-config.yaml"
+    agent_model = payload["agent_model"]
+    assert isinstance(agent_model, dict)
+    del agent_model[missing_field]
+    config_path = tmp_path / "missing-agent-model-config.yaml"
     _write_config(config_path, payload)
 
     with pytest.raises(ValidationError):
         load_config(config_path)
 
 
-def test_agent_chat_requires_nonthinking_deepseek(tmp_path: Path) -> None:
+def test_agent_model_requires_nonthinking_deepseek(tmp_path: Path) -> None:
     payload = _config_payload()
-    agent_chat = payload["agent_chat"]
-    assert isinstance(agent_chat, dict)
-    agent_chat["reasoning_effort"] = "high"
-    config_path = tmp_path / "thinking-agent-chat-config.yaml"
+    agent_model = payload["agent_model"]
+    assert isinstance(agent_model, dict)
+    agent_model["reasoning_effort"] = "high"
+    config_path = tmp_path / "thinking-agent-model-config.yaml"
     _write_config(config_path, payload)
 
     with pytest.raises(ValidationError):
@@ -242,15 +254,15 @@ def test_agent_chat_requires_nonthinking_deepseek(tmp_path: Path) -> None:
         "https://api.deepseek.com /v1",
     ],
 )
-@pytest.mark.parametrize("section", ["agent_chat", "video_fallback"])
+@pytest.mark.parametrize("section", ["agent_model", "video_fallback"])
 def test_deepseek_base_urls_require_safe_https_endpoints(
     tmp_path: Path,
     section: str,
     base_url: str,
 ) -> None:
     payload = _config_payload()
-    if section == "agent_chat":
-        target = payload["agent_chat"]
+    if section == "agent_model":
+        target = payload["agent_model"]
     else:
         target = payload["video_parser"]["fallback"]["deepseek"]
     assert isinstance(target, dict)
@@ -264,10 +276,10 @@ def test_deepseek_base_urls_require_safe_https_endpoints(
 
 def test_deepseek_base_urls_are_trimmed_and_canonicalized(tmp_path: Path) -> None:
     payload = _config_payload()
-    agent_chat = payload["agent_chat"]
-    assert isinstance(agent_chat, dict)
-    agent_chat["base_url"] = "  https://api.deepseek.test/v1/  "
+    agent_model = payload["agent_model"]
+    assert isinstance(agent_model, dict)
+    agent_model["base_url"] = "  https://api.deepseek.test/v1/  "
     config_path = tmp_path / "canonical-base-url.yaml"
     _write_config(config_path, payload)
 
-    assert load_config(config_path).agent_chat.base_url == "https://api.deepseek.test/v1"
+    assert load_config(config_path).agent_model.base_url == "https://api.deepseek.test/v1"

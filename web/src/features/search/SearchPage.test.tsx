@@ -149,6 +149,35 @@ afterEach(() => {
 });
 
 describe("Search assistant presentation", () => {
+  it("distinguishes retrieved candidates from a truly empty retrieval", () => {
+    const message = {
+      ...assistantMessage("只生成了文字"),
+      searchResult: {
+        query: "雨天门口",
+        seriesIds: [series.seriesId],
+        searchedVideoIds: ["video-1"],
+        partial: false,
+        warnings: [],
+        hits: [],
+        retrievalTrace: [{
+          query: "雨天门口",
+          topK: 8,
+          strategyVersion: "test",
+          requestedWeights: { transcript: 0.2, semantic: 0.5, visual: 0.3 },
+          effectiveWeights: { transcript: 0.2, semantic: 0.5, visual: 0.3 },
+          resultCount: 2,
+          videoChunkIds: ["chunk-1", "chunk-2"],
+        }],
+      },
+      renderBlocks: [{ type: "markdown" as const, markdown: "只生成了文字" }],
+    };
+
+    renderPage(message);
+
+    expect(screen.getByText("检索到了候选片段，但本次回答未附带可播放视频，请重试。")).toBeInTheDocument();
+    expect(screen.queryByText("没有检索到可展示的视频片段，试试换个描述。")).not.toBeInTheDocument();
+  });
+
   it("renders GFM while dropping raw HTML, unsafe links and remotely loaded model images", () => {
     const content = [
       "## 核心事件",
@@ -189,10 +218,10 @@ describe("Search assistant presentation", () => {
       ...assistantMessage("兼容正文", hits),
       renderBlocks: [
         { type: "markdown" as const, markdown: "## 开场说明" },
-        { type: "video" as const, videoChunkId: "chunk-2" },
+        { type: "video" as const, videoChunkId: "chunk-2", startMs: 22_000, endMs: 25_000 },
         { type: "markdown" as const, markdown: "两段之间的解释" },
-        { type: "video" as const, videoChunkId: "unknown-chunk" },
-        { type: "video" as const, videoChunkId: "chunk-1" },
+        { type: "video" as const, videoChunkId: "unknown-chunk", startMs: 1_000, endMs: 2_000 },
+        { type: "video" as const, videoChunkId: "chunk-1", startMs: 12_000, endMs: 15_000 },
       ],
     };
 
@@ -208,6 +237,56 @@ describe("Search assistant presentation", () => {
     expect(screen.getAllByRole("img")).toHaveLength(2);
     expect(screen.queryByText("兼容正文")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
+    expect(screen.getByText("00:22–00:25")).toBeInTheDocument();
+  });
+
+  it("uses the agent-selected time range instead of the source chunk range", async () => {
+    const hit = searchHit("chunk-1", 1, "精确片段首帧");
+    const message = {
+      ...assistantMessage("精确片段", [hit]),
+      renderBlocks: [
+        { type: "video" as const, videoChunkId: hit.evidence.videoChunkId, startMs: 12_500, endMs: 13_500 },
+      ],
+    };
+    renderPage(message);
+    const user = userEvent.setup();
+
+    expect(screen.getByText("00:12–00:13")).toBeInTheDocument();
+    expect(screen.queryByText("00:12–00:15")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("img", { name: "精确片段首帧" }));
+    const video = screen.getByLabelText<HTMLVideoElement>("视频证据");
+    Object.defineProperty(video, "readyState", { value: HTMLMediaElement.HAVE_METADATA, configurable: true });
+    video.dispatchEvent(new Event("loadedmetadata"));
+
+    expect(video.currentTime).toBe(12.5);
+    expect(screen.getByRole("slider", { name: "视频片段播放进度" })).toHaveAttribute("max", "1000");
+    expect(screen.getByText("00:00 / 00:01")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "引用此片段追问" }));
+    expect(screen.getByText(/已引用.*00:12–00:13/)).toBeInTheDocument();
+  });
+
+  it("falls back to the canonical chunk when the submitted range is outside it", async () => {
+    const hit = searchHit("chunk-1", 1, "越界片段首帧");
+    const message = {
+      ...assistantMessage("越界片段", [hit]),
+      renderBlocks: [
+        { type: "video" as const, videoChunkId: hit.evidence.videoChunkId, startMs: 11_999, endMs: 13_500 },
+      ],
+    };
+    renderPage(message);
+    const user = userEvent.setup();
+
+    expect(screen.getByText("00:12–00:15")).toBeInTheDocument();
+    await user.click(screen.getByRole("img", { name: "越界片段首帧" }));
+    const video = screen.getByLabelText<HTMLVideoElement>("视频证据");
+    Object.defineProperty(video, "readyState", { value: HTMLMediaElement.HAVE_METADATA, configurable: true });
+    video.dispatchEvent(new Event("loadedmetadata"));
+
+    expect(video.currentTime).toBe(12);
+    expect(screen.getByRole("slider", { name: "视频片段播放进度" })).toHaveAttribute("max", "3000");
+    expect(screen.getByText("00:00 / 00:03")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "引用此片段追问" }));
+    expect(screen.getByText(/已引用.*00:12–00:15/)).toBeInTheDocument();
   });
 
   it("shows only thumbnail images until selection and keeps exactly one selected video mounted", async () => {

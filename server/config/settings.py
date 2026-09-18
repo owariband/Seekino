@@ -33,7 +33,8 @@ class ServerSettings:
     upload: UploadServiceConfig
     parse: VideoParseRuntimeConfig
     agent: AgentServiceConfig
-    agent_deepseek_chat_model: str | None
+    agent_chat_model: str | None
+    agent_fallback_model: str | None
     agent_evaluator_model: str | None
     agent_request_timeout_seconds: float
     mq: MQConsumerConfig
@@ -245,8 +246,12 @@ class ServerSettings:
                 ),
             ),
             agent_query_model=_optional_environment("ANIVAG_AGENT_QUERY_MODEL"),
-            agent_deepseek_chat_model=_optional_environment(
-                "ANIVAG_DEEPSEEK_CHAT_MODEL"
+            agent_chat_model=_optional_environment(
+                "ANIVAG_AGENT_CHAT_MODEL",
+                legacy_name="ANIVAG_DEEPSEEK_CHAT_MODEL",
+            ),
+            agent_fallback_model=_optional_environment(
+                "ANIVAG_AGENT_FALLBACK_MODEL"
             ),
             agent_evaluator_model=_optional_environment(
                 "ANIVAG_AGENT_EVALUATOR_MODEL"
@@ -335,8 +340,14 @@ def _required_environment(name: str) -> str:
     return value.strip()
 
 
-def _optional_environment(name: str) -> str | None:
+def _optional_environment(
+    name: str,
+    *,
+    legacy_name: str | None = None,
+) -> str | None:
     value = os.getenv(name)
+    if value is None and legacy_name is not None:
+        value = os.getenv(legacy_name)
     return value.strip() if value and value.strip() else None
 
 

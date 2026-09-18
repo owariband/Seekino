@@ -30,18 +30,20 @@ Workspace
 
 ```text
 一次 AgentRuntime.kick()：
-    Query Agent：SDK 内部模型 / 工具循环，给出计划、草稿和选中片段 ID
+    Query Agent：SDK 内部模型 / 工具循环，检索 Chunk 并提出候选播放范围
         ↓
     Evaluator Agent：complete / continue + advice
         ├── continue 且尚未满 3 轮 → 下一轮 Query，读取原计划和全部工作记录
         ├── 第 3 轮仍 continue → FAILED，最终 Chat 不调用
-        └── complete → Chat 自主循环（tool_choice=auto）
+        └── complete → Chat 自主循环
+                            ├── 有获批 Evidence：首次 tool_choice=required
+                            ├── 无获批 Evidence / 已提交片段：tool_choice=auto
                             ├── 输出一段普通 Markdown
-                            ├── 调用 submit_video_item(video_chunk_id, claim)
+                            ├── 调用 submit_video_item(video_chunk_id, start_ms, end_ms, claim)
                             ├── 继续输出 Markdown 或再提交视频
                             └── 自主结束
                                       ↓
-                     Server 校验每个 ID，生成有序 renderBlocks
+                     Server 校验每个 ID 并归一化播放范围，生成有序 renderBlocks
                                       ↓
                      确定性 Output Node 补齐可信媒体信息
                             ↓
@@ -56,11 +58,15 @@ Retrieve Tool 是进程内工具，直接调用注入的 `VideoRetrievalService.
 
 代码职责：`server/service/agent_chat.py` 管会话与消息事务；`server/agent/` 是独立于 HTTP 的
 Harness；`gateway/agent_model.py` 使用 LangChain `create_agent` / `ToolStrategy` 管 Query
-内层工具循环，`langgraph` 管外层审核循环。最终 Chat 通过 DeepSeek 的文本 Chat Completions
+内层工具循环，`langgraph` 管外层审核循环。Evaluator 使用 text-only DeepSeek Chat Completions
+和单个 required function call 返回结构化审核；最终 Chat 同样通过 DeepSeek 的文本 Chat Completions
 运行有边界的自主工具循环；每轮可输出 Markdown、调用一个或多个
-`submit_video_item({video_chunk_id, claim})`，或结束。Chat 可以使用零个或任意获批 Evidence 子集，并自主决定
-Markdown 与视频窗口的交错顺序；Server 拒绝重复或未获批 ID，且视频 URI、原视频时间、
-标题等始终从可信 Evidence 补齐。逻辑块顺序保存在 `renderBlocks`；整个循环和数据库提交
+`submit_video_item({video_chunk_id, start_ms, end_ms, claim})`，或结束。有获批 Evidence 时至少提交一个，
+之后可以只使用其任意子集；没有获批 Evidence 时可以不调用工具。Chat 自主决定
+Markdown 与视频窗口的交错顺序；Server 拒绝重复或未获批 ID。提交的时间应当与
+Evaluator 审核通过的 Query 范围一致；不一致或越出 canonical Chunk 时回退到合法的审批范围，
+审批范围也非法时回退完整 canonical Chunk 并记录 warning，不因播放范围错误中止文字回答。
+视频 URI、标题等仍始终从可信 Evidence 补齐。逻辑块顺序保存在 `renderBlocks`；整个循环和数据库提交
 成功后才原子交付给前端，不暴露失败运行的半成品。
 
 ## 3. 接口总览
@@ -161,7 +167,7 @@ Retrieve Tool 的闭包只使用当前 Kick 的 Scope，模型、advice 和前�
 `topK` 可省略，默认 `8`；当前服务端上限默认 `20`，同时限制每次召回和最终选中的不同片段数量。
 多次召回可以累积更多内部证据，交付结果仍遵守本次 TopK。一次发送先提交 USER Message 和
 `PROCESSING` ASSISTANT Message，再由 Service 拥有的执行任务运行 Harness。Query 草稿通过审核后，
-最终 Chat 整理正文；DeepSeek 函数调用完整返回、校验通过且数据库事务成功，才更新同一个 ASSISTANT 为 `COMPLETED`。同一 Conversation 同时只允许一个
+最终 Chat 整理正文；函数调用完整返回、校验通过且数据库事务成功，才更新同一个 ASSISTANT 为 `COMPLETED`。同一 Conversation 同时只允许一个
 ASSISTANT Message 处于 `PROCESSING`。
 
 响应 `200`：
@@ -231,8 +237,12 @@ ASSISTANT Message 处于 `PROCESSING`。
 不包含独立 `/api/search` 才有的 `agentReply`。`retrievalTrace` 按实际调用顺序记录 Query Agent
 每次检索的受限 `topK`、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID，
 供调权实验复现；普通 `/api/search` 不返回该 Agent 专属字段。`renderBlocks` 是最终显示顺序：Markdown 块携带
-`markdown`，视频块只携带 `videoChunkId`，前端必须将它与同一消息的可信
-`searchResult.hits` 关联，不得从块或正文自行构造媒体 URI。`content` 保留为所有 Markdown 块
+`markdown`，视频块携带 `videoChunkId` 和 Evaluator 审核通过的原视频绝对 `startMs/endMs`。
+该范围应当是对应 canonical Chunk 的子区间；Query 提出候选范围，Evaluator 通过 advice 要求修订，
+Chat 在 `submit_video_item` 中显式提交最终范围。候选范围越界不改变 retrieve 已召回 Chunk 的真实性，
+也不在 Evaluator 之前中止 Kick；最终提交范围仍非法时由 Server 回退 canonical Chunk 并记录 warning。
+前端必须将视频块与同一消息的可信 `searchResult.hits` 关联，不得从块或正文自行构造媒体 URI。
+旧块缺失时间或范围非法时，Server 投影回退到 canonical Chunk 范围。`content` 保留为所有 Markdown 块
 的兼容汇总。存在候选时，`hits`
 包含选中的完整 Candidate、SelectionReason 和可安全交付给前端的 VideoChunkEvidence。
 每个 `hits[].evidence.seriesId` 都必填，来自 MySQL 对 Series / Video / VideoChunk 的批量
@@ -315,7 +325,7 @@ Content-Type: application/json
 | `answer.started` | USER / PROCESSING ASSISTANT 已提交 | `userMessage`、`assistantMessage` |
 | `answer.progress` | Query / Evaluator / Chat 阶段切换 | `phase`：RETRIEVING / EVALUATING / RESPONDING |
 | `answer.evidence` | 最终结果校验并提交后 | `searchResult`：由可信获批 Evidence 补齐的视频窗口，不含 `agentReply`，包含 `retrievalTrace`；兼容旧客户端 |
-| `answer.block` | Evidence 之后按 Chat 逻辑顺序发送 | `block`：Markdown 块或只含 `videoChunkId` 的视频块 |
+| `answer.block` | Evidence 之后按 Chat 逻辑顺序发送 | `block`：Markdown 块，或含 `videoChunkId` 及已审批 `startMs/endMs` 的视频块 |
 | `answer.delta` | 最终结果校验并提交后 | `delta`：所有 Markdown 块的一次性兼容汇总 |
 | `answer.completed` | 最终结果成功提交后 | `userMessage`、`assistantMessage`：持久化快照 |
 | `answer.failed` | 执行失败且 FAILED 状态已保存 | `error`、`userMessage`、`assistantMessage` |
@@ -351,6 +361,7 @@ Message 状态：
 ANIVAG_AGENT_QUERY_MODEL
 ANIVAG_AGENT_EVALUATOR_MODEL
 ANIVAG_AGENT_CHAT_MODEL
+ANIVAG_AGENT_FALLBACK_MODEL
 ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS=180
 ANIVAG_AGENT_HISTORY_MESSAGE_LIMIT=12
 ANIVAG_AGENT_DEFAULT_TOP_K=8
@@ -359,24 +370,32 @@ ANIVAG_AGENT_MAX_LOOP_TURNS=3
 ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN=6
 ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN=4
 ANIVAG_AGENT_MAX_OUTPUT_TOKENS=4096
-ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS=180
+ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS=600
 ANIVAG_AGENT_MAX_CONCURRENT_KICKS=4
 ```
 
-Query 和 Evaluator 的默认模型都是 `config.yaml` 的 `video_parser.transcript_model`，并通过 Ark
-调用；`ANIVAG_AGENT_QUERY_MODEL`、`ANIVAG_AGENT_EVALUATOR_MODEL` 可分别覆盖。Chat 默认读取
-`config.yaml` 的 `agent_chat`：Provider 固定为 DeepSeek，默认模型 `deepseek-flash`，API Key
-环境变量名由 `agent_chat.api_key_env` 指定（默认 `DEEPSEEK_API_KEY`）；
-`ANIVAG_DEEPSEEK_CHAT_MODEL` 只覆盖模型名；旧的 Provider 中立变量
-`ANIVAG_AGENT_CHAT_MODEL` 会在启动时给出迁移错误。消息 `modelName` 记录实际 Chat 模型，不继承或冒充
-Query / Evaluator 模型。
+Query、Evaluator 和 Chat 默认都使用 `config.yaml` 的 `agent_model.model`（DeepSeek Flash），
+通过 `agent_model.provider` 指定的 DeepSeek endpoint 调用；`agent_model.reasoning_effort` 固定为
+`none`，请求显式关闭 thinking。Query 使用 LangChain Tool Calling，Evaluator 使用一次 required
+function call，Chat 使用有边界的 function-calling loop；三个角色可分别用对应环境变量覆盖模型名。
+`ANIVAG_AGENT_FALLBACK_MODEL` 默认取 `video_parser.transcript_model`（Ark Doubao Lite）。Provider
+请求失败或模型响应结构非法时，失败的单次模型调用在当前消息与 Tool 状态上原位切到 Lite；
+已完成的业务 Tool 结果与 acknowledgement 继续复用，不重新执行检索或视频提交。业务 Tool
+错误、取消 / deadline / 预算等控制错误和本地输入校验错误不会触发模型降级。消息
+`modelName` 记录 Chat 的 DeepSeek 主模型，发生 Lite fallback 时只记录结构化 warning。
+`ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS` 限制单次 Provider
+请求，`ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS` 则覆盖最多三轮 Query/Evaluator 和最终
+Chat；两者不是同一个超时窗口。
 
-Chat 是 text-only、非 token 流式的自主工具循环，并设置
-`thinking.type=disabled`。Gateway 每轮使用 `tool_choice=auto`；DeepSeek 可以输出普通
+Chat 是 text-only、非 token 流式的自主工具循环。存在获批 Evidence 时，第一次调用使用
+`tool_choice=required`；成功提交至少一个片段后恢复 `auto`。没有获批 Evidence 时直接使用
+`auto`。DeepSeek 可以输出普通
 `message.content`、调用一个或多个 `submit_video_item`，或以 `finish_reason=stop` 结束。
 工具结果以 `role=tool` acknowledgement 送回模型，然后由模型自主决定下一步。
-每个工具调用的参数只允许 `video_chunk_id` 和 `claim`；Server 允许获批 hits 的零个或子集，
-但拒绝重复、未获批或 Schema 不合法的调用。完成的循环必须至少生成一段非空 Markdown，
+每个工具调用的参数只允许 `video_chunk_id`、`start_ms`、`end_ms` 和 `claim`；获批 hits 非空时
+Chat 必须至少提交一个，但仍可只选其子集；Server 拒绝重复、未获批或 Schema 不合法的调用。
+已获批 Chunk 的时间偏差是可恢复的展示错误，
+Server 使用获批范围或 canonical Chunk 降级并记录 warning。完成的循环必须至少生成一段非空 Markdown，
 并受统一的模型调用次数与 Kick deadline 约束。循环或持久化任一失败，都不会向前端
 交付视频窗口或正文；已进入同步 Provider 请求后的取消仍需等待请求返回或超时。
 

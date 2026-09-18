@@ -54,7 +54,7 @@ def dotenv_variable_names(path: str | Path) -> tuple[str, ...]:
 def config_digest() -> str:
     values = {key: value for key, value in os.environ.items() if key.startswith(("ANIVAG_", "VITE_"))}
     model_config = load_config()
-    api_key_names = {"ARK_API_KEY", model_config.agent_chat.api_key_env}
+    api_key_names = {"ARK_API_KEY", model_config.agent_model.api_key_env}
     if model_config.video_parser.fallback.enabled:
         api_key_names.add(model_config.video_parser.fallback.deepseek.api_key_env)
     for key in sorted(api_key_names):
@@ -340,7 +340,7 @@ def start_applications() -> None:
                 "请在 .env.local 填写 ARK_API_KEY，AniVAG Server 的 Parse Consumer 需要它完成启动。"
             )
         model_config = load_config()
-        deepseek_key_names = {model_config.agent_chat.api_key_env}
+        deepseek_key_names = {model_config.agent_model.api_key_env}
         if model_config.video_parser.fallback.enabled:
             deepseek_key_names.add(
                 model_config.video_parser.fallback.deepseek.api_key_env
@@ -352,7 +352,7 @@ def start_applications() -> None:
             raise RuntimeError(
                 "请在 .env.local 填写 "
                 + "、".join(missing_deepseek_keys)
-                + "；Chat Agent 与已启用的 DeepSeek 解析需要它完成启动。"
+                + "；AniVAG Agent 或已启用的 DeepSeek 解析需要它完成启动。"
             )
         launch("api", [sys.executable, "-u", "-m", "server.api"])
         wait_ready("api", lambda: api_ready(api_base))

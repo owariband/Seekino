@@ -9,7 +9,8 @@ from arkruntime import Ark
 from engine.parse.runtime import EngineVideoParseRuntime
 from gateway.config import load_config
 from gateway.agent_model import DeepSeekFunctionCallingModel, SDKQueryAgentModel
-from gateway.models import ArkMultimodalModel
+from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
+from gateway.models import ArkMultimodalModel, DeepSeekStructuredTextModel
 from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
 from gateway.schemas import EmbeddingResult
 from qdrant_client import QdrantClient
@@ -80,19 +81,13 @@ class ApplicationServices:
 
 
 def build_application_services(settings: ServerSettings) -> ApplicationServices:
-    legacy_chat_model = os.getenv("ANIVAG_AGENT_CHAT_MODEL", "").strip()
-    if legacy_chat_model:
-        raise RuntimeError(
-            "ANIVAG_AGENT_CHAT_MODEL is no longer provider-neutral; remove it "
-            "or migrate it to ANIVAG_DEEPSEEK_CHAT_MODEL"
-        )
     gateway_config = load_config(settings.model_config_path)
-    chat_config = gateway_config.agent_chat
-    chat_api_key = os.getenv(chat_config.api_key_env, "").strip()
-    if not chat_api_key:
+    agent_model_config = gateway_config.agent_model
+    agent_api_key = os.getenv(agent_model_config.api_key_env, "").strip()
+    if not agent_api_key:
         raise RuntimeError(
-            "DeepSeek Chat requires API key environment variable "
-            f"{chat_config.api_key_env}"
+            "Agent model API key environment variable "
+            f"{agent_model_config.api_key_env!r} is not configured"
         )
     engine = create_database_engine(
         settings.database_url,
@@ -159,35 +154,54 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         text_weight=settings.retrieval.text_weight,
         vision_weight=settings.retrieval.vision_weight,
     )
-    ark_agent_model = gateway_config.video_parser.transcript_model
-    query_model_name = settings.agent_query_model or ark_agent_model
-    evaluator_model_name = settings.agent_evaluator_model or ark_agent_model
-    chat_model_name = settings.agent_deepseek_chat_model or chat_config.model
+    fallback_agent_model = (
+        settings.agent_fallback_model
+        or gateway_config.video_parser.transcript_model
+    )
+    query_model_name = settings.agent_query_model or agent_model_config.model
+    evaluator_model_name = settings.agent_evaluator_model or agent_model_config.model
+    chat_model_name = settings.agent_chat_model or agent_model_config.model
     request_timeout = min(
-        settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
+        settings.agent_request_timeout_seconds,
+        settings.agent.execution_timeout_seconds,
+        agent_model_config.request_timeout_seconds,
+    )
+    max_output_tokens = min(
+        settings.agent.max_output_tokens,
+        agent_model_config.max_output_tokens,
+    )
+    evaluator_fallback = ArkMultimodalModel(
+        model=fallback_agent_model,
+        request_timeout_seconds=request_timeout,
+        max_output_tokens=max_output_tokens,
     )
     runtime = AgentRuntime(
         SDKQueryAgentModel(
             model=query_model_name,
+            provider=DEEPSEEK_PROVIDER,
+            base_url=agent_model_config.base_url,
+            api_key=agent_api_key,
             request_timeout_seconds=request_timeout,
-            max_output_tokens=settings.agent.max_output_tokens,
+            max_output_tokens=max_output_tokens,
             max_input_chars=settings.agent.max_prompt_chars,
+            fallback_model=fallback_agent_model,
+            fallback_provider=ARK_PROVIDER,
         ),
-        ArkMultimodalModel(
+        DeepSeekStructuredTextModel(
             model=evaluator_model_name,
+            base_url=agent_model_config.base_url,
+            api_key=agent_api_key,
             request_timeout_seconds=request_timeout,
-            max_output_tokens=settings.agent.max_output_tokens,
+            max_output_tokens=max_output_tokens,
+            fallback_model=evaluator_fallback,
         ),
         DeepSeekFunctionCallingModel(
             model=chat_model_name,
-            base_url=chat_config.base_url,
-            api_key=chat_api_key,
-            request_timeout_seconds=min(
-                request_timeout, chat_config.request_timeout_seconds,
-            ),
-            max_output_tokens=min(
-                settings.agent.max_output_tokens, chat_config.max_output_tokens,
-            ),
+            base_url=agent_model_config.base_url,
+            api_key=agent_api_key,
+            fallback_model=fallback_agent_model,
+            request_timeout_seconds=request_timeout,
+            max_output_tokens=max_output_tokens,
         ),
         retrieval.search,
         max_loop_turns=settings.agent.max_loop_turns,

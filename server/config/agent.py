@@ -14,7 +14,9 @@ class AgentServiceConfig:
     max_tool_calls_per_turn: int = 4
     max_output_tokens: int = 4096
     max_prompt_chars: int = 200_000
-    execution_timeout_seconds: float = 180
+    # Covers up to three Query/Evaluator turns plus final Chat. Individual
+    # Provider requests keep their own, shorter timeout.
+    execution_timeout_seconds: float = 600
     maximum_concurrent_kicks: int = 4
 
     def __post_init__(self) -> None:

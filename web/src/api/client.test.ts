@@ -208,7 +208,7 @@ describe("POST answer stream", () => {
   it("delivers ordered render blocks without resolving video references in the client", async () => {
     const payloads = [
       { sequence: 2, block: { type: "markdown", markdown: "第一段" } },
-      { sequence: 3, block: { type: "video", videoChunkId: "chunk-1" } },
+      { sequence: 3, block: { type: "video", videoChunkId: "chunk-1", startMs: 12_500, endMs: 13_500 } },
     ];
     const body = new ReadableStream<Uint8Array>({ start(controller) {
       for (const payload of payloads) {

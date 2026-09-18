@@ -78,15 +78,29 @@ def bind_draft(
                 query_by_id[video_chunk_id] = call.query
     if not last_query:
         raise AgentModelInvocationError("First Query turn must retrieve real evidence")
-    selected_ids = list(dict.fromkeys(draft.selected_video_chunk_ids))
-    if len(selected_ids) > max_selected_hits:
+    selected_ranges = []
+    selected_ids: set[str] = set()
+    for selected_range in draft.selected_video_ranges:
+        if selected_range.video_chunk_id in selected_ids:
+            raise AgentModelInvocationError(
+                "Query Agent selected duplicate ranges for one VideoChunk"
+            )
+        selected_ids.add(selected_range.video_chunk_id)
+        selected_ranges.append(selected_range)
+    if len(selected_ranges) > max_selected_hits:
         raise AgentModelInvocationError("Query draft exceeds the final selected-hit budget")
-    if any(video_chunk_id not in by_id for video_chunk_id in selected_ids):
+    if any(item.video_chunk_id not in by_id for item in selected_ranges):
         raise AgentModelInvocationError("Query Agent selected a VideoChunk outside retrieved evidence")
-    selected = [by_id[video_chunk_id].model_copy(deep=True) for video_chunk_id in selected_ids]
+    selected = [
+        by_id[item.video_chunk_id].model_copy(deep=True)
+        for item in selected_ranges
+    ]
     # For a union of searches, per-chunk source turns and full calls retain provenance.
     # The public query is the actual last source query of the ordered selection.
-    selected_query = query_by_id[selected_ids[-1]] if selected_ids else last_query
+    selected_query = (
+        query_by_id[selected_ranges[-1].video_chunk_id]
+        if selected_ranges else last_query
+    )
     available = VideoChunkSearchResult(
         query=last_query, series_ids=list(inputs["series_ids"]),
         agent_reply=AgentReply(message="实际检索证据。", result_count=len(by_id)),
@@ -100,7 +114,10 @@ def bind_draft(
         searched_video_ids=available.searched_video_ids,
         partial=available.partial, warnings=available.warnings,
     )
-    return available, bound, {key: sources[key] for key in selected_ids}
+    return available, bound, {
+        item.video_chunk_id: sources[item.video_chunk_id]
+        for item in selected_ranges
+    }
 
 
 def build_chat_output(
@@ -145,7 +162,11 @@ def build_chat_output(
         render_blocks=[
             block.model_copy(deep=True)
             if isinstance(block, MarkdownRenderBlock)
-            else VideoRenderBlock(video_chunk_id=block.video_chunk_id)
+            else VideoRenderBlock(
+                video_chunk_id=block.video_chunk_id,
+                start_ms=block.start_ms,
+                end_ms=block.end_ms,
+            )
             for block in rendered.blocks
         ],
         retrieval_trace=[entry.model_copy(deep=True) for entry in retrieval_trace],

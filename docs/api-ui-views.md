@@ -15,7 +15,7 @@ VO 按 `commonVO.py`、`libraryVO.py`、`uploadVO.py`、`jobVO.py`、`agentVO.py
 | upload | UploadSessionCreateRequest、UploadSessionView、UploadSegmentView、UploadCompleteView | 完整上传确认点、缺失分段、真实合并阶段、源 SHA、后续 Job、资源 version |
 | job | ParseJobView、VideoChunkCheckpointView、JobCounts、JobSummary | 实际阶段 / 进度 / 检查点、结构化错误、单调 version、全范围权威统计 |
 | parseUsage | ParseUsageVO、ParseUsageRowVO | 真实视频与动画身份、按模型和职责汇总的 Token／调用数、人民币预估金额、消耗记录完整性 |
-| agent | Conversation / Message 请求与 View、EvidenceReference、各类回答事件 | 历史 preview、毫秒时间、消息 phase / version、候选引用、恢复同一轮消息对 |
+| agent | Conversation / Message 请求与 View、EvidenceReference、各类回答事件 | 历史 preview、毫秒时间、消息 phase / version、候选引用、Evaluator 审核后的精确视频范围、恢复同一轮消息对 |
 | search | VideoChunkEvidenceView、VideoChunkCandidateView、SearchHitView、SearchResultView、Keyframe | 正文与证据、视频定位、完整检索范围、最终 rank、partial / warnings、可读取媒体 |
 | system | HealthView | API 存活与真实 serverTime |
 
@@ -88,15 +88,15 @@ Content-Type: application/json
 }
 ```
 
-reference 可省略 / 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
+reference 可省略 / 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。`messageId + videoChunkId` 会在服务端恢复该来源回答已审核的精确播放范围，无需让前端回传时间；旧消息缺失范围时回退 canonical Chunk。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
 
-SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits，还包含可审计的 retrievalTrace（每次 Query、受限 topK、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID）。候选同时暴露 transcriptRank/transcriptScore、textRank/textScore、visionRank/visionScore；Transcript 命中说明使用真正匹配的 ASR cue 与绝对时间。消息快照有 phase 与单调 version，前端拒绝旧版本覆盖新状态。phase 仅有 QUEUED / RETRIEVING / EVALUATING / RESPONDING，终态为 null，不包含私有推理。
+SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits，还包含可审计的 retrievalTrace（每次 Query、受限 topK、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID）。候选同时暴露 transcriptRank/transcriptScore、textRank/textScore、visionRank/visionScore；Transcript 命中说明使用真正匹配的 ASR cue 与绝对时间。同一 Kick 的后续检索若再次命中已经交给模型的 Chunk，只回传轻量 `reusedHits`；完整 ASR 与 canonical 时间线引用首次结果，Server 仍保存每次检索的完整事实。事实性结论必须包含非空 `selected_video_ranges`；Query Agent 根据 ASR 和事件时间线为每个真实 Chunk 提出候选范围，Evaluator 在越界、截断或前后冗余时通过 advice 要求 Query 修订。候选范围不参与 retrieve 落地，也不在 Evaluator 之前引发致命失败。存在 approved evidence 时，Chat 首次调用使用 `tool_choice=required` 并至少提交一个 `submit_video_item`；成功提交后恢复 `auto`。最终范围不一致或越界时，Server 回退到合法审批范围，审批范围也非法时回退 canonical Chunk 并记录 warning，不使整轮文字回答失败。Query、Evaluator、Chat 默认使用 `config.yaml` 的 `agent_model.model`（DeepSeek Flash）；Provider 请求或模型响应异常时，失败的单次模型调用在原消息 / Tool 状态上切换到 Ark Doubao Lite。已经完成的业务 Tool 及 acknowledgement 会保留，不重新执行；业务 Tool 错误、取消 / deadline / 预算等控制错误以及本地输入校验错误均不触发模型降级。旧消息没有精确范围或范围非法时，公开投影回退到该 Chunk 的 canonical 范围；Chunk ID 无法与同消息可信 hit 关联时不渲染。消息快照有 phase 与单调 version，前端拒绝旧版本覆盖新状态。phase 仅有 QUEUED / RETRIEVING / EVALUATING / RESPONDING，终态为 null，不包含私有推理。
 
 持久化 FAILED 时，answer.failed 返回公开 error 与真实消息对，并保留已经确认的证据 / 部分正文。队列溢出或无法确认终态提交时返回 answer.interrupted，不谎称后台 FAILED。恢复时读取 messages/get / list / events。断开流不取消后台任务。不同 Conversation 的流、上下文和候选引用隔离。
 
 SearchResult 同时包含 query、seriesIds、searchedVideoIds、agentReply、hits、partial、warnings。searchedVideoIds 来自实际索引范围，Harness 汇总各轮真实检索的视频范围，不能从命中候选反推。旧记录没有该事实时返回 [] 并说明缺少原始范围记录。candidate.rank 是最终候选位置+1；fusedRank 保留原检索排序，不把融合分数显示成置信度。
 
-videos/content 新增 variant=playback|original，默认 playback；原文件可读取不等于兼容浏览器。播放器使用后端提供的 playbackUrl，保留原视频毫秒时间轴。媒体丢失返回 MEDIA_MISSING / 410，未准备好或不兼容返回 MEDIA_NOT_READY / 409。Range、If-Range 与 ETag 等浏览器读取头通过 CORS 放行并暴露。
+videos/content 新增 variant=playback|original，默认 playback；原文件可读取不等于兼容浏览器。播放器使用后端提供的 playbackUrl 加载原视频，但交互时间轴以 render block 的精确范围为零点和总长度；拖动位置映射回原视频绝对时间，并在 endMs 停止。媒体丢失返回 MEDIA_MISSING / 410，未准备好或不兼容返回 MEDIA_NOT_READY / 409。Range、If-Range 与 ETag 等浏览器读取头通过 CORS 放行并暴露。
 
 当前与完整 UI 目标的差异：
 

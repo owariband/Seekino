@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from openai import APIConnectionError
 from PIL import Image
 from pydantic import BaseModel, ConfigDict
 
@@ -11,6 +12,7 @@ from gateway.models import (
     ArkMultimodalModel,
     DeepSeekModelError,
     DeepSeekMultimodalModel,
+    DeepSeekStructuredTextModel,
     ImageInput,
     LlamaCppModelError,
     LlamaCppMultimodalModel,
@@ -139,6 +141,51 @@ def test_ark_maps_text_image_and_video_to_responses_sse(tmp_path) -> None:
     }
 
 
+def test_ark_structured_model_falls_back_after_primary_request_failure() -> None:
+    class FallbackResponses(FakeResponses):
+        def create(self, **kwargs: object) -> FakeStream:
+            self.calls.append(kwargs)
+            if kwargs["model"] == "doubao-pro":
+                raise RuntimeError("provider unavailable")
+            return self.stream
+
+    responses = FallbackResponses(_result())
+    model = ArkMultimodalModel(
+        "doubao-pro",
+        fallback_model="doubao-lite",
+        client=SimpleNamespace(responses=responses),
+    )
+
+    result = model.generate(
+        [TextInput("审核候选片段")],
+        schema_name="structured_result",
+        result_type=StructuredResult,
+    )
+
+    assert result == _result()
+    assert [call["model"] for call in responses.calls] == [
+        "doubao-pro", "doubao-lite",
+    ]
+
+
+def test_ark_structured_model_honors_shorter_per_request_timeout() -> None:
+    responses = FakeResponses(_result())
+    model = ArkMultimodalModel(
+        "doubao-lite",
+        request_timeout_seconds=20,
+        client=SimpleNamespace(responses=responses),
+    )
+
+    assert model.generate(
+        [TextInput("审核候选片段")],
+        schema_name="structured_result",
+        result_type=StructuredResult,
+        request_timeout_seconds=6.5,
+    ) == _result()
+
+    assert responses.calls[0]["timeout"] == 6.5
+
+
 def test_ark_text_stream_preserves_original_deltas_and_output_budget() -> None:
     responses = FakeResponses(_result())
     responses.stream = FakeStream(
@@ -248,6 +295,281 @@ class FakeDeepSeekResponses:
             status=self.status,
             output_text=self.output_text,
         )
+
+
+def _deepseek_structured_tool_response(
+    *,
+    schema_name: str = "structured_result",
+    arguments: str | None = None,
+    finish_reason: str = "tool_calls",
+) -> object:
+    return SimpleNamespace(
+        model="deepseek-flash",
+        choices=[
+            SimpleNamespace(
+                finish_reason=finish_reason,
+                message=SimpleNamespace(
+                    role="assistant",
+                    tool_calls=[
+                        SimpleNamespace(
+                            type="function",
+                            function=SimpleNamespace(
+                                name=schema_name,
+                                arguments=arguments or _result().model_dump_json(),
+                            ),
+                        )
+                    ],
+                ),
+            )
+        ],
+    )
+
+
+class FakeDeepSeekChatCompletions:
+    def __init__(self, response: object | None = None) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.response = response or _deepseek_structured_tool_response()
+        self.error: Exception | None = None
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
+class FakeArkStructuredModel:
+    provider_name = "ark"
+    model_name = "doubao-lite"
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def generate(
+        self,
+        inputs,
+        *,
+        schema_name,
+        result_type,
+        request_timeout_seconds=None,
+    ):
+        self.calls.append({
+            "inputs": inputs,
+            "schema_name": schema_name,
+            "result_type": result_type,
+            "request_timeout_seconds": request_timeout_seconds,
+        })
+        return _result()
+
+
+def test_deepseek_structured_text_uses_required_chat_completion_tool() -> None:
+    completions = FakeDeepSeekChatCompletions()
+    model = DeepSeekStructuredTextModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com/",
+        api_key="test-key",
+        max_output_tokens=777,
+        request_timeout_seconds=12,
+        client=SimpleNamespace(
+            chat=SimpleNamespace(completions=completions),
+        ),
+    )
+
+    result = model.generate(
+        [TextInput("候选片段"), TextInput("请审核时间范围")],
+        schema_name="structured_result",
+        result_type=StructuredResult,
+    )
+
+    assert result == _result()
+    assert model.base_url == "https://api.deepseek.com"
+    assert len(completions.calls) == 1
+    request = completions.calls[0]
+    assert request["model"] == "deepseek-flash"
+    assert request["messages"] == [
+        {"role": "user", "content": "候选片段\n\n请审核时间范围"}
+    ]
+    assert request["tool_choice"] == "required"
+    assert request["temperature"] == 0
+    assert request["max_tokens"] == 777
+    assert request["timeout"] == 12
+    assert request["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert "reasoning" not in request
+    assert len(request["tools"]) == 1
+    function = request["tools"][0]["function"]
+    assert function["name"] == "structured_result"
+    rendered_schema = json.dumps(function["parameters"])
+    assert '"$defs"' not in rendered_schema
+    assert '"$ref"' not in rendered_schema
+
+
+def test_deepseek_structured_text_falls_back_after_response_error_with_deadline(
+    caplog,
+    monkeypatch,
+) -> None:
+    clock = iter([100.0, 103.5])
+    monkeypatch.setattr("gateway.models.monotonic", lambda: next(clock))
+    completions = FakeDeepSeekChatCompletions(
+        _deepseek_structured_tool_response(finish_reason="stop")
+    )
+    fallback = FakeArkStructuredModel()
+    inputs = [TextInput("审核候选片段")]
+    model = DeepSeekStructuredTextModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+        fallback_model=fallback,
+        client=SimpleNamespace(
+            chat=SimpleNamespace(completions=completions),
+        ),
+    )
+
+    with caplog.at_level("WARNING", logger="gateway.models"):
+        result = model.generate(
+            inputs,
+            schema_name="structured_result",
+            result_type=StructuredResult,
+        )
+
+    assert result == _result()
+    assert model.model_name == model.primary_model_name == "deepseek-flash"
+    assert model.fallback_provider_name == "ark"
+    assert model.fallback_model_name == "doubao-lite"
+    assert fallback.calls == [{
+        "inputs": inputs,
+        "schema_name": "structured_result",
+        "result_type": StructuredResult,
+        "request_timeout_seconds": 6.5,
+    }]
+    assert "fallback_provider=ark fallback_model=doubao-lite" in caplog.text
+
+
+def test_deepseek_structured_text_falls_back_after_provider_error() -> None:
+    completions = FakeDeepSeekChatCompletions()
+    completions.error = APIConnectionError(
+        request=httpx.Request(
+            "POST", "https://api.deepseek.com/chat/completions"
+        )
+    )
+    fallback = FakeArkStructuredModel()
+    model = DeepSeekStructuredTextModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+        fallback_model=fallback,
+        client=SimpleNamespace(
+            chat=SimpleNamespace(completions=completions),
+        ),
+    )
+
+    assert model.generate(
+        [TextInput("审核候选片段")],
+        schema_name="structured_result",
+        result_type=StructuredResult,
+    ) == _result()
+    assert len(fallback.calls) == 1
+
+
+def test_deepseek_structured_text_does_not_fall_back_for_invalid_input(
+    tmp_path,
+) -> None:
+    image_path = tmp_path / "frame.jpg"
+    image_path.write_bytes(b"image")
+    completions = FakeDeepSeekChatCompletions()
+    fallback = FakeArkStructuredModel()
+    model = DeepSeekStructuredTextModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+        fallback_model=fallback,
+        client=SimpleNamespace(
+            chat=SimpleNamespace(completions=completions),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="only supports TextInput"):
+        model.generate(
+            [ImageInput(image_path)],
+            schema_name="structured_result",
+            result_type=StructuredResult,
+        )
+
+    assert completions.calls == []
+    assert fallback.calls == []
+
+
+def test_deepseek_structured_text_does_not_fall_back_after_deadline(
+    monkeypatch,
+) -> None:
+    clock = iter([100.0, 111.0])
+    monkeypatch.setattr("gateway.models.monotonic", lambda: next(clock))
+    completions = FakeDeepSeekChatCompletions(
+        _deepseek_structured_tool_response(finish_reason="stop")
+    )
+    fallback = FakeArkStructuredModel()
+    model = DeepSeekStructuredTextModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+        fallback_model=fallback,
+        client=SimpleNamespace(
+            chat=SimpleNamespace(completions=completions),
+        ),
+    )
+
+    with pytest.raises(DeepSeekModelError, match="deadline expired before fallback"):
+        model.generate(
+            [TextInput("审核候选片段")],
+            schema_name="structured_result",
+            result_type=StructuredResult,
+        )
+
+    assert fallback.calls == []
+
+
+def test_deepseek_structured_text_close_only_closes_owned_client(
+    monkeypatch,
+) -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.close_count = 0
+
+        def close(self) -> None:
+            self.close_count += 1
+
+    owned_client = Client()
+    monkeypatch.setattr("gateway.models.OpenAI", lambda **_kwargs: owned_client)
+    owned_model = DeepSeekStructuredTextModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+    )
+    external_client = Client()
+    external_model = DeepSeekStructuredTextModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+        client=external_client,
+    )
+
+    owned_model.close()
+    owned_model.close()
+    external_model.close()
+
+    assert owned_client.close_count == 1
+    assert external_client.close_count == 0
 
 
 def test_deepseek_streams_text_without_structured_output_format() -> None:
@@ -406,6 +728,162 @@ def test_deepseek_rejects_invalid_structured_responses(
             schema_name="structured_result",
             result_type=StructuredResult,
         )
+
+
+def test_deepseek_structured_model_falls_back_to_injected_ark_after_response_error(
+    caplog,
+    monkeypatch,
+) -> None:
+    clock = iter([100.0, 103.5])
+    monkeypatch.setattr("gateway.models.monotonic", lambda: next(clock))
+    inputs = [TextInput("审核候选片段")]
+    responses = FakeDeepSeekResponses('{"summary":"missing scenes"}')
+    fallback = FakeArkStructuredModel()
+    model = DeepSeekMultimodalModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+        fallback_model=fallback,
+        client=SimpleNamespace(responses=responses),
+    )
+
+    with caplog.at_level("WARNING", logger="gateway.models"):
+        result = model.generate(
+            inputs,
+            schema_name="structured_result",
+            result_type=StructuredResult,
+        )
+
+    assert result == _result()
+    assert model.model_name == model.primary_model_name == "deepseek-flash"
+    assert model.fallback_provider_name == "ark"
+    assert model.fallback_model_name == "doubao-lite"
+    assert fallback.calls == [{
+        "inputs": inputs,
+        "schema_name": "structured_result",
+        "result_type": StructuredResult,
+        "request_timeout_seconds": 6.5,
+    }]
+    assert responses.calls[0]["timeout"] == 10
+    assert "fallback_provider=ark fallback_model=doubao-lite" in caplog.text
+
+
+def test_deepseek_structured_model_falls_back_after_provider_error() -> None:
+    class FailingResponses:
+        def create(self, **_kwargs: object) -> object:
+            raise APIConnectionError(
+                request=httpx.Request("POST", "https://api.deepseek.com/responses")
+            )
+
+    fallback = FakeArkStructuredModel()
+    model = DeepSeekMultimodalModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+        fallback_model=fallback,
+        client=SimpleNamespace(responses=FailingResponses()),
+    )
+
+    assert model.generate(
+        [TextInput("审核候选片段")],
+        schema_name="structured_result",
+        result_type=StructuredResult,
+    ) == _result()
+    assert len(fallback.calls) == 1
+
+
+def test_deepseek_does_not_fall_back_for_invalid_input(tmp_path) -> None:
+    video_path = tmp_path / "chunk.mp4"
+    video_path.write_bytes(b"video")
+    fallback = FakeArkStructuredModel()
+    responses = FakeDeepSeekResponses(_result().model_dump_json())
+    model = DeepSeekMultimodalModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+        fallback_model=fallback,
+        client=SimpleNamespace(responses=responses),
+    )
+
+    with pytest.raises(ValueError, match="does not support VideoInput"):
+        model.generate(
+            [VideoInput(video_path, fps=1.0)],
+            schema_name="structured_result",
+            result_type=StructuredResult,
+        )
+
+    assert responses.calls == []
+    assert fallback.calls == []
+
+
+def test_deepseek_does_not_fall_back_after_shared_deadline_expires(
+    monkeypatch,
+) -> None:
+    clock = iter([100.0, 111.0])
+    monkeypatch.setattr("gateway.models.monotonic", lambda: next(clock))
+    fallback = FakeArkStructuredModel()
+    responses = FakeDeepSeekResponses('{"summary":"missing scenes"}')
+    model = DeepSeekMultimodalModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+        fallback_model=fallback,
+        client=SimpleNamespace(responses=responses),
+    )
+
+    with pytest.raises(DeepSeekModelError, match="deadline expired before fallback"):
+        model.generate(
+            [TextInput("审核候选片段")],
+            schema_name="structured_result",
+            result_type=StructuredResult,
+        )
+
+    assert fallback.calls == []
+
+
+def test_deepseek_close_only_closes_owned_client(monkeypatch) -> None:
+    class Client:
+        responses = FakeDeepSeekResponses(_result().model_dump_json())
+
+        def __init__(self) -> None:
+            self.close_count = 0
+
+        def close(self) -> None:
+            self.close_count += 1
+
+    owned_client = Client()
+    monkeypatch.setattr("gateway.models.OpenAI", lambda **_kwargs: owned_client)
+    owned_model = DeepSeekMultimodalModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+    )
+    external_client = Client()
+    external_model = DeepSeekMultimodalModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=100,
+        request_timeout_seconds=10,
+        client=external_client,
+    )
+
+    owned_model.close()
+    owned_model.close()
+    external_model.close()
+
+    assert owned_client.close_count == 1
+    assert external_client.close_count == 0
 
 
 def test_ollama_uses_configured_url_and_preserves_ordered_images(tmp_path) -> None:

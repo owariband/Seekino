@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
 from ..schema import VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
@@ -57,13 +58,32 @@ def project_inputs(
     }
 
 
-def project_search_result(result: VideoChunkSearchResult) -> dict[str, Any]:
-    """Project the canonical Server result into evidence needed by model roles."""
-    return {
+def project_search_result(
+    result: VideoChunkSearchResult,
+    *,
+    previously_returned_video_chunk_ids: Collection[str] = (),
+) -> dict[str, Any]:
+    """Project canonical evidence without replaying an earlier Tool payload."""
+    previous_ids = set(previously_returned_video_chunk_ids)
+    new_hits = []
+    reused_hits = []
+    for hit in result.hits:
+        if hit.candidate.video_chunk_id in previous_ids:
+            reused_hits.append({
+                "candidate": hit.candidate.model_dump(mode="json", by_alias=True),
+                "selectionReason": _project_selection_reason(
+                    hit.selection_reason.model_dump(mode="json", by_alias=True),
+                    include_matched=False,
+                ),
+            })
+        else:
+            new_hits.append(_project_hit(hit))
+
+    projected = {
         "query": result.query,
         "seriesIds": list(result.series_ids),
         "resultCount": len(result.hits),
-        "hits": [_project_hit(hit) for hit in result.hits],
+        "hits": new_hits,
         "searchedVideoCount": (
             len(result.searched_video_ids)
             if result.searched_video_ids is not None else None
@@ -71,6 +91,13 @@ def project_search_result(result: VideoChunkSearchResult) -> dict[str, Any]:
         "partial": result.partial,
         "warnings": list(result.warnings),
     }
+    if reused_hits:
+        projected.update({
+            "newResultCount": len(new_hits),
+            "reusedResultCount": len(reused_hits),
+            "reusedHits": reused_hits,
+        })
+    return projected
 
 
 def _project_hit(hit: VideoChunkSearchHit) -> dict[str, Any]:
@@ -98,6 +125,7 @@ def _project_history_message(message: dict) -> dict[str, Any]:
 
 def _project_stored_search_result(result: dict) -> dict[str, Any]:
     hits = []
+    canonical_ranges: dict[str, tuple[int, int]] = {}
     for hit in result.get("hits") or []:
         if not isinstance(hit, dict):
             continue
@@ -106,6 +134,18 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
         evidence = hit.get("evidence")
         if not isinstance(candidate, dict) or not isinstance(evidence, dict):
             continue
+        video_chunk_id = candidate.get("videoChunkId")
+        start_ms = evidence.get("startMs")
+        end_ms = evidence.get("endMs")
+        if (
+            isinstance(video_chunk_id, str)
+            and isinstance(start_ms, int)
+            and not isinstance(start_ms, bool)
+            and isinstance(end_ms, int)
+            and not isinstance(end_ms, bool)
+            and 0 <= start_ms < end_ms
+        ):
+            canonical_ranges[video_chunk_id] = (start_ms, end_ms)
         hits.append({
             "candidate": {
                 "videoChunkId": candidate.get("videoChunkId"),
@@ -131,9 +171,52 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
         "seriesIds": list(result.get("seriesIds") or []),
         "resultCount": reply.get("resultCount") if isinstance(reply, dict) else len(hits),
         "hits": hits,
+        "videoRanges": _project_stored_video_ranges(result, canonical_ranges),
         "partial": bool(result.get("partial", False)),
         "warnings": list(result.get("warnings") or []),
     }
+
+
+def _project_stored_video_ranges(
+    result: dict,
+    canonical_ranges: dict[str, tuple[int, int]],
+) -> list[dict[str, int | str]]:
+    raw_blocks = result.get("renderBlocks")
+    if not isinstance(raw_blocks, list):
+        return [
+            {"videoChunkId": video_chunk_id, "startMs": start_ms, "endMs": end_ms}
+            for video_chunk_id, (start_ms, end_ms) in canonical_ranges.items()
+        ]
+    ranges: list[dict[str, int | str]] = []
+    seen: set[str] = set()
+    for block in raw_blocks:
+        if not isinstance(block, dict) or block.get("type") != "video":
+            continue
+        video_chunk_id = block.get("videoChunkId")
+        if (
+            not isinstance(video_chunk_id, str)
+            or video_chunk_id in seen
+            or video_chunk_id not in canonical_ranges
+        ):
+            continue
+        canonical_start_ms, canonical_end_ms = canonical_ranges[video_chunk_id]
+        start_ms = block.get("startMs")
+        end_ms = block.get("endMs")
+        if not (
+            isinstance(start_ms, int)
+            and not isinstance(start_ms, bool)
+            and isinstance(end_ms, int)
+            and not isinstance(end_ms, bool)
+            and canonical_start_ms <= start_ms < end_ms <= canonical_end_ms
+        ):
+            start_ms, end_ms = canonical_start_ms, canonical_end_ms
+        seen.add(video_chunk_id)
+        ranges.append({
+            "videoChunkId": video_chunk_id,
+            "startMs": start_ms,
+            "endMs": end_ms,
+        })
+    return ranges
 
 
 def _project_reference(
@@ -148,6 +231,21 @@ def _project_reference(
         for key in ("reference", "sourceStatus")
         if key in reference
     }
+    selected_range = reference.get("selectedRange")
+    if isinstance(selected_range, dict):
+        start_ms = selected_range.get("startMs")
+        end_ms = selected_range.get("endMs")
+        if (
+            isinstance(start_ms, int)
+            and not isinstance(start_ms, bool)
+            and isinstance(end_ms, int)
+            and not isinstance(end_ms, bool)
+            and 0 <= start_ms < end_ms
+        ):
+            projected["selectedRange"] = {
+                "startMs": start_ms,
+                "endMs": end_ms,
+            }
     reason = reference.get("selectionReason")
     if isinstance(reason, dict):
         projected["selectionReason"] = _project_selection_reason(

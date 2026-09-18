@@ -65,8 +65,15 @@ Transcript 是对已保存 ASR 原文的词法匹配，通道自身不会翻译 
 - `evidence.transcript`：用于证据核验的 ASR cues；只有 `candidate.transcriptRank` 非空才表示该候选进入了 ASR 原话排行榜。
 - `evidence.allTimeEvents`、`videoCompact`、`windowSummary`：用于核验结论的视觉事件与语义上下文。
 - `selectionReason`：Server 生成的候选保留说明。必须与 evidence 交叉核验，不得将它当作新事实。
+- `newResultCount`、`reusedResultCount`、`reusedHits`：仅在后续调用再次命中已返回的 VideoChunk 时出现。`hits` 只携带新 Chunk 的完整 evidence；`reusedHits` 只更新候选排序与摘要，完整 ASR 和 canonical 时间范围继续引用前一次 Tool 结果，不代表证据缺失。
 - `partial` 和 `warnings`：检索完整性与限制，不得隐藏。
 
 ## 迭代策略
 
 当清晰 Query 和一组权重已经产生充分证据时，一次调用即可。当结果较弱，或问题包含明确分离的语义与画面部分时，可在预算内用改写后的独立 Query 和有意调整的权重比例再检索。只能选择当前或已记录检索调用真实返回的 `videoChunkId`。不得更改 Workspace、Series Scope、`rrf_k`、单通道候选深度、collection、ANN/exact 模式或索引版本。
+
+## 最终片段范围
+
+retrieve 只召回 canonical VideoChunk，不根据最终播放小区间再次检索或裁剪。最终草稿使用 `selected_video_ranges` 选择证据，每项包含真实的 `video_chunk_id`，以及根据 ASR 时间线、事件或视觉证据提出的原视频绝对 `start_ms` 和 `end_ms`。这个小区间是播放建议，不参与 retrieve 是否成立。
+
+时间范围应满足对应候选的 `evidence.startMs <= start_ms < end_ms <= evidence.endMs`，完整覆盖支撑结论的事件、动作或对白，并去掉无关前后内容。不得从一句对白或连续动作中间截断，也不得为了追求短而移除理解结论所需的上下文。Evaluator 会审核范围边界、完整性和精确性；范围不合理时通过 advice 交给 Query 修订，不把它升级成 retrieval 失败。Chat 使用 `submit_video_item` 显式提交获批的 `video_chunk_id`、`start_ms`、`end_ms` 和 `claim`；Server 对异常提交降级并告警，不让可恢复的播放范围问题破坏文字回答。

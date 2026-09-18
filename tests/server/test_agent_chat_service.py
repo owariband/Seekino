@@ -31,7 +31,7 @@ from server.repository.video import VideoRepository
 from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult,
 )
-from server.service.agent_chat import AgentChatService
+from server.service.agent_chat import AgentChatService, _stored_video_range
 from server.service.library import LibraryService
 
 
@@ -69,7 +69,7 @@ class _QueryModel:
     model_name: str = "query-test"
     queries: tuple[str | None, ...] = ("第一次改写",)
     prompts: list[str] = field(default_factory=list)
-    selected_ids: tuple[str, ...] = ()
+    selected_ranges: tuple[tuple[str, int, int], ...] = ()
 
     def run_query(self, prompt, *, tools, result_type, max_model_calls, **_kwargs):
         self.prompts.append(prompt)
@@ -87,7 +87,15 @@ class _QueryModel:
             })
         return result_type.model_validate({
             "plan_context": f"第 {number} 轮检索并核验动作。",
-            "message": f"第 {number} 轮待审核草稿。", "selected_video_chunk_ids": list(self.selected_ids),
+            "message": f"第 {number} 轮待审核草稿。",
+            "selected_video_ranges": [
+                {
+                    "video_chunk_id": video_chunk_id,
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                }
+                for video_chunk_id, start_ms, end_ms in self.selected_ranges
+            ],
         })
 
 
@@ -117,11 +125,14 @@ class _ChatModel:
     def run_agent_loop(
         self, prompt, *, function_name, function_description, result_type,
         max_model_calls, handle_text, handle_tool_call,
+        require_tool_call=False,
         request_timeout_seconds=None, check_control=None,
     ):
         assert function_name == "submit_video_item"
         assert function_description
-        assert set(result_type.model_fields) == {"video_chunk_id", "claim"}
+        assert set(result_type.model_fields) == {
+            "video_chunk_id", "start_ms", "end_ms", "claim",
+        }
         self.prompts.append(prompt)
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
@@ -132,24 +143,35 @@ class _ChatModel:
         if self.fail:
             raise RuntimeError("private upstream failure")
         context = json.loads(prompt.rsplit("\n\n", 1)[1])
+        approved_turn = context["approved_turn"]
         chunk_ids = [
             hit["candidate"]["videoChunkId"]
-            for hit in context["approved_turn"]["selected_evidence"]["hits"]
+            for hit in approved_turn["selected_evidence"]["hits"]
         ]
+        assert require_tool_call is bool(chunk_ids)
+        ranges_by_id = {
+            item["video_chunk_id"]: item
+            for item in approved_turn["draft"]["selected_video_ranges"]
+        }
         check_control()
         handle_text(
             "目前没有足够的候选画面，"
             if chunk_ids else "目前没有足够的候选画面，建议补充人物或动作。"
         )
         for chunk_id in chunk_ids:
+            selected_range = ranges_by_id[chunk_id]
             item = result_type.model_validate({
                 "video_chunk_id": chunk_id,
+                "start_ms": selected_range["start_ms"],
+                "end_ms": selected_range["end_ms"],
                 "claim": f"片段 {chunk_id} 支持回答。",
             })
             self.submitted_items.append(item.model_dump())
             assert json.loads(handle_tool_call(item)) == {
                 "accepted": True,
                 "video_chunk_id": chunk_id,
+                "start_ms": selected_range["start_ms"],
+                "end_ms": selected_range["end_ms"],
             }
         if chunk_ids:
             handle_text("建议补充人物或动作。")
@@ -239,7 +261,14 @@ def evidence_service(build_service, prepared_import):
         selection_reason=SelectionReason(summary=chunk.window_summary, matched_evidence=[], limitations=[]),
         evidence=chunk,
     ) for index, chunk in enumerate(videos.hydrate_video_chunks(report.video_chunk_ids))]
-    query.selected_ids = tuple(report.video_chunk_ids)
+    query.selected_ranges = tuple(
+        (
+            hit.evidence.video_chunk_id,
+            hit.evidence.start_ms,
+            hit.evidence.end_ms,
+        )
+        for hit in retrieval.hits
+    )
     return resources
 
 
@@ -286,6 +315,10 @@ def test_read_only_message_recovery_by_user_assistant_or_request_key(build_servi
 
 def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidence_service):
     service, conversation, _, _, query, *_ = evidence_service
+    selected = list(query.selected_ranges)
+    chunk_id, start_ms, end_ms = selected[1]
+    selected[1] = (chunk_id, start_ms + 1, end_ms - 1)
+    query.selected_ranges = tuple(selected)
     source = _send(service, conversation)
     hits = source.assistant_message.search_result["hits"]
     reference = {"messageId": source.assistant_message.message_id,
@@ -297,13 +330,91 @@ def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidenc
     context = json.loads(query.prompts[-1].split("\n\n", 1)[1])["inputs"]
     assert context["reference_context"]["evidence"]["videoChunkId"] == reference["videoChunkId"]
     assert context["reference_context"]["evidence"]["contextBeforeCompact"] == hits[1]["evidence"]["contextBeforeCompact"]
+    assert context["reference_context"]["selectedRange"] == {
+        "startMs": start_ms + 1,
+        "endMs": end_ms - 1,
+    }
     assert context["reference_context"]["sourceStatus"] == "COMPLETED"
     assert [hit["candidate"]["videoChunkId"] for hit in context["history"][1]["searchResult"]["hits"]] == [
         hit["candidate"]["videoChunkId"] for hit in hits
     ]
+    assert context["history"][1]["searchResult"]["videoRanges"] == [
+        {
+            "videoChunkId": block["videoChunkId"],
+            "startMs": block["startMs"],
+            "endMs": block["endMs"],
+        }
+        for block in source.assistant_message.search_result["renderBlocks"]
+        if block["type"] == "video"
+    ]
     changed = {**reference, "videoChunkId": hits[0]["candidate"]["videoChunkId"]}
     with pytest.raises(AgentConflictError):
         _send(service, conversation, key="reference", content="这段的前文呢？", reference=changed)
+
+
+@pytest.mark.parametrize("blocks", [
+    None,
+    [{"type": "video", "videoChunkId": "chunk-1"}],
+    [{
+        "type": "video", "videoChunkId": "chunk-1",
+        "startMs": 999, "endMs": 1900,
+    }],
+    [{
+        "type": "video", "videoChunkId": "chunk-1",
+        "startMs": 1800, "endMs": 1700,
+    }],
+    [{
+        "type": "video", "videoChunkId": "chunk-1",
+        "startMs": 1100, "endMs": 2001,
+    }],
+])
+def test_reference_range_falls_back_to_canonical_for_legacy_or_invalid_blocks(
+    caplog, blocks,
+):
+    caplog.set_level(logging.WARNING, logger="server.service.agent_chat")
+    search_result = {} if blocks is None else {"renderBlocks": blocks}
+
+    assert _stored_video_range(
+        search_result,
+        "chunk-1",
+        canonical_start_ms=1000,
+        canonical_end_ms=2000,
+        conversation_id="conversation",
+        message_id="assistant",
+    ) == {"startMs": 1000, "endMs": 2000}
+    warning = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("event=agent_video_range_fallback ")
+    )
+    assert "conversation_id=conversation message_id=assistant" in warning
+    assert "video_chunk_id=chunk-1" in warning
+    assert "canonical_start_ms=1000 canonical_end_ms=2000" in warning
+    assert "action=fallback_to_canonical" in warning
+
+
+def test_reference_range_preserves_valid_stored_range_without_warning(caplog):
+    caplog.set_level(logging.WARNING, logger="server.service.agent_chat")
+
+    selected_range = _stored_video_range(
+        {"renderBlocks": [{
+            "type": "video",
+            "videoChunkId": "chunk-1",
+            "startMs": 1100,
+            "endMs": 1900,
+        }]},
+        "chunk-1",
+        canonical_start_ms=1000,
+        canonical_end_ms=2000,
+        conversation_id="conversation",
+        message_id="assistant",
+    )
+
+    assert selected_range == {"startMs": 1100, "endMs": 1900}
+    assert not [
+        record for record in caplog.records
+        if record.getMessage().startswith("event=agent_video_range_fallback ")
+    ]
 
 
 @pytest.mark.parametrize("invalid", ["user-message", "missing-chunk", "other-conversation", "outside-scope"])
@@ -562,7 +673,8 @@ def test_next_kick_reads_only_completed_conversation_history(build_service):
         "searchResult": {
             "query": first.assistant_message.search_result["query"],
             "seriesIds": first.assistant_message.search_result["seriesIds"],
-            "resultCount": 0, "hits": [], "partial": False, "warnings": [],
+            "resultCount": 0, "hits": [], "videoRanges": [],
+            "partial": False, "warnings": [],
         },
     }
     with pytest.raises(AgentConversationNotFoundError):
@@ -807,7 +919,13 @@ def test_slow_consumer_receives_one_atomic_tool_answer(build_service):
 
 def test_shutdown_requests_stop_and_waits_before_resources_close(build_service):
     release = Event()
-    service, conversation, _, _, _, _, _ = build_service(chat=_ChatModel(release=release))
+    evaluator = _EvaluatorModel()
+    closed = []
+    evaluator.close = lambda: closed.append(True)
+    service, conversation, _, _, _, _, _ = build_service(
+        evaluator=evaluator,
+        chat=_ChatModel(release=release),
+    )
     execution = service.start_message(conversation.conversation_id, workspace_id="local-default", content="找杯子", idempotency_key="shutdown", stream=True)
     try:
         for _ in range(4):
@@ -816,6 +934,7 @@ def test_shutdown_requests_stop_and_waits_before_resources_close(build_service):
     finally:
         release.set()
     service.close()
+    assert closed == [True]
     with pytest.raises(AgentModelInvocationError, match="cancelled"):
         execution.result()
     assert service.list_all_messages(conversation.conversation_id, workspace_id="local-default")[-1].status == "FAILED"

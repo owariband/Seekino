@@ -308,6 +308,8 @@ def _agent_render_blocks(
             blocks.extend(
                 AgentVideoRenderBlockView(
                     video_chunk_id=hit.candidate.video_chunk_id,
+                    start_ms=hit.evidence.start_ms,
+                    end_ms=hit.evidence.end_ms,
                 )
                 for hit in result.hits
             )
@@ -329,14 +331,46 @@ def _agent_render_blocks(
             continue
         if raw.get("type") == "video":
             video_chunk_id = raw.get("videoChunkId")
+            if isinstance(video_chunk_id, str) and video_chunk_id not in hits_by_id:
+                _logger.warning(
+                    "event=agent_video_range_fallback conversation_id=%s message_id=%s "
+                    "video_chunk_id=%s proposed_start_ms=%r proposed_end_ms=%r "
+                    "canonical_start_ms=None canonical_end_ms=None "
+                    "action=drop_unknown_chunk",
+                    state.conversation_id, state.message_id, video_chunk_id,
+                    raw.get("startMs"), raw.get("endMs"),
+                )
+                continue
             if (
                 isinstance(video_chunk_id, str)
                 and video_chunk_id in hits_by_id
                 and video_chunk_id not in seen_video_ids
             ):
+                evidence = hits_by_id[video_chunk_id].evidence
+                start_ms = raw.get("startMs")
+                end_ms = raw.get("endMs")
+                if not (
+                    isinstance(start_ms, int)
+                    and not isinstance(start_ms, bool)
+                    and isinstance(end_ms, int)
+                    and not isinstance(end_ms, bool)
+                    and evidence.start_ms <= start_ms < end_ms <= evidence.end_ms
+                ):
+                    _logger.warning(
+                        "event=agent_video_range_fallback conversation_id=%s message_id=%s "
+                        "video_chunk_id=%s proposed_start_ms=%r proposed_end_ms=%r "
+                        "canonical_start_ms=%s canonical_end_ms=%s "
+                        "action=fallback_to_canonical",
+                        state.conversation_id, state.message_id, video_chunk_id,
+                        start_ms, end_ms, evidence.start_ms, evidence.end_ms,
+                    )
+                    start_ms = evidence.start_ms
+                    end_ms = evidence.end_ms
                 seen_video_ids.add(video_chunk_id)
                 blocks.append(AgentVideoRenderBlockView(
                     video_chunk_id=video_chunk_id,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
                 ))
     if not any(block.type == "markdown" for block in blocks) and state.content:
         blocks.insert(0, AgentMarkdownRenderBlockView(markdown=state.content))

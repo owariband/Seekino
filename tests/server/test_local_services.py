@@ -75,17 +75,20 @@ def test_config_digest_tracks_model_api_key_changes(monkeypatch) -> None:
     assert len(initial) == len(ark_changed) == len(both_changed) == 64
 
 
-def test_config_digest_tracks_configured_chat_api_key(monkeypatch) -> None:
+def test_config_digest_tracks_configured_parse_fallback_api_key(monkeypatch) -> None:
     config = SimpleNamespace(
-        agent_chat=SimpleNamespace(api_key_env="CUSTOM_CHAT_API_KEY"),
+        agent_model=SimpleNamespace(api_key_env="DEEPSEEK_API_KEY"),
         video_parser=SimpleNamespace(
-            fallback=SimpleNamespace(enabled=False),
+            fallback=SimpleNamespace(
+                enabled=True,
+                deepseek=SimpleNamespace(api_key_env="CUSTOM_DEEPSEEK_API_KEY"),
+            ),
         ),
     )
     monkeypatch.setattr(local_services, "load_config", lambda: config)
-    monkeypatch.setenv("CUSTOM_CHAT_API_KEY", "first")
+    monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "first")
     initial = config_digest()
-    monkeypatch.setenv("CUSTOM_CHAT_API_KEY", "second")
+    monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "second")
 
     assert config_digest() != initial
 
@@ -176,19 +179,22 @@ def test_start_requires_deepseek_key_before_launching_server(monkeypatch) -> Non
         local_services.start_applications()
 
 
-def test_start_requires_configured_chat_key_name(monkeypatch) -> None:
+def test_start_requires_configured_parse_fallback_key_name(monkeypatch) -> None:
     config = SimpleNamespace(
-        agent_chat=SimpleNamespace(api_key_env="CUSTOM_CHAT_API_KEY"),
+        agent_model=SimpleNamespace(api_key_env="CUSTOM_DEEPSEEK_API_KEY"),
         video_parser=SimpleNamespace(
-            fallback=SimpleNamespace(enabled=False),
+            fallback=SimpleNamespace(
+                enabled=True,
+                deepseek=SimpleNamespace(api_key_env="CUSTOM_DEEPSEEK_API_KEY"),
+            ),
         ),
     )
     monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
     monkeypatch.setenv("ARK_API_KEY", "ark-test")
-    monkeypatch.delenv("CUSTOM_CHAT_API_KEY", raising=False)
+    monkeypatch.delenv("CUSTOM_DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setattr(local_services, "load_config", lambda: config)
     monkeypatch.setattr(local_services, "listening", lambda _port: False)
     monkeypatch.setattr(local_services, "owned_pid", lambda _name: None)
 
-    with pytest.raises(RuntimeError, match="CUSTOM_CHAT_API_KEY"):
+    with pytest.raises(RuntimeError, match="CUSTOM_DEEPSEEK_API_KEY"):
         local_services.start_applications()

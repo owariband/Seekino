@@ -6,7 +6,9 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AfterValidator, AliasChoices, BaseModel, ConfigDict, Field, StringConstraints,
+)
 
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
@@ -48,7 +50,7 @@ class DeepSeekModelConfig(BaseModel):
     request_timeout_seconds: float = Field(gt=0)
 
 
-class AgentChatModelConfig(BaseModel):
+class AgentModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: Literal["deepseek"] = "deepseek"
@@ -60,8 +62,8 @@ class AgentChatModelConfig(BaseModel):
     request_timeout_seconds: float = Field(gt=0)
 
 
-def _default_agent_chat_config() -> AgentChatModelConfig:
-    return AgentChatModelConfig(
+def _default_agent_model_config() -> AgentModelConfig:
+    return AgentModelConfig(
         model="deepseek-flash",
         base_url="https://api.deepseek.com",
         api_key_env="DEEPSEEK_API_KEY",
@@ -103,9 +105,10 @@ class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Keep parse-only custom configs compatible; Server startup still validates
-    # the resolved Chat API key before opening database or Qdrant resources.
-    agent_chat: AgentChatModelConfig = Field(
-        default_factory=_default_agent_chat_config,
+    # the resolved Agent API key before opening database or Qdrant resources.
+    agent_model: AgentModelConfig = Field(
+        default_factory=_default_agent_model_config,
+        validation_alias=AliasChoices("agent_model", "agent_chat"),
     )
     # Keep the parser YAML key stable for the existing CLI and local run configuration.
     video_parser: VideoParseConfig

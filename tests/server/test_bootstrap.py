@@ -25,42 +25,6 @@ class _QdrantClient:
         self.closed = True
 
 
-def test_process_assembly_requires_chat_key_before_opening_resources(monkeypatch):
-    from types import SimpleNamespace
-
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.setattr(
-        bootstrap,
-        "create_database_engine",
-        lambda *_args, **_kwargs: pytest.fail("database opened before config validation"),
-    )
-
-    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
-        bootstrap.build_application_services(
-            SimpleNamespace(model_config_path=None),
-        )
-
-
-def test_process_assembly_rejects_legacy_provider_neutral_chat_override(
-    monkeypatch,
-) -> None:
-    from types import SimpleNamespace
-
-    monkeypatch.setenv("ANIVAG_AGENT_CHAT_MODEL", "doubao-old-chat")
-    monkeypatch.setattr(
-        bootstrap,
-        "create_database_engine",
-        lambda *_args, **_kwargs: pytest.fail(
-            "database opened before legacy config validation"
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="ANIVAG_DEEPSEEK_CHAT_MODEL"):
-        bootstrap.build_application_services(
-            SimpleNamespace(model_config_path=None),
-        )
-
-
 @pytest.mark.parametrize(
     ("configured_models", "expected_models"),
     [
@@ -71,8 +35,8 @@ def test_process_assembly_rejects_legacy_provider_neutral_chat_override(
         (
             (None, None, None),
             (
-                "doubao-seed-2-0-lite-260428",
-                "doubao-seed-2-0-lite-260428",
+                "deepseek-flash",
+                "deepseek-flash",
                 "deepseek-flash",
             ),
         ),
@@ -106,7 +70,8 @@ def test_process_assembly_receives_runtime_configuration(
         video_embedding_fps=2.0,
         agent_query_model=configured_models[0],
         agent_evaluator_model=configured_models[1],
-        agent_deepseek_chat_model=configured_models[2],
+        agent_chat_model=configured_models[2],
+        agent_fallback_model="configured-fallback-model",
         agent_request_timeout_seconds=120,
         images=ImageUploadConfig(maximum_upload_size_bytes=2048, maximum_pixels=1_000_000, model_max_edge=512),
         agent=AgentServiceConfig(
@@ -197,6 +162,19 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._query_model.model_name == expected_models[0]
         assert runtime._evaluator_model.model_name == expected_models[1]
         assert runtime._chat_model.model_name == expected_models[2]
+        assert isinstance(
+            runtime._evaluator_model,
+            bootstrap.DeepSeekStructuredTextModel,
+        )
+        assert runtime._query_model.provider_name == "deepseek"
+        assert runtime._evaluator_model.provider_name == "deepseek"
+        assert runtime._chat_model.provider_name == "deepseek"
+        assert runtime._query_model.fallback_provider_name == "ark"
+        assert runtime._evaluator_model.fallback_provider_name == "ark"
+        assert runtime._chat_model.fallback_provider_name == "ark"
+        assert runtime._query_model.fallback_model_name == "configured-fallback-model"
+        assert runtime._evaluator_model.fallback_model_name == "configured-fallback-model"
+        assert runtime._chat_model.fallback_model_name == "configured-fallback-model"
         assert runtime._query_model.max_output_tokens == 2048
         assert runtime._query_model.max_input_chars == 120_000
         assert runtime._chat_model.max_output_tokens == 2048

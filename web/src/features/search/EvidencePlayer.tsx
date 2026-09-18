@@ -1,5 +1,5 @@
-import { Captions, CircleAlert, Clock3, Play, ScanSearch } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Captions, CircleAlert, Clock3, Pause, Play, ScanSearch } from "lucide-react";
+import { type CSSProperties, type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { errorMessage, getVideoChunk, mediaUrl } from "../../api/client";
 import type { VideoChunkEvidence, VideoChunkSearchHit } from "../../api/contracts";
@@ -11,13 +11,18 @@ type EvidenceTab = "reason" | "evidence" | "context";
 
 interface EvidencePlayerProps {
   hit: VideoChunkSearchHit | null;
+  playbackRange: { startMs: number; endMs: number };
 }
 
-export function EvidencePlayer({ hit }: EvidencePlayerProps) {
+export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playRef = useRef<(() => void) | null>(null);
+  const playingRef = useRef(false);
   const [tab, setTab] = useState<EvidenceTab>("reason");
   const [playError, setPlayError] = useState<string | null>(null);
+  const [mediaReady, setMediaReady] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [relativePositionMs, setRelativePositionMs] = useState(0);
   const [refreshed, setRefreshed] = useState<VideoChunkEvidence | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [failedImage, setFailedImage] = useState<string | null>(null);
@@ -27,54 +32,86 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
   selectionRef.current = selectionKey;
   useEffect(() => { setRefreshing(false); }, [hit?.evidence.workspaceId, hit?.evidence.videoChunkId]);
   const playbackUrl = evidence?.playbackStatus === "READY" ? mediaUrl(evidence.playbackUrl) : null;
+  const clipDurationMs = Math.max(0, playbackRange.endMs - playbackRange.startMs);
+  const playbackKey = evidence && playbackUrl ? `${evidence.workspaceId}:${evidence.videoId}:${evidence.videoChunkId}:${playbackRange.startMs}:${playbackRange.endMs}:${playbackUrl}` : null;
 
   useEffect(() => {
     setTab("reason");
     setPlayError(null);
+    setMediaReady(false);
+    setPlaying(false);
+    setRelativePositionMs(0);
+    playingRef.current = false;
     const video = videoRef.current;
     if (!video || !evidence || !playbackUrl) return;
-    const start = evidence.startMs / 1000;
-    const end = evidence.endMs / 1000;
+    const start = playbackRange.startMs / 1000;
+    const end = playbackRange.endMs / 1000;
     let active = true;
     let requested = false;
     video.pause();
-    const position = () => {
-      video.currentTime = start;
-      if (requested) {
-        requested = false;
-        void video.play().catch((error: unknown) => {
-          if (active) setPlayError(errorMessage(error));
-        });
-      }
+    const startPlayback = () => {
+      requested = false;
+      void video.play().catch((error: unknown) => {
+        if (active && !(error instanceof DOMException && error.name === "AbortError")) setPlayError(errorMessage(error));
+      });
     };
-    const stopAtEnd = () => {
+    const positionAtStart = () => {
+      video.currentTime = start;
+      setRelativePositionMs(0);
+    };
+    const prepare = () => {
+      setMediaReady(true);
+      positionAtStart();
+      if (requested) startPlayback();
+    };
+    const syncPosition = () => {
+      if (video.currentTime < start) {
+        positionAtStart();
+        return;
+      }
       if (video.currentTime >= end) {
         video.pause();
         video.currentTime = end;
+        setRelativePositionMs(clipDurationMs);
+        playingRef.current = false;
+        setPlaying(false);
+        return;
       }
+      setRelativePositionMs(Math.min(clipDurationMs, Math.max(0, video.currentTime * 1000 - playbackRange.startMs)));
     };
     const keepInRange = () => {
-      if (video.currentTime < start || video.currentTime >= end) video.currentTime = start;
+      if (video.currentTime < start || video.currentTime >= end) positionAtStart();
+      playingRef.current = true;
+      setPlaying(true);
+    };
+    const markPaused = () => {
+      playingRef.current = false;
+      setPlaying(false);
     };
     playRef.current = () => {
       setPlayError(null);
       requested = true;
-      if (video.readyState >= HTMLMediaElement.HAVE_METADATA) position();
+      if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        if (video.currentTime < start || video.currentTime >= end) positionAtStart();
+        startPlayback();
+      }
     };
-    video.addEventListener("loadedmetadata", position);
-    video.addEventListener("timeupdate", stopAtEnd);
+    video.addEventListener("loadedmetadata", prepare);
+    video.addEventListener("timeupdate", syncPosition);
     video.addEventListener("play", keepInRange);
-    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) position();
+    video.addEventListener("pause", markPaused);
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) prepare();
     return () => {
       active = false;
       requested = false;
       playRef.current = null;
-      video.removeEventListener("loadedmetadata", position);
-      video.removeEventListener("timeupdate", stopAtEnd);
+      video.removeEventListener("loadedmetadata", prepare);
+      video.removeEventListener("timeupdate", syncPosition);
       video.removeEventListener("play", keepInRange);
+      video.removeEventListener("pause", markPaused);
       video.pause();
     };
-  }, [evidence?.workspaceId, evidence?.videoId, evidence?.videoChunkId, evidence?.startMs, evidence?.endMs, playbackUrl]);
+  }, [clipDurationMs, evidence?.workspaceId, evidence?.videoId, evidence?.videoChunkId, playbackRange.endMs, playbackRange.startMs, playbackUrl]);
 
   if (!hit || !evidence) {
     return (
@@ -88,6 +125,30 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
   }
 
   const explanation = explainHit(hit);
+  const seekClip = (relativeMs: number) => {
+    const video = videoRef.current;
+    if (!video || !mediaReady) return;
+    const nextPositionMs = Math.min(clipDurationMs, Math.max(0, relativeMs));
+    video.currentTime = (playbackRange.startMs + nextPositionMs) / 1000;
+    setRelativePositionMs(nextPositionMs);
+    if (nextPositionMs >= clipDurationMs) video.pause();
+  };
+  const seekClipWithKeyboard = (event: KeyboardEvent<HTMLInputElement>) => {
+    let nextPositionMs: number;
+    switch (event.key) {
+      case "ArrowLeft":
+      case "ArrowDown": nextPositionMs = relativePositionMs - 1_000; break;
+      case "ArrowRight":
+      case "ArrowUp": nextPositionMs = relativePositionMs + 1_000; break;
+      case "PageDown": nextPositionMs = relativePositionMs - 5_000; break;
+      case "PageUp": nextPositionMs = relativePositionMs + 5_000; break;
+      case "Home": nextPositionMs = 0; break;
+      case "End": nextPositionMs = clipDurationMs; break;
+      default: return;
+    }
+    event.preventDefault();
+    seekClip(nextPositionMs);
+  };
   const refreshMedia = async () => {
     setRefreshing(true);
     try {
@@ -103,22 +164,49 @@ export function EvidencePlayer({ hit }: EvidencePlayerProps) {
   return (
     <aside className={styles.evidencePanel}>
       <div className={styles.viewer}>
-        {playbackUrl ? <video key={`${evidence.workspaceId}:${evidence.videoId}:${evidence.videoChunkId}:${playbackUrl}`} ref={videoRef} controls preload="metadata" src={playbackUrl} poster={evidence.thumbnail && failedImage !== evidence.thumbnail.imageId ? mediaUrl(evidence.thumbnail.url) ?? undefined : undefined} onError={() => setPlayError("视频媒体无法读取，请刷新媒体状态后重试。")} aria-label="视频证据" />
+        {playbackUrl ? <video key={playbackKey} ref={videoRef} playsInline preload="metadata" src={playbackUrl} poster={evidence.thumbnail && failedImage !== evidence.thumbnail.imageId ? mediaUrl(evidence.thumbnail.url) ?? undefined : undefined} onError={() => setPlayError("视频媒体无法读取，请刷新媒体状态后重试。")} aria-label="视频证据" />
           : <p role="status">{evidence.playbackStatus === "MISSING" ? "原视频文件已丢失，仍可查看文字证据。" : evidence.playbackStatus === "PREPARING" ? "播放媒体正在准备，仍可查看文字证据。" : "暂无可播放媒体，仍可查看文字证据。"}</p>}
+        {playbackUrl ? (
+          <div className={styles.clipControls}>
+            <button
+              className={styles.clipToggle}
+              type="button"
+              onClick={() => {
+                if (playingRef.current) videoRef.current?.pause();
+                else playRef.current?.();
+              }}
+              aria-label={playing ? "暂停视频片段" : "播放视频片段"}
+            >
+              {playing ? <Pause size={18} fill="currentColor" aria-hidden="true" /> : <Play size={18} fill="currentColor" aria-hidden="true" />}
+            </button>
+            <input
+              className={styles.clipTimeline}
+              type="range"
+              min={0}
+              max={clipDurationMs}
+              step={1}
+              value={Math.min(relativePositionMs, clipDurationMs)}
+              disabled={!mediaReady || clipDurationMs <= 0}
+              onChange={(event) => seekClip(Number(event.currentTarget.value))}
+              onKeyDown={seekClipWithKeyboard}
+              aria-label="视频片段播放进度"
+              aria-valuetext={`${formatTimecode(relativePositionMs)} / ${formatTimecode(clipDurationMs)}`}
+              style={{ "--clip-progress": `${clipDurationMs > 0 ? (relativePositionMs / clipDurationMs) * 100 : 0}%` } as CSSProperties}
+            />
+            <time className={styles.clipTime}>{formatTimecode(relativePositionMs)} / {formatTimecode(clipDurationMs)}</time>
+          </div>
+        ) : null}
         <div className={styles.frameMeta}>
           <span>{episodeLabel(evidence.episodeOrder)}</span>
-          <strong>{formatTimeRange(evidence.startMs, evidence.endMs)}</strong>
+          <strong>{formatTimeRange(playbackRange.startMs, playbackRange.endMs)}</strong>
         </div>
       </div>
 
       <div className={styles.playerHeading}>
         <div>
           <h2>{evidence.seriesName}</h2>
+          <p>片段范围 {formatTimeRange(playbackRange.startMs, playbackRange.endMs)}</p>
         </div>
-        <button className="button-secondary" type="button" disabled={!playbackUrl} onClick={() => playRef.current?.()}>
-          <Play size={15} fill="currentColor" />
-          从 {formatTimecode(evidence.startMs)} 播放
-        </button>
       </div>
 
       {playError ? <p className={styles.messageError} role="alert">{playError}</p> : null}

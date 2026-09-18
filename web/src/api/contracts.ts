@@ -378,7 +378,7 @@ export interface AgentMessageTiming {
 }
 export type AgentRenderBlock =
   | { type: "markdown"; markdown: string }
-  | { type: "video"; videoChunkId: string };
+  | { type: "video"; videoChunkId: string; startMs: number; endMs: number };
 
 export interface AgentMessageView {
   messageId: string;

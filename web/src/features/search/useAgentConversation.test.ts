@@ -181,14 +181,14 @@ describe("Conversation state", () => {
     const hit = { candidate: { videoChunkId: "chunk" }, evidence: { videoId: "video", videoChunkId: "chunk", startMs: 12_000, endMs: 15_000 } } as VideoChunkSearchHit;
 
     act(() => {
-      stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, block: { type: "video", videoChunkId: "chunk" } });
+      stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, block: { type: "video", videoChunkId: "chunk", startMs: 12_500, endMs: 14_500 } });
       stream.emit({ type: "answer.evidence", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, searchResult: searchResult(["A"], [hit]) });
       stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 4, block: { type: "markdown", markdown: "片段后的说明" } });
       snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A")] });
     });
 
     expect(result.current.messages[1]?.renderBlocks).toEqual([
-      { type: "video", videoChunkId: "chunk" },
+      { type: "video", videoChunkId: "chunk", startMs: 12_500, endMs: 14_500 },
       { type: "markdown", markdown: "片段后的说明" },
     ]);
     expect(result.current.messages[1]?.searchResult?.hits).toEqual([hit]);

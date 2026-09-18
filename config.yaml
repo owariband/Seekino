@@ -1,4 +1,4 @@
-agent_chat:
+agent_model:
   provider: deepseek
   model: deepseek-flash
   base_url: https://api.deepseek.com

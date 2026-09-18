@@ -42,10 +42,11 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.max_tool_calls_per_turn == 4
     assert settings.agent.max_output_tokens == 4096
     assert settings.agent.max_prompt_chars == 200_000
-    assert settings.agent.execution_timeout_seconds == 180
+    assert settings.agent.execution_timeout_seconds == 600
     assert settings.agent.maximum_concurrent_kicks == 4
     assert settings.agent_query_model is None
-    assert settings.agent_deepseek_chat_model is None
+    assert settings.agent_chat_model is None
+    assert settings.agent_fallback_model is None
     assert settings.agent_evaluator_model is None
     assert settings.mq.heartbeat_interval < settings.mq.lease_duration
     assert settings.mq.poll_interval_seconds == 2.0
@@ -228,7 +229,8 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
     overrides = {
         "ANIVAG_AGENT_QUERY_MODEL": "query-model",
         "ANIVAG_AGENT_EVALUATOR_MODEL": "review-model",
-        "ANIVAG_DEEPSEEK_CHAT_MODEL": "output-model",
+        "ANIVAG_AGENT_CHAT_MODEL": "output-model",
+        "ANIVAG_AGENT_FALLBACK_MODEL": "fallback-model",
         "ANIVAG_AGENT_MAX_LOOP_TURNS": "2",
         "ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN": "5",
         "ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN": "3",
@@ -243,8 +245,9 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
     assert (
         settings.agent_query_model,
         settings.agent_evaluator_model,
-        settings.agent_deepseek_chat_model,
-    ) == ("query-model", "review-model", "output-model")
+        settings.agent_chat_model,
+        settings.agent_fallback_model,
+    ) == ("query-model", "review-model", "output-model", "fallback-model")
     assert settings.agent.max_loop_turns == 2
     assert settings.agent.max_model_calls_per_turn == 5
     assert settings.agent.max_tool_calls_per_turn == 3
@@ -252,6 +255,21 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
     assert settings.agent.max_prompt_chars == 120_000
     assert settings.agent.execution_timeout_seconds == 90
     assert settings.agent.maximum_concurrent_kicks == 2
+
+
+def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_DEEPSEEK_CHAT_MODEL", "legacy-chat-model")
+
+    settings = ServerSettings.from_environment()
+
+    assert settings.agent_chat_model == "legacy-chat-model"
+
+    monkeypatch.setenv("ANIVAG_AGENT_CHAT_MODEL", "current-chat-model")
+
+    settings = ServerSettings.from_environment()
+
+    assert settings.agent_chat_model == "current-chat-model"
 
 
 @pytest.mark.parametrize("name,value", [

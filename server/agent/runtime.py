@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
+import logging
 from math import isfinite
 from threading import Event
 from time import monotonic
@@ -21,6 +22,8 @@ from .state import (
     LoopTurn, ModelContextBudget, RunInputs, RunState,
 )
 from .tools import build_retrieval_tool
+
+_logger = logging.getLogger(__name__)
 
 
 class AgentRuntime:
@@ -82,6 +85,11 @@ class AgentRuntime:
     def model_name(self) -> str:
         return self._chat_model.model_name
 
+    def close(self) -> None:
+        close_evaluator = getattr(self._evaluator_model, "close", None)
+        if callable(close_evaluator):
+            close_evaluator()
+
     def kick(
         self,
         inputs: RunInputs,
@@ -112,10 +120,18 @@ class AgentRuntime:
         control.publish(inputs, {"type": "answer.progress", "phase": AnswerPhase.RETRIEVING})
         calls = []
         context_budget = ModelContextBudget(self._max_prompt_chars)
+        previously_returned_video_chunk_ids = {
+            hit.candidate.video_chunk_id
+            for turn in previous
+            for hit in turn.retrieval_result.hits
+        }
         tool = build_retrieval_tool(
             self._retrieve, inputs=inputs, control=control, calls=calls,
             maximum_top_k=self._maximum_top_k, max_tool_calls=self._max_tool_calls,
             context_budget=context_budget,
+            previously_returned_video_chunk_ids=(
+                previously_returned_video_chunk_ids
+            ),
         )
         selection_limit = min(inputs["requested_top_k"], self._maximum_top_k)
         draft = run_query(
@@ -138,6 +154,13 @@ class AgentRuntime:
             retrieval_calls=tuple(calls), retrieval_result=available,
             evidence_source_turns=sources, query_draft=draft, draft_output=selected,
             review=review, status=review.action,
+        )
+        _logger.info(
+            "event=agent_turn_evaluated conversation_id=%s message_id=%s "
+            "turn_number=%s retrieved_hit_count=%s selected_hit_count=%s "
+            "review_action=%s",
+            inputs["conversation_id"], inputs["assistant_message_id"],
+            current.number, len(available.hits), len(selected.hits), review.action,
         )
         if review.action == "continue" and current.number >= self._max_loop_turns:
             raise AgentModelInvocationError(
