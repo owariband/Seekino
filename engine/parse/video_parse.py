@@ -5,6 +5,7 @@ import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 
 from .background import BackgroundImage
+from .prompts import build_video_parse_context
 from .schemas import (
     AnalysisWindow,
     ContextEvent,
@@ -52,7 +53,7 @@ class ParsePipeline:
                 f"expected {expected_sequence_no}, got {video_chunk.sequence_no}"
             )
 
-        model_context = self._build_model_context(
+        model_context = build_video_parse_context(
             video_chunk,
             compact,
             series_bible=series_bible,
@@ -231,51 +232,6 @@ class ParsePipeline:
             expected_start_ms = window.chunk_end_ms
         if expected_start_ms != duration_ms:
             raise ValueError("canonical chunks must cover the complete video")
-
-    @staticmethod
-    def _build_model_context(
-        window: AnalysisWindow,
-        context_before: ContextSnapshot,
-        *,
-        series_bible: str | None,
-    ) -> str:
-        sections = [
-            "ParsePipeline 窗口约束：",
-            (
-                "- 当前 AnalysisWindow 对应整集绝对时间 "
-                f"[{window.analysis_start_ms}, {window.analysis_end_ms}) ms；"
-                "模型输出时间仍须相对当前 AnalysisWindow 起点。"
-            ),
-            (
-                "- 当前规范 VideoChunk 对应窗口内相对时间 "
-                f"[{window.relative_chunk_start_ms}, "
-                f"{window.relative_chunk_end_ms}) ms。"
-            ),
-            (
-                "- AnalysisWindow 两侧内容仅用于看清跨边界事件；"
-                "请正常返回窗口内有证据的事件，Engine 会按事件中点"
-                "做唯一归属。"
-            ),
-        ]
-        if series_bible and series_bible.strip():
-            sections.extend(
-                [
-                    "",
-                    "SeriesBible（只用于身份与术语消歧）：",
-                    series_bible.strip(),
-                ]
-            )
-        sections.extend(
-            [
-                "",
-                (
-                    "contextBeforeCompact（此前规范 VideoChunk 已确认的"
-                    "有界历史；不得据此虚构当前事件）："
-                ),
-                context_before.compact_text or "（首段，无历史事件）",
-            ]
-        )
-        return "\n".join(sections)
 
     @staticmethod
     def _merge_window_events(

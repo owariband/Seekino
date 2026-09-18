@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 
-from .schemas import TranscriptAnalysis
+from .schemas import AnalysisWindow, ContextSnapshot, TranscriptAnalysis
 
 TRANSCRIPT_PROMPT = """
 你只负责从这段视频的音轨中转写可听见的人声，不负责理解画面。
@@ -132,6 +132,51 @@ def build_video_parse_prompt(
             f"{evidence_name}）：\n{context.strip()}"
         )
     return "\n\n".join(sections)
+
+
+def build_video_parse_context(
+    window: AnalysisWindow,
+    context_before: ContextSnapshot,
+    *,
+    series_bible: str | None,
+) -> str:
+    sections = [
+        "ParsePipeline 窗口约束：",
+        (
+            "- 当前 AnalysisWindow 对应整集绝对时间 "
+            f"[{window.analysis_start_ms}, {window.analysis_end_ms}) ms；"
+            "模型输出时间仍须相对当前 AnalysisWindow 起点。"
+        ),
+        (
+            "- 当前规范 VideoChunk 对应窗口内相对时间 "
+            f"[{window.relative_chunk_start_ms}, "
+            f"{window.relative_chunk_end_ms}) ms。"
+        ),
+        (
+            "- AnalysisWindow 两侧内容仅用于看清跨边界事件；"
+            "请正常返回窗口内有证据的事件，Engine 会按事件中点"
+            "做唯一归属。"
+        ),
+    ]
+    if series_bible and series_bible.strip():
+        sections.extend(
+            [
+                "",
+                "SeriesBible（只用于身份与术语消歧）：",
+                series_bible.strip(),
+            ]
+        )
+    sections.extend(
+        [
+            "",
+            (
+                "contextBeforeCompact（此前规范 VideoChunk 已确认的"
+                "有界历史；不得据此虚构当前事件）："
+            ),
+            context_before.compact_text or "（首段，无历史事件）",
+        ]
+    )
+    return "\n".join(sections)
 
 
 def build_neutral_visual_prompt(frame_count: int) -> str:
