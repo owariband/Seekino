@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from ..model.dto.indexSyncDTO import IndexReconcileReport, IndexSyncItem, IndexSyncRunReport
 from ..model.index_sync import IndexSyncOperation, IndexSyncStatus
 from ..repository.index_sync import IndexSyncRepository
 from ..storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
 from ..utils.errors import exception_summary
-from ..utils.time import utc_now
+from ..utils.time import now_unix_time_ms, timedelta_to_ms
 from .qdrant_mutation_lock import QdrantMutationLock
 
 
@@ -28,7 +28,7 @@ class IndexSyncService:
         mutation_lock: QdrantMutationLock,
         retry_base_seconds: int = 5,
         retry_max_seconds: int = 300,
-        clock: Callable[[], datetime] | None = None,
+        clock: Callable[[], int] | None = None,
     ) -> None:
         if retry_base_seconds <= 0:
             raise ValueError("retry_base_seconds must be greater than zero")
@@ -42,13 +42,13 @@ class IndexSyncService:
         self._mutation_lock = mutation_lock
         self._retry_base_seconds = retry_base_seconds
         self._retry_max_seconds = retry_max_seconds
-        self._clock = clock or utc_now
+        self._clock = clock or now_unix_time_ms
 
     def sync_due(
         self,
         *,
         limit: int = 100,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> IndexSyncRunReport:
         """Synchronize currently due intents without coupling fact commits to Qdrant."""
 
@@ -56,7 +56,7 @@ class IndexSyncService:
             materialized_count = self._repository.materialize_all()
             # Materialization can create PENDING intents at the current instant.
             # Read the cutoff afterwards so one run can consume new intents.
-            due_at = now or self._clock()
+            due_at = now if now is not None else self._clock()
             items = self._repository.list_due(limit, now=due_at)
             synced, failed, stale = self._apply_items(items)
             return IndexSyncRunReport(
@@ -137,7 +137,9 @@ class IndexSyncService:
                             error=exception_summary(exc),
                             available_at=(
                                 self._clock()
-                                + self._retry_delay(item.attempt_count)
+                                + timedelta_to_ms(
+                                    self._retry_delay(item.attempt_count)
+                                )
                             ),
                         ):
                             failed_count += 1
@@ -250,7 +252,9 @@ class IndexSyncService:
             try:
                 self._apply_item(item)
             except Exception as exc:
-                retry_at = self._clock() + self._retry_delay(item.attempt_count)
+                retry_at = self._clock() + timedelta_to_ms(
+                    self._retry_delay(item.attempt_count)
+                )
                 recorded = self._repository.mark_failed(
                     item.video_chunk_id,
                     item.source_revision,

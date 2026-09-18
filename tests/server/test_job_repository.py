@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -21,14 +21,15 @@ from server.repository.job import (
     ParseJobLeaseLostError,
     ParseJobRepository,
 )
+from server.repository.job_timing import ParseJobTimingRepository
 from server.model.dto.jobDTO import VideoChunkCheckpointState
 from server.api import jobs as jobs_api
-from server.model.vo.commonVO import unix_time_ms
 from server.api.jobs import project_job
 from server.repository.library import LibraryRepository
 from server.model.dto.jobDTO import ParseJobDetail
 from server.service.job import ParseJobService
 from server.service.library import LibraryService
+from server.utils.time import datetime_to_unix_time_ms, timedelta_to_ms
 
 
 def _seed_job(
@@ -43,7 +44,7 @@ def _seed_job(
     series_id = str(uuid4())
     video_id = str(uuid4())
     job_id = str(uuid4())
-    now = datetime(2026, 9, 14, 10, 0, 0)
+    now = datetime_to_unix_time_ms(datetime(2026, 9, 14, 10, 0, 0, tzinfo=UTC))
     with session_factory.begin() as session:
         session.add(
             SeriesRecord(
@@ -104,24 +105,24 @@ def test_public_job_version_tracks_semantic_changes_and_not_heartbeats(repositor
     lease = queue.claim_next("worker", lease_duration=timedelta(minutes=2), now=now)
     assert lease is not None
     assert jobs.get(job_id).version == 2
-    assert queue.heartbeat(lease, lease_duration=timedelta(minutes=2), now=now + timedelta(seconds=1))
+    assert queue.heartbeat(lease, lease_duration=timedelta(minutes=2), now=now + timedelta_to_ms(timedelta(seconds=1)))
     assert jobs.get(job_id).version == 2
-    assert jobs.update_progress(lease, stage=ParseJobStage.PARSING, progress=30, now=now + timedelta(seconds=2))
+    assert jobs.update_progress(lease, stage=ParseJobStage.PARSING, progress=30, now=now + timedelta_to_ms(timedelta(seconds=2)))
     assert jobs.get(job_id).version == 3
-    assert jobs.update_progress(lease, stage=ParseJobStage.PREPARING, progress=20, now=now + timedelta(seconds=3))
+    assert jobs.update_progress(lease, stage=ParseJobStage.PREPARING, progress=20, now=now + timedelta_to_ms(timedelta(seconds=3)))
     assert jobs.get(job_id).version == 3
     checkpoint = VideoChunkCheckpointState(
         job_id=job_id, sequence_no=0, video_chunk_id=str(uuid4()),
         stage=VideoChunkCheckpointStage.PARSED.value,
         parse_artifact_uri="artifact://test/private/parse.json",
     )
-    jobs.save_checkpoint(lease, checkpoint, now=now + timedelta(seconds=4))
+    jobs.save_checkpoint(lease, checkpoint, now=now + timedelta_to_ms(timedelta(seconds=4)))
     assert jobs.get(job_id).version == 4
-    jobs.save_checkpoint(lease, checkpoint, now=now + timedelta(seconds=5))
+    jobs.save_checkpoint(lease, checkpoint, now=now + timedelta_to_ms(timedelta(seconds=5)))
     assert jobs.get(job_id).version == 4
-    jobs.save_checkpoint(lease, replace(checkpoint, stage=VideoChunkCheckpointStage.TEXT_EMBEDDED.value), now=now + timedelta(seconds=6))
+    jobs.save_checkpoint(lease, replace(checkpoint, stage=VideoChunkCheckpointStage.TEXT_EMBEDDED.value), now=now + timedelta_to_ms(timedelta(seconds=6)))
     assert jobs.get(job_id).version == 5
-    assert queue.acknowledge(lease, now=now + timedelta(seconds=7))
+    assert queue.acknowledge(lease, duration_ms=0, now=now + timedelta_to_ms(timedelta(seconds=7)))
     assert jobs.get(job_id).version == 6
 
 
@@ -132,17 +133,17 @@ def test_terminal_failure_has_completion_time_and_safe_public_projection(reposit
     )
     lease = queue.claim_next("worker", lease_duration=timedelta(minutes=2), now=now)
     assert lease is not None
-    failed_at = now + timedelta(minutes=3) if expire_lease else now + timedelta(seconds=5)
+    failed_at = now + timedelta_to_ms(timedelta(minutes=3) if expire_lease else timedelta(seconds=5))
     if expire_lease:
         assert queue.reap_expired(retry_delay=timedelta(minutes=1), now=failed_at) == 1
     else:
-        assert queue.retry(lease, error="private key https://internal/provider", retry_at=failed_at, now=failed_at)
+        assert queue.retry(lease, error="private key https://internal/provider", retry_at=failed_at, duration_ms=0, now=failed_at)
     job = jobs.get(job_id)
     assert job.status == ParseJobStatus.FAILED
     assert job.completed_at == failed_at
     assert job.version == 3
     public = project_job(ParseJobDetail(job, ())).model_dump(by_alias=True)
-    assert public["completedAt"] == unix_time_ms(failed_at)
+    assert public["completedAt"] == failed_at
     assert public["availableAt"] is None
     assert public["estimatedRemainingMs"] is None
     assert public["retryOfJobId"] is None
@@ -163,7 +164,7 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
     engine, _video_repository = repository
     factory = create_session_factory(engine)
     with factory.begin() as session:
-        session.get(SeriesParseJobRecord, foreign_job_id).available_at = now + timedelta(days=1)
+        session.get(SeriesParseJobRecord, foreign_job_id).available_at = now + timedelta_to_ms(timedelta(days=1))
     service = ParseJobService(jobs, LibraryService(LibraryRepository(factory)))
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(services=SimpleNamespace(jobs=service))))
     first = jobs_api.list_jobs(request, "local-default", None, "QUEUED", None, 1)
@@ -182,7 +183,7 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
         stage=VideoChunkCheckpointStage.PARSED.value,
         parse_artifact_uri="artifact://test/private/parse.json",
     )
-    jobs.save_checkpoint(lease, checkpoint, now=now + timedelta(seconds=1))
+    jobs.save_checkpoint(lease, checkpoint, now=now + timedelta_to_ms(timedelta(seconds=1)))
     summary = jobs_api.get_job_summary(request, "local-default", None)
     assert summary.counts.queued == 1
     assert summary.counts.running == 1
@@ -208,6 +209,13 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
 
 def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     jobs, queue, job_id, video_id, now = _seed_job(repository)
+    engine, _video_repository = repository
+    session_factory = create_session_factory(engine)
+    service = ParseJobService(
+        jobs,
+        LibraryService(LibraryRepository(session_factory)),
+        ParseJobTimingRepository(session_factory),
+    )
 
     first = queue.claim_next(
         "worker-a",
@@ -229,7 +237,7 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
         first,
         stage=ParseJobStage.PARSING,
         progress=30,
-        now=now + timedelta(seconds=10),
+        now=now + timedelta_to_ms(timedelta(seconds=10)),
     )
 
     checkpoint = jobs.save_checkpoint(
@@ -241,17 +249,18 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
             stage=VideoChunkCheckpointStage.PARSED.value,
             parse_artifact_uri="artifact://test/jobs/chunk-0000.json",
         ),
-        now=now + timedelta(seconds=20),
+        now=now + timedelta_to_ms(timedelta(seconds=20)),
     )
     assert checkpoint.stage == VideoChunkCheckpointStage.PARSED.value
     assert len(jobs.list_checkpoints(job_id)) == 1
 
-    retry_at = now + timedelta(minutes=5)
+    retry_at = now + timedelta_to_ms(timedelta(minutes=5))
     assert queue.retry(
         first,
         error="temporary provider failure",
         retry_at=retry_at,
-        now=now + timedelta(seconds=30),
+        duration_ms=123,
+        now=now + timedelta_to_ms(timedelta(seconds=30)),
     )
     waiting = jobs.get(job_id)
     assert waiting.status == ParseJobStatus.RETRY_WAIT.value
@@ -259,6 +268,12 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     assert waiting.series_name.startswith("Series ")
     assert waiting.episode_order == 1
     assert waiting.original_filename == "episode.mp4"
+    waiting_detail = service.get(job_id, workspace_id="local-default")
+    assert waiting_detail.processing_duration_ms == 123
+    assert waiting_detail.processing_timing_complete is False
+    [waiting_listed] = service.list(workspace_id="local-default")
+    assert waiting_listed.processing_duration_ms == 123
+    assert waiting_listed.processing_timing_complete is False
 
     second = queue.claim_next(
         "worker-b",
@@ -280,11 +295,17 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
             now=retry_at,
         )
 
-    assert queue.acknowledge(second, now=retry_at + timedelta(seconds=30))
+    assert queue.acknowledge(second, duration_ms=456, now=retry_at + timedelta_to_ms(timedelta(seconds=30)))
     completed = jobs.get(job_id)
     assert completed.status == ParseJobStatus.SUCCEEDED.value
     assert completed.stage == ParseJobStage.COMPLETED.value
     assert completed.progress == 100
+    completed_detail = service.get(job_id, workspace_id="local-default")
+    assert completed_detail.processing_duration_ms == 579
+    assert completed_detail.processing_timing_complete is True
+    [completed_listed] = service.list(workspace_id="local-default")
+    assert completed_listed.processing_duration_ms == 579
+    assert completed_listed.processing_timing_complete is True
 
 
 def test_checkpoint_cannot_move_backwards_or_change_identity(repository) -> None:
@@ -547,11 +568,12 @@ def test_retry_can_replay_earlier_stages_without_regressing_progress(repository)
     )
     jobs.save_checkpoint(first, checkpoint, now=now)
     assert jobs.update_progress(first, stage=ParseJobStage.INDEXING, now=now)
-    retry_at = now + timedelta(seconds=10)
+    retry_at = now + timedelta_to_ms(timedelta(seconds=10))
     assert queue.retry(
         first,
         error="index unavailable",
         retry_at=retry_at,
+        duration_ms=0,
         now=now,
     )
     second = queue.claim_next(

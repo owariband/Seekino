@@ -26,6 +26,7 @@ from .mq.mysql_queue import MySqlParseJobQueue
 from .repository.agent import AgentRepository
 from .repository.index_sync import IndexSyncRepository
 from .repository.job import ParseJobRepository
+from .repository.job_timing import ParseJobTimingRepository
 from .repository.library import LibraryRepository
 from .repository.parse_usage import ParseUsageRepository
 from .repository.upload import UploadRepository
@@ -36,6 +37,7 @@ from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
 from .service.parse_usage import ParseUsageService
+from .service.parse_timing import ParseChunkStageTimer
 from .service.qdrant_mutation_lock import QdrantMutationLock
 from .service.upload import UploadService
 from .service.video_processing import VideoProcessingService
@@ -101,7 +103,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
     )
     library = LibraryService(LibraryRepository(session_factory), artifact_store)
     job_repository = ParseJobRepository(session_factory)
-    jobs = ParseJobService(job_repository, library)
+    timing_repository = ParseJobTimingRepository(session_factory)
+    jobs = ParseJobService(job_repository, library, timing_repository)
     parse_usage = ParseUsageService(
         ParseUsageRepository(session_factory), jobs,
         load_model_pricing(settings.model_pricing_path),
@@ -243,6 +246,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         ),
         processing_embedder,
         parse_usage=parse_usage,
+        stage_timer=ParseChunkStageTimer(timing_repository),
         config=VideoProcessingConfig(
             embedding_dimensions=settings.text_vector_dimensions,
             chunk_duration_ms=settings.parse.chunk_duration_ms,

@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import (
     CheckConstraint,
-    DateTime,
+    BigInteger,
     ForeignKey,
     Index,
     Integer,
     String,
-    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
+from ..utils.time import now_unix_time_ms
 from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampedRecord
 
 
@@ -66,10 +65,10 @@ class IndexSyncIntentRecord(TimestampedRecord, Base):
         nullable=False,
         default=0,
     )
-    available_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    available_at: Mapped[int] = mapped_column(
+        BigInteger,
         nullable=False,
-        server_default=func.now(),
+        default=now_unix_time_ms,
     )
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
-    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    synced_at: Mapped[int | None] = mapped_column(BigInteger)

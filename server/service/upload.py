@@ -6,7 +6,6 @@ import re
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
-from datetime import datetime, timedelta
 from pathlib import Path
 
 from engine.parse.analysis_windows import probe_video_duration_ms
@@ -30,7 +29,7 @@ from ..storage.artifact import (
 )
 from ..storage.qdrant import QdrantVideoChunkStore
 from ..utils.errors import exception_summary
-from ..utils.time import utc_now_naive
+from ..utils.time import now_unix_time_ms, timedelta_to_ms
 from ..utils.validation import require_nonempty_text
 from .qdrant_mutation_lock import QdrantMutationLock
 
@@ -57,7 +56,7 @@ class UploadService:
         *,
         config: UploadServiceConfig | None = None,
         probe_duration: Callable[[str | Path], int] = probe_video_duration_ms,
-        clock: Callable[[], datetime] | None = None,
+        clock: Callable[[], int] | None = None,
         video_chunk_store: QdrantVideoChunkStore | None = None,
         qdrant_mutation_lock: QdrantMutationLock | None = None,
     ) -> None:
@@ -69,7 +68,7 @@ class UploadService:
         self._artifact_store = artifact_store
         self._config = config or UploadServiceConfig()
         self._probe_duration = probe_duration
-        self._clock = clock or utc_now_naive
+        self._clock = clock or now_unix_time_ms
         self._video_chunk_store = video_chunk_store
         self._qdrant_mutation_lock = qdrant_mutation_lock
 
@@ -117,7 +116,7 @@ class UploadService:
             preferred_segment_size_bytes=segment_size,
             total_segments=total_segments,
             idempotency_key=normalized_idempotency_key,
-            expires_at=now + self._config.session_ttl,
+            expires_at=now + timedelta_to_ms(self._config.session_ttl),
             now=now,
             content_sha256=content_sha256,
         )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -11,6 +11,7 @@ from server.model.upload import UploadSessionRecord, UploadSessionStatus
 from server.model.video import SeriesRecord, VideoRecord
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.job import ParseJobRepository
+from server.utils.time import timedelta_to_ms
 
 
 def _seed(repository, *, max_attempts: int = 3):
@@ -19,7 +20,7 @@ def _seed(repository, *, max_attempts: int = 3):
     series_id = str(uuid4())
     video_id = str(uuid4())
     job_id = str(uuid4())
-    now = datetime(2026, 9, 16, 10, 0, 0)
+    now = 1_789_549_200_000
     with session_factory.begin() as session:
         session.add(
             SeriesRecord(
@@ -86,21 +87,22 @@ def test_mysql_queue_claims_heartbeats_retries_and_acknowledges(repository) -> N
     assert queue.heartbeat(
         first,
         lease_duration=timedelta(minutes=2),
-        now=now + timedelta(seconds=30),
+        now=now + timedelta_to_ms(timedelta(seconds=30)),
     )
-    retry_at = now + timedelta(minutes=3)
+    retry_at = now + timedelta_to_ms(timedelta(minutes=3))
     assert queue.retry(
         first,
         error="provider unavailable",
         retry_at=retry_at,
-        now=now + timedelta(minutes=1),
+        duration_ms=0,
+        now=now + timedelta_to_ms(timedelta(minutes=1)),
     )
     second = queue.claim_next(
         "consumer-b", lease_duration=timedelta(minutes=2), now=retry_at,
     )
     assert second is not None
     assert second.lease_version == first.lease_version + 1
-    assert queue.acknowledge(second, now=retry_at + timedelta(seconds=1))
+    assert queue.acknowledge(second, duration_ms=0, now=retry_at + timedelta_to_ms(timedelta(seconds=1)))
 
     completed = jobs.get(job_id)
     assert completed.status == ParseJobStatus.SUCCEEDED.value
@@ -116,19 +118,19 @@ def test_mysql_queue_reaps_an_expired_final_attempt(repository) -> None:
 
     assert queue.reap_expired(
         retry_delay=timedelta(minutes=1),
-        now=now + timedelta(seconds=31),
+        now=now + timedelta_to_ms(timedelta(seconds=31)),
     ) == 1
 
     failed = jobs.get(job_id)
     assert failed.status == ParseJobStatus.FAILED.value
-    assert failed.completed_at == now + timedelta(seconds=31)
+    assert failed.completed_at == now + timedelta_to_ms(timedelta(seconds=31))
 
 
 def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> None:
     engine, _video_repository = repository
     session_factory = create_session_factory(engine)
     queue = MySqlParseJobQueue(session_factory)
-    now = datetime(2026, 9, 14, 10, 0, 0)
+    now = 1_789_376_400_000
     series_a = str(uuid4())
     series_b = str(uuid4())
     first_job = str(uuid4())
@@ -190,12 +192,12 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
                     progress=0,
                     attempt_count=0,
                     max_attempts=3,
-                    available_at=now + timedelta(seconds=delay),
+                    available_at=now + timedelta_to_ms(timedelta(seconds=delay)),
                     lease_version=0,
                 )
             )
 
-    claim_at = now + timedelta(seconds=3)
+    claim_at = now + timedelta_to_ms(timedelta(seconds=3))
     first = queue.claim_next(
         "worker-a", lease_duration=timedelta(minutes=2), now=claim_at,
     )
@@ -208,11 +210,11 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
     assert queue.claim_next(
         "worker-c", lease_duration=timedelta(minutes=2), now=claim_at,
     ) is None
-    assert queue.acknowledge(first, now=claim_at + timedelta(seconds=1))
+    assert queue.acknowledge(first, duration_ms=0, now=claim_at + timedelta_to_ms(timedelta(seconds=1)))
     sibling = queue.claim_next(
         "worker-c",
         lease_duration=timedelta(minutes=2),
-        now=claim_at + timedelta(seconds=2),
+        now=claim_at + timedelta_to_ms(timedelta(seconds=2)),
     )
     assert sibling is not None and sibling.job_id == sibling_job
 
@@ -254,7 +256,7 @@ def test_later_upload_waits_for_earlier_video_and_its_retry(repository) -> None:
                 attempt_count=0,
                 max_attempts=3,
                 lease_version=0,
-                available_at=now - timedelta(minutes=1),
+                available_at=now - timedelta_to_ms(timedelta(minutes=1)),
             )
         )
 
@@ -262,20 +264,20 @@ def test_later_upload_waits_for_earlier_video_and_its_retry(repository) -> None:
         "worker-a", lease_duration=timedelta(minutes=2), now=now,
     )
     assert first is not None and first.job_id == first_job_id
-    retry_at = now + timedelta(minutes=5)
+    retry_at = now + timedelta_to_ms(timedelta(minutes=5))
     assert queue.retry(
-        first, error="temporary error", retry_at=retry_at, now=now,
+        first, error="temporary error", retry_at=retry_at, duration_ms=0, now=now,
     )
     assert queue.claim_next(
         "worker-b",
         lease_duration=timedelta(minutes=2),
-        now=now + timedelta(seconds=1),
+        now=now + timedelta_to_ms(timedelta(seconds=1)),
     ) is None
     retry = queue.claim_next(
         "worker-b", lease_duration=timedelta(minutes=2), now=retry_at,
     )
     assert retry is not None and retry.job_id == first_job_id
-    assert queue.acknowledge(retry, now=retry_at)
+    assert queue.acknowledge(retry, duration_ms=0, now=retry_at)
     later = queue.claim_next(
         "worker-c", lease_duration=timedelta(minutes=2), now=retry_at,
     )
@@ -346,7 +348,7 @@ def test_earlier_upload_without_job_blocks_later_parse_until_expired(
                 total_segments=1,
                 status=upload_status.value,
                 idempotency_key="earlier-upload",
-                expires_at=now + timedelta(minutes=1),
+                expires_at=now + timedelta_to_ms(timedelta(minutes=1)),
             )
         )
     assert queue.claim_next(
@@ -356,6 +358,6 @@ def test_earlier_upload_without_job_blocks_later_parse_until_expired(
     lease = queue.claim_next(
         "worker",
         lease_duration=timedelta(minutes=2),
-        now=now + timedelta(minutes=1),
+        now=now + timedelta_to_ms(timedelta(minutes=1)),
     )
     assert lease is not None and lease.job_id == job_id

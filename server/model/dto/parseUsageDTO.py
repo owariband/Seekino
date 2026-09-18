@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -25,7 +24,7 @@ class ParseModelCallState:
     model: str
     category: Literal["parse", "embedding"]
     operation: str
-    started_at: datetime
+    started_at: int
     request_id: str | None
     status: Literal["completed", "failed"]
     usage: TokenUsage | None

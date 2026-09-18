@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -6,6 +6,7 @@ import pytest
 from gateway.usage import TokenUsage
 from server.config.usage import PriceTier, load_model_pricing
 from server.service.parse_usage import estimate_cost_cny
+from server.utils.time import datetime_to_unix_time_ms
 
 
 def _estimate(model: str, usage: TokenUsage, *, category="parse", operation="video_timeline", instant=None):
@@ -13,7 +14,9 @@ def _estimate(model: str, usage: TokenUsage, *, category="parse", operation="vid
     snapshot = config.snapshot(
         provider="deepseek" if model == "deepseek-flash" else "ark",
         model=model, category=category, input_tokens=usage.input_tokens,
-        started_at=instant or datetime(2026, 9, 15, 11, 30),
+        started_at=datetime_to_unix_time_ms(
+            (instant or datetime(2026, 9, 15, 11, 30)).replace(tzinfo=UTC)
+        ),
     )
     if snapshot is None:
         return None
@@ -74,3 +77,22 @@ def test_default_pricing_does_not_invent_historical_or_missing_modality_costs():
     assert _estimate("doubao-embedding-vision-251215", usage, category="embedding", operation="video_embedding") is None
     assert _estimate("deepseek-flash", usage, instant=datetime(2026, 9, 10, 3, 59, 59)) is None
     assert _estimate("custom-model-with-no-rate", usage) is None
+
+
+def test_persisted_price_snapshot_uses_unix_milliseconds_for_absolute_times():
+    snapshot = load_model_pricing().snapshot(
+        provider="ark",
+        model="doubao-seed-2-0-lite-260428",
+        category="parse",
+        input_tokens=1,
+        started_at=datetime_to_unix_time_ms(
+            datetime(2026, 9, 15, 11, 30, tzinfo=UTC)
+        ),
+    )
+    assert snapshot is not None
+    model_price = snapshot["model_price"]
+    assert isinstance(model_price["checked_at"], int)
+    assert isinstance(model_price["effective_from"], int)
+    assert model_price["effective_until"] is None or isinstance(
+        model_price["effective_until"], int
+    )

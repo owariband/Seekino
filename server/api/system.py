@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import Request
 
-from ..utils.time import utc_now
+from ..utils.time import now_unix_time_ms
 from ..model.vo.systemVO import (
     HealthComponentsView,
     HealthView,
@@ -26,6 +26,6 @@ def health(request: Request) -> HealthView:
         consumer_health = ParseConsumerHealthView(status="stopped")
     return HealthView(
         status="ok" if consumer_health.status == "running" else "degraded",
-        server_time=utc_now(),
+        server_time=now_unix_time_ms(),
         components=HealthComponentsView(parse_consumer=consumer_health),
     )

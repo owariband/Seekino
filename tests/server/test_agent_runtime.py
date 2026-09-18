@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from threading import Barrier, Event
 
 import pytest
@@ -12,10 +11,12 @@ from gateway.agent_model import ModelInputTooLargeError
 from server.agent import AgentContextBudgetError, AgentModelInvocationError, AgentRuntime
 from server.agent.context import project_search_result
 from server.agent.state import (
-    ChatVideoItem, ExecutionControl, ModelContextBudget, QueryDraft, RetrievalCall,
+    ExecutionControl, ModelContextBudget, QueryDraft, RetrievalCall,
     RetrievalChannelWeights, RunInputs, context_json,
 )
-from server.agent.tools import build_retrieval_tool
+from server.agent.tools import (
+    SubmitVideoItemArguments, build_retrieval_tool,
+)
 from server.schema import (
     AgentReply,
     MatchedEvidence,
@@ -69,7 +70,7 @@ def _hit(chunk_id="chunk-1", *, workspace="workspace", series="series"):
         retrieval_text="cup action", video_compact="cup action", context_before_compact="",
         context_after_compact="", window_summary="cup action", model_provider="ark",
         model_name="parser", pipeline_version="v1", is_fallback=False,
-        parse_provenance=None, parsed_at=datetime(2026, 9, 15),
+        parse_provenance=None, parsed_at=1_789_724_800,
     )
     return VideoChunkSearchHit(
         candidate=VideoChunkCandidate(video_chunk_id=chunk_id, fused_rank=1, fused_score=1),
@@ -194,13 +195,14 @@ class Chat:
         self.require_tool_calls = []
 
     def run_agent_loop(
-        self, prompt, *, function_name, function_description, result_type,
-        max_model_calls, handle_text, handle_tool_call,
+        self, prompt, *, tools, max_model_calls, handle_text,
         require_tool_call=False,
         request_timeout_seconds=None, check_control=None,
     ):
-        assert function_name == "submit_video_item"
-        assert function_description
+        assert len(tools) == 1
+        assert tools[0].name == "submit_video_item"
+        assert tools[0].description
+        assert tools[0].args_schema is SubmitVideoItemArguments
         context = json.loads(prompt.rsplit("\n\n", 1)[1])
         self.contexts.append(context)
         assert request_timeout_seconds is not None
@@ -215,10 +217,6 @@ class Chat:
         ]
         self.require_tool_calls.append(require_tool_call)
         assert require_tool_call is bool(chunk_ids)
-        approved_ranges = {
-            item["video_chunk_id"]: item
-            for item in context["approved_turn"]["draft"]["selected_video_ranges"]
-        }
         text_blocks = (
             ["## Final answer", "Grounded answer."]
             if chunk_ids else ["## Final answer\n\nGrounded answer."]
@@ -228,15 +226,14 @@ class Chat:
         handle_text(text_blocks[0])
         for chunk_id in chunk_ids:
             check_control()
-            approved_range = approved_ranges[chunk_id]
-            item = result_type.model_validate({
+            item = SubmitVideoItemArguments.model_validate({
                 "video_chunk_id": chunk_id,
-                "start_ms": approved_range["start_ms"],
-                "end_ms": approved_range["end_ms"],
                 "claim": f"Grounded evidence for {chunk_id}.",
             })
             self.video_items.append(item)
-            self.tool_results.append(json.loads(handle_tool_call(item)))
+            self.tool_results.append(json.loads(tools[0].invoke(
+                item.model_dump(mode="python")
+            )))
         if len(text_blocks) == 2:
             check_control()
             self.text_blocks.append(text_blocks[1])
@@ -267,6 +264,12 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     assert result.render_blocks[1].end_ms == 1900
     assert "selected_video_ranges" in query.prompts[0]
     assert "事实性结论" in query.prompts[0]
+    assert "1. 用户意图拆解" in evaluator.prompts[0]
+    assert "2. 查询策略" in evaluator.prompts[0]
+    assert "query、top_k" in evaluator.prompts[0]
+    assert "channel_weights" in evaluator.prompts[0]
+    assert "3. 视频条目" in evaluator.prompts[0]
+    assert "4. 时间范围" in evaluator.prompts[0]
     assert "完整覆盖支撑结论" in evaluator.prompts[0]
     assert "selected_video_ranges 为空" in evaluator.prompts[0]
     assert evaluator.contexts[0]["draft"]["selected_video_ranges"] == [
@@ -295,8 +298,6 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     assert chat.tool_results == [{
         "accepted": True,
         "video_chunk_id": "chunk-1",
-        "start_ms": 1100,
-        "end_ms": 1900,
     }]
     assert all(event["conversationId"] == "conversation" for event in events)
     assert all(event["messageId"] == "conversation-answer" for event in events)
@@ -416,7 +417,7 @@ def test_unknown_selected_id_fails_before_evaluator_or_chat():
     assert evaluator.contexts == chat.contexts == []
 
 
-def test_out_of_chunk_range_reaches_evaluator_and_query_can_apply_advice():
+def test_out_of_chunk_range_after_evaluator_approval_forces_query_revision():
     class CorrectingQuery(Query):
         def run_query(self, prompt, **kwargs):
             self.selected_ranges = [
@@ -425,8 +426,14 @@ def test_out_of_chunk_range_reaches_evaluator_and_query_can_apply_advice():
             ]
             return super().run_query(prompt, **kwargs)
 
+    class AlwaysCompleteEvaluator(Evaluator):
+        def generate(self, inputs, *, schema_name, result_type):
+            return super().generate(
+                inputs, schema_name=schema_name, result_type=result_type,
+            ).model_copy(update={"action": "complete", "advice": "approved"})
+
     runtime, query, evaluator, chat, _retrieval = _runtime(
-        query=CorrectingQuery(), evaluator=Evaluator(approve_at=2),
+        query=CorrectingQuery(), evaluator=AlwaysCompleteEvaluator(),
     )
 
     result = runtime.kick(_inputs())
@@ -434,10 +441,10 @@ def test_out_of_chunk_range_reaches_evaluator_and_query_can_apply_advice():
     assert evaluator.contexts[0]["draft"]["selected_video_ranges"] == [
         _selected_range("chunk-1", start_ms=999, end_ms=1500)
     ]
-    assert query.contexts[1]["turns"][0]["review"] == {
-        "action": "continue",
-        "advice": "find broken cup, not picked-up cup",
-    }
+    assert query.contexts[1]["turns"][0]["review"]["action"] == "continue"
+    assert "Server range validation rejected" in (
+        query.contexts[1]["turns"][0]["review"]["advice"]
+    )
     assert evaluator.contexts[1]["draft"]["selected_video_ranges"] == [
         _selected_range("chunk-1")
     ]
@@ -467,11 +474,6 @@ def test_selected_range_rejects_non_integer_or_non_increasing_time(
             "selected_video_ranges": [_selected_range(
                 "chunk-1", start_ms=start_ms, end_ms=end_ms,
             )],
-        })
-    with pytest.raises(ValueError):
-        ChatVideoItem.model_validate({
-            **_selected_range("chunk-1", start_ms=start_ms, end_ms=end_ms),
-            "claim": "Grounded evidence.",
         })
 
 
@@ -988,14 +990,12 @@ def test_chat_failure_emits_no_unvalidated_evidence_or_text():
 def test_chat_cannot_submit_unapproved_evidence_ids() -> None:
     class InventedEvidenceChat(Chat):
         def run_agent_loop(
-            self, prompt, *, result_type, handle_tool_call, **kwargs,
+            self, prompt, *, tools, **kwargs,
         ):
-            handle_tool_call(result_type.model_validate({
+            tools[0].invoke({
                 "video_chunk_id": "invented-chunk",
-                "start_ms": 1100,
-                "end_ms": 1900,
                 "claim": "Invented evidence.",
-            }))
+            })
 
     runtime, *_ = _runtime(chat=InventedEvidenceChat())
     events = []
@@ -1030,17 +1030,15 @@ def test_chat_cannot_silently_drop_all_approved_evidence() -> None:
 def test_chat_cannot_submit_the_same_approved_id_twice() -> None:
     class DuplicateEvidenceChat(Chat):
         def run_agent_loop(
-            self, prompt, *, result_type, handle_text, handle_tool_call, **kwargs,
+            self, prompt, *, tools, handle_text, **kwargs,
         ):
             handle_text("Grounded answer.")
-            item = result_type.model_validate({
+            item = {
                 "video_chunk_id": "chunk-1",
-                "start_ms": 1100,
-                "end_ms": 1900,
                 "claim": "Grounded evidence.",
-            })
-            handle_tool_call(item)
-            handle_tool_call(item)
+            }
+            tools[0].invoke(item)
+            tools[0].invoke(item)
 
     runtime, *_ = _runtime(chat=DuplicateEvidenceChat())
     events = []
@@ -1054,14 +1052,12 @@ def test_chat_cannot_submit_the_same_approved_id_twice() -> None:
 def test_chat_requires_nonempty_markdown_even_when_video_was_submitted() -> None:
     class VideoOnlyChat(Chat):
         def run_agent_loop(
-            self, prompt, *, result_type, handle_tool_call, **kwargs,
+            self, prompt, *, tools, **kwargs,
         ):
-            handle_tool_call(result_type.model_validate({
+            tools[0].invoke({
                 "video_chunk_id": "chunk-1",
-                "start_ms": 1100,
-                "end_ms": 1900,
                 "claim": "Grounded evidence.",
-            }))
+            })
 
     runtime, *_ = _runtime(chat=VideoOnlyChat())
     events = []
@@ -1076,16 +1072,14 @@ def test_chat_requires_nonempty_markdown_even_when_video_was_submitted() -> None
 def test_chat_may_choose_an_approved_subset_in_any_order(submitted_ids) -> None:
     class ChoosingChat(Chat):
         def run_agent_loop(
-            self, prompt, *, result_type, handle_text, handle_tool_call, **kwargs,
+            self, prompt, *, tools, handle_text, **kwargs,
         ):
             handle_text("Before video.")
             for chunk_id in submitted_ids:
-                handle_tool_call(result_type.model_validate({
+                tools[0].invoke({
                     "video_chunk_id": chunk_id,
-                    "start_ms": 1100,
-                    "end_ms": 1900,
                     "claim": f"Chosen {chunk_id}.",
-                }))
+                })
             handle_text("After video.")
 
     runtime, *_ = _runtime(
@@ -1105,69 +1099,41 @@ def test_chat_may_choose_an_approved_subset_in_any_order(submitted_ids) -> None:
     assert result.agent_reply.message == "Before video.\n\nAfter video."
 
 
-@pytest.mark.parametrize("submitted_start_ms,submitted_end_ms", [
-    (1050, 1950),
-    (500, 2500),
-])
-def test_chat_changed_or_out_of_chunk_range_uses_approved_range_and_warns(
-    caplog, submitted_start_ms, submitted_end_ms,
-):
-    class ChangedRangeChat(Chat):
-        def run_agent_loop(
-            self, prompt, *, result_type, handle_text, handle_tool_call, **kwargs,
-        ):
-            handle_text("Grounded answer.")
-            self.tool_results.append(json.loads(handle_tool_call(result_type.model_validate({
+def test_chat_tool_does_not_accept_a_playback_range() -> None:
+    class RangeSubmittingChat(Chat):
+        def run_agent_loop(self, prompt, *, tools, **kwargs):
+            tools[0].invoke({
                 "video_chunk_id": "chunk-1",
-                "start_ms": submitted_start_ms,
-                "end_ms": submitted_end_ms,
+                "start_ms": 1000,
+                "end_ms": 2000,
                 "claim": "Grounded evidence.",
-            }))))
+            })
 
-    caplog.set_level(logging.WARNING, logger="server.agent.chat")
-    chat = ChangedRangeChat()
-    runtime, *_ = _runtime(chat=chat)
+    runtime, *_ = _runtime(chat=RangeSubmittingChat())
 
-    result = runtime.kick(_inputs())
+    with pytest.raises(AgentModelInvocationError, match="Chat Agent model"):
+        runtime.kick(_inputs())
 
-    video = next(block for block in result.render_blocks if block.type == "video")
-    assert (video.start_ms, video.end_ms) == (1100, 1900)
-    assert chat.tool_results == [{
-        "accepted": True,
-        "video_chunk_id": "chunk-1",
-        "start_ms": 1100,
-        "end_ms": 1900,
-    }]
-    assert "event=agent_video_range_fallback" in caplog.text
-    assert "conversation_id=conversation" in caplog.text
-    assert "message_id=conversation-answer" in caplog.text
-    assert "video_chunk_id=chunk-1" in caplog.text
-    assert (
-        f"proposed_start_ms={submitted_start_ms} proposed_end_ms={submitted_end_ms}"
-        in caplog.text
+
+def test_approved_out_of_chunk_range_is_rejected_before_chat() -> None:
+    runtime, query, evaluator, chat, _retrieval = _runtime(
+        query=Query(selected_ranges=[
+            _selected_range("chunk-1", start_ms=999, end_ms=1500)
+        ]),
     )
-    assert "approved_start_ms=1100 approved_end_ms=1900" in caplog.text
-    assert "canonical_start_ms=1000 canonical_end_ms=2000" in caplog.text
-    assert "action=use_approved_range" in caplog.text
 
+    with pytest.raises(
+        AgentModelInvocationError,
+        match="Evaluator rejected the Query draft after 3 turns",
+    ):
+        runtime.kick(_inputs())
 
-def test_approved_out_of_chunk_range_falls_back_to_canonical_and_warns(caplog):
-    caplog.set_level(logging.WARNING, logger="server.agent.chat")
-    runtime, _query, evaluator, _chat, _retrieval = _runtime(query=Query(
-        selected_ranges=[_selected_range("chunk-1", start_ms=999, end_ms=1500)],
-    ))
-
-    result = runtime.kick(_inputs())
-
-    assert evaluator.contexts[0]["draft"]["selected_video_ranges"] == [
-        _selected_range("chunk-1", start_ms=999, end_ms=1500)
-    ]
-    video = next(block for block in result.render_blocks if block.type == "video")
-    assert (video.start_ms, video.end_ms) == (1000, 2000)
-    assert "proposed_start_ms=999 proposed_end_ms=1500" in caplog.text
-    assert "approved_start_ms=999 approved_end_ms=1500" in caplog.text
-    assert "canonical_start_ms=1000 canonical_end_ms=2000" in caplog.text
-    assert "action=fallback_to_canonical" in caplog.text
+    assert len(query.contexts) == len(evaluator.contexts) == 3
+    assert chat.contexts == []
+    assert query.contexts[1]["turns"][0]["review"]["action"] == "continue"
+    assert "Server range validation rejected" in (
+        query.contexts[1]["turns"][0]["review"]["advice"]
+    )
 
 
 def test_cancel_after_agent_loop_stops_before_output():
@@ -1247,8 +1213,7 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
         model_name = "echo"
 
         def run_agent_loop(
-            self, prompt, *, function_name, function_description, result_type,
-            max_model_calls, handle_text, handle_tool_call,
+            self, prompt, *, tools, max_model_calls, handle_text,
             require_tool_call=False,
             request_timeout_seconds=None, check_control=None,
         ):
@@ -1259,12 +1224,10 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
             ]
             handle_text(context["approved_turn"]["plan_context"])
             for chunk_id in chunk_ids:
-                handle_tool_call(result_type.model_validate({
+                tools[0].invoke({
                     "video_chunk_id": chunk_id,
-                    "start_ms": 1100,
-                    "end_ms": 1900,
                     "claim": f"Evidence for {chunk_id}",
-                }))
+                })
 
     def search(
         query,

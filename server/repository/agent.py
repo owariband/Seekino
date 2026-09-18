@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 import json
 
 from sqlalchemy import func, select
@@ -349,7 +348,7 @@ class AgentRepository:
         return VideoRepository(self._session_factory).hydrate_video_chunks([video_chunk_id])[0]
 
     def checkpoint_assistant_message(
-        self, message_id: str, *, now: datetime, phase: str | None = None,
+        self, message_id: str, *, now: int, phase: str | None = None,
         content: str | None = None, search_result: dict | None = None,
         timing: AgentMessageTimingState | None = None,
     ) -> AgentMessageState:
@@ -388,7 +387,7 @@ class AgentRepository:
         requested_series_ids: list[str],
         user_message_id: str,
         assistant_message_id: str,
-        now: datetime,
+        now: int,
         reference: dict[str, str] | None = None,
     ) -> StartedAgentMessageState:
         with self._session_factory.begin() as session:
@@ -478,7 +477,7 @@ class AgentRepository:
         content: str,
         retrieval_query: str,
         search_result: dict,
-        now: datetime,
+        now: int,
         timing: AgentMessageTimingState | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
@@ -525,7 +524,7 @@ class AgentRepository:
         message_id: str,
         *,
         error: str,
-        now: datetime,
+        now: int,
         public_code: str = "PROCESSING_FAILED",
         public_message: str = "这次对话未能完成，请稍后重试。",
         timing: AgentMessageTimingState | None = None,
@@ -716,7 +715,7 @@ class AgentRepository:
         record: AgentMessageRecord,
         *,
         current_phase: str | None,
-        now: datetime,
+        now: int,
         timing: AgentMessageTimingState | None,
     ) -> None:
         if timing is not None:
@@ -727,7 +726,7 @@ class AgentRepository:
         stages = AgentRepository._timing_state(record.timing).stages
         elapsed_ms = max(
             0,
-            int((now - record.timing.started_at).total_seconds() * 1000),
+            now - record.timing.started_at,
         )
         recorded_ms = sum(stage.duration_ms for stage in stages)
         remaining_ms = max(0, elapsed_ms - recorded_ms)

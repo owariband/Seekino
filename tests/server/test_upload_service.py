@@ -4,7 +4,7 @@ import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import timedelta
 from threading import Event
 from uuid import uuid4
 
@@ -52,6 +52,7 @@ from server.service.qdrant_mutation_lock import (
     QdrantMutationLockBusyError,
 )
 from server.storage.artifact import LocalArtifactStore
+from server.utils.time import timedelta_to_ms
 
 
 def _config() -> UploadServiceConfig:
@@ -325,7 +326,7 @@ def test_delete_rejects_completing_and_running_parse(repository, tmp_path):
 
 
 def test_manual_parse_retry_preserves_progress_checkpoints_usage_and_attempt_history(repository, tmp_path):
-    retry_at = datetime(2026, 9, 16, 12, 0)
+    retry_at = 1_789_560_000_000
     engine, store, _upload_repository, service = _upload_service(
         repository,
         tmp_path,
@@ -336,8 +337,8 @@ def test_manual_parse_retry_preserves_progress_checkpoints_usage_and_attempt_his
         _put(service, upload.upload_session_id, number, data)
     completed = service.complete(upload.upload_session_id, workspace_id="local-default")
     checkpoint_id = str(uuid4())
-    started_at = retry_at - timedelta(minutes=10)
-    completed_at = retry_at - timedelta(minutes=1)
+    started_at = retry_at - timedelta_to_ms(timedelta(minutes=10))
+    completed_at = retry_at - timedelta_to_ms(timedelta(minutes=1))
     with create_session_factory(engine).begin() as session:
         job = session.get(SeriesParseJobRecord, completed.job_id)
         job.status = ParseJobStatus.FAILED.value
@@ -347,8 +348,8 @@ def test_manual_parse_retry_preserves_progress_checkpoints_usage_and_attempt_his
         job.max_attempts = 3
         job.version = 7
         job.lease_owner = "stale-worker"
-        job.lease_expires_at = retry_at - timedelta(seconds=1)
-        job.heartbeat_at = retry_at - timedelta(seconds=2)
+        job.lease_expires_at = retry_at - timedelta_to_ms(timedelta(seconds=1))
+        job.heartbeat_at = retry_at - timedelta_to_ms(timedelta(seconds=2))
         job.started_at = started_at
         job.completed_at = completed_at
         job.last_error = "provider timed out"
@@ -457,7 +458,7 @@ def test_manual_parse_retry_requires_the_uploads_failed_primary_job(repository, 
             attempt_count=1,
             max_attempts=1,
             version=1,
-            available_at=datetime(2026, 9, 16, 12, 0),
+            available_at=1_789_560_000_000,
             lease_version=0,
             last_error="secondary failed",
         ))
@@ -475,7 +476,7 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
     repository,
     tmp_path,
 ):
-    reparsed_at = datetime(2026, 9, 17, 12, 0)
+    reparsed_at = 1_789_646_400_000
     current_time = [reparsed_at]
     engine, store, _upload_repository, service = _upload_service(
         repository,
@@ -498,8 +499,8 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
         job.attempt_count = 3
         job.max_attempts = 3
         job.version = 7
-        job.started_at = reparsed_at - timedelta(hours=1)
-        job.completed_at = reparsed_at - timedelta(minutes=30)
+        job.started_at = reparsed_at - timedelta_to_ms(timedelta(hours=1))
+        job.completed_at = reparsed_at - timedelta_to_ms(timedelta(minutes=30))
         video = session.get(VideoRecord, completed.video_id)
         video.parse_status = ParseJobStatus.SUCCEEDED.value
         video.parse_progress = 100
@@ -546,7 +547,7 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
             job_id=completed.job_id,
             attempt_count=3,
             lease_version=3,
-            started_at=reparsed_at - timedelta(hours=1),
+            started_at=reparsed_at - timedelta_to_ms(timedelta(hours=1)),
             recording_complete=True,
         ))
     old_attempt_artifact = (
@@ -604,8 +605,9 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
     assert queue.retry(
         lease,
         error="replacement parse failed",
-        retry_at=reparsed_at + timedelta(minutes=1),
-        now=reparsed_at + timedelta(seconds=10),
+        retry_at=reparsed_at + timedelta_to_ms(timedelta(minutes=1)),
+        duration_ms=0,
+        now=reparsed_at + timedelta_to_ms(timedelta(seconds=10)),
     )
     with session_factory() as session:
         video = session.get(VideoRecord, completed.video_id)
@@ -615,13 +617,13 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
     second_lease = queue.claim_next(
         "reparse-worker",
         lease_duration=timedelta(minutes=5),
-        now=reparsed_at + timedelta(minutes=1),
+        now=reparsed_at + timedelta_to_ms(timedelta(minutes=1)),
     )
     assert second_lease is not None
     assert second_lease.preserve_existing_result is True
     assert queue.reap_expired(
         retry_delay=timedelta(minutes=1),
-        now=reparsed_at + timedelta(minutes=7),
+        now=reparsed_at + timedelta_to_ms(timedelta(minutes=7)),
     ) == 1
     with session_factory() as session:
         video = session.get(VideoRecord, completed.video_id)
@@ -631,19 +633,20 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
     final_lease = queue.claim_next(
         "reparse-worker",
         lease_duration=timedelta(minutes=5),
-        now=reparsed_at + timedelta(minutes=8),
+        now=reparsed_at + timedelta_to_ms(timedelta(minutes=8)),
     )
     assert final_lease is not None
     assert final_lease.attempt_count == 6
     assert queue.retry(
         final_lease,
         error="replacement parse exhausted",
-        retry_at=reparsed_at + timedelta(minutes=9),
-        now=reparsed_at + timedelta(minutes=8, seconds=10),
+        retry_at=reparsed_at + timedelta_to_ms(timedelta(minutes=9)),
+        duration_ms=0,
+        now=reparsed_at + timedelta_to_ms(timedelta(minutes=8, seconds=10)),
     )
     failed_reparse = jobs.get(completed.job_id)
     assert failed_reparse.status == ParseJobStatus.FAILED.value
-    current_time[0] = reparsed_at + timedelta(minutes=9)
+    current_time[0] = reparsed_at + timedelta_to_ms(timedelta(minutes=9))
     service.retry_parse(
         upload.upload_session_id,
         workspace_id="local-default",
@@ -668,7 +671,7 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
     completed = service.complete(upload.upload_session_id, workspace_id="local-default")
-    now = datetime(2026, 9, 16, 12, 0)
+    now = 1_789_560_000_000
     video_chunk_id = str(uuid4())
     call_id = str(uuid4())
     snapshot_id = str(uuid4())
@@ -874,7 +877,7 @@ def test_reconcile_resumes_active_upload_cleanup_after_begin_crash(repository, t
     deletion = upload_repository.begin_delete_session(
         upload.upload_session_id,
         workspace_id="local-default",
-        now=datetime(2026, 9, 16, 12, 0),
+        now=1_789_560_000_000,
     )
     assert deletion.session.status == UploadSessionStatus.EXPIRED.value
     with create_session_factory(engine)() as session:
@@ -971,11 +974,11 @@ def test_delete_cleanup_failure_can_be_retried(repository, tmp_path, monkeypatch
 
 
 def test_deleting_segments_from_an_expired_session_advances_its_visible_version(repository, tmp_path):
-    now = datetime(2026, 9, 16, 12, 0)
+    now = 1_789_560_000_000
     _engine, _store, _repo, service = _upload_service(repository, tmp_path, clock=lambda: now)
     upload = _create(service)
     _put(service, upload.upload_session_id, 0, b"abcd")
-    now += timedelta(hours=2)
+    now += timedelta_to_ms(timedelta(hours=2))
     expired = service.get_session(upload.upload_session_id, workspace_id="local-default")
     assert expired.status == "EXPIRED" and expired.uploaded_size_bytes == 4
     deleted = service.delete_session(upload.upload_session_id, workspace_id="local-default")
@@ -1020,7 +1023,7 @@ def test_complete_creates_video_and_durable_parse_job_once(
 
 
 def test_expired_session_rejects_new_segments(repository, tmp_path) -> None:
-    now = datetime(2026, 9, 14, 12, 0, 0)
+    now = 1_789_387_200_000
     _engine, store, upload_repository, service = _upload_service(
         repository,
         tmp_path,
@@ -1032,7 +1035,7 @@ def test_expired_session_rejects_new_segments(repository, tmp_path) -> None:
         store,
         config=_config(),
         probe_duration=lambda _path: 12_345,
-        clock=lambda: now + timedelta(hours=2),
+        clock=lambda: now + timedelta_to_ms(timedelta(hours=2)),
     )
 
     with pytest.raises(UploadStateError, match="expired"):
@@ -1264,12 +1267,12 @@ def test_legacy_session_without_fingerprint_compares_file_fields(repository, tmp
 
 @pytest.mark.parametrize("elapsed_hours", [0, 2])
 def test_replay_and_expiration_do_not_lock_series(repository, tmp_path, elapsed_hours):
-    now = datetime(2026, 9, 14, 12, 0, 0)
+    now = 1_789_387_200_000
     engine, store, upload_repository, service = _upload_service(repository, tmp_path, clock=lambda: now)
     first = _create(service)
     replay_service = UploadService(
         upload_repository, store, config=_config(),
-        clock=lambda: now + timedelta(hours=elapsed_hours),
+        clock=lambda: now + timedelta_to_ms(timedelta(hours=elapsed_hours)),
     )
     statements = []
 

@@ -117,6 +117,16 @@ function assistantMessage(content: string, hits: VideoChunkSearchHit[] = []): Ag
       warnings: [],
       hits,
     } : null,
+    renderBlocks: [
+      ...(content ? [{ type: "markdown" as const, markdown: content }] : []),
+      ...hits.map((hit) => ({
+        type: "video" as const,
+        videoChunkId: hit.evidence.videoChunkId,
+        startMs: hit.evidence.startMs,
+        endMs: hit.evidence.endMs,
+      })),
+    ],
+    timing: null,
     lastError: null,
     createdAt: now,
     updatedAt: now,
@@ -265,28 +275,35 @@ describe("Search assistant presentation", () => {
     expect(screen.getByText(/已引用.*00:12–00:13/)).toBeInTheDocument();
   });
 
-  it("falls back to the canonical chunk when the submitted range is outside it", async () => {
+  it("drops an out-of-bounds approved range instead of expanding it to the canonical chunk", async () => {
     const hit = searchHit("chunk-1", 1, "越界片段首帧");
     const message = {
       ...assistantMessage("越界片段", [hit]),
       renderBlocks: [
+        { type: "markdown" as const, markdown: "越界片段" },
         { type: "video" as const, videoChunkId: hit.evidence.videoChunkId, startMs: 11_999, endMs: 13_500 },
       ],
     };
     renderPage(message);
-    const user = userEvent.setup();
 
-    expect(screen.getByText("00:12–00:15")).toBeInTheDocument();
-    await user.click(screen.getByRole("img", { name: "越界片段首帧" }));
-    const video = screen.getByLabelText<HTMLVideoElement>("视频证据");
-    Object.defineProperty(video, "readyState", { value: HTMLMediaElement.HAVE_METADATA, configurable: true });
-    video.dispatchEvent(new Event("loadedmetadata"));
+    expect(await screen.findByText("越界片段")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "越界片段首帧" })).not.toBeInTheDocument();
+    expect(screen.queryByText("00:12–00:15")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
+  });
 
-    expect(video.currentTime).toBe(12);
-    expect(screen.getByRole("slider", { name: "视频片段播放进度" })).toHaveAttribute("max", "3000");
-    expect(screen.getByText("00:00 / 00:03")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "引用此片段追问" }));
-    expect(screen.getByText(/已引用.*00:12–00:15/)).toBeInTheDocument();
+  it("does not synthesize canonical video blocks for a legacy message without renderBlocks", () => {
+    const hit = searchHit("chunk-1", 1, "旧消息首帧");
+    const { renderBlocks: _renderBlocks, ...legacyMessage } = assistantMessage(
+      "旧消息只有正文",
+      [hit],
+    );
+
+    renderPage(legacyMessage as AgentMessageView);
+
+    expect(screen.getByText("旧消息只有正文")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "旧消息首帧" })).not.toBeInTheDocument();
+    expect(screen.queryByText("00:12–00:15")).not.toBeInTheDocument();
   });
 
   it("shows only thumbnail images until selection and keeps exactly one selected video mounted", async () => {

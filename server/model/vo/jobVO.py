@@ -40,7 +40,10 @@ class ParseJobView(ContractModel):
     stage_progress: int | None = Field(ge=0, le=100)
     completed_duration_ms: int | None = Field(ge=0)
     completed_through_ms: int | None = Field(ge=0)
+    video_duration_ms: int = Field(gt=0)
     total_duration_ms: int = Field(gt=0)
+    processing_duration_ms: int = Field(ge=0)
+    processing_timing_complete: bool
     completed_chunk_count: int | None = Field(ge=0)
     total_chunk_count: int = Field(ge=0)
     current_chunk: CurrentVideoChunkView | None

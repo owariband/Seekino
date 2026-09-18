@@ -75,7 +75,7 @@ def test_ark_captures_one_raw_usage_before_result_validation():
     assert len(provider.calls) == len(calls) == 1
     call = calls[0]
     assert UUID(call.call_id)
-    assert call.started_at.tzinfo is None
+    assert isinstance(call.started_at, int) and call.started_at >= 0
     assert (call.provider, call.model, call.operation, call.request_id, call.status) == (
         "ark", "actual-model", "video_timeline", "request-123", "completed",
     )

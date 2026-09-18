@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from sqlalchemy import Engine, create_engine, inspect
+from sqlalchemy import BigInteger, Engine, create_engine, inspect
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -19,6 +19,42 @@ class Base(DeclarativeBase):
 
 class SchemaUpgradeRequiredError(RuntimeError):
     pass
+
+
+_UNIX_TIME_MS_COLUMNS = {
+    "agent_conversation": {"last_message_at", "created_at", "updated_at"},
+    "agent_message": {"created_at", "updated_at"},
+    "agent_message_timing": {"started_at"},
+    "context_snapshot": {"created_at"},
+    "index_sync_intent": {"available_at", "synced_at", "created_at", "updated_at"},
+    "parse_model_call": {"started_at", "created_at", "updated_at"},
+    "parse_job_attempt_timing": {"started_at", "completed_at"},
+    "parse_usage_attempt": {"started_at"},
+    "series": {"created_at", "updated_at"},
+    "series_parse_job": {
+        "available_at",
+        "lease_expires_at",
+        "heartbeat_at",
+        "started_at",
+        "completed_at",
+        "created_at",
+        "updated_at",
+    },
+    "upload_segment": {"created_at"},
+    "upload_session": {
+        "completion_started_at",
+        "expires_at",
+        "completed_at",
+        "created_at",
+        "updated_at",
+    },
+    "video": {"created_at", "updated_at"},
+    "video_chunk": {"created_at", "updated_at"},
+    "video_chunk_checkpoint": {"updated_at"},
+    "video_chunk_embedding": {"created_at", "updated_at"},
+    "video_chunk_info": {"parsed_at"},
+    "video_chunk_stage_timing": {"started_at", "completed_at"},
+}
 
 
 def create_database_engine(
@@ -123,6 +159,15 @@ def create_schema(engine: Engine) -> None:
         "series_parse_job": {"version"},
         "video_chunk_checkpoint": {"chunk_start_ms", "chunk_end_ms"},
         "upload_session": {"content_sha256", "completion_stage", "version", "job_id", "last_error_code", "request_fingerprint"},
+        "parse_job_attempt_timing": {
+            "job_id", "attempt_count", "lease_version", "started_at",
+            "completed_at", "duration_ms", "outcome", "timing_complete",
+        },
+        "video_chunk_stage_timing": {
+            "job_id", "attempt_count", "lease_version", "sequence_no",
+            "stage", "video_chunk_id", "started_at", "completed_at",
+            "duration_ms", "status",
+        },
     }.items():
         if table_name not in existing_tables:
             continue
@@ -134,12 +179,47 @@ def create_schema(engine: Engine) -> None:
             + ", ".join(sorted(missing_view_columns))
         )
 
+    if "series_parse_job" in existing_tables:
+        missing_timing_tables = {
+            table_name
+            for table_name in {"parse_job_attempt_timing", "video_chunk_stage_timing"}
+            if table_name not in existing_tables
+        }
+        if missing_timing_tables:
+            raise SchemaUpgradeRequiredError(
+                "ParseJob timing schema requires a controlled migration before "
+                "init-db; missing: " + ", ".join(sorted(missing_timing_tables))
+            )
+
+    legacy_timestamp_columns: set[str] = set()
+    for table_name, timestamp_columns in _UNIX_TIME_MS_COLUMNS.items():
+        if table_name not in existing_tables:
+            continue
+        for column in inspector.get_columns(table_name):
+            column_type = column["type"]
+            if (
+                column["name"] in timestamp_columns
+                and (
+                    not isinstance(column_type, BigInteger)
+                    or bool(getattr(column_type, "unsigned", False))
+                )
+            ):
+                legacy_timestamp_columns.add(f"{table_name}.{column['name']}")
+    if legacy_timestamp_columns:
+        found = ", ".join(sorted(legacy_timestamp_columns))
+        raise SchemaUpgradeRequiredError(
+            "absolute timestamps require the controlled signed-BIGINT "
+            "Unix-millisecond "
+            f"BIGINT migration before init-db; found: {found}"
+        )
+
     # Importing registers every table on Base.metadata without making the
     # connection module depend on concrete repositories.
     from .model import agent as _agent_models  # noqa: F401
     from .model import index_sync as _index_sync_models  # noqa: F401
     from .model import job as _job_models  # noqa: F401
     from .model import parse_usage as _parse_usage_models  # noqa: F401
+    from .model import job_timing as _job_timing_models  # noqa: F401
     from .model import upload as _upload_models  # noqa: F401
     from .model import video as _video_models  # noqa: F401
 

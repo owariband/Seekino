@@ -110,76 +110,88 @@ def materialize_analysis_windows(
 ) -> None:
     if max_height is not None and max_height <= 0:
         raise ValueError("max_height must be greater than zero")
-
     for window in windows:
-        if not window.source_video.is_file():
-            raise FileNotFoundError(
-                f"video file does not exist: {window.source_video}"
-            )
-        window.media_path.parent.mkdir(parents=True, exist_ok=True)
-        if window.media_path.exists():
-            if window.media_path.is_file() and window.media_path.stat().st_size > 0:
-                continue
-            raise RuntimeError(
-                f"analysis window path exists but is not a usable file: "
-                f"{window.media_path}"
-            )
-
-        start_seconds = f"{window.analysis_start_ms / 1000:.3f}"
-        duration_seconds = f"{window.analysis_duration_ms / 1000:.3f}"
-        command = [
-            ffmpeg_bin,
-            "-nostdin",
-            "-v",
-            "error",
-            "-ss",
-            start_seconds,
-            "-i",
-            str(window.source_video),
-            "-t",
-            duration_seconds,
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
-            "-sn",
-        ]
-        if max_height is not None:
-            command.extend(["-vf", f"scale=-2:min({max_height}\\,ih)"])
-        command.extend(
-            [
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "25",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                "-movflags",
-                "+faststart",
-                "-n",
-                str(window.media_path),
-            ]
+        materialize_analysis_window(
+            window,
+            ffmpeg_bin=ffmpeg_bin,
+            max_height=max_height,
         )
-        try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                "ffmpeg is required to create local analysis windows"
-            ) from exc
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or "").strip()
-            if detail:
-                detail = f": {detail[-1000:]}"
-            raise RuntimeError(
-                f"ffmpeg could not create analysis window {window.sequence_no}"
-                f"{detail}"
-            ) from exc
+
+
+def materialize_analysis_window(
+    window: AnalysisWindow,
+    *,
+    ffmpeg_bin: str = "ffmpeg",
+    max_height: int | None = 720,
+) -> None:
+    """Materialize one planned analysis window without plan-level validation."""
+
+    if max_height is not None and max_height <= 0:
+        raise ValueError("max_height must be greater than zero")
+    if not window.source_video.is_file():
+        raise FileNotFoundError(f"video file does not exist: {window.source_video}")
+    window.media_path.parent.mkdir(parents=True, exist_ok=True)
+    if window.media_path.exists():
+        if window.media_path.is_file() and window.media_path.stat().st_size > 0:
+            return
+        raise RuntimeError(
+            f"analysis window path exists but is not a usable file: {window.media_path}"
+        )
+
+    start_seconds = f"{window.analysis_start_ms / 1000:.3f}"
+    duration_seconds = f"{window.analysis_duration_ms / 1000:.3f}"
+    command = [
+        ffmpeg_bin,
+        "-nostdin",
+        "-v",
+        "error",
+        "-ss",
+        start_seconds,
+        "-i",
+        str(window.source_video),
+        "-t",
+        duration_seconds,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-sn",
+    ]
+    if max_height is not None:
+        command.extend(["-vf", f"scale=-2:min({max_height}\\,ih)"])
+    command.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "25",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            "-n",
+            str(window.media_path),
+        ]
+    )
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "ffmpeg is required to create local analysis windows"
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        if detail:
+            detail = f": {detail[-1000:]}"
+        raise RuntimeError(
+            f"ffmpeg could not create analysis window {window.sequence_no}{detail}"
+        ) from exc
 
 
 def materialize_canonical_chunks(
@@ -200,72 +212,91 @@ def materialize_canonical_chunks(
     for expected_sequence_no, window in enumerate(windows):
         if window.sequence_no != expected_sequence_no:
             raise ValueError("analysis windows must have contiguous sequence numbers")
-        if not window.source_video.is_file():
-            raise FileNotFoundError(
-                f"video file does not exist: {window.source_video}"
+        outputs.append(
+            materialize_canonical_chunk(
+                window,
+                output_dir=target_directory,
+                ffmpeg_bin=ffmpeg_bin,
+                max_height=max_height,
             )
-        target = target_directory / f"chunk-{window.sequence_no:04d}.mp4"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            if target.is_file() and target.stat().st_size > 0:
-                outputs.append(target)
-                continue
-            raise RuntimeError(
-                f"canonical VideoChunk path is not a usable file: {target}"
-            )
-
-        command = [
-            ffmpeg_bin,
-            "-nostdin",
-            "-v",
-            "error",
-            "-ss",
-            f"{window.chunk_start_ms / 1000:.3f}",
-            "-i",
-            str(window.source_video),
-            "-t",
-            f"{(window.chunk_end_ms - window.chunk_start_ms) / 1000:.3f}",
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
-            "-sn",
-        ]
-        if max_height is not None:
-            command.extend(["-vf", f"scale=-2:min({max_height}\\,ih)"])
-        command.extend(
-            [
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "25",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                "-movflags",
-                "+faststart",
-                "-n",
-                str(target),
-            ]
         )
-        try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                "ffmpeg is required to create canonical VideoChunks"
-            ) from exc
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or "").strip()
-            if detail:
-                detail = f": {detail[-1000:]}"
-            raise RuntimeError(
-                f"ffmpeg could not create canonical VideoChunk "
-                f"{window.sequence_no}{detail}"
-            ) from exc
-        outputs.append(target)
     return outputs
+
+
+def materialize_canonical_chunk(
+    window: AnalysisWindow,
+    *,
+    output_dir: str | Path,
+    ffmpeg_bin: str = "ffmpeg",
+    max_height: int | None = 720,
+) -> Path:
+    """Materialize one canonical chunk; callers owning a plan validate it."""
+
+    if max_height is not None and max_height <= 0:
+        raise ValueError("max_height must be greater than zero")
+    if not window.source_video.is_file():
+        raise FileNotFoundError(f"video file does not exist: {window.source_video}")
+    target = (
+        Path(output_dir).expanduser().resolve()
+        / f"chunk-{window.sequence_no:04d}.mp4"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        if target.is_file() and target.stat().st_size > 0:
+            return target
+        raise RuntimeError(
+            f"canonical VideoChunk path is not a usable file: {target}"
+        )
+    command = [
+        ffmpeg_bin,
+        "-nostdin",
+        "-v",
+        "error",
+        "-ss",
+        f"{window.chunk_start_ms / 1000:.3f}",
+        "-i",
+        str(window.source_video),
+        "-t",
+        f"{(window.chunk_end_ms - window.chunk_start_ms) / 1000:.3f}",
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-sn",
+    ]
+    if max_height is not None:
+        command.extend(["-vf", f"scale=-2:min({max_height}\\,ih)"])
+    command.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "25",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            "-n",
+            str(target),
+        ]
+    )
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "ffmpeg is required to create canonical VideoChunks"
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        if detail:
+            detail = f": {detail[-1000:]}"
+        raise RuntimeError(
+            f"ffmpeg could not create canonical VideoChunk {window.sequence_no}{detail}"
+        ) from exc
+    return target

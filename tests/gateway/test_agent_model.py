@@ -58,7 +58,7 @@ def _tool_call(
     arguments: dict | str,
     *,
     call_id: str | None = "call-1",
-    function_name: str = "submit_video_item",
+    tool_name: str = "submit_video_item",
     call_type: str = "function",
 ):
     rendered_arguments = (
@@ -68,7 +68,7 @@ def _tool_call(
         id=call_id,
         type=call_type,
         function=SimpleNamespace(
-            name=function_name,
+            name=tool_name,
             arguments=rendered_arguments,
         ),
     )
@@ -127,19 +127,28 @@ def _run_agent(
     *,
     max_model_calls: int = 4,
     handle_text=lambda _text: None,
-    handle_tool_call=lambda _item: "accepted",
+    invoke_tool=lambda _item: "accepted",
     require_tool_call: bool = False,
     request_timeout_seconds: float | None = None,
     check_control=None,
 ) -> None:
+    def submit_video_item(video_chunk_id: str, claim: str) -> str:
+        return invoke_tool(VideoItem(
+            video_chunk_id=video_chunk_id,
+            claim=claim,
+        ))
+
+    tool = StructuredTool.from_function(
+        func=submit_video_item,
+        name="submit_video_item",
+        description="Submit one approved video item.",
+        args_schema=VideoItem,
+    )
     model.run_agent_loop(
         "根据审核后的证据回答",
-        function_name="submit_video_item",
-        function_description="Submit one approved video item.",
-        result_type=VideoItem,
+        tools=[tool],
         max_model_calls=max_model_calls,
         handle_text=handle_text,
-        handle_tool_call=handle_tool_call,
         require_tool_call=require_tool_call,
         request_timeout_seconds=request_timeout_seconds,
         check_control=check_control,
@@ -185,7 +194,7 @@ def test_deepseek_agent_loop_preserves_text_and_tool_order_across_turns() -> Non
     _run_agent(
         model,
         handle_text=handle_text,
-        handle_tool_call=handle_tool,
+        invoke_tool=handle_tool,
     )
 
     assert events == [
@@ -248,7 +257,7 @@ def test_deepseek_agent_loop_allows_first_turn_text_stop() -> None:
         model,
         max_model_calls=1,
         handle_text=texts.append,
-        handle_tool_call=lambda _item: pytest.fail("tool handler must not run"),
+        invoke_tool=lambda _item: pytest.fail("tool handler must not run"),
     )
 
     assert texts == ["没有需要展示的视频，直接回答。"]
@@ -279,7 +288,7 @@ def test_ark_agent_loop_requires_video_tool_and_falls_back_to_lite() -> None:
         model,
         require_tool_call=True,
         handle_text=lambda text: events.append(("text", text)),
-        handle_tool_call=lambda item: (
+        invoke_tool=lambda item: (
             events.append(("tool", item.video_chunk_id)) or "accepted"
         ),
     )
@@ -319,7 +328,7 @@ def test_ark_agent_loop_does_not_fallback_after_tool_handler_error() -> None:
         _run_agent(
             model,
             require_tool_call=True,
-            handle_tool_call=reject_item,
+            invoke_tool=reject_item,
         )
 
     assert [call["model"] for call in completions.calls] == ["doubao-pro"]
@@ -348,7 +357,7 @@ def test_ark_agent_loop_falls_back_when_pro_stops_without_final_text() -> None:
         model,
         require_tool_call=True,
         handle_text=lambda text: events.append(("text", text)),
-        handle_tool_call=lambda item: (
+        invoke_tool=lambda item: (
             events.append(("tool", item.video_chunk_id)) or "accepted"
         ),
     )
@@ -391,7 +400,7 @@ def test_deepseek_agent_loop_falls_back_to_ark_in_place_after_tool_result() -> N
         model,
         require_tool_call=True,
         handle_text=lambda text: events.append(("text", text)),
-        handle_tool_call=lambda item: (
+        invoke_tool=lambda item: (
             events.append(("tool", item.video_chunk_id)) or "accepted"
         ),
     )
@@ -427,7 +436,7 @@ def test_deepseek_agent_loop_accepts_empty_stop_after_earlier_visible_text() -> 
     _run_agent(
         model,
         handle_text=lambda text: events.append(("text", text)),
-        handle_tool_call=lambda item: (
+        invoke_tool=lambda item: (
             events.append(("tool", item.video_chunk_id)) or "accepted"
         ),
     )
@@ -450,7 +459,7 @@ def test_deepseek_agent_loop_requires_visible_text_before_completion() -> None:
         _run_agent(
             model,
             handle_text=lambda _text: pytest.fail("empty text must not be emitted"),
-            handle_tool_call=lambda item: tools.append(item) or "accepted",
+            invoke_tool=lambda item: tools.append(item) or "accepted",
         )
 
     assert [item.video_chunk_id for item in tools] == ["chunk-1"]
@@ -473,7 +482,7 @@ def test_deepseek_validates_full_tool_batch_before_any_callback() -> None:
         _run_agent(
             model,
             handle_text=lambda text: events.append(("text", text)),
-            handle_tool_call=lambda item: events.append(("tool", item)) or "accepted",
+            invoke_tool=lambda item: events.append(("tool", item)) or "accepted",
         )
 
     assert events == []
@@ -515,7 +524,7 @@ def test_deepseek_agent_loop_rejects_invalid_turn(response, message) -> None:
     ("calls", "message"),
     [
         (
-            [_tool_call(_video_item(), function_name="unexpected")],
+            [_tool_call(_video_item(), tool_name="unexpected")],
             "unexpected function",
         ),
         (
@@ -554,7 +563,7 @@ def test_deepseek_agent_loop_rejects_invalid_tool_calls(calls, message) -> None:
         _run_agent(
             model,
             handle_text=events.append,
-            handle_tool_call=lambda item: events.append(item) or "accepted",
+            invoke_tool=lambda item: events.append(item) or "accepted",
         )
 
     assert events == []
@@ -579,7 +588,7 @@ def test_deepseek_agent_loop_rejects_reused_tool_id_across_turns() -> None:
         _run_agent(
             model,
             handle_text=lambda text: events.append(("text", text)),
-            handle_tool_call=lambda item: (
+            invoke_tool=lambda item: (
                 events.append(("tool", item.video_chunk_id)) or "accepted"
             ),
         )
@@ -604,7 +613,7 @@ def test_deepseek_agent_loop_stops_at_model_call_budget() -> None:
             model,
             max_model_calls=1,
             handle_text=lambda text: events.append(("text", text)),
-            handle_tool_call=lambda item: (
+            invoke_tool=lambda item: (
                 events.append(("tool", item.video_chunk_id)) or "accepted"
             ),
         )
@@ -690,7 +699,7 @@ def test_deepseek_agent_loop_propagates_text_handler_error_before_tools() -> Non
         _run_agent(
             model,
             handle_text=fail,
-            handle_tool_call=lambda item: tools.append(item) or "accepted",
+            invoke_tool=lambda item: tools.append(item) or "accepted",
         )
 
     assert tools == []
@@ -711,27 +720,32 @@ def test_deepseek_agent_loop_propagates_tool_handler_error() -> None:
         raise RuntimeError("server rejected item")
 
     with pytest.raises(RuntimeError, match="server rejected item"):
-        _run_agent(model, handle_tool_call=fail)
+        _run_agent(model, invoke_tool=fail)
 
     assert len(completions.calls) == 1
 
 
-def test_deepseek_agent_loop_rejects_non_string_tool_result() -> None:
+def test_deepseek_agent_loop_serializes_structured_tool_result() -> None:
     model, completions = _function_model(
         _agent_response(
             None,
             calls=[_tool_call(_video_item())],
             finish_reason="tool_calls",
         ),
+        _agent_response("answer"),
     )
 
-    with pytest.raises(TypeError, match="must return str"):
-        _run_agent(
-            model,
-            handle_tool_call=lambda _item: {"accepted": True},
-        )
+    _run_agent(
+        model,
+        invoke_tool=lambda _item: {"accepted": True},
+    )
 
-    assert len(completions.calls) == 1
+    assert len(completions.calls) == 2
+    assert completions.calls[1]["messages"][-1] == {
+        "role": "tool",
+        "tool_call_id": "call-1",
+        "content": '{"accepted":true}',
+    }
 
 
 def test_deepseek_agent_loop_records_usage_for_each_request() -> None:

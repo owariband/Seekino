@@ -2,13 +2,15 @@
 
 > 状态：首个可运行纵向闭环
 >
-> 更新时间：2026-09-17
+> 更新时间：2026-09-18
 >
 > 面向对象：WebUI 对话、历史会话与 Agent 状态联调
 
 本文只描述独立 Agent 会话系统，不重复描述视频上传、解析任务或底层 `/api/search`
 契约。所有资源 ID 使用 camelCase Query 参数，不放入 Path；创建、列表、详情和发送动作
 分别显式使用 `create`、`list`、`get`、`send`。
+所有绝对时间字段都是 Unix epoch 毫秒整数（signed INT64 / MySQL `BIGINT`）；
+视频 `startMs/endMs` 和 Agent `totalDurationMs/stages[].durationMs` 是相对毫秒，不是时间戳。
 
 ## 1. 领域关系
 
@@ -39,11 +41,11 @@ Workspace
                             ├── 有获批 Evidence：首次 tool_choice=required
                             ├── 无获批 Evidence / 已提交片段：tool_choice=auto
                             ├── 输出一段普通 Markdown
-                            ├── 调用 submit_video_item(video_chunk_id, start_ms, end_ms, claim)
+                            ├── 调用 submit_video_item(video_chunk_id, claim)
                             ├── 继续输出 Markdown 或再提交视频
                             └── 自主结束
                                       ↓
-                     Server 校验每个 ID 并归一化播放范围，生成有序 renderBlocks
+                     Server 校验每个 ID，从获批 selected_video_ranges 绑定范围，生成有序 renderBlocks
                                       ↓
                      确定性 Output Node 补齐可信媒体信息
                             ↓
@@ -52,8 +54,8 @@ Workspace
                      answer.completed
 ```
 
-Retrieve Tool 是进程内工具，直接调用注入的 `VideoRetrievalService.search`。模型参数只有
-`query` / `top_k`；Workspace / Series Scope 由当前 Kick 固定。完整实际召回、公开计划、
+Agent Tool 的参数 Schema 与构造器统一由 `server/agent/tools.py` 提供。Retrieve Tool 是进程内工具，直接调用注入的 `VideoRetrievalService.search`。模型参数只有
+`query` / `top_k` / `channel_weights`；Workspace / Series Scope 由当前 Kick 固定。完整实际召回、公开计划、
 草稿、审核意见和复用来源保存在各 `LoopTurn`，下一轮显式获得这些信息。
 
 代码职责：`server/service/agent_chat.py` 管会话与消息事务；`server/agent/` 是独立于 HTTP 的
@@ -61,11 +63,13 @@ Harness；`gateway/agent_model.py` 使用 LangChain `create_agent` / `ToolStrate
 内层工具循环，`langgraph` 管外层审核循环。Evaluator 使用 text-only DeepSeek Chat Completions
 和单个 required function call 返回结构化审核；最终 Chat 同样通过 DeepSeek 的文本 Chat Completions
 运行有边界的自主工具循环；每轮可输出 Markdown、调用一个或多个
-`submit_video_item({video_chunk_id, start_ms, end_ms, claim})`，或结束。有获批 Evidence 时至少提交一个，
+`submit_video_item({video_chunk_id, claim})`，或结束。有获批 Evidence 时至少提交一个，
 之后可以只使用其任意子集；没有获批 Evidence 时可以不调用工具。Chat 自主决定
-Markdown 与视频窗口的交错顺序；Server 拒绝重复或未获批 ID。提交的时间应当与
-Evaluator 审核通过的 Query 范围一致；不一致或越出 canonical Chunk 时回退到合法的审批范围，
-审批范围也非法时回退完整 canonical Chunk 并记录 warning，不因播放范围错误中止文字回答。
+Markdown 与视频窗口的交错顺序；Server 拒绝重复或未获批 ID。Chat 不提交时间。
+Evaluator 放行后，Server 要求 Query 的 `selected_video_ranges` 与获批 Evidence 的 ID 集合
+完全一致，且每个范围都在对应 canonical Evidence 内；非法 complete 转为 continue。Output 仅按
+`video_chunk_id` 从该获批范围生成 `renderBlocks.startMs/endMs`，不存在 proposed / approved /
+canonical 三层范围或 fallback。
 视频 URI、标题等仍始终从可信 Evidence 补齐。逻辑块顺序保存在 `renderBlocks`；整个循环和数据库提交
 成功后才原子交付给前端，不暴露失败运行的半成品。
 
@@ -110,8 +114,8 @@ Content-Type: application/json
   "title": "寻找春日影后的质问",
   "messageCount": 0,
   "lastMessageAt": null,
-  "createdAt": "2026-09-15T01:01:00",
-  "updatedAt": "2026-09-15T01:01:00"
+  "createdAt": 1789434060000,
+  "updatedAt": 1789434060000
 }
 ```
 
@@ -187,8 +191,8 @@ ASSISTANT Message 处于 `PROCESSING`。
     "retrievalQuery": null,
     "searchResult": null,
     "lastError": null,
-    "createdAt": "2026-09-15T01:02:00",
-    "updatedAt": "2026-09-15T01:02:00"
+    "createdAt": 1789434120000,
+    "updatedAt": 1789434120000
   },
   "assistantMessage": {
     "messageId": "8166b7b0-...",
@@ -227,8 +231,8 @@ ASSISTANT Message 处于 `PROCESSING`。
       }
     ],
     "lastError": null,
-    "createdAt": "2026-09-15T01:02:00",
-    "updatedAt": "2026-09-15T01:02:04"
+    "createdAt": 1789434120000,
+    "updatedAt": 1789434124000
   }
 }
 ```
@@ -237,12 +241,13 @@ ASSISTANT Message 处于 `PROCESSING`。
 不包含独立 `/api/search` 才有的 `agentReply`。`retrievalTrace` 按实际调用顺序记录 Query Agent
 每次检索的受限 `topK`、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID，
 供调权实验复现；普通 `/api/search` 不返回该 Agent 专属字段。`renderBlocks` 是最终显示顺序：Markdown 块携带
-`markdown`，视频块携带 `videoChunkId` 和 Evaluator 审核通过的原视频绝对 `startMs/endMs`。
-该范围应当是对应 canonical Chunk 的子区间；Query 提出候选范围，Evaluator 通过 advice 要求修订，
-Chat 在 `submit_video_item` 中显式提交最终范围。候选范围越界不改变 retrieve 已召回 Chunk 的真实性，
-也不在 Evaluator 之前中止 Kick；最终提交范围仍非法时由 Server 回退 canonical Chunk 并记录 warning。
+`markdown`，视频块携带 `videoChunkId` 和 Evaluator 审核通过的原视频媒体偏移 `startMs/endMs`。
+该范围应当是对应 canonical Chunk 的子区间；Query 提出候选范围，Evaluator 通过 advice 要求修订。
+候选范围越界不改变 retrieve 已召回 Chunk 的真实性，也不在 Evaluator 之前中止 Kick；
+但 Evaluator complete 只有在获批 ID 集合与 `selected_video_ranges` 一致、每个范围合法时才接受。
+Chat 只提交 `video_chunk_id + claim`，Output 从获批 `selected_video_ranges` 绑定范围。
 前端必须将视频块与同一消息的可信 `searchResult.hits` 关联，不得从块或正文自行构造媒体 URI。
-旧块缺失时间或范围非法时，Server 投影回退到 canonical Chunk 范围。`content` 保留为所有 Markdown 块
+旧块缺失时间或范围非法时，Server 丢弃该块，不扩大为 canonical Chunk。`content` 保留为所有 Markdown 块
 的兼容汇总。存在候选时，`hits`
 包含选中的完整 Candidate、SelectionReason 和可安全交付给前端的 VideoChunkEvidence。
 每个 `hits[].evidence.seriesId` 都必填，来自 MySQL 对 Series / Video / VideoChunk 的批量
@@ -392,10 +397,10 @@ Chat 是 text-only、非 token 流式的自主工具循环。存在获批 Eviden
 `auto`。DeepSeek 可以输出普通
 `message.content`、调用一个或多个 `submit_video_item`，或以 `finish_reason=stop` 结束。
 工具结果以 `role=tool` acknowledgement 送回模型，然后由模型自主决定下一步。
-每个工具调用的参数只允许 `video_chunk_id`、`start_ms`、`end_ms` 和 `claim`；获批 hits 非空时
+每个工具调用的参数只允许 `video_chunk_id` 和 `claim`；获批 hits 非空时
 Chat 必须至少提交一个，但仍可只选其子集；Server 拒绝重复、未获批或 Schema 不合法的调用。
-已获批 Chunk 的时间偏差是可恢复的展示错误，
-Server 使用获批范围或 canonical Chunk 降级并记录 warning。完成的循环必须至少生成一段非空 Markdown，
+Server 从 Evaluator 已批准的 `selected_video_ranges` 绑定时间；审批集合不一致或范围越界会拒绝交付，
+不使用 canonical Chunk 降级。完成的循环必须至少生成一段非空 Markdown，
 并受统一的模型调用次数与 Kick deadline 约束。循环或持久化任一失败，都不会向前端
 交付视频窗口或正文；已进入同步 Provider 请求后的取消仍需等待请求返回或超时。
 

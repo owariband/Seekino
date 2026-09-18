@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -52,7 +52,7 @@ class ModelCallUsage:
     provider: str
     model: str
     operation: str
-    started_at: datetime
+    started_at: int
     request_id: str | None
     usage: TokenUsage | None
     status: Literal["completed", "failed"]
@@ -105,7 +105,7 @@ class ModelCallTracker:
         self.provider = provider
         self.model = model
         self.operation = operation
-        self.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.started_at = time.time_ns() // 1_000_000
         self.request_id: str | None = None
         self.usage: TokenUsage | None = None
 

@@ -30,7 +30,7 @@ from ..model.video import (
 from ..mq.contracts import ParseJobLeaseLostError
 from ..schema import VideoChunkEvidence, VideoChunkKeyframeReference
 from ..utils.media import merge_keyframe_uri_values
-from ..utils.time import utc_now_naive
+from ..utils.time import now_unix_time_ms
 from ..utils.validation import require_nonempty_text
 from .index_sync import materialize_index_sync_intents
 
@@ -279,7 +279,7 @@ class VideoRepository:
         with self._session_factory.begin() as session:
             job: SeriesParseJobRecord | None = None
             if lease is not None:
-                checked_at = utc_now_naive()
+                checked_at = now_unix_time_ms()
                 job = session.scalar(
                     select(SeriesParseJobRecord)
                     .where(
@@ -590,7 +590,10 @@ class VideoRepository:
             # external write is deliberately handled after this transaction.
             materialize_index_sync_intents(session, chunk_ids)
             if job is not None:
-                if job.lease_expires_at is None or job.lease_expires_at <= utc_now_naive():
+                if (
+                    job.lease_expires_at is None
+                    or job.lease_expires_at <= now_unix_time_ms()
+                ):
                     raise ParseJobLeaseLostError(
                         "parse job lease expired while facts were being persisted"
                     )

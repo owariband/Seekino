@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from pydantic import Field
 
@@ -37,9 +36,9 @@ class IndexSyncItem:
     generation: int
     status: IndexSyncStatus
     attempt_count: int
-    available_at: datetime
+    available_at: int
     last_error: str | None
-    synced_at: datetime | None
+    synced_at: int | None
     is_fallback: bool
     text_vector: list[float] | None
     vision_vector: list[float] | None

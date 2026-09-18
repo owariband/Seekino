@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
@@ -71,7 +70,7 @@ class VideoSummaryState:
 class SeriesLastSearchState:
     conversation_id: str
     query: str
-    searched_at: datetime
+    searched_at: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,8 +84,8 @@ class SeriesState:
     important_extra_data: dict | None
     character_bible: list[dict]
     video_count: int
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
     ready_video_count: int = 0
     failed_video_count: int = 0
     pending_upload_count: int = 0

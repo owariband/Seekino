@@ -92,8 +92,8 @@ async function loadMessages(conversationId: string): Promise<AgentMessageView[]>
 function richerTiming(
   previous: AgentMessageTiming | null | undefined,
   next: AgentMessageTiming | null | undefined,
-): AgentMessageTiming | null | undefined {
-  if (!previous) return next;
+): AgentMessageTiming | null {
+  if (!previous) return next ?? null;
   if (!next) return previous;
   if (next.totalDurationMs !== null) return next;
   if (previous.totalDurationMs !== null) return previous;

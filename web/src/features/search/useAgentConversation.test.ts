@@ -29,7 +29,9 @@ function conversation(conversationId = "conv-A"): AgentConversationView {
 function message(conversationId: string, overrides: Partial<AgentMessageView> = {}): AgentMessageView {
   return {
     messageId: "assistant", conversationId, seriesIds: ["A"], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", phase: "QUEUED", reference: null, content: null,
-    modelName: null, replyToMessageId: "user", retrievalQuery: null, searchResult: null, lastError: null, createdAt: now, updatedAt: now, ...overrides, version: overrides.version ?? (overrides.status && overrides.status !== "PROCESSING" ? 2 : 1),
+    modelName: null, replyToMessageId: "user", retrievalQuery: null, searchResult: null,
+    renderBlocks: [], timing: null, lastError: null, createdAt: now, updatedAt: now,
+    ...overrides, version: overrides.version ?? (overrides.status && overrides.status !== "PROCESSING" ? 2 : 1),
   };
 }
 function started(conversationId: string): AgentAnswerEvent {

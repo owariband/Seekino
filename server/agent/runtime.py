@@ -15,11 +15,14 @@ from langgraph.graph import END, START, StateGraph
 from ..schema import VideoChunkSearchResult
 from .chat import render_chat
 from .evaluator import evaluate
-from .output import bind_draft, build_retrieval_trace, finalize_output
+from .output import (
+    bind_draft, build_retrieval_trace, finalize_output,
+    validate_approved_video_ranges,
+)
 from .query import run_query
 from .state import (
-    AgentFinalOutput, AgentModelInvocationError, AnswerPhase, ExecutionControl,
-    LoopTurn, ModelContextBudget, RunInputs, RunState,
+    AgentFinalOutput, AgentModelInvocationError, AnswerPhase, EvalDecision,
+    ExecutionControl, LoopTurn, ModelContextBudget, RunInputs, RunState,
 )
 from .tools import build_retrieval_tool
 
@@ -149,6 +152,17 @@ class AgentRuntime:
             self._max_prompt_chars,
         )
         control.check()
+        if review.action == "complete":
+            try:
+                validate_approved_video_ranges(selected, draft)
+            except AgentModelInvocationError as exc:
+                review = EvalDecision(
+                    action="continue",
+                    advice=(
+                        "Server range validation rejected the approved draft: "
+                        f"{exc}. Revise selected_video_ranges before resubmitting."
+                    ),
+                )
         current = LoopTurn(
             number=len(previous) + 1, plan_context=draft.plan_context,
             retrieval_calls=tuple(calls), retrieval_result=available,

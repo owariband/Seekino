@@ -2,7 +2,7 @@
 
 本次按 UI 规格补齐现有接口的输入与返回数据。Conversation 不绑定动画范围：每次 `messages/send` 提交 `seriesIds`，省略或空数组展开为当前 Workspace 全部 READY Series。后端保存本轮实际范围并注入 Retrieve Tool；后续多选改变不会修改历史消息，也不会改变正在执行的 Kick。
 
-模型按职责分目录：`server/model/dto/` 存放请求参数和业务传输对象，`server/model/vo/` 存放前端公开视图，`server/model/` 下保留 ORM 与业务枚举。两类模型均按资源分文件，如 `agentDTO.py` / `agentVO.py`、`libraryDTO.py` / `libraryVO.py`、`uploadDTO.py` / `uploadVO.py`。Repository、Service 直接引用 DTO，不再各自定义跨层数据类。请求沿用原类名、字段、默认值、校验与 camelCase JSON 别名；原内部状态类继续使用 dataclass、datetime 和内部字段，不直接作为 HTTP 返回结构。
+模型按职责分目录：`server/model/dto/` 存放请求参数和业务传输对象，`server/model/vo/` 存放前端公开视图，`server/model/` 下保留 ORM 与业务枚举。两类模型均按资源分文件，如 `agentDTO.py` / `agentVO.py`、`libraryDTO.py` / `libraryVO.py`、`uploadDTO.py` / `uploadVO.py`。Repository、Service 直接引用 DTO，不再各自定义跨层数据类。请求沿用原类名、字段、默认值、校验与 camelCase JSON 别名；内部状态类继续使用 dataclass 和 snake_case 字段，不直接作为 HTTP 返回结构。持久化和跨层传递的绝对时间统一为 Unix epoch 毫秒整数，转换与校验收口在 `server/utils/time.py`。
 
 解析导入、索引同步与核对的结果报告也分别放在 `parseDTO.py` / `indexSyncDTO.py`；它们是业务传输对象，沿用原 Pydantic 字段校验。`server/schema.py` 保留通用契约基类和 Harness / 检索共享证据契约。
 
@@ -19,7 +19,7 @@ VO 按 `commonVO.py`、`libraryVO.py`、`uploadVO.py`、`jobVO.py`、`agentVO.py
 | search | VideoChunkEvidenceView、VideoChunkCandidateView、SearchHitView、SearchResultView、Keyframe | 正文与证据、视频定位、完整检索范围、最终 rank、partial / warnings、可读取媒体 |
 | system | HealthView | API 存活与真实 serverTime |
 
-所有业务请求显式传 `workspaceId`：有 JSON Body 时放 Body，否则放 Query。所有公开绝对时间用 Unix 毫秒整数，未知时间为 null；视频偏移继续用 startMs / endMs，不当作日期。所有列表使用 `Page<T>`，参数默认 limit=50，范围 1–100；cursor 绑定 Workspace、筛选与固定排序。
+所有业务请求显式传 `workspaceId`：有 JSON Body 时放 Body，否则放 Query。所有公开和持久化的绝对时间用 Unix epoch 毫秒整数，数据库使用 signed `BIGINT`，Python / JSON 使用整数，未知时间为 null。视频 `startMs` / `endMs` / `atMs` 是相对于原视频起点的媒体偏移，`durationMs` 类字段是时长；二者都是相对毫秒，不当作日期或 Unix 时间戳。所有列表使用 `Page<T>`，参数默认 limit=50，范围 1–100；cursor 绑定 Workspace、筛选与固定排序。
 
 ```ts
 interface Page<T> {
@@ -41,6 +41,8 @@ Series list 返回轻量 `SeriesSummary`，get / create 返回 `SeriesDetail`；
 `SeriesDetail.transcriptLanguageHint` 是用户配置的 ASR 原文语言提示，例如日语 `ja`。它进入 Query Agent 的 `series_context`，用于判断 Transcript-heavy Query 应采用哪种语言和脚本；它不是界面 locale，不证明具体台词存在，更新后也不会重新解析视频。
 
 ParseJob 的 overallProgress 以语义解析为主：canonical VideoChunk 全部完成媒体准备后到 1%，随后按已 PARSED 的真实视频时长从 1% 推进到 99%；文本/视觉向量化、持久化和索引同步不再额外瓜分权重，所有片段完成语义解析后保持 99%，只有任务成功并可检索时才到 100%。completedDurationMs、completedThroughMs、completedChunkCount 和 currentChunk 始终描述 PARSED 覆盖：前者是全部已解析片段的时长和，连续水位只统计从零开始无缺口的已解析范围，两者不能混用。stageProgress 仅保留为内部阶段诊断字段，任务页不再展示第二个百分比。范围缺失或不连续的历史任务返回 null，不回退到旧的估算百分比。
+
+ParseJob 另返回 `videoDurationMs`（原视频时长）和兼容别名 `totalDurationMs`；`processingDurationMs` 是所有已结束 worker attempt 的已知单调计时总和，不是视频时长。`processingTimingComplete=false` 表示尚有运行中 attempt、lease 过期或历史缺数，前端显示“至少 …（不完整）”而不伪装精确。每个 VideoChunk 的 SPLIT / ASR / PARSE / TEXT_EMBEDDING / VISION_EMBEDDING / INDEX 耗时单独持久化用于诊断，不进入前端 ParseJob DTO。
 
 新增和补充的接口：
 
@@ -88,15 +90,15 @@ Content-Type: application/json
 }
 ```
 
-reference 可省略 / 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。`messageId + videoChunkId` 会在服务端恢复该来源回答已审核的精确播放范围，无需让前端回传时间；旧消息缺失范围时回退 canonical Chunk。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
+reference 可省略 / 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。`messageId + videoChunkId` 会在服务端恢复该来源回答已审核的精确播放范围，无需让前端回传时间；旧消息缺失或非法范围不再扩大为 canonical Chunk，引用校验失败。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
 
-SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits，还包含可审计的 retrievalTrace（每次 Query、受限 topK、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID）。候选同时暴露 transcriptRank/transcriptScore、textRank/textScore、visionRank/visionScore；Transcript 命中说明使用真正匹配的 ASR cue 与绝对时间。同一 Kick 的后续检索若再次命中已经交给模型的 Chunk，只回传轻量 `reusedHits`；完整 ASR 与 canonical 时间线引用首次结果，Server 仍保存每次检索的完整事实。事实性结论必须包含非空 `selected_video_ranges`；Query Agent 根据 ASR 和事件时间线为每个真实 Chunk 提出候选范围，Evaluator 在越界、截断或前后冗余时通过 advice 要求 Query 修订。候选范围不参与 retrieve 落地，也不在 Evaluator 之前引发致命失败。存在 approved evidence 时，Chat 首次调用使用 `tool_choice=required` 并至少提交一个 `submit_video_item`；成功提交后恢复 `auto`。最终范围不一致或越界时，Server 回退到合法审批范围，审批范围也非法时回退 canonical Chunk 并记录 warning，不使整轮文字回答失败。Query、Evaluator、Chat 默认使用 `config.yaml` 的 `agent_model.model`（DeepSeek Flash）；Provider 请求或模型响应异常时，失败的单次模型调用在原消息 / Tool 状态上切换到 Ark Doubao Lite。已经完成的业务 Tool 及 acknowledgement 会保留，不重新执行；业务 Tool 错误、取消 / deadline / 预算等控制错误以及本地输入校验错误均不触发模型降级。旧消息没有精确范围或范围非法时，公开投影回退到该 Chunk 的 canonical 范围；Chunk ID 无法与同消息可信 hit 关联时不渲染。消息快照有 phase 与单调 version，前端拒绝旧版本覆盖新状态。phase 仅有 QUEUED / RETRIEVING / EVALUATING / RESPONDING，终态为 null，不包含私有推理。
+SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits，还包含可审计的 retrievalTrace（每次 Query、受限 topK、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID）。候选同时暴露 transcriptRank/transcriptScore、textRank/textScore、visionRank/visionScore；Transcript 命中说明使用真正匹配的 ASR cue 与媒体时间偏移。同一 Kick 的后续检索若再次命中已经交给模型的 Chunk，只回传轻量 `reusedHits`；完整 ASR 与 canonical 时间线引用首次结果，Server 仍保存每次检索的完整事实。事实性结论必须包含非空 `selected_video_ranges`；Query Agent 根据 ASR 和事件时间线为每个真实 Chunk 提出候选范围，Evaluator 审核越界、截断或前后冗余，不合理时通过 advice 要求 Query 修订。Evaluator 放行时，`selected_video_ranges` 必须与获批 Evidence 的 ID 集合完全一致，且每个范围都被其 canonical Evidence 包含；非法 complete 转为 continue，不产生降级范围。Agent 工具的 Schema 和构造统一收口在 `server/agent/tools.py`。Chat 的 `submit_video_item` 只接受 `video_chunk_id + claim`；存在 approved evidence 时首次使用 `tool_choice=required`，成功提交至少一个后恢复 `auto`。Output 按 ID 从获批 `selected_video_ranges` 原样绑定 `startMs/endMs`，不存在 Chat proposed range、approved range、canonical range 三层 fallback。Query、Evaluator、Chat 默认使用 `config.yaml` 的 `agent_model.model`（DeepSeek Flash）；Provider 请求或模型响应异常时，失败的单次模型调用在原消息 / Tool 状态上切换到 Ark Doubao Lite。已经完成的业务 Tool 及 acknowledgement 会保留，不重新执行；业务 Tool 错误、取消 / deadline / 预算等控制错误以及本地输入校验错误均不触发模型降级。旧消息的视频块缺少精确范围或范围非法时不渲染，不扩大为 canonical Chunk；Chunk ID 无法与同消息可信 hit 关联时同样不渲染。消息快照有 phase 与单调 version，前端拒绝旧版本覆盖新状态。phase 仅有 QUEUED / RETRIEVING / EVALUATING / RESPONDING，终态为 null，不包含私有推理。
 
 持久化 FAILED 时，answer.failed 返回公开 error 与真实消息对，并保留已经确认的证据 / 部分正文。队列溢出或无法确认终态提交时返回 answer.interrupted，不谎称后台 FAILED。恢复时读取 messages/get / list / events。断开流不取消后台任务。不同 Conversation 的流、上下文和候选引用隔离。
 
 SearchResult 同时包含 query、seriesIds、searchedVideoIds、agentReply、hits、partial、warnings。searchedVideoIds 来自实际索引范围，Harness 汇总各轮真实检索的视频范围，不能从命中候选反推。旧记录没有该事实时返回 [] 并说明缺少原始范围记录。candidate.rank 是最终候选位置+1；fusedRank 保留原检索排序，不把融合分数显示成置信度。
 
-videos/content 新增 variant=playback|original，默认 playback；原文件可读取不等于兼容浏览器。播放器使用后端提供的 playbackUrl 加载原视频，但交互时间轴以 render block 的精确范围为零点和总长度；拖动位置映射回原视频绝对时间，并在 endMs 停止。媒体丢失返回 MEDIA_MISSING / 410，未准备好或不兼容返回 MEDIA_NOT_READY / 409。Range、If-Range 与 ETag 等浏览器读取头通过 CORS 放行并暴露。
+videos/content 新增 variant=playback|original，默认 playback；原文件可读取不等于兼容浏览器。播放器使用后端提供的 playbackUrl 加载原视频，但交互时间轴以 render block 的精确范围为零点和总长度；拖动位置映射回原视频媒体坐标，并在 endMs 停止。媒体丢失返回 MEDIA_MISSING / 410，未准备好或不兼容返回 MEDIA_NOT_READY / 409。Range、If-Range 与 ETag 等浏览器读取头通过 CORS 放行并暴露。
 
 当前与完整 UI 目标的差异：
 
@@ -120,10 +122,17 @@ videos/content 新增 variant=playback|original，默认 playback；原文件可
 | video_chunk_checkpoint | chunk_start_ms BIGINT NULL、chunk_end_ms BIGINT NULL |
 | upload_session | content_sha256 VARCHAR(64) NULL、completion_stage VARCHAR(32) NULL、version INT NOT NULL DEFAULT 1、job_id VARCHAR(36) NULL、last_error_code VARCHAR(64) NULL、request_fingerprint VARCHAR(64) NULL |
 
+所有旧绝对时间列需受控迁移为 Unix epoch 毫秒 `BIGINT`，见
+`docs/migrations/20260918_unix_time_ms.sql`。旧库同时需新增
+`parse_job_attempt_timing` 和 `video_chunk_stage_timing`，见
+`docs/migrations/20260918_parse_job_timing.sql`。前者记录每次 worker attempt 的总耗时，
+后者记录每个 VideoChunk 的阶段耗时；绝对开始/结束时间是 `BIGINT`
+Unix epoch 毫秒，`duration_ms` 是单调计时得到的相对毫秒。
+
 为 Message / Job / Upload 添加 version>0 检查；Message phase 与 Upload completionStage 添加合法值检查。upload_session.job_id 关联实际 series_parse_job.job_id。旧上传完成记录应从 Video / 对应 pipeline Job 回填实际 SHA / Job；无法确认的值保留 null，禁止猜测关联。旧错误只能回填公开通用 Failure，不直接复制含内部诊断的信息到 last_error_message。已有 PROCESSING phase 不能凭空猜测，保持 null，直到真实运行阶段写入。init-db 会检查这些列并拒绝缺列结构；本次没有执行真实数据库 DDL。
 
 request_fingerprint 只保存原始规范化创建请求的摘要，不包含服务端分段配置、后续分配的顺序或计算出的实际 SHA；因此同键不同可选参数会冲突。历史上传无法从结果反推原始可选参数意图时保留 null，继续按旧字段校验；不填伪造指纹。新增上传均固定真实请求指纹。
 
-video_chunk_checkpoint 的 chunk_start_ms / chunk_end_ms 保存 canonical VideoChunk 的绝对时间范围，用于按真实视频时长计算解析进度。AnalysisWindow 允许重叠，不能用于累计完成时长。两列必须同时为空或同时有值；已有值不可改写。已持久化的历史任务从 video_chunk.start_ms / end_ms 确定性回填，无法确认的旧任务保持 null，并在下次从检查点恢复时补齐。对应受控 SQL 见 `docs/migrations/20260916_video_chunk_checkpoint_ranges.sql`。
+video_chunk_checkpoint 的 chunk_start_ms / chunk_end_ms 保存 canonical VideoChunk 相对于原视频起点的媒体范围，用于按真实视频时长计算解析进度。AnalysisWindow 允许重叠，不能用于累计完成时长。两列必须同时为空或同时有值；已有值不可改写。已持久化的历史任务从 video_chunk.start_ms / end_ms 确定性回填，无法确认的旧任务保持 null，并在下次从检查点恢复时补齐。对应受控 SQL 见 `docs/migrations/20260916_video_chunk_checkpoint_ranges.sql`。
 
 Series 的 `transcript_language_hint` 由用户确认并用于 Query Agent 的 Transcript 检索改写；已有行保持 null，不从作品名或文件名猜测。对应受控 SQL 见 `docs/migrations/20260917_series_transcript_language_hint.sql`。

@@ -5,23 +5,49 @@ import subprocess
 import sys
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
+from server.model.vo.commonVO import UnixTimeMs
 from server.utils import time as time_utils
 from server.utils.errors import MAX_ERROR_SUMMARY_LENGTH, exception_summary
 from server.utils.validation import require_nonempty_text
 
 
-def test_time_helpers_keep_aware_and_naive_utc_semantics(monkeypatch):
-    assert time_utils.utc_now().tzinfo is UTC
+def test_time_helpers_use_signed_int64_unix_milliseconds(monkeypatch):
     fixed = datetime(2026, 9, 15, 12, 30, tzinfo=UTC)
-    monkeypatch.setattr(time_utils, "utc_now", lambda: fixed)
-
-    assert time_utils.utc_now_naive() == datetime(2026, 9, 15, 12, 30)
-    assert time_utils.utc_now_naive().tzinfo is None
+    fixed_ms = 1_789_475_400_000
+    monkeypatch.setattr(time_utils.time, "time_ns", lambda: fixed_ms * 1_000_000)
+    assert time_utils.now_unix_time_ms() == fixed_ms
+    assert time_utils.datetime_to_unix_time_ms(fixed) == fixed_ms
+    assert time_utils.unix_time_ms_to_datetime(fixed_ms) == fixed
     local = datetime(2026, 9, 15, 20, 30, tzinfo=timezone(timedelta(hours=8)))
-    assert time_utils.as_naive_utc(local) == time_utils.utc_now_naive()
-    naive = datetime(2026, 9, 15, 12, 30)
-    assert time_utils.as_naive_utc(naive) is naive
+    assert time_utils.datetime_to_unix_time_ms(local) == fixed_ms
+    assert time_utils.timedelta_to_ms(timedelta(seconds=1, microseconds=234_000)) == 1_234
+
+
+@pytest.mark.parametrize("value", [-1, True, 1.5, "1", None, 2**63])
+def test_unix_time_helper_rejects_non_int64_values(value):
+    with pytest.raises(ValueError, match="signed INT64"):
+        time_utils.require_unix_time_ms(value)
+
+
+def test_datetime_conversion_requires_explicit_timezone():
+    with pytest.raises(ValueError, match="explicit timezone"):
+        time_utils.datetime_to_unix_time_ms(datetime(2026, 9, 15, 12, 30))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [datetime(2026, 9, 15, tzinfo=UTC), "1789411200000", 1.0, True, 2**63],
+)
+def test_api_unix_time_contract_accepts_only_signed_int64_milliseconds(value):
+    with pytest.raises(ValidationError):
+        TypeAdapter(UnixTimeMs).validate_python(value)
+
+    assert (
+        TypeAdapter(UnixTimeMs).validate_python(1_789_411_200_000)
+        == 1_789_411_200_000
+    )
 
 
 @pytest.mark.parametrize("value", [None, 42, "", " spaced", "spaced ", "\n"])

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from pydantic import Field
@@ -55,6 +54,6 @@ class PreparedVideoParseImport:
     content_hash: str
     total_bytes: int
     pipeline_version: str
-    parsed_at: datetime
+    parsed_at: int
     parse_result: VideoParseResult
     chunks: tuple[PreparedVideoChunk, ...]

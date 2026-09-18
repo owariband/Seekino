@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -18,8 +18,9 @@ from server.model.dto.jobDTO import (
     VideoChunkCheckpointState,
 )
 from server.repository.agent import AgentConversationNotFoundError
+from server.utils.time import timedelta_to_ms
 
-_NOW = datetime(2026, 9, 15, 12)
+_NOW = 1_789_454_400_000
 _CONVERSATION_ID = "conversation-1"
 _WORKSPACE_ID = "workspace-1"
 
@@ -144,7 +145,7 @@ def test_agent_sse_emits_same_sequence_status_updates(monkeypatch, final_status)
         content="verified answer" if final_status == "COMPLETED" else None,
         last_error={"code": "PROCESSING_FAILED", "message": "model unavailable"} if final_status == "FAILED" else None,
         version=processing.version + 1,
-        updated_at=_NOW + timedelta(seconds=2),
+        updated_at=_NOW + timedelta_to_ms(timedelta(seconds=2)),
     )
     service = _AgentService([[user, processing], [user, processing], [user, final]])
 
@@ -244,7 +245,7 @@ def _job_detail() -> ParseJobDetail:
             available_at=_NOW,
             lease_owner="worker-1",
             lease_version=1,
-            lease_expires_at=_NOW + timedelta(minutes=5),
+            lease_expires_at=_NOW + timedelta_to_ms(timedelta(minutes=5)),
             heartbeat_at=_NOW,
             started_at=_NOW,
             completed_at=None,
@@ -361,9 +362,9 @@ def test_job_sse_ignores_heartbeat_but_emits_progress(monkeypatch) -> None:
         initial,
         job=replace(
             initial.job,
-            heartbeat_at=_NOW + timedelta(seconds=1),
-            lease_expires_at=_NOW + timedelta(minutes=6),
-            updated_at=_NOW + timedelta(seconds=1),
+            heartbeat_at=_NOW + timedelta_to_ms(timedelta(seconds=1)),
+            lease_expires_at=_NOW + timedelta_to_ms(timedelta(minutes=6)),
+            updated_at=_NOW + timedelta_to_ms(timedelta(seconds=1)),
         ),
     )
     progress = replace(heartbeat, job=replace(heartbeat.job, progress=40))

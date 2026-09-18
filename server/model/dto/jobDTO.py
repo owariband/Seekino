@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,16 +19,16 @@ class ParseJobState:
     attempt_count: int
     max_attempts: int
     version: int
-    available_at: datetime
+    available_at: int
     lease_owner: str | None
     lease_version: int
-    lease_expires_at: datetime | None
-    heartbeat_at: datetime | None
-    started_at: datetime | None
-    completed_at: datetime | None
+    lease_expires_at: int | None
+    heartbeat_at: int | None
+    started_at: int | None
+    completed_at: int | None
     last_error: str | None
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
     duration_ms: int
     upload_session_id: str | None = None
     is_primary_upload_job: bool = False
@@ -43,7 +42,7 @@ class ParseJobLease:
     pipeline_version: str
     worker_id: str
     lease_version: int
-    lease_expires_at: datetime
+    lease_expires_at: int
     attempt_count: int
     max_attempts: int
     episode_order: int
@@ -84,10 +83,12 @@ class ParseJobSummaryState:
     counts: dict[str, int]
     checkpoint_count: int
     version: int
-    updated_at: datetime
+    updated_at: int
 
 
 @dataclass(frozen=True, slots=True)
 class ParseJobDetail:
     job: ParseJobState
     checkpoints: tuple[VideoChunkCheckpointState, ...]
+    processing_duration_ms: int = 0
+    processing_timing_complete: bool = False

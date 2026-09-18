@@ -2,7 +2,7 @@
 
 > 状态：Upload-to-Search M1 与 Agent Chat 基础接口已实现；真实模型聊天联调与异常恢复仍待验收/补齐
 >
-> 更新时间：2026-09-17
+> 更新时间：2026-09-18
 >
 > 面向对象：WebUI、前端状态管理与联调开发
 >
@@ -30,7 +30,8 @@ ID 统一通过 camelCase Query 参数传递，不放在 URL Path 中。检索�
 
 - 普通请求与响应使用 JSON，字段统一为 `camelCase`。
 - ID 为规范 UUID 字符串。
-- 时间为 ISO 8601 字符串；前端不要自行假设展示时区。
+- 绝对时间是 Unix epoch 毫秒整数，后端和数据库按 signed INT64 / `BIGINT` 存储；前端只在显示边界转换时区。
+- 媒体 `startMs` / `endMs` / `atMs` 与耗时 `durationMs` 类字段是相对毫秒，不是 Unix 时间戳。
 - `workspaceId` 当前默认是 `local-default`。
 - 上传分片的 Body 是原始二进制，不是 `multipart/form-data`。
 - 当前 M1 没有登录认证；`workspaceId` 是数据作用域，不是安全认证凭证。
@@ -311,11 +312,11 @@ UploadSession。相同 Key 搭配不同文件信息会返回 `409`。
   "uploadedSegmentCount": 0,
   "uploadedSizeBytes": 0,
   "missingSegmentNumbers": [0, 1, 2],
-  "expiresAt": "2026-09-15T10:00:00",
+  "expiresAt": 1789466400000,
   "videoId": null,
   "lastError": null,
-  "createdAt": "2026-09-14T10:00:00",
-  "updatedAt": "2026-09-14T10:00:00"
+  "createdAt": 1789380000000,
+  "updatedAt": 1789380000000
 }
 ```
 
@@ -475,11 +476,11 @@ POST /api/uploads/complete?uploadSessionId={uploadSessionId}&workspaceId=local-d
     "uploadedSegmentCount": 256,
     "uploadedSizeBytes": 2147483648,
     "missingSegmentNumbers": [],
-    "expiresAt": "2026-09-15T10:00:00",
+    "expiresAt": 1789466400000,
     "videoId": "2a150753-57ae-58c3-a996-d552734bc640",
     "lastError": null,
-    "createdAt": "2026-09-14T10:00:00",
-    "updatedAt": "2026-09-14T10:20:00"
+    "createdAt": 1789380000000,
+    "updatedAt": 1789381200000
   },
   "videoId": "2a150753-57ae-58c3-a996-d552734bc640",
   "jobId": "72d1f97d-7f11-57da-a245-f51442672580"
@@ -566,20 +567,34 @@ GET /api/jobs/get?jobId={jobId}&workspaceId=local-default
 ```json
 {
   "jobId": "72d1f97d-7f11-57da-a245-f51442672580",
+  "uploadSessionId": "8b6ce5d9-d1bf-4b04-b201-4f16cae46cef",
+  "workspaceId": "local-default",
   "seriesId": "77285f16-3e5b-592e-ba15-8b224b619806",
   "videoId": "2a150753-57ae-58c3-a996-d552734bc640",
   "seriesName": "BanG Dream! It's MyGO!!!!!",
   "episodeOrder": 7,
   "originalFilename": "episode-07.mp4",
   "pipelineVersion": "m1",
+  "retryOfJobId": null,
   "status": "RUNNING",
   "stage": "PARSING",
   "progress": 37,
+  "overallProgress": 37,
+  "stageProgress": 55,
+  "completedDurationMs": 532000,
+  "completedThroughMs": 472000,
+  "videoDurationMs": 1440000,
+  "totalDurationMs": 1440000,
+  "processingDurationMs": 182000,
+  "processingTimingComplete": false,
+  "completedChunkCount": 9,
+  "totalChunkCount": 24,
+  "currentChunk": {"sequenceNo": 9, "startMs": 540000, "endMs": 600000},
   "attemptCount": 1,
   "maxAttempts": 3,
-  "availableAt": "2026-09-14T10:20:00",
-  "leaseExpiresAt": "2026-09-14T10:26:00",
-  "startedAt": "2026-09-14T10:21:00",
+  "availableAt": 1789381200000,
+  "estimatedRemainingMs": null,
+  "startedAt": 1789381260000,
   "completedAt": null,
   "lastError": null,
   "checkpoints": [
@@ -587,23 +602,32 @@ GET /api/jobs/get?jobId={jobId}&workspaceId=local-default
       "sequenceNo": 0,
       "videoChunkId": "75f5...",
       "stage": "INDEXED",
-      "chunkMediaUri": "artifact://development/media/.../chunk-0000.mp4",
-      "analysisWindowMediaUri": "artifact://development/media/.../window-0000.mp4",
+      "chunkStartMs": 0,
+      "chunkEndMs": 60000,
       "lastError": null
     },
     {
       "sequenceNo": 1,
       "videoChunkId": "d9a2...",
       "stage": "PARSED",
-      "chunkMediaUri": "artifact://development/media/.../chunk-0001.mp4",
-      "analysisWindowMediaUri": "artifact://development/media/.../window-0001.mp4",
+      "chunkStartMs": 60000,
+      "chunkEndMs": 120000,
       "lastError": null
     }
   ],
-  "createdAt": "2026-09-14T10:20:00",
-  "updatedAt": "2026-09-14T10:23:00"
+  "canRetry": false,
+  "canReparse": false,
+  "canCancel": false,
+  "version": 4,
+  "createdAt": 1789381200000,
+  "updatedAt": 1789381380000
 }
 ```
+
+`videoDurationMs` 是原视频时长，`totalDurationMs` 是暂时保留的兼容别名。
+`processingDurationMs` 是 worker 已知执行 attempt 的累计单调计时，不是视频时长；
+`processingTimingComplete=false` 时前端必须把它显示为不完整值。后端会记录每个
+VideoChunk 的各解析阶段耗时，但该诊断明细不进入 ParseJob 公开 DTO。
 
 Job 状态：
 
@@ -879,7 +903,7 @@ Content-Type: application/json
 - `evidence` 是按照 `videoChunkId` 从 MySQL 联表 Hydrate 后生成的公开投影；内部存储 URI、媒体引用、Hash 和原始检索正文不会交给浏览器。
 - Vision vector 绑定的是无重叠 canonical VideoChunk MP4，不是 caption。
 - 响应不返回原始 Text/Vision 浮点向量。
-- 新解析的 canonical VideoChunk 会生成首帧 keyframe；`thumbnail` 是第一张有效关键帧，`keyframes[].atMs` 是原视频绝对时间。`imageId` 是服务端生成的 opaque URL-safe base64 标识，前端只能透传，不能按 `videoChunkId:index` 拼接。旧数据缺失有效关键帧时可返回 `thumbnail: null` 并在 `warnings` 中说明。
+- 新解析的 canonical VideoChunk 会生成首帧 keyframe；`thumbnail` 是第一张有效关键帧，`keyframes[].atMs` 是相对于原视频起点的媒体偏移。`imageId` 是服务端生成的 opaque URL-safe base64 标识，前端只能透传，不能按 `videoChunkId:index` 拼接。旧数据缺失有效关键帧时可返回 `thumbnail: null` 并在 `warnings` 中说明。
 - 候选列表只加载 `thumbnail.url` 的懒加载图片；用户点击候选后再挂载 `playbackUrl` 对应的 `<video preload="metadata">`。播放定位仍使用 `startMs/endMs`，不要从模型正文反解析时间。
 
 ## 8. 建议前端类型
@@ -887,6 +911,8 @@ Content-Type: application/json
 以下类型是便于对接的摘录；精确约束仍以 OpenAPI 为准。
 
 ```ts
+type UnixTimeMs = number;
+
 type SeriesStatus = "EMPTY" | "INDEXING" | "READY";
 type UploadStatus = "UPLOADING" | "COMPLETING" | "COMPLETED" | "EXPIRED";
 type ParseJobStatus =
@@ -911,11 +937,11 @@ interface UploadSessionView {
   uploadedSegmentCount: number;
   uploadedSizeBytes: number;
   missingSegmentNumbers: number[];
-  expiresAt: string;
+  expiresAt: UnixTimeMs;
   videoId: string | null;
   lastError: string | null;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: UnixTimeMs;
+  updatedAt: UnixTimeMs;
 }
 
 interface VideoChunkCheckpointView {
@@ -928,32 +954,52 @@ interface VideoChunkCheckpointView {
     | "TEXT_EMBEDDED"
     | "VISION_EMBEDDED"
     | "INDEXED";
-  chunkMediaUri: string | null;
-  analysisWindowMediaUri: string | null;
-  lastError: string | null;
+  chunkStartMs: number | null;
+  chunkEndMs: number | null;
+  lastError: Failure | null;
 }
 
 interface ParseJobView {
   jobId: string;
+  uploadSessionId: string | null;
+  workspaceId: string;
   seriesId: string;
   videoId: string;
   seriesName: string;
   episodeOrder: number;
   originalFilename: string;
   pipelineVersion: string;
+  retryOfJobId: string | null;
   status: ParseJobStatus;
   stage: string;
   progress: number;
+  overallProgress: number | null;
+  stageProgress: number | null;
+  completedDurationMs: number | null;
+  completedThroughMs: number | null;
+  videoDurationMs: number;
+  /** 兼容字段，值与 videoDurationMs 相同。 */
+  totalDurationMs: number;
+  /** 已知 worker attempt 的累计处理耗时，不是媒体时长。 */
+  processingDurationMs: number;
+  processingTimingComplete: boolean;
+  completedChunkCount: number | null;
+  totalChunkCount: number;
+  currentChunk: { sequenceNo: number; startMs: number; endMs: number } | null;
   attemptCount: number;
   maxAttempts: number;
-  availableAt: string;
-  leaseExpiresAt: string | null;
-  startedAt: string | null;
-  completedAt: string | null;
-  lastError: string | null;
+  availableAt: UnixTimeMs | null;
+  estimatedRemainingMs: number | null;
+  startedAt: UnixTimeMs | null;
+  completedAt: UnixTimeMs | null;
+  lastError: Failure | null;
   checkpoints: VideoChunkCheckpointView[];
-  createdAt: string;
-  updatedAt: string;
+  canRetry: boolean;
+  canReparse: boolean;
+  canCancel: boolean;
+  version: number;
+  createdAt: UnixTimeMs;
+  updatedAt: UnixTimeMs;
 }
 
 interface VideoChunkCandidate {
@@ -974,8 +1020,6 @@ interface TranscriptCue {
 }
 
 type PlaybackStatus = "PREPARING" | "READY" | "FAILED" | "MISSING";
-type UnixTimeMs = number;
-
 interface ImageAsset {
   imageId: string;
   url: string;
@@ -1160,7 +1204,7 @@ Agent Run 恢复尚未实现。
       └── complete：Chat 进入自主循环
            → 有获批 Evidence 时首次 tool_choice=required，否则为 auto
            → 成功提交片段后恢复 auto，可继续输出 Markdown、调用工具或结束
-           → Server 逐项校验 ID，归一化播放范围，并从可信 Evidence 补齐 URI / 标题
+           → Server 逐项校验 ID，并从获批 selected_video_ranges 绑定播放范围、补齐可信 URI / 标题
            → Output 保留 Markdown / video 逻辑顺序
            → 原子提交 ASSISTANT → block / evidence / delta / completed
 ```
@@ -1355,11 +1399,12 @@ Query、Evaluator 和 Chat 可分别使用 `ANIVAG_AGENT_QUERY_MODEL`、
 Chat 默认对 DeepSeek 发起 text-only、非 token 流式的有边界自主工具循环。有获批 Evidence 时首次使用
 `tool_choice=required`，成功提交至少一个片段后恢复 `auto`；没有获批 Evidence 时从 `auto` 开始。
 模型可以输出普通 Markdown、调用一个或多个
-`submit_video_item({video_chunk_id, start_ms, end_ms, claim})`，或自主结束。tool acknowledgement 返回模型后，由它决定
+`submit_video_item({video_chunk_id, claim})`，或自主结束。tool acknowledgement 返回模型后，由它决定
 下一步，不存在“必须先提交全部视频，再统一输出文本”的固定两阶段。Server 拒绝重复/未获批 ID；
 URI 和标题仍只从可信 Evidence 填充。
-Chat 应提交 Evaluator 审批的 Query 范围；不一致或越界时 Server 回退到合法的审批范围，
-审批范围也非法时回退 canonical Chunk 并记录 warning，不使整条文字回答失败。
+Chat 不提交时间。Evaluator 放行后，Server 要求 `selected_video_ranges` 与获批
+Evidence 完全一致且均被 canonical Evidence 包含；Output 按 `video_chunk_id` 从该获批
+范围原样生成 `renderBlocks.startMs/endMs`，不存在 Chat proposed range 或 canonical fallback。
 完成后按发生顺序得到 `renderBlocks`，且至少有一个非空 Markdown 块。全部块与数据库提交
 都成功后，SSE 才原子释放 evidence、有序 block、兼容 delta 与 completed；各轮 HTTP 请求共享
 当前 Kick 剩余 deadline 和模型调用次数上限。
@@ -1393,15 +1438,16 @@ ASSISTANT：PROCESSING → COMPLETED / FAILED
 限制 URL 协议的 Markdown 渲染器展示；视频块的 `videoChunkId` 及已审批 `startMs/endMs` 只能与同一消息的
 `searchResult.hits` 关联，找不到可信 hit 时不渲染。`content` 和 `answer.delta` 是所有 Markdown 块
 的兼容汇总，`answer.evidence` 是完整可信证据的兼容交付；它们不能用来重建新的交错顺序。
-旧历史消息没有 `renderBlocks` 时，前端回退为先渲染 `content`，再按 `searchResult.hits` 渲染视频；
-历史视频块缺少时间字段或范围越出对应 Chunk 时使用 canonical Chunk 范围；
+旧历史消息没有 `renderBlocks` 时，前端只回退渲染 `content` Markdown，不得从
+`searchResult.hits` 合成视频块；
+历史视频块缺少时间字段或范围越出对应 Chunk 时不渲染，不扩大为 canonical Chunk；
 视频块的 Chunk ID 在同一消息 hits 中不存在时不渲染。
 只有 completed 或持久化 COMPLETED 快照代表完整交付成功。播放使用
 `evidence.videoId + renderBlock.startMs/endMs`；不要从模型正文反解析视频时间。
 
 候选卡优先显示 `evidence.thumbnail`，图片可使用原生 lazy loading；不要在卡片列表中预先挂载
 所有视频。用户点击某个候选后，再创建使用 `evidence.playbackUrl` 的 video 元素，并以
-`preload="metadata"` 加载。自定义进度条的总长为 `endMs - startMs`，用户的相对 seek 映射回原视频绝对时间，到达 `endMs` 时停止。
+`preload="metadata"` 加载。自定义进度条的总长为 `endMs - startMs`，用户的相对 seek 映射回原视频媒体坐标，到达 `endMs` 时停止。
 
 ### 12.5 POST 正文 SSE、GET 快照与页面恢复
 

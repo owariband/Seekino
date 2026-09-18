@@ -3,7 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from threading import Event
 from uuid import uuid4
 
@@ -24,6 +24,7 @@ from server.service.index_sync import IndexSyncInvariantError, IndexSyncService
 from server.service.qdrant_mutation_lock import QdrantMutationLock
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
+from server.utils.time import now_unix_time_ms, timedelta_to_ms
 
 
 def _with_vectors(prepared_import):
@@ -83,20 +84,20 @@ def _series_status(engine, series_id: str) -> str:
 
 def test_sync_captures_default_due_cutoff_after_materialization() -> None:
     calls: list[str] = []
-    run_at = datetime.now(UTC)
+    run_at = now_unix_time_ms()
 
     class OrderingRepository:
         def materialize_all(self) -> int:
             calls.append("materialize")
             return 0
 
-        def list_due(self, limit: int, *, now: datetime):
+        def list_due(self, limit: int, *, now: int):
             assert limit == 100
             assert now == run_at
             calls.append("list_due")
             return []
 
-    def clock() -> datetime:
+    def clock() -> int:
         calls.append("clock")
         return run_at
 
@@ -220,7 +221,7 @@ def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
     for chunk_id in chunk_ids:
         store.delete(chunk_id)
 
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = now_unix_time_ms()
     with create_session_factory(engine).begin() as session:
         session.add(UploadSessionRecord(
             upload_session_id=str(uuid4()),
@@ -252,7 +253,7 @@ def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
 
     assert index_repository.materialize_all() == 0
     assert index_repository.list_all() == []
-    sync_report = service.sync_due(now=now + timedelta(seconds=1))
+    sync_report = service.sync_due(now=now + timedelta_to_ms(timedelta(seconds=1)))
     reconcile_report = service.reconcile()
     rebuild_report = service.rebuild()
     with pytest.raises(IndexSyncInvariantError, match="missing index intents"):
@@ -285,7 +286,7 @@ def test_qdrant_outage_keeps_facts_and_retries_to_convergence(
     video_repository.import_video_parse(prepared)
     index_repository = IndexSyncRepository(create_session_factory(engine))
     unavailable = _UnavailableStore()
-    run_at = datetime.now(UTC) + timedelta(seconds=1)
+    run_at = now_unix_time_ms() + timedelta_to_ms(timedelta(seconds=1))
     service = _service(
         engine,
         index_repository,
@@ -309,7 +310,7 @@ def test_qdrant_outage_keeps_facts_and_retries_to_convergence(
 
     client = QdrantClient(":memory:")
     recovered = _service(engine, index_repository, _store(client)).sync_due(
-        now=run_at + timedelta(seconds=5)
+        now=run_at + timedelta_to_ms(timedelta(seconds=5))
     )
 
     assert recovered.selected_count == 2
@@ -464,7 +465,7 @@ def test_reconcile_outage_is_persisted_for_retry(
     index_repository = IndexSyncRepository(create_session_factory(engine))
     client = QdrantClient(":memory:")
     _service(engine, index_repository, _store(client)).sync_due()
-    run_at = datetime.now(UTC)
+    run_at = now_unix_time_ms()
 
     report = _service(
         engine,
@@ -477,7 +478,7 @@ def test_reconcile_outage_is_persisted_for_retry(
     assert report.failed_count == 2
     assert all(
         item.status is IndexSyncStatus.RETRY_WAIT
-        and item.available_at == (run_at + timedelta(seconds=5)).replace(tzinfo=None)
+        and item.available_at == run_at + timedelta_to_ms(timedelta(seconds=5))
         for item in index_repository.list_all()
     )
     assert _series_status(engine, prepared.series_id) == "INDEXING"
@@ -493,7 +494,7 @@ def test_late_old_write_invalidates_a_newer_synced_generation(
     index_repository = IndexSyncRepository(create_session_factory(engine))
     old_item = index_repository.list_due(
         1,
-        now=datetime.now(UTC) + timedelta(seconds=1),
+        now=now_unix_time_ms() + timedelta_to_ms(timedelta(seconds=1)),
     )[0]
     updated = replace(
         prepared,

@@ -14,8 +14,9 @@ from ..schema import VideoChunkSearchResult
 from .context import project_search_result
 from .output import validate_result
 from .state import (
-    AgentModelInvocationError, AgentToolInvocationError, ExecutionControl,
-    ModelContextBudget, RetrievalCall, RetrievalChannelWeights, RunInputs, context_json,
+    AgentModelInvocationError, AgentToolInvocationError, ChatVideoBlock,
+    ExecutionControl, MarkdownRenderBlock, ModelContextBudget, RetrievalCall,
+    RetrievalChannelWeights, RunInputs, context_json,
 )
 
 
@@ -44,6 +45,19 @@ class RetrievalArguments(BaseModel):
             "Values are normalized by the Server before Weighted RRF fusion."
         ),
     )
+
+
+class SubmitVideoItemArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_chunk_id: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=36),
+    ]
+    claim: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000),
+    ]
 
 
 def build_retrieval_tool(
@@ -149,4 +163,46 @@ def build_retrieval_tool(
             "The scope cannot be changed. First turn must call this tool at least once."
         ),
         args_schema=RetrievalArguments,
+    )
+
+
+def build_submit_video_item_tool(
+    *,
+    approved_video_chunk_ids: Collection[str],
+    control: ExecutionControl,
+    submitted_video_chunk_ids: set[str],
+    blocks: list[MarkdownRenderBlock | ChatVideoBlock],
+) -> StructuredTool:
+    """Bind one Chat invocation to its approved evidence and ordered blocks."""
+    approved_ids = frozenset(approved_video_chunk_ids)
+
+    def submit_video_item(video_chunk_id: str, claim: str) -> str:
+        control.check()
+        if video_chunk_id not in approved_ids:
+            raise AgentModelInvocationError(
+                "Chat submitted a VideoChunk outside approved evidence"
+            )
+        if video_chunk_id in submitted_video_chunk_ids:
+            raise AgentModelInvocationError(
+                "Chat submitted the same approved VideoChunk more than once"
+            )
+        submitted_video_chunk_ids.add(video_chunk_id)
+        blocks.append(ChatVideoBlock(
+            video_chunk_id=video_chunk_id,
+            claim=claim,
+        ))
+        return context_json({
+            "accepted": True,
+            "video_chunk_id": video_chunk_id,
+        })
+
+    return StructuredTool.from_function(
+        func=submit_video_item,
+        name="submit_video_item",
+        description=(
+            "Submit one approved video chunk for a frontend video window. "
+            "Provide its video_chunk_id and a grounded claim. The Server binds "
+            "the Evaluator-approved playback range and all trusted media metadata."
+        ),
+        args_schema=SubmitVideoItemArguments,
     )

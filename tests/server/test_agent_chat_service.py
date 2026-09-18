@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
 from queue import Empty
 from threading import Event
 from uuid import uuid4
 
 import pytest
+from langchain_core.tools import BaseTool
 from sqlalchemy import event, func, select, text
 
+from server.agent.context import _project_stored_search_result
 from server.agent.runtime import AgentRuntime
 from server.agent.state import AgentContextBudgetError, AgentModelInvocationError
 from server.database import (
@@ -31,7 +33,7 @@ from server.repository.video import VideoRepository
 from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult,
 )
-from server.service.agent_chat import AgentChatService, _stored_video_range
+from server.service.agent_chat import AgentChatService, _validated_stored_video_range
 from server.service.library import LibraryService
 
 
@@ -123,16 +125,12 @@ class _ChatModel:
     fail: bool = False
 
     def run_agent_loop(
-        self, prompt, *, function_name, function_description, result_type,
-        max_model_calls, handle_text, handle_tool_call,
+        self, prompt, *, tools: Sequence[BaseTool], max_model_calls, handle_text,
         require_tool_call=False,
         request_timeout_seconds=None, check_control=None,
     ):
-        assert function_name == "submit_video_item"
-        assert function_description
-        assert set(result_type.model_fields) == {
-            "video_chunk_id", "start_ms", "end_ms", "claim",
-        }
+        submit_video_item = next(tool for tool in tools if tool.name == "submit_video_item")
+        assert set(submit_video_item.args_schema.model_fields) == {"video_chunk_id", "claim"}
         self.prompts.append(prompt)
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
@@ -149,29 +147,20 @@ class _ChatModel:
             for hit in approved_turn["selected_evidence"]["hits"]
         ]
         assert require_tool_call is bool(chunk_ids)
-        ranges_by_id = {
-            item["video_chunk_id"]: item
-            for item in approved_turn["draft"]["selected_video_ranges"]
-        }
         check_control()
         handle_text(
             "目前没有足够的候选画面，"
             if chunk_ids else "目前没有足够的候选画面，建议补充人物或动作。"
         )
         for chunk_id in chunk_ids:
-            selected_range = ranges_by_id[chunk_id]
-            item = result_type.model_validate({
+            item = {
                 "video_chunk_id": chunk_id,
-                "start_ms": selected_range["start_ms"],
-                "end_ms": selected_range["end_ms"],
                 "claim": f"片段 {chunk_id} 支持回答。",
-            })
-            self.submitted_items.append(item.model_dump())
-            assert json.loads(handle_tool_call(item)) == {
+            }
+            self.submitted_items.append(item)
+            assert json.loads(submit_video_item.invoke(item)) == {
                 "accepted": True,
                 "video_chunk_id": chunk_id,
-                "start_ms": selected_range["start_ms"],
-                "end_ms": selected_range["end_ms"],
             }
         if chunk_ids:
             handle_text("建议补充人物或动作。")
@@ -368,35 +357,36 @@ def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidenc
         "startMs": 1100, "endMs": 2001,
     }],
 ])
-def test_reference_range_falls_back_to_canonical_for_legacy_or_invalid_blocks(
+def test_reference_range_rejects_legacy_or_invalid_blocks(
     caplog, blocks,
 ):
     caplog.set_level(logging.WARNING, logger="server.service.agent_chat")
     search_result = {} if blocks is None else {"renderBlocks": blocks}
 
-    assert _stored_video_range(
-        search_result,
-        "chunk-1",
-        canonical_start_ms=1000,
-        canonical_end_ms=2000,
-        conversation_id="conversation",
-        message_id="assistant",
-    ) == {"startMs": 1000, "endMs": 2000}
+    with pytest.raises(AgentReferenceInvalidError):
+        _validated_stored_video_range(
+            search_result,
+            "chunk-1",
+            evidence_start_ms=1000,
+            evidence_end_ms=2000,
+            conversation_id="conversation",
+            message_id="assistant",
+        )
     warning = next(
         record.getMessage()
         for record in caplog.records
-        if record.getMessage().startswith("event=agent_video_range_fallback ")
+        if record.getMessage().startswith("event=agent_invalid_stored_video_range ")
     )
     assert "conversation_id=conversation message_id=assistant" in warning
     assert "video_chunk_id=chunk-1" in warning
-    assert "canonical_start_ms=1000 canonical_end_ms=2000" in warning
-    assert "action=fallback_to_canonical" in warning
+    assert "evidence_start_ms=1000 evidence_end_ms=2000" in warning
+    assert "action=reject_reference" in warning
 
 
 def test_reference_range_preserves_valid_stored_range_without_warning(caplog):
     caplog.set_level(logging.WARNING, logger="server.service.agent_chat")
 
-    selected_range = _stored_video_range(
+    selected_range = _validated_stored_video_range(
         {"renderBlocks": [{
             "type": "video",
             "videoChunkId": "chunk-1",
@@ -404,8 +394,8 @@ def test_reference_range_preserves_valid_stored_range_without_warning(caplog):
             "endMs": 1900,
         }]},
         "chunk-1",
-        canonical_start_ms=1000,
-        canonical_end_ms=2000,
+        evidence_start_ms=1000,
+        evidence_end_ms=2000,
         conversation_id="conversation",
         message_id="assistant",
     )
@@ -413,8 +403,43 @@ def test_reference_range_preserves_valid_stored_range_without_warning(caplog):
     assert selected_range == {"startMs": 1100, "endMs": 1900}
     assert not [
         record for record in caplog.records
-        if record.getMessage().startswith("event=agent_video_range_fallback ")
+        if record.getMessage().startswith("event=agent_invalid_stored_video_range ")
     ]
+
+
+@pytest.mark.parametrize(("render_blocks", "expected"), [
+    (None, []),
+    ([{
+        "type": "video",
+        "videoChunkId": "chunk-1",
+        "startMs": 900,
+        "endMs": 1900,
+    }], []),
+    ([{
+        "type": "video",
+        "videoChunkId": "unknown",
+        "startMs": 1100,
+        "endMs": 1900,
+    }], []),
+    ([{
+        "type": "video",
+        "videoChunkId": "chunk-1",
+        "startMs": 1100,
+        "endMs": 1900,
+    }], [{"videoChunkId": "chunk-1", "startMs": 1100, "endMs": 1900}]),
+])
+def test_history_video_ranges_preserve_only_valid_stored_blocks(render_blocks, expected):
+    result = {
+        "hits": [{
+            "candidate": {"videoChunkId": "chunk-1", "fusedRank": 1},
+            "selectionReason": {},
+            "evidence": {"startMs": 1000, "endMs": 2000},
+        }],
+    }
+    if render_blocks is not None:
+        result["renderBlocks"] = render_blocks
+
+    assert _project_stored_search_result(result)["videoRanges"] == expected
 
 
 @pytest.mark.parametrize("invalid", ["user-message", "missing-chunk", "other-conversation", "outside-scope"])
@@ -984,7 +1009,7 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
         assert record is not None
         record.next_message_sequence = 500
 
-    now = datetime(2026, 9, 15, 12)
+    now = 1_789_454_400_000
     started = repository.start_message(
         conversation_id=conversation.conversation_id,
         workspace_id="workspace-1",
@@ -1016,12 +1041,12 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
             content="answer",
             retrieval_query="query",
             search_result={"hits": []},
-            now=datetime(2026, 9, 15, 11, 59, 59),
+            now=1_789_454_399_000,
         )
     else:
         repository.fail_assistant_message(
             started.assistant_message.message_id, error="failed",
-            now=datetime(2026, 9, 15, 11, 59, 59),
+            now=1_789_454_399_000,
         )
     final = service.list_all_messages(
         conversation.conversation_id, workspace_id="workspace-1"

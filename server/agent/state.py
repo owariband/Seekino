@@ -116,21 +116,6 @@ class RetrievalChannelWeights(BaseModel):
         return self
 
 
-class ChatVideoItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    video_chunk_id: _VideoChunkId
-    start_ms: int = Field(strict=True, ge=0)
-    end_ms: int = Field(strict=True, gt=0)
-    claim: _EvidenceClaim
-
-    @model_validator(mode="after")
-    def validate_time_range(self) -> ChatVideoItem:
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
-        return self
-
-
 class MarkdownRenderBlock(ContractModel):
     type: Literal["markdown"] = "markdown"
     markdown: _Markdown
@@ -154,15 +139,7 @@ class ChatVideoBlock(BaseModel):
 
     type: Literal["video"] = "video"
     video_chunk_id: _VideoChunkId
-    start_ms: int = Field(strict=True, ge=0)
-    end_ms: int = Field(strict=True, gt=0)
     claim: _EvidenceClaim
-
-    @model_validator(mode="after")
-    def validate_time_range(self) -> ChatVideoBlock:
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
-        return self
 
 
 ChatRenderBlock = Annotated[

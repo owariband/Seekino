@@ -19,7 +19,7 @@ from ..model.dto.agentDTO import (
 )
 from ..service.agent_chat import AgentChatService, AgentMessageExecution
 from ..service.media import MediaService
-from ..utils.time import utc_now_naive
+from ..utils.time import now_unix_time_ms
 from ..model.vo.commonVO import Page
 from .search import search_evidence_view
 from .context import get_services, get_sse_config
@@ -244,7 +244,7 @@ async def _agent_message_events(
         view = AgentMessageEventView(
             conversation_id=conversation_id,
             messages=[_agent_message_view(item, media=media, workspace_id=workspace_id) for item in states],
-            occurred_at=utc_now_naive(),
+            occurred_at=now_unix_time_ms(),
         )
         payload = view.model_dump_json(by_alias=True)
         fingerprint = hashlib.sha256(view.model_dump_json(by_alias=True, exclude={"occurred_at"}).encode("utf-8")).hexdigest()
@@ -304,15 +304,6 @@ def _agent_render_blocks(
         blocks = []
         if state.content:
             blocks.append(AgentMarkdownRenderBlockView(markdown=state.content))
-        if result is not None:
-            blocks.extend(
-                AgentVideoRenderBlockView(
-                    video_chunk_id=hit.candidate.video_chunk_id,
-                    start_ms=hit.evidence.start_ms,
-                    end_ms=hit.evidence.end_ms,
-                )
-                for hit in result.hits
-            )
         return blocks
 
     hits_by_id = {
@@ -331,20 +322,17 @@ def _agent_render_blocks(
             continue
         if raw.get("type") == "video":
             video_chunk_id = raw.get("videoChunkId")
-            if isinstance(video_chunk_id, str) and video_chunk_id not in hits_by_id:
+            if not isinstance(video_chunk_id, str) or video_chunk_id not in hits_by_id:
                 _logger.warning(
-                    "event=agent_video_range_fallback conversation_id=%s message_id=%s "
+                    "event=agent_invalid_video_render_block conversation_id=%s message_id=%s "
                     "video_chunk_id=%s proposed_start_ms=%r proposed_end_ms=%r "
-                    "canonical_start_ms=None canonical_end_ms=None "
                     "action=drop_unknown_chunk",
                     state.conversation_id, state.message_id, video_chunk_id,
                     raw.get("startMs"), raw.get("endMs"),
                 )
                 continue
             if (
-                isinstance(video_chunk_id, str)
-                and video_chunk_id in hits_by_id
-                and video_chunk_id not in seen_video_ids
+                video_chunk_id not in seen_video_ids
             ):
                 evidence = hits_by_id[video_chunk_id].evidence
                 start_ms = raw.get("startMs")
@@ -357,15 +345,14 @@ def _agent_render_blocks(
                     and evidence.start_ms <= start_ms < end_ms <= evidence.end_ms
                 ):
                     _logger.warning(
-                        "event=agent_video_range_fallback conversation_id=%s message_id=%s "
+                        "event=agent_invalid_video_render_block conversation_id=%s message_id=%s "
                         "video_chunk_id=%s proposed_start_ms=%r proposed_end_ms=%r "
-                        "canonical_start_ms=%s canonical_end_ms=%s "
-                        "action=fallback_to_canonical",
+                        "evidence_start_ms=%s evidence_end_ms=%s "
+                        "action=drop_invalid_range",
                         state.conversation_id, state.message_id, video_chunk_id,
                         start_ms, end_ms, evidence.start_ms, evidence.end_ms,
                     )
-                    start_ms = evidence.start_ms
-                    end_ms = evidence.end_ms
+                    continue
                 seen_video_ids.add(video_chunk_id)
                 blocks.append(AgentVideoRenderBlockView(
                     video_chunk_id=video_chunk_id,

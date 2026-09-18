@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -22,7 +20,7 @@ from ..model.job_progress import calculate_checkpoint_progress
 from ..model.upload import UploadSessionRecord, UploadSessionStatus
 from ..model.video import SeriesRecord, VideoRecord
 from ..mq.contracts import ParseJobLeaseLostError
-from ..utils.time import utc_now_naive
+from ..utils.time import now_unix_time_ms
 from ..utils.validation import require_nonempty_text
 
 
@@ -42,7 +40,7 @@ _JOB_STAGE_ORDER = {stage.value: order for order, stage in enumerate(ParseJobSta
 
 def current_lease_predicate(
     lease: ParseJobLease,
-    now: datetime,
+    now: int,
 ) -> tuple:
     """Match writes owned by one still-current ParseJob lease."""
 
@@ -234,7 +232,10 @@ class ParseJobRepository:
                 counts={status: int(count) for status, count, _version, _updated in rows},
                 checkpoint_count=int(checkpoint_count or 0),
                 version=sum(int(version) for _status, _count, version, _updated in rows),
-                updated_at=max((updated for _status, _count, _version, updated in rows), default=utc_now_naive()),
+                updated_at=max(
+                    (updated for _status, _count, _version, updated in rows),
+                    default=now_unix_time_ms(),
+                ),
             )
 
     @staticmethod
@@ -252,7 +253,7 @@ class ParseJobRepository:
         *,
         stage: ParseJobStage | str,
         progress: int | None = None,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> bool:
         """Advance the public stage without inventing a percentage.
 
@@ -267,7 +268,7 @@ class ParseJobRepository:
                 raise ValueError("progress must be an integer")
             if not 0 <= progress <= 100:
                 raise ValueError("progress must be between zero and 100")
-        updated_at = now or utc_now_naive()
+        updated_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             job = session.scalar(
                 select(SeriesParseJobRecord)
@@ -292,7 +293,7 @@ class ParseJobRepository:
         lease: ParseJobLease,
         checkpoint: VideoChunkCheckpointState,
         *,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> VideoChunkCheckpointState:
         if checkpoint.job_id != lease.job_id:
             raise ValueError("checkpoint job_id does not match the lease")
@@ -300,7 +301,7 @@ class ParseJobRepository:
             raise ValueError("checkpoint sequence_no must be nonnegative")
         _validate_checkpoint_bounds(checkpoint, lease.duration_ms)
         stage = VideoChunkCheckpointStage(checkpoint.stage).value
-        checked_at = now or utc_now_naive()
+        checked_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             job = self._require_current_lease(session, lease, checked_at)
             current = session.get(
@@ -420,17 +421,21 @@ class ParseJobRepository:
         self,
         lease: ParseJobLease,
         *,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> None:
         with self._session_factory() as session:
-            self._require_current_lease(session, lease, now or utc_now_naive())
+            self._require_current_lease(
+                session,
+                lease,
+                now if now is not None else now_unix_time_ms(),
+            )
 
     @classmethod
     def _require_current_lease(
         cls,
         session: Session,
         lease: ParseJobLease,
-        now: datetime,
+        now: int,
     ) -> SeriesParseJobRecord:
         job = session.scalar(
             select(SeriesParseJobRecord).where(

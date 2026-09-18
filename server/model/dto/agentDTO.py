@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Generic, TypeVar
 
 from pydantic import Field
@@ -44,7 +43,7 @@ class AgentStageTimingState:
 
 @dataclass(frozen=True, slots=True)
 class AgentMessageTimingState:
-    started_at: datetime
+    started_at: int
     total_duration_ms: int | None
     stages: tuple[AgentStageTimingState, ...]
 
@@ -55,9 +54,9 @@ class AgentConversationState:
     workspace_id: str
     title: str
     message_count: int
-    last_message_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
+    last_message_at: int | None
+    created_at: int
+    updated_at: int
     last_message_preview: str | None = None
 
 
@@ -75,8 +74,8 @@ class AgentMessageState:
     retrieval_query: str | None
     search_result: dict | None
     last_error: AgentFailure | None
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
     phase: AnswerPhase | None = None
     version: int = 1
     reference: dict[str, str] | None = None

@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo
 import yaml
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
+from ..utils.time import datetime_to_unix_time_ms, unix_time_ms_to_datetime
+
 
 def _decimal_rate(value):
     if isinstance(value, float):
@@ -108,8 +110,8 @@ class ModelPricingConfig(BaseModel):
     unit: Literal[1000000] = 1000000
     models: list[ModelPrice] = Field(default_factory=list)
 
-    def snapshot(self, *, provider: str, model: str, category: str, input_tokens: int, started_at: datetime) -> dict | None:
-        instant = started_at.replace(tzinfo=UTC) if started_at.tzinfo is None else started_at
+    def snapshot(self, *, provider: str, model: str, category: str, input_tokens: int, started_at: int) -> dict | None:
+        instant = unix_time_ms_to_datetime(started_at)
         candidates = [price for price in self.models
                       if price.provider == provider and price.model == model and price.category == category
                       and price.effective_from <= instant
@@ -127,8 +129,16 @@ class ModelPricingConfig(BaseModel):
                      and (tier.max_input_tokens is None or input_tokens < tier.max_input_tokens)), None)
         if tier is None:
             return None
+        model_price = price.model_dump(mode="json")
+        model_price["checked_at"] = datetime_to_unix_time_ms(price.checked_at)
+        model_price["effective_from"] = datetime_to_unix_time_ms(price.effective_from)
+        model_price["effective_until"] = (
+            datetime_to_unix_time_ms(price.effective_until)
+            if price.effective_until is not None
+            else None
+        )
         return {"version": self.version, "currency": self.currency, "unit": self.unit,
-                "model_price": price.model_dump(mode="json"), "time_band": band.name if band else None,
+                "model_price": model_price, "time_band": band.name if band else None,
                 "tier": tier.model_dump(mode="json")}
 
 

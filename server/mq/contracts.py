@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Protocol
 
 from ..model.dto.jobDTO import ParseJobLease
@@ -16,7 +16,7 @@ class ParseJobQueue(Protocol):
         worker_id: str,
         *,
         lease_duration: timedelta,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> ParseJobLease | None: ...
 
     def heartbeat(
@@ -24,14 +24,15 @@ class ParseJobQueue(Protocol):
         lease: ParseJobLease,
         *,
         lease_duration: timedelta,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> bool: ...
 
     def acknowledge(
         self,
         lease: ParseJobLease,
         *,
-        now: datetime | None = None,
+        duration_ms: int,
+        now: int | None = None,
     ) -> bool: ...
 
     def retry(
@@ -39,15 +40,16 @@ class ParseJobQueue(Protocol):
         lease: ParseJobLease,
         *,
         error: str,
-        retry_at: datetime,
-        now: datetime | None = None,
+        retry_at: int,
+        duration_ms: int,
+        now: int | None = None,
     ) -> bool: ...
 
     def reap_expired(
         self,
         *,
         retry_delay: timedelta,
-        now: datetime | None = None,
+        now: int | None = None,
         limit: int = 100,
     ) -> int: ...
 

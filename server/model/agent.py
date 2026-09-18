@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -8,7 +7,6 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
-    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -61,9 +59,7 @@ class AgentConversationRecord(TimestampedRecord, Base):
         nullable=False,
         default=0,
     )
-    last_message_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=False)
-    )
+    last_message_at: Mapped[int | None] = mapped_column(BigInteger)
 
 
 class AgentMessageRecord(TimestampedRecord, Base):
@@ -160,8 +156,8 @@ class AgentMessageTimingRecord(Base):
         ForeignKey("agent_message.message_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    started_at: Mapped[int] = mapped_column(
+        BigInteger,
         nullable=False,
     )
     total_duration_ms: Mapped[int | None] = mapped_column(BigInteger)

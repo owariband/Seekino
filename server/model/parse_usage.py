@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
-
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
@@ -16,7 +14,7 @@ class ParseUsageAttemptRecord(Base):
     job_id: Mapped[str] = mapped_column(ForeignKey("series_parse_job.job_id"), primary_key=True)
     attempt_count: Mapped[int] = mapped_column(Integer, primary_key=True)
     lease_version: Mapped[int] = mapped_column(Integer, primary_key=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    started_at: Mapped[int] = mapped_column(BigInteger, nullable=False)
     recording_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
@@ -42,7 +40,7 @@ class ParseModelCallRecord(TimestampedRecord, Base):
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[str] = mapped_column(String(16), nullable=False)
     operation: Mapped[str] = mapped_column(String(128), nullable=False)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    started_at: Mapped[int] = mapped_column(BigInteger, nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     tokens: Mapped[dict | None] = mapped_column(JSON)

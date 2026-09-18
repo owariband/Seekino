@@ -122,12 +122,18 @@ def bind_draft(
 
 def build_chat_output(
     draft: VideoChunkSearchResult,
+    query_draft: QueryDraft,
     rendered: ChatRenderDraft,
     retrieval_trace: list[RetrievalTraceEntry],
 ) -> AgentFinalOutput:
+    validate_approved_video_ranges(draft, query_draft)
     approved_hits = {
         hit.candidate.video_chunk_id: hit
         for hit in draft.hits
+    }
+    approved_ranges = {
+        item.video_chunk_id: item
+        for item in query_draft.selected_video_ranges
     }
     if any(
         item.video_chunk_id not in approved_hits
@@ -164,13 +170,49 @@ def build_chat_output(
             if isinstance(block, MarkdownRenderBlock)
             else VideoRenderBlock(
                 video_chunk_id=block.video_chunk_id,
-                start_ms=block.start_ms,
-                end_ms=block.end_ms,
+                start_ms=approved_ranges[block.video_chunk_id].start_ms,
+                end_ms=approved_ranges[block.video_chunk_id].end_ms,
             )
             for block in rendered.blocks
         ],
         retrieval_trace=[entry.model_copy(deep=True) for entry in retrieval_trace],
     )
+
+
+def validate_approved_video_ranges(
+    draft: VideoChunkSearchResult,
+    query_draft: QueryDraft,
+) -> None:
+    approved_hits = {
+        hit.candidate.video_chunk_id: hit
+        for hit in draft.hits
+    }
+    approved_ranges = {
+        item.video_chunk_id: item
+        for item in query_draft.selected_video_ranges
+    }
+    if (
+        len(approved_ranges) != len(query_draft.selected_video_ranges)
+        or len(approved_hits) != len(draft.hits)
+        or set(approved_ranges) != set(approved_hits)
+    ):
+        raise AgentModelInvocationError(
+            "Approved video ranges do not match approved evidence"
+        )
+    for video_chunk_id, approved in approved_ranges.items():
+        evidence = approved_hits[video_chunk_id].evidence
+        if not (
+            evidence.start_ms
+            <= approved.start_ms
+            < approved.end_ms
+            <= evidence.end_ms
+        ):
+            raise AgentModelInvocationError(
+                "Approved range for VideoChunk "
+                f"{video_chunk_id!r} [{approved.start_ms}, {approved.end_ms}) "
+                "must be contained in canonical evidence range "
+                f"[{evidence.start_ms}, {evidence.end_ms})"
+            )
 
 
 def build_retrieval_trace(turns: list[LoopTurn]) -> list[RetrievalTraceEntry]:
@@ -200,6 +242,7 @@ def finalize_output(turns: list[LoopTurn], inputs: RunInputs) -> AgentFinalOutpu
     validate_result(turn.draft_output, inputs)
     return build_chat_output(
         turn.draft_output,
+        turn.query_draft,
         turn.rendered_answer,
         build_retrieval_trace(turns),
     )

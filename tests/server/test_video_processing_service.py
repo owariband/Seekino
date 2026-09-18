@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
+from contextlib import contextmanager
 from dataclasses import replace
 from contextvars import ContextVar
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 from threading import Event, Lock, Thread
@@ -23,10 +25,11 @@ from gateway.schemas import EmbeddingResult
 from sqlalchemy import select
 
 from server.database import DatabaseEnvironment, create_session_factory
-from server.identity import derive_video_chunk_id
+from server.identity import derive_video_chunk_id, derive_video_id
 from server.model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
 from server.model.index_sync import IndexSyncIntentRecord, IndexSyncStatus
 from server.model.job import ParseJobStatus, VideoChunkCheckpointStage
+from server.model.job_timing import VideoChunkTimingStage
 from server.model.video import (
     SeriesRecord,
     VideoChunkEmbeddingRecord,
@@ -46,6 +49,7 @@ from server.service.media import MediaService
 from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
 from server.service.video_processing import VideoProcessingConfig, VideoProcessingService
+from server.utils.time import now_unix_time_ms, timedelta_to_ms
 from server.storage.artifact import ArtifactIntegrityError
 
 
@@ -259,7 +263,7 @@ def _lease() -> ParseJobLease:
         pipeline_version="pipeline-v1",
         worker_id="consumer-test",
         lease_version=1,
-        lease_expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5),
+        lease_expires_at=now_unix_time_ms() + timedelta_to_ms(timedelta(minutes=5)),
         attempt_count=1,
         max_attempts=3,
         episode_order=1,
@@ -294,6 +298,14 @@ def _materialize_canonical(windows, *, output_dir, **_kwargs):
     return paths
 
 
+def _materialize_analysis_one(window, **kwargs):
+    _materialize_analysis([window], **kwargs)
+
+
+def _materialize_canonical_one(window, *, output_dir, **kwargs):
+    return _materialize_canonical([window], output_dir=output_dir, **kwargs)[0]
+
+
 def _extract_frames(video_path, timestamps_ms, *, output_dir, **_kwargs):
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
@@ -323,6 +335,35 @@ class _IndexSink:
         raise AssertionError("index sync should not be reached")
 
 
+class _SuccessfulVideoSink:
+    def __init__(self, segment_count: int) -> None:
+        self._segment_count = segment_count
+
+    def import_video_parse_for_job(self, _prepared, lease):
+        return SimpleNamespace(video_chunk_ids=[
+            derive_video_chunk_id(lease.video_id, sequence_no)
+            for sequence_no in range(self._segment_count)
+        ])
+
+
+class _SuccessfulIndexSink:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def sync_video_chunks(self, video_chunk_ids):
+        self.calls.append(list(video_chunk_ids))
+
+
+class _RecordingStageTimer:
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, VideoChunkTimingStage]] = []
+
+    @contextmanager
+    def measure(self, _lease, *, sequence_no, stage):
+        self.calls.append((sequence_no, stage))
+        yield
+
+
 def _unit_processor(
     tmp_path,
     monkeypatch,
@@ -331,10 +372,13 @@ def _unit_processor(
     *,
     asr_mode,
     chunk_duration_ms=10_000,
+    stage_timer=None,
+    videos=None,
+    index=None,
 ):
     artifacts = _MemoryArtifacts(tmp_path / "artifacts")
-    videos = _VideoSink()
-    index = _IndexSink()
+    videos = videos or _VideoSink()
+    index = index or _IndexSink()
     processor = VideoProcessingService(
         jobs,  # type: ignore[arg-type]
         videos,  # type: ignore[arg-type]
@@ -349,6 +393,7 @@ def _unit_processor(
             asr_concurrency=2,
             asr_mode=asr_mode,
         ),
+        stage_timer=stage_timer,
     )
     source = tmp_path / "source.mp4"
     source.write_bytes(b"fixture")
@@ -359,18 +404,60 @@ def _unit_processor(
         lambda *_args: (None, [], False),
     )
     monkeypatch.setattr(
-        "server.service.video_processing.materialize_analysis_windows",
-        _materialize_analysis,
+        "server.service.video_processing.materialize_analysis_window",
+        _materialize_analysis_one,
     )
     monkeypatch.setattr(
-        "server.service.video_processing.materialize_canonical_chunks",
-        _materialize_canonical,
+        "server.service.video_processing.materialize_canonical_chunk",
+        _materialize_canonical_one,
     )
     monkeypatch.setattr(
         "server.service.video_processing.extract_video_frames",
         _extract_frames,
     )
     return processor, artifacts, videos, index
+
+
+def test_processing_service_measures_every_stage_for_each_segment(
+    prepared_import,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    algorithm = _Algorithm(prepared_import.parse_result)
+    segment_count = len(prepared_import.parse_result.chunks)
+    timer = _RecordingStageTimer()
+    index = _SuccessfulIndexSink()
+    lease = _lease()
+    lease = replace(
+        lease,
+        video_id=derive_video_id(lease.series_id, lease.content_hash),
+    )
+    processor, _artifacts, _videos, _index = _unit_processor(
+        tmp_path,
+        monkeypatch,
+        algorithm,
+        _MemoryJobs(),
+        asr_mode="lite",
+        stage_timer=timer,
+        videos=_SuccessfulVideoSink(segment_count),
+        index=index,
+    )
+
+    assert len(processor.process(lease)) == segment_count
+    stages = (
+        VideoChunkTimingStage.SPLIT,
+        VideoChunkTimingStage.ASR,
+        VideoChunkTimingStage.PARSE,
+        VideoChunkTimingStage.TEXT_EMBEDDING,
+        VideoChunkTimingStage.VISION_EMBEDDING,
+        VideoChunkTimingStage.INDEX,
+    )
+    assert Counter(timer.calls) == Counter(
+        (sequence_no, stage)
+        for sequence_no in range(segment_count)
+        for stage in stages
+    )
+    assert len(index.calls) == segment_count
 
 
 def test_processing_service_ignores_stray_json_restores_db_prefix_and_reaches_ready(
@@ -459,13 +546,19 @@ def test_processing_service_ignores_stray_json_restores_db_prefix_and_reaches_re
             paths.append(path)
         return paths
 
+    def materialize_analysis_one(window, **kwargs):
+        materialize_analysis([window], **kwargs)
+
+    def materialize_canonical_one(window, *, output_dir, **kwargs):
+        return materialize_canonical([window], output_dir=output_dir, **kwargs)[0]
+
     monkeypatch.setattr(
-        "server.service.video_processing.materialize_analysis_windows",
-        materialize_analysis,
+        "server.service.video_processing.materialize_analysis_window",
+        materialize_analysis_one,
     )
     monkeypatch.setattr(
-        "server.service.video_processing.materialize_canonical_chunks",
-        materialize_canonical,
+        "server.service.video_processing.materialize_canonical_chunk",
+        materialize_canonical_one,
     )
     monkeypatch.setattr(
         "server.service.video_processing.extract_video_frames",
@@ -594,7 +687,7 @@ def test_processing_service_ignores_stray_json_restores_db_prefix_and_reaches_re
     assert processor.process(edited_lease) == video_chunk_ids
     assert algorithm.parse_sequences == [0, 1, 1]
     assert not snapshot_path.exists()
-    assert queue.acknowledge(lease)
+    assert queue.acknowledge(lease, duration_ms=0)
     checkpoints = jobs.list_checkpoints(completed.job_id)
     assert {item.stage for item in checkpoints} == {
         VideoChunkCheckpointStage.INDEXED.value
@@ -1027,13 +1120,19 @@ def test_late_old_lease_media_materialization_cannot_pollute_new_media_pointer(
             paths.append(path)
         return paths
 
+    def materialize_analysis_one(window, **kwargs):
+        materialize_analysis([window], **kwargs)
+
+    def materialize_canonical_one(window, *, output_dir, **kwargs):
+        return materialize_canonical([window], output_dir=output_dir, **kwargs)[0]
+
     monkeypatch.setattr(
-        "server.service.video_processing.materialize_analysis_windows",
-        materialize_analysis,
+        "server.service.video_processing.materialize_analysis_window",
+        materialize_analysis_one,
     )
     monkeypatch.setattr(
-        "server.service.video_processing.materialize_canonical_chunks",
-        materialize_canonical,
+        "server.service.video_processing.materialize_canonical_chunk",
+        materialize_canonical_one,
     )
     monkeypatch.setattr(
         "server.service.video_processing.extract_video_frames",

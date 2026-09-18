@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
-    DateTime,
     ForeignKey,
     Integer,
     String,
@@ -103,14 +101,12 @@ class UploadSessionRecord(TimestampedRecord, Base):
     request_fingerprint: Mapped[str | None] = mapped_column(String(64))
     active_slot_key: Mapped[str | None] = mapped_column(String(96))
     completion_token: Mapped[str | None] = mapped_column(String(ID_LENGTH))
-    completion_started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=False)
-    )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    completion_started_at: Mapped[int | None] = mapped_column(BigInteger)
+    expires_at: Mapped[int] = mapped_column(
+        BigInteger,
         nullable=False,
     )
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    completed_at: Mapped[int | None] = mapped_column(BigInteger)
     video_id: Mapped[str | None] = mapped_column(
         ForeignKey("video.video_id", ondelete="SET NULL"),
         index=True,
@@ -150,7 +146,7 @@ class UploadSegmentRecord(Base):
     actual_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     artifact_uri: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    created_at: Mapped[int] = mapped_column(
+        BigInteger,
         nullable=False,
     )

@@ -125,7 +125,7 @@ def _project_history_message(message: dict) -> dict[str, Any]:
 
 def _project_stored_search_result(result: dict) -> dict[str, Any]:
     hits = []
-    canonical_ranges: dict[str, tuple[int, int]] = {}
+    evidence_ranges: dict[str, tuple[int, int]] = {}
     for hit in result.get("hits") or []:
         if not isinstance(hit, dict):
             continue
@@ -145,7 +145,7 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
             and not isinstance(end_ms, bool)
             and 0 <= start_ms < end_ms
         ):
-            canonical_ranges[video_chunk_id] = (start_ms, end_ms)
+            evidence_ranges[video_chunk_id] = (start_ms, end_ms)
         hits.append({
             "candidate": {
                 "videoChunkId": candidate.get("videoChunkId"),
@@ -171,7 +171,7 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
         "seriesIds": list(result.get("seriesIds") or []),
         "resultCount": reply.get("resultCount") if isinstance(reply, dict) else len(hits),
         "hits": hits,
-        "videoRanges": _project_stored_video_ranges(result, canonical_ranges),
+        "videoRanges": _project_stored_video_ranges(result, evidence_ranges),
         "partial": bool(result.get("partial", False)),
         "warnings": list(result.get("warnings") or []),
     }
@@ -179,14 +179,11 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
 
 def _project_stored_video_ranges(
     result: dict,
-    canonical_ranges: dict[str, tuple[int, int]],
+    evidence_ranges: dict[str, tuple[int, int]],
 ) -> list[dict[str, int | str]]:
     raw_blocks = result.get("renderBlocks")
     if not isinstance(raw_blocks, list):
-        return [
-            {"videoChunkId": video_chunk_id, "startMs": start_ms, "endMs": end_ms}
-            for video_chunk_id, (start_ms, end_ms) in canonical_ranges.items()
-        ]
+        return []
     ranges: list[dict[str, int | str]] = []
     seen: set[str] = set()
     for block in raw_blocks:
@@ -196,10 +193,10 @@ def _project_stored_video_ranges(
         if (
             not isinstance(video_chunk_id, str)
             or video_chunk_id in seen
-            or video_chunk_id not in canonical_ranges
+            or video_chunk_id not in evidence_ranges
         ):
             continue
-        canonical_start_ms, canonical_end_ms = canonical_ranges[video_chunk_id]
+        evidence_start_ms, evidence_end_ms = evidence_ranges[video_chunk_id]
         start_ms = block.get("startMs")
         end_ms = block.get("endMs")
         if not (
@@ -207,9 +204,9 @@ def _project_stored_video_ranges(
             and not isinstance(start_ms, bool)
             and isinstance(end_ms, int)
             and not isinstance(end_ms, bool)
-            and canonical_start_ms <= start_ms < end_ms <= canonical_end_ms
+            and evidence_start_ms <= start_ms < end_ms <= evidence_end_ms
         ):
-            start_ms, end_ms = canonical_start_ms, canonical_end_ms
+            continue
         seen.add(video_chunk_id)
         ranges.append({
             "videoChunkId": video_chunk_id,

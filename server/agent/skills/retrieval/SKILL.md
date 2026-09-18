@@ -76,4 +76,4 @@ Transcript 是对已保存 ASR 原文的词法匹配，通道自身不会翻译 
 
 retrieve 只召回 canonical VideoChunk，不根据最终播放小区间再次检索或裁剪。最终草稿使用 `selected_video_ranges` 选择证据，每项包含真实的 `video_chunk_id`，以及根据 ASR 时间线、事件或视觉证据提出的原视频绝对 `start_ms` 和 `end_ms`。这个小区间是播放建议，不参与 retrieve 是否成立。
 
-时间范围应满足对应候选的 `evidence.startMs <= start_ms < end_ms <= evidence.endMs`，完整覆盖支撑结论的事件、动作或对白，并去掉无关前后内容。不得从一句对白或连续动作中间截断，也不得为了追求短而移除理解结论所需的上下文。Evaluator 会审核范围边界、完整性和精确性；范围不合理时通过 advice 交给 Query 修订，不把它升级成 retrieval 失败。Chat 使用 `submit_video_item` 显式提交获批的 `video_chunk_id`、`start_ms`、`end_ms` 和 `claim`；Server 对异常提交降级并告警，不让可恢复的播放范围问题破坏文字回答。
+时间范围应满足对应候选的 `evidence.startMs <= start_ms < end_ms <= evidence.endMs`，完整覆盖支撑结论的事件、动作或对白，并去掉无关前后内容。不得从一句对白或连续动作中间截断，也不得为了追求短而移除理解结论所需的上下文。Evaluator 会审核范围边界、完整性和精确性；范围不合理时通过 advice 交给 Query 修订，不把它升级成 retrieval 失败。Chat 使用 `submit_video_item` 只提交获批的 `video_chunk_id` 和 `claim`；Server 将 Evaluator 已批准的 `selected_video_ranges` 原样绑定为最终播放范围。范围集合不一致或越界属于审批状态错误，必须拒绝，不能回退到 canonical Chunk 或让 Chat 再提出第三组范围。

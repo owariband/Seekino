@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .utils.time import MAX_UNIX_TIME_MS
 
 
 def _to_camel(value: str) -> str:
@@ -90,7 +91,7 @@ class VideoChunkEvidence(ContractModel):
     pipeline_version: str
     is_fallback: bool
     parse_provenance: dict[str, Any] | None
-    parsed_at: datetime
+    parsed_at: int = Field(ge=0, le=MAX_UNIX_TIME_MS, strict=True)
 
 
 class VideoChunkCandidate(ContractModel):

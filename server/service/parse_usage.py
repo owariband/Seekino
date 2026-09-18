@@ -13,7 +13,7 @@ from ..config.usage import ModelPricingConfig, PriceTier
 from ..model.dto.jobDTO import ParseJobLease
 from ..model.dto.parseUsageDTO import ParseModelCallState, ParseUsageRowState, ParseUsageState
 from ..repository.parse_usage import ParseUsageRepository
-from ..utils.time import utc_now_naive
+from ..utils.time import now_unix_time_ms
 from .job import ParseJobService
 
 _logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ class ParseUsageService:
     def capture(self, lease: ParseJobLease) -> Iterator[None]:
         incomplete = Event()
         try:
-            if not self._repository.start_attempt(lease, now=utc_now_naive()):
+            if not self._repository.start_attempt(lease, now=now_unix_time_ms()):
                 incomplete.set()
         except Exception:
             incomplete.set()

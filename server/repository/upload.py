@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 import hashlib
 import json
 from uuid import uuid4
@@ -33,7 +33,7 @@ from ..model.video import (
     VideoChunkRecord,
     VideoRecord,
 )
-from ..utils.time import utc_now_naive
+from ..utils.time import now_unix_time_ms, timedelta_to_ms
 from .index_sync import refresh_series_statuses
 
 
@@ -78,8 +78,8 @@ class UploadRepository:
         preferred_segment_size_bytes: int,
         total_segments: int,
         idempotency_key: str,
-        expires_at: datetime,
-        now: datetime,
+        expires_at: int,
+        now: int,
         content_sha256: str | None = None,
     ) -> UploadSessionState:
         requested = {
@@ -167,9 +167,9 @@ class UploadRepository:
         self,
         upload_session_id: str,
         *,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> UploadSessionState:
-        checked_at = now or utc_now_naive()
+        checked_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             record = session.scalar(
                 select(UploadSessionRecord)
@@ -195,7 +195,7 @@ class UploadRepository:
         *,
         workspace_id: str,
         expected_job_version: int,
-        now: datetime,
+        now: int,
     ) -> str:
         """Requeue the ParseJob owned by an UploadSession.
 
@@ -300,7 +300,7 @@ class UploadRepository:
         workspace_id: str,
         expected_job_version: int,
         additional_attempts: int,
-        now: datetime,
+        now: int,
     ) -> str:
         """Restart one UploadSession's terminal ParseJob from its source Video.
 
@@ -469,7 +469,7 @@ class UploadRepository:
         upload_session_id: str,
         *,
         workspace_id: str,
-        now: datetime,
+        now: int,
     ) -> UploadSessionDeletion:
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
@@ -589,7 +589,7 @@ class UploadRepository:
         self,
         deletion: UploadSessionDeletion,
         *,
-        now: datetime,
+        now: int,
     ) -> UploadSessionState:
         with self._session_factory.begin() as session:
             upload = self._locked_session(
@@ -679,9 +679,9 @@ class UploadRepository:
         actual_size_bytes: int,
         checksum_sha256: str,
         artifact_uri: str,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> UploadSegmentState:
-        registered_at = now or utc_now_naive()
+        registered_at = now if now is not None else now_unix_time_ms()
         expired = False
         result: UploadSegmentState | None = None
         with self._session_factory.begin() as session:
@@ -747,10 +747,10 @@ class UploadRepository:
         self,
         upload_session_id: str,
         *,
-        now: datetime | None = None,
+        now: int | None = None,
         stale_after: timedelta = timedelta(minutes=15),
     ) -> UploadCompletionClaim:
-        claimed_at = now or utc_now_naive()
+        claimed_at = now if now is not None else now_unix_time_ms()
         expired = False
         result: UploadCompletionClaim | None = None
         with self._session_factory.begin() as session:
@@ -778,7 +778,7 @@ class UploadRepository:
                     started_at = upload.completion_started_at
                     if (
                         started_at is not None
-                        and started_at + stale_after > claimed_at
+                        and started_at + timedelta_to_ms(stale_after) > claimed_at
                     ):
                         raise UploadCompletionInProgressError(
                             "upload completion is already in progress"
@@ -849,7 +849,7 @@ class UploadRepository:
                 ):
                     segments_by_upload.setdefault(upload_id, []).append((number, size))
             result = []
-            checked_at = utc_now_naive()
+            checked_at = now_unix_time_ms()
             for record in records:
                 self._expire_if_due(record, checked_at)
                 if statuses is None or record.status in statuses:
@@ -897,9 +897,9 @@ class UploadRepository:
         duration_ms: int,
         pipeline_version: str,
         max_job_attempts: int,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> CompletedUploadState:
-        completed_at = now or utc_now_naive()
+        completed_at = now if now is not None else now_unix_time_ms()
         job_id = derive_parse_job_id(video_id, pipeline_version)
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
@@ -1020,7 +1020,7 @@ class UploadRepository:
             )
 
     @staticmethod
-    def _expire_if_due(upload: UploadSessionRecord, now: datetime) -> bool:
+    def _expire_if_due(upload: UploadSessionRecord, now: int) -> bool:
         if (
             upload.status not in (UploadSessionStatus.COMPLETED.value, UploadSessionStatus.EXPIRED.value)
             and upload.expires_at <= now

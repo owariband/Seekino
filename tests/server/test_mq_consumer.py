@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from uuid import uuid4
 
 from server.database import create_session_factory
@@ -12,13 +12,15 @@ from server.model.video import SeriesRecord, VideoRecord
 from server.mq.consumer import ParseJobConsumer
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.job import ParseJobRepository
+from server.repository.job_timing import ParseJobTimingRepository
+from server.utils.time import now_unix_time_ms, timedelta_to_ms
 
 
 @dataclass
 class _Clock:
-    now: datetime
+    now: int
 
-    def __call__(self) -> datetime:
+    def __call__(self) -> int:
         return self.now
 
 
@@ -41,7 +43,7 @@ def _seed(repository, *, max_attempts: int = 3):
     series_id = str(uuid4())
     video_id = str(uuid4())
     job_id = str(uuid4())
-    now = datetime(2026, 9, 14, 10, 0, 0)
+    now = 1_789_376_400_000
     with session_factory.begin() as session:
         session.add(
             SeriesRecord(
@@ -124,6 +126,29 @@ def test_consumer_claims_and_completes_one_job(repository) -> None:
     assert any("completed job=" in item for item in logs)
 
 
+def test_consumer_persists_monotonic_processing_duration(repository) -> None:
+    jobs, queue, job_id, now = _seed(repository)
+    engine, _video_repository = repository
+    timing = ParseJobTimingRepository(create_session_factory(engine))
+    readings = iter((1_000_000_000, 1_321_000_000))
+    consumer = ParseJobConsumer(
+        queue,
+        _Processor([[str(uuid4())]]),
+        worker_id="worker-a",
+        lease_duration=timedelta(minutes=2),
+        heartbeat_interval=timedelta(minutes=1),
+        retry_base=timedelta(seconds=10),
+        retry_max=timedelta(minutes=1),
+        clock=_Clock(now),
+        monotonic_clock=lambda: next(readings),
+    )
+
+    assert consumer.run_once()
+
+    assert jobs.get(job_id).status == ParseJobStatus.SUCCEEDED.value
+    assert timing.totals(job_id) == (321, True)
+
+
 def test_consumer_retries_with_a_new_lease_version(repository) -> None:
     jobs, queue, job_id, now = _seed(repository)
     clock = _Clock(now)
@@ -133,7 +158,7 @@ def test_consumer_retries_with_a_new_lease_version(repository) -> None:
     assert consumer.run_once()
     waiting = jobs.get(job_id)
     assert waiting.status == ParseJobStatus.RETRY_WAIT.value
-    assert waiting.available_at == now + timedelta(seconds=10)
+    assert waiting.available_at == now + timedelta_to_ms(timedelta(seconds=10))
 
     clock.now = waiting.available_at
     assert consumer.run_once()
@@ -168,7 +193,7 @@ class _IdleQueue:
 
 def test_consumer_start_and_close_own_the_background_thread() -> None:
     queue = _IdleQueue()
-    consumer = _consumer(queue, _Processor([]), _Clock(datetime.now()), [])
+    consumer = _consumer(queue, _Processor([]), _Clock(now_unix_time_ms()), [])
 
     consumer.start()
     assert queue.polled.wait(timeout=1)
@@ -190,7 +215,7 @@ def test_consumer_exposes_fatal_background_failure() -> None:
     consumer = _consumer(
         _FailingQueue(),
         _Processor([]),
-        _Clock(datetime.now()),
+        _Clock(now_unix_time_ms()),
         logs,
     )
 

@@ -4,7 +4,7 @@ import os
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from threading import Barrier, Event
 from uuid import uuid4
 
@@ -33,6 +33,7 @@ from server.model.upload import (
     UploadSessionStatus,
 )
 from server.mq.mysql_queue import MySqlParseJobQueue
+from server.utils.time import now_unix_time_ms, timedelta_to_ms
 from server.mq.contracts import ParseJobLeaseLostError
 from server.repository.job import ParseJobRepository
 from server.repository.index_sync import IndexSyncRepository
@@ -203,7 +204,7 @@ def test_mysql_index_sync_hides_video_while_upload_deletion_is_pending(
 
     try:
         VideoRepository(session_factory).import_video_parse(prepared)
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = now_unix_time_ms()
         with session_factory.begin() as session:
             session.add(UploadSessionRecord(
                 upload_session_id=str(uuid4()),
@@ -333,7 +334,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
         upload.upload_session_id,
         workspace_id="mysql-completed-delete",
     )
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = now_unix_time_ms()
     call_id = str(uuid4())
     with session_factory.begin() as session:
         session.add(ParseUsageAttemptRecord(
@@ -729,8 +730,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
     )
     jobs = ParseJobRepository(session_factory)
     queue = MySqlParseJobQueue(session_factory)
-    # MySQL DATETIME stores whole seconds; claim after the completed uploads.
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
+    now = now_unix_time_ms() + timedelta_to_ms(timedelta(seconds=1))
     barrier = Barrier(2)
 
     def claim(worker_id: str):
@@ -763,7 +763,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
             ),
             now=now,
         )
-        retry_at = now + timedelta(seconds=10)
+        retry_at = now + timedelta_to_ms(timedelta(seconds=10))
         assert queue.retry(
             first,
             error="retry integration",
@@ -773,7 +773,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         sibling = queue.claim_next(
             "worker-c",
             lease_duration=timedelta(minutes=2),
-            now=now + timedelta(seconds=1),
+            now=now + timedelta_to_ms(timedelta(seconds=1)),
         )
         assert sibling is None
         second = queue.claim_next(

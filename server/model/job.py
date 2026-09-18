@@ -1,22 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
-    DateTime,
     ForeignKey,
     Index,
     Integer,
     String,
     UniqueConstraint,
-    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
+from ..utils.time import now_unix_time_ms
 from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampedRecord
 
 
@@ -107,19 +105,17 @@ class SeriesParseJobRecord(TimestampedRecord, Base):
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    available_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    available_at: Mapped[int] = mapped_column(
+        BigInteger,
         nullable=False,
-        server_default=func.now(),
+        default=now_unix_time_ms,
     )
     lease_owner: Mapped[str | None] = mapped_column(String(128))
     lease_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=False)
-    )
-    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    lease_expires_at: Mapped[int | None] = mapped_column(BigInteger)
+    heartbeat_at: Mapped[int | None] = mapped_column(BigInteger)
+    started_at: Mapped[int | None] = mapped_column(BigInteger)
+    completed_at: Mapped[int | None] = mapped_column(BigInteger)
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
 
 
@@ -160,9 +156,9 @@ class VideoChunkCheckpointRecord(Base):
     text_embedding_artifact_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     vision_embedding_artifact_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    updated_at: Mapped[int] = mapped_column(
+        BigInteger,
         nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
+        default=now_unix_time_ms,
+        onupdate=now_unix_time_ms,
     )

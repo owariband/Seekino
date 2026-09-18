@@ -39,7 +39,10 @@ function job(status: ParseJobView["status"], id = status.toLowerCase()): ParseJo
     stageProgress: status === "FAILED" ? 18 : null,
     completedDurationMs: 120_000,
     completedThroughMs: 120_000,
+    videoDurationMs: 300_000,
     totalDurationMs: 300_000,
+    processingDurationMs: 321,
+    processingTimingComplete: false,
     completedChunkCount: 2,
     totalChunkCount: 5,
     currentChunk: null,
@@ -77,6 +80,53 @@ afterEach(() => {
   uploadActions.forgetDeletedSession.mockReset();
   uploadActions.openDialog.mockReset();
   uploadActions.syncRequeuedParse.mockReset();
+});
+
+describe("task status filters", () => {
+  it("keeps queued, running, retrying, failed, and completed tasks in separate filters", async () => {
+    const jobs = [
+      job("QUEUED"),
+      job("RUNNING"),
+      job("RETRY_WAIT"),
+      job("FAILED"),
+      job("SUCCEEDED"),
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => response({ items: jobs, hasMore: false, nextCursor: null })));
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByText("queued.mp4");
+    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中1");
+    for (const [label, filename] of [
+      ["排队中", "queued.mp4"],
+      ["进行中", "running.mp4"],
+      ["等待重试", "retry_wait.mp4"],
+      ["异常", "failed.mp4"],
+      ["已完成", "succeeded.mp4"],
+    ] as const) {
+      await user.click(screen.getByRole("button", { name: label }));
+      expect(screen.getByText(filename)).toBeInTheDocument();
+      for (const other of jobs) {
+        if (other.originalFilename !== filename) {
+          expect(screen.queryByText(other.originalFilename)).not.toBeInTheDocument();
+        }
+      }
+    }
+  });
+});
+
+describe("processing timing", () => {
+  it("shows measured processing milliseconds instead of the video duration", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [{ ...job("RUNNING"), processingDurationMs: 321, processingTimingComplete: false }],
+      hasMore: false,
+      nextCursor: null,
+    })));
+    renderPage();
+
+    expect(await screen.findByText("累计解析耗时")).toBeInTheDocument();
+    expect(await screen.findByText("至少 321 毫秒（不完整）")).toBeInTheDocument();
+  });
 });
 
 describe("task deletion", () => {
@@ -190,7 +240,7 @@ describe("manual parse retry", () => {
 
     await waitFor(() => expect(screen.queryByRole("button", { name: `重试解析 ${failed.originalFilename}` })).not.toBeInTheDocument());
     expect(uploadActions.syncRequeuedParse).toHaveBeenCalledWith(retried);
-    expect(screen.getByText("等待解析")).toBeInTheDocument();
+    expect(screen.getByText("排队中", { selector: '[data-status="QUEUED"]' })).toBeInTheDocument();
     expect(screen.getByText("3 / 4")).toBeInTheDocument();
     const retry = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/uploads/retry-parse"));
     expect(String(retry?.[0])).toBe("/api/uploads/retry-parse?uploadSessionId=upload-failed&workspaceId=local-default&expectedJobVersion=7");
@@ -295,6 +345,7 @@ describe("segment progress presentation", () => {
       stageProgress: 85,
       completedDurationMs: 120_000,
       completedThroughMs: 120_000,
+      videoDurationMs: 140_000,
       totalDurationMs: 140_000,
       completedChunkCount: 2,
       totalChunkCount: 3,
@@ -352,6 +403,7 @@ describe("segment progress presentation", () => {
       stageProgress: 100,
       completedDurationMs: 140_000,
       completedThroughMs: 140_000,
+      videoDurationMs: 140_000,
       totalDurationMs: 140_000,
       completedChunkCount: 3,
       totalChunkCount: 3,

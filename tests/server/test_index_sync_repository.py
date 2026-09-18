@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -26,6 +26,7 @@ from server.repository.index_sync import (
     materialize_index_sync_intents,
 )
 from server.model.dto.parseDTO import PreparedEmbedding
+from server.utils.time import now_unix_time_ms, timedelta_to_ms
 
 
 def _with_vectors(prepared_import, *, first_text: list[float] | None = None):
@@ -363,8 +364,8 @@ def test_retry_schedule_and_conditional_state_changes(
     video_repository.import_video_parse(_with_vectors(prepared_import))
     index_repository = IndexSyncRepository(create_session_factory(engine))
     item = index_repository.list_all()[0]
-    now = datetime.now(UTC).replace(tzinfo=None)
-    retry_at = now + timedelta(minutes=5)
+    now = now_unix_time_ms()
+    retry_at = now + timedelta_to_ms(timedelta(minutes=5))
 
     assert index_repository.mark_failed(
         item.video_chunk_id,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import func, select
@@ -15,6 +15,7 @@ from server.repository.library import LibraryRepository
 from server.repository.video import ParseImportConflictError, VideoRepository
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.mq.mysql_queue import MySqlParseJobQueue
+from server.utils.time import now_unix_time_ms, timedelta_to_ms
 
 
 def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> None:
@@ -37,7 +38,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
             for chunk in prepared_import.chunks
         ),
     )
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = now_unix_time_ms()
     job_id = "d1070c86-b716-4df7-bbb6-83072c7e9aea"
     with session_factory.begin() as session:
         session.add(
@@ -92,11 +93,12 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
         now=now,
     )
     assert first is not None
-    retry_at = now + timedelta(seconds=1)
+    retry_at = now + timedelta_to_ms(timedelta(seconds=1))
     assert queue.retry(
         first,
         error="handoff",
         retry_at=retry_at,
+        duration_ms=0,
         now=now,
     )
     second = queue.claim_next(

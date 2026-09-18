@@ -27,7 +27,7 @@ import { episodeLabel, formatTimecode, formatTimeRange } from "../../shared/form
 import styles from "./tasks.module.css";
 import { ParseUsageDetails } from "./ParseUsageDetails";
 
-type Filter = "all" | "active" | "failed" | "completed";
+type Filter = "all" | ParseJobStatus;
 
 const PIPELINE = ["解析画面与对白", "发布检索结果", "可检索"];
 
@@ -44,12 +44,19 @@ const PIPELINE_STAGE_INDEX: Record<string, number> = {
 };
 
 const statusText: Record<ParseJobStatus, string> = {
-  QUEUED: "等待解析",
-  RUNNING: "正在解析",
+  QUEUED: "排队中",
+  RUNNING: "进行中",
   RETRY_WAIT: "等待重试",
-  SUCCEEDED: "解析完成",
-  FAILED: "解析失败",
+  SUCCEEDED: "已完成",
+  FAILED: "异常",
 };
+
+function formatProcessingDuration(durationMs: number): string {
+  if (durationMs < 1_000) return `${durationMs} 毫秒`;
+  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(durationMs % 1_000 === 0 ? 0 : 1)} 秒`;
+  const totalSeconds = Math.floor(durationMs / 1_000);
+  return `${Math.floor(totalSeconds / 60)} 分 ${totalSeconds % 60} 秒`;
+}
 
 export function TasksPage() {
   const { forgetDeletedSession, openDialog, syncRequeuedParse } = useUploads();
@@ -182,13 +189,8 @@ export function TasksPage() {
   };
 
   const jobs = jobsQuery.data ?? [];
-  const visibleJobs = jobs.filter((job) => {
-    if (filter === "active") return ["QUEUED", "RUNNING", "RETRY_WAIT"].includes(job.status);
-    if (filter === "failed") return job.status === "FAILED";
-    if (filter === "completed") return job.status === "SUCCEEDED";
-    return true;
-  });
-  const activeCount = jobs.filter((job) => ["QUEUED", "RUNNING", "RETRY_WAIT"].includes(job.status)).length;
+  const visibleJobs = filter === "all" ? jobs : jobs.filter((job) => job.status === filter);
+  const runningCount = jobs.filter((job) => job.status === "RUNNING").length;
   const completedCount = jobs.filter((job) => job.status === "SUCCEEDED").length;
   const checkpointCount = jobs.reduce((sum, job) => sum + job.checkpoints.length, 0);
 
@@ -207,7 +209,7 @@ export function TasksPage() {
       </header>
 
       <section className={styles.metrics} aria-label="任务概况">
-        <article><Activity size={17} /><div><span>处理中</span><strong>{activeCount}</strong></div></article>
+        <article><Activity size={17} /><div><span>进行中</span><strong>{runningCount}</strong></div></article>
         <article><Rows3 size={17} /><div><span>切片检查点</span><strong>{checkpointCount}</strong></div></article>
         <article><CheckCircle2 size={17} /><div><span>已完成</span><strong>{completedCount}</strong></div></article>
       </section>
@@ -216,11 +218,13 @@ export function TasksPage() {
         <div role="group" aria-label="筛选解析任务">
           {([
             ["all", "全部"],
-            ["active", "进行中"],
-            ["failed", "异常"],
-            ["completed", "已完成"],
+            ["QUEUED", "排队中"],
+            ["RUNNING", "进行中"],
+            ["RETRY_WAIT", "等待重试"],
+            ["FAILED", "异常"],
+            ["SUCCEEDED", "已完成"],
           ] as const).map(([value, label]) => (
-            <button type="button" key={value} className={filter === value ? styles.filterActive : undefined} onClick={() => setFilter(value)}>{label}</button>
+            <button type="button" key={value} aria-pressed={filter === value} className={filter === value ? styles.filterActive : undefined} onClick={() => setFilter(value)}>{label}</button>
           ))}
         </div>
         <span>每 5 秒自动同步 · 手动刷新可立即校准</span>
@@ -374,7 +378,7 @@ export function TasksPage() {
                   <strong>
                     {job.completedThroughMs === null
                       ? "等待检查点"
-                      : `${formatTimecode(job.completedThroughMs)} / ${formatTimecode(job.totalDurationMs)}`}
+                      : `${formatTimecode(job.completedThroughMs)} / ${formatTimecode(job.videoDurationMs)}`}
                   </strong>
                 </span>
                 <span>
@@ -410,6 +414,11 @@ export function TasksPage() {
                 <dl>
                   <div><dt>文件</dt><dd>{job.originalFilename}</dd></div>
                   <div><dt>尝试次数</dt><dd>{job.attemptCount} / {job.maxAttempts}</dd></div>
+                  <div><dt>{job.status === "SUCCEEDED" || job.status === "FAILED" ? "解析耗时" : "累计解析耗时"}</dt><dd>{job.processingTimingComplete
+                    ? formatProcessingDuration(job.processingDurationMs)
+                    : job.processingDurationMs > 0
+                      ? `至少 ${formatProcessingDuration(job.processingDurationMs)}（不完整）`
+                      : job.attemptCount === 0 ? "未开始" : "尚未完整记录"}</dd></div>
                   <div><dt>流水线</dt><dd>{job.pipelineVersion}</dd></div>
                   <div><dt>更新于</dt><dd>{new Date(job.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</dd></div>
                 </dl>

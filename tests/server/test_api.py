@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Sequence
 from io import BytesIO
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -12,6 +13,7 @@ from uuid import uuid4
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from langchain_core.tools import BaseTool
 from PIL import Image
 
 from server.api.app import create_app
@@ -92,7 +94,7 @@ class _RetrievalStub:
         )
 
 
-def test_agent_render_blocks_preserve_order_join_known_hits_and_support_legacy(
+def test_agent_render_blocks_preserves_valid_blocks_and_drops_invalid_stored_blocks(
     caplog,
 ) -> None:
     caplog.set_level(logging.WARNING, logger="server.api.agent")
@@ -122,8 +124,8 @@ def test_agent_render_blocks_preserve_order_join_known_hits_and_support_legacy(
             ],
         },
         last_error=None,
-        created_at=datetime(2026, 9, 17),
-        updated_at=datetime(2026, 9, 17),
+        created_at=1_789_603_200_000,
+        updated_at=1_789_603_200_000,
     )
     projected = SimpleNamespace(hits=[
         SimpleNamespace(
@@ -147,30 +149,24 @@ def test_agent_render_blocks_preserve_order_join_known_hits_and_support_legacy(
             "endMs": 1800,
         },
         {"type": "markdown", "markdown": "第二段"},
-        {
-            "type": "video",
-            "videoChunkId": "known-1",
-            "startMs": 1000,
-            "endMs": 2000,
-        },
     ]
     warnings = [
         record.getMessage()
         for record in caplog.records
-        if record.getMessage().startswith("event=agent_video_range_fallback ")
+        if record.getMessage().startswith("event=agent_invalid_video_render_block ")
     ]
     assert len(warnings) == 2
     assert "video_chunk_id=unknown" in warnings[0]
     assert "action=drop_unknown_chunk" in warnings[0]
     assert "video_chunk_id=known-1" in warnings[1]
     assert "proposed_start_ms=None proposed_end_ms=None" in warnings[1]
-    assert "canonical_start_ms=1000 canonical_end_ms=2000" in warnings[1]
-    assert "action=fallback_to_canonical" in warnings[1]
+    assert "evidence_start_ms=1000 evidence_end_ms=2000" in warnings[1]
+    assert "action=drop_invalid_range" in warnings[1]
     legacy = _agent_render_blocks(
         replace(state, search_result={}),
         projected,
     )
-    assert [block.type for block in legacy] == ["markdown", "video", "video"]
+    assert [block.type for block in legacy] == ["markdown"]
 
 
 @pytest.mark.parametrize(("start_ms", "end_ms"), [
@@ -180,7 +176,7 @@ def test_agent_render_blocks_preserve_order_join_known_hits_and_support_legacy(
     (1200, 2001),
     (True, 1800),
 ])
-def test_agent_render_blocks_falls_back_for_invalid_known_chunk_range(
+def test_agent_render_blocks_drops_invalid_known_chunk_range(
     caplog, start_ms, end_ms,
 ) -> None:
     caplog.set_level(logging.WARNING, logger="server.api.agent")
@@ -204,8 +200,8 @@ def test_agent_render_blocks_falls_back_for_invalid_known_chunk_range(
             }],
         },
         last_error=None,
-        created_at=datetime(2026, 9, 17),
-        updated_at=datetime(2026, 9, 17),
+        created_at=1_789_603_200_000,
+        updated_at=1_789_603_200_000,
     )
     projected = SimpleNamespace(hits=[SimpleNamespace(
         candidate=SimpleNamespace(video_chunk_id="known"),
@@ -217,21 +213,16 @@ def test_agent_render_blocks_falls_back_for_invalid_known_chunk_range(
     assert [block.model_dump(mode="json", by_alias=True) for block in blocks] == [{
         "type": "markdown",
         "markdown": "正文",
-    }, {
-        "type": "video",
-        "videoChunkId": "known",
-        "startMs": 1000,
-        "endMs": 2000,
     }]
     warning = next(
         record.getMessage()
         for record in caplog.records
-        if record.getMessage().startswith("event=agent_video_range_fallback ")
+        if record.getMessage().startswith("event=agent_invalid_video_render_block ")
     )
     assert "conversation_id=conversation message_id=assistant" in warning
     assert "video_chunk_id=known" in warning
-    assert "canonical_start_ms=1000 canonical_end_ms=2000" in warning
-    assert "action=fallback_to_canonical" in warning
+    assert "evidence_start_ms=1000 evidence_end_ms=2000" in warning
+    assert "action=drop_invalid_range" in warning
 
 
 @dataclass
@@ -252,18 +243,14 @@ class _AgentModelStub:
         })
 
     def run_agent_loop(
-        self, prompt, *, function_name, function_description, result_type,
-        max_model_calls, handle_text, handle_tool_call,
+        self, prompt, *, tools: Sequence[BaseTool], max_model_calls, handle_text,
         require_tool_call=False,
         request_timeout_seconds=None, check_control=None,
     ):
         import json
 
-        assert function_name == "submit_video_item"
-        assert function_description
-        assert set(result_type.model_fields) == {
-            "video_chunk_id", "start_ms", "end_ms", "claim",
-        }
+        submit_video_item = next(tool for tool in tools if tool.name == "submit_video_item")
+        assert set(submit_video_item.args_schema.model_fields) == {"video_chunk_id", "claim"}
         assert max_model_calls > 0
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
@@ -271,10 +258,6 @@ class _AgentModelStub:
         approved = context["approved_turn"]
         hits = approved["selected_evidence"]["hits"]
         assert require_tool_call is bool(hits)
-        ranges_by_id = {
-            item["video_chunk_id"]: item
-            for item in approved["draft"]["selected_video_ranges"]
-        }
         if not hits:
             handle_text(approved["draft"]["message"])
             return
@@ -282,13 +265,10 @@ class _AgentModelStub:
         for hit in hits:
             check_control and check_control()
             video_chunk_id = hit["candidate"]["videoChunkId"]
-            selected_range = ranges_by_id[video_chunk_id]
-            handle_tool_call(result_type.model_validate({
+            submit_video_item.invoke({
                 "video_chunk_id": video_chunk_id,
-                "start_ms": selected_range["start_ms"],
-                "end_ms": selected_range["end_ms"],
                 "claim": hit["selectionReason"]["summary"],
-            }))
+            })
         handle_text(approved["draft"]["message"])
 
     def generate(self, _inputs, *, schema_name: str, result_type):
@@ -882,7 +862,7 @@ def test_agent_conversation_delete_rejects_processing_answer(tmp_path: Path) -> 
         requested_series_ids=[series_id],
         user_message_id=str(uuid4()),
         assistant_message_id=str(uuid4()),
-        now=datetime(2026, 9, 17),
+        now=1_789_603_200_000,
     )
 
     response = client.post(
@@ -1295,7 +1275,7 @@ def test_upload_full_reparse_is_distinct_version_fenced_and_starts_at_zero(tmp_p
         job.progress = 100
         job.attempt_count = 1
         job.version = 6
-        job.completed_at = datetime(2026, 9, 17, 10, 0)
+        job.completed_at = 1_789_639_200_000
         video = session.get(VideoRecord, job.video_id)
         video.parse_status = ParseJobStatus.SUCCEEDED.value
         video.parse_progress = 100
@@ -1440,7 +1420,10 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert job.json()["stageProgress"] is None
     assert job.json()["completedDurationMs"] is None
     assert job.json()["completedThroughMs"] is None
+    assert job.json()["videoDurationMs"] == 12_345
     assert job.json()["totalDurationMs"] == 12_345
+    assert job.json()["processingDurationMs"] == 0
+    assert job.json()["processingTimingComplete"] is False
     assert job.json()["completedChunkCount"] is None
     assert job.json()["totalChunkCount"] == 0
     assert job.json()["currentChunk"] is None
@@ -1486,7 +1469,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert _job_event_fingerprint(after_progress) != _job_event_fingerprint(
         after_heartbeat
     )
-    assert queue.acknowledge(lease)
+    assert queue.acknowledge(lease, duration_ms=0)
     with client.stream(
         "GET",
         "/api/jobs/events",

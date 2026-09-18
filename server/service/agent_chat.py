@@ -4,7 +4,6 @@ import logging
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict
-from datetime import UTC, datetime
 from queue import Empty, Full, Queue
 from threading import Event, Lock
 from time import monotonic_ns
@@ -30,7 +29,7 @@ from ..repository.agent import (
     AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
 )
 from ..repository.video import SeriesNotReadyError, VideoChunkNotFoundError
-from ..utils.time import utc_now_naive
+from ..utils.time import now_unix_time_ms
 from ..utils.validation import require_nonempty_text
 from .library import LibraryService
 from .pagination import decode_cursor, encode_cursor
@@ -42,7 +41,7 @@ class _AgentExecutionTimer:
     def __init__(
         self,
         *,
-        started_at: datetime,
+        started_at: int,
         started_ns: int,
         monotonic_clock: Callable[[], int],
     ) -> None:
@@ -132,7 +131,7 @@ class AgentMessageExecution:
                 "conversationId": self.initial.assistant_message.conversation_id,
                 "messageId": self.initial.assistant_message.message_id,
                 "sequence": self._sequence,
-                "occurredAt": int(utc_now_naive().replace(tzinfo=UTC).timestamp() * 1000),
+                "occurredAt": now_unix_time_ms(),
             }
             try:
                 self._events.put_nowait(payload)
@@ -195,7 +194,7 @@ class AgentChatService:
         runtime: AgentRuntime,
         *,
         config: AgentServiceConfig | None = None,
-        clock: Callable[[], datetime] = utc_now_naive,
+        clock: Callable[[], int] = now_unix_time_ms,
         monotonic_clock: Callable[[], int] = monotonic_ns,
     ) -> None:
         self._repository = repository
@@ -387,7 +386,7 @@ class AgentChatService:
         ):
             raise ValueError(f"top_k must be between 1 and {self._config.maximum_top_k}")
         normalized_key = require_nonempty_text(idempotency_key, "idempotency_key", maximum=128)
-        timing_started_at: datetime | None = None
+        timing_started_at: int | None = None
         timing_started_ns: int | None = None
         with self._lock:
             if self._closed:
@@ -484,11 +483,11 @@ class AgentChatService:
             evidence = self._repository.load_reference_evidence(reference["videoChunkId"])
             if evidence.workspace_id != workspace_id or evidence.series_id not in scope:
                 raise AgentReferenceInvalidError("引用的片段不属于本次检索范围。")
-            selected_range = _stored_video_range(
+            selected_range = _validated_stored_video_range(
                 source.search_result,
                 reference["videoChunkId"],
-                canonical_start_ms=evidence.start_ms,
-                canonical_end_ms=evidence.end_ms,
+                evidence_start_ms=evidence.start_ms,
+                evidence_end_ms=evidence.end_ms,
                 conversation_id=source.conversation_id,
                 message_id=source.message_id,
             )
@@ -705,12 +704,12 @@ def _canonical_reference(reference):
         raise AgentReferenceInvalidError("引用的消息或片段 ID 无效。") from exc
 
 
-def _stored_video_range(
+def _validated_stored_video_range(
     search_result: dict,
     video_chunk_id: str,
     *,
-    canonical_start_ms: int,
-    canonical_end_ms: int,
+    evidence_start_ms: int,
+    evidence_end_ms: int,
     conversation_id: str | None = None,
     message_id: str | None = None,
 ) -> dict[str, int]:
@@ -732,9 +731,9 @@ def _stored_video_range(
                 and not isinstance(proposed_start_ms, bool)
                 and isinstance(proposed_end_ms, int)
                 and not isinstance(proposed_end_ms, bool)
-                and canonical_start_ms <= proposed_start_ms
+                and evidence_start_ms <= proposed_start_ms
                 and proposed_start_ms < proposed_end_ms
-                and proposed_end_ms <= canonical_end_ms
+                and proposed_end_ms <= evidence_end_ms
             ):
                 return {
                     "startMs": proposed_start_ms,
@@ -742,15 +741,15 @@ def _stored_video_range(
                 }
             break
     _logger.warning(
-        "event=agent_video_range_fallback conversation_id=%s message_id=%s "
+        "event=agent_invalid_stored_video_range conversation_id=%s message_id=%s "
         "video_chunk_id=%s proposed_start_ms=%r proposed_end_ms=%r "
-        "canonical_start_ms=%s canonical_end_ms=%s "
-        "action=fallback_to_canonical",
+        "evidence_start_ms=%s evidence_end_ms=%s "
+        "action=reject_reference",
         conversation_id, message_id, video_chunk_id,
         proposed_start_ms, proposed_end_ms,
-        canonical_start_ms, canonical_end_ms,
+        evidence_start_ms, evidence_end_ms,
     )
-    return {"startMs": canonical_start_ms, "endMs": canonical_end_ms}
+    raise AgentReferenceInvalidError("引用片段缺少有效的已保存播放范围。")
 
 
 def _page(items, total, offset, scope):

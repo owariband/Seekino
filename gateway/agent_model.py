@@ -68,12 +68,9 @@ class AgentLoopModel(Protocol):
         self,
         prompt: str,
         *,
-        function_name: str,
-        function_description: str,
-        result_type: type[_ResultModel],
+        tools: Sequence[BaseTool],
         max_model_calls: int,
         handle_text: Callable[[str], None],
-        handle_tool_call: Callable[[_ResultModel], str],
         require_tool_call: bool = False,
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
@@ -135,12 +132,9 @@ class DeepSeekFunctionCallingModel:
         self,
         prompt: str,
         *,
-        function_name: str,
-        function_description: str,
-        result_type: type[_ResultModel],
+        tools: Sequence[BaseTool],
         max_model_calls: int,
         handle_text: Callable[[str], None],
-        handle_tool_call: Callable[[_ResultModel], str],
         require_tool_call: bool = False,
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
@@ -170,7 +164,7 @@ class DeepSeekFunctionCallingModel:
 
             def request_turn(
                 messages: list[dict[str, Any]],
-                tool: dict[str, Any],
+                tool_specs: list[dict[str, Any]],
                 tool_choice: str,
                 timeout: float,
                 seen_tool_call_ids: set[str],
@@ -182,10 +176,9 @@ class DeepSeekFunctionCallingModel:
                         fallback_client,
                         model_name=self.fallback_model_name,
                         max_output_tokens=self.max_output_tokens,
-                        function_name=function_name,
-                        result_type=result_type,
+                        tools=tools,
                         messages=messages,
-                        tool=tool,
+                        tool_specs=tool_specs,
                         tool_choice=tool_choice,
                         timeout=timeout,
                         seen_tool_call_ids=seen_tool_call_ids,
@@ -199,10 +192,9 @@ class DeepSeekFunctionCallingModel:
                     return self._request_turn(
                         client,
                         model_name=self.model_name,
-                        function_name=function_name,
-                        result_type=result_type,
+                        tools=tools,
                         messages=messages,
-                        tool=tool,
+                        tool_specs=tool_specs,
                         tool_choice=tool_choice,
                         timeout=timeout,
                         seen_tool_call_ids=seen_tool_call_ids,
@@ -230,10 +222,9 @@ class DeepSeekFunctionCallingModel:
                         fallback_client,
                         model_name=self.fallback_model_name,
                         max_output_tokens=self.max_output_tokens,
-                        function_name=function_name,
-                        result_type=result_type,
+                        tools=tools,
                         messages=messages,
-                        tool=tool,
+                        tool_specs=tool_specs,
                         tool_choice=tool_choice,
                         timeout=fallback_timeout,
                         seen_tool_call_ids=seen_tool_call_ids,
@@ -242,12 +233,9 @@ class DeepSeekFunctionCallingModel:
 
             _run_function_calling_loop(
                 prompt=prompt,
-                function_name=function_name,
-                function_description=function_description,
-                result_type=result_type,
+                tools=tools,
                 max_model_calls=max_model_calls,
                 handle_text=handle_text,
-                handle_tool_call=handle_tool_call,
                 require_tool_call=require_tool_call,
                 request_timeout_seconds=effective_timeout,
                 check_control=check_control,
@@ -261,10 +249,9 @@ class DeepSeekFunctionCallingModel:
         client: Any,
         *,
         model_name: str,
-        function_name: str,
-        result_type: type[_ResultModel],
+        tools: Sequence[BaseTool],
         messages: list[dict[str, Any]],
-        tool: dict[str, Any],
+        tool_specs: list[dict[str, Any]],
         tool_choice: str,
         timeout: float,
         seen_tool_call_ids: set[str],
@@ -273,28 +260,28 @@ class DeepSeekFunctionCallingModel:
         with track_model_call(
             provider=self.provider_name,
             model=model_name,
-            operation=function_name,
+            operation=",".join(tool.name for tool in tools),
         ) as call:
             _logger.info(
                 "event=chat_model_request_contract provider=%s model=%s "
-                "tool_choice=%s tool_count=1 tool_names=%s",
+                "tool_choice=%s tool_count=%s tool_names=%s",
                 self.provider_name,
                 model_name,
                 tool_choice,
-                function_name,
+                len(tools),
+                ",".join(tool.name for tool in tools),
             )
             response = self._create_completion(
                 client,
                 call,
                 messages=messages,
-                tools=[tool],
+                tools=tool_specs,
                 tool_choice=tool_choice,
                 timeout=timeout,
             )
             return _validated_agent_turn(
                 response,
-                function_name=function_name,
-                result_type=result_type,
+                tools=tools,
                 seen_tool_call_ids=seen_tool_call_ids,
                 provider_label="DeepSeek",
                 error_type=DeepSeekFunctionCallingError,
@@ -342,10 +329,9 @@ def _request_ark_function_turn(
     *,
     model_name: str | None,
     max_output_tokens: int,
-    function_name: str,
-    result_type: type[_ResultModel],
+    tools: Sequence[BaseTool],
     messages: list[dict[str, Any]],
-    tool: dict[str, Any],
+    tool_specs: list[dict[str, Any]],
     tool_choice: str,
     timeout: float,
     seen_tool_call_ids: set[str],
@@ -356,16 +342,17 @@ def _request_ark_function_turn(
     with track_model_call(
         provider=ARK_PROVIDER,
         model=model_name,
-        operation=function_name,
+        operation=",".join(tool.name for tool in tools),
     ) as call:
         try:
             _logger.info(
                 "event=chat_model_request_contract provider=%s model=%s "
-                "tool_choice=%s tool_count=1 tool_names=%s",
+                "tool_choice=%s tool_count=%s tool_names=%s",
                 ARK_PROVIDER,
                 model_name,
                 tool_choice,
-                function_name,
+                len(tools),
+                ",".join(tool.name for tool in tools),
             )
             response = client.chat.completions.create(
                 model=model_name,
@@ -374,7 +361,7 @@ def _request_ark_function_turn(
                 temperature=0,
                 max_completion_tokens=max_output_tokens,
                 timeout=timeout,
-                tools=[tool],
+                tools=tool_specs,
                 tool_choice=tool_choice,
             )
         except Exception as exc:
@@ -385,8 +372,7 @@ def _request_ark_function_turn(
         call.capture_response(response)
         return _validated_agent_turn(
             response,
-            function_name=function_name,
-            result_type=result_type,
+            tools=tools,
             seen_tool_call_ids=seen_tool_call_ids,
             provider_label="Ark",
             error_type=ArkFunctionCallingError,
@@ -435,12 +421,9 @@ class ArkFunctionCallingModel:
         self,
         prompt: str,
         *,
-        function_name: str,
-        function_description: str,
-        result_type: type[_ResultModel],
+        tools: Sequence[BaseTool],
         max_model_calls: int,
         handle_text: Callable[[str], None],
-        handle_tool_call: Callable[[_ResultModel], str],
         require_tool_call: bool = False,
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
@@ -457,7 +440,7 @@ class ArkFunctionCallingModel:
         try:
             def request_turn(
                 messages: list[dict[str, Any]],
-                tool: dict[str, Any],
+                tool_specs: list[dict[str, Any]],
                 tool_choice: str,
                 timeout: float,
                 seen_tool_call_ids: set[str],
@@ -470,10 +453,9 @@ class ArkFunctionCallingModel:
                         client,
                         model_name=model_name,
                         max_output_tokens=self.max_output_tokens,
-                        function_name=function_name,
-                        result_type=result_type,
+                        tools=tools,
                         messages=messages,
-                        tool=tool,
+                        tool_specs=tool_specs,
                         tool_choice=tool_choice,
                         timeout=request_timeout,
                         seen_tool_call_ids=seen_tool_call_ids,
@@ -504,12 +486,9 @@ class ArkFunctionCallingModel:
 
             _run_function_calling_loop(
                 prompt=prompt,
-                function_name=function_name,
-                function_description=function_description,
-                result_type=result_type,
+                tools=tools,
                 max_model_calls=max_model_calls,
                 handle_text=handle_text,
-                handle_tool_call=handle_tool_call,
                 require_tool_call=require_tool_call,
                 request_timeout_seconds=effective_timeout,
                 check_control=check_control,
@@ -522,15 +501,38 @@ class ArkFunctionCallingModel:
                 client.close()
 
 
+def _function_tool_spec(tool: BaseTool) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": inline_schema_refs(
+                tool.get_input_schema().model_json_schema()
+            ),
+        },
+    }
+
+
+def _tool_output_text(output: object) -> str:
+    if isinstance(output, str):
+        return output
+    if isinstance(output, BaseModel):
+        output = output.model_dump(mode="json")
+    return json.dumps(
+        output,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
 def _run_function_calling_loop(
     *,
     prompt: str,
-    function_name: str,
-    function_description: str,
-    result_type: type[_ResultModel],
+    tools: Sequence[BaseTool],
     max_model_calls: int,
     handle_text: Callable[[str], None],
-    handle_tool_call: Callable[[_ResultModel], str],
     require_tool_call: bool,
     request_timeout_seconds: float,
     check_control: Callable[[], None] | None,
@@ -540,10 +542,15 @@ def _run_function_calling_loop(
 ) -> None:
     if not prompt.strip():
         raise ValueError("prompt must not be empty")
-    if not function_name.strip():
-        raise ValueError("function_name must not be empty")
-    if not function_description.strip():
-        raise ValueError("function_description must not be empty")
+    if not tools:
+        raise ValueError("tools must not be empty")
+    tool_names = [tool.name for tool in tools]
+    if any(not name.strip() for name in tool_names):
+        raise ValueError("tool names must not be empty")
+    if len(tool_names) != len(set(tool_names)):
+        raise ValueError("tool names must be unique")
+    if any(not tool.description.strip() for tool in tools):
+        raise ValueError("tool descriptions must not be empty")
     if (
         isinstance(max_model_calls, bool)
         or not isinstance(max_model_calls, int)
@@ -557,14 +564,7 @@ def _run_function_calling_loop(
     if check_control is not None:
         check_control()
     messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
-    tool = {
-        "type": "function",
-        "function": {
-            "name": function_name,
-            "description": function_description,
-            "parameters": inline_schema_refs(result_type.model_json_schema()),
-        },
-    }
+    tool_specs = [_function_tool_spec(tool) for tool in tools]
     seen_tool_call_ids: set[str] = set()
     emitted_text = False
     submitted_tool = False
@@ -578,7 +578,7 @@ def _run_function_calling_loop(
         tool_choice = "required" if require_tool_call and not submitted_tool else "auto"
         finish_reason, content, assistant_message, validated_calls = request_turn(
             messages,
-            tool,
+            tool_specs,
             tool_choice,
             remaining_timeout,
             seen_tool_call_ids,
@@ -599,17 +599,15 @@ def _run_function_calling_loop(
             return
 
         messages.append(assistant_message)
-        for tool_call_id, result in validated_calls:
+        for tool_call_id, tool, arguments in validated_calls:
             if check_control is not None:
                 check_control()
-            output = handle_tool_call(result)
-            if not isinstance(output, str):
-                raise TypeError("handle_tool_call must return str")
+            output = tool.invoke(arguments)
             submitted_tool = True
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call_id,
-                "content": output,
+                "content": _tool_output_text(output),
             })
     raise error_type(
         f"{provider_label} agent loop exhausted max_model_calls before stop"
@@ -619,8 +617,7 @@ def _run_function_calling_loop(
 def _validated_agent_turn(
     response: Any,
     *,
-    function_name: str,
-    result_type: type[_ResultModel],
+    tools: Sequence[BaseTool],
     seen_tool_call_ids: set[str],
     provider_label: str = "DeepSeek",
     error_type: type[RuntimeError] = DeepSeekFunctionCallingError,
@@ -630,8 +627,9 @@ def _validated_agent_turn(
     str,
     str | None,
     dict[str, Any],
-    list[tuple[str, _ResultModel]],
+    list[tuple[str, BaseTool, dict[str, Any]]],
 ]:
+    tools_by_name = {tool.name: tool for tool in tools}
     choice = _single_completion_choice(
         response, provider_label=provider_label, error_type=error_type,
     )
@@ -693,7 +691,7 @@ def _validated_agent_turn(
 
     new_tool_call_ids: set[str] = set()
     rendered_calls: list[dict[str, Any]] = []
-    validated_calls: list[tuple[str, _ResultModel]] = []
+    validated_calls: list[tuple[str, BaseTool, dict[str, Any]]] = []
     for tool_call in tool_calls:
         tool_call_id = getattr(tool_call, "id", None)
         if (
@@ -708,9 +706,10 @@ def _validated_agent_turn(
         new_tool_call_ids.add(tool_call_id)
 
         function = getattr(tool_call, "function", None)
+        function_name = getattr(function, "name", None)
         if (
             getattr(tool_call, "type", None) != "function"
-            or getattr(function, "name", None) != function_name
+            or function_name not in tools_by_name
         ):
             raise error_type(
                 f"{provider_label} called an unexpected function"
@@ -721,7 +720,8 @@ def _validated_agent_turn(
                 f"{provider_label} returned empty function arguments"
             )
         try:
-            result = result_type.model_validate_json(arguments)
+            tool = tools_by_name[function_name]
+            result = tool.get_input_schema().model_validate_json(arguments)
         except (ValueError, TypeError) as error:
             raise error_type(
                 f"{provider_label} function arguments do not match schema "
@@ -736,7 +736,11 @@ def _validated_agent_turn(
                 "arguments": arguments,
             },
         })
-        validated_calls.append((tool_call_id, result))
+        validated_calls.append((
+            tool_call_id,
+            tool,
+            result.model_dump(mode="python"),
+        ))
 
     seen_tool_call_ids.update(new_tool_call_ids)
     return (

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from pydantic import Field
 
@@ -34,11 +33,11 @@ class UploadSessionState:
     status: str
     uploaded_segment_count: int
     uploaded_size_bytes: int
-    expires_at: datetime
+    expires_at: int
     video_id: str | None
     last_error: str | None
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
     content_sha256: str | None = None
     completion_stage: str | None = None
     job_id: str | None = None

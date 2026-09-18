@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
@@ -30,6 +30,7 @@ from server.service.job import ParseJobService
 from server.service.library import LibraryService
 from server.service.parse_usage import ParseUsageService, estimate_cost_cny
 from server.service.video_processing import VideoProcessingService
+from server.utils.time import timedelta_to_ms
 
 
 def _pricing() -> ModelPricingConfig:
@@ -51,7 +52,7 @@ def accounting(tmp_path):
     library = LibraryService(LibraryRepository(factory))
     series = library.create_series(workspace_id="mine", name="Actual Series", description=None, character_bible=[])
     video_id, job_id = str(uuid4()), str(uuid4())
-    now = datetime(2026, 9, 15, 0)
+    now = 1_789_411_200_000
     with factory.begin() as session:
         session.add(VideoRecord(
             video_id=video_id, series_id=series.series_id, episode_order=2, upload_sequence=1,
@@ -88,7 +89,7 @@ def _lease(accounting):
 def _event(*, model="chat", operation="video_parse", category="parse", sequence_no=0, usage=None, status="completed"):
     return ParseModelCall(ModelCallUsage(
         call_id=str(uuid4()), provider="fixture", model=model, operation=operation,
-        started_at=datetime(2026, 9, 15, 0), request_id="real-provider-request", usage=usage, status=status,
+        started_at=1_789_411_200_000, request_id="real-provider-request", usage=usage, status=status,
     ), sequence_no=sequence_no, category=category)
 
 
@@ -150,9 +151,9 @@ def test_failed_and_stale_calls_are_retained_across_all_attempts(accounting):
     first = _lease(accounting)
     with accounting.service.capture(first):
         accounting.service.record(first, _event(usage=TokenUsage(100, 20, 120, 0, 0), status="failed"))
-    retry_at = accounting.now + timedelta(seconds=2)
+    retry_at = accounting.now + timedelta_to_ms(timedelta(seconds=2))
     assert accounting.queue.retry(
-        first, error="fixture", retry_at=retry_at, now=retry_at,
+        first, error="fixture", retry_at=retry_at, duration_ms=0, now=retry_at,
     )
     second = accounting.queue.claim_next(
         "replacement", lease_duration=timedelta(minutes=5), now=retry_at,
@@ -241,9 +242,9 @@ def test_new_attempt_after_metadata_read_is_included_in_coverage(accounting, mon
     get_job = accounting.service._jobs.get
     def claims_after_metadata(*args, **kwargs):
         detail = get_job(*args, **kwargs)
-        retry_at = accounting.now + timedelta(seconds=2)
+        retry_at = accounting.now + timedelta_to_ms(timedelta(seconds=2))
         assert accounting.queue.retry(
-            first, error="fixture", retry_at=retry_at, now=retry_at,
+            first, error="fixture", retry_at=retry_at, duration_ms=0, now=retry_at,
         )
         second = accounting.queue.claim_next(
             "next", lease_duration=timedelta(minutes=5), now=retry_at,

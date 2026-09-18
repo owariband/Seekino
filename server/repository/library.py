@@ -20,7 +20,7 @@ from ..model.video import (
     VideoChunkEmbeddingRecord,
 )
 from ..utils.media import stored_keyframe_uri
-from ..utils.time import utc_now_naive
+from ..utils.time import now_unix_time_ms
 from .upload import UploadRepository
 
 
@@ -299,7 +299,7 @@ class LibraryRepository:
                 UploadSessionRecord.workspace_id == records[0].workspace_id,
                 UploadSessionRecord.status.not_in({"COMPLETED", "EXPIRED", "CANCELLED"}),
                 (UploadSessionRecord.status != "UPLOADING")
-                | (UploadSessionRecord.expires_at > utc_now_naive()),
+                | (UploadSessionRecord.expires_at > now_unix_time_ms()),
             )
             .group_by(UploadSessionRecord.series_id)
         ).all())

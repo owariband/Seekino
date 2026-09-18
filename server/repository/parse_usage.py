@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import and_, select
@@ -26,7 +25,7 @@ class ParseUsageRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 
-    def start_attempt(self, lease: ParseJobLease, *, now: datetime) -> bool:
+    def start_attempt(self, lease: ParseJobLease, *, now: int) -> bool:
         identity = (lease.job_id, lease.attempt_count, lease.lease_version)
         try:
             with self._session_factory.begin() as session:

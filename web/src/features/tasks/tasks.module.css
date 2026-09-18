@@ -40,6 +40,7 @@
 
 .toolbar > div {
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
 }
 
@@ -68,7 +69,7 @@
 }
 
 .job {
-  padding: clamp(20px, 3vw, 32px);
+  padding: clamp(18px, 2vw, 26px);
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -151,8 +152,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-top: 18px;
-  padding-top: 16px;
+  margin-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 
@@ -243,7 +244,7 @@
   position: relative;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  margin-top: 32px;
+  margin-top: 24px;
 }
 
 .pipelineLine {
@@ -291,8 +292,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px 22px;
-  margin-top: 24px;
-  padding: 12px 14px;
+  margin-top: 18px;
+  padding: 10px 12px;
   color: var(--ink-faint);
   border-radius: 10px;
   background: var(--teal-wash);
@@ -306,11 +307,11 @@
 
 .jobDetail {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 35px;
-  align-items: end;
-  margin-top: 30px;
-  padding-top: 20px;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: 24px;
+  align-items: start;
+  margin-top: 20px;
+  padding-top: 14px;
   border-top: 1px solid var(--line);
 }
 
@@ -340,15 +341,18 @@
 .checkpointGrid i[data-stage="TEXT_EMBEDDED"] { background: color-mix(in srgb, var(--teal) 48%, var(--surface)); }
 .checkpointGrid i[data-stage="VISION_EMBEDDED"] { background: color-mix(in srgb, var(--teal) 70%, var(--surface)); }
 .checkpointGrid i[data-stage="INDEXED"] { background: var(--teal-deep); }
-.checkpointGrid span { color: var(--ink-faint); font-size: .62rem; }
+.checkpointGrid span { color: var(--ink-faint); font-size: .62rem; white-space: nowrap; }
 
 .jobDetail dl {
   display: flex;
-  gap: 24px;
+  min-width: 0;
+  gap: 18px;
   margin: 0;
 }
 
 .jobDetail dl div { display: grid; gap: 4px; }
+.jobDetail dl div:first-child { min-width: 0; flex: 1; }
+.jobDetail dl div:first-child dd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jobDetail dt { color: var(--ink-faint); font-size: .57rem; }
 .jobDetail dd { margin: 0; color: var(--ink-soft); font: 500 .61rem/1 var(--mono); }
 
@@ -370,8 +374,8 @@
 .retryNote { align-items: center; color: var(--amber); }
 
 .usageDetails {
-  margin-top: 20px;
-  padding-top: 16px;
+  margin-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 

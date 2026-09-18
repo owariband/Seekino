@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -8,19 +7,18 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
-    DateTime,
     ForeignKey,
     Integer,
     JSON,
     String,
     Text,
     UniqueConstraint,
-    func,
 )
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
+from ..utils.time import now_unix_time_ms
 
 ID_LENGTH = 36
 LONG_TEXT = Text().with_variant(LONGTEXT(), "mysql")
@@ -39,16 +37,16 @@ class VideoIndexStatus(StrEnum):
 
 
 class TimestampedRecord:
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    created_at: Mapped[int] = mapped_column(
+        BigInteger,
         nullable=False,
-        server_default=func.now(),
+        default=now_unix_time_ms,
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    updated_at: Mapped[int] = mapped_column(
+        BigInteger,
         nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
+        default=now_unix_time_ms,
+        onupdate=now_unix_time_ms,
     )
 
 
@@ -187,8 +185,8 @@ class VideoChunkInfoRecord(Base):
     pipeline_version: Mapped[str] = mapped_column(String(128), nullable=False)
     is_fallback: Mapped[bool] = mapped_column(Boolean, nullable=False)
     parse_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    parsed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    parsed_at: Mapped[int] = mapped_column(
+        BigInteger,
         nullable=False,
     )
 
@@ -228,10 +226,10 @@ class ContextSnapshotRecord(Base):
         nullable=False,
         unique=True,
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    created_at: Mapped[int] = mapped_column(
+        BigInteger,
         nullable=False,
-        server_default=func.now(),
+        default=now_unix_time_ms,
     )
 
 

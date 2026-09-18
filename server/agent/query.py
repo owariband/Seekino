@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from gateway.agent_model import ModelInputTooLargeError, QueryAgentModel
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import BaseTool
 
 from .context import project_inputs, project_search_result
 from .skills import RETRIEVAL_SKILL_PROMPT
@@ -18,7 +18,7 @@ def run_query(
     inputs: RunInputs,
     previous_turns: list[LoopTurn],
     *,
-    tools: Sequence[StructuredTool],
+    tools: Sequence[BaseTool],
     max_model_calls: int,
     selection_limit: int,
     control: ExecutionControl,

@@ -14,29 +14,26 @@ import { useAgentConversation } from "./useAgentConversation";
 import styles from "./search.module.css";
 
 function messageRenderBlocks(message: AgentMessageView): AgentRenderBlock[] {
-  if (message.renderBlocks !== undefined) return message.renderBlocks;
-  return [
-    ...(message.content ? [{ type: "markdown" as const, markdown: message.content }] : []),
-    ...(message.searchResult?.hits.map((hit) => ({
-      type: "video" as const,
-      videoChunkId: hit.evidence.videoChunkId,
-      startMs: hit.evidence.startMs,
-      endMs: hit.evidence.endMs,
-    })) ?? []),
-  ];
-}
-
-function videoPlaybackRange(block: Extract<AgentRenderBlock, { type: "video" }>, hit: NonNullable<AgentMessageView["searchResult"]>["hits"][number]) {
-  if (
-    Number.isSafeInteger(block.startMs)
-    && Number.isSafeInteger(block.endMs)
-    && hit.evidence.startMs <= block.startMs
-    && block.startMs < block.endMs
-    && block.endMs <= hit.evidence.endMs
-  ) {
-    return { startMs: block.startMs, endMs: block.endMs };
-  }
-  return { startMs: hit.evidence.startMs, endMs: hit.evidence.endMs };
+  const blocks = Array.isArray(message.renderBlocks) && message.renderBlocks.length > 0
+    ? message.renderBlocks
+    : message.content
+      ? [{ type: "markdown" as const, markdown: message.content }]
+      : [];
+  const hitsById = new Map(
+    message.searchResult?.hits.map((hit) => [hit.evidence.videoChunkId, hit]) ?? [],
+  );
+  return blocks.filter((block) => {
+    if (block.type === "markdown") return Boolean(block.markdown.trim());
+    const hit = hitsById.get(block.videoChunkId);
+    return Boolean(
+      hit
+      && Number.isSafeInteger(block.startMs)
+      && Number.isSafeInteger(block.endMs)
+      && hit.evidence.startMs <= block.startMs
+      && block.startMs < block.endMs
+      && block.endMs <= hit.evidence.endMs,
+    );
+  });
 }
 
 async function loadConversations(): Promise<AgentConversationView[]> {
@@ -118,7 +115,9 @@ export function SearchPage() {
   const referenceMessage = reference ? messages.find((message) => message.messageId === reference.messageId) : null;
   const referenceHit = referenceMessage?.searchResult?.hits.find((hit) => hit.evidence.videoChunkId === reference?.videoChunkId) ?? null;
   const referenceBlock = referenceMessage && reference ? messageRenderBlocks(referenceMessage).find((block) => block.type === "video" && block.videoChunkId === reference.videoChunkId) : null;
-  const referenceRange = referenceHit && referenceBlock?.type === "video" ? videoPlaybackRange(referenceBlock, referenceHit) : null;
+  const referenceRange = referenceHit && referenceBlock?.type === "video"
+    ? { startMs: referenceBlock.startMs, endMs: referenceBlock.endMs }
+    : null;
   const activeConversation = conversations.find((item) => item.conversationId === conversationId) ?? null;
 
   const replaceConversations = useCallback((items: AgentConversationView[]) => {
@@ -437,7 +436,7 @@ export function SearchPage() {
                       const hit = message.searchResult?.hits.find((item) => item.evidence.videoChunkId === block.videoChunkId);
                       if (!hit) return null;
                       const explanation = explainHit(hit);
-                      const playbackRange = videoPlaybackRange(block, hit);
+                      const playbackRange = { startMs: block.startMs, endMs: block.endMs };
                       const selected = selection?.messageId === message.messageId && selectedHit?.evidence.videoChunkId === hit.evidence.videoChunkId;
                       const thumbnailUrl = hit.evidence.thumbnail ? mediaUrl(hit.evidence.thumbnail.url) : null;
                       const firstVideo = !blocks.slice(0, index).some((item) => item.type === "video" && message.searchResult?.hits.some((candidate) => candidate.evidence.videoChunkId === item.videoChunkId));
@@ -489,7 +488,7 @@ export function SearchPage() {
 
           <div className={styles.composerArea}>
             <form className={styles.composer} onSubmit={submit}>
-              {reference ? <div className={styles.referenceChip}><span>已引用{referenceHit ? ` ${referenceHit.evidence.seriesName} · ${episodeLabel(referenceHit.evidence.episodeOrder)} · ${formatTimeRange(referenceRange?.startMs ?? referenceHit.evidence.startMs, referenceRange?.endMs ?? referenceHit.evidence.endMs)}` : "选中片段"}</span><button type="button" onClick={() => setReference(null)} aria-label="取消引用"><X size={13} /></button></div> : null}
+              {reference ? <div className={styles.referenceChip}><span>已引用{referenceHit && referenceRange ? ` ${referenceHit.evidence.seriesName} · ${episodeLabel(referenceHit.evidence.episodeOrder)} · ${formatTimeRange(referenceRange.startMs, referenceRange.endMs)}` : "选中片段"}</span><button type="button" onClick={() => setReference(null)} aria-label="取消引用"><X size={13} /></button></div> : null}
               <textarea
                 ref={composerRef}
                 value={query}

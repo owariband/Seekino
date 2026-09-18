@@ -10,7 +10,6 @@ import pytest
 from sqlalchemy import select
 
 from server.api import library as library_api
-from server.model.vo.commonVO import unix_time_ms
 from server.api.library import project_series_detail
 from server.database import DatabaseEnvironment, create_session_factory
 from server.model.agent import AgentConversationRecord, AgentMessageRecord
@@ -28,7 +27,7 @@ from server.repository.upload import UploadRepository
 from server.service.library import LibraryService
 from server.service.media import MediaService
 from server.storage.artifact import LocalArtifactStore
-from server.utils.time import utc_now_naive
+from server.utils.time import now_unix_time_ms, timedelta_to_ms
 
 
 def _library(repository):
@@ -71,7 +70,7 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
     ready = library.get_series(report.series_id, workspace_id="local-default")
     assert ready.ready_video_count == 1
     detail = project_series_detail(ready, media).model_dump(by_alias=True)
-    assert detail["createdAt"] == unix_time_ms(ready.created_at)
+    assert detail["createdAt"] == ready.created_at
     assert detail["videos"][0]["indexStatus"] == "READY"
     assert detail["videos"][0]["parseStatus"] == "SUCCEEDED"
     assert detail["videos"][0]["parseProgress"] == 100
@@ -92,7 +91,7 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
 def test_latest_job_failure_and_index_error_are_actual_and_workspace_scoped(repository, prepared_import):
     factory, videos, library = _library(repository)
     report = videos.import_video_parse(prepared_import)
-    now = utc_now_naive()
+    now = now_unix_time_ms()
     job_id = str(uuid4())
     with factory.begin() as session:
         session.add(SeriesParseJobRecord(
@@ -122,7 +121,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
 ) -> None:
     factory, videos, library = _library(repository)
     report = videos.import_video_parse(prepared_import)
-    now = utc_now_naive()
+    now = now_unix_time_ms()
     job_id = str(uuid4())
     with factory.begin() as session:
         session.add(SeriesParseJobRecord(
@@ -178,16 +177,16 @@ def test_pending_upload_counts_expiry_and_full_detail(repository):
     factory, _videos, library = _library(repository)
     series = library.create_series(workspace_id="local-default", name="Pending Series")
     uploads = UploadRepository(factory)
-    now = utc_now_naive()
+    now = now_unix_time_ms()
     active = []
-    for episode, expires in ((2, now + timedelta(days=1)), (3, now + timedelta(days=1)), (4, now - timedelta(seconds=1))):
+    for episode, expires in ((2, now + timedelta_to_ms(timedelta(days=1))), (3, now + timedelta_to_ms(timedelta(days=1))), (4, now - timedelta_to_ms(timedelta(seconds=1)))):
         state = uploads.create_session(
             workspace_id="local-default", series_id=series.series_id,
             episode_order=episode, upload_sequence=episode,
             original_filename=f"episode-{episode}.mp4", media_type="video/mp4",
             total_size_bytes=10, preferred_segment_size_bytes=4, total_segments=3,
             idempotency_key=f"upload-{episode}", expires_at=expires,
-            now=now - timedelta(days=1),
+            now=now - timedelta_to_ms(timedelta(days=1)),
         )
         if episode != 4:
             active.append(state.upload_session_id)
@@ -204,7 +203,7 @@ def test_last_search_uses_each_message_scope_and_workspace(repository):
     factory, _videos, library = _library(repository)
     first = library.create_series(workspace_id="local-default", name="First")
     second = library.create_series(workspace_id="local-default", name="Second")
-    now = utc_now_naive()
+    now = now_unix_time_ms()
     local_conversation, foreign_conversation = str(uuid4()), str(uuid4())
     with factory.begin() as session:
         for conversation_id, workspace in ((local_conversation, "local-default"), (foreign_conversation, "other")):
@@ -214,8 +213,8 @@ def test_last_search_uses_each_message_scope_and_workspace(repository):
             ))
         session.flush()
         for sequence, conversation, scope, content, created_at in (
-            (0, local_conversation, [first.series_id], "first question", now - timedelta(minutes=2)),
-            (1, local_conversation, [second.series_id], "second question", now - timedelta(minutes=1)),
+            (0, local_conversation, [first.series_id], "first question", now - timedelta_to_ms(timedelta(minutes=2))),
+            (1, local_conversation, [second.series_id], "second question", now - timedelta_to_ms(timedelta(minutes=1))),
             (0, foreign_conversation, [first.series_id, second.series_id], "foreign secret", now),
         ):
             session.add(AgentMessageRecord(
@@ -276,7 +275,7 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
     report = videos.import_video_parse(prepared_import)
     upload_session_id = str(uuid4())
     inactive_upload_session_id = str(uuid4())
-    now = utc_now_naive()
+    now = now_unix_time_ms()
     with factory.begin() as session:
         session.add_all([
             UploadSessionRecord(
@@ -293,7 +292,7 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
                 status="COMPLETED",
                 idempotency_key="episode-edit-linked-upload",
                 active_slot_key=f"{report.series_id}:{prepared_import.episode_order}",
-                expires_at=now + timedelta(days=1),
+                expires_at=now + timedelta_to_ms(timedelta(days=1)),
                 completed_at=now,
                 video_id=report.video_id,
             ),
@@ -355,7 +354,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
 ) -> None:
     factory, videos, library = _library(repository)
     report = videos.import_video_parse(prepared_import)
-    now = utc_now_naive()
+    now = now_unix_time_ms()
     linked_upload_id = str(uuid4())
     reserved_upload_id = str(uuid4())
     occupied_video_id = str(uuid4())
@@ -375,7 +374,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
                 status="COMPLETED",
                 idempotency_key="episode-edit-conflict-linked",
                 active_slot_key=f"{report.series_id}:{prepared_import.episode_order}",
-                expires_at=now + timedelta(days=1),
+                expires_at=now + timedelta_to_ms(timedelta(days=1)),
                 completed_at=now,
                 video_id=report.video_id,
             ),
@@ -393,7 +392,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
                 status="UPLOADING",
                 idempotency_key="episode-edit-reserved-slot",
                 active_slot_key=f"{report.series_id}:10",
-                expires_at=now + timedelta(days=1),
+                expires_at=now + timedelta_to_ms(timedelta(days=1)),
             ),
             VideoRecord(
                 video_id=occupied_video_id,

@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import timedelta
+from time import monotonic_ns
 
 from ..model.dto.jobDTO import ParseJobLease
 from ..utils.errors import exception_summary
-from ..utils.time import utc_now_naive
+from ..utils.time import now_unix_time_ms, timedelta_to_ms
 from .contracts import ParseJobHandler, ParseJobLeaseLostError, ParseJobQueue
 
 _logger = logging.getLogger(__name__)
@@ -25,7 +26,8 @@ class ParseJobConsumer:
         retry_base: timedelta,
         retry_max: timedelta,
         poll_interval_seconds: float = 2.0,
-        clock: Callable[[], datetime] | None = None,
+        clock: Callable[[], int] | None = None,
+        monotonic_clock: Callable[[], int] = monotonic_ns,
         on_log: Callable[[str], None] | None = None,
     ) -> None:
         if not worker_id.strip():
@@ -48,7 +50,8 @@ class ParseJobConsumer:
         self._retry_base = retry_base
         self._retry_max = retry_max
         self._poll_interval_seconds = poll_interval_seconds
-        self._clock = clock or utc_now_naive
+        self._clock = clock or now_unix_time_ms
+        self._monotonic_clock = monotonic_clock
         self._on_log = on_log
         self._stop = threading.Event()
         self._lifecycle_lock = threading.Lock()
@@ -102,6 +105,8 @@ class ParseJobConsumer:
             f"claimed job={lease.job_id} attempt={lease.attempt_count} "
             f"leaseVersion={lease.lease_version}"
         )
+        processor_started_ns = self._monotonic_clock()
+        processing_duration_ms: int | None = None
         try:
             with _LeaseHeartbeat(
                 self._queue,
@@ -110,8 +115,16 @@ class ParseJobConsumer:
                 interval=self._heartbeat_interval,
             ) as heartbeat:
                 chunk_ids = self._processor.process(lease)
+                processing_duration_ms = max(
+                    0,
+                    self._monotonic_clock() - processor_started_ns,
+                ) // 1_000_000
                 heartbeat.require_current()
-                if not self._queue.acknowledge(lease, now=self._clock()):
+                if not self._queue.acknowledge(
+                    lease,
+                    duration_ms=processing_duration_ms,
+                    now=self._clock(),
+                ):
                     raise ParseJobLeaseLostError(
                         "parse job lease was lost before completion"
                     )
@@ -121,11 +134,19 @@ class ParseJobConsumer:
         except ParseJobLeaseLostError as exc:
             self._log(f"abandoned stale job={lease.job_id}: {exc}")
         except Exception as exc:
-            retry_at = self._clock() + self._retry_delay(lease.attempt_count)
+            if processing_duration_ms is None:
+                processing_duration_ms = max(
+                    0,
+                    self._monotonic_clock() - processor_started_ns,
+                ) // 1_000_000
+            retry_at = self._clock() + timedelta_to_ms(
+                self._retry_delay(lease.attempt_count)
+            )
             recorded = self._queue.retry(
                 lease,
                 error=exception_summary(exc),
                 retry_at=retry_at,
+                duration_ms=processing_duration_ms,
                 now=self._clock(),
             )
             disposition = "recorded" if recorded else "lease already lost"

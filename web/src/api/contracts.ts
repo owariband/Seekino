@@ -181,7 +181,13 @@ export interface ParseJobView {
   stageProgress: number | null;
   completedDurationMs: number | null;
   completedThroughMs: number | null;
+  /** Duration of the source video; totalDurationMs is retained for compatibility. */
+  videoDurationMs: number;
   totalDurationMs: number;
+  /** Cumulative known worker processing time, never the video duration. */
+  processingDurationMs: number;
+  /** True only for a terminal job whose every attempt duration was measured. */
+  processingTimingComplete: boolean;
   completedChunkCount: number | null;
   totalChunkCount: number;
   currentChunk: ParseJobCurrentChunkView | null;
@@ -395,8 +401,8 @@ export interface AgentMessageView {
   replyToMessageId: string | null;
   retrievalQuery: string | null;
   searchResult: AgentSearchEvidence | null;
-  renderBlocks?: AgentRenderBlock[];
-  timing?: AgentMessageTiming | null;
+  renderBlocks: AgentRenderBlock[];
+  timing: AgentMessageTiming | null;
   lastError: Failure | null;
   createdAt: UnixTimeMs;
   updatedAt: UnixTimeMs;

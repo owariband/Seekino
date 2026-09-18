@@ -5,7 +5,6 @@ import json
 import math
 import os
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +28,7 @@ from ..model.dto.parseDTO import (
     PreparedVideoParseImport,
 )
 from ..schema import VideoChunkKeyframeReference
+from ..utils.time import now_unix_time_ms, require_unix_time_ms
 
 
 def prepare_completed_video_parse_import(
@@ -56,7 +56,7 @@ def prepare_completed_video_parse_import(
     ],
     text_embeddings: Mapping[int, PreparedEmbedding],
     vision_embeddings: Mapping[int, PreparedEmbedding],
-    parsed_at: datetime | None = None,
+    parsed_at: int | None = None,
 ) -> PreparedVideoParseImport:
     """Prepare already-verified Worker outputs without transitional file caches."""
 
@@ -134,7 +134,11 @@ def prepare_completed_video_parse_import(
         content_hash=content_hash,
         total_bytes=total_bytes,
         pipeline_version=pipeline_version.strip(),
-        parsed_at=parsed_at or datetime.now(UTC).replace(tzinfo=None),
+        parsed_at=(
+            now_unix_time_ms()
+            if parsed_at is None
+            else require_unix_time_ms(parsed_at, "parsed_at")
+        ),
         parse_result=parse_result,
         chunks=tuple(prepared_chunks),
     )
@@ -295,9 +299,7 @@ def prepare_video_parse_import(
             )
         )
 
-    parsed_at = datetime.fromtimestamp(parse_path.stat().st_mtime, UTC).replace(
-        tzinfo=None
-    )
+    parsed_at = parse_path.stat().st_mtime_ns // 1_000_000
     return PreparedVideoParseImport(
         series_id=resolved_series_id,
         workspace_id=workspace_id.strip(),

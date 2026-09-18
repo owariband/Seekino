@@ -1,30 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Annotated, Generic, TypeVar
 
-from pydantic import BeforeValidator, Field
+from pydantic import Field
 
 from ...schema import ContractModel
-
-
-def unix_time_ms(value: datetime) -> int:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    elapsed = value.astimezone(timezone.utc) - datetime(1970, 1, 1, tzinfo=timezone.utc)
-    return elapsed.days * 86_400_000 + elapsed.seconds * 1000 + elapsed.microseconds // 1000
-
-
-def _absolute_time(value: object) -> object:
-    if isinstance(value, str):
-        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return unix_time_ms(value) if isinstance(value, datetime) else value
+from ...utils.time import MAX_UNIX_TIME_MS
 
 
 UnixTimeMs = Annotated[
     int,
-    BeforeValidator(_absolute_time),
-    Field(strict=True, ge=0, le=9_007_199_254_740_991),
+    Field(strict=True, ge=0, le=MAX_UNIX_TIME_MS),
 ]
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import exists, select, update
 from sqlalchemy.orm import aliased, Session, sessionmaker
@@ -11,7 +11,13 @@ from ..model.upload import UploadSessionRecord, UploadSessionStatus
 from ..model.video import SeriesRecord, VideoRecord
 from ..repository.index_sync import refresh_series_statuses
 from ..repository.job import current_lease_predicate
-from ..utils.time import utc_now_naive
+from ..repository.job_timing import (
+    expire_attempt_in_session,
+    finish_attempt_in_session,
+    start_attempt_in_session,
+)
+from ..model.job_timing import ParseJobAttemptOutcome
+from ..utils.time import now_unix_time_ms, timedelta_to_ms
 from ..utils.validation import require_nonempty_text
 
 
@@ -26,12 +32,12 @@ class MySqlParseJobQueue:
         worker_id: str,
         *,
         lease_duration: timedelta,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> ParseJobLease | None:
         normalized_worker_id = require_nonempty_text(worker_id, "worker_id")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        claimed_at = now or utc_now_naive()
+        claimed_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             active_job = aliased(SeriesParseJobRecord)
             earlier_video = aliased(VideoRecord)
@@ -112,7 +118,7 @@ class MySqlParseJobQueue:
                 ParseJobStatus.SUCCEEDED.value,
                 "COMPLETED",
             }
-            expires_at = claimed_at + lease_duration
+            expires_at = claimed_at + timedelta_to_ms(lease_duration)
             job.status = ParseJobStatus.RUNNING.value
             if job.stage == ParseJobStage.QUEUED.value:
                 job.stage = ParseJobStage.PREPARING.value
@@ -121,14 +127,14 @@ class MySqlParseJobQueue:
             job.lease_version += 1
             job.lease_expires_at = expires_at
             job.heartbeat_at = claimed_at
-            job.started_at = job.started_at or claimed_at
+            if job.started_at is None:
+                job.started_at = claimed_at
             job.last_error = None
             job.version += 1
             if not preserve_existing_result:
                 video.parse_status = ParseJobStatus.RUNNING.value
                 series.status = "INDEXING"
-            session.flush()
-            return ParseJobLease(
+            lease = ParseJobLease(
                 job_id=job.job_id,
                 series_id=job.series_id,
                 video_id=job.video_id,
@@ -152,24 +158,29 @@ class MySqlParseJobQueue:
                 character_bible=series.character_bible,
                 preserve_existing_result=preserve_existing_result,
             )
+            # Keep the attempt's start and the lease that owns it atomic: an
+            # attempt must never exist without a claim, or vice versa.
+            start_attempt_in_session(session, lease, started_at=claimed_at)
+            session.flush()
+            return lease
 
     def heartbeat(
         self,
         lease: ParseJobLease,
         *,
         lease_duration: timedelta,
-        now: datetime | None = None,
+        now: int | None = None,
     ) -> bool:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        heartbeat_at = now or utc_now_naive()
+        heartbeat_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             result = session.execute(
                 update(SeriesParseJobRecord)
                 .where(*current_lease_predicate(lease, heartbeat_at))
                 .values(
                     heartbeat_at=heartbeat_at,
-                    lease_expires_at=heartbeat_at + lease_duration,
+                    lease_expires_at=heartbeat_at + timedelta_to_ms(lease_duration),
                 )
             )
             return result.rowcount == 1
@@ -178,9 +189,10 @@ class MySqlParseJobQueue:
         self,
         lease: ParseJobLease,
         *,
-        now: datetime | None = None,
+        duration_ms: int,
+        now: int | None = None,
     ) -> bool:
-        completed_at = now or utc_now_naive()
+        completed_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             result = session.execute(
                 update(SeriesParseJobRecord)
@@ -199,6 +211,13 @@ class MySqlParseJobQueue:
             )
             if result.rowcount != 1:
                 return False
+            finish_attempt_in_session(
+                session,
+                lease,
+                completed_at=completed_at,
+                outcome=ParseJobAttemptOutcome.SUCCEEDED,
+                duration_ms=duration_ms,
+            )
             session.execute(
                 update(VideoRecord)
                 .where(VideoRecord.video_id == lease.video_id)
@@ -215,10 +234,11 @@ class MySqlParseJobQueue:
         lease: ParseJobLease,
         *,
         error: str,
-        retry_at: datetime,
-        now: datetime | None = None,
+        retry_at: int,
+        duration_ms: int,
+        now: int | None = None,
     ) -> bool:
-        failed_at = now or utc_now_naive()
+        failed_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             job = session.scalar(
                 select(SeriesParseJobRecord)
@@ -240,6 +260,17 @@ class MySqlParseJobQueue:
             job.last_error = _error_summary(error)
             job.version += 1
             job.completed_at = failed_at if exhausted else None
+            finish_attempt_in_session(
+                session,
+                lease,
+                completed_at=failed_at,
+                outcome=(
+                    ParseJobAttemptOutcome.FAILED
+                    if exhausted
+                    else ParseJobAttemptOutcome.RETRY
+                ),
+                duration_ms=duration_ms,
+            )
             video = session.get(VideoRecord, lease.video_id)
             if video is not None and not lease.preserve_existing_result:
                 video.parse_status = job.status
@@ -249,14 +280,14 @@ class MySqlParseJobQueue:
         self,
         *,
         retry_delay: timedelta,
-        now: datetime | None = None,
+        now: int | None = None,
         limit: int = 100,
     ) -> int:
         if retry_delay < timedelta(0):
             raise ValueError("retry_delay cannot be negative")
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
-        reaped_at = now or utc_now_naive()
+        reaped_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             jobs = session.scalars(
                 select(SeriesParseJobRecord)
@@ -275,13 +306,20 @@ class MySqlParseJobQueue:
                     if exhausted
                     else ParseJobStatus.RETRY_WAIT.value
                 )
-                job.available_at = reaped_at + retry_delay
+                job.available_at = reaped_at + timedelta_to_ms(retry_delay)
                 job.lease_owner = None
                 job.lease_expires_at = None
                 job.heartbeat_at = None
                 job.last_error = "worker lease expired"
                 job.version += 1
                 job.completed_at = reaped_at if exhausted else None
+                expire_attempt_in_session(
+                    session,
+                    job_id=job.job_id,
+                    attempt_count=job.attempt_count,
+                    lease_version=job.lease_version,
+                    completed_at=reaped_at,
+                )
                 video = session.get(VideoRecord, job.video_id)
                 if video is not None and video.parse_status not in {
                     ParseJobStatus.SUCCEEDED.value,
