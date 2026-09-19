@@ -73,12 +73,13 @@ class _QueryModel:
     prompts: list[str] = field(default_factory=list)
     selected_ranges: tuple[tuple[str, int, int], ...] = ()
 
-    def run_query(self, prompt, *, tools, result_type, max_model_calls, **_kwargs):
+    def run_structured(self, prompt, *, tools, result_type, max_model_calls, **_kwargs):
         self.prompts.append(prompt)
-        number = json.loads(prompt.split("\n\n", 1)[1])["turn_number"]
+        number = json.loads(prompt.rsplit("\n\n", 1)[1])["turn_number"]
         query = self.queries[min(number - 1, len(self.queries) - 1)]
+        tools_by_name = {tool.name: tool for tool in tools}
         if query is not None:
-            tools[0].invoke({
+            tools_by_name["retrieve"].invoke({
                 "query": query,
                 "top_k": 8,
                 "channel_weights": {
@@ -87,17 +88,25 @@ class _QueryModel:
                     "visual": 0.4,
                 },
             })
+        for video_chunk_id, start_ms, end_ms in self.selected_ranges:
+            cursor = None
+            while True:
+                page = json.loads(tools_by_name["read_trieve_item"].invoke({
+                    "video_chunk_id": video_chunk_id,
+                    "cursor": cursor,
+                }))
+                cursor = page["next_cursor"]
+                if cursor is None:
+                    break
+            tools_by_name["update_draft_tem"].invoke({
+                "video_chunk_id": video_chunk_id,
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "claim": f"片段 {video_chunk_id} 支持回答。",
+            })
         return result_type.model_validate({
             "plan_context": f"第 {number} 轮检索并核验动作。",
             "message": f"第 {number} 轮待审核草稿。",
-            "selected_video_ranges": [
-                {
-                    "video_chunk_id": video_chunk_id,
-                    "start_ms": start_ms,
-                    "end_ms": end_ms,
-                }
-                for video_chunk_id, start_ms, end_ms in self.selected_ranges
-            ],
         })
 
 
@@ -107,8 +116,28 @@ class _EvaluatorModel:
     approve_after: int = 1
     calls: int = 0
 
-    def generate(self, _inputs, *, schema_name, result_type):
-        assert schema_name == "anivag_answer_evaluation"
+    def run_structured(self, _prompt, *, tools, result_type, **_kwargs):
+        tools_by_name = {tool.name: tool for tool in tools}
+        cursor = None
+        item_ids = []
+        while True:
+            page = json.loads(tools_by_name["get_draft_catelog"].invoke({
+                "cursor": cursor,
+            }))
+            item_ids.extend(item["video_chunk_id"] for item in page["items"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+        for video_chunk_id in item_ids:
+            cursor = None
+            while True:
+                page = json.loads(tools_by_name["read_draft_item"].invoke({
+                    "video_chunk_id": video_chunk_id,
+                    "cursor": cursor,
+                }))
+                cursor = page["next_cursor"]
+                if cursor is None:
+                    break
         self.calls += 1
         return result_type.model_validate({
             "action": "complete" if self.calls >= self.approve_after else "continue",
@@ -127,10 +156,10 @@ class _ChatModel:
     def run_agent_loop(
         self, prompt, *, tools: Sequence[BaseTool], max_model_calls, handle_text,
         require_tool_call=False,
-        request_timeout_seconds=None, check_control=None,
+        request_timeout_seconds=None, check_control=None, max_input_chars=None,
     ):
-        submit_video_item = next(tool for tool in tools if tool.name == "submit_video_item")
-        assert set(submit_video_item.args_schema.model_fields) == {"video_chunk_id", "claim"}
+        update_video_item = next(tool for tool in tools if tool.name == "update_video_item")
+        assert set(update_video_item.args_schema.model_fields) == {"video_chunk_id", "claim"}
         self.prompts.append(prompt)
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
@@ -142,25 +171,24 @@ class _ChatModel:
             raise RuntimeError("private upstream failure")
         context = json.loads(prompt.rsplit("\n\n", 1)[1])
         approved_turn = context["approved_turn"]
-        chunk_ids = [
-            hit["candidate"]["videoChunkId"]
-            for hit in approved_turn["selected_evidence"]["hits"]
-        ]
+        chunk_ids = approved_turn["video_chunk_ids"]
         assert require_tool_call is bool(chunk_ids)
         check_control()
         handle_text(
             "目前没有足够的候选画面，"
             if chunk_ids else "目前没有足够的候选画面，建议补充人物或动作。"
         )
-        for chunk_id in chunk_ids:
+        for current_count, chunk_id in enumerate(chunk_ids, 1):
             item = {
                 "video_chunk_id": chunk_id,
                 "claim": f"片段 {chunk_id} 支持回答。",
             }
             self.submitted_items.append(item)
-            assert json.loads(submit_video_item.invoke(item)) == {
+            assert json.loads(update_video_item.invoke(item)) == {
                 "accepted": True,
+                "operation": "inserted",
                 "video_chunk_id": chunk_id,
+                "video_item_count": current_count,
             }
         if chunk_ids:
             handle_text("建议补充人物或动作。")
@@ -281,9 +309,9 @@ def test_query_agent_receives_series_transcript_language_hint(build_service):
 
     _send(service, conversation, content="她当时的原话是什么？")
 
-    context = json.loads(query.prompts[-1].split("\n\n", 1)[1])["inputs"]
+    context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
     assert context["series_context"][0]["transcriptLanguageHint"] == "ja"
-    assert "日语 ASR 必须使用日语原文" in query.prompts[-1]
+    assert "Transcript 通道不会翻译 Query" in query.prompts[-1]
 
 
 def test_read_only_message_recovery_by_user_assistant_or_request_key(build_service):
@@ -316,7 +344,7 @@ def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidenc
     assert followup.user_message.reference == reference
     assert followup.assistant_message.reference is None
     assert _send(service, conversation, key="reference", content="这段的前文呢？", reference=reference) == followup
-    context = json.loads(query.prompts[-1].split("\n\n", 1)[1])["inputs"]
+    context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
     assert context["reference_context"]["evidence"]["videoChunkId"] == reference["videoChunkId"]
     assert context["reference_context"]["evidence"]["contextBeforeCompact"] == hits[1]["evidence"]["contextBeforeCompact"]
     assert context["reference_context"]["selectedRange"] == {
@@ -637,9 +665,9 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
     assert messages[0].timing is None
     assert [call[0] for call in retrieval.calls] == ["第一次改写"] + ([second_query] if second_query else [])
     assert evaluator.calls == 2 and len(chat.prompts) == 1
-    context = json.loads(query.prompts[1].split("\n\n", 1)[1])
+    context = json.loads(query.prompts[1].rsplit("\n\n", 1)[1])
     assert context["original_plan"] == "第 1 轮检索并核验动作。"
-    assert context["turns"][0]["query_draft"]["message"] == "第 1 轮待审核草稿。"
+    assert context["turns"][0]["draft"]["message"] == "第 1 轮待审核草稿。"
     assert context["turns"][0]["review"]["advice"] == "补充摔杯子的动作，重新核验。"
     with pytest.raises(AgentConflictError, match="different request fields"):
         service.send_message(conversation.conversation_id, workspace_id="local-default", content="寻找摔杯子的片段", top_k=7, idempotency_key="message")
@@ -681,7 +709,7 @@ def test_next_kick_reads_only_completed_conversation_history(build_service):
     service, conversation, _, _, query, _, _ = build_service()
     first = _send(service, conversation)
     _send(service, conversation, key="second", content="再找一段")
-    context = json.loads(query.prompts[1].split("\n\n", 1)[1])
+    context = json.loads(query.prompts[1].rsplit("\n\n", 1)[1])
     assert context["turn_number"] == 1 and context["turns"] == []
     history = context["inputs"]["history"]
     assert history[0] == {
@@ -714,11 +742,11 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
     )
     library = LibraryService(LibraryRepository(repository._session_factory))
     original_id = library.list_series(workspace_id="local-default")[0].series_id
-    run_query = query.run_query
+    run_structured = query.run_structured
     added_ids = []
 
     def query_with_new_series(*args, **kwargs):
-        draft = run_query(*args, **kwargs)
+        draft = run_structured(*args, **kwargs)
         if not added_ids:
             added = library.create_series(workspace_id="local-default", name="Added mid-loop")
             with repository._session_factory.begin() as session:
@@ -726,12 +754,12 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
             added_ids.append(added.series_id)
         return draft
 
-    monkeypatch.setattr(query, "run_query", query_with_new_series)
+    monkeypatch.setattr(query, "run_structured", query_with_new_series)
     first = _send(service, conversation, series_ids=[])
     assert [call[1] for call in retrieval.calls] == [[original_id], [original_id]]
     assert first.user_message.series_ids == first.assistant_message.series_ids == (original_id,)
     assert all(
-        json.loads(prompt.split("\n\n", 1)[1])["inputs"]["series_ids"] == [original_id]
+        json.loads(prompt.rsplit("\n\n", 1)[1])["inputs"]["series_ids"] == [original_id]
         for prompt in query.prompts
     )
 
@@ -746,7 +774,7 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
     second = _send(service, conversation, key="next-all", series_ids=[])
     assert second.user_message.series_ids == tuple(sorted([original_id, added_ids[0]]))
     assert retrieval.calls[-1][1] == list(second.user_message.series_ids)
-    context = json.loads(query.prompts[-1].split("\n\n", 1)[1])
+    context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])
     assert [item["seriesIds"] for item in context["inputs"]["history"]] == [[original_id], [original_id]]
 
 
@@ -763,7 +791,7 @@ def test_next_message_can_choose_another_scope_without_reusing_old_evidence(buil
     assert [call[1] for call in retrieval.calls] == [[original_id], [added.series_id]]
     assert first.assistant_message.series_ids == (original_id,)
     assert second.assistant_message.series_ids == (added.series_id,)
-    context = json.loads(query.prompts[-1].split("\n\n", 1)[1])
+    context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])
     assert context["turns"] == [] and context["inputs"]["series_ids"] == [added.series_id]
     assert all(item["seriesIds"] == [original_id] for item in context["inputs"]["history"])
     with pytest.raises(AgentConflictError):

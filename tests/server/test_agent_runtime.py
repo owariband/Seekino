@@ -9,14 +9,10 @@ import pytest
 
 from gateway.agent_model import ModelInputTooLargeError
 from server.agent import AgentContextBudgetError, AgentModelInvocationError, AgentRuntime
-from server.agent.context import project_search_result
 from server.agent.state import (
-    ExecutionControl, ModelContextBudget, QueryDraft, RetrievalCall,
-    RetrievalChannelWeights, RunInputs, context_json,
+    QueryDraft, RetrievalChannelWeights, RunInputs,
 )
-from server.agent.tools import (
-    SubmitVideoItemArguments, build_retrieval_tool,
-)
+from server.agent.tools import UpdateVideoItemArguments
 from server.schema import (
     AgentReply,
     MatchedEvidence,
@@ -53,6 +49,28 @@ def _retrieval_args(
             "visual": visual,
         },
     }
+
+
+def _tool_map(tools):
+    return {tool.name: tool for tool in tools}
+
+
+def _invoke_json(tool, arguments):
+    return json.loads(tool.invoke(arguments))
+
+
+def _read_all(tool, video_chunk_id):
+    pages = []
+    cursor = None
+    while True:
+        page = _invoke_json(tool, {
+            "video_chunk_id": video_chunk_id,
+            "cursor": cursor,
+        })
+        pages.append(page)
+        cursor = page["next_cursor"]
+        if cursor is None:
+            return pages
 
 
 def _hit(chunk_id="chunk-1", *, workspace="workspace", series="series"):
@@ -136,16 +154,20 @@ class Query:
         self.tool_results = []
         self.budgets = []
 
-    def run_query(self, prompt, *, tools, result_type, max_model_calls, check_control=None):
+    def run_structured(
+        self, prompt, *, tools, result_type, max_model_calls, check_control=None,
+        max_input_chars=None,
+    ):
         self.prompts.append(prompt)
         context = json.loads(prompt.rsplit("\n\n", 1)[1])
         self.contexts.append(context)
         self.budgets.append(max_model_calls)
         number = context["turn_number"]
+        tools_by_name = _tool_map(tools)
         if number in self.search_rounds:
             for index in range(self.searches_per_round):
                 self.tool_results.append(
-                    tools[0].invoke(_retrieval_args(
+                    _invoke_json(tools_by_name["retrieve"], _retrieval_args(
                         f"query-{number}-{index}",
                         8,
                         transcript=self.channel_weights[0],
@@ -153,11 +175,19 @@ class Query:
                         visual=self.channel_weights[2],
                     ))
                 )
+        ranges = (
+            [_selected_range(chunk_id) for chunk_id in self.selected]
+            if self.selected_ranges is None
+            else self.selected_ranges
+        )
+        for item in ranges:
+            _read_all(tools_by_name["read_trieve_item"], item["video_chunk_id"])
+            tools_by_name["update_draft_tem"].invoke({
+                **item,
+                "claim": f"Grounded evidence for {item['video_chunk_id']}.",
+            })
         return result_type.model_validate({
             "plan_context": f"plan-{number}", "message": f"draft-{number}",
-            "selected_video_ranges": [
-                _selected_range(chunk_id) for chunk_id in self.selected
-            ] if self.selected_ranges is None else self.selected_ranges,
         })
 
 
@@ -170,10 +200,23 @@ class Evaluator:
         self.prompts = []
         self.contexts = []
 
-    def generate(self, inputs, *, schema_name, result_type):
-        assert schema_name == "anivag_answer_evaluation"
-        self.prompts.append(inputs[0].text)
-        self.contexts.append(json.loads(inputs[0].text.rsplit("\n\n", 1)[1]))
+    def run_structured(
+        self, prompt, *, tools, result_type, max_model_calls, check_control=None,
+        max_input_chars=None,
+    ):
+        self.prompts.append(prompt)
+        self.contexts.append(json.loads(prompt.rsplit("\n\n", 1)[1]))
+        tools_by_name = _tool_map(tools)
+        cursor = None
+        item_ids = []
+        while True:
+            page = _invoke_json(tools_by_name["get_draft_catelog"], {"cursor": cursor})
+            item_ids.extend(item["video_chunk_id"] for item in page["items"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+        for video_chunk_id in item_ids:
+            _read_all(tools_by_name["read_draft_item"], video_chunk_id)
         number = len(self.contexts)
         return result_type.model_validate({
             "action": "complete" if number == self.approve_at else "continue",
@@ -197,12 +240,16 @@ class Chat:
     def run_agent_loop(
         self, prompt, *, tools, max_model_calls, handle_text,
         require_tool_call=False,
-        request_timeout_seconds=None, check_control=None,
+        request_timeout_seconds=None, check_control=None, max_input_chars=None,
     ):
-        assert len(tools) == 1
-        assert tools[0].name == "submit_video_item"
-        assert tools[0].description
-        assert tools[0].args_schema is SubmitVideoItemArguments
+        assert [tool.name for tool in tools] == [
+            "remove_video_item", "update_video_item",
+            "get_draft_catelog", "read_draft_item",
+        ]
+        tools_by_name = _tool_map(tools)
+        update_video_item = tools_by_name["update_video_item"]
+        assert update_video_item.description
+        assert update_video_item.args_schema is UpdateVideoItemArguments
         context = json.loads(prompt.rsplit("\n\n", 1)[1])
         self.contexts.append(context)
         assert request_timeout_seconds is not None
@@ -211,10 +258,7 @@ class Chat:
         assert max_model_calls > 0
         self.model_call_budgets.append(max_model_calls)
         assert check_control is not None
-        chunk_ids = [
-            hit["candidate"]["videoChunkId"]
-            for hit in context["approved_turn"]["selected_evidence"]["hits"]
-        ]
+        chunk_ids = context["approved_turn"]["video_chunk_ids"]
         self.require_tool_calls.append(require_tool_call)
         assert require_tool_call is bool(chunk_ids)
         text_blocks = (
@@ -226,12 +270,12 @@ class Chat:
         handle_text(text_blocks[0])
         for chunk_id in chunk_ids:
             check_control()
-            item = SubmitVideoItemArguments.model_validate({
+            item = UpdateVideoItemArguments.model_validate({
                 "video_chunk_id": chunk_id,
                 "claim": f"Grounded evidence for {chunk_id}.",
             })
             self.video_items.append(item)
-            self.tool_results.append(json.loads(tools[0].invoke(
+            self.tool_results.append(json.loads(update_video_item.invoke(
                 item.model_dump(mode="python")
             )))
         if len(text_blocks) == 2:
@@ -262,18 +306,15 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     assert result.hits[0].evidence.end_ms == 2000
     assert result.render_blocks[1].start_ms == 1100
     assert result.render_blocks[1].end_ms == 1900
-    assert "selected_video_ranges" in query.prompts[0]
+    assert "update_draft_tem" in query.prompts[0]
+    assert "read_trieve_item" in query.prompts[0]
     assert "事实性结论" in query.prompts[0]
-    assert "1. 用户意图拆解" in evaluator.prompts[0]
-    assert "2. 查询策略" in evaluator.prompts[0]
-    assert "query、top_k" in evaluator.prompts[0]
-    assert "channel_weights" in evaluator.prompts[0]
-    assert "3. 视频条目" in evaluator.prompts[0]
-    assert "4. 时间范围" in evaluator.prompts[0]
-    assert "完整覆盖支撑结论" in evaluator.prompts[0]
-    assert "selected_video_ranges 为空" in evaluator.prompts[0]
-    assert evaluator.contexts[0]["draft"]["selected_video_ranges"] == [
-        _selected_range("chunk-1")
+    assert "用户意图" in evaluator.prompts[0]
+    assert "检索策略" in evaluator.prompts[0]
+    assert "每个 Draft Item" in evaluator.prompts[0]
+    assert "播放范围" in evaluator.prompts[0]
+    assert evaluator.contexts[0]["current_draft"]["video_chunk_ids"] == [
+        "chunk-1"
     ]
     assert [event["phase"] for event in events if event["type"] == "answer.progress"] == [
         *(["RETRIEVING", "EVALUATING"] * approve_at), "RESPONDING",
@@ -297,7 +338,9 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     assert chat.require_tool_calls == [True]
     assert chat.tool_results == [{
         "accepted": True,
+        "operation": "inserted",
         "video_chunk_id": "chunk-1",
+        "video_item_count": 1,
     }]
     assert all(event["conversationId"] == "conversation" for event in events)
     assert all(event["messageId"] == "conversation-answer" for event in events)
@@ -326,6 +369,32 @@ def test_third_rejection_is_failure_and_never_starts_final_chat():
     assert [event["phase"] for event in events] == ["RETRIEVING", "EVALUATING"] * 3
 
 
+def test_evaluator_cannot_complete_without_reading_the_full_draft() -> None:
+    class BlindEvaluator:
+        model_name = "blind-evaluator"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run_structured(self, _prompt, *, result_type, **_kwargs):
+            self.calls += 1
+            return result_type.model_validate({
+                "action": "complete",
+                "advice": "approved without reading",
+            })
+
+    evaluator = BlindEvaluator()
+    runtime, _query, _evaluator, chat, _retrieval = _runtime(
+        evaluator=evaluator,
+    )
+
+    with pytest.raises(AgentModelInvocationError, match="after 3 turns"):
+        runtime.kick(_inputs())
+
+    assert evaluator.calls == 3
+    assert chat.contexts == []
+
+
 def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
     runtime, query, evaluator, chat, retrieval = _runtime(
         query=Query(search_rounds=(1, 2), searches_per_round=2), evaluator=Evaluator(3),
@@ -336,7 +405,7 @@ def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
     assert len(third["turns"]) == 2
     for number, record in enumerate(third["turns"], 1):
         assert record["plan_context"] == f"plan-{number}"
-        assert record["query_draft"]["message"] == f"draft-{number}"
+        assert record["draft"]["message"] == f"draft-{number}"
         assert record["review"] == {
             "action": "continue", "advice": "find broken cup, not picked-up cup",
         }
@@ -378,15 +447,12 @@ def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
     ]
     assert evaluator.contexts[2]["retrieval_calls"] == []
     assert evaluator.contexts[2]["evidence_source_turns"] == {"chunk-1": 2}
-    assert len(evaluator.contexts[2]["available_evidence"]["hits"]) == 2
+    assert evaluator.contexts[2]["current_draft"]["video_chunk_ids"] == ["chunk-1"]
     assert "selected_output" not in evaluator.contexts[2]
     approved = chat.contexts[0]["approved_turn"]
     assert approved["number"] == 3
-    assert approved["draft"]["message"] == "draft-3"
-    assert approved["draft"]["selected_video_ranges"] == [
-        _selected_range("chunk-1")
-    ]
-    assert len(approved["selected_evidence"]["hits"]) == 1
+    assert approved["message"] == "draft-3"
+    assert approved["video_chunk_ids"] == ["chunk-1"]
     assert "turns" not in chat.contexts[0]
     assert "retrieval_result" not in approved
     assert "chunk-2" not in json.dumps(chat.contexts[0])
@@ -412,46 +478,36 @@ def test_invalid_retrieved_scope_or_time_fails_before_evaluation(mutation, expec
 
 def test_unknown_selected_id_fails_before_evaluator_or_chat():
     runtime, _query, evaluator, chat, _retrieval = _runtime(query=Query(selected=("invented",)))
-    with pytest.raises(AgentModelInvocationError, match="outside retrieved evidence"):
+    with pytest.raises(AgentModelInvocationError, match="Unknown retrieved video_chunk_id"):
         runtime.kick(_inputs())
     assert evaluator.contexts == chat.contexts == []
 
 
 def test_out_of_chunk_range_after_evaluator_approval_forces_query_revision():
     class CorrectingQuery(Query):
-        def run_query(self, prompt, **kwargs):
+        def run_structured(self, prompt, **kwargs):
             self.selected_ranges = [
                 _selected_range("chunk-1", start_ms=999, end_ms=1500)
                 if not self.contexts else _selected_range("chunk-1")
             ]
-            return super().run_query(prompt, **kwargs)
+            return super().run_structured(prompt, **kwargs)
 
     class AlwaysCompleteEvaluator(Evaluator):
-        def generate(self, inputs, *, schema_name, result_type):
-            return super().generate(
-                inputs, schema_name=schema_name, result_type=result_type,
-            ).model_copy(update={"action": "complete", "advice": "approved"})
+        def run_structured(self, prompt, **kwargs):
+            return super().run_structured(prompt, **kwargs).model_copy(
+                update={"action": "complete", "advice": "approved"},
+            )
 
     runtime, query, evaluator, chat, _retrieval = _runtime(
         query=CorrectingQuery(), evaluator=AlwaysCompleteEvaluator(),
     )
 
-    result = runtime.kick(_inputs())
-
-    assert evaluator.contexts[0]["draft"]["selected_video_ranges"] == [
-        _selected_range("chunk-1", start_ms=999, end_ms=1500)
-    ]
-    assert query.contexts[1]["turns"][0]["review"]["action"] == "continue"
-    assert "Server range validation rejected" in (
-        query.contexts[1]["turns"][0]["review"]["advice"]
-    )
-    assert evaluator.contexts[1]["draft"]["selected_video_ranges"] == [
-        _selected_range("chunk-1")
-    ]
-    assert len(chat.contexts) == 1
-    assert (result.render_blocks[1].start_ms, result.render_blocks[1].end_ms) == (
-        1100, 1900,
-    )
+    with pytest.raises(
+        AgentModelInvocationError,
+        match="Draft Item range must be contained in canonical Evidence",
+    ):
+        runtime.kick(_inputs())
+    assert evaluator.contexts == chat.contexts == []
 
 
 @pytest.mark.parametrize("start_ms,end_ms", [
@@ -513,15 +569,15 @@ def test_selection_order_keeps_exact_real_evidence_and_approved_ranges():
     ]
 
 
-def test_duplicate_selected_chunk_ranges_are_rejected_before_evaluation():
-    runtime, _query, evaluator, chat, _retrieval = _runtime(query=Query(
+def test_duplicate_draft_updates_are_deduplicated_by_chunk_id():
+    runtime, _query, evaluator, _chat, _retrieval = _runtime(query=Query(
         selected=("chunk-1", "chunk-1"),
     ))
 
-    with pytest.raises(AgentModelInvocationError, match="duplicate ranges"):
-        runtime.kick(_inputs())
+    result = runtime.kick(_inputs())
 
-    assert evaluator.contexts == chat.contexts == []
+    assert result.agent_reply.result_count == 1
+    assert evaluator.contexts[0]["current_draft"]["video_chunk_ids"] == ["chunk-1"]
 
 
 def test_series_background_is_injected_once_without_leaking_into_each_hit():
@@ -551,11 +607,9 @@ def test_series_background_is_injected_once_without_leaking_into_each_hit():
     assert evaluator_context.count(marker) == 1
     assert len(evaluator_context) < full_result_chars // 4
     assert marker not in json.dumps(chat.contexts[0], ensure_ascii=False)
-    tool_evidence = query.tool_results[0]["hits"][0]["evidence"]
-    assert tool_evidence["videoCompact"] == "cup action"
-    assert "importantExtraData" not in tool_evidence
-    assert "characterBible" not in tool_evidence
-    assert "originalSourceUri" not in tool_evidence
+    tool_card = query.tool_results[0]["items"][0]
+    assert tool_card["description"] == "matched action"
+    assert "evidence" not in tool_card
     assert result.hits[0].evidence.important_extra_data == background
     assert result.hits[0].evidence.character_bible == [{"name": "Tomori"}]
 
@@ -640,11 +694,11 @@ def test_reference_context_uses_compact_evidence_without_repeating_background():
     chat_context = json.dumps(chat.contexts[0], ensure_ascii=False)
     assert background_marker not in query_context + evaluator_context + chat_context
     assert query_context.count(evidence_marker) == 1
-    assert evaluator_context.count(evidence_marker) == 1
-    assert chat_context.count(evidence_marker) == 1
+    assert evaluator_context.count(evidence_marker) == 0
+    assert chat_context.count(evidence_marker) == 0
     assert query_context.count(matched_marker) == 1
-    assert evaluator_context.count(matched_marker) == 1
-    assert chat_context.count(matched_marker) == 1
+    assert evaluator_context.count(matched_marker) == 0
+    assert chat_context.count(matched_marker) == 0
 
 
 def test_multi_turn_context_keeps_one_canonical_evidence_copy():
@@ -657,8 +711,8 @@ def test_multi_turn_context_keeps_one_canonical_evidence_copy():
 
     runtime.kick(_inputs())
 
-    assert json.dumps(query.contexts[2], ensure_ascii=False).count(marker) == 1
-    assert json.dumps(evaluator.contexts[2], ensure_ascii=False).count(marker) == 1
+    assert json.dumps(query.contexts[2], ensure_ascii=False).count(marker) == 0
+    assert json.dumps(evaluator.contexts[2], ensure_ascii=False).count(marker) == 0
     assert all("retrieval_result" not in turn for turn in query.contexts[2]["turns"])
     assert all("draft_output" not in turn for turn in query.contexts[2]["turns"])
 
@@ -719,12 +773,20 @@ def test_empty_real_retrieval_can_deliver_an_approved_uncertain_answer():
 
 def test_tool_scope_is_not_an_exposed_model_argument_and_top_k_is_bounded():
     class InspectQuery(Query):
-        def run_query(self, prompt, *, tools, result_type, max_model_calls, check_control=None):
+        def run_structured(
+            self, prompt, *, tools, result_type, max_model_calls,
+            check_control=None, max_input_chars=None,
+        ):
             assert "# Video Retrieval Skill" in prompt
             assert set(tools[0].args_schema.model_fields) == {
-                "query", "top_k", "channel_weights",
+                "query", "top_k", "channel_weights", "cursor",
             }
-            return super().run_query(prompt, tools=tools, result_type=result_type, max_model_calls=max_model_calls)
+            return super().run_structured(
+                prompt,
+                tools=tools,
+                result_type=result_type,
+                max_model_calls=max_model_calls,
+            )
 
     runtime, query, _evaluator, _chat, retrieval = _runtime(
         query=InspectQuery(), maximum_top_k=2, max_model_calls_per_turn=5,
@@ -743,21 +805,21 @@ def test_model_selected_weights_are_normalized_recorded_and_returned_to_agent():
     result = runtime.kick(_inputs())
 
     assert retrieval.weights[0] == pytest.approx((0.6, 0.3, 0.1))
-    strategy = query.tool_results[0]["retrievalStrategy"]
-    assert strategy["requestedWeights"] == {
+    strategy = query.tool_results[0]["retrieval_strategy"]
+    assert strategy["requested_weights"] == {
         "transcript": 0.6,
         "semantic": 0.3,
         "visual": 0.1,
     }
-    assert strategy["effectiveWeights"] == pytest.approx({
+    assert strategy["effective_weights"] == pytest.approx({
         "transcript": 0.6,
         "semantic": 0.3,
         "visual": 0.1,
     })
     recorded = evaluator.contexts[0]["retrieval_calls"][0]["retrieval_strategy"]
-    assert recorded["requested_weights"] == strategy["requestedWeights"]
+    assert recorded["requested_weights"] == strategy["requested_weights"]
     assert recorded["effective_weights"] == pytest.approx(
-        strategy["effectiveWeights"]
+        strategy["effective_weights"]
     )
     trace = result.model_dump(mode="json", by_alias=True)["retrievalTrace"]
     assert trace == [{
@@ -811,7 +873,7 @@ def test_tool_budget_stops_before_an_extra_search_or_evaluation():
     runtime, _query, evaluator, chat, retrieval = _runtime(
         query=Query(searches_per_round=2), max_tool_calls_per_turn=1,
     )
-    with pytest.raises(AgentModelInvocationError, match="tool-call budget"):
+    with pytest.raises(AgentModelInvocationError, match="Tool-call budget"):
         runtime.kick(_inputs())
     assert len(retrieval.calls) == 1
     assert evaluator.contexts == chat.contexts == []
@@ -828,7 +890,7 @@ def test_prompt_character_budget_stops_before_the_query_provider():
 
 def test_complete_query_message_budget_error_keeps_its_specific_semantics():
     class OversizedQuery(Query):
-        def run_query(self, *args, **kwargs):
+        def run_structured(self, *args, **kwargs):
             raise ModelInputTooLargeError("complete Query messages exceeded the limit")
 
     runtime, _query, evaluator, chat, retrieval = _runtime(query=OversizedQuery())
@@ -839,76 +901,12 @@ def test_complete_query_message_budget_error_keeps_its_specific_semantics():
     assert evaluator.contexts == chat.contexts == retrieval.calls == []
 
 
-def test_tool_context_does_not_replay_full_evidence_for_repeated_chunks():
-    hit = _hit()
-    retrieval = Retrieval([hit])
-    preview = retrieval.search(
-        "same-query",
-        workspace_id="workspace",
-        series_ids=["series"],
-        top_k=1,
-        transcript_weight=0.0,
-        text_weight=0.5,
-        vision_weight=0.5,
-    )
-    retrieval.calls.clear()
-    retrieval.weights.clear()
-    projected_preview = project_search_result(preview)
-    projected_preview["retrievalStrategy"] = {
-        "version": "query-adaptive-three-channel-rrf-v2",
-        "requestedWeights": {"transcript": 0.0, "semantic": 0.5, "visual": 0.5},
-        "effectiveWeights": {"transcript": 0.0, "semantic": 0.5, "visual": 0.5},
-    }
-    result_chars = len(context_json(projected_preview))
-    context_budget = ModelContextBudget(result_chars * 2 - 1)
-    calls: list[RetrievalCall] = []
-    tool = build_retrieval_tool(
-        retrieval.search, inputs=_inputs(), control=ExecutionControl(float("inf")),
-        calls=calls, maximum_top_k=1, max_tool_calls=2,
-        context_budget=context_budget,
-    )
-
-    first = tool.invoke(_retrieval_args("same-query", 1))
-    second = tool.invoke(_retrieval_args("same-query", 1))
-
-    assert len(retrieval.calls) == 2
-    assert len(calls) == 2
-    assert len(first["hits"]) == 1
-    assert second["hits"] == []
-    assert second["newResultCount"] == 0
-    assert second["reusedResultCount"] == 1
-    assert second["reusedHits"][0]["candidate"]["videoChunkId"] == "chunk-1"
-    assert "evidence" not in second["reusedHits"][0]
-    assert "matchedEvidence" not in second["reusedHits"][0]["selectionReason"]
-
-
-def test_tool_context_reuses_evidence_already_returned_by_an_earlier_turn():
-    retrieval = Retrieval([_hit("known-chunk"), _hit("new-chunk")])
-    calls: list[RetrievalCall] = []
-    tool = build_retrieval_tool(
-        retrieval.search, inputs=_inputs(), control=ExecutionControl(float("inf")),
-        calls=calls, maximum_top_k=2, max_tool_calls=1,
-        context_budget=ModelContextBudget(100_000),
-        previously_returned_video_chunk_ids={"known-chunk"},
-    )
-
-    projected = tool.invoke(_retrieval_args("follow-up", 2))
-
-    assert [
-        hit["evidence"]["videoChunkId"] for hit in projected["hits"]
-    ] == ["new-chunk"]
-    assert [
-        hit["candidate"]["videoChunkId"] for hit in projected["reusedHits"]
-    ] == ["known-chunk"]
-    assert len(calls) == 1
-    assert [
-        hit.candidate.video_chunk_id for hit in calls[0].result.hits
-    ] == ["known-chunk", "new-chunk"]
-
-
 def test_parallel_tool_calls_share_one_turn_budget_and_keep_actual_records():
     class ParallelQuery(Query):
-        def run_query(self, prompt, *, tools, result_type, max_model_calls, check_control=None):
+        def run_structured(
+            self, prompt, *, tools, result_type, max_model_calls,
+            check_control=None, max_input_chars=None,
+        ):
             with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = [executor.submit(
                     tools[0].invoke,
@@ -925,7 +923,7 @@ def test_parallel_tool_calls_share_one_turn_budget_and_keep_actual_records():
     runtime, _query, evaluator, chat, retrieval = _runtime(
         query=ParallelQuery(), max_tool_calls_per_turn=1,
     )
-    with pytest.raises(AgentModelInvocationError, match="tool-call budget"):
+    with pytest.raises(AgentModelInvocationError, match="Tool-call budget"):
         runtime.kick(_inputs())
     assert len(retrieval.calls) == 1
     assert evaluator.contexts == chat.contexts == []
@@ -992,7 +990,7 @@ def test_chat_cannot_submit_unapproved_evidence_ids() -> None:
         def run_agent_loop(
             self, prompt, *, tools, **kwargs,
         ):
-            tools[0].invoke({
+            _tool_map(tools)["update_video_item"].invoke({
                 "video_chunk_id": "invented-chunk",
                 "claim": "Invented evidence.",
             })
@@ -1002,7 +1000,7 @@ def test_chat_cannot_submit_unapproved_evidence_ids() -> None:
 
     with pytest.raises(
         AgentModelInvocationError,
-        match="outside approved evidence",
+        match="approved Draft Evidence",
     ):
         runtime.kick(_inputs(), emit=events.append)
 
@@ -1020,14 +1018,14 @@ def test_chat_cannot_silently_drop_all_approved_evidence() -> None:
 
     with pytest.raises(
         AgentModelInvocationError,
-        match="without submitting approved video evidence",
+        match="without placing approved video evidence",
     ):
         runtime.kick(_inputs(), emit=events.append)
 
     assert [event for event in events if event["type"] != "answer.progress"] == []
 
 
-def test_chat_cannot_submit_the_same_approved_id_twice() -> None:
+def test_chat_updates_the_same_approved_id_in_place() -> None:
     class DuplicateEvidenceChat(Chat):
         def run_agent_loop(
             self, prompt, *, tools, handle_text, **kwargs,
@@ -1037,16 +1035,16 @@ def test_chat_cannot_submit_the_same_approved_id_twice() -> None:
                 "video_chunk_id": "chunk-1",
                 "claim": "Grounded evidence.",
             }
-            tools[0].invoke(item)
-            tools[0].invoke(item)
+            update = _tool_map(tools)["update_video_item"]
+            update.invoke(item)
+            update.invoke({**item, "claim": "Revised grounded evidence."})
 
     runtime, *_ = _runtime(chat=DuplicateEvidenceChat())
     events = []
 
-    with pytest.raises(AgentModelInvocationError, match="more than once"):
-        runtime.kick(_inputs(), emit=events.append)
+    result = runtime.kick(_inputs(), emit=events.append)
 
-    assert [event for event in events if event["type"] != "answer.progress"] == []
+    assert result.hits[0].selection_reason.summary == "Revised grounded evidence."
 
 
 def test_chat_requires_nonempty_markdown_even_when_video_was_submitted() -> None:
@@ -1054,7 +1052,7 @@ def test_chat_requires_nonempty_markdown_even_when_video_was_submitted() -> None
         def run_agent_loop(
             self, prompt, *, tools, **kwargs,
         ):
-            tools[0].invoke({
+            _tool_map(tools)["update_video_item"].invoke({
                 "video_chunk_id": "chunk-1",
                 "claim": "Grounded evidence.",
             })
@@ -1076,7 +1074,7 @@ def test_chat_may_choose_an_approved_subset_in_any_order(submitted_ids) -> None:
         ):
             handle_text("Before video.")
             for chunk_id in submitted_ids:
-                tools[0].invoke({
+                _tool_map(tools)["update_video_item"].invoke({
                     "video_chunk_id": chunk_id,
                     "claim": f"Chosen {chunk_id}.",
                 })
@@ -1102,7 +1100,7 @@ def test_chat_may_choose_an_approved_subset_in_any_order(submitted_ids) -> None:
 def test_chat_tool_does_not_accept_a_playback_range() -> None:
     class RangeSubmittingChat(Chat):
         def run_agent_loop(self, prompt, *, tools, **kwargs):
-            tools[0].invoke({
+            _tool_map(tools)["update_video_item"].invoke({
                 "video_chunk_id": "chunk-1",
                 "start_ms": 1000,
                 "end_ms": 2000,
@@ -1124,16 +1122,13 @@ def test_approved_out_of_chunk_range_is_rejected_before_chat() -> None:
 
     with pytest.raises(
         AgentModelInvocationError,
-        match="Evaluator rejected the Query draft after 3 turns",
+        match="Draft Item range must be contained in canonical Evidence",
     ):
         runtime.kick(_inputs())
 
-    assert len(query.contexts) == len(evaluator.contexts) == 3
+    assert len(query.contexts) == 1
+    assert evaluator.contexts == []
     assert chat.contexts == []
-    assert query.contexts[1]["turns"][0]["review"]["action"] == "continue"
-    assert "Server range validation rejected" in (
-        query.contexts[1]["turns"][0]["review"]["advice"]
-    )
 
 
 def test_cancel_after_agent_loop_stops_before_output():
@@ -1158,8 +1153,8 @@ def test_deadline_after_a_model_call_stops_before_chat(monkeypatch):
     monkeypatch.setattr("server.agent.state.monotonic", lambda: clock[0])
 
     class SlowEvaluator(Evaluator):
-        def generate(self, inputs, *, schema_name, result_type):
-            result = super().generate(inputs, schema_name=schema_name, result_type=result_type)
+        def run_structured(self, prompt, **kwargs):
+            result = super().run_structured(prompt, **kwargs)
             clock[0] = 102.0
             return result
 
@@ -1188,25 +1183,36 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
     class ScopedQuery:
         model_name = "scoped-query"
 
-        def run_query(self, prompt, *, tools, result_type, max_model_calls, check_control=None):
+        def run_structured(
+            self, prompt, *, tools, result_type, max_model_calls,
+            check_control=None, max_input_chars=None,
+        ):
             context = json.loads(prompt.rsplit("\n\n", 1)[1])
             assert context["turns"] == []
             name = context["inputs"]["conversation_id"]
             rendezvous.wait(timeout=5)
-            result = tools[0].invoke(_retrieval_args(name, 1))
+            tools_by_name = _tool_map(tools)
+            result = _invoke_json(tools_by_name["retrieve"], _retrieval_args(name, 1))
+            video_chunk_id = result["items"][0]["video_chunk_id"]
+            _read_all(tools_by_name["read_trieve_item"], video_chunk_id)
+            tools_by_name["update_draft_tem"].invoke({
+                "video_chunk_id": video_chunk_id,
+                "start_ms": 1100,
+                "end_ms": 1900,
+                "claim": f"Evidence for {video_chunk_id}",
+            })
             return result_type.model_validate({
                 "plan_context": name, "message": name,
-                "selected_video_ranges": [{
-                    "video_chunk_id": result["hits"][0]["candidate"]["videoChunkId"],
-                    "start_ms": 1100,
-                    "end_ms": 1900,
-                }],
             })
 
     class Approve:
         model_name = "approve"
 
-        def generate(self, inputs, *, schema_name, result_type):
+        def run_structured(self, prompt, *, tools, result_type, **_kwargs):
+            tools_by_name = _tool_map(tools)
+            catalog = _invoke_json(tools_by_name["get_draft_catelog"], {})
+            for item in catalog["items"]:
+                _read_all(tools_by_name["read_draft_item"], item["video_chunk_id"])
             return result_type.model_validate({"action": "complete", "advice": "ok"})
 
     class EchoChat:
@@ -1215,16 +1221,13 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
         def run_agent_loop(
             self, prompt, *, tools, max_model_calls, handle_text,
             require_tool_call=False,
-            request_timeout_seconds=None, check_control=None,
+            request_timeout_seconds=None, check_control=None, max_input_chars=None,
         ):
             context = json.loads(prompt.rsplit("\n\n", 1)[1])
-            chunk_ids = [
-                hit["candidate"]["videoChunkId"]
-                for hit in context["approved_turn"]["selected_evidence"]["hits"]
-            ]
+            chunk_ids = context["approved_turn"]["video_chunk_ids"]
             handle_text(context["approved_turn"]["plan_context"])
             for chunk_id in chunk_ids:
-                tools[0].invoke({
+                _tool_map(tools)["update_video_item"].invoke({
                     "video_chunk_id": chunk_id,
                     "claim": f"Evidence for {chunk_id}",
                 })
@@ -1292,5 +1295,5 @@ def test_multiple_searches_may_choose_one_valid_hit_within_budget():
     result = runtime.kick(_inputs())
     assert result.agent_reply.result_count == 1
     assert result.hits[0].evidence.video_chunk_id == "chunk-2"
-    assert len(evaluator.contexts[0]["available_evidence"]["hits"]) == 2
+    assert len(evaluator.contexts[0]["retrieval_calls"]) == 2
     assert result.query == "query-1-1"

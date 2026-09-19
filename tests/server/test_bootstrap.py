@@ -164,7 +164,7 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._chat_model.model_name == expected_models[2]
         assert isinstance(
             runtime._evaluator_model,
-            bootstrap.DeepSeekStructuredTextModel,
+            bootstrap.SDKStructuredToolAgentModel,
         )
         assert runtime._query_model.provider_name == "deepseek"
         assert runtime._evaluator_model.provider_name == "deepseek"
@@ -177,12 +177,22 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._chat_model.fallback_model_name == "configured-fallback-model"
         assert runtime._query_model.max_output_tokens == 2048
         assert runtime._query_model.max_input_chars == 120_000
+        assert runtime._query_model.context_window_policy.maximum_input_tokens == 57_856
+        assert runtime._query_model.context_window_policy.auto_compact_tokens == 48_000
+        assert runtime._evaluator_model.context_window_policy is (
+            runtime._query_model.context_window_policy
+        )
+        assert runtime._chat_model.context_window_policy is (
+            runtime._query_model.context_window_policy
+        )
         assert runtime._chat_model.max_output_tokens == 2048
         assert runtime._evaluator_model.max_output_tokens == 2048
         assert runtime._max_loop_turns == 2
         assert runtime._max_model_calls == 4
         assert runtime._max_tool_calls == 2
         assert runtime._max_prompt_chars == 120_000
+        assert runtime._max_tool_result_bytes == 16_384
+        assert runtime._max_catalog_items == 20
         assert runtime._execution_timeout == 90
         assert services.agent._executor._max_workers == 2
         app = create_app(services, settings=settings)

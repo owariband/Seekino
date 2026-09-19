@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
+from copy import deepcopy
 from time import monotonic
 from typing import Any, Protocol, TypeVar
 
@@ -13,13 +14,27 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage, message_to_dict
+from langchain_core.messages import (
+    AIMessage,
+    RemoveMessage,
+    convert_to_messages,
+    convert_to_openai_messages,
+)
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from openai import APIError, OpenAI, OpenAIError
 from pydantic import BaseModel, PrivateAttr
 
 from .constants import ARK_OPENAI_BASE_URL, ARK_PROVIDER, DEEPSEEK_PROVIDER
+from .context_window import (
+    ContextCheckpoint,
+    ContextWindowController,
+    ContextWindowOverflow,
+    ContextWindowPolicy,
+    ContextWindowUpdate,
+    measure_context,
+)
 from .model_utils import deepseek_non_thinking_extra_body, log_model_fallback
 from .schema_utils import inline_schema_refs
 from .sse_proxy import ContentFilterError
@@ -30,7 +45,7 @@ _logger = logging.getLogger(__name__)
 
 
 class ModelInputTooLargeError(RuntimeError):
-    """The complete model message state exceeded an application character budget."""
+    """The complete model message state exceeded an application context budget."""
 
 
 class QueryModelIncompleteError(RuntimeError):
@@ -45,11 +60,11 @@ class MissingStructuredQueryDraftError(RuntimeError):
     """The Query loop ended without the required structured draft."""
 
 
-class QueryAgentModel(Protocol):
+class StructuredToolAgentModel(Protocol):
     provider_name: str
     model_name: str
 
-    def run_query(
+    def run_structured(
         self,
         prompt: str,
         *,
@@ -57,7 +72,14 @@ class QueryAgentModel(Protocol):
         result_type: type[_ResultModel],
         max_model_calls: int,
         check_control: Callable[[], None] | None = None,
+        max_input_chars: int | None = None,
+        context_checkpoint: ContextCheckpoint | None = None,
+        initial_messages: Sequence[dict[str, Any]] | None = None,
     ) -> _ResultModel: ...
+
+
+# Kept while callers migrate to the role-neutral protocol.
+QueryAgentModel = StructuredToolAgentModel
 
 
 class AgentLoopModel(Protocol):
@@ -74,6 +96,9 @@ class AgentLoopModel(Protocol):
         require_tool_call: bool = False,
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
+        max_input_chars: int | None = None,
+        context_checkpoint: ContextCheckpoint | None = None,
+        initial_messages: Sequence[dict[str, Any]] | None = None,
     ) -> None: ...
 
 
@@ -89,6 +114,8 @@ class DeepSeekFunctionCallingModel:
     """Run a DeepSeek tool loop with an optional in-place Ark fallback."""
 
     provider_name = DEEPSEEK_PROVIDER
+    supports_context_checkpoints = True
+    supports_context_messages = True
 
     def __init__(
         self,
@@ -99,6 +126,7 @@ class DeepSeekFunctionCallingModel:
         max_output_tokens: int,
         request_timeout_seconds: float,
         fallback_model: str | None = None,
+        context_window_policy: ContextWindowPolicy | None = None,
         client: Any | None = None,
         fallback_client: Any | None = None,
     ) -> None:
@@ -123,6 +151,7 @@ class DeepSeekFunctionCallingModel:
         self.fallback_model_name = fallback_model
         self.base_url = base_url.rstrip("/")
         self.max_output_tokens = max_output_tokens
+        self.context_window_policy = context_window_policy
         self._api_key = api_key
         self._request_timeout_seconds = request_timeout_seconds
         self._client = client
@@ -138,6 +167,9 @@ class DeepSeekFunctionCallingModel:
         require_tool_call: bool = False,
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
+        max_input_chars: int | None = None,
+        context_checkpoint: ContextCheckpoint | None = None,
+        initial_messages: Sequence[dict[str, Any]] | None = None,
     ) -> None:
         effective_timeout = min(
             self._request_timeout_seconds,
@@ -239,6 +271,10 @@ class DeepSeekFunctionCallingModel:
                 require_tool_call=require_tool_call,
                 request_timeout_seconds=effective_timeout,
                 check_control=check_control,
+                max_input_chars=max_input_chars,
+                context_window_policy=self.context_window_policy,
+                context_checkpoint=context_checkpoint,
+                initial_messages=initial_messages,
                 provider_label="Agent",
                 error_type=DeepSeekFunctionCallingError,
                 request_turn=request_turn,
@@ -279,7 +315,7 @@ class DeepSeekFunctionCallingModel:
                 tool_choice=tool_choice,
                 timeout=timeout,
             )
-            return _validated_agent_turn(
+            turn = _validated_agent_turn(
                 response,
                 tools=tools,
                 seen_tool_call_ids=seen_tool_call_ids,
@@ -288,6 +324,7 @@ class DeepSeekFunctionCallingModel:
                 require_tool_call=tool_choice == "required",
                 require_visible_text_on_stop=require_visible_text_on_stop,
             )
+            return (*turn, _response_input_tokens(response))
 
     def _create_completion(
         self,
@@ -322,6 +359,28 @@ class DeepSeekFunctionCallingModel:
             ) from error
         usage_call.capture_response(response)
         return response
+
+
+def _response_input_tokens(response: Any) -> int | None:
+    usage = (
+        response.get("usage")
+        if isinstance(response, Mapping)
+        else getattr(response, "usage", None)
+    )
+    if usage is None:
+        return None
+    value = (
+        usage.get("input_tokens", usage.get("prompt_tokens"))
+        if isinstance(usage, Mapping)
+        else getattr(
+            usage,
+            "input_tokens",
+            getattr(usage, "prompt_tokens", None),
+        )
+    )
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def _request_ark_function_turn(
@@ -370,7 +429,7 @@ def _request_ark_function_turn(
                 f"Ark request failed for model {model_name!r}"
             ) from exc
         call.capture_response(response)
-        return _validated_agent_turn(
+        turn = _validated_agent_turn(
             response,
             tools=tools,
             seen_tool_call_ids=seen_tool_call_ids,
@@ -379,12 +438,15 @@ def _request_ark_function_turn(
             require_tool_call=tool_choice == "required",
             require_visible_text_on_stop=require_visible_text_on_stop,
         )
+        return (*turn, _response_input_tokens(response))
 
 
 class ArkFunctionCallingModel:
     """Run the final bounded tool loop on Doubao Pro with per-call Lite fallback."""
 
     provider_name = ARK_PROVIDER
+    supports_context_checkpoints = True
+    supports_context_messages = True
 
     def __init__(
         self,
@@ -393,6 +455,7 @@ class ArkFunctionCallingModel:
         fallback_model: str | None,
         max_output_tokens: int,
         request_timeout_seconds: float,
+        context_window_policy: ContextWindowPolicy | None = None,
         client: Any | None = None,
     ) -> None:
         if not model.strip():
@@ -414,6 +477,7 @@ class ArkFunctionCallingModel:
             fallback_model if fallback_model != model else None
         )
         self.max_output_tokens = max_output_tokens
+        self.context_window_policy = context_window_policy
         self._request_timeout_seconds = request_timeout_seconds
         self._client = client
 
@@ -427,6 +491,9 @@ class ArkFunctionCallingModel:
         require_tool_call: bool = False,
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
+        max_input_chars: int | None = None,
+        context_checkpoint: ContextCheckpoint | None = None,
+        initial_messages: Sequence[dict[str, Any]] | None = None,
     ) -> None:
         effective_timeout = min(
             self._request_timeout_seconds,
@@ -492,6 +559,10 @@ class ArkFunctionCallingModel:
                 require_tool_call=require_tool_call,
                 request_timeout_seconds=effective_timeout,
                 check_control=check_control,
+                max_input_chars=max_input_chars,
+                context_window_policy=self.context_window_policy,
+                context_checkpoint=context_checkpoint,
+                initial_messages=initial_messages,
                 provider_label="Ark",
                 error_type=ArkFunctionCallingError,
                 request_turn=request_turn,
@@ -527,6 +598,29 @@ def _tool_output_text(output: object) -> str:
     )
 
 
+def _log_context_window_update(
+    role: str,
+    update: ContextWindowUpdate,
+) -> None:
+    _logger.info(
+        "event=agent_context_window_compacted role=%s reason=%s "
+        "window_number=%s window_id=%s previous_window_id=%s "
+        "characters_before=%s characters_after=%s "
+        "estimated_tokens_before=%s estimated_tokens_after=%s "
+        "cleared_tool_results=%s",
+        role,
+        update.reason,
+        update.window_number,
+        update.window_id,
+        update.previous_window_id,
+        update.before.characters,
+        update.after.characters,
+        update.before.estimated_tokens,
+        update.after.estimated_tokens,
+        update.cleared_tool_results,
+    )
+
+
 def _run_function_calling_loop(
     *,
     prompt: str,
@@ -536,9 +630,16 @@ def _run_function_calling_loop(
     require_tool_call: bool,
     request_timeout_seconds: float,
     check_control: Callable[[], None] | None,
+    max_input_chars: int | None,
+    context_window_policy: ContextWindowPolicy | None,
+    context_checkpoint: ContextCheckpoint | None,
+    initial_messages: Sequence[dict[str, Any]] | None,
     provider_label: str,
     error_type: type[RuntimeError],
-    request_turn: Callable[..., tuple[str, str | None, dict[str, Any], list]],
+    request_turn: Callable[
+        ...,
+        tuple[str, str | None, dict[str, Any], list, int | None],
+    ],
 ) -> None:
     if not prompt.strip():
         raise ValueError("prompt must not be empty")
@@ -559,12 +660,29 @@ def _run_function_calling_loop(
         raise ValueError("max_model_calls must be a positive integer")
     if request_timeout_seconds <= 0:
         raise ValueError("request_timeout_seconds must be greater than zero")
+    if max_input_chars is not None and (
+        isinstance(max_input_chars, bool)
+        or not isinstance(max_input_chars, int)
+        or max_input_chars <= 0
+    ):
+        raise ValueError("max_input_chars must be positive when provided")
 
     deadline = monotonic() + request_timeout_seconds
     if check_control is not None:
         check_control()
-    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+    messages: list[dict[str, Any]] = (
+        deepcopy(list(initial_messages))
+        if initial_messages is not None
+        else [{"role": "user", "content": prompt}]
+    )
+    if not messages:
+        raise ValueError("initial_messages must not be empty when provided")
     tool_specs = [_function_tool_spec(tool) for tool in tools]
+    context_window = ContextWindowController(
+        policy=context_window_policy,
+        maximum_input_characters=max_input_chars,
+        label=f"{provider_label} agent-loop",
+    )
     seen_tool_call_ids: set[str] = set()
     emitted_text = False
     submitted_tool = False
@@ -575,14 +693,38 @@ def _run_function_calling_loop(
         remaining_timeout = deadline - monotonic()
         if remaining_timeout <= 0:
             raise error_type(f"{provider_label} agent loop request deadline expired")
+        try:
+            context_update = context_window.prepare(
+                messages,
+                contract=tool_specs,
+                checkpoint=context_checkpoint,
+            )
+        except ContextWindowOverflow as exc:
+            raise ModelInputTooLargeError(str(exc)) from exc
+        if context_update.compacted:
+            messages = context_update.messages
+            _log_context_window_update(provider_label, context_update)
         tool_choice = "required" if require_tool_call and not submitted_tool else "auto"
-        finish_reason, content, assistant_message, validated_calls = request_turn(
+        (
+            finish_reason,
+            content,
+            assistant_message,
+            validated_calls,
+            provider_input_tokens,
+        ) = request_turn(
             messages,
             tool_specs,
             tool_choice,
             remaining_timeout,
             seen_tool_call_ids,
             not emitted_text,
+        )
+        context_window.record_provider_input_tokens(
+            provider_input_tokens,
+            request_estimated_tokens=measure_context(
+                messages,
+                tool_specs,
+            ).estimated_tokens,
         )
         if check_control is not None:
             check_control()
@@ -905,27 +1047,70 @@ class _ExecutionControlMiddleware(AgentMiddleware):
         self._check()
 
 
-class _InputCharacterLimitMiddleware(AgentMiddleware):
-    def __init__(self, maximum_chars: int, contract_chars: int) -> None:
-        super().__init__()
-        self._maximum_chars = maximum_chars
-        self._contract_chars = contract_chars
+class _ContextWindowMiddleware(AgentMiddleware):
+    """Apply the same replacement-window policy to LangChain Agent state."""
 
-    def before_model(self, state: Any, runtime: Any) -> None:
+    def __init__(
+        self,
+        *,
+        policy: ContextWindowPolicy | None,
+        maximum_input_characters: int | None,
+        contract: object,
+        checkpoint: ContextCheckpoint | None,
+        label: str,
+    ) -> None:
+        super().__init__()
+        self._controller = ContextWindowController(
+            policy=policy,
+            maximum_input_characters=maximum_input_characters,
+            label=label,
+        )
+        self._contract = contract
+        self._checkpoint = checkpoint
+        self._label = label
+        self._last_request_estimated_tokens: int | None = None
+
+    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         messages = state.get("messages", [])
-        payload = [
-            message_to_dict(message) if isinstance(message, BaseMessage) else message
-            for message in messages
-        ]
-        message_chars = len(json.dumps(
-            payload, ensure_ascii=False, separators=(",", ":"), default=str,
-        ))
-        total_chars = message_chars + self._contract_chars
-        if total_chars > self._maximum_chars:
-            raise ModelInputTooLargeError(
-                "Query model message character budget exceeded: "
-                f"{total_chars} > {self._maximum_chars}"
+        rendered = convert_to_openai_messages(messages)
+        payload = [rendered] if isinstance(rendered, dict) else rendered
+        try:
+            update = self._controller.prepare(
+                payload,
+                contract=self._contract,
+                checkpoint=self._checkpoint,
             )
+        except ContextWindowOverflow as exc:
+            raise ModelInputTooLargeError(str(exc)) from exc
+        self._last_request_estimated_tokens = measure_context(
+            update.messages,
+            self._contract,
+        ).estimated_tokens
+        if not update.compacted:
+            return None
+        _log_context_window_update(self._label, update)
+        replacement = convert_to_messages(update.messages)
+        return {
+            "messages": [
+                RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                *replacement,
+            ]
+        }
+
+    def after_model(self, state: Any, runtime: Any) -> None:
+        if self._last_request_estimated_tokens is None:
+            return
+        for message in reversed(state.get("messages", [])):
+            if not isinstance(message, AIMessage):
+                continue
+            usage = message.usage_metadata
+            if not isinstance(usage, Mapping):
+                return
+            self._controller.record_provider_input_tokens(
+                usage.get("input_tokens"),
+                request_estimated_tokens=self._last_request_estimated_tokens,
+            )
+            return
 
 
 def _new_query_client(
@@ -982,8 +1167,11 @@ def _build_query_chat_model(
     )
 
 
-class SDKQueryAgentModel:
-    """Let LangChain own the inner model/tool loop, with a fresh state per call."""
+class SDKStructuredToolAgentModel:
+    """Run one isolated LangChain Tool loop ending in structured output."""
+
+    supports_context_checkpoints = True
+    supports_context_messages = True
 
     def __init__(
         self,
@@ -992,6 +1180,7 @@ class SDKQueryAgentModel:
         request_timeout_seconds: float,
         max_output_tokens: int,
         max_input_chars: int | None = None,
+        context_window_policy: ContextWindowPolicy | None = None,
         fallback_model: str | None = None,
         fallback_provider: str | None = None,
         provider: str = "ark",
@@ -1034,6 +1223,7 @@ class SDKQueryAgentModel:
         self.request_timeout_seconds = request_timeout_seconds
         self.max_output_tokens = max_output_tokens
         self.max_input_chars = max_input_chars
+        self.context_window_policy = context_window_policy
         self.fallback_model_name = (
             fallback_model if fallback_model != model else None
         )
@@ -1048,7 +1238,7 @@ class SDKQueryAgentModel:
         self._fallback_client = fallback_client
         self._chat_model = chat_model
 
-    def run_query(
+    def run_structured(
         self,
         prompt: str,
         *,
@@ -1056,9 +1246,20 @@ class SDKQueryAgentModel:
         result_type: type[_ResultModel],
         max_model_calls: int,
         check_control: Callable[[], None] | None = None,
+        max_input_chars: int | None = None,
+        context_checkpoint: ContextCheckpoint | None = None,
+        initial_messages: Sequence[dict[str, Any]] | None = None,
     ) -> _ResultModel:
         if not prompt.strip() or max_model_calls <= 0:
-            raise ValueError("Query prompt and model call budget must be positive")
+            raise ValueError("Agent prompt and model call budget must be positive")
+        if initial_messages is not None and not initial_messages:
+            raise ValueError("initial_messages must not be empty when provided")
+        if max_input_chars is not None and (
+            isinstance(max_input_chars, bool)
+            or not isinstance(max_input_chars, int)
+            or max_input_chars <= 0
+        ):
+            raise ValueError("max_input_chars must be positive when provided")
         if check_control is not None:
             check_control()
         with ExitStack() as cleanup:
@@ -1118,10 +1319,21 @@ class SDKQueryAgentModel:
             ]
             if check_control is not None:
                 middleware.append(_ExecutionControlMiddleware(check_control))
-            if self.max_input_chars is not None:
-                middleware.append(_InputCharacterLimitMiddleware(
-                    self.max_input_chars,
-                    _model_contract_chars(tools, result_type),
+            effective_input_chars = (
+                min(self.max_input_chars, max_input_chars)
+                if self.max_input_chars is not None and max_input_chars is not None
+                else self.max_input_chars or max_input_chars
+            )
+            if (
+                effective_input_chars is not None
+                or self.context_window_policy is not None
+            ):
+                middleware.append(_ContextWindowMiddleware(
+                    policy=self.context_window_policy,
+                    maximum_input_characters=effective_input_chars,
+                    contract=_model_contract(tools, result_type),
+                    checkpoint=context_checkpoint,
+                    label=f"{self.provider_name}:{self.model_name}",
                 ))
             agent = create_agent(
                 model,
@@ -1130,7 +1342,13 @@ class SDKQueryAgentModel:
                 middleware=middleware,
             )
             state = agent.invoke(
-                {"messages": [{"role": "user", "content": prompt}]},
+                {
+                    "messages": (
+                        deepcopy(list(initial_messages))
+                        if initial_messages is not None
+                        else [{"role": "user", "content": prompt}]
+                    )
+                },
                 config={
                     "recursion_limit": max_model_calls * 6 + 10,
                     "max_concurrency": 1,
@@ -1139,16 +1357,44 @@ class SDKQueryAgentModel:
             result = state.get("structured_response")
             if not isinstance(result, result_type):
                 raise MissingStructuredQueryDraftError(
-                    "Query Agent ended without its structured draft"
+                    "Agent ended without its required structured result"
                 )
             return result
 
+    def run_query(
+        self,
+        prompt: str,
+        *,
+        tools: Sequence[BaseTool],
+        result_type: type[_ResultModel],
+        max_model_calls: int,
+        check_control: Callable[[], None] | None = None,
+        max_input_chars: int | None = None,
+        context_checkpoint: ContextCheckpoint | None = None,
+        initial_messages: Sequence[dict[str, Any]] | None = None,
+    ) -> _ResultModel:
+        """Compatibility entry point for callers not yet migrated."""
 
-def _model_contract_chars(
+        return self.run_structured(
+            prompt,
+            tools=tools,
+            result_type=result_type,
+            max_model_calls=max_model_calls,
+            check_control=check_control,
+            max_input_chars=max_input_chars,
+            context_checkpoint=context_checkpoint,
+            initial_messages=initial_messages,
+        )
+
+
+SDKQueryAgentModel = SDKStructuredToolAgentModel
+
+
+def _model_contract(
     tools: Sequence[BaseTool],
     result_type: type[BaseModel],
-) -> int:
-    contracts = {
+) -> dict[str, Any]:
+    return {
         "tools": [{
             "name": tool.name,
             "description": tool.description,
@@ -1156,6 +1402,3 @@ def _model_contract_chars(
         } for tool in tools],
         "structured_output": result_type.model_json_schema(),
     }
-    return len(json.dumps(
-        contracts, ensure_ascii=False, separators=(",", ":"), default=str,
-    ))

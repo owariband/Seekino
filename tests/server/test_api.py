@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import Sequence
 from io import BytesIO
@@ -230,52 +231,64 @@ class _AgentModelStub:
     model_name: str
     provider_name: str = "test"
 
-    def run_query(self, _prompt, *, tools, result_type, max_model_calls, **_kwargs):
-        tools[0].invoke({
+    def run_structured(
+        self, _prompt, *, tools, result_type, max_model_calls, **_kwargs,
+    ):
+        tools_by_name = {tool.name: tool for tool in tools}
+        if "action" in result_type.model_fields:
+            catalog = json.loads(tools_by_name["get_draft_catelog"].invoke({}))
+            for item in catalog["items"]:
+                cursor = None
+                while True:
+                    page = json.loads(tools_by_name["read_draft_item"].invoke({
+                        "video_chunk_id": item["video_chunk_id"],
+                        "cursor": cursor,
+                    }))
+                    cursor = page["next_cursor"]
+                    if cursor is None:
+                        break
+            return result_type.model_validate({
+                "action": "complete", "advice": "回答与证据一致，可以交付。",
+            })
+        tools_by_name["retrieve"].invoke({
             "query": "她为什么哭",
             "top_k": 5,
-            "channel_weights": {"transcript": 0.1, "semantic": 0.7, "visual": 0.2},
+            "channel_weights": {
+                "transcript": 0.1, "semantic": 0.7, "visual": 0.2,
+            },
         })
         return result_type.model_validate({
             "plan_context": "召回哭泣的片段并检查画面和对白。",
             "message": "没有找到可以核验的候选画面。",
-            "selected_video_ranges": [],
         })
 
     def run_agent_loop(
         self, prompt, *, tools: Sequence[BaseTool], max_model_calls, handle_text,
         require_tool_call=False,
-        request_timeout_seconds=None, check_control=None,
+        request_timeout_seconds=None, check_control=None, max_input_chars=None,
     ):
         import json
 
-        submit_video_item = next(tool for tool in tools if tool.name == "submit_video_item")
-        assert set(submit_video_item.args_schema.model_fields) == {"video_chunk_id", "claim"}
+        update_video_item = next(tool for tool in tools if tool.name == "update_video_item")
+        assert set(update_video_item.args_schema.model_fields) == {"video_chunk_id", "claim"}
         assert max_model_calls > 0
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
         context = json.loads(prompt.rsplit("\n\n", 1)[1])
         approved = context["approved_turn"]
-        hits = approved["selected_evidence"]["hits"]
-        assert require_tool_call is bool(hits)
-        if not hits:
-            handle_text(approved["draft"]["message"])
+        chunk_ids = approved["video_chunk_ids"]
+        assert require_tool_call is bool(chunk_ids)
+        if not chunk_ids:
+            handle_text(approved["message"])
             return
         handle_text("以下片段支持这个结论。")
-        for hit in hits:
+        for video_chunk_id in chunk_ids:
             check_control and check_control()
-            video_chunk_id = hit["candidate"]["videoChunkId"]
-            submit_video_item.invoke({
+            update_video_item.invoke({
                 "video_chunk_id": video_chunk_id,
-                "claim": hit["selectionReason"]["summary"],
+                "claim": f"片段 {video_chunk_id} 支持结论。",
             })
-        handle_text(approved["draft"]["message"])
-
-    def generate(self, _inputs, *, schema_name: str, result_type):
-        assert schema_name == "anivag_answer_evaluation"
-        return result_type.model_validate({
-            "action": "complete", "advice": "回答与证据一致，可以交付。",
-        })
+        handle_text(approved["message"])
 
 
 class _ParseConsumerStub:
@@ -1790,8 +1803,9 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         )
 
     class QueryWithEvidence(_AgentModelStub):
-        def run_query(self, _prompt, *, tools, result_type, **_kwargs):
-            result = tools[0].invoke({
+        def run_structured(self, _prompt, *, tools, result_type, **_kwargs):
+            tools_by_name = {tool.name: tool for tool in tools}
+            result = json.loads(tools_by_name["retrieve"].invoke({
                 "query": "找动作片段",
                 "top_k": 5,
                 "channel_weights": {
@@ -1799,18 +1813,26 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                     "semantic": 0.2,
                     "visual": 0.6,
                 },
-            })
+            }))
+            for item in result["items"]:
+                cursor = None
+                while True:
+                    page = json.loads(tools_by_name["read_trieve_item"].invoke({
+                        "video_chunk_id": item["video_chunk_id"],
+                        "cursor": cursor,
+                    }))
+                    cursor = page["next_cursor"]
+                    if cursor is None:
+                        break
+                tools_by_name["update_draft_tem"].invoke({
+                    "video_chunk_id": item["video_chunk_id"],
+                    "start_ms": item["start_ms"],
+                    "end_ms": item["end_ms"],
+                    "claim": "画面中有对应动作。",
+                })
             return result_type.model_validate({
                 "plan_context": "召回动作并检查片段来源。",
                 "message": "这些片段包含动作。",
-                "selected_video_ranges": [
-                    {
-                        "video_chunk_id": hit["evidence"]["videoChunkId"],
-                        "start_ms": hit["evidence"]["startMs"],
-                        "end_ms": hit["evidence"]["endMs"],
-                    }
-                    for hit in result["hits"]
-                ],
             })
 
     service._runtime._retrieve = joined_search
@@ -1963,7 +1985,7 @@ def test_rejected_loop_sends_failed_event_and_json_maps_harness_error(tmp_path):
 
     class RejectModel:
         model_name = "reject-model"
-        def generate(self, _inputs, *, schema_name, result_type):
+        def run_structured(self, _prompt, *, result_type, **_kwargs):
             return result_type.model_validate({"action": "continue", "advice": "需要重新找摔杯子的片段。"})
 
     runtime._evaluator_model = RejectModel()

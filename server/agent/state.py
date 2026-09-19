@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from threading import Event
 from time import monotonic
-from typing import Annotated, Literal, NotRequired, TypedDict
+from typing import Any, Annotated, Literal, NotRequired, TypedDict
 
 from pydantic import (
     BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator,
@@ -46,6 +46,10 @@ class AgentToolInvocationError(RuntimeError):
     """An injected tool failed; the application owns its cause's error mapping."""
 
 
+class AgentToolOutputError(AgentToolInvocationError):
+    """A Tool could not satisfy its bounded output contract."""
+
+
 class SelectedVideoRange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -66,6 +70,28 @@ class QueryDraft(BaseModel):
     plan_context: _Text
     message: _Text
     selected_video_ranges: list[SelectedVideoRange] = Field(max_length=100)
+
+
+class QueryCompletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_context: _Text
+    message: _Text
+
+
+class DraftItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_chunk_id: _VideoChunkId
+    start_ms: int = Field(strict=True, ge=0)
+    end_ms: int = Field(strict=True, gt=0)
+    claim: _EvidenceClaim
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> DraftItem:
+        if self.end_ms <= self.start_ms:
+            raise ValueError("end_ms must be greater than start_ms")
+        return self
 
 
 class RetrievalChannelWeights(BaseModel):
@@ -271,7 +297,13 @@ class LoopTurn:
             "plan_context": self.plan_context,
             "retrieval_calls": [call.context() for call in self.retrieval_calls],
             "evidence_source_turns": self.evidence_source_turns,
-            "query_draft": self.query_draft.model_dump(mode="json"),
+            "draft": {
+                "message": self.query_draft.message,
+                "video_chunk_ids": [
+                    item.video_chunk_id
+                    for item in self.query_draft.selected_video_ranges
+                ],
+            },
             "review": self.review.model_dump(mode="json"),
         }
 
@@ -333,6 +365,9 @@ class ModelContextBudget:
 
 class RunState(TypedDict):
     inputs: RunInputs
+    # AgentWorkspace is intentionally typed as Any here: LangGraph resolves all
+    # TypedDict hints at runtime, while workspace.py imports this module.
+    workspace: Any
     turns: list[LoopTurn]
     control: ExecutionControl
     final_output: AgentFinalOutput

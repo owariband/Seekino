@@ -8,8 +8,7 @@ from math import isfinite
 from threading import Event
 from time import monotonic
 
-from gateway.agent_model import AgentLoopModel, QueryAgentModel
-from gateway.models import StructuredAgentModel
+from gateway.agent_model import AgentLoopModel, StructuredToolAgentModel
 from langgraph.graph import END, START, StateGraph
 
 from ..schema import VideoChunkSearchResult
@@ -22,32 +21,34 @@ from .output import (
 from .query import run_query
 from .state import (
     AgentFinalOutput, AgentModelInvocationError, AnswerPhase, EvalDecision,
-    ExecutionControl, LoopTurn, ModelContextBudget, RunInputs, RunState,
+    ExecutionControl, LoopTurn, ModelContextBudget, QueryDraft, RunInputs,
+    RunState, SelectedVideoRange,
 )
-from .tools import build_retrieval_tool
+from .tools import (
+    DraftReadAudit, build_chat_tools, build_evaluator_tools, build_query_tools,
+)
+from .workspace import AgentWorkspace
 
 _logger = logging.getLogger(__name__)
 
 
 class AgentRuntime:
-    """Reusable Loop rules; every kick owns its state, scope and delivery buffer.
-
-    Deadline/cancellation checks are cooperative at model/tool/stream boundaries.
-    Blocking Provider calls also need a finite timeout on the injected model.
-    """
+    """Run isolated Query, Evaluator and Chat contexts over one per-Kick Workspace."""
 
     def __init__(
         self,
-        query_model: QueryAgentModel,
-        evaluator_model: StructuredAgentModel,
+        query_model: StructuredToolAgentModel,
+        evaluator_model: StructuredToolAgentModel,
         chat_model: AgentLoopModel,
         retrieve: Callable[..., VideoChunkSearchResult],
         *,
         max_loop_turns: int = 3,
         max_model_calls_per_turn: int = 6,
-        max_tool_calls_per_turn: int = 4,
+        max_tool_calls_per_turn: int = 24,
         maximum_top_k: int = 20,
         max_prompt_chars: int = 200_000,
+        max_tool_result_bytes: int = 16_384,
+        max_catalog_items_per_page: int = 20,
         execution_timeout_seconds: float = 180,
     ) -> None:
         for name, value, maximum in [
@@ -56,13 +57,28 @@ class AgentRuntime:
             ("max_tool_calls_per_turn", max_tool_calls_per_turn, None),
             ("maximum_top_k", maximum_top_k, 100),
             ("max_prompt_chars", max_prompt_chars, None),
+            ("max_tool_result_bytes", max_tool_result_bytes, None),
+            ("max_catalog_items_per_page", max_catalog_items_per_page, 100),
         ]:
-            if (isinstance(value, bool) or not isinstance(value, int) or value < 1
-                or (maximum is not None and value > maximum)):
-                bounds = f"between 1 and {maximum}" if maximum is not None else "a positive integer"
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 1
+                or (maximum is not None and value > maximum)
+            ):
+                bounds = (
+                    f"between 1 and {maximum}"
+                    if maximum is not None
+                    else "a positive integer"
+                )
                 raise ValueError(f"{name} must be {bounds}")
-        if (isinstance(execution_timeout_seconds, bool)
-            or not isfinite(execution_timeout_seconds) or execution_timeout_seconds <= 0):
+        if max_tool_result_bytes < 512:
+            raise ValueError("max_tool_result_bytes must be at least 512")
+        if (
+            isinstance(execution_timeout_seconds, bool)
+            or not isfinite(execution_timeout_seconds)
+            or execution_timeout_seconds <= 0
+        ):
             raise ValueError("execution_timeout_seconds must be positive and finite")
         self._query_model = query_model
         self._evaluator_model = evaluator_model
@@ -73,13 +89,17 @@ class AgentRuntime:
         self._max_tool_calls = max_tool_calls_per_turn
         self._maximum_top_k = maximum_top_k
         self._max_prompt_chars = max_prompt_chars
+        self._max_tool_result_bytes = max_tool_result_bytes
+        self._max_catalog_items = max_catalog_items_per_page
         self._execution_timeout = execution_timeout_seconds
         builder = StateGraph(RunState)
         builder.add_node("turn", self.turn)
         builder.add_node("chat", self._chat)
         builder.add_node("output", self._output)
         builder.add_edge(START, "turn")
-        builder.add_conditional_edges("turn", self._route, {"continue": "turn", "complete": "chat"})
+        builder.add_conditional_edges(
+            "turn", self._route, {"continue": "turn", "complete": "chat"},
+        )
         builder.add_edge("chat", "output")
         builder.add_edge("output", END)
         self._graph = builder.compile()
@@ -89,9 +109,14 @@ class AgentRuntime:
         return self._chat_model.model_name
 
     def close(self) -> None:
-        close_evaluator = getattr(self._evaluator_model, "close", None)
-        if callable(close_evaluator):
-            close_evaluator()
+        closed: set[int] = set()
+        for model in (self._query_model, self._evaluator_model, self._chat_model):
+            if id(model) in closed:
+                continue
+            closed.add(id(model))
+            close_model = getattr(model, "close", None)
+            if callable(close_model):
+                close_model()
 
     def kick(
         self,
@@ -100,58 +125,146 @@ class AgentRuntime:
         emit: Callable[[dict], None] | None = None,
         cancellation: Event | None = None,
     ) -> AgentFinalOutput:
-        if (not inputs["workspace_id"].strip() or not inputs["user_message"].strip()
-            or not inputs["series_ids"] or any(not value.strip() for value in inputs["series_ids"])):
+        if (
+            not inputs["workspace_id"].strip()
+            or not inputs["user_message"].strip()
+            or not inputs["series_ids"]
+            or any(not value.strip() for value in inputs["series_ids"])
+        ):
             raise ValueError("Kick requires user input and fixed workspace / Series scope")
         top_k = inputs["requested_top_k"]
-        if isinstance(top_k, bool) or not isinstance(top_k, int) or not 1 <= top_k <= 100:
+        if (
+            isinstance(top_k, bool)
+            or not isinstance(top_k, int)
+            or not 1 <= top_k <= 100
+        ):
             raise ValueError("requested_top_k must be between 1 and 100")
-        control = ExecutionControl(monotonic() + self._execution_timeout, cancellation, emit)
+        control = ExecutionControl(
+            monotonic() + self._execution_timeout, cancellation, emit,
+        )
+        workspace = AgentWorkspace(
+            workspace_id=inputs["workspace_id"],
+            series_ids=tuple(inputs["series_ids"]),
+        )
         control.check()
         result = self._graph.invoke(
-            {"inputs": deepcopy(inputs), "turns": [], "control": control},
+            {
+                "inputs": deepcopy(inputs),
+                "workspace": workspace,
+                "turns": [],
+                "control": control,
+            },
             config={"recursion_limit": self._max_loop_turns + 5},
         )
         control.check()
         return result["final_output"]
 
     def turn(self, state: RunState) -> dict:
-        control, inputs, previous = state["control"], state["inputs"], state["turns"]
+        control = state["control"]
+        inputs = state["inputs"]
+        workspace = state["workspace"]
+        previous = state["turns"]
         control.check()
         if len(previous) >= self._max_loop_turns:
-            raise AgentModelInvocationError("Query / Evaluator loop-turn budget exceeded")
-        control.publish(inputs, {"type": "answer.progress", "phase": AnswerPhase.RETRIEVING})
+            raise AgentModelInvocationError(
+                "Query / Evaluator loop-turn budget exceeded"
+            )
+        control.publish(inputs, {
+            "type": "answer.progress",
+            "phase": AnswerPhase.RETRIEVING,
+        })
         calls = []
         context_budget = ModelContextBudget(self._max_prompt_chars)
-        previously_returned_video_chunk_ids = {
-            hit.candidate.video_chunk_id
-            for turn in previous
-            for hit in turn.retrieval_result.hits
-        }
-        tool = build_retrieval_tool(
-            self._retrieve, inputs=inputs, control=control, calls=calls,
-            maximum_top_k=self._maximum_top_k, max_tool_calls=self._max_tool_calls,
-            context_budget=context_budget,
-            previously_returned_video_chunk_ids=(
-                previously_returned_video_chunk_ids
-            ),
+        query_tools = build_query_tools(
+            self._retrieve,
+            workspace=workspace,
+            inputs=inputs,
+            control=control,
+            calls=calls,
+            maximum_top_k=self._maximum_top_k,
+            maximum_tool_calls=self._max_tool_calls,
+            maximum_result_bytes=self._max_tool_result_bytes,
+            maximum_catalog_items=self._max_catalog_items,
         )
         selection_limit = min(inputs["requested_top_k"], self._maximum_top_k)
-        draft = run_query(
-            self._query_model, inputs, previous,
-            tools=[tool], max_model_calls=self._max_model_calls, control=control,
-            selection_limit=selection_limit, context_budget=context_budget,
+        completion = run_query(
+            self._query_model,
+            inputs,
+            previous,
+            tools=query_tools,
+            max_model_calls=self._max_model_calls,
+            control=control,
+            selection_limit=selection_limit,
+            context_budget=context_budget,
+            workspace=workspace,
         )
         control.check()
+        draft_items = workspace.draft_items()
+        if len(draft_items) > selection_limit:
+            raise AgentModelInvocationError(
+                "Query draft exceeds the final selected-hit budget"
+            )
+        draft = QueryDraft(
+            plan_context=completion.plan_context,
+            message=completion.message,
+            selected_video_ranges=[
+                SelectedVideoRange(
+                    video_chunk_id=item.video_chunk_id,
+                    start_ms=item.start_ms,
+                    end_ms=item.end_ms,
+                )
+                for item in draft_items
+            ],
+        )
         available, selected, sources = bind_draft(
-            inputs, previous, calls, draft, max_selected_hits=selection_limit,
+            inputs,
+            previous,
+            calls,
+            draft,
+            max_selected_hits=selection_limit,
         )
-        control.publish(inputs, {"type": "answer.progress", "phase": AnswerPhase.EVALUATING})
+
+        control.publish(inputs, {
+            "type": "answer.progress",
+            "phase": AnswerPhase.EVALUATING,
+        })
+        audit = DraftReadAudit()
+        evaluator_tools = build_evaluator_tools(
+            self._retrieve,
+            workspace=workspace,
+            inputs=inputs,
+            control=control,
+            calls=calls,
+            maximum_top_k=self._maximum_top_k,
+            maximum_tool_calls=self._max_tool_calls,
+            maximum_result_bytes=self._max_tool_result_bytes,
+            maximum_catalog_items=self._max_catalog_items,
+            audit=audit,
+        )
         review = evaluate(
-            self._evaluator_model, inputs, previous, draft, available, calls, sources,
-            self._max_prompt_chars,
+            self._evaluator_model,
+            inputs,
+            previous,
+            draft,
+            calls,
+            sources,
+            tools=evaluator_tools,
+            max_model_calls=self._max_model_calls,
+            control=control,
+            max_prompt_chars=self._max_prompt_chars,
+            workspace=workspace,
         )
         control.check()
+        if review.action == "complete" and not audit.covers(
+            item.video_chunk_id for item in draft_items
+        ):
+            review = EvalDecision(
+                action="continue",
+                advice=(
+                    "Evaluator must read the complete Draft catalog and every Draft "
+                    "item before approval. Repeat the audit using the read Tools."
+                ),
+            )
         if review.action == "complete":
             try:
                 validate_approved_video_ranges(selected, draft)
@@ -160,21 +273,33 @@ class AgentRuntime:
                     action="continue",
                     advice=(
                         "Server range validation rejected the approved draft: "
-                        f"{exc}. Revise selected_video_ranges before resubmitting."
+                        f"{exc}. Revise the Draft Item ranges before resubmitting."
                     ),
                 )
+        if review.action == "complete":
+            workspace.approve_draft()
+
         current = LoopTurn(
-            number=len(previous) + 1, plan_context=draft.plan_context,
-            retrieval_calls=tuple(calls), retrieval_result=available,
-            evidence_source_turns=sources, query_draft=draft, draft_output=selected,
-            review=review, status=review.action,
+            number=len(previous) + 1,
+            plan_context=draft.plan_context,
+            retrieval_calls=tuple(calls),
+            retrieval_result=available,
+            evidence_source_turns=sources,
+            query_draft=draft,
+            draft_output=selected,
+            review=review,
+            status=review.action,
         )
         _logger.info(
             "event=agent_turn_evaluated conversation_id=%s message_id=%s "
             "turn_number=%s retrieved_hit_count=%s selected_hit_count=%s "
             "review_action=%s",
-            inputs["conversation_id"], inputs["assistant_message_id"],
-            current.number, len(available.hits), len(selected.hits), review.action,
+            inputs["conversation_id"],
+            inputs["assistant_message_id"],
+            current.number,
+            len(available.hits),
+            len(selected.hits),
+            review.action,
         )
         if review.action == "continue" and current.number >= self._max_loop_turns:
             raise AgentModelInvocationError(
@@ -188,13 +313,28 @@ class AgentRuntime:
 
     def _chat(self, state: RunState) -> dict:
         current = state["turns"][-1]
-        state["control"].publish(state["inputs"], {
-            "type": "answer.progress", "phase": AnswerPhase.RESPONDING,
+        control = state["control"]
+        control.publish(state["inputs"], {
+            "type": "answer.progress",
+            "phase": AnswerPhase.RESPONDING,
         })
+        chat_tools = build_chat_tools(
+            workspace=state["workspace"],
+            control=control,
+            maximum_tool_calls=self._max_tool_calls,
+            maximum_result_bytes=self._max_tool_result_bytes,
+            maximum_catalog_items=self._max_catalog_items,
+        )
         rendered = render_chat(
-            self._chat_model, state["inputs"], current, state["control"],
-            self._max_prompt_chars, self._max_model_calls,
-            build_retrieval_trace(state["turns"]),
+            self._chat_model,
+            state["inputs"],
+            current,
+            state["workspace"],
+            tools=chat_tools,
+            control=control,
+            max_prompt_chars=self._max_prompt_chars,
+            max_model_calls=self._max_model_calls,
+            retrieval_trace=build_retrieval_trace(state["turns"]),
         )
         return {
             "turns": [

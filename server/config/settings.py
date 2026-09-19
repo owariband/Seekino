@@ -236,6 +236,30 @@ class ServerSettings:
                 max_prompt_chars=_environment_int(
                     "ANIVAG_AGENT_MAX_PROMPT_CHARS", agent_defaults.max_prompt_chars,
                 ),
+                context_window_tokens=_environment_int(
+                    "ANIVAG_AGENT_CONTEXT_WINDOW_TOKENS",
+                    agent_defaults.context_window_tokens,
+                ),
+                context_safety_margin_tokens=_environment_int(
+                    "ANIVAG_AGENT_CONTEXT_SAFETY_MARGIN_TOKENS",
+                    agent_defaults.context_safety_margin_tokens,
+                ),
+                auto_compact_tokens=_environment_int(
+                    "ANIVAG_AGENT_AUTO_COMPACT_TOKENS",
+                    agent_defaults.auto_compact_tokens,
+                ),
+                compact_target_tokens=_environment_int(
+                    "ANIVAG_AGENT_COMPACT_TARGET_TOKENS",
+                    agent_defaults.compact_target_tokens,
+                ),
+                max_tool_result_bytes=_environment_int(
+                    "ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES",
+                    agent_defaults.max_tool_result_bytes,
+                ),
+                max_catalog_items_per_page=_environment_int(
+                    "ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE",
+                    agent_defaults.max_catalog_items_per_page,
+                ),
                 execution_timeout_seconds=_environment_float(
                     "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS",
                     agent_defaults.execution_timeout_seconds,

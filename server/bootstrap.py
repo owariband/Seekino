@@ -8,9 +8,11 @@ from typing import Any
 from arkruntime import Ark
 from engine.parse.runtime import EngineVideoParseRuntime
 from gateway.config import load_config
-from gateway.agent_model import DeepSeekFunctionCallingModel, SDKQueryAgentModel
+from gateway.agent_model import (
+    DeepSeekFunctionCallingModel, SDKStructuredToolAgentModel,
+)
 from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
-from gateway.models import ArkMultimodalModel, DeepSeekStructuredTextModel
+from gateway.context_window import ContextWindowPolicy
 from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
 from gateway.schemas import EmbeddingResult
 from qdrant_client import QdrantClient
@@ -173,13 +175,15 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         settings.agent.max_output_tokens,
         agent_model_config.max_output_tokens,
     )
-    evaluator_fallback = ArkMultimodalModel(
-        model=fallback_agent_model,
-        request_timeout_seconds=request_timeout,
-        max_output_tokens=max_output_tokens,
+    context_window_policy = ContextWindowPolicy(
+        context_window_tokens=settings.agent.context_window_tokens,
+        output_reserve_tokens=max_output_tokens,
+        safety_margin_tokens=settings.agent.context_safety_margin_tokens,
+        auto_compact_tokens=settings.agent.auto_compact_tokens,
+        compact_target_tokens=settings.agent.compact_target_tokens,
     )
     runtime = AgentRuntime(
-        SDKQueryAgentModel(
+        SDKStructuredToolAgentModel(
             model=query_model_name,
             provider=DEEPSEEK_PROVIDER,
             base_url=agent_model_config.base_url,
@@ -187,16 +191,21 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             request_timeout_seconds=request_timeout,
             max_output_tokens=max_output_tokens,
             max_input_chars=settings.agent.max_prompt_chars,
+            context_window_policy=context_window_policy,
             fallback_model=fallback_agent_model,
             fallback_provider=ARK_PROVIDER,
         ),
-        DeepSeekStructuredTextModel(
+        SDKStructuredToolAgentModel(
             model=evaluator_model_name,
+            provider=DEEPSEEK_PROVIDER,
             base_url=agent_model_config.base_url,
             api_key=agent_api_key,
             request_timeout_seconds=request_timeout,
             max_output_tokens=max_output_tokens,
-            fallback_model=evaluator_fallback,
+            max_input_chars=settings.agent.max_prompt_chars,
+            context_window_policy=context_window_policy,
+            fallback_model=fallback_agent_model,
+            fallback_provider=ARK_PROVIDER,
         ),
         DeepSeekFunctionCallingModel(
             model=chat_model_name,
@@ -205,6 +214,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             fallback_model=fallback_agent_model,
             request_timeout_seconds=request_timeout,
             max_output_tokens=max_output_tokens,
+            context_window_policy=context_window_policy,
         ),
         retrieval.search,
         max_loop_turns=settings.agent.max_loop_turns,
@@ -212,6 +222,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         max_tool_calls_per_turn=settings.agent.max_tool_calls_per_turn,
         maximum_top_k=settings.agent.maximum_top_k,
         max_prompt_chars=settings.agent.max_prompt_chars,
+        max_tool_result_bytes=settings.agent.max_tool_result_bytes,
+        max_catalog_items_per_page=settings.agent.max_catalog_items_per_page,
         execution_timeout_seconds=settings.agent.execution_timeout_seconds,
     )
     agent = AgentChatService(

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Collection
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..schema import VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
 
 if TYPE_CHECKING:
     from .state import RunInputs
+    from .workspace import AgentWorkspace
+
+
+_MAX_CHECKPOINT_RETRIEVAL_IDS = 200
 
 
 _EVIDENCE_FIELDS = (
@@ -35,6 +39,62 @@ _EVIDENCE_ALIASES = tuple(
     for name, field in VideoChunkEvidence.model_fields.items()
     if name in _EVIDENCE_FIELDS
 )
+
+
+def build_workspace_checkpoint(
+    workspace: AgentWorkspace,
+    *,
+    role: Literal["query", "evaluator", "chat"],
+) -> dict[str, Any]:
+    """Project bounded canonical state when the Harness installs a new window."""
+
+    retrieval_ids = workspace.retrieval_item_ids()
+    visible_retrieval_ids = retrieval_ids[-_MAX_CHECKPOINT_RETRIEVAL_IDS:]
+    approved = role == "chat"
+    draft_items = workspace.draft_items(approved=approved)
+    checkpoint: dict[str, Any] = {
+        "schema": "anivag.agent-workspace-checkpoint.v1",
+        "role": role,
+        "workspace_id": workspace.workspace_id,
+        "series_ids": list(workspace.series_ids),
+        "retrieval_catalog": {
+            "item_count": len(retrieval_ids),
+            "visible_video_chunk_ids": list(visible_retrieval_ids),
+            "omitted_item_count": len(retrieval_ids) - len(visible_retrieval_ids),
+        },
+        "draft_catalog": [
+            {
+                "video_chunk_id": item.video_chunk_id,
+                "start_ms": item.start_ms,
+                "end_ms": item.end_ms,
+            }
+            for item in draft_items
+        ],
+        "recovery": (
+            "Treat IDs and counts as navigation metadata only. Use the registered "
+            "Catalog/Read Tools for exact Evidence or Draft content."
+        ),
+    }
+    if role == "chat":
+        blocks = workspace.render_blocks()
+        checkpoint["render_draft"] = {
+            "block_count": len(blocks),
+            "blocks": [
+                (
+                    {
+                        "type": "video",
+                        "video_chunk_id": getattr(block, "video_chunk_id"),
+                    }
+                    if getattr(block, "type", None) == "video"
+                    else {
+                        "type": "markdown",
+                        "character_count": len(getattr(block, "markdown", "")),
+                    }
+                )
+                for block in blocks
+            ],
+        }
+    return checkpoint
 
 
 def project_inputs(

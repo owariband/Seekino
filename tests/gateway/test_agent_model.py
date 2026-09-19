@@ -131,6 +131,7 @@ def _run_agent(
     require_tool_call: bool = False,
     request_timeout_seconds: float | None = None,
     check_control=None,
+    max_input_chars: int | None = None,
 ) -> None:
     def submit_video_item(video_chunk_id: str, claim: str) -> str:
         return invoke_tool(VideoItem(
@@ -152,7 +153,31 @@ def _run_agent(
         require_tool_call=require_tool_call,
         request_timeout_seconds=request_timeout_seconds,
         check_control=check_control,
+        max_input_chars=max_input_chars,
     )
+
+
+def test_function_loop_releases_oversized_tool_result_before_next_request() -> None:
+    model, completions = _function_model(
+        _agent_response(
+            calls=[_tool_call(_video_item())],
+            finish_reason="tool_calls",
+        ),
+        _agent_response("回答"),
+    )
+
+    _run_agent(
+        model,
+        invoke_tool=lambda _item: "x" * 20_000,
+        max_input_chars=10_000,
+    )
+
+    assert len(completions.calls) == 2
+    second_messages = completions.calls[1]["messages"]
+    assert "anivag_context_checkpoint" in second_messages[1]["content"]
+    released = json.loads(second_messages[-1]["content"])
+    assert released["context_window"] == "tool_result_released"
+    assert released["original_bytes"] == 20_000
 
 
 def test_deepseek_agent_loop_preserves_text_and_tool_order_across_turns() -> None:
@@ -1530,7 +1555,7 @@ def test_sdk_query_stops_after_lite_also_omits_required_tool() -> None:
     client.close()
 
 
-def test_sdk_query_checks_complete_messages_before_second_model_request() -> None:
+def test_sdk_query_compacts_complete_messages_before_second_model_request() -> None:
     requests = []
     searches = []
     large_query = "下雨场景" + "x" * 3_000
@@ -1540,7 +1565,25 @@ def test_sdk_query_checks_complete_messages_before_second_model_request() -> Non
         return {"query": query, "hits": []}
 
     def respond(request: httpx.Request) -> httpx.Response:
-        requests.append(json.loads(request.content))
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if len(requests) == 2:
+            tool_messages = [
+                message
+                for message in payload["messages"]
+                if message["role"] == "tool"
+            ]
+            assert json.loads(tool_messages[-1]["content"])[
+                "context_window"
+            ] == "tool_result_released"
+            return httpx.Response(200, json=_completion(
+                "QueryDraft",
+                {
+                    "plan_context": "已完成有界检索",
+                    "message": "未找到候选",
+                    "selected_video_chunk_ids": [],
+                },
+            ))
         return httpx.Response(
             200,
             json=_completion("search_video_chunk_evidence", {"query": large_query}),
@@ -1555,12 +1598,12 @@ def test_sdk_query_checks_complete_messages_before_second_model_request() -> Non
         max_input_chars=5_000, client=client,
     )
 
-    with pytest.raises(ModelInputTooLargeError, match="message character budget"):
-        model.run_query(
-            "检索", tools=[_tool(retrieve)], result_type=QueryDraft, max_model_calls=3,
-        )
+    result = model.run_query(
+        "检索", tools=[_tool(retrieve)], result_type=QueryDraft, max_model_calls=3,
+    )
 
-    assert len(requests) == 1
+    assert result.selected_video_chunk_ids == []
+    assert len(requests) == 2
     assert searches == [large_query]
     client.close()
 

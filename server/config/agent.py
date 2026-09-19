@@ -11,9 +11,15 @@ class AgentServiceConfig:
     maximum_top_k: int = 20
     max_loop_turns: int = 3
     max_model_calls_per_turn: int = 6
-    max_tool_calls_per_turn: int = 4
+    max_tool_calls_per_turn: int = 24
     max_output_tokens: int = 4096
     max_prompt_chars: int = 200_000
+    context_window_tokens: int = 64_000
+    context_safety_margin_tokens: int = 4_096
+    auto_compact_tokens: int = 48_000
+    compact_target_tokens: int = 24_000
+    max_tool_result_bytes: int = 16_384
+    max_catalog_items_per_page: int = 20
     # Covers up to three Query/Evaluator turns plus final Chat. Individual
     # Provider requests keep their own, shorter timeout.
     execution_timeout_seconds: float = 600
@@ -32,10 +38,35 @@ class AgentServiceConfig:
             raise ValueError("max_loop_turns must be between 1 and 3")
         for name in (
             "max_model_calls_per_turn", "max_tool_calls_per_turn",
-            "max_output_tokens", "max_prompt_chars", "maximum_concurrent_kicks",
+            "max_output_tokens", "max_prompt_chars", "max_tool_result_bytes",
+            "context_window_tokens", "context_safety_margin_tokens",
+            "auto_compact_tokens", "compact_target_tokens",
+            "max_catalog_items_per_page", "maximum_concurrent_kicks",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be greater than zero")
+        if self.max_tool_result_bytes < 512:
+            raise ValueError("max_tool_result_bytes must be at least 512")
+        if self.max_catalog_items_per_page > 100:
+            raise ValueError("max_catalog_items_per_page must not exceed 100")
+        maximum_input_tokens = (
+            self.context_window_tokens
+            - self.max_output_tokens
+            - self.context_safety_margin_tokens
+        )
+        if maximum_input_tokens <= 0:
+            raise ValueError(
+                "context_window_tokens must exceed max_output_tokens and "
+                "context_safety_margin_tokens"
+            )
+        if self.auto_compact_tokens > maximum_input_tokens:
+            raise ValueError(
+                "auto_compact_tokens must not exceed the maximum input budget"
+            )
+        if self.compact_target_tokens >= self.auto_compact_tokens:
+            raise ValueError(
+                "compact_target_tokens must be lower than auto_compact_tokens"
+            )
         if (
             not math.isfinite(self.execution_timeout_seconds)
             or self.execution_timeout_seconds <= 0
