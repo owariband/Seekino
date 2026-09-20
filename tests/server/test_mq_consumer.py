@@ -12,7 +12,6 @@ from server.model.video import SeriesRecord, VideoRecord
 from server.mq.consumer import ParseJobConsumer
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.job import ParseJobRepository
-from server.repository.job_timing import ParseJobTimingRepository
 from server.utils.time import now_unix_time_ms, timedelta_to_ms
 
 
@@ -128,8 +127,6 @@ def test_consumer_claims_and_completes_one_job(repository) -> None:
 
 def test_consumer_persists_monotonic_processing_duration(repository) -> None:
     jobs, queue, job_id, now = _seed(repository)
-    engine, _video_repository = repository
-    timing = ParseJobTimingRepository(create_session_factory(engine))
     readings = iter((1_000_000_000, 1_321_000_000))
     consumer = ParseJobConsumer(
         queue,
@@ -145,8 +142,10 @@ def test_consumer_persists_monotonic_processing_duration(repository) -> None:
 
     assert consumer.run_once()
 
-    assert jobs.get(job_id).status == ParseJobStatus.SUCCEEDED.value
-    assert timing.totals(job_id) == (321, True)
+    job = jobs.get(job_id)
+    assert job.status == ParseJobStatus.SUCCEEDED.value
+    assert job.processing_duration_ms == 321
+    assert job.processing_timing_complete is True
 
 
 def test_consumer_retries_with_a_new_lease_version(repository) -> None:

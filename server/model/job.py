@@ -4,6 +4,7 @@ from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     ForeignKey,
     Index,
@@ -82,6 +83,10 @@ class SeriesParseJobRecord(TimestampedRecord, Base):
             "lease_version >= 0",
             name="ck_series_parse_job_lease_version",
         ),
+        CheckConstraint(
+            "processing_duration_ms >= 0",
+            name="ck_series_parse_job_processing_duration",
+        ),
         CheckConstraint("version >= 1", name="ck_series_parse_job_version"),
         Index("ix_series_parse_job_due", "status", "available_at"),
         MYSQL_TABLE_OPTIONS,
@@ -116,6 +121,16 @@ class SeriesParseJobRecord(TimestampedRecord, Base):
     heartbeat_at: Mapped[int | None] = mapped_column(BigInteger)
     started_at: Mapped[int | None] = mapped_column(BigInteger)
     completed_at: Mapped[int | None] = mapped_column(BigInteger)
+    processing_duration_ms: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+    processing_timing_complete: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
 
 

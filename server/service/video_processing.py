@@ -7,7 +7,7 @@ import os
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import nullcontext
 from contextvars import copy_context
 from pathlib import Path
 from threading import Condition, Event
@@ -45,7 +45,6 @@ from ..identity import derive_video_chunk_id
 from ..model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
 from ..model.dto.parseDTO import PreparedEmbedding
 from ..model.job import ParseJobStage, VideoChunkCheckpointStage
-from ..model.job_timing import VideoChunkTimingStage
 from ..mq.contracts import ParseJobLeaseLostError
 from ..repository.job import ParseJobRepository
 from ..repository.video import VideoRepository
@@ -55,7 +54,6 @@ from ..utils.files import write_json_once
 from .index_sync import IndexSyncService
 from .parse_import import prepare_completed_video_parse_import
 from .parse_usage import ParseUsageService
-from .parse_timing import ParseChunkStageTimer
 
 
 class MultimodalEmbedder(Protocol):
@@ -97,7 +95,6 @@ class VideoProcessingService:
         *,
         config: VideoProcessingConfig | None = None,
         parse_usage: ParseUsageService | None = None,
-        stage_timer: ParseChunkStageTimer | None = None,
     ) -> None:
         self._jobs = jobs
         self._videos = videos
@@ -107,7 +104,6 @@ class VideoProcessingService:
         self._embedder = embedder
         self._config = config or VideoProcessingConfig()
         self._parse_usage = parse_usage
-        self._stage_timer = stage_timer
 
     def process(self, lease: ParseJobLease) -> list[str]:
         capture = (
@@ -117,22 +113,6 @@ class VideoProcessingService:
         )
         with capture:
             return self._process(lease)
-
-    def _measure_stage(
-        self,
-        lease: ParseJobLease,
-        sequence_no: int,
-        stage: VideoChunkTimingStage,
-    ) -> AbstractContextManager[None]:
-        """Use a no-op context in unit/legacy deployments without timing."""
-
-        if self._stage_timer is None:
-            return nullcontext()
-        return self._stage_timer.measure(
-            lease,
-            sequence_no=sequence_no,
-            stage=stage,
-        )
 
     def _process(self, lease: ParseJobLease) -> list[str]:
         source_video = self._verified_source(lease)
@@ -179,84 +159,79 @@ class VideoProcessingService:
             f"{lease.job_id}-lease-{lease.lease_version:08d}"
         )
         # Validate the full planned topology before single-item materializers
-        # are used for accurate segment timing.
+        # are used.
         if [window.sequence_no for window in windows] != list(range(len(windows))):
             raise RuntimeError("analysis windows must have contiguous sequence numbers")
         for window in windows:
             sequence_no = window.sequence_no
-            with self._measure_stage(lease, sequence_no, VideoChunkTimingStage.SPLIT):
-                materialize_analysis_window(
-                    window,
-                    max_height=self._config.analysis_max_height,
+            materialize_analysis_window(
+                window,
+                max_height=self._config.analysis_max_height,
+            )
+            canonical_path = materialize_canonical_chunk(
+                window,
+                output_dir=attempt_directory / "canonical-chunks",
+                max_height=self._config.canonical_max_height,
+            )
+            self._jobs.assert_current_lease(lease)
+            [(relative_at_ms, keyframe_path)] = extract_video_frames(
+                canonical_path,
+                [0],
+                output_dir=(
+                    attempt_directory
+                    / "keyframes"
+                    / f"chunk-{sequence_no:04d}"
+                ),
+                max_height=self._config.canonical_max_height,
+            )
+            if not (
+                0
+                <= relative_at_ms
+                < window.chunk_end_ms - window.chunk_start_ms
+            ):
+                raise RuntimeError(
+                    "canonical keyframe position is outside its VideoChunk"
                 )
-                canonical_path = materialize_canonical_chunk(
-                    window,
-                    output_dir=attempt_directory / "canonical-chunks",
-                    max_height=self._config.canonical_max_height,
-                )
-                self._jobs.assert_current_lease(lease)
-                [(relative_at_ms, keyframe_path)] = extract_video_frames(
-                    canonical_path,
-                    [0],
-                    output_dir=(
-                        attempt_directory
-                        / "keyframes"
-                        / f"chunk-{sequence_no:04d}"
-                    ),
-                    max_height=self._config.canonical_max_height,
-                )
-                if not (
-                    0
-                    <= relative_at_ms
-                    < window.chunk_end_ms - window.chunk_start_ms
-                ):
-                    raise RuntimeError(
-                        "canonical keyframe position is outside its VideoChunk"
-                    )
-                chunk_artifact = self._artifacts.publish_video_artifact(
-                    canonical_path,
-                    series_id=lease.series_id,
-                    video_id=lease.video_id,
-                    category="chunks",
-                    filename=(
-                        f"{published_filename_prefix}-{canonical_path.name}"
-                    ),
-                )
-                analysis_artifact = self._artifacts.publish_video_artifact(
-                    window.media_path,
-                    series_id=lease.series_id,
-                    video_id=lease.video_id,
-                    category="analysis-windows",
-                    filename=(
-                        f"{published_filename_prefix}-{window.media_path.name}"
-                    ),
-                )
-                keyframe_artifact = self._artifacts.publish_video_artifact(
-                    keyframe_path,
-                    series_id=lease.series_id,
-                    video_id=lease.video_id,
-                    category="keyframes",
-                    filename=(
-                        f"{published_filename_prefix}-chunk-{sequence_no:04d}-"
-                        f"{keyframe_path.name}"
-                    ),
-                )
-                chunk_media_refs[sequence_no] = chunk_artifact.uri
-                analysis_media_refs[sequence_no] = analysis_artifact.uri
-                keyframes_by_sequence[sequence_no] = (
-                    VideoChunkKeyframeReference(
-                        uri=keyframe_artifact.uri,
-                        at_ms=window.chunk_start_ms + relative_at_ms,
-                    ),
-                )
-                checkpoints[sequence_no] = self._save_checkpoint(
-                    lease,
-                    checkpoints.get(sequence_no),
-                    requested_stage=VideoChunkCheckpointStage.SPLIT_READY,
-                    sequence_no=sequence_no,
-                    chunk_media_uri=chunk_artifact.uri,
-                    analysis_window_media_uri=analysis_artifact.uri,
-                )
+            chunk_artifact = self._artifacts.publish_video_artifact(
+                canonical_path,
+                series_id=lease.series_id,
+                video_id=lease.video_id,
+                category="chunks",
+                filename=f"{published_filename_prefix}-{canonical_path.name}",
+            )
+            analysis_artifact = self._artifacts.publish_video_artifact(
+                window.media_path,
+                series_id=lease.series_id,
+                video_id=lease.video_id,
+                category="analysis-windows",
+                filename=f"{published_filename_prefix}-{window.media_path.name}",
+            )
+            keyframe_artifact = self._artifacts.publish_video_artifact(
+                keyframe_path,
+                series_id=lease.series_id,
+                video_id=lease.video_id,
+                category="keyframes",
+                filename=(
+                    f"{published_filename_prefix}-chunk-{sequence_no:04d}-"
+                    f"{keyframe_path.name}"
+                ),
+            )
+            chunk_media_refs[sequence_no] = chunk_artifact.uri
+            analysis_media_refs[sequence_no] = analysis_artifact.uri
+            keyframes_by_sequence[sequence_no] = (
+                VideoChunkKeyframeReference(
+                    uri=keyframe_artifact.uri,
+                    at_ms=window.chunk_start_ms + relative_at_ms,
+                ),
+            )
+            checkpoints[sequence_no] = self._save_checkpoint(
+                lease,
+                checkpoints.get(sequence_no),
+                requested_stage=VideoChunkCheckpointStage.SPLIT_READY,
+                sequence_no=sequence_no,
+                chunk_media_uri=chunk_artifact.uri,
+                analysis_window_media_uri=analysis_artifact.uri,
+            )
 
         self._advance_stage(lease, ParseJobStage.PARSING)
         chunks = self._load_completed_prefix(
@@ -280,16 +255,13 @@ class VideoProcessingService:
         )
         try:
             for window, candidate_transcript in candidate_transcripts:
-                with self._measure_stage(
-                    lease, window.sequence_no, VideoChunkTimingStage.PARSE,
-                ):
-                    chunk = self._runtime.parse_chunk(
-                        context_before,
-                        window,
-                        candidate_transcript=candidate_transcript,
-                        series_bible=series_bible,
-                        background_images=background_images,
-                    )
+                chunk = self._runtime.parse_chunk(
+                    context_before,
+                    window,
+                    candidate_transcript=candidate_transcript,
+                    series_bible=series_bible,
+                    background_images=background_images,
+                )
                 # Model calls cannot be force-cancelled reliably. Their output only
                 # becomes durable after the current lease is checked again.
                 self._jobs.assert_current_lease(lease)
@@ -389,22 +361,18 @@ class VideoProcessingService:
             )
         for sequence_no in sorted(checkpoints):
             video_chunk_id = checkpoints[sequence_no].video_chunk_id
-            # A fully indexed checkpoint is durable work from a prior attempt;
-            # do not manufacture another timing row while recovering it.
+            # A fully indexed checkpoint is durable work from a prior attempt.
             if _checkpoint_rank(checkpoints[sequence_no].stage) < _checkpoint_rank(
                 VideoChunkCheckpointStage.INDEXED.value
             ):
-                with self._measure_stage(
-                    lease, sequence_no, VideoChunkTimingStage.INDEX,
-                ):
-                    self._jobs.assert_current_lease(lease)
-                    self._index_sync.sync_video_chunks([video_chunk_id])
-                    self._jobs.assert_current_lease(lease)
-                    checkpoints[sequence_no] = self._save_checkpoint(
-                        lease, checkpoints[sequence_no],
-                        requested_stage=VideoChunkCheckpointStage.INDEXED,
-                        sequence_no=sequence_no,
-                    )
+                self._jobs.assert_current_lease(lease)
+                self._index_sync.sync_video_chunks([video_chunk_id])
+                self._jobs.assert_current_lease(lease)
+                checkpoints[sequence_no] = self._save_checkpoint(
+                    lease, checkpoints[sequence_no],
+                    requested_stage=VideoChunkCheckpointStage.INDEXED,
+                    sequence_no=sequence_no,
+                )
         return report.video_chunk_ids
 
     def _load_completed_prefix(
@@ -506,10 +474,7 @@ class VideoProcessingService:
                     outstanding += 1
                 try:
                     def transcribe_one() -> TranscriptAnalysis:
-                        with self._measure_stage(
-                            lease, window.sequence_no, VideoChunkTimingStage.ASR,
-                        ):
-                            return self._runtime.transcribe_chunk(window)
+                        return self._runtime.transcribe_chunk(window)
 
                     result: TranscriptAnalysis | BaseException = (
                         root_context.copy().run(transcribe_one)
@@ -656,18 +621,15 @@ class VideoProcessingService:
                     / "embeddings"
                     / f"chunk-{sequence_no:04d}.text.json"
                 )
-                with self._measure_stage(
-                    lease, sequence_no, VideoChunkTimingStage.TEXT_EMBEDDING,
-                ):
-                    embedding = self._load_or_embed(
-                        path,
-                        video_chunk_id=video_chunk_id,
-                        modality="text",
-                        sequence_no=sequence_no,
-                        input_hash=input_hash,
-                        create=lambda: self._embedder.embed_text(document.text),
-                        lease=lease,
-                    )
+                embedding = self._load_or_embed(
+                    path,
+                    video_chunk_id=video_chunk_id,
+                    modality="text",
+                    sequence_no=sequence_no,
+                    input_hash=input_hash,
+                    create=lambda: self._embedder.embed_text(document.text),
+                    lease=lease,
+                )
                 checkpoints[sequence_no] = self._save_checkpoint(
                     lease,
                     checkpoints.get(sequence_no),
@@ -710,18 +672,15 @@ class VideoProcessingService:
                     / "embeddings"
                     / f"chunk-{sequence_no:04d}.vision.json"
                 )
-                with self._measure_stage(
-                    lease, sequence_no, VideoChunkTimingStage.VISION_EMBEDDING,
-                ):
-                    embedding = self._load_or_embed(
-                        path,
-                        video_chunk_id=video_chunk_id,
-                        modality="video",
-                        sequence_no=sequence_no,
-                        input_hash=input_hash,
-                        create=lambda media=media: self._embedder.embed_video(media),
-                        lease=lease,
-                    )
+                embedding = self._load_or_embed(
+                    path,
+                    video_chunk_id=video_chunk_id,
+                    modality="video",
+                    sequence_no=sequence_no,
+                    input_hash=input_hash,
+                    create=lambda media=media: self._embedder.embed_video(media),
+                    lease=lease,
+                )
                 checkpoints[sequence_no] = self._save_checkpoint(
                     lease,
                     checkpoints.get(sequence_no),

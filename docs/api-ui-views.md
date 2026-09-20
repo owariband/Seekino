@@ -123,11 +123,10 @@ videos/content 新增 variant=playback|original，默认 playback；原文件可
 | upload_session | content_sha256 VARCHAR(64) NULL、completion_stage VARCHAR(32) NULL、version INT NOT NULL DEFAULT 1、job_id VARCHAR(36) NULL、last_error_code VARCHAR(64) NULL、request_fingerprint VARCHAR(64) NULL |
 
 所有旧绝对时间列需受控迁移为 Unix epoch 毫秒 `BIGINT`，见
-`docs/migrations/20260918_unix_time_ms.sql`。旧库同时需新增
-`parse_job_attempt_timing` 和 `video_chunk_stage_timing`，见
-`docs/migrations/20260918_parse_job_timing.sql`。前者记录每次 worker attempt 的总耗时，
-后者记录每个 VideoChunk 的阶段耗时；绝对开始/结束时间是 `BIGINT`
-Unix epoch 毫秒，`duration_ms` 是单调计时得到的相对毫秒。
+`docs/migrations/20260918_unix_time_ms.sql`。解析任务的累计 worker 耗时和
+计时完整性保存在 `series_parse_job.processing_duration_ms` 与
+`series_parse_job.processing_timing_complete`，见
+`docs/migrations/20260919_parse_job_processing_timing.sql`。
 
 为 Message / Job / Upload 添加 version>0 检查；Message phase 与 Upload completionStage 添加合法值检查。upload_session.job_id 关联实际 series_parse_job.job_id。旧上传完成记录应从 Video / 对应 pipeline Job 回填实际 SHA / Job；无法确认的值保留 null，禁止猜测关联。旧错误只能回填公开通用 Failure，不直接复制含内部诊断的信息到 last_error_message。已有 PROCESSING phase 不能凭空猜测，保持 null，直到真实运行阶段写入。init-db 会检查这些列并拒绝缺列结构；本次没有执行真实数据库 DDL。
 

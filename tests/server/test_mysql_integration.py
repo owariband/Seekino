@@ -768,6 +768,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
             first,
             error="retry integration",
             retry_at=retry_at,
+            duration_ms=0,
             now=now,
         )
         sibling = queue.claim_next(
@@ -786,7 +787,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         assert second.lease_version == first.lease_version + 1
         with pytest.raises(ParseJobLeaseLostError):
             jobs.save_checkpoint(first, checkpoint, now=retry_at)
-        assert queue.acknowledge(second, now=retry_at)
+        assert queue.acknowledge(second, duration_ms=0, now=retry_at)
         sibling = queue.claim_next(
             "worker-e", lease_duration=timedelta(minutes=2), now=retry_at,
         )

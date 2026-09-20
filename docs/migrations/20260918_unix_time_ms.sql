@@ -42,8 +42,6 @@ WHERE table_schema = DATABASE()
       OR (table_name = 'agent_message_timing' AND column_name = 'started_at')
       OR (table_name = 'parse_usage_attempt' AND column_name = 'started_at')
       OR (table_name = 'parse_model_call' AND column_name IN ('started_at', 'created_at', 'updated_at'))
-      OR (table_name = 'parse_job_attempt_timing' AND column_name IN ('started_at', 'completed_at'))
-      OR (table_name = 'video_chunk_stage_timing' AND column_name IN ('started_at', 'completed_at'))
   )
 ORDER BY table_name, ordinal_position;
 

@@ -249,6 +249,8 @@ def _job_detail() -> ParseJobDetail:
             heartbeat_at=_NOW,
             started_at=_NOW,
             completed_at=None,
+            processing_duration_ms=0,
+            processing_timing_complete=True,
             last_error=None,
             created_at=_NOW,
             updated_at=_NOW,

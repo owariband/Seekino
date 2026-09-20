@@ -646,6 +646,7 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
     )
     failed_reparse = jobs.get(completed.job_id)
     assert failed_reparse.status == ParseJobStatus.FAILED.value
+    assert failed_reparse.processing_timing_complete is False
     current_time[0] = reparsed_at + timedelta_to_ms(timedelta(minutes=9))
     service.retry_parse(
         upload.upload_session_id,

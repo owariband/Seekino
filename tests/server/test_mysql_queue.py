@@ -124,6 +124,8 @@ def test_mysql_queue_reaps_an_expired_final_attempt(repository) -> None:
     failed = jobs.get(job_id)
     assert failed.status == ParseJobStatus.FAILED.value
     assert failed.completed_at == now + timedelta_to_ms(timedelta(seconds=31))
+    assert failed.processing_duration_ms == 0
+    assert failed.processing_timing_complete is False
 
 
 def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> None:

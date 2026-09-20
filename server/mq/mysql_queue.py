@@ -11,12 +11,6 @@ from ..model.upload import UploadSessionRecord, UploadSessionStatus
 from ..model.video import SeriesRecord, VideoRecord
 from ..repository.index_sync import refresh_series_statuses
 from ..repository.job import current_lease_predicate
-from ..repository.job_timing import (
-    expire_attempt_in_session,
-    finish_attempt_in_session,
-    start_attempt_in_session,
-)
-from ..model.job_timing import ParseJobAttemptOutcome
 from ..utils.time import now_unix_time_ms, timedelta_to_ms
 from ..utils.validation import require_nonempty_text
 
@@ -158,9 +152,6 @@ class MySqlParseJobQueue:
                 character_bible=series.character_bible,
                 preserve_existing_result=preserve_existing_result,
             )
-            # Keep the attempt's start and the lease that owns it atomic: an
-            # attempt must never exist without a claim, or vice versa.
-            start_attempt_in_session(session, lease, started_at=claimed_at)
             session.flush()
             return lease
 
@@ -192,6 +183,7 @@ class MySqlParseJobQueue:
         duration_ms: int,
         now: int | None = None,
     ) -> bool:
+        _require_duration(duration_ms)
         completed_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             result = session.execute(
@@ -205,19 +197,15 @@ class MySqlParseJobQueue:
                     lease_expires_at=None,
                     heartbeat_at=None,
                     completed_at=completed_at,
+                    processing_duration_ms=(
+                        SeriesParseJobRecord.processing_duration_ms + duration_ms
+                    ),
                     last_error=None,
                     version=SeriesParseJobRecord.version + 1,
                 )
             )
             if result.rowcount != 1:
                 return False
-            finish_attempt_in_session(
-                session,
-                lease,
-                completed_at=completed_at,
-                outcome=ParseJobAttemptOutcome.SUCCEEDED,
-                duration_ms=duration_ms,
-            )
             session.execute(
                 update(VideoRecord)
                 .where(VideoRecord.video_id == lease.video_id)
@@ -238,6 +226,7 @@ class MySqlParseJobQueue:
         duration_ms: int,
         now: int | None = None,
     ) -> bool:
+        _require_duration(duration_ms)
         failed_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             job = session.scalar(
@@ -260,17 +249,7 @@ class MySqlParseJobQueue:
             job.last_error = _error_summary(error)
             job.version += 1
             job.completed_at = failed_at if exhausted else None
-            finish_attempt_in_session(
-                session,
-                lease,
-                completed_at=failed_at,
-                outcome=(
-                    ParseJobAttemptOutcome.FAILED
-                    if exhausted
-                    else ParseJobAttemptOutcome.RETRY
-                ),
-                duration_ms=duration_ms,
-            )
+            job.processing_duration_ms += duration_ms
             video = session.get(VideoRecord, lease.video_id)
             if video is not None and not lease.preserve_existing_result:
                 video.parse_status = job.status
@@ -313,13 +292,7 @@ class MySqlParseJobQueue:
                 job.last_error = "worker lease expired"
                 job.version += 1
                 job.completed_at = reaped_at if exhausted else None
-                expire_attempt_in_session(
-                    session,
-                    job_id=job.job_id,
-                    attempt_count=job.attempt_count,
-                    lease_version=job.lease_version,
-                    completed_at=reaped_at,
-                )
+                job.processing_timing_complete = False
                 video = session.get(VideoRecord, job.video_id)
                 if video is not None and video.parse_status not in {
                     ParseJobStatus.SUCCEEDED.value,
@@ -332,3 +305,12 @@ class MySqlParseJobQueue:
 def _error_summary(error: str) -> str:
     normalized = error.strip() or "parse job failed"
     return normalized[:8192]
+
+
+def _require_duration(duration_ms: int) -> None:
+    if (
+        isinstance(duration_ms, bool)
+        or not isinstance(duration_ms, int)
+        or duration_ms < 0
+    ):
+        raise ValueError("duration_ms must be a nonnegative integer")

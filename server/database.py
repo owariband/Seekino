@@ -28,7 +28,6 @@ _UNIX_TIME_MS_COLUMNS = {
     "context_snapshot": {"created_at"},
     "index_sync_intent": {"available_at", "synced_at", "created_at", "updated_at"},
     "parse_model_call": {"started_at", "created_at", "updated_at"},
-    "parse_job_attempt_timing": {"started_at", "completed_at"},
     "parse_usage_attempt": {"started_at"},
     "series": {"created_at", "updated_at"},
     "series_parse_job": {
@@ -53,7 +52,6 @@ _UNIX_TIME_MS_COLUMNS = {
     "video_chunk_checkpoint": {"updated_at"},
     "video_chunk_embedding": {"created_at", "updated_at"},
     "video_chunk_info": {"parsed_at"},
-    "video_chunk_stage_timing": {"started_at", "completed_at"},
 }
 
 
@@ -156,18 +154,13 @@ def create_schema(engine: Engine) -> None:
         "series": {"transcript_language_hint"},
         "agent_conversation": {"title_is_auto"},
         "agent_message": {"phase", "version", "reference", "last_error_code", "last_error_message"},
-        "series_parse_job": {"version"},
+        "series_parse_job": {
+            "version",
+            "processing_duration_ms",
+            "processing_timing_complete",
+        },
         "video_chunk_checkpoint": {"chunk_start_ms", "chunk_end_ms"},
         "upload_session": {"content_sha256", "completion_stage", "version", "job_id", "last_error_code", "request_fingerprint"},
-        "parse_job_attempt_timing": {
-            "job_id", "attempt_count", "lease_version", "started_at",
-            "completed_at", "duration_ms", "outcome", "timing_complete",
-        },
-        "video_chunk_stage_timing": {
-            "job_id", "attempt_count", "lease_version", "sequence_no",
-            "stage", "video_chunk_id", "started_at", "completed_at",
-            "duration_ms", "status",
-        },
     }.items():
         if table_name not in existing_tables:
             continue
@@ -178,18 +171,6 @@ def create_schema(engine: Engine) -> None:
             "UI view schema requires a controlled migration before init-db; missing: "
             + ", ".join(sorted(missing_view_columns))
         )
-
-    if "series_parse_job" in existing_tables:
-        missing_timing_tables = {
-            table_name
-            for table_name in {"parse_job_attempt_timing", "video_chunk_stage_timing"}
-            if table_name not in existing_tables
-        }
-        if missing_timing_tables:
-            raise SchemaUpgradeRequiredError(
-                "ParseJob timing schema requires a controlled migration before "
-                "init-db; missing: " + ", ".join(sorted(missing_timing_tables))
-            )
 
     legacy_timestamp_columns: set[str] = set()
     for table_name, timestamp_columns in _UNIX_TIME_MS_COLUMNS.items():
@@ -219,7 +200,6 @@ def create_schema(engine: Engine) -> None:
     from .model import index_sync as _index_sync_models  # noqa: F401
     from .model import job as _job_models  # noqa: F401
     from .model import parse_usage as _parse_usage_models  # noqa: F401
-    from .model import job_timing as _job_timing_models  # noqa: F401
     from .model import upload as _upload_models  # noqa: F401
     from .model import video as _video_models  # noqa: F401
 

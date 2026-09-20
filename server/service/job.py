@@ -4,7 +4,6 @@ from ..identity import canonical_uuid
 from ..model.dto.jobDTO import ParseJobDetail, ParseJobSummaryState
 from ..model.job import ParseJobStatus
 from ..repository.job import ParseJobRepository
-from ..repository.job_timing import ParseJobTimingRepository
 from .library import LibraryService
 from ..utils.validation import require_nonempty_text
 
@@ -14,25 +13,22 @@ class ParseJobService:
         self,
         repository: ParseJobRepository,
         library: LibraryService,
-        timing: ParseJobTimingRepository | None = None,
     ) -> None:
         self._repository = repository
         self._library = library
-        self._timing = timing
 
     def get(self, job_id: str, *, workspace_id: str) -> ParseJobDetail:
         canonical_job_id = canonical_uuid(job_id, "job_id")
         job = self._repository.get(canonical_job_id)
         self._library.get_video(job.video_id, workspace_id=workspace_id)
-        duration_ms, complete = self._timing_for(canonical_job_id)
         return ParseJobDetail(
             job=job,
             checkpoints=tuple(
                 self._repository.list_checkpoints(canonical_job_id)
             ),
-            processing_duration_ms=duration_ms,
+            processing_duration_ms=job.processing_duration_ms,
             processing_timing_complete=(
-                complete
+                job.processing_timing_complete
                 and job.status
                 in {ParseJobStatus.SUCCEEDED.value, ParseJobStatus.FAILED.value}
             ),
@@ -60,14 +56,13 @@ class ParseJobService:
         checkpoints = self._repository.list_checkpoints_for_jobs(
             [item.job_id for item in jobs]
         )
-        timings = self._timing.totals_for_jobs([item.job_id for item in jobs]) if self._timing else {}
         return [
             ParseJobDetail(
                 job=item,
                 checkpoints=tuple(checkpoints[item.job_id]),
-                processing_duration_ms=timings.get(item.job_id, (0, False))[0],
+                processing_duration_ms=item.processing_duration_ms,
                 processing_timing_complete=(
-                    timings.get(item.job_id, (0, False))[1]
+                    item.processing_timing_complete
                     and item.status
                     in {
                         ParseJobStatus.SUCCEEDED.value,
@@ -77,9 +72,6 @@ class ParseJobService:
             )
             for item in jobs
         ]
-
-    def _timing_for(self, job_id: str) -> tuple[int, bool]:
-        return self._timing.totals(job_id) if self._timing else (0, False)
 
     def count(self, *, workspace_id: str, series_id: str | None = None, statuses: tuple[str, ...] | None = None) -> int:
         normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")

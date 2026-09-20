@@ -483,6 +483,8 @@ class ParseJobRepository:
             heartbeat_at=record.heartbeat_at,
             started_at=record.started_at,
             completed_at=record.completed_at,
+            processing_duration_ms=record.processing_duration_ms,
+            processing_timing_complete=record.processing_timing_complete,
             last_error=record.last_error,
             created_at=record.created_at,
             updated_at=record.updated_at,

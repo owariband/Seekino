@@ -21,7 +21,6 @@ from server.repository.job import (
     ParseJobLeaseLostError,
     ParseJobRepository,
 )
-from server.repository.job_timing import ParseJobTimingRepository
 from server.model.dto.jobDTO import VideoChunkCheckpointState
 from server.api import jobs as jobs_api
 from server.api.jobs import project_job
@@ -214,7 +213,6 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     service = ParseJobService(
         jobs,
         LibraryService(LibraryRepository(session_factory)),
-        ParseJobTimingRepository(session_factory),
     )
 
     first = queue.claim_next(

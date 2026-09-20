@@ -26,6 +26,8 @@ class ParseJobState:
     heartbeat_at: int | None
     started_at: int | None
     completed_at: int | None
+    processing_duration_ms: int
+    processing_timing_complete: bool
     last_error: str | None
     created_at: int
     updated_at: int
