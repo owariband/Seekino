@@ -255,3 +255,52 @@ return completed
 - Agent：模型异常或三轮审核未通过会明确失败，没有自动基础召回降级；执行恢复和跨实例 delta 回放未实现。B01 拟修复方案仅做过期失败收尾，不能描述成从上次 Turn 续跑。
 - 取消／手动重跑／服务端 settings 写入：此前明确未纳入开发。上传“移除”只停止本地传输，不代表取消服务端任务。
 - 历史 Parse 消耗：过去没有保存 usage 的已完成任务无法补算。新版 Worker 处理既有排队任务也能记录；旧任务重试只记录新调用，旧执行缺失时整体仍不完整；复用缓存不补造历史费用。
+
+## TODO（待修复解决）
+
+### B06：缺少可复用的结构化 Context Canvas 与受限 Patch 框架
+
+优先级：中。类型：Agent 结构化状态编排重复建设。状态：待修复，当前暂缓实施。
+
+#### 问题与背景
+
+Chat Agent 已经维护一份结构化 Workspace／Canvas，并通过 Tool 逐步修改草稿、证据和时间范围。Parse 若要让 VideoUnderstandingAgent 校正 ASR 结果，也会出现同一种需求：ASR 先把原始证据写入每个 Chunk 的 Context，Understanding 只能修改被授权的特定 bullet，完整 Chunk 校验通过后再生成 Artifact、Checkpoint 和最终业务事实。
+
+这不是某个 Prompt 的局部问题，而是一类重复出现的 Agent 基础设施：结构化上下文、字段级写权限、Tool Patch、校验、版本、差异记录、临时草稿与持久化快照。目前 Chat 与 Parse 各自手写类似机制，会重复实现状态模型、Tool 参数、路径白名单、错误处理和恢复语义；继续复制会让两套行为逐渐分叉。
+
+当前 Parse Graph 已满足“生产 ASR 不单独写业务库，Understanding 完成后才提交 Chunk Parse Artifact／Checkpoint，全部 Embedding 完成后再统一导入业务事实”。缺口不在落库时机，而在 Context 和 Agent 输出契约：Understanding 可以重新生成 Timeline Event 时间，却不能受控地修改或产出 canonical Transcript；原始 ASR 与理解后的事件时间仍可能并存且不一致。
+
+#### 当前取舍
+
+- 暂不为了这一点立即重构 Parse 数据契约和 LangGraph。改造会同时波及 raw／canonical Transcript、Prompt、Tool、Checkpoint 兼容、持久化、召回和历史数据语义。
+- 当前 Chat Query／Evaluator 可以在召回后根据 Evidence 选择更准确的最终播放区间，能够覆盖主要用户路径；它只负责本次答案的范围选择，不会修复已经持久化的 ASR 或 Event 数据。
+- 保留现有生产执行方式：ASR 跨 Chunk 有界并发，全部 ASR 完成后 Understanding 按 Context 顺序串行；不在本 TODO 中顺带改造成 Chunk 级流水线。
+- 原始 ASR 证据不应被 Agent 原地覆盖。未来应将 raw evidence 与 Agent 生成的 canonical state 分开，最终持久化哪一层必须由显式契约决定。
+
+#### 目标框架
+
+- 定义通用 Canvas Document：由稳定 `block_id`、明确 block 类型、revision 和 metadata 组成；业务字段仍由各领域自己的 Schema 定义，框架不理解 Anime、Transcript 或 Chat 等领域含义。
+- Tool 只能执行白名单操作，例如读取 block、替换指定 bullet、追加受控条目或提交草稿；每个 Agent 显式声明可修改的 block／字段，禁止任意对象写入和任意 JSON Path Patch。
+- Raw Evidence block 只读；Canonical／Draft block 可按 Policy 修改。一次 Tool Patch 必须先在副本上完成结构校验和领域校验，再原子提交；失败不能留下部分修改。
+- 每次修改记录 revision、调用方、目标 block 和结构化 diff，支持审计、乐观并发检查、重放测试以及 Artifact／Checkpoint 恢复。
+- 区分运行期 Draft 与 Durable Snapshot。Agent 只操作当前 Draft；业务流程在明确提交点保存完整、已验证的 Snapshot，而不是让 Tool 直接写数据库。
+- Chat 与 Parse 只实现薄的领域适配器，共用 Canvas、Patch、Policy、Validation 和 Revision 核心；不能把某一侧的 Workspace 类型直接泄漏到另一侧。
+
+#### TODO
+
+- [ ] 盘点 Chat Workspace／Tool 的现有更新动作，以及 Parse `Graph State`、`ContextSnapshot`、Chunk Artifact 的状态修改点，整理真正共有的最小操作集。
+- [ ] 定义最小 Canvas／Block／Patch／Policy／Revision 协议，先写状态转换和非法 Patch 的纯单元测试，不先接模型。
+- [ ] 明确 Parse 的 block：不可变 `raw_asr`、可修改 `canonical_transcript`、`timeline_events`、`context_before` 与 `context_after`；决定 raw ASR 是否只保留在 Artifact 中。
+- [ ] 明确 ASR raw 时间字段契约。若采用 `start_time`／`end_time`，不得继续把它们伪装成已经规范化的毫秒；无效或未知时间不能导致整条可用文本被丢弃。
+- [ ] 为 VideoUnderstandingAgent 提供受限 Tool，只允许修改 canonical block 的指定 bullet；完成后生成不可变 Parsed Chunk，再沿现有 PARSED Checkpoint 路径提交。
+- [ ] 将 Transcript 字面召回的时间真相切换到 canonical Transcript，或明确改用已校正的 DIALOGUE Event；不能继续静默混用 Lite ASR 时间与 Understanding Event 时间。
+- [ ] 选择一个边界清楚的 Chat 更新流程作为第二个接入方，验证共享的是框架而不是复制另一套业务模型。
+- [ ] 补齐 Tool 越权、Schema 失败无部分写入、revision 冲突、Chunk 重试恢复、旧 Artifact／历史行兼容及 raw evidence 不可变回归测试。
+
+#### 验收条件
+
+- Agent 只能修改 Policy 明确授权的 bullet；越权字段、未知 block 和过期 revision 均被稳定拒绝。
+- 同一次 Tool 调用要么提交完整合法的新 revision，要么不改变 Context，不存在半更新状态。
+- Raw Evidence 始终可追溯且不可被覆盖；Canonical 数据的来源、版本和最终持久化时机明确。
+- Chat 与 Parse 至少各有一个真实流程使用同一套 Canvas/Patch 核心，且没有复制两份路径校验、revision 或 diff 实现。
+- Parse 失败重试能够从最后一个已提交的完整 Chunk Snapshot 恢复，不依赖进程内共享可变对象。
