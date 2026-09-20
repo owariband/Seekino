@@ -226,6 +226,7 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     assert first.video_id == video_id
     assert first.lease_version == 1
     assert first.attempt_count == 1
+    assert first.processing_duration_base_ms == 0
     assert queue.claim_next(
         "worker-b",
         lease_duration=timedelta(minutes=2),
@@ -247,10 +248,20 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
             stage=VideoChunkCheckpointStage.PARSED.value,
             parse_artifact_uri="artifact://test/jobs/chunk-0000.json",
         ),
+        processing_duration_ms=100,
         now=now + timedelta_to_ms(timedelta(seconds=20)),
     )
     assert checkpoint.stage == VideoChunkCheckpointStage.PARSED.value
     assert len(jobs.list_checkpoints(job_id)) == 1
+    assert jobs.get(job_id).processing_duration_ms == 100
+
+    jobs.save_checkpoint(
+        first,
+        checkpoint,
+        processing_duration_ms=90,
+        now=now + timedelta_to_ms(timedelta(seconds=21)),
+    )
+    assert jobs.get(job_id).processing_duration_ms == 100
 
     retry_at = now + timedelta_to_ms(timedelta(minutes=5))
     assert queue.retry(
@@ -281,6 +292,7 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     assert second is not None
     assert second.lease_version == 2
     assert second.attempt_count == 2
+    assert second.processing_duration_base_ms == 123
     assert not queue.heartbeat(
         first,
         lease_duration=timedelta(minutes=2),
@@ -290,8 +302,18 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
         jobs.save_checkpoint(
             first,
             checkpoint,
+            processing_duration_ms=999,
             now=retry_at,
         )
+    assert jobs.get(job_id).processing_duration_ms == 123
+
+    jobs.save_checkpoint(
+        second,
+        checkpoint,
+        processing_duration_ms=500,
+        now=retry_at + timedelta_to_ms(timedelta(seconds=20)),
+    )
+    assert jobs.get(job_id).processing_duration_ms == 500
 
     assert queue.acknowledge(second, duration_ms=456, now=retry_at + timedelta_to_ms(timedelta(seconds=30)))
     completed = jobs.get(job_id)

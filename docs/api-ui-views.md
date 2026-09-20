@@ -42,7 +42,7 @@ Series list 返回轻量 `SeriesSummary`，get / create 返回 `SeriesDetail`；
 
 ParseJob 的 overallProgress 以语义解析为主：canonical VideoChunk 全部完成媒体准备后到 1%，随后按已 PARSED 的真实视频时长从 1% 推进到 99%；文本/视觉向量化、持久化和索引同步不再额外瓜分权重，所有片段完成语义解析后保持 99%，只有任务成功并可检索时才到 100%。completedDurationMs、completedThroughMs、completedChunkCount 和 currentChunk 始终描述 PARSED 覆盖：前者是全部已解析片段的时长和，连续水位只统计从零开始无缺口的已解析范围，两者不能混用。stageProgress 仅保留为内部阶段诊断字段，任务页不再展示第二个百分比。范围缺失或不连续的历史任务返回 null，不回退到旧的估算百分比。
 
-ParseJob 另返回 `videoDurationMs`（原视频时长）和兼容别名 `totalDurationMs`；`processingDurationMs` 是所有已结束 worker attempt 的已知单调计时总和，不是视频时长。`processingTimingComplete=false` 表示尚有运行中 attempt、lease 过期或历史缺数，前端显示“至少 …（不完整）”而不伪装精确。系统不再为每个 VideoChunk 的 SPLIT / ASR / PARSE / TEXT_EMBEDDING / VISION_EMBEDDING / INDEX 单独持久化耗时，只保留 ParseJob 级累计处理时间和完整性。
+ParseJob 另返回 `videoDurationMs`（原视频时长）和兼容别名 `totalDurationMs`；`processingDurationMs` 是 worker attempt 的已知单调计时总和，不是视频时长。运行中的 Attempt 每当一个 VideoChunk 到达 PARSED checkpoint，就在现有 checkpoint 事务内更新一次任务级累计耗时；`acknowledge` / `retry` 再结算该 Attempt 剩余时间，因此前端会随解析片段推进显示“...（进行中）”，而不是等任务结束后才出现数值。运行期间 `processingTimingComplete=false`，此时累计值是截至最新 PARSED checkpoint 的当前下界；任务结束后若该字段仍为 `false`，则表示 lease 过期或历史缺数，前端显示“至少 ...（不完整）”而不伪装精确。该补充没有新增表、字段或事务，也不为 SPLIT / ASR / PARSE / TEXT_EMBEDDING / VISION_EMBEDDING / INDEX 持久化阶段明细。
 
 新增和补充的接口：
 

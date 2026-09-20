@@ -11,6 +11,7 @@ from contextlib import nullcontext
 from contextvars import copy_context
 from pathlib import Path
 from threading import Condition, Event
+from time import monotonic_ns
 from typing import Literal, Protocol
 
 from engine.parse.analysis_windows import (
@@ -95,6 +96,7 @@ class VideoProcessingService:
         *,
         config: VideoProcessingConfig | None = None,
         parse_usage: ParseUsageService | None = None,
+        monotonic_clock: Callable[[], int] = monotonic_ns,
     ) -> None:
         self._jobs = jobs
         self._videos = videos
@@ -104,6 +106,7 @@ class VideoProcessingService:
         self._embedder = embedder
         self._config = config or VideoProcessingConfig()
         self._parse_usage = parse_usage
+        self._monotonic_clock = monotonic_clock
 
     def process(self, lease: ParseJobLease) -> list[str]:
         capture = (
@@ -115,6 +118,7 @@ class VideoProcessingService:
             return self._process(lease)
 
     def _process(self, lease: ParseJobLease) -> list[str]:
+        processing_started_ns = self._monotonic_clock()
         source_video = self._verified_source(lease)
         work_directory = self._artifacts.work_directory(lease.job_id)
         attempt_directory = _attempt_directory(work_directory, lease.lease_version)
@@ -288,6 +292,14 @@ class VideoProcessingService:
                     requested_stage=VideoChunkCheckpointStage.PARSED,
                     sequence_no=sequence_no,
                     parse_artifact_uri=self._artifacts.uri_for_path(parse_path),
+                    processing_duration_ms=(
+                        lease.processing_duration_base_ms
+                        + max(
+                            0,
+                            self._monotonic_clock() - processing_started_ns,
+                        )
+                        // 1_000_000
+                    ),
                 )
                 chunks.append(chunk)
                 context_before = chunk.context_after
@@ -808,6 +820,7 @@ class VideoProcessingService:
         parse_artifact_uri: str | None = None,
         text_embedding_artifact_uri: str | None = None,
         vision_embedding_artifact_uri: str | None = None,
+        processing_duration_ms: int | None = None,
     ) -> VideoChunkCheckpointState:
         stage = requested_stage
         if current is not None and _checkpoint_rank(current.stage) > _checkpoint_rank(
@@ -837,6 +850,7 @@ class VideoProcessingService:
                 text_embedding_artifact_uri=text_embedding_artifact_uri,
                 vision_embedding_artifact_uri=vision_embedding_artifact_uri,
             ),
+            processing_duration_ms=processing_duration_ms,
         )
 
 

@@ -116,16 +116,22 @@ describe("task status filters", () => {
 });
 
 describe("processing timing", () => {
-  it("shows measured processing milliseconds instead of the video duration", async () => {
+  it("shows live chunk timing without hiding unstarted or incomplete timing states", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => response({
-      items: [{ ...job("RUNNING"), processingDurationMs: 321, processingTimingComplete: false }],
+      items: [
+        { ...job("RUNNING"), processingDurationMs: 321, processingTimingComplete: false },
+        { ...job("QUEUED"), processingDurationMs: 0, processingTimingComplete: true, attemptCount: 0 },
+        { ...job("FAILED"), processingDurationMs: 654, processingTimingComplete: false },
+      ],
       hasMore: false,
       nextCursor: null,
     })));
     renderPage();
 
-    expect(await screen.findByText("累计解析耗时")).toBeInTheDocument();
-    expect(await screen.findByText("至少 321 毫秒（不完整）")).toBeInTheDocument();
+    expect(await screen.findAllByText("累计解析耗时")).toHaveLength(2);
+    expect(await screen.findByText("321 毫秒（进行中）")).toBeInTheDocument();
+    expect(await screen.findByText("未开始")).toBeInTheDocument();
+    expect(await screen.findByText("至少 654 毫秒（不完整）")).toBeInTheDocument();
   });
 });
 

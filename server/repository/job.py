@@ -293,12 +293,19 @@ class ParseJobRepository:
         lease: ParseJobLease,
         checkpoint: VideoChunkCheckpointState,
         *,
+        processing_duration_ms: int | None = None,
         now: int | None = None,
     ) -> VideoChunkCheckpointState:
         if checkpoint.job_id != lease.job_id:
             raise ValueError("checkpoint job_id does not match the lease")
         if checkpoint.sequence_no < 0:
             raise ValueError("checkpoint sequence_no must be nonnegative")
+        if processing_duration_ms is not None and (
+            isinstance(processing_duration_ms, bool)
+            or not isinstance(processing_duration_ms, int)
+            or processing_duration_ms < 0
+        ):
+            raise ValueError("processing_duration_ms must be a nonnegative integer")
         _validate_checkpoint_bounds(checkpoint, lease.duration_ms)
         stage = VideoChunkCheckpointStage(checkpoint.stage).value
         checked_at = now if now is not None else now_unix_time_ms()
@@ -380,6 +387,12 @@ class ParseJobRepository:
             if derived_progress is not None and job.progress != derived_progress:
                 job.progress = derived_progress
                 changed = True
+            if (
+                processing_duration_ms is not None
+                and processing_duration_ms > job.processing_duration_ms
+            ):
+                job.processing_duration_ms = processing_duration_ms
+                changed = True
             if changed:
                 job.version += 1
                 job.updated_at = checked_at
@@ -438,9 +451,9 @@ class ParseJobRepository:
         now: int,
     ) -> SeriesParseJobRecord:
         job = session.scalar(
-            select(SeriesParseJobRecord).where(
-                *current_lease_predicate(lease, now)
-            )
+            select(SeriesParseJobRecord)
+            .where(*current_lease_predicate(lease, now))
+            .with_for_update()
         )
         if job is None:
             raise ParseJobLeaseLostError("parse job lease is no longer current")

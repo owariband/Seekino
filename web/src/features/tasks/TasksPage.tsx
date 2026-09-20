@@ -58,6 +58,19 @@ function formatProcessingDuration(durationMs: number): string {
   return `${Math.floor(totalSeconds / 60)} 分 ${totalSeconds % 60} 秒`;
 }
 
+function processingDurationText(job: ParseJobView): string {
+  if (job.attemptCount === 0) return "未开始";
+  if (job.status === "RUNNING") {
+    return job.processingDurationMs > 0
+      ? `${formatProcessingDuration(job.processingDurationMs)}（进行中）`
+      : "首个片段处理中";
+  }
+  if (job.processingTimingComplete) return formatProcessingDuration(job.processingDurationMs);
+  return job.processingDurationMs > 0
+    ? `至少 ${formatProcessingDuration(job.processingDurationMs)}（不完整）`
+    : "尚未完整记录";
+}
+
 export function TasksPage() {
   const { forgetDeletedSession, openDialog, syncRequeuedParse } = useUploads();
   const queryClient = useQueryClient();
@@ -414,11 +427,7 @@ export function TasksPage() {
                 <dl>
                   <div><dt>文件</dt><dd>{job.originalFilename}</dd></div>
                   <div><dt>尝试次数</dt><dd>{job.attemptCount} / {job.maxAttempts}</dd></div>
-                  <div><dt>{job.status === "SUCCEEDED" || job.status === "FAILED" ? "解析耗时" : "累计解析耗时"}</dt><dd>{job.processingTimingComplete
-                    ? formatProcessingDuration(job.processingDurationMs)
-                    : job.processingDurationMs > 0
-                      ? `至少 ${formatProcessingDuration(job.processingDurationMs)}（不完整）`
-                      : job.attemptCount === 0 ? "未开始" : "尚未完整记录"}</dd></div>
+                  <div><dt>{job.status === "SUCCEEDED" || job.status === "FAILED" ? "解析耗时" : "累计解析耗时"}</dt><dd>{processingDurationText(job)}</dd></div>
                   <div><dt>流水线</dt><dd>{job.pipelineVersion}</dd></div>
                   <div><dt>更新于</dt><dd>{new Date(job.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</dd></div>
                 </dl>

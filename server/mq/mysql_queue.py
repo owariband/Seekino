@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from sqlalchemy import exists, select, update
+from sqlalchemy import case, exists, select, update
 from sqlalchemy.orm import aliased, Session, sessionmaker
 
 from ..model.dto.jobDTO import ParseJobLease
@@ -138,6 +138,7 @@ class MySqlParseJobQueue:
                 lease_expires_at=expires_at,
                 attempt_count=job.attempt_count,
                 max_attempts=job.max_attempts,
+                processing_duration_base_ms=job.processing_duration_ms,
                 episode_order=video.episode_order,
                 upload_sequence=video.upload_sequence,
                 original_filename=video.original_filename,
@@ -184,6 +185,7 @@ class MySqlParseJobQueue:
         now: int | None = None,
     ) -> bool:
         _require_duration(duration_ms)
+        processing_duration_ms = lease.processing_duration_base_ms + duration_ms
         completed_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             result = session.execute(
@@ -197,8 +199,13 @@ class MySqlParseJobQueue:
                     lease_expires_at=None,
                     heartbeat_at=None,
                     completed_at=completed_at,
-                    processing_duration_ms=(
-                        SeriesParseJobRecord.processing_duration_ms + duration_ms
+                    processing_duration_ms=case(
+                        (
+                            SeriesParseJobRecord.processing_duration_ms
+                            < processing_duration_ms,
+                            processing_duration_ms,
+                        ),
+                        else_=SeriesParseJobRecord.processing_duration_ms,
                     ),
                     last_error=None,
                     version=SeriesParseJobRecord.version + 1,
@@ -227,6 +234,7 @@ class MySqlParseJobQueue:
         now: int | None = None,
     ) -> bool:
         _require_duration(duration_ms)
+        processing_duration_ms = lease.processing_duration_base_ms + duration_ms
         failed_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             job = session.scalar(
@@ -249,7 +257,10 @@ class MySqlParseJobQueue:
             job.last_error = _error_summary(error)
             job.version += 1
             job.completed_at = failed_at if exhausted else None
-            job.processing_duration_ms += duration_ms
+            job.processing_duration_ms = max(
+                job.processing_duration_ms,
+                processing_duration_ms,
+            )
             video = session.get(VideoRecord, lease.video_id)
             if video is not None and not lease.preserve_existing_result:
                 video.parse_status = job.status

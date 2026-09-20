@@ -134,6 +134,7 @@ class _MemoryJobs:
     def __init__(self) -> None:
         self.current = True
         self.checkpoints = []
+        self.processing_durations = []
 
     def list_checkpoints(self, _job_id):
         return []
@@ -146,9 +147,17 @@ class _MemoryJobs:
         del stage
         return self.current
 
-    def save_checkpoint(self, _lease, checkpoint):
+    def save_checkpoint(
+        self,
+        _lease,
+        checkpoint,
+        *,
+        processing_duration_ms=None,
+    ):
         self.assert_current_lease(_lease)
         self.checkpoints.append(checkpoint)
+        if processing_duration_ms is not None:
+            self.processing_durations.append(processing_duration_ms)
         return checkpoint
 
 
@@ -172,7 +181,14 @@ class _ConcurrentMemoryJobs:
         with self.lock:
             return lease.lease_version == self.current_version
 
-    def save_checkpoint(self, lease, checkpoint):
+    def save_checkpoint(
+        self,
+        lease,
+        checkpoint,
+        *,
+        processing_duration_ms=None,
+    ):
+        del processing_duration_ms
         self.assert_current_lease(lease)
         with self.lock:
             current = self.by_sequence.get(checkpoint.sequence_no)
@@ -263,6 +279,7 @@ def _lease() -> ParseJobLease:
         lease_expires_at=now_unix_time_ms() + timedelta_to_ms(timedelta(minutes=5)),
         attempt_count=1,
         max_attempts=3,
+        processing_duration_base_ms=0,
         episode_order=1,
         upload_sequence=1,
         original_filename="episode.mp4",
@@ -361,10 +378,14 @@ def _unit_processor(
     chunk_duration_ms=10_000,
     videos=None,
     index=None,
+    monotonic_clock=None,
 ):
     artifacts = _MemoryArtifacts(tmp_path / "artifacts")
     videos = videos or _VideoSink()
     index = index or _IndexSink()
+    processor_kwargs = {}
+    if monotonic_clock is not None:
+        processor_kwargs["monotonic_clock"] = monotonic_clock
     processor = VideoProcessingService(
         jobs,  # type: ignore[arg-type]
         videos,  # type: ignore[arg-type]
@@ -379,6 +400,7 @@ def _unit_processor(
             asr_concurrency=2,
             asr_mode=asr_mode,
         ),
+        **processor_kwargs,
     )
     source = tmp_path / "source.mp4"
     source.write_bytes(b"fixture")
@@ -708,12 +730,14 @@ def test_processing_service_runs_asr_ahead_but_parses_in_sequence(
 
     jobs = _MemoryJobs()
     algorithm = ConcurrentAlgorithm(prepared_import.parse_result)
+    clock_values = iter([1_000_000_000, 1_100_000_000, 1_250_000_000])
     processor, artifacts, _videos, _index = _unit_processor(
         tmp_path,
         monkeypatch,
         algorithm,
         jobs,
         asr_mode="lite",
+        monotonic_clock=lambda: next(clock_values),
     )
 
     def stop_after_parse(*_args, **_kwargs):
@@ -723,7 +747,7 @@ def test_processing_service_runs_asr_ahead_but_parses_in_sequence(
     token = asr_context.set("parse-usage-capture")
     try:
         with pytest.raises(ParsingReached):
-            processor.process(_lease())
+            processor.process(replace(_lease(), processing_duration_base_ms=400))
     finally:
         asr_context.reset(token)
 
@@ -731,6 +755,7 @@ def test_processing_service_runs_asr_ahead_but_parses_in_sequence(
     assert algorithm.finish_order == [1, 0]
     assert algorithm.parse_sequences == [0, 1]
     assert algorithm.context_values == ["parse-usage-capture"] * 2
+    assert jobs.processing_durations == [500, 650]
     assert (
         artifacts.work_directory(_lease().job_id)
         / "leases"

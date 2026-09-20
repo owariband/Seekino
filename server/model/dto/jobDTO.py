@@ -47,6 +47,7 @@ class ParseJobLease:
     lease_expires_at: int
     attempt_count: int
     max_attempts: int
+    processing_duration_base_ms: int
     episode_order: int
     upload_sequence: int
     original_filename: str

@@ -193,10 +193,11 @@ return completed
 #### 已实施方案
 
 - **没有新建计时表。** 在现有 `series_parse_job` 上增加 `processing_duration_ms` 和 `processing_timing_complete` 两个字段。
-- Consumer 使用单调时钟测量一次 Attempt 的执行耗时；`acknowledge` 在 current-lease 条件下原子累加成功 Attempt，`retry` 锁定 Job 后累加已结束的失败 Attempt。
+- Consumer 使用单调时钟测量一次 Attempt 的执行耗时。每个 VideoChunk 到达 PARSED checkpoint 时，复用现有 checkpoint 事务，以“此前 Attempt 累计值 + 当前 Attempt 已运行时间”为绝对目标单调更新 `processing_duration_ms`；`acknowledge` / `retry` 再以同一口径结算该 Attempt 的最终值，避免重复累计。
 - Lease 过期时无法可靠知道完整耗时，因此不猜测数值，只将 `processing_timing_complete` 永久置为 `false`；后续重试成功也不会把历史缺口误恢复为完整。
 - 删除逐 Attempt／逐 Stage 的 Model、DTO、Repository、Service 和 `VideoProcessingService` 阶段计时包装，消除每个 Chunk、每个 Stage 的额外写库及锁竞争。
-- API 继续返回累计处理耗时；任务未终态、Lease 过期或历史记录缺失时明确返回不完整语义，不把已知下界伪装成精确总耗时。
+- API 继续返回任务级累计处理耗时；运行中的任务保持 `processing_timing_complete=false`，其当前下界按 PARSED chunk 推进，前端按 RUNNING 状态显示“进行中”。任务结束后若因 Lease 过期或历史记录缺失仍不完整，则显示“至少 ...（不完整）”，不把已知下界伪装成精确总耗时。
+- 这次 chunk 粒度刷新没有新增表、字段或独立事务，只复用现有 ParseJob 字段和 checkpoint 保存事务。
 
 #### 受控升级
 
@@ -206,7 +207,7 @@ return completed
 
 #### 取舍与验收结果
 
-- 保留任务级累计处理耗时，放弃逐 Attempt、逐 Chunk、逐 Stage 的持久化诊断明细；这是有意的性能／可维护性取舍。
+- 保留任务级累计处理耗时，并按 PARSED chunk 更新；仍放弃逐 Attempt、逐 Chunk、逐 Stage 的持久化诊断明细，这是有意的性能／可维护性取舍。
 - 成功、失败重试、最终 Lease 过期以及“过期后再次执行仍保持 incomplete”均有回归覆盖。
 - 全量测试结果为 `841 passed, 8 skipped`；本地 MySQL、Qdrant、API、Web 均已启动，`GET /healthz` 返回 `status=ok`，Parse Consumer 为 `running`。
 
