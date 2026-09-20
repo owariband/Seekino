@@ -26,12 +26,6 @@ class TranscriptCue(BaseModel):
     end_ms: int = Field(ge=0)
     text: str = Field(min_length=1)
 
-    @model_validator(mode="after")
-    def validate_time_range(self) -> "TranscriptCue":
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
-        return self
-
 
 class TranscriptAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid")
