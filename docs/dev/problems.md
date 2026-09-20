@@ -1,6 +1,6 @@
 # 项目问题清单
 
-更新日期：2026-09-17。依据当前源码和本轮审查，区分确定缺陷、功能缺失和待联调项。本文件记录问题及拟修复方案，不表示方案已经实现，也不扩展当前开发范围。
+更新日期：2026-09-20。依据当前源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。
 
 ## frontend
 
@@ -155,17 +155,74 @@ return completed
 
 依据：[upload.py](../../server/service/upload.py) 的 complete；[artifact.py](../../server/storage/artifact.py) 的 delete_upload_staging；[errors.py](../../server/api/errors.py) 的 PermissionError 映射。
 
+### B03：Lite ASR 点时间戳被候选转写 Schema 误判
+
+优先级：高。类型：输入契约过度校验。状态：已修复（`dabcb8d`）。
+
+#### 问题与根因
+
+上传完成后的解析阶段频繁出现结构化结果解析错误。实际失败点不在上传链路，也不是 Lite Provider 本身不可用，而是 `TranscriptCue` 曾强制要求 `end_ms > start_ms`。Lite 返回 `start_ms == end_ms` 的点状 Cue 时，结果会在候选转写反序列化阶段被 Pydantic 拒绝，后续解析尚未开始就进入失败／重试，因此日志中表现为同类解析错误连续出现。
+
+这里混淆了两种不同契约：原始 ASR Cue 只是候选文本及粗粒度定位，不应被要求伪造一个正长度区间；`TimelineEvent`、AnalysisWindow 和 canonical VideoChunk 才需要严格的正区间不变量。Cue 字段中的 `_ms` 是视频内相对时间的内部表示，不是 Chat Submit 的 Unix 毫秒时间戳，也与 ParseJob 的处理耗时无关。问题不在于 Lite 是否能输出“精确到 1 ms 的持续时间”，而在于系统不应在 Lite 输出入口强制这种语义。
+
+#### 已实施方案
+
+- 删除 `TranscriptCue` 的跨字段严格区间校验，不再在 Lite 候选转写入口判断起止关系，允许 `start_ms == end_ms` 的点状 Cue。
+- 保留必要的结构校验：起止值仍须为非负整数、文本非空、未知字段仍被拒绝。没有把原始模型输出当作任意 JSON 直接传入后续链路。
+- 保留 `TimelineEvent` 等正式时间区间的 `end_ms > start_ms` 校验；本次没有放宽 canonical 视频区间、事件区间或数据库区间约束。
+- 增加点状 Cue 回归测试，明确 `TranscriptCue(start_ms=3000, end_ms=3000, ...)` 可被接收，同时原有反向 TimelineEvent 拒绝测试继续保留。
+
+#### 验收结果
+
+- Lite 点状 Cue 不再触发候选转写 Schema 错误和由此产生的重复解析失败。
+- 没有为了通过校验而把点时间强行改写成 `[t, t+1ms)`，也没有把 Chat Submit 的绝对毫秒时间戳规则错误套到 Lite ASR。
+- 全量测试与 B04 一并验证为 `841 passed, 8 skipped`；跳过项均为未配置隔离测试库的 MySQL 集成测试。
+
+依据：[schemas.py](../../engine/parse/schemas.py) 的 `TranscriptCue` / `TimelineEvent`；[test_schemas.py](../../tests/engine/test_schemas.py) 的点状 Cue 回归测试。
+
+### B04：ParseJob 逐 Attempt／逐 Stage 计时造成高频写库
+
+优先级：高。类型：不必要的持久化复杂度与并发开销。状态：已修复（`c1ab11a`）。
+
+#### 问题与根因
+
+上一版计时设计新建了 `parse_job_attempt_timing` 和 `video_chunk_stage_timing`，并在 SPLIT、ASR、PARSE、TEXT_EMBEDDING、VISION_EMBEDDING、INDEX 等阶段分别开始和结束计时。每个 VideoChunk 的每个阶段都会产生额外事务，并行 ASR 还会争用同一 Attempt 计时记录；但当前产品实际只消费 ParseJob 的累计 Worker 处理耗时和该数值是否完整。
+
+这套明细计时与 Lite Cue 的时间单位没有关系。Lite 的相对媒体定位不应为了 ParseJob 性能统计而满足毫秒级正区间；ParseJob 的 `processing_duration_ms` 则是 Worker 使用单调时钟测得的执行耗时，两者必须保持解耦。
+
+#### 已实施方案
+
+- **没有新建计时表。** 在现有 `series_parse_job` 上增加 `processing_duration_ms` 和 `processing_timing_complete` 两个字段。
+- Consumer 使用单调时钟测量一次 Attempt 的执行耗时；`acknowledge` 在 current-lease 条件下原子累加成功 Attempt，`retry` 锁定 Job 后累加已结束的失败 Attempt。
+- Lease 过期时无法可靠知道完整耗时，因此不猜测数值，只将 `processing_timing_complete` 永久置为 `false`；后续重试成功也不会把历史缺口误恢复为完整。
+- 删除逐 Attempt／逐 Stage 的 Model、DTO、Repository、Service 和 `VideoProcessingService` 阶段计时包装，消除每个 Chunk、每个 Stage 的额外写库及锁竞争。
+- API 继续返回累计处理耗时；任务未终态、Lease 过期或历史记录缺失时明确返回不完整语义，不把已知下界伪装成精确总耗时。
+
+#### 受控升级
+
+[20260919_parse_job_processing_timing.sql](../migrations/20260919_parse_job_processing_timing.sql) 是一次性迁移，执行前必须停止 Parse Worker；脚本会在仍有 `RUNNING` Job 时主动中止。
+
+迁移直接给 `series_parse_job` 增加两个字段。若旧明细表已经部署，则仅在 Attempt 记录数量、序号 `1..N` 和完整性全部一致时汇总旧耗时；否则保守标记为不完整。若旧明细表从未部署，已经运行过的历史 Job 同样标记为不完整，不会误报成“0 ms 且完整”。完成折叠后删除两张旧明细表。
+
+#### 取舍与验收结果
+
+- 保留任务级累计处理耗时，放弃逐 Attempt、逐 Chunk、逐 Stage 的持久化诊断明细；这是有意的性能／可维护性取舍。
+- 成功、失败重试、最终 Lease 过期以及“过期后再次执行仍保持 incomplete”均有回归覆盖。
+- 全量测试结果为 `841 passed, 8 skipped`；本地 MySQL、Qdrant、API、Web 均已启动，`GET /healthz` 返回 `status=ok`，Parse Consumer 为 `running`。
+
+依据：[job.py](../../server/model/job.py) 的 Job 字段；[consumer.py](../../server/mq/consumer.py) 的单调计时；[mysql_queue.py](../../server/mq/mysql_queue.py) 的原子累计、重试与 Lease 过期处理；[job.py](../../server/service/job.py) 的公开完整性语义；[20260919_parse_job_processing_timing.sql](../migrations/20260919_parse_job_processing_timing.sql) 的受控迁移。
+
 ## 联调与验收
 
 这些项目属于待验证或部署准备，不等于对应主体代码未实现。
 
 | 项目 | 当前证据／缺口 | 待完成工作 |
 | --- | --- | --- |
-| 真实整链联调 | 当前检查的 MySQL、Qdrant、API、Web 服务端口未监听，连接配置未补齐 | 在隔离环境完成配置／Schema，使用小视频验收上传→解析→两路向量→索引→聊天→定位播放 |
-| MySQL 集成测试 | 最近后端全量 446 passed，2 项因未配置 ANIVAG_TEST_DATABASE_URL 跳过 | 用隔离测试库执行已有集成项，验证事务、锁与迁移 |
+| 真实整链联调 | 2026-09-20 本地 MySQL、Qdrant、API、Web 已启动，`/healthz` 为 ok 且 Parse Consumer running；尚未用新视频跑完整业务链 | 使用小视频验收上传→解析→两路向量→索引→聊天→定位播放，不能用存活检查替代整链验收 |
+| MySQL 集成测试 | 最近全量 `841 passed, 8 skipped`；8 项均因未配置 `ANIVAG_TEST_DATABASE_URL` 跳过，本地开发库启动时 Schema 校验通过 | 使用独立测试库执行集成项，验证事务、锁和历史 Schema 迁移；禁止直接拿开发库跑破坏性测试 |
 | 浏览器端到端 | 前端最近全量 53 passed；Playwright 有配置但没有用例，本轮截图未成功 | 补真实浏览器验收，不将 mock / DOM 通过描述成整链通过 |
 | Parse 消耗 | 采集、价格快照、Decimal 人民币计算及 UI 已实现；相关最新前端测试 18 passed、typecheck 通过 | 新版 Worker 执行后核对真实 Provider usage、MySQL 记录、费用与页面；缺细分保持未知 |
-| 已有数据库升级 | init-db 有旧 Schema guard，不自动 ALTER 历史表 | 按已记录的受控迁移处理旧结构；本轮未执行真实 DDL |
+| 已有数据库升级 | init-db 有旧 Schema guard，不自动 ALTER 历史表；本地当前 Schema 已通过启动校验，但未演练带旧 timing 明细表的历史库升级 | 停止 Worker 后执行受控迁移，并在历史数据副本上核对汇总结果、Incomplete 标记与旧表清理 |
 
 ## 当前能力边界与未纳入范围
 
