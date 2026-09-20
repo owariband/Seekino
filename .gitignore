@@ -2,7 +2,7 @@
 .motor-code/
 
 # Local design notes and generated architecture artifacts
-docs/design/*
+docs/design/
 docs/notes/
 docs/ui-design/
 /transfer.md
