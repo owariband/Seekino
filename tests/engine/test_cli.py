@@ -1,9 +1,7 @@
-import sys
 from pathlib import Path
 
 import pytest
 
-import engine.parse.cli as cli_module
 from engine.parse.cli import _load_completed_chunks
 from engine.parse.schemas import (
     AnalysisWindow,
@@ -12,62 +10,6 @@ from engine.parse.schemas import (
     VideoChunkParseResult,
     VideoParseProvenance,
 )
-
-
-def test_cli_disables_thinking_only_for_video_parser(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    class ConstructionComplete(RuntimeError):
-        pass
-
-    constructed: list[tuple[str, dict[str, object]]] = []
-
-    class Model:
-        def __init__(self, model: str, **kwargs: object) -> None:
-            constructed.append((model, kwargs))
-
-    def stop_after_model_construction(*_args: object, **_kwargs: object):
-        raise ConstructionComplete
-
-    source = tmp_path / "episode.mp4"
-    source.write_bytes(b"video fixture")
-    monkeypatch.setattr(cli_module, "ArkMultimodalModel", Model)
-    monkeypatch.setattr(cli_module, "probe_video_duration_ms", lambda _path: 1_000)
-    monkeypatch.setattr(
-        cli_module,
-        "plan_analysis_windows",
-        lambda *_args, **_kwargs: [],
-    )
-    monkeypatch.setattr(
-        cli_module,
-        "materialize_analysis_windows",
-        lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(cli_module, "VideoChunkParser", stop_after_model_construction)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "engine.parse.cli",
-            "parse-video",
-            "--video",
-            str(source),
-            "--output-dir",
-            str(tmp_path / "output"),
-            "--no-fallback",
-        ],
-    )
-
-    with pytest.raises(ConstructionComplete):
-        cli_module.main()
-
-    assert [model for model, _kwargs in constructed] == [
-        "doubao-seed-2-0-lite-260428",
-        "doubao-seed-2-1-pro-260628",
-    ]
-    assert "thinking_mode" not in constructed[0][1]
-    assert constructed[1][1]["thinking_mode"] == "disabled"
 
 
 def _window() -> AnalysisWindow:

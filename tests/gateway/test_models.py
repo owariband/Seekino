@@ -97,7 +97,6 @@ def test_ark_maps_text_image_and_video_to_responses_sse(tmp_path) -> None:
     responses = FakeResponses(_result())
     model = ArkMultimodalModel(
         "ark-test-model",
-        thinking_mode="disabled",
         client=SimpleNamespace(responses=responses),
     )
 
@@ -117,7 +116,6 @@ def test_ark_maps_text_image_and_video_to_responses_sse(tmp_path) -> None:
     call = responses.calls[0]
     assert call["stream"] is True
     assert call["model"] == "ark-test-model"
-    assert call["thinking"] == {"type": "disabled"}
     content = call["input"][0]["content"]
     assert content[0] == {
         "type": "input_text",
@@ -168,7 +166,6 @@ def test_ark_structured_model_falls_back_after_primary_request_failure() -> None
     assert [call["model"] for call in responses.calls] == [
         "doubao-pro", "doubao-lite",
     ]
-    assert all("thinking" not in call for call in responses.calls)
 
 
 def test_ark_structured_model_honors_shorter_per_request_timeout() -> None:

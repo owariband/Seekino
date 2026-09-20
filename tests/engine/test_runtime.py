@@ -36,14 +36,14 @@ def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
     )[0]
     window.media_path.parent.mkdir(parents=True)
     window.media_path.write_bytes(b"analysis fixture")
-    constructed: list[tuple[str, dict[str, object]]] = []
+    constructed: list[str] = []
 
     class Model:
         provider_name = "ark"
 
-        def __init__(self, model, **kwargs):
+        def __init__(self, model, **_kwargs):
             self.model_name = model
-            constructed.append((model, kwargs))
+            constructed.append(model)
 
         def generate(self, _inputs, *, schema_name, result_type):
             if schema_name == "candidate_transcript":
@@ -84,11 +84,7 @@ def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
     )
 
     assert all(item == TranscriptAnalysis(transcript=[]) for item in transcripts)
-    assert [model for model, _kwargs in constructed] == [
-        "test-lite", "test-pro",
-    ]
-    assert "thinking_mode" not in constructed[0][1]
-    assert constructed[1][1]["thinking_mode"] == "disabled"
+    assert constructed == ["test-lite", "test-pro"]
     assert parsed.window == window
     assert parsed.window_summary == "片段完成"
 

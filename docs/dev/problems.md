@@ -213,50 +213,6 @@ return completed
 
 依据：[job.py](../../server/model/job.py) 的 Job 字段；[consumer.py](../../server/mq/consumer.py) 的单调计时；[mysql_queue.py](../../server/mq/mysql_queue.py) 的原子累计、重试与 Lease 过期处理；[job.py](../../server/service/job.py) 的公开完整性语义；[20260919_parse_job_processing_timing.sql](../migrations/20260919_parse_job_processing_timing.sql) 的受控迁移。
 
-### B05：23 分钟视频的 Pro 画面解析耗时约 70 分钟
-
-优先级：高。类型：模型推理配置导致的关键路径性能问题。状态：已实施，单 Chunk 真实调用验证通过，待整集复验。
-
-#### 问题与根因
-
-2026-09-20 的 EP02 任务 `d57d8145-4ea8-5790-8cf1-62988b67703a` 处理 23 分 40 秒视频共耗时 74 分 30 秒。该次执行只有一次 Attempt，96 次模型调用全部成功，没有错误、重试或中断等待。阶段拆分如下：
-
-- 准备和首个 Lite ASR 约 1 分 37 秒；后续 Lite ASR 已四路预取并被 Pro 解析覆盖。
-- 24 次 `video_timeline` 共 70 分 01 秒，占任务墙钟约 94%，平均每个一分钟 Chunk 175 秒。
-- 文本向量约 5.5 秒，视频向量约 2 分 45 秒，索引约 2 秒。
-
-每个 Chunk 都需要上一片的 `context_after`，所以主时间线调用必须按顺序执行，不能在不改变人物连续性和去重语义的情况下直接并发。真正异常的是主 Pro 请求没有指定 thinking 模式：24 次调用的 228,260 个输出 Token 中有 182,362 个 reasoning Token，占 79.9%；可见结构化结果平均仅 1,912 Token。reasoning Token 与单次调用耗时高度相关，而各片输入量相对稳定。
-
-#### 已实施方案
-
-- `VideoParseConfig` 增加向后兼容的可选 `video_thinking`；默认项目配置显式设为 `disabled`。
-- Server Runtime 和独立 Parse CLI 都只把该配置传给主 `video_model`。Lite 候选转写保持现状，避免把性能修复扩大为 ASR 行为调整。
-- `ArkMultimodalModel` 在配置存在时向 Responses 请求传递 `thinking: {type: disabled}`；旧的自定义配置未声明该字段时仍不发送参数。
-- 第一版不设置 `max_output_tokens`。现有合法 Chunk JSON 为 25–52 KB，贸然限制输出可能截断严格 JSON，再次制造解析错误；待关闭 thinking 后积累整集可见输出分布，再决定是否增加保守上限。
-- 没有改 Chunk 时长、上下文串行关系、结果 Schema、Checkpoint 或数据库结构。
-
-#### 单 Chunk 真实对照
-
-使用原任务 Chunk 0 的同一视频窗口、候选转写、12,335 字背景资料和 9 张人物参考图进行了真实 Ark 调用。两次输入 Token 几乎一致，可直接比较：
-
-| 指标 | 原任务默认 thinking | `thinking: disabled` |
-| --- | ---: | ---: |
-| 输入 Token | 46,775 | 46,774 |
-| 输出 Token | 10,984 | 2,007 |
-| reasoning Token | 9,306 | 0 |
-| 调用耗时 | 189.765 秒 | 38.264 秒 |
-| 结构化结果 | 解析成功，16 个归属事件 | 解析成功，22 个归属事件 |
-
-该片实测耗时下降约 79.8%，且结果通过现有严格 Schema。按单片比例外推，整集可能从 74 分钟降到约 20 分钟量级；这只是容量估算，不代替整集质量和耗时验收。
-
-#### 后续验收
-
-- 用同类 20–25 分钟动画完整重跑，确认 24 次 `video_timeline` 的 reasoning Token 均为 0，并核对总耗时、事件数量、人物连续性及检索命中。
-- 若仍需提速，再单独 A/B `video_fps`；不先并发主 Parse，也不先压缩输出上限。
-- 视频向量串行最多只占本次约 2 分 45 秒，属于后续小优化，不应掩盖主关键路径。
-
-依据：[models.py](../../gateway/models.py) 的 Ark Responses 请求；[config.py](../../gateway/config.py) 与 [config.yaml](../../config.yaml) 的 `video_thinking`；[runtime.py](../../engine/parse/runtime.py) 和 [cli.py](../../engine/parse/cli.py) 的主模型装配；本地 `parse_model_call` 用量与同输入 Chunk 0 真值对照。
-
 ## 联调与验收
 
 这些项目属于待验证或部署准备，不等于对应主体代码未实现。
