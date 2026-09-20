@@ -28,10 +28,11 @@ from .schemas import (
     VideoParseResult,
 )
 from .video_chunk_parse import (
-    ContentFilterFallbackVideoChunkParser,
-    DeepSeekFallbackVideoChunkParser,
-    VideoChunkEvidenceParser,
-    VideoChunkParser,
+    ContentFilterVideoUnderstandingAgent,
+    FrameFallbackVideoUnderstandingAgent,
+    VideoASRAgent,
+    VideoUnderstandingAgent,
+    VideoUnderstandingAgentProtocol,
 )
 from .video_parse import ParsePipeline
 from .usage import parse_chunk_scope
@@ -76,6 +77,43 @@ class _ResolvedRuntimeConfig:
     fallback: VideoFallbackConfig
 
 
+class EngineASRAgent:
+    """Server-facing ASR port backed by one Engine composition runtime."""
+
+    def __init__(self, runtime: EngineVideoParseRuntime) -> None:
+        self._runtime = runtime
+
+    def transcribe_chunk(
+        self,
+        video_chunk: AnalysisWindow,
+    ) -> TranscriptAnalysis:
+        return self._runtime.transcribe_chunk(video_chunk)
+
+
+class EngineVideoUnderstandingAgent:
+    """Server-facing understanding port backed by one Engine runtime."""
+
+    def __init__(self, runtime: EngineVideoParseRuntime) -> None:
+        self._runtime = runtime
+
+    def understand_chunk(
+        self,
+        compact: ContextSnapshot,
+        video_chunk: AnalysisWindow,
+        *,
+        transcript: TranscriptAnalysis,
+        series_bible: str | None = None,
+        background_images: Sequence[BackgroundImage] = (),
+    ) -> VideoChunkParseResult:
+        return self._runtime.understand_chunk(
+            compact,
+            video_chunk,
+            transcript=transcript,
+            series_bible=series_bible,
+            background_images=background_images,
+        )
+
+
 class EngineVideoParseRuntime:
     """Programmatic adapter over the same Engine pipeline used by the CLI."""
 
@@ -91,18 +129,30 @@ class EngineVideoParseRuntime:
         self._on_log = on_log or (lambda _message: None)
         self._assembly_lock = Lock()
         self._resolved: _ResolvedRuntimeConfig | None = None
-        self._transcript_client: ArkMultimodalModel | None = None
-        self._model_parser: VideoChunkParser | None = None
+        self._asr_agent: VideoASRAgent | None = None
+        self._understanding_agent: VideoUnderstandingAgentProtocol | None = None
         self._pipeline: ParsePipeline | None = None
+        self._server_asr_agent = EngineASRAgent(self)
+        self._server_understanding_agent = EngineVideoUnderstandingAgent(self)
+
+    @property
+    def server_asr_agent(self) -> EngineASRAgent:
+        return self._server_asr_agent
+
+    @property
+    def server_understanding_agent(self) -> EngineVideoUnderstandingAgent:
+        return self._server_understanding_agent
 
     def describe_models(
         self,
-        transcript_mode: Literal["lite", "none"],
+        *,
+        asr_enabled: bool,
     ) -> VideoParseModels:
-        if transcript_mode not in {"lite", "none"}:
-            raise ValueError("transcript_mode must be lite or none")
         resolved = self._resolve_config()
         fallback = resolved.fallback
+        transcript_mode: Literal["lite", "none"] = (
+            "lite" if asr_enabled else "none"
+        )
         return VideoParseModels(
             transcript=(
                 resolved.transcript_model if transcript_mode == "lite" else None
@@ -127,26 +177,28 @@ class EngineVideoParseRuntime:
         self,
         video_chunk: AnalysisWindow,
     ) -> TranscriptAnalysis:
-        model_parser = self._get_model_parser()
+        if self._config.asr_mode != "lite":
+            raise RuntimeError("ASR is disabled for this runtime")
+        asr_agent = self._get_asr_agent()
         with parse_chunk_scope(video_chunk.sequence_no):
-            return model_parser.transcribe(
+            return asr_agent.transcribe(
                 video_chunk.media_path,
                 duration_ms=video_chunk.analysis_duration_ms,
             )
 
-    def parse_chunk(
+    def understand_chunk(
         self,
         compact: ContextSnapshot,
         video_chunk: AnalysisWindow,
         *,
-        candidate_transcript: TranscriptAnalysis | None = None,
+        transcript: TranscriptAnalysis,
         series_bible: str | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoChunkParseResult:
-        return self._get_pipeline().parse_chunk(
+        return self._get_pipeline().understand_chunk(
             compact,
             video_chunk,
-            candidate_transcript=candidate_transcript,
+            transcript=transcript,
             series_bible=series_bible,
             background_images=background_images,
         )
@@ -194,12 +246,16 @@ class EngineVideoParseRuntime:
             video_model=video_model,
             fallback_provider=deepseek.provider,
             fallback_model=deepseek.model,
-            fallback_transcript_model=transcript_model,
+            fallback_transcript_model=(
+                transcript_model if self._config.asr_mode == "lite" else None
+            ),
             fallback_frame_fps=fallback_config.frame_fps,
             fallback_group_duration_ms=fallback_config.group_duration_ms,
             fallback_max_frames_per_group=fallback_config.max_frames_per_group,
         )
-        models = self.describe_models(self._config.asr_mode)
+        models = self.describe_models(
+            asr_enabled=self._config.asr_mode == "lite"
+        )
         if len(completed_chunks) == len(windows):
             completed = VideoParseResult(
                 models=models,
@@ -220,7 +276,11 @@ class EngineVideoParseRuntime:
             write_json(completed, work_directory / "pipeline.parse.json")
             return completed
 
-        model_parser = self._get_model_parser()
+        asr_agent = (
+            self._get_asr_agent()
+            if self._config.asr_mode == "lite"
+            else None
+        )
         pipeline = self._get_pipeline()
 
         def checkpoint(chunk: VideoChunkParseResult) -> None:
@@ -242,7 +302,7 @@ class EngineVideoParseRuntime:
                 on_chunk_complete(chunk, path)
 
         with stream_candidate_transcripts(
-            model_parser,
+            asr_agent,
             windows[len(completed_chunks) :],
             output_dir=work_directory,
             transcript_model=transcript_model,
@@ -308,39 +368,38 @@ class EngineVideoParseRuntime:
                 )
             return self._resolved
 
-    def _get_model_parser(self) -> VideoChunkParser:
+    def _get_asr_agent(self) -> VideoASRAgent:
         resolved = self._resolve_config()
         with self._assembly_lock:
-            if self._model_parser is None:
-                transcript_client = ArkMultimodalModel(
+            if self._asr_agent is None:
+                client = ArkMultimodalModel(
                     resolved.transcript_model,
                     request_timeout_seconds=(
                         self._config.request_timeout_seconds
                     ),
                 )
-                video_client = ArkMultimodalModel(
-                    resolved.video_model,
-                    request_timeout_seconds=(
-                        self._config.request_timeout_seconds
-                    ),
+                self._asr_agent = VideoASRAgent(
+                    client,
+                    fps=resolved.transcript_fps,
                 )
-                self._transcript_client = transcript_client
-                self._model_parser = VideoChunkParser(
-                    transcript_client,
-                    video_client,
-                    transcript_fps=resolved.transcript_fps,
-                    video_fps=resolved.video_fps,
-                )
-            return self._model_parser
+            return self._asr_agent
 
-    def _get_pipeline(self) -> ParsePipeline:
-        model_parser = self._get_model_parser()
+    def _get_understanding_agent(self) -> VideoUnderstandingAgentProtocol:
         resolved = self._resolve_config()
         with self._assembly_lock:
-            if self._pipeline is not None:
-                return self._pipeline
+            if self._understanding_agent is not None:
+                return self._understanding_agent
 
-            semantic_parser: VideoChunkEvidenceParser = model_parser
+            video_client = ArkMultimodalModel(
+                resolved.video_model,
+                request_timeout_seconds=self._config.request_timeout_seconds,
+            )
+            understanding_agent: VideoUnderstandingAgentProtocol = (
+                VideoUnderstandingAgent(
+                    video_client,
+                    fps=resolved.video_fps,
+                )
+            )
             if resolved.fallback_enabled:
                 deepseek = resolved.fallback.deepseek
                 api_key = os.getenv(deepseek.api_key_env)
@@ -357,14 +416,14 @@ class EngineVideoParseRuntime:
                     request_timeout_seconds=deepseek.request_timeout_seconds,
                     reasoning_effort=deepseek.reasoning_effort,
                 )
-                transcript_client = self._transcript_client
-                if transcript_client is None:
-                    raise RuntimeError("transcript model client was not initialized")
-                fallback_parser = DeepSeekFallbackVideoChunkParser(
-                    transcript_client,
+                fallback_agent = FrameFallbackVideoUnderstandingAgent(
                     fallback_model,
                     fallback_model,
-                    transcript_fps=resolved.transcript_fps,
+                    asr_model_name=(
+                        resolved.transcript_model
+                        if self._config.asr_mode == "lite"
+                        else None
+                    ),
                     frame_fps=resolved.fallback.frame_fps,
                     group_duration_ms=resolved.fallback.group_duration_ms,
                     max_frames_per_group=(
@@ -372,21 +431,27 @@ class EngineVideoParseRuntime:
                     ),
                     max_height=resolved.fallback.max_height,
                 )
-                semantic_parser = ContentFilterFallbackVideoChunkParser(
-                    model_parser,
-                    fallback_parser,
+                understanding_agent = ContentFilterVideoUnderstandingAgent(
+                    understanding_agent,
+                    fallback_agent,
                     primary_model=resolved.video_model,
                     on_fallback=lambda error: self._on_log(
                         "content-filter fallback; "
                         f"code={error.code or 'content_filter'}"
                     ),
                 )
+            self._understanding_agent = understanding_agent
+            return self._understanding_agent
 
-            self._pipeline = ParsePipeline(
-                semantic_parser,
-                max_context_events=self._config.max_context_events,
-                max_context_chars=self._config.max_context_chars,
-            )
+    def _get_pipeline(self) -> ParsePipeline:
+        understanding_agent = self._get_understanding_agent()
+        with self._assembly_lock:
+            if self._pipeline is None:
+                self._pipeline = ParsePipeline(
+                    understanding_agent,
+                    max_context_events=self._config.max_context_events,
+                    max_context_chars=self._config.max_context_chars,
+                )
             return self._pipeline
 
 

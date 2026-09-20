@@ -243,17 +243,20 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             else embedding_config.fps
         ),
     )
+    parse_runtime = EngineVideoParseRuntime(
+        model_config_path=settings.model_config_path,
+        config=settings.parse,
+        on_log=_logger.info,
+    )
     processor = VideoProcessingService(
         job_repository,
         video_repository,
         index_sync,
         artifact_store,
-        EngineVideoParseRuntime(
-            model_config_path=settings.model_config_path,
-            config=settings.parse,
-            on_log=_logger.info,
-        ),
-        processing_embedder,
+        model_manifest=parse_runtime,
+        asr_agent=parse_runtime.server_asr_agent,
+        understanding_agent=parse_runtime.server_understanding_agent,
+        embedding_agent=processing_embedder,
         parse_usage=parse_usage,
         config=VideoProcessingConfig(
             embedding_dimensions=settings.text_vector_dimensions,

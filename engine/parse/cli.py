@@ -18,10 +18,11 @@ from .checkpoints import (
     write_json as _write_json,
 )
 from .video_chunk_parse import (
-    ContentFilterFallbackVideoChunkParser,
-    DeepSeekFallbackVideoChunkParser,
-    VideoChunkEvidenceParser,
-    VideoChunkParser,
+    ContentFilterVideoUnderstandingAgent,
+    FrameFallbackVideoUnderstandingAgent,
+    VideoASRAgent,
+    VideoUnderstandingAgent,
+    VideoUnderstandingAgentProtocol,
 )
 from .schemas import (
     VideoChunkCheckpoint,
@@ -61,7 +62,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--asr-mode",
         choices=("lite", "none"),
         default="lite",
-        help="Use Lite candidate ASR or pass an explicit empty candidate to Pro.",
+        help=(
+            "Run the configured ASR Agent or pass an explicit empty "
+            "Transcript to video understanding."
+        ),
     )
     parse_video.add_argument("--request-timeout-seconds", type=float, default=600)
     parse_video.add_argument("--max-context-events", type=int, default=8)
@@ -164,21 +168,26 @@ def main() -> None:
         flush=True,
     )
 
-    transcript_model_client = ArkMultimodalModel(
-        transcript_model,
-        request_timeout_seconds=args.request_timeout_seconds,
-    )
+    asr_agent = None
+    if args.asr_mode == "lite":
+        transcript_model_client = ArkMultimodalModel(
+            transcript_model,
+            request_timeout_seconds=args.request_timeout_seconds,
+        )
+        asr_agent = VideoASRAgent(
+            transcript_model_client,
+            fps=transcript_fps,
+        )
     video_model_client = ArkMultimodalModel(
         video_model,
         request_timeout_seconds=args.request_timeout_seconds,
     )
-    model_parser = VideoChunkParser(
-        transcript_model_client,
-        video_model_client,
-        transcript_fps=transcript_fps,
-        video_fps=video_fps,
+    understanding_agent: VideoUnderstandingAgentProtocol = (
+        VideoUnderstandingAgent(
+            video_model_client,
+            fps=video_fps,
+        )
     )
-    semantic_parser: VideoChunkEvidenceParser = model_parser
     if fallback_enabled:
         assert deepseek_api_key is not None
         deepseek_model = DeepSeekMultimodalModel(
@@ -189,11 +198,12 @@ def main() -> None:
             request_timeout_seconds=deepseek_config.request_timeout_seconds,
             reasoning_effort=deepseek_config.reasoning_effort,
         )
-        fallback_parser: VideoChunkEvidenceParser = DeepSeekFallbackVideoChunkParser(
-            transcript_model_client,
+        fallback_agent = FrameFallbackVideoUnderstandingAgent(
             deepseek_model,
             deepseek_model,
-            transcript_fps=transcript_fps,
+            asr_model_name=(
+                transcript_model if args.asr_mode == "lite" else None
+            ),
             frame_fps=fallback_config.frame_fps,
             group_duration_ms=fallback_config.group_duration_ms,
             max_frames_per_group=fallback_config.max_frames_per_group,
@@ -205,14 +215,14 @@ def main() -> None:
                 "Doubao output content filter triggered; "
                 f"code={error.code or 'content_filter'}; "
                 f"partial_output_chars={error.partial_output_chars}; "
-                f"running Lite ASR and grouped {deepseek_config.model} "
+                f"using existing ASR and grouped {deepseek_config.model} "
                 "visual/refiner fallback once",
                 flush=True,
             )
 
-        semantic_parser = ContentFilterFallbackVideoChunkParser(
-            model_parser,
-            fallback_parser,
+        understanding_agent = ContentFilterVideoUnderstandingAgent(
+            understanding_agent,
+            fallback_agent,
             primary_model=video_model,
             on_fallback=report_fallback,
         )
@@ -232,7 +242,9 @@ def main() -> None:
         video_model=video_model,
         fallback_provider=deepseek_config.provider,
         fallback_model=deepseek_config.model,
-        fallback_transcript_model=transcript_model,
+        fallback_transcript_model=(
+            transcript_model if args.asr_mode == "lite" else None
+        ),
         fallback_frame_fps=fallback_config.frame_fps,
         fallback_group_duration_ms=fallback_config.group_duration_ms,
         fallback_max_frames_per_group=fallback_config.max_frames_per_group,
@@ -244,7 +256,7 @@ def main() -> None:
             flush=True,
         )
     pipeline = ParsePipeline(
-        semantic_parser,
+        understanding_agent,
         max_context_events=args.max_context_events,
         max_context_chars=args.max_context_chars,
     )
@@ -272,7 +284,7 @@ def main() -> None:
         )
 
     with _stream_candidate_transcripts(
-        model_parser,
+        asr_agent,
         windows[len(completed_chunks) :],
         output_dir=output_dir,
         transcript_model=transcript_model,

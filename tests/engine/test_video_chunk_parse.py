@@ -10,10 +10,11 @@ from gateway.sse_proxy import ContentFilterError
 import engine.parse.video_chunk_parse as video_chunk_parse_module
 from engine.parse.background import BackgroundImage
 from engine.parse.video_chunk_parse import (
-    ContentFilterFallbackVideoChunkParser,
-    DeepSeekFallbackVideoChunkParser,
-    OrderedFrameVideoChunkParser,
-    VideoChunkParser,
+    ContentFilterVideoUnderstandingAgent,
+    FrameFallbackVideoUnderstandingAgent,
+    OrderedFrameVideoUnderstandingAgent,
+    VideoASRAgent,
+    VideoUnderstandingAgent,
 )
 from engine.parse.schemas import (
     NeutralVisualEvidence,
@@ -136,22 +137,21 @@ def _run_deepseek_fallback(
     *,
     refiner_timeline: VideoTimeline | None = None,
     background_images=(),
+    transcript: TranscriptAnalysis | None = None,
+    asr_model_name: str | None = "test-lite",
 ):
     video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
-    transcript = TranscriptAnalysis(
-        transcript=[
-            TranscriptCue(
-                start_ms=30_400,
-                end_ms=31_100,
-                text="ASR_SECRET_LITE_TRANSCRIPT",
-            )
-        ]
-    )
-    transcript_model = FakeModel(
-        "test-lite",
-        {"candidate_transcript": transcript},
-    )
+    if transcript is None:
+        transcript = TranscriptAnalysis(
+            transcript=[
+                TranscriptCue(
+                    start_ms=30_400,
+                    end_ms=31_100,
+                    text="ASR_SECRET_LITE_TRANSCRIPT",
+                )
+            ]
+        )
     vision_model = SequencedVisionModel()
     if refiner_timeline is None:
         refiner_timeline = VideoTimeline(
@@ -200,31 +200,29 @@ def _run_deepseek_fallback(
         "SeriesBible:\nSERIES_BIBLE_SECRET\n\n"
         "contextBeforeCompact:\nCOMPACT_SECRET"
     )
-    result = DeepSeekFallbackVideoChunkParser(
-        transcript_model,
+    result = FrameFallbackVideoUnderstandingAgent(
         vision_model,
         refiner_model,
-        transcript_fps=1.0,
+        asr_model_name=asr_model_name,
         frame_fps=0.5,
         group_duration_ms=30_000,
         max_frames_per_group=15,
         max_height=720,
-    ).analyze(
+    ).understand(
         video_path,
         duration_ms=66_000,
-        candidate_transcript=TranscriptAnalysis(transcript=[]),
+        transcript=transcript,
         context=context,
         background_images=background_images,
     )
     return {
         "result": result,
-        "transcript_model": transcript_model,
         "vision_model": vision_model,
         "refiner_model": refiner_model,
     }
 
 
-def test_video_chunk_parser_fuses_candidate_transcript_with_video(tmp_path) -> None:
+def test_asr_and_understanding_agents_exchange_an_explicit_transcript(tmp_path) -> None:
     transcript_model = FakeModel(
         "test-lite",
         {"candidate_transcript": _transcript()},
@@ -233,13 +231,16 @@ def test_video_chunk_parser_fuses_candidate_transcript_with_video(tmp_path) -> N
     video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
 
-    result = VideoChunkParser(
+    transcript = VideoASRAgent(
         transcript_model,
+        fps=0.5,
+    ).transcribe(video_path, duration_ms=8000)
+    result = VideoUnderstandingAgent(
         video_model,
-        transcript_fps=0.5,
-        video_fps=2.0,
-    ).analyze(
+        fps=2.0,
+    ).understand(
         video_path,
+        transcript=transcript,
         context="角色穿红色外套",
         duration_ms=8000,
     )
@@ -276,8 +277,7 @@ def test_video_chunk_parser_fuses_candidate_transcript_with_video(tmp_path) -> N
     assert "text 写 null" in instruction
 
 
-def test_video_chunk_parser_sends_labeled_background_images_with_video(tmp_path) -> None:
-    transcript_model = FakeModel("test-lite", {})
+def test_understanding_agent_sends_labeled_background_images_with_video(tmp_path) -> None:
     video_model = FakeModel("test-pro", {"video_timeline": _timeline()})
     video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
@@ -288,20 +288,17 @@ def test_video_chunk_parser_sends_labeled_background_images_with_video(tmp_path)
     for image in images:
         image.path.write_bytes(b"background image")
 
-    VideoChunkParser(
-        transcript_model,
+    VideoUnderstandingAgent(
         video_model,
-        transcript_fps=1.0,
-        video_fps=1.0,
-    ).analyze(
+        fps=1.0,
+    ).understand(
         video_path,
         duration_ms=8000,
-        candidate_transcript=_transcript(),
+        transcript=_transcript(),
         context="人物背景正文与自定义字段",
         background_images=images,
     )
 
-    assert transcript_model.calls == []
     inputs = video_model.calls[0]["inputs"]
     assert [type(item) for item in inputs] == [
         TextInput, ImageInput, TextInput, ImageInput, VideoInput, TextInput,
@@ -315,29 +312,25 @@ def test_video_chunk_parser_sends_labeled_background_images_with_video(tmp_path)
     assert "人物背景正文与自定义字段" in inputs[5].text
 
 
-def test_video_chunk_parser_reuses_precomputed_candidate_transcript(tmp_path) -> None:
-    transcript_model = FakeModel("test-lite", {})
+def test_understanding_agent_uses_the_explicit_transcript(tmp_path) -> None:
     video_model = FakeModel("test-pro", {"video_timeline": _timeline()})
     video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
 
-    result = VideoChunkParser(
-        transcript_model,
+    result = VideoUnderstandingAgent(
         video_model,
-        transcript_fps=1.0,
-        video_fps=1.0,
-    ).analyze(
+        fps=1.0,
+    ).understand(
         video_path,
         duration_ms=8000,
-        candidate_transcript=_transcript(),
+        transcript=_transcript(),
     )
 
-    assert transcript_model.calls == []
     assert len(video_model.calls) == 1
     assert result.candidate_transcript == _transcript().transcript
 
 
-def test_video_chunk_parser_supports_silent_local_direct_video(tmp_path) -> None:
+def test_understanding_agent_supports_silent_local_direct_video(tmp_path) -> None:
     video_model = FakeModel(
         "qwen-local",
         {"video_timeline": _timeline()},
@@ -346,16 +339,14 @@ def test_video_chunk_parser_supports_silent_local_direct_video(tmp_path) -> None
     video_path = tmp_path / "chunk.mp4"
     video_path.write_bytes(b"fake-video")
 
-    result = VideoChunkParser(
-        FakeModel("unused-transcript", {}),
+    result = VideoUnderstandingAgent(
         video_model,
-        transcript_fps=1.0,
-        video_fps=0.5,
+        fps=0.5,
         video_audio_available=False,
-    ).analyze(
+    ).understand(
         video_path,
         duration_ms=8000,
-        candidate_transcript=_transcript(),
+        transcript=_transcript(),
     )
 
     inputs = video_model.calls[0]["inputs"]
@@ -371,13 +362,11 @@ def test_video_chunk_parser_supports_silent_local_direct_video(tmp_path) -> None
     )
 
 
-def test_video_chunk_parser_preserves_ordered_frame_evidence(tmp_path) -> None:
+def test_understanding_agent_preserves_ordered_frame_evidence(tmp_path) -> None:
     video_model = FakeModel("test-pro", {"video_timeline": _timeline()})
-    parser = VideoChunkParser(
-        FakeModel("test-lite", {}),
+    parser = VideoUnderstandingAgent(
         video_model,
-        transcript_fps=1.0,
-        video_fps=1.0,
+        fps=1.0,
     )
     first_frame = tmp_path / "frame-1.jpg"
     second_frame = tmp_path / "frame-2.jpg"
@@ -387,7 +376,7 @@ def test_video_chunk_parser_preserves_ordered_frame_evidence(tmp_path) -> None:
     result = parser.analyze_frames(
         [(1000, first_frame), (5000, second_frame)],
         duration_ms=8000,
-        candidate_transcript=TranscriptAnalysis(transcript=[]),
+        transcript=TranscriptAnalysis(transcript=[]),
         context="此前成员正在准备演出",
     )
 
@@ -413,25 +402,23 @@ def test_video_chunk_parser_preserves_ordered_frame_evidence(tmp_path) -> None:
     assert result.provenance.frame_timestamps_ms == [1000, 5000]
 
 
-def test_video_chunk_parser_rejects_non_increasing_frame_timestamps(tmp_path) -> None:
+def test_understanding_agent_rejects_non_increasing_frame_timestamps(tmp_path) -> None:
     frame = tmp_path / "frame.jpg"
     frame.write_bytes(b"frame")
-    parser = VideoChunkParser(
-        FakeModel("test-lite", {}),
+    parser = VideoUnderstandingAgent(
         FakeModel("test-pro", {"video_timeline": _timeline()}),
-        transcript_fps=1.0,
-        video_fps=1.0,
+        fps=1.0,
     )
 
     with pytest.raises(ValueError, match="strictly increasing"):
         parser.analyze_frames(
             [(1000, frame), (1000, frame)],
             duration_ms=8000,
-            candidate_transcript=TranscriptAnalysis(transcript=[]),
+            transcript=TranscriptAnalysis(transcript=[]),
         )
 
 
-def test_ordered_frame_video_chunk_parser_records_local_sampling(tmp_path) -> None:
+def test_ordered_frame_understanding_agent_records_local_sampling(tmp_path) -> None:
     frame = tmp_path / "frame.jpg"
     frame.write_bytes(b"frame")
     model = FakeModel(
@@ -439,7 +426,7 @@ def test_ordered_frame_video_chunk_parser_records_local_sampling(tmp_path) -> No
         {"video_timeline": _timeline()},
         provider_name="ollama",
     )
-    parser = OrderedFrameVideoChunkParser(
+    parser = OrderedFrameVideoUnderstandingAgent(
         model,
         frame_fps=0.5,
         max_frames=33,
@@ -449,7 +436,7 @@ def test_ordered_frame_video_chunk_parser_records_local_sampling(tmp_path) -> No
     result = parser.analyze_frames(
         [(1000, frame)],
         duration_ms=8000,
-        candidate_transcript=TranscriptAnalysis(transcript=[]),
+        transcript=TranscriptAnalysis(transcript=[]),
     )
 
     assert isinstance(model.calls[0]["inputs"][1], TextInput)
@@ -475,12 +462,9 @@ def test_frame_paths_keep_background_images_separate_from_timed_frames(
     frames = [(1000, frame)]
     model = FakeModel("frame-model", {"video_timeline": _timeline()})
     if mode == "ark_frames":
-        parser = VideoChunkParser(
-            FakeModel("test-lite", {}), model,
-            transcript_fps=1.0, video_fps=1.0,
-        )
+        parser = VideoUnderstandingAgent(model, fps=1.0)
     else:
-        parser = OrderedFrameVideoChunkParser(
+        parser = OrderedFrameVideoUnderstandingAgent(
             model, frame_fps=0.5, max_frames=33, max_height=720,
         )
     if mode == "ordered_video":
@@ -490,15 +474,15 @@ def test_frame_paths_keep_background_images_separate_from_timed_frames(
             video_chunk_parse_module, "extract_video_frames",
             lambda *_args, **_kwargs: frames,
         )
-        result = parser.analyze(
+        result = parser.understand(
             video, duration_ms=8000,
-            candidate_transcript=TranscriptAnalysis(transcript=[]),
+            transcript=TranscriptAnalysis(transcript=[]),
             background_images=[background],
         )
     else:
         result = parser.analyze_frames(
             frames, duration_ms=8000,
-            candidate_transcript=TranscriptAnalysis(transcript=[]),
+            transcript=TranscriptAnalysis(transcript=[]),
             background_images=[background],
         )
 
@@ -528,8 +512,6 @@ def test_deepseek_fallback_uses_background_images_only_in_refinement(
             item.path != background.path
             for item in call["inputs"] if isinstance(item, ImageInput)
         )
-    transcript_inputs = run["transcript_model"].calls[0]["inputs"]
-    assert not any(isinstance(item, ImageInput) for item in transcript_inputs)
     refiner_call = run["refiner_model"].calls[0]
     assert "asset://portrait_01" in refiner_call["inputs"][0].text
     assert isinstance(refiner_call["inputs"][1], ImageInput)
@@ -581,19 +563,13 @@ def test_deepseek_fallback_groups_frames_and_isolates_visual_stage(
         assert "ASR_SECRET_LITE_TRANSCRIPT" not in visual_prompt
 
 
-def test_deepseek_fallback_refines_lite_asr_context_and_mapped_evidence(
+def test_deepseek_fallback_refines_explicit_asr_and_mapped_evidence(
     tmp_path,
     monkeypatch,
 ) -> None:
     run = _run_deepseek_fallback(tmp_path, monkeypatch)
     result = run["result"]
-    transcript_model = run["transcript_model"]
     refiner_model = run["refiner_model"]
-
-    # Even an explicitly supplied empty primary transcript must not suppress the
-    # on-demand Lite stage of the selected fallback chain.
-    assert len(transcript_model.calls) == 1
-    assert transcript_model.calls[0]["schema_name"] == "candidate_transcript"
 
     assert len(refiner_model.calls) == 1
     assert refiner_model.calls[0]["schema_name"] == "fallback_video_timeline"
@@ -621,6 +597,24 @@ def test_deepseek_fallback_refines_lite_asr_context_and_mapped_evidence(
     assert result.provenance.visual_model == "deepseek-flash"
     assert result.provenance.refiner_model == "deepseek-flash"
     assert result.provenance.group_frame_counts == [15, 15, 3]
+
+
+def test_deepseek_fallback_keeps_empty_transcript_and_records_no_asr_model(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    run = _run_deepseek_fallback(
+        tmp_path,
+        monkeypatch,
+        transcript=TranscriptAnalysis(transcript=[]),
+        asr_model_name=None,
+        refiner_timeline=VideoTimeline(summary="无对白片段", events=[]),
+    )
+
+    result = run["result"]
+    assert result.candidate_transcript == []
+    assert result.provenance is not None
+    assert result.provenance.fallback_transcript_model is None
 
 
 def test_deepseek_fallback_rejects_unsupported_dialogue_text(
@@ -679,7 +673,7 @@ class RaisingParser:
         self.calls = 0
         self.requests = []
 
-    def analyze(self, *args, **kwargs):
+    def understand(self, *args, **kwargs):
         self.calls += 1
         self.requests.append(kwargs)
         raise self.error
@@ -691,7 +685,7 @@ class ReturningParser:
         self.calls = 0
         self.requests = []
 
-    def analyze(self, *args, **kwargs) -> VideoEvidence:
+    def understand(self, *args, **kwargs) -> VideoEvidence:
         self.calls += 1
         self.requests.append(kwargs)
         return self.evidence
@@ -724,11 +718,16 @@ def test_content_filter_falls_back_once_and_preserves_diagnostics(tmp_path) -> N
     )
 
     images = [BackgroundImage("portrait_01", tmp_path / "portrait.png")]
-    result = ContentFilterFallbackVideoChunkParser(
+    result = ContentFilterVideoUnderstandingAgent(
         primary,
         fallback,
         primary_model="test-pro",
-    ).analyze("chunk.mp4", duration_ms=8000, background_images=images)
+    ).understand(
+        "chunk.mp4",
+        transcript=TranscriptAnalysis(transcript=[]),
+        duration_ms=8000,
+        background_images=images,
+    )
 
     assert primary.calls == 1
     assert fallback.calls == 1
@@ -753,13 +752,17 @@ def test_non_content_filter_error_does_not_fall_back() -> None:
         )
     )
 
-    parser = ContentFilterFallbackVideoChunkParser(
+    parser = ContentFilterVideoUnderstandingAgent(
         primary,
         fallback,
         primary_model="test-pro",
     )
     with pytest.raises(RuntimeError, match="network failed"):
-        parser.analyze("chunk.mp4", duration_ms=8000)
+        parser.understand(
+            "chunk.mp4",
+            transcript=TranscriptAnalysis(transcript=[]),
+            duration_ms=8000,
+        )
 
     assert primary.calls == 1
     assert fallback.calls == 0

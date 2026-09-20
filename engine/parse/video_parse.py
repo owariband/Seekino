@@ -18,13 +18,13 @@ from .schemas import (
     VideoParseResult,
 )
 from .usage import parse_chunk_scope
-from .video_chunk_parse import VideoChunkEvidenceParser
+from .video_chunk_parse import VideoUnderstandingAgentProtocol
 
 
 class ParsePipeline:
     def __init__(
         self,
-        parser: VideoChunkEvidenceParser,
+        understanding_agent: VideoUnderstandingAgentProtocol,
         *,
         max_context_events: int = 8,
         max_context_chars: int = 2000,
@@ -33,16 +33,16 @@ class ParsePipeline:
             raise ValueError("max_context_events must be greater than zero")
         if max_context_chars < 256:
             raise ValueError("max_context_chars must be at least 256")
-        self._parser = parser
+        self._understanding_agent = understanding_agent
         self._max_context_events = max_context_events
         self._max_context_chars = max_context_chars
 
-    def parse_chunk(
+    def understand_chunk(
         self,
         compact: ContextSnapshot,
         video_chunk: AnalysisWindow,
         *,
-        candidate_transcript: TranscriptAnalysis | None = None,
+        transcript: TranscriptAnalysis,
         series_bible: str | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoChunkParseResult:
@@ -59,11 +59,11 @@ class ParsePipeline:
             series_bible=series_bible,
         )
         with parse_chunk_scope(video_chunk.sequence_no):
-            evidence = self._parser.analyze(
+            evidence = self._understanding_agent.understand(
                 str(video_chunk.media_path),
+                transcript=transcript,
                 context=model_context,
                 duration_ms=video_chunk.analysis_duration_ms,
-                candidate_transcript=candidate_transcript,
                 background_images=background_images,
             )
         observed_events, owned_events = self._merge_window_events(
@@ -152,7 +152,7 @@ class ParsePipeline:
                 context_before = completed.context_after
                 continue
 
-            candidate_transcript = None
+            candidate_transcript = TranscriptAnalysis(transcript=[])
             if transcript_mapping is not None:
                 try:
                     candidate_transcript = transcript_mapping[window.sequence_no]
@@ -175,10 +175,10 @@ class ParsePipeline:
                         f"sequence; expected {window.sequence_no}, got "
                         f"{transcript_sequence_no}"
                     )
-            chunk_result = self.parse_chunk(
+            chunk_result = self.understand_chunk(
                 context_before,
                 window,
-                candidate_transcript=candidate_transcript,
+                transcript=candidate_transcript,
                 series_bible=series_bible,
                 background_images=background_images,
             )

@@ -1,11 +1,17 @@
 # ByteDance-internal coding telemetry (never commit)
 .motor-code/
 
-# Local design notes and generated architecture artifacts
+# Local design notes and generated visual / architecture artifacts
 docs/design/
 docs/notes/
 docs/ui-design/
 /transfer.md
+/.baoyu-skills/
+/diagrams/
+/infographic/
+/docs/*.dataflow.json
+/docs/*.visual-check.*
+/docs/*-pipeline.html
 
 # Local development state
 .DS_Store

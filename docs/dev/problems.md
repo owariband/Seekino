@@ -170,15 +170,16 @@ return completed
 - 删除 `TranscriptCue` 的跨字段严格区间校验，不再在 Lite 候选转写入口判断起止关系，允许 `start_ms == end_ms` 的点状 Cue。
 - 保留必要的结构校验：起止值仍须为非负整数、文本非空、未知字段仍被拒绝。没有把原始模型输出当作任意 JSON 直接传入后续链路。
 - 保留 `TimelineEvent` 等正式时间区间的 `end_ms > start_ms` 校验；本次没有放宽 canonical 视频区间、事件区间或数据库区间约束。
+- 原始 ASR 与数据库事实保持原值；只有检索层在构造要求正区间的公开 Evidence 时做软投影：点状 Cue 临时表示为 `[t, t+1ms)`，反向或损坏 Cue 跳过并记录 warning。该投影不回写数据库，也不会令 ParseJob 失败或重试。
 - 增加点状 Cue 回归测试，明确 `TranscriptCue(start_ms=3000, end_ms=3000, ...)` 可被接收，同时原有反向 TimelineEvent 拒绝测试继续保留。
 
 #### 验收结果
 
 - Lite 点状 Cue 不再触发候选转写 Schema 错误和由此产生的重复解析失败。
-- 没有为了通过校验而把点时间强行改写成 `[t, t+1ms)`，也没有把 Chat Submit 的绝对毫秒时间戳规则错误套到 Lite ASR。
-- 全量测试与 B04 一并验证为 `841 passed, 8 skipped`；跳过项均为未配置隔离测试库的 MySQL 集成测试。
+- 没有为了通过 ASR 输入校验而改写原始 Cue，也没有把 Chat Submit 的绝对毫秒时间戳规则错误套到 Lite ASR；`[t, t+1ms)` 仅是检索 Evidence 的非持久化兼容表示。
+- 当前全量测试验证为 `844 passed, 8 skipped`；跳过项均为未配置隔离测试库的 MySQL 集成测试。
 
-依据：[schemas.py](../../engine/parse/schemas.py) 的 `TranscriptCue` / `TimelineEvent`；[test_schemas.py](../../tests/engine/test_schemas.py) 的点状 Cue 回归测试。
+依据：[schemas.py](../../engine/parse/schemas.py) 的 `TranscriptCue` / `TimelineEvent`；[video.py](../../server/repository/video.py) 的检索边界软投影；[test_schemas.py](../../tests/engine/test_schemas.py) 与 [test_video_retrieval_service.py](../../tests/server/test_video_retrieval_service.py) 的回归测试。
 
 ### B04：ParseJob 逐 Attempt／逐 Stage 计时造成高频写库
 
@@ -212,6 +213,29 @@ return completed
 - 全量测试结果为 `841 passed, 8 skipped`；本地 MySQL、Qdrant、API、Web 均已启动，`GET /healthz` 返回 `status=ok`，Parse Consumer 为 `running`。
 
 依据：[job.py](../../server/model/job.py) 的 Job 字段；[consumer.py](../../server/mq/consumer.py) 的单调计时；[mysql_queue.py](../../server/mq/mysql_queue.py) 的原子累计、重试与 Lease 过期处理；[job.py](../../server/service/job.py) 的公开完整性语义；[20260919_parse_job_processing_timing.sql](../migrations/20260919_parse_job_processing_timing.sql) 的受控迁移。
+
+### B05：Parse Agent 边界被模型档位和 fallback 隐式耦合
+
+优先级：高。类型：解析编排与恢复边界不清。状态：已修复本轮结构问题，数据契约迁移待后续处理。
+
+#### 问题与根因
+
+旧编排把 Lite／Pro 这样的 provider tier 当成流程角色，ASR、视频理解和内容审核 fallback 的职责彼此渗透；尤其是 fallback 曾能把空 Transcript 当成“ASR 未运行”并自行补跑 ASR。这样既无法从拓扑判断一次视频会调用哪些能力，也难以说明失败后哪些结果可以恢复。
+
+#### 已实施方案
+
+- 生产链路由 `VideoProcessingService` 内的串行 LangGraph 统一编排：准备窗口与媒体 → ASR Agent → VideoUnderstandingAgent → 组装检索文档 → EmbeddingAgent → MySQL 业务事实 → Qdrant 索引。ASR 节点内部仍可有界并发，理解节点按序演进 Context。
+- Agent 不互相调用，只通过 Graph State 交接显式 DTO。provider、model 与 tier 只保留为配置和 provenance，不再决定拓扑。
+- 生产装配向 Graph 注入不同的 `EngineASRAgent` 与 `EngineVideoUnderstandingAgent` 对象；模型清单由独立 `ParseModelManifest` 提供，不再挂在理解 Agent 协议上。
+- 内容审核 fallback 只属于 VideoUnderstandingAgent：它复用 Graph 传入的同一份 Transcript，不调用 ASR Agent；显式空 Transcript 也不会触发补跑。
+- LangGraph 没有配置 checkpointer 或节点 retry。异常仍由 ParseJobConsumer 和 MySQL Queue 发起下一 Attempt；MySQL Checkpoint、已提交 Artifact 与 Lease/Fencing 是跨 Attempt 的恢复真相，Graph State 只是当次执行内存。
+
+#### 尚未迁移的契约与已知恢复缺口
+
+- 本轮**没有**把 ASR raw DTO 迁移为 `start_time` / `end_time` 字符串，也没有新增“原始 ASR”与“经理解校正后的 canonical transcript”两套独立类型和存储。当前 `TranscriptAnalysis` / `TranscriptCue` 仍沿用 `start_ms` / `end_ms` 整数契约；这项数据模型重构需单独设计和迁移。
+- 生产 ASR 阶段当前没有独立 durable checkpoint，结果只保存在本次 Graph State。VideoUnderstandingAgent 失败后，下一 Attempt 会恢复已经持久化的连续 PARSED 前缀，但会为剩余窗口重新执行 ASR；即使上一次已经在内存中完成这些 Transcript，也无法跨 Attempt 复用。
+
+依据：[video_processing.py](../../server/service/video_processing.py) 的 Graph、State 与节点顺序；[runtime.py](../../engine/parse/runtime.py) 和 [video_chunk_parse.py](../../engine/parse/video_chunk_parse.py) 的 Agent/fallback 契约；[consumer.py](../../server/mq/consumer.py) 与 [job.py](../../server/repository/job.py) 的 Queue retry、Checkpoint 和 Lease；[test_video_processing_service.py](../../tests/server/test_video_processing_service.py) 的阶段顺序与恢复回归测试。
 
 ## 联调与验收
 

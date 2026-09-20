@@ -35,39 +35,40 @@ from .schemas import (
 ProvenanceProvider = Literal["doubao", "deepseek", "ollama", "llama_cpp"]
 
 
-class VideoChunkEvidenceParser(Protocol):
-    def analyze(
+class VideoASRAgentProtocol(Protocol):
+    def transcribe(
         self,
         video_path: str | Path,
         *,
+        duration_ms: int | None = None,
+    ) -> TranscriptAnalysis: ...
+
+
+class VideoUnderstandingAgentProtocol(Protocol):
+    def understand(
+        self,
+        video_path: str | Path,
+        *,
+        transcript: TranscriptAnalysis,
         context: str | None = None,
         duration_ms: int | None = None,
-        candidate_transcript: TranscriptAnalysis | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence: ...
 
 
-class VideoChunkParser:
-    """Parse one existing video chunk with direct video model input."""
+class VideoASRAgent:
+    """Transcribe one video window without interpreting its visual content."""
 
     def __init__(
         self,
-        transcript_model: MultimodalModel,
-        video_model: MultimodalModel,
+        model: MultimodalModel,
         *,
-        transcript_fps: float,
-        video_fps: float,
-        video_audio_available: bool = True,
+        fps: float,
     ) -> None:
-        _validate_fps("transcript_fps", transcript_fps)
-        _validate_fps("video_fps", video_fps)
-        self.transcript_model_name = transcript_model.model_name
-        self.video_model_name = video_model.model_name
-        self.transcript_fps = transcript_fps
-        self.video_fps = video_fps
-        self.video_audio_available = video_audio_available
-        self._transcript_model = transcript_model
-        self._video_model = video_model
+        _validate_fps("fps", fps)
+        self.model_name = model.model_name
+        self.fps = fps
+        self._model = model
 
     def transcribe(
         self,
@@ -77,25 +78,39 @@ class VideoChunkParser:
     ) -> TranscriptAnalysis:
         path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
         return _transcribe_video_chunk(
-            self._transcript_model,
+            self._model,
             path,
             duration_ms=resolved_duration_ms,
-            transcript_fps=self.transcript_fps,
+            transcript_fps=self.fps,
         )
 
-    def analyze(
+
+class VideoUnderstandingAgent:
+    """Understand one video window from video evidence and an explicit ASR DTO."""
+
+    def __init__(
+        self,
+        model: MultimodalModel,
+        *,
+        fps: float,
+        video_audio_available: bool = True,
+    ) -> None:
+        _validate_fps("fps", fps)
+        self.model_name = model.model_name
+        self.fps = fps
+        self.video_audio_available = video_audio_available
+        self._model = model
+
+    def understand(
         self,
         video_path: str | Path,
         *,
+        transcript: TranscriptAnalysis,
         context: str | None = None,
         duration_ms: int | None = None,
-        candidate_transcript: TranscriptAnalysis | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
-        transcript = candidate_transcript
-        if transcript is None:
-            transcript = self.transcribe(path, duration_ms=resolved_duration_ms)
         transcript = _clamp_transcript(transcript, resolved_duration_ms)
         instruction = build_video_parse_prompt(
             resolved_duration_ms,
@@ -104,25 +119,25 @@ class VideoChunkParser:
             ordered_frames=False,
             video_audio_available=self.video_audio_available,
         )
-        timeline = self._video_model.generate(
+        timeline = self._model.generate(
             [
                 *build_background_image_inputs(background_images),
-                VideoInput(path=path, fps=self.video_fps),
+                VideoInput(path=path, fps=self.fps),
                 TextInput(text=instruction),
             ],
             schema_name="video_timeline",
             result_type=VideoTimeline,
         )
-        provider = _provenance_provider(self._video_model)
+        provider = _provenance_provider(self._model)
         return _to_video_evidence(
             timeline,
             transcript,
             resolved_duration_ms,
             provenance=VideoParseProvenance(
                 provider=provider,
-                model=self.video_model_name,
+                model=self.model_name,
                 input_mode="video",
-                frame_fps=self.video_fps if provider == "llama_cpp" else None,
+                frame_fps=self.fps if provider == "llama_cpp" else None,
             ),
         )
 
@@ -131,15 +146,15 @@ class VideoChunkParser:
         frames: Sequence[tuple[int, str | Path]],
         *,
         duration_ms: int,
-        candidate_transcript: TranscriptAnalysis,
+        transcript: TranscriptAnalysis,
         context: str | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         return _analyze_ordered_frames(
-            self._video_model,
+            self._model,
             frames,
             duration_ms=duration_ms,
-            candidate_transcript=candidate_transcript,
+            transcript=transcript,
             context=context,
             frame_fps=None,
             sequence_intro=ARK_FRAME_SEQUENCE_INTRO,
@@ -147,8 +162,8 @@ class VideoChunkParser:
         )
 
 
-class OrderedFrameVideoChunkParser:
-    """Parse one video chunk after Engine samples an ordered frame sequence."""
+class OrderedFrameVideoUnderstandingAgent:
+    """Understand one video window from an ordered frame sequence."""
 
     def __init__(
         self,
@@ -169,17 +184,16 @@ class OrderedFrameVideoChunkParser:
         self.max_height = max_height
         self._model = model
 
-    def analyze(
+    def understand(
         self,
         video_path: str | Path,
         *,
+        transcript: TranscriptAnalysis,
         context: str | None = None,
         duration_ms: int | None = None,
-        candidate_transcript: TranscriptAnalysis | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
-        transcript = candidate_transcript or TranscriptAnalysis(transcript=[])
         timestamps_ms = plan_frame_timestamps(
             resolved_duration_ms,
             frame_fps=self.frame_fps,
@@ -195,7 +209,7 @@ class OrderedFrameVideoChunkParser:
             return self.analyze_frames(
                 frames,
                 duration_ms=resolved_duration_ms,
-                candidate_transcript=transcript,
+                transcript=transcript,
                 context=context,
                 background_images=background_images,
             )
@@ -205,7 +219,7 @@ class OrderedFrameVideoChunkParser:
         frames: Sequence[tuple[int, str | Path]],
         *,
         duration_ms: int,
-        candidate_transcript: TranscriptAnalysis,
+        transcript: TranscriptAnalysis,
         context: str | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
@@ -213,7 +227,7 @@ class OrderedFrameVideoChunkParser:
             self._model,
             frames,
             duration_ms=duration_ms,
-            candidate_transcript=candidate_transcript,
+            transcript=transcript,
             context=context,
             frame_fps=self.frame_fps,
             sequence_intro=FRAME_SEQUENCE_INTRO,
@@ -221,22 +235,20 @@ class OrderedFrameVideoChunkParser:
         )
 
 
-class DeepSeekFallbackVideoChunkParser:
-    """Run Lite ASR, grouped neutral vision, then evidence-only refinement."""
+class FrameFallbackVideoUnderstandingAgent:
+    """Understand a window from explicit ASR and grouped visual evidence."""
 
     def __init__(
         self,
-        transcript_model: MultimodalModel,
         vision_model: MultimodalModel,
         refiner_model: MultimodalModel,
         *,
-        transcript_fps: float,
+        asr_model_name: str | None,
         frame_fps: float,
         group_duration_ms: int,
         max_frames_per_group: int,
         max_height: int,
     ) -> None:
-        _validate_fps("transcript_fps", transcript_fps)
         _validate_fps("frame_fps", frame_fps)
         if group_duration_ms <= 0:
             raise ValueError("group_duration_ms must be greater than zero")
@@ -249,43 +261,27 @@ class DeepSeekFallbackVideoChunkParser:
         if refiner_model.provider_name != "deepseek":
             raise ValueError("refiner_model must use the deepseek provider")
 
-        self.transcript_model_name = transcript_model.model_name
+        self.asr_model_name = asr_model_name
         self.vision_model_name = vision_model.model_name
         self.refiner_model_name = refiner_model.model_name
-        self.transcript_fps = transcript_fps
         self.frame_fps = frame_fps
         self.group_duration_ms = group_duration_ms
         self.max_frames_per_group = max_frames_per_group
         self.max_height = max_height
-        self._transcript_model = transcript_model
         self._vision_model = vision_model
         self._refiner_model = refiner_model
 
-    def analyze(
+    def understand(
         self,
         video_path: str | Path,
         *,
+        transcript: TranscriptAnalysis,
         context: str | None = None,
         duration_ms: int | None = None,
-        candidate_transcript: TranscriptAnalysis | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
-        # The primary path may deliberately use an empty candidate transcript.
-        # A fallback still needs the dedicated Lite audio pass selected for this
-        # chain. Reuse a non-empty precomputed Lite result when one exists.
-        if candidate_transcript is None or not candidate_transcript.transcript:
-            transcript = _transcribe_video_chunk(
-                self._transcript_model,
-                path,
-                duration_ms=resolved_duration_ms,
-                transcript_fps=self.transcript_fps,
-            )
-        else:
-            transcript = _clamp_transcript(
-                candidate_transcript,
-                resolved_duration_ms,
-            )
+        transcript = _clamp_transcript(transcript, resolved_duration_ms)
 
         mapped_observations: list[dict[str, Any]] = []
         all_timestamps_ms: list[int] = []
@@ -373,20 +369,20 @@ class DeepSeekFallbackVideoChunkParser:
                 group_frame_counts=group_frame_counts,
                 group_duration_ms=self.group_duration_ms,
                 max_frames_per_group=self.max_frames_per_group,
-                fallback_transcript_model=self.transcript_model_name,
+                fallback_transcript_model=self.asr_model_name,
                 visual_model=self.vision_model_name,
                 refiner_model=self.refiner_model_name,
             ),
         )
 
 
-class ContentFilterFallbackVideoChunkParser:
+class ContentFilterVideoUnderstandingAgent:
     """Use one configured video-chunk fallback for an explicit content filter."""
 
     def __init__(
         self,
-        primary: VideoChunkEvidenceParser,
-        fallback: VideoChunkEvidenceParser,
+        primary: VideoUnderstandingAgentProtocol,
+        fallback: VideoUnderstandingAgentProtocol,
         *,
         primary_model: str,
         on_fallback: Callable[[ContentFilterError], None] | None = None,
@@ -396,31 +392,31 @@ class ContentFilterFallbackVideoChunkParser:
         self._primary_model = primary_model
         self._on_fallback = on_fallback
 
-    def analyze(
+    def understand(
         self,
         video_path: str | Path,
         *,
+        transcript: TranscriptAnalysis,
         context: str | None = None,
         duration_ms: int | None = None,
-        candidate_transcript: TranscriptAnalysis | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         try:
-            return self._primary.analyze(
+            return self._primary.understand(
                 video_path,
+                transcript=transcript,
                 context=context,
                 duration_ms=duration_ms,
-                candidate_transcript=candidate_transcript,
                 background_images=background_images,
             )
         except ContentFilterError as error:
             if self._on_fallback is not None:
                 self._on_fallback(error)
-            evidence = self._fallback.analyze(
+            evidence = self._fallback.understand(
                 video_path,
+                transcript=transcript,
                 context=context,
                 duration_ms=duration_ms,
-                candidate_transcript=candidate_transcript,
                 background_images=background_images,
             )
             if evidence.provenance is None:
@@ -449,7 +445,7 @@ def _analyze_ordered_frames(
     frames: Sequence[tuple[int, str | Path]],
     *,
     duration_ms: int,
-    candidate_transcript: TranscriptAnalysis,
+    transcript: TranscriptAnalysis,
     context: str | None,
     frame_fps: float | None,
     sequence_intro: str,
@@ -461,7 +457,7 @@ def _analyze_ordered_frames(
         sequence_intro=sequence_intro,
     )
     inputs = [*build_background_image_inputs(background_images), *inputs]
-    transcript = _clamp_transcript(candidate_transcript, duration_ms)
+    transcript = _clamp_transcript(transcript, duration_ms)
     inputs.append(
         TextInput(
             text=build_video_parse_prompt(

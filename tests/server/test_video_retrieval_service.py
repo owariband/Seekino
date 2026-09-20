@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from uuid import uuid4
 
@@ -450,6 +451,69 @@ def test_transcript_only_retrieval_matches_real_asr_without_embedding(
             "start_ms": 1_000,
             "end_ms": 3_000,
         }
+    finally:
+        client.close()
+
+
+def test_transcript_retrieval_soft_validates_persisted_time_ranges(
+    repository,
+    prepared_import,
+    caplog,
+) -> None:
+    first, second = prepared_import.chunks
+    prepared_import = replace(
+        prepared_import,
+        chunks=(
+            replace(
+                first,
+                parse_result=first.parse_result.model_copy(
+                    update={
+                        "candidate_transcript": [
+                            TranscriptCue(
+                                start_ms=1_000,
+                                end_ms=1_000,
+                                text="瞬间回应",
+                            ),
+                            TranscriptCue(
+                                start_ms=3_000,
+                                end_ms=2_000,
+                                text="反向坏数据",
+                            ),
+                        ]
+                    }
+                ),
+            ),
+            second,
+        ),
+    )
+    service, _store, client, embedder, prepared, report = _ready_retrieval(
+        repository,
+        prepared_import,
+    )
+    try:
+        with caplog.at_level(logging.WARNING, logger="server.repository.video"):
+            result = service.search(
+                "瞬间回应",
+                workspace_id=prepared.workspace_id,
+                series_ids=[prepared.series_id],
+                top_k=2,
+                transcript_weight=1.0,
+                text_weight=0.0,
+                vision_weight=0.0,
+            )
+
+        assert embedder.calls == []
+        assert [hit.candidate.video_chunk_id for hit in result.hits] == [
+            report.video_chunk_ids[0]
+        ]
+        assert result.hits[0].selection_reason.matched_evidence[0].model_dump() == {
+            "kind": "TRANSCRIPT",
+            "text": "瞬间回应",
+            "start_ms": 1_000,
+            "end_ms": 1_001,
+        }
+        assert "normalized_point_cue_count=1" in caplog.text
+        assert "skipped_invalid_cue_count=1" in caplog.text
     finally:
         client.close()
 

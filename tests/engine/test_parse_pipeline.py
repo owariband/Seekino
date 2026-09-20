@@ -52,13 +52,13 @@ class FakeParser:
             ],
         ]
 
-    def analyze(
+    def understand(
         self,
         video_path: str,
         *,
+        transcript: TranscriptAnalysis,
         context: str | None = None,
         duration_ms: int | None = None,
-        candidate_transcript: TranscriptAnalysis | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         index = int(Path(video_path).stem.rsplit("-", 1)[-1])
@@ -75,20 +75,20 @@ class FakeParser:
 
 
 class FakeFallbackParser(FakeParser):
-    def analyze(
+    def understand(
         self,
         video_path: str,
         *,
+        transcript: TranscriptAnalysis,
         context: str | None = None,
         duration_ms: int | None = None,
-        candidate_transcript: TranscriptAnalysis | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
-        evidence = super().analyze(
+        evidence = super().understand(
             video_path,
+            transcript=transcript,
             context=context,
             duration_ms=duration_ms,
-            candidate_transcript=candidate_transcript,
             background_images=background_images,
         )
         return evidence.model_copy(
@@ -146,9 +146,10 @@ def test_parse_chunk_owns_events_and_advances_the_supplied_context() -> None:
         recent_events=[],
     )
 
-    result = ParsePipeline(parser).parse_chunk(
+    result = ParsePipeline(parser).understand_chunk(
         compact,
         _windows()[0],
+        transcript=TranscriptAnalysis(transcript=[]),
         series_bible="角色术语表",
     )
 
@@ -181,7 +182,11 @@ def test_parse_chunk_deduplicates_against_recent_compact_events() -> None:
         ],
     )
 
-    result = ParsePipeline(FakeParser()).parse_chunk(compact, _windows()[1])
+    result = ParsePipeline(FakeParser()).understand_chunk(
+        compact,
+        _windows()[1],
+        transcript=TranscriptAnalysis(transcript=[]),
+    )
 
     assert result.events == []
     assert result.observed_events[0].owned_by_current_chunk is True
@@ -202,7 +207,11 @@ def test_parse_chunk_requires_the_immediately_preceding_compact() -> None:
         ValueError,
         match="context snapshot must immediately precede the video chunk",
     ):
-        ParsePipeline(FakeParser()).parse_chunk(compact, _windows()[1])
+        ParsePipeline(FakeParser()).understand_chunk(
+            compact,
+            _windows()[1],
+            transcript=TranscriptAnalysis(transcript=[]),
+        )
 
 
 def test_parse_chunk_preserves_fallback_provenance() -> None:
@@ -213,9 +222,10 @@ def test_parse_chunk_preserves_fallback_provenance() -> None:
         recent_events=[],
     )
 
-    result = ParsePipeline(FakeFallbackParser()).parse_chunk(
+    result = ParsePipeline(FakeFallbackParser()).understand_chunk(
         compact,
         _windows()[0],
+        transcript=TranscriptAnalysis(transcript=[]),
     )
 
     assert result.is_fallback is True

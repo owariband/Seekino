@@ -17,6 +17,7 @@ from engine.parse.schemas import (
     TranscriptAnalysis,
     VideoChunkCheckpoint,
     VideoChunkParseResult,
+    VideoParseProvenance,
     VideoTimeline,
 )
 
@@ -62,14 +63,25 @@ def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
         )
     )
 
-    models = runtime.describe_models("none")
+    models = runtime.describe_models(asr_enabled=False)
 
     assert models.transcript is None
     assert models.fallback.transcript_model == "test-lite"
     assert constructed == []
+    asr_agent = runtime.server_asr_agent
+    understanding_agent = runtime.server_understanding_agent
+    assert asr_agent is not understanding_agent
+    assert asr_agent._runtime is runtime
+    assert understanding_agent._runtime is runtime
+    assert not hasattr(asr_agent, "understand_chunk")
+    assert not hasattr(asr_agent, "describe_models")
+    assert not hasattr(understanding_agent, "transcribe_chunk")
+    assert not hasattr(understanding_agent, "describe_models")
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        transcripts = list(executor.map(runtime.transcribe_chunk, [window] * 4))
+        transcripts = list(executor.map(asr_agent.transcribe_chunk, [window] * 4))
+
+    assert constructed == ["test-lite"]
 
     compact = ContextSnapshot(
         snapshot_id="context-initial",
@@ -77,10 +89,10 @@ def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
         compact_text="",
         recent_events=[],
     )
-    parsed = runtime.parse_chunk(
+    parsed = understanding_agent.understand_chunk(
         compact,
         window,
-        candidate_transcript=transcripts[0],
+        transcript=transcripts[0],
     )
 
     assert all(item == TranscriptAnalysis(transcript=[]) for item in transcripts)
@@ -126,7 +138,19 @@ def test_runtime_resumes_a_fully_parsed_video_without_model_credentials(
             window=window,
             context_before=before,
             candidate_transcript=[],
-            is_fallback=False,
+            video_parse=VideoParseProvenance(
+                provider="deepseek",
+                model="deepseek-flash",
+                input_mode="ordered_frames",
+                frame_fps=0.5,
+                group_duration_ms=30_000,
+                max_frames_per_group=15,
+                fallback_transcript_model=None,
+                visual_model="deepseek-flash",
+                refiner_model="deepseek-flash",
+                fallback_reason="content_filter",
+            ),
+            is_fallback=True,
             window_summary="片段完成",
             observed_events=[],
             events=[],

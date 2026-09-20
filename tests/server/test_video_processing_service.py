@@ -54,11 +54,12 @@ class _Algorithm:
     def __init__(self, template: VideoParseResult) -> None:
         self.template = template
         self.backgrounds = []
-        self.parse_sequences: list[int] = []
+        self.understanding_sequences: list[int] = []
         self.transcribe_sequences: list[int] = []
         self.fail_once_at: int | None = None
 
-    def describe_models(self, transcript_mode):
+    def describe_models(self, *, asr_enabled: bool):
+        transcript_mode = "lite" if asr_enabled else "none"
         assert self.template.models is not None
         return self.template.models.model_copy(
             update={
@@ -75,17 +76,17 @@ class _Algorithm:
         self.transcribe_sequences.append(video_chunk.sequence_no)
         return TranscriptAnalysis(transcript=[])
 
-    def parse_chunk(
+    def understand_chunk(
         self,
         compact,
         video_chunk,
         *,
-        candidate_transcript=None,
+        transcript,
         series_bible,
         background_images,
     ):
         self.backgrounds.append((series_bible, background_images))
-        self.parse_sequences.append(video_chunk.sequence_no)
+        self.understanding_sequences.append(video_chunk.sequence_no)
         if self.fail_once_at == video_chunk.sequence_no:
             self.fail_once_at = None
             raise RuntimeError(f"fixture parse failure at {video_chunk.sequence_no}")
@@ -95,16 +96,12 @@ class _Algorithm:
                 "window": video_chunk,
                 "context_before": compact,
                 "context_before_compact": compact.compact_text,
-                "candidate_transcript": (
-                    candidate_transcript.transcript
-                    if candidate_transcript is not None
-                    else []
-                ),
+                "candidate_transcript": transcript.transcript,
             }
         )
 
 
-class _Embedder:
+class _EmbeddingAgent:
     def __init__(self) -> None:
         self.text_inputs: list[str] = []
         self.video_inputs: list[Path] = []
@@ -378,11 +375,13 @@ def _unit_processor(
     chunk_duration_ms=10_000,
     videos=None,
     index=None,
+    embedding_agent=None,
     monotonic_clock=None,
 ):
     artifacts = _MemoryArtifacts(tmp_path / "artifacts")
     videos = videos or _VideoSink()
     index = index or _IndexSink()
+    embedding_agent = embedding_agent or _EmbeddingAgent()
     processor_kwargs = {}
     if monotonic_clock is not None:
         processor_kwargs["monotonic_clock"] = monotonic_clock
@@ -391,8 +390,10 @@ def _unit_processor(
         videos,  # type: ignore[arg-type]
         index,  # type: ignore[arg-type]
         artifacts,  # type: ignore[arg-type]
-        algorithm,
-        _Embedder(),
+        model_manifest=algorithm,
+        asr_agent=algorithm,
+        understanding_agent=algorithm,
+        embedding_agent=embedding_agent,
         config=VideoProcessingConfig(
             embedding_dimensions=3,
             chunk_duration_ms=chunk_duration_ms,
@@ -529,7 +530,7 @@ def test_processing_service_ignores_stray_json_restores_db_prefix_and_reaches_re
         "server.service.video_processing.extract_video_frames",
         _extract_frames,
     )
-    embedder = _Embedder()
+    embedding_agent = _EmbeddingAgent()
     index_store = _IndexStore()
     algorithm = _Algorithm(prepared_import.parse_result)
     index_sync = IndexSyncService(
@@ -554,8 +555,10 @@ def test_processing_service_ignores_stray_json_restores_db_prefix_and_reaches_re
         VideoRepository(session_factory),
         index_sync,
         artifacts,
-        algorithm,
-        embedder,
+        model_manifest=algorithm,
+        asr_agent=algorithm,
+        understanding_agent=algorithm,
+        embedding_agent=embedding_agent,
         config=VideoProcessingConfig(
             embedding_dimensions=3,
             chunk_duration_ms=10_000,
@@ -622,16 +625,16 @@ def test_processing_service_ignores_stray_json_restores_db_prefix_and_reaches_re
 
     assert repeated_video_chunk_ids == video_chunk_ids
     assert len(video_chunk_ids) == 2
-    assert len(embedder.text_inputs) == 2
-    assert all("第" in text for text in embedder.text_inputs)
+    assert len(embedding_agent.text_inputs) == 2
+    assert all("第" in text for text in embedding_agent.text_inputs)
     assert [
         path.name.endswith(f"-chunk-{sequence_no:04d}.mp4")
-        for sequence_no, path in enumerate(embedder.video_inputs)
+        for sequence_no, path in enumerate(embedding_agent.video_inputs)
     ] == [True, True]
-    assert all(lease.job_id in path.name for path in embedder.video_inputs)
+    assert all(lease.job_id in path.name for path in embedding_agent.video_inputs)
     assert len(index_store.points) == 2
     assert sync_calls[:2] == [[video_chunk_ids[0]], [video_chunk_ids[1]]]
-    assert algorithm.parse_sequences == [0, 1, 1]
+    assert algorithm.understanding_sequences == [0, 1, 1]
     assert algorithm.transcribe_sequences == []
     assert len(algorithm.backgrounds) == 3
     text, references = algorithm.backgrounds[0]
@@ -650,7 +653,7 @@ def test_processing_service_ignores_stray_json_restores_db_prefix_and_reaches_re
     # A completed legacy parse can finish persistence without adopting new background.
     snapshot_path.unlink()
     assert processor.process(edited_lease) == video_chunk_ids
-    assert algorithm.parse_sequences == [0, 1, 1]
+    assert algorithm.understanding_sequences == [0, 1, 1]
     assert not snapshot_path.exists()
     assert queue.acknowledge(lease, duration_ms=0)
     checkpoints = jobs.list_checkpoints(completed.job_id)
@@ -690,7 +693,7 @@ def test_processing_service_ignores_stray_json_restores_db_prefix_and_reaches_re
     assert all(item.status == IndexSyncStatus.SYNCED.value for item in intents)
 
 
-def test_processing_service_runs_asr_ahead_but_parses_in_sequence(
+def test_processing_service_runs_asr_ahead_but_understands_in_sequence(
     prepared_import,
     tmp_path,
     monkeypatch,
@@ -753,7 +756,7 @@ def test_processing_service_runs_asr_ahead_but_parses_in_sequence(
 
     assert algorithm.maximum_active == 2
     assert algorithm.finish_order == [1, 0]
-    assert algorithm.parse_sequences == [0, 1]
+    assert algorithm.understanding_sequences == [0, 1]
     assert algorithm.context_values == ["parse-usage-capture"] * 2
     assert jobs.processing_durations == [500, 650]
     assert (
@@ -762,6 +765,90 @@ def test_processing_service_runs_asr_ahead_but_parses_in_sequence(
         / "lease-00000001"
         / "pipeline.parse.json"
     ).is_file()
+
+
+def test_processing_graph_finishes_each_agent_phase_before_the_next(
+    prepared_import,
+    tmp_path,
+    monkeypatch,
+):
+    events: list[tuple[str, object]] = []
+    events_lock = Lock()
+    chunk_count = len(prepared_import.parse_result.chunks)
+
+    class RecordingAgents(_Algorithm):
+        def transcribe_chunk(self, video_chunk):
+            transcript = super().transcribe_chunk(video_chunk)
+            with events_lock:
+                events.append(("asr", video_chunk.sequence_no))
+            return transcript
+
+        def understand_chunk(self, *args, **kwargs):
+            with events_lock:
+                assert sum(phase == "asr" for phase, _value in events) == chunk_count
+                assert all(phase != "embedding" for phase, _value in events)
+                events.append(("understanding", args[1].sequence_no))
+            return super().understand_chunk(*args, **kwargs)
+
+    class RecordingEmbeddingAgent(_EmbeddingAgent):
+        def _record(self, modality: str) -> None:
+            with events_lock:
+                assert sum(
+                    phase == "understanding" for phase, _value in events
+                ) == chunk_count
+                events.append(("embedding", modality))
+
+        def embed_text(self, text):
+            self._record("text")
+            return super().embed_text(text)
+
+        def embed_video(self, video_path):
+            self._record("video")
+            return super().embed_video(video_path)
+
+    agents = RecordingAgents(prepared_import.parse_result)
+    processor, _artifacts, _videos, _index = _unit_processor(
+        tmp_path,
+        monkeypatch,
+        agents,
+        _MemoryJobs(),
+        asr_mode="lite",
+        videos=_SuccessfulVideoSink(chunk_count),
+        index=_SuccessfulIndexSink(),
+        embedding_agent=RecordingEmbeddingAgent(),
+    )
+
+    lease = replace(
+        _lease(),
+        series_id=prepared_import.series_id,
+        video_id=prepared_import.video_id,
+        pipeline_version=prepared_import.pipeline_version,
+        episode_order=prepared_import.episode_order,
+        upload_sequence=prepared_import.upload_sequence,
+        original_filename=prepared_import.original_filename,
+        original_source_uri=prepared_import.original_source_uri,
+        content_hash=prepared_import.content_hash,
+        total_bytes=prepared_import.total_bytes,
+        duration_ms=prepared_import.parse_result.duration_ms,
+        workspace_id=prepared_import.workspace_id,
+        series_name=prepared_import.series_name,
+        series_description=prepared_import.series_description,
+        important_extra_data=prepared_import.important_extra_data,
+        character_bible=prepared_import.character_bible,
+    )
+    chunk_ids = processor.process(lease)
+
+    phases = [phase for phase, _value in events]
+    assert len(chunk_ids) == chunk_count
+    assert phases.count("asr") == chunk_count
+    assert phases.count("understanding") == chunk_count
+    assert phases.count("embedding") == chunk_count * 2
+    assert max(index for index, phase in enumerate(phases) if phase == "asr") < min(
+        index for index, phase in enumerate(phases) if phase == "understanding"
+    )
+    assert max(
+        index for index, phase in enumerate(phases) if phase == "understanding"
+    ) < min(index for index, phase in enumerate(phases) if phase == "embedding")
 
 
 def test_asr_workers_refill_while_an_earlier_sequence_is_still_running(
@@ -803,7 +890,7 @@ def test_asr_workers_refill_while_an_earlier_sequence_is_still_running(
         try:
             consumed.extend(
                 window.sequence_no
-                for window, _transcript in processor._ordered_candidate_transcripts(
+                for window, _transcript in processor._ordered_asr_transcripts(
                     _lease(),
                     windows,
                 )
@@ -854,10 +941,10 @@ def test_asr_workers_stop_safely_after_processing_failure(
                 with self.lock:
                     self.active -= 1
 
-        def parse_chunk(self, *args, **kwargs):
+        def understand_chunk(self, *args, **kwargs):
             if failure == "parse":
                 raise RuntimeError("fixture parse stopped")
-            return super().parse_chunk(*args, **kwargs)
+            return super().understand_chunk(*args, **kwargs)
 
     runtime = FailingRuntime(prepared_import.parse_result)
     processor, _artifacts, _videos, _index = _unit_processor(
@@ -877,7 +964,10 @@ def test_asr_workers_stop_safely_after_processing_failure(
     sleep(0.05)
     assert runtime.active == 0
     assert runtime.calls == calls_after_exit
-    assert len(runtime.calls) <= 4
+    if failure == "parse":
+        assert len(runtime.calls) == 10
+    else:
+        assert len(runtime.calls) <= 4
 
 
 def test_parse_result_is_discarded_when_lease_is_lost_before_persistence(
@@ -888,8 +978,8 @@ def test_parse_result_is_discarded_when_lease_is_lost_before_persistence(
     jobs = _MemoryJobs()
 
     class LeaseLosingAlgorithm(_Algorithm):
-        def parse_chunk(self, *args, **kwargs):
-            chunk = super().parse_chunk(*args, **kwargs)
+        def understand_chunk(self, *args, **kwargs):
+            chunk = super().understand_chunk(*args, **kwargs)
             jobs.current = False
             return chunk
 
@@ -901,7 +991,7 @@ def test_parse_result_is_discarded_when_lease_is_lost_before_persistence(
         jobs,
         asr_mode="none",
     )
-    embedder = processor._embedder
+    embedding_agent = processor._embedding_agent
 
     with pytest.raises(ParseJobLeaseLostError, match="fixture lease lost"):
         processor.process(_lease())
@@ -914,8 +1004,8 @@ def test_parse_result_is_discarded_when_lease_is_lost_before_persistence(
         checkpoint.stage != VideoChunkCheckpointStage.PARSED.value
         for checkpoint in jobs.checkpoints
     )
-    assert embedder.text_inputs == []
-    assert embedder.video_inputs == []
+    assert embedding_agent.text_inputs == []
+    assert embedding_agent.video_inputs == []
     assert not videos.called
     assert not index.called
 
@@ -930,8 +1020,8 @@ def test_late_old_lease_write_cannot_replace_new_lease_parse_artifact(
             super().__init__(template)
             self.name = name
 
-        def parse_chunk(self, *args, **kwargs):
-            return super().parse_chunk(*args, **kwargs).model_copy(
+        def understand_chunk(self, *args, **kwargs):
+            return super().understand_chunk(*args, **kwargs).model_copy(
                 update={"window_summary": self.name}
             )
 
@@ -1212,7 +1302,7 @@ def test_db_parse_checkpoints_must_be_a_complete_continuous_prefix(
         processor._load_completed_prefix(
             windows,
             checkpoints,
-            models=algorithm.describe_models("none"),
+            models=algorithm.describe_models(asr_enabled=False),
         )
 
 

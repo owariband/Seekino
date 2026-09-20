@@ -88,17 +88,17 @@ NEUTRAL_VISUAL_PROMPT = """
 """.strip()
 
 FALLBACK_REFINER_PROMPT = """
-请把 Lite 音轨转写与匿名逐帧视觉证据整理为 VideoTimeline。你在本阶段看不到当前片段的原始视频帧、视频或音轨；可能收到带 asset:// 标签的背景参考图，仅用于人物身份与术语消歧，不得假装观察到当前片段证据中未写出的内容。
+请把上游 ASR 转写与匿名逐帧视觉证据整理为 VideoTimeline。你在本阶段看不到当前片段的原始视频帧、视频或音轨；可能收到带 asset:// 标签的背景参考图，仅用于人物身份与术语消歧，不得假装观察到当前片段证据中未写出的内容。
 
 证据边界：
-1. 当前片段的画面、动作、物体和硬字幕只能来自 visual_observations；可听见的台词只能来自 lite_candidate_asr。解析上下文承接上一片段；上下文与背景参考图只能帮助人物与术语消歧，不能创造当前片段事实。背景图中的动作或文字不能作为当前事件或台词证据。
-2. visual_fact 是抽帧视觉证据；hard_subtitle 是抽帧时刻可见文字；visible_speaker 只是低置信线索，不能单独认定说话者。Lite ASR 可能有错漏或少量时间偏差，应与硬字幕互相校验。
+1. 当前片段的画面、动作、物体和硬字幕只能来自 visual_observations；可听见的台词只能来自 asr_transcript。解析上下文承接上一片段；上下文与背景参考图只能帮助人物与术语消歧，不能创造当前片段事实。背景图中的动作或文字不能作为当前事件或台词证据。
+2. visual_fact 是抽帧视觉证据；hard_subtitle 是抽帧时刻可见文字；visible_speaker 只是低置信线索，不能单独认定说话者。ASR 转写可能有错漏或少量时间偏差，应与硬字幕互相校验。
 3. 人物归一不能只凭发色；只有外观、乐器、服装和位置等多项证据与解析上下文共同匹配时才使用标准名。灯光会改变发色观感。证据不足时保留匿名外观描述，明确区分台上人物与台下观众。孤立一帧且相邻观察不支持的高细节描述应省略，不要扩写。
 
 时间与事件：
-4. 所有时间均为当前 AnalysisWindow 内相对毫秒，必须位于给定 duration_ms 范围内；events 按 start_ms 非递减排序，end_ms 必须大于 start_ms。support_intervals_ms 只表示抽帧邻近支持范围，不代表动作持续整个区间。台词时间优先参考 Lite ASR。
+4. 所有时间均为当前 AnalysisWindow 内相对毫秒，必须位于给定 duration_ms 范围内；events 按 start_ms 非递减排序，end_ms 必须大于 start_ms。support_intervals_ms 只表示抽帧邻近支持范围，不代表动作持续整个区间。台词时间优先参考上游 ASR 转写。
 5. 输出有语义价值的事件，不要为每条 visual observation 机械创建 ACTION。同一时刻的 DIALOGUE 与视觉状态属于同一镜头时，把视觉状态写进 DIALOGUE.description；只有独立动作或镜头变化才另建 ACTION/SCENE。不同硬字幕或真正变化的镜头不能丢，也不要补齐抽帧间未观察到的动作。
-6. 逐项覆盖 lite_candidate_asr：每条可听清的 ASR cue 都应对应一条 DIALOGUE，除非硬字幕明确证明它是误识别；不要因为附近另有硬字幕就静默删除 ASR。同一时刻存在两路台词时允许事件重叠。
+6. 逐项覆盖 asr_transcript：每条可听清的 ASR cue 都应对应一条 DIALOGUE，除非硬字幕明确证明它是误识别；不要因为附近另有硬字幕就静默删除 ASR。同一时刻存在两路台词时允许事件重叠。
 7. DIALOGUE.text 必须逐字等于 allowed_dialogue_texts 中的一个完整字符串。若 ASR 与附近中文硬字幕语义对应，优先逐字选择中文行；若没有对应中文行，逐字使用 ASR 原文。不得自行翻译、补写、续写或改标点。同一帧有两组独立字幕时应保留为两条可重叠 DIALOGUE。
 8. 只有证据足以对应说话者时，description 才写姓名；否则使用匿名人物或“画面出现字幕”。description 和 summary 使用简体中文，保持事实克制，不增加因果、动机、内心或剧情知识。
 9. 只返回符合指定 JSON Schema 的对象。
@@ -118,11 +118,10 @@ def build_video_parse_prompt(
     ]
     if ordered_frames:
         sections.append(FRAME_PARSE_EVIDENCE_PROMPT)
-    candidate_name = "候选 ASR" if ordered_frames else "Lite 候选 ASR"
     sections.append(
         f"当前视频片段实际时长为 {duration_ms} ms；"
         f"所有事件必须完全位于 0 到 {duration_ms} ms 之间。\n\n"
-        f"{candidate_name}（可能有错，仅作为辅助证据）：\n"
+        "上游 ASR 转写（可能有错，仅作为辅助证据）：\n"
         f"{transcript.model_dump_json(indent=2)}"
     )
     if context:
@@ -201,7 +200,7 @@ def build_fallback_refiner_prompt(
     evidence = {
         "time_basis": "analysis-window-relative milliseconds",
         "duration_ms": duration_ms,
-        "lite_candidate_asr": [
+        "asr_transcript": [
             {"cue_id": f"a{index:03d}", **cue.model_dump(mode="json")}
             for index, cue in enumerate(transcript.transcript)
         ],

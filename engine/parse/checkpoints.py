@@ -20,7 +20,7 @@ from .schemas import (
     VideoChunkParseResult,
 )
 from .usage import parse_chunk_scope
-from .video_chunk_parse import VideoChunkParser
+from .video_chunk_parse import VideoASRAgentProtocol
 
 
 def write_json(payload: BaseModel | dict[str, Any], output: Path) -> None:
@@ -57,7 +57,7 @@ def load_completed_chunks(
     video_model: str,
     fallback_provider: str,
     fallback_model: str,
-    fallback_transcript_model: str,
+    fallback_transcript_model: str | None,
     fallback_frame_fps: float,
     fallback_group_duration_ms: int,
     fallback_max_frames_per_group: int,
@@ -121,6 +121,14 @@ def load_completed_chunks(
                 actual_fallback = {
                     key: getattr(provenance, key) for key in expected_fallback
                 }
+                legacy_no_asr_provenance = (
+                    transcript_source == "none"
+                    and actual_fallback["fallback_transcript_model"]
+                    == checkpoint.transcript_model
+                    and expected_fallback["fallback_transcript_model"] is None
+                )
+                if legacy_no_asr_provenance:
+                    actual_fallback["fallback_transcript_model"] = None
                 if actual_fallback != expected_fallback:
                     raise RuntimeError(
                         f"fallback strategy changed for checkpoint: {path}"
@@ -134,7 +142,7 @@ def load_completed_chunks(
 class _CandidateTranscriptStream:
     def __init__(
         self,
-        parser: VideoChunkParser,
+        parser: VideoASRAgentProtocol | None,
         windows: Sequence[AnalysisWindow],
         *,
         output_dir: Path,
@@ -198,6 +206,8 @@ class _CandidateTranscriptStream:
         if transcript_source == "none":
             self._prepare_empty_transcripts()
             return
+        if parser is None:
+            raise ValueError("an ASR agent is required when transcript_source is lite")
 
         self._executor = ThreadPoolExecutor(
             max_workers=min(concurrency, len(self._pending)),
@@ -263,6 +273,8 @@ class _CandidateTranscriptStream:
         self,
         window: AnalysisWindow,
     ) -> TranscriptAnalysis:
+        if self._parser is None:
+            raise RuntimeError("ASR agent was not configured")
         with parse_chunk_scope(window.sequence_no):
             analysis = self._parser.transcribe(
                 window.media_path,
@@ -304,7 +316,7 @@ class _CandidateTranscriptStream:
         self._ready_count = len(self._transcripts)
         self._log(
             f"candidate ASR disabled for {pending_count} pending chunks; "
-            "Pro will use video audio and hard subtitles"
+            "video understanding will use video audio and hard subtitles"
         )
 
     def _checkpoint_path(self, sequence_no: int) -> Path:
@@ -317,7 +329,7 @@ class _CandidateTranscriptStream:
 
 @contextmanager
 def stream_candidate_transcripts(
-    parser: VideoChunkParser,
+    parser: VideoASRAgentProtocol | None,
     windows: Sequence[AnalysisWindow],
     *,
     output_dir: Path,
@@ -342,7 +354,7 @@ def stream_candidate_transcripts(
 
 
 def prepare_candidate_transcripts(
-    parser: VideoChunkParser,
+    parser: VideoASRAgentProtocol,
     windows: Sequence[AnalysisWindow],
     *,
     output_dir: Path,

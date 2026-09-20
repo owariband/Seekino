@@ -10,9 +10,25 @@ AniVAG 是一个面向事件级视频检索与时间证据定位的多模态视�
 
 - Anime-first：课程视频只作为未来迁移验证，不改变产品定位。
 - Video-only：用户不需要上传外挂字幕文件。
-- 语音、镜头与关键帧进入查询前的异步建库链路；主路径调用 Doubao Pro，明确触发内容审核时降级为按需 Lite ASR、分组抽帧、官方 DeepSeek Flash 视觉取证与文本整理。烧录字幕 OCR 暂不阻塞第一版。
+- 语音、镜头与关键帧进入查询前的异步建库链路；生产 Parse 由 Server LangGraph 编排独立的 ASR、视频理解与 Embedding Agent。烧录字幕 OCR 暂不阻塞第一版。
 - 在线查询融合语音文本、视觉与角色事件候选，返回时间证据。
 - V1 使用 MySQL 持久化 Queue + AniVAG Server 进程内 Consumer；RocketMQ 不是单用户 MVP 的前置依赖。
+
+## 生产 Parse Graph
+
+生产业务数据按以下阶段串行推进；ASR 节点内部可以按配置并发处理多个待解析窗口：
+
+```text
+准备窗口与媒体 → ASR Agent → VideoUnderstandingAgent → EmbeddingAgent → MySQL 业务事实 → Qdrant 索引
+```
+
+Agent 之间不直接调用，只通过 Graph State 交接显式 DTO。provider、model 与
+tier 只决定运行配置和 provenance，不代表 Agent 拓扑；内容审核 fallback 复用 Graph
+传入的同一份 Transcript，不会补跑 ASR。
+
+当前 LangGraph 不配置 checkpointer 或节点 retry。失败重试仍由 ParseJobConsumer 与
+MySQL Queue 管理，MySQL Checkpoint、Artifact 和 Lease/Fencing 才是恢复真相；Graph
+State 只覆盖当前一次执行。
 
 ## 快速开始
 

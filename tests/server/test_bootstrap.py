@@ -5,6 +5,7 @@ import sys
 from dataclasses import replace
 
 import pytest
+from engine.parse.runtime import EngineASRAgent, EngineVideoUnderstandingAgent
 
 from server import bootstrap
 from server.api.app import create_app
@@ -105,6 +106,7 @@ def test_process_assembly_receives_runtime_configuration(
 
     class Embedder:
         def __init__(self, model, **kwargs):
+            received["processing_embedding_agent"] = self
             received["processing_embedder"] = {
                 "model": model,
                 "fps": kwargs["fps"],
@@ -147,8 +149,22 @@ def test_process_assembly_receives_runtime_configuration(
             "fps": settings.video_embedding_fps,
             "dimensions": settings.text_vector_dimensions,
         }
-        assert type(received["processor"]).__module__ == "server.service.video_processing"
-        processing_config = received["processor"]._config
+        processor = received["processor"]
+        assert type(processor).__module__ == "server.service.video_processing"
+        assert processor._asr_agent is not processor._understanding_agent
+        assert isinstance(processor._model_manifest, bootstrap.EngineVideoParseRuntime)
+        assert isinstance(processor._asr_agent, EngineASRAgent)
+        assert isinstance(
+            processor._understanding_agent,
+            EngineVideoUnderstandingAgent,
+        )
+        assert processor._asr_agent._runtime is processor._model_manifest
+        assert (
+            processor._understanding_agent._runtime
+            is processor._model_manifest
+        )
+        assert processor._embedding_agent is received["processing_embedding_agent"]
+        processing_config = processor._config
         assert processing_config.chunk_duration_ms == settings.parse.chunk_duration_ms
         assert processing_config.context_overlap_ms == settings.parse.context_overlap_ms
         assert processing_config.analysis_max_height == settings.parse.max_height

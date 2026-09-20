@@ -12,7 +12,7 @@ from contextvars import copy_context
 from pathlib import Path
 from threading import Condition, Event
 from time import monotonic_ns
-from typing import Literal, Protocol
+from typing import Literal, Protocol, TypedDict
 
 from engine.parse.analysis_windows import (
     materialize_analysis_window,
@@ -40,6 +40,7 @@ from engine.retrieval.video_retrieval import (
     build_video_chunk_retrieval_documents,
 )
 from gateway.schemas import EmbeddingResult
+from langgraph.graph import END, START, StateGraph
 
 from ..config.video_processing import VideoProcessingConfig
 from ..identity import derive_video_chunk_id
@@ -57,29 +58,57 @@ from .parse_import import prepare_completed_video_parse_import
 from .parse_usage import ParseUsageService
 
 
-class MultimodalEmbedder(Protocol):
+class ASRAgent(Protocol):
+    def transcribe_chunk(self, video_chunk: AnalysisWindow) -> TranscriptAnalysis: ...
+
+
+class ParseModelManifest(Protocol):
+    def describe_models(
+        self,
+        *,
+        asr_enabled: bool,
+    ) -> VideoParseModels: ...
+
+
+class VideoUnderstandingAgent(Protocol):
+    def understand_chunk(
+        self,
+        compact: ContextSnapshot,
+        video_chunk: AnalysisWindow,
+        *,
+        transcript: TranscriptAnalysis,
+        series_bible: str | None = None,
+        background_images: Sequence[BackgroundImage] = (),
+    ) -> VideoChunkParseResult: ...
+
+
+class EmbeddingAgent(Protocol):
     def embed_text(self, text: str) -> EmbeddingResult: ...
 
     def embed_video(self, video_path: str | Path) -> EmbeddingResult: ...
 
 
-class VideoParseRuntime(Protocol):
-    def describe_models(
-        self,
-        transcript_mode: Literal["lite", "none"],
-    ) -> VideoParseModels: ...
-
-    def transcribe_chunk(self, video_chunk: AnalysisWindow) -> TranscriptAnalysis: ...
-
-    def parse_chunk(
-        self,
-        compact: ContextSnapshot,
-        video_chunk: AnalysisWindow,
-        *,
-        candidate_transcript: TranscriptAnalysis | None = None,
-        series_bible: str | None = None,
-        background_images: Sequence[BackgroundImage] = (),
-    ) -> VideoChunkParseResult: ...
+class VideoParseGraphState(TypedDict):
+    lease: ParseJobLease
+    processing_started_ns: int
+    source_video: Path
+    attempt_directory: Path
+    checkpoints: dict[int, VideoChunkCheckpointState]
+    series_bible: str | None
+    background_images: list[BackgroundImage]
+    missing_legacy_background: bool
+    models: VideoParseModels
+    windows: list[AnalysisWindow]
+    chunk_media_refs: dict[int, str]
+    analysis_media_refs: dict[int, str]
+    keyframes_by_sequence: dict[int, tuple[VideoChunkKeyframeReference, ...]]
+    chunks: list[VideoChunkParseResult]
+    transcripts: dict[int, TranscriptAnalysis]
+    parse_result: VideoParseResult
+    documents: dict[int, VideoChunkRetrievalDocument]
+    text_embeddings: dict[int, PreparedEmbedding]
+    vision_embeddings: dict[int, PreparedEmbedding]
+    video_chunk_ids: list[str]
 
 
 class VideoProcessingService:
@@ -91,8 +120,10 @@ class VideoProcessingService:
         videos: VideoRepository,
         index_sync: IndexSyncService,
         artifacts: ArtifactStore,
-        runtime: VideoParseRuntime,
-        embedder: MultimodalEmbedder,
+        model_manifest: ParseModelManifest,
+        asr_agent: ASRAgent,
+        understanding_agent: VideoUnderstandingAgent,
+        embedding_agent: EmbeddingAgent,
         *,
         config: VideoProcessingConfig | None = None,
         parse_usage: ParseUsageService | None = None,
@@ -102,11 +133,40 @@ class VideoProcessingService:
         self._videos = videos
         self._index_sync = index_sync
         self._artifacts = artifacts
-        self._runtime = runtime
-        self._embedder = embedder
+        self._model_manifest = model_manifest
+        self._asr_agent = asr_agent
+        self._understanding_agent = understanding_agent
+        self._embedding_agent = embedding_agent
         self._config = config or VideoProcessingConfig()
         self._parse_usage = parse_usage
         self._monotonic_clock = monotonic_clock
+        self._graph = self._build_graph()
+
+    def _build_graph(self):
+        builder = StateGraph(VideoParseGraphState)
+        builder.add_node("load_job", self._load_job)
+        builder.add_node("plan_chunks", self._plan_chunks)
+        builder.add_node("prepare_media", self._prepare_media)
+        builder.add_node("asr_agent", self._run_asr_agent)
+        builder.add_node(
+            "video_understanding_agent",
+            self._run_video_understanding_agent,
+        )
+        builder.add_node("assemble_documents", self._assemble_documents)
+        builder.add_node("embedding_agent", self._run_embedding_agent)
+        builder.add_node("persist_facts", self._persist_facts)
+        builder.add_node("sync_index", self._sync_index)
+        builder.add_edge(START, "load_job")
+        builder.add_edge("load_job", "plan_chunks")
+        builder.add_edge("plan_chunks", "prepare_media")
+        builder.add_edge("prepare_media", "asr_agent")
+        builder.add_edge("asr_agent", "video_understanding_agent")
+        builder.add_edge("video_understanding_agent", "assemble_documents")
+        builder.add_edge("assemble_documents", "embedding_agent")
+        builder.add_edge("embedding_agent", "persist_facts")
+        builder.add_edge("persist_facts", "sync_index")
+        builder.add_edge("sync_index", END)
+        return builder.compile()
 
     def process(self, lease: ParseJobLease) -> list[str]:
         capture = (
@@ -118,7 +178,16 @@ class VideoProcessingService:
             return self._process(lease)
 
     def _process(self, lease: ParseJobLease) -> list[str]:
-        processing_started_ns = self._monotonic_clock()
+        result = self._graph.invoke(
+            {
+                "lease": lease,
+                "processing_started_ns": self._monotonic_clock(),
+            }
+        )
+        return result["video_chunk_ids"]
+
+    def _load_job(self, state: VideoParseGraphState) -> dict:
+        lease = state["lease"]
         source_video = self._verified_source(lease)
         work_directory = self._artifacts.work_directory(lease.job_id)
         attempt_directory = _attempt_directory(work_directory, lease.lease_version)
@@ -131,21 +200,31 @@ class VideoProcessingService:
             background_images,
             missing_legacy_background,
         ) = self._parse_background(lease, work_directory, checkpoints)
-        models = self._runtime.describe_models(self._config.asr_mode)
+        models = self._model_manifest.describe_models(
+            asr_enabled=self._config.asr_mode != "none"
+        )
         if models.transcript_mode != self._config.asr_mode:
-            raise RuntimeError("Parse runtime described a different transcript mode")
+            raise RuntimeError(
+                "ParseModelManifest described a different transcript mode"
+            )
+        return {
+            "source_video": source_video,
+            "attempt_directory": attempt_directory,
+            "checkpoints": checkpoints,
+            "series_bible": series_bible,
+            "background_images": background_images,
+            "missing_legacy_background": missing_legacy_background,
+            "models": models,
+        }
 
-        chunk_media_refs: dict[int, str] = {}
-        analysis_media_refs: dict[int, str] = {}
-        keyframes_by_sequence: dict[
-            int,
-            tuple[VideoChunkKeyframeReference, ...],
-        ] = {}
+    def _plan_chunks(self, state: VideoParseGraphState) -> dict:
+        lease = state["lease"]
+        checkpoints = dict(state["checkpoints"])
         self._advance_stage(lease, ParseJobStage.PREPARING)
         windows = plan_analysis_windows(
-            source_video,
+            state["source_video"],
             duration_ms=lease.duration_ms,
-            output_dir=attempt_directory / "windows",
+            output_dir=state["attempt_directory"] / "windows",
             chunk_duration_ms=self._config.chunk_duration_ms,
             context_overlap_ms=self._config.context_overlap_ms,
         )
@@ -159,14 +238,24 @@ class VideoProcessingService:
                 chunk_start_ms=window.chunk_start_ms,
                 chunk_end_ms=window.chunk_end_ms,
             )
+        if [window.sequence_no for window in windows] != list(range(len(windows))):
+            raise RuntimeError("analysis windows must have contiguous sequence numbers")
+        return {"windows": windows, "checkpoints": checkpoints}
+
+    def _prepare_media(self, state: VideoParseGraphState) -> dict:
+        lease = state["lease"]
+        attempt_directory = state["attempt_directory"]
+        checkpoints = dict(state["checkpoints"])
+        chunk_media_refs: dict[int, str] = {}
+        analysis_media_refs: dict[int, str] = {}
+        keyframes_by_sequence: dict[
+            int,
+            tuple[VideoChunkKeyframeReference, ...],
+        ] = {}
         published_filename_prefix = (
             f"{lease.job_id}-lease-{lease.lease_version:08d}"
         )
-        # Validate the full planned topology before single-item materializers
-        # are used.
-        if [window.sequence_no for window in windows] != list(range(len(windows))):
-            raise RuntimeError("analysis windows must have contiguous sequence numbers")
-        for window in windows:
+        for window in state["windows"]:
             sequence_no = window.sequence_no
             materialize_analysis_window(
                 window,
@@ -236,79 +325,109 @@ class VideoProcessingService:
                 chunk_media_uri=chunk_artifact.uri,
                 analysis_window_media_uri=analysis_artifact.uri,
             )
+        return {
+            "checkpoints": checkpoints,
+            "chunk_media_refs": chunk_media_refs,
+            "analysis_media_refs": analysis_media_refs,
+            "keyframes_by_sequence": keyframes_by_sequence,
+        }
 
+    def _run_asr_agent(self, state: VideoParseGraphState) -> dict:
+        lease = state["lease"]
         self._advance_stage(lease, ParseJobStage.PARSING)
         chunks = self._load_completed_prefix(
-            windows,
-            checkpoints,
-            models=models,
+            state["windows"],
+            state["checkpoints"],
+            models=state["models"],
         )
-        if missing_legacy_background and len(chunks) != len(windows):
+        if state["missing_legacy_background"] and len(chunks) != len(
+            state["windows"]
+        ):
             raise RuntimeError(
                 "旧解析任务缺少背景快照，无法确认已解析片段使用的背景；"
                 "请保留原检查点并创建新的解析任务"
             )
-
-        context_before = (
-            chunks[-1].context_after if chunks else _initial_context_snapshot()
-        )
-        pending_windows = windows[len(chunks) :]
-        candidate_transcripts = self._ordered_candidate_transcripts(
+        pending_windows = state["windows"][len(chunks) :]
+        transcript_stream = self._ordered_asr_transcripts(
             lease,
             pending_windows,
         )
+        transcripts: dict[int, TranscriptAnalysis] = {}
         try:
-            for window, candidate_transcript in candidate_transcripts:
-                chunk = self._runtime.parse_chunk(
-                    context_before,
-                    window,
-                    candidate_transcript=candidate_transcript,
-                    series_bible=series_bible,
-                    background_images=background_images,
-                )
-                # Model calls cannot be force-cancelled reliably. Their output only
-                # becomes durable after the current lease is checked again.
-                self._jobs.assert_current_lease(lease)
-                _validate_algorithm_chunk(chunk, window, context_before)
-
-                sequence_no = window.sequence_no
-                parse_path = (
-                    attempt_directory
-                    / "chunks"
-                    / f"chunk-{sequence_no:04d}.json"
-                )
-                _write_json_atomic(
-                    parse_path,
-                    VideoChunkCheckpoint(
-                        transcript_model=models.fallback.transcript_model,
-                        transcript_source=self._config.asr_mode,
-                        video_model=models.video_parser,
-                        chunk=chunk,
-                    ).model_dump(mode="json"),
-                )
-                checkpoints[sequence_no] = self._save_checkpoint(
-                    lease,
-                    checkpoints.get(sequence_no),
-                    requested_stage=VideoChunkCheckpointStage.PARSED,
-                    sequence_no=sequence_no,
-                    parse_artifact_uri=self._artifacts.uri_for_path(parse_path),
-                    processing_duration_ms=(
-                        lease.processing_duration_base_ms
-                        + max(
-                            0,
-                            self._monotonic_clock() - processing_started_ns,
-                        )
-                        // 1_000_000
-                    ),
-                )
-                chunks.append(chunk)
-                context_before = chunk.context_after
+            for window, transcript in transcript_stream:
+                transcripts[window.sequence_no] = transcript
         finally:
-            candidate_transcripts.close()
+            transcript_stream.close()
+        return {"chunks": chunks, "transcripts": transcripts}
+
+    def _run_video_understanding_agent(
+        self,
+        state: VideoParseGraphState,
+    ) -> dict:
+        lease = state["lease"]
+        chunks = list(state["chunks"])
+        checkpoints = dict(state["checkpoints"])
+        context_before = (
+            chunks[-1].context_after if chunks else _initial_context_snapshot()
+        )
+        pending_windows = state["windows"][len(chunks) :]
+        for window in pending_windows:
+            try:
+                transcript = state["transcripts"][window.sequence_no]
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"ASRAgent returned no result for VideoChunk {window.sequence_no}"
+                ) from exc
+            self._jobs.assert_current_lease(lease)
+            chunk = self._understanding_agent.understand_chunk(
+                context_before,
+                window,
+                transcript=transcript,
+                series_bible=state["series_bible"],
+                background_images=state["background_images"],
+            )
+            # Model calls cannot be force-cancelled reliably. Their output only
+            # becomes durable after the current lease is checked again.
+            self._jobs.assert_current_lease(lease)
+            _validate_algorithm_chunk(chunk, window, context_before)
+
+            sequence_no = window.sequence_no
+            parse_path = (
+                state["attempt_directory"]
+                / "chunks"
+                / f"chunk-{sequence_no:04d}.json"
+            )
+            models = state["models"]
+            _write_json_atomic(
+                parse_path,
+                VideoChunkCheckpoint(
+                    transcript_model=models.fallback.transcript_model,
+                    transcript_source=self._config.asr_mode,
+                    video_model=models.video_parser,
+                    chunk=chunk,
+                ).model_dump(mode="json"),
+            )
+            checkpoints[sequence_no] = self._save_checkpoint(
+                lease,
+                checkpoints.get(sequence_no),
+                requested_stage=VideoChunkCheckpointStage.PARSED,
+                sequence_no=sequence_no,
+                parse_artifact_uri=self._artifacts.uri_for_path(parse_path),
+                processing_duration_ms=(
+                    lease.processing_duration_base_ms
+                    + max(
+                        0,
+                        self._monotonic_clock() - state["processing_started_ns"],
+                    )
+                    // 1_000_000
+                ),
+            )
+            chunks.append(chunk)
+            context_before = chunk.context_after
 
         result = VideoParseResult(
-            models=models,
-            source_video=source_video,
+            models=state["models"],
+            source_video=state["source_video"],
             duration_ms=lease.duration_ms,
             chunk_duration_ms=self._config.chunk_duration_ms,
             context_overlap_ms=self._config.context_overlap_ms,
@@ -320,30 +439,50 @@ class VideoProcessingService:
         )
         self._jobs.assert_current_lease(lease)
         _write_json_atomic(
-            attempt_directory / "pipeline.parse.json",
+            state["attempt_directory"] / "pipeline.parse.json",
             result.model_dump(mode="json"),
         )
+        return {
+            "checkpoints": checkpoints,
+            "chunks": chunks,
+            "parse_result": result,
+        }
+
+    def _assemble_documents(self, state: VideoParseGraphState) -> dict:
         documents = {
             item.sequence_no: item
-            for item in build_video_chunk_retrieval_documents(result)
+            for item in build_video_chunk_retrieval_documents(state["parse_result"])
         }
+        return {"documents": documents}
+
+    def _run_embedding_agent(self, state: VideoParseGraphState) -> dict:
+        lease = state["lease"]
+        checkpoints = dict(state["checkpoints"])
         self._advance_stage(lease, ParseJobStage.TEXT_EMBEDDING)
         text_embeddings = self._embed_text_chunks(
             lease,
-            attempt_directory,
-            documents,
+            state["attempt_directory"],
+            state["documents"],
             checkpoints,
         )
         self._advance_stage(lease, ParseJobStage.VISION_EMBEDDING)
         vision_embeddings = self._embed_vision_chunks(
             lease,
-            attempt_directory,
-            chunk_media_refs,
+            state["attempt_directory"],
+            state["chunk_media_refs"],
             checkpoints,
         )
+        return {
+            "checkpoints": checkpoints,
+            "text_embeddings": text_embeddings,
+            "vision_embeddings": vision_embeddings,
+        }
+
+    def _persist_facts(self, state: VideoParseGraphState) -> dict:
+        lease = state["lease"]
         self._advance_stage(lease, ParseJobStage.PERSISTING)
         prepared = prepare_completed_video_parse_import(
-            result,
+            state["parse_result"],
             workspace_id=lease.workspace_id,
             series_id=lease.series_id,
             series_name=lease.series_name,
@@ -358,19 +497,26 @@ class VideoProcessingService:
             content_hash=lease.content_hash,
             total_bytes=lease.total_bytes,
             pipeline_version=lease.pipeline_version,
-            chunk_media_refs=chunk_media_refs,
-            analysis_window_media_refs=analysis_media_refs,
-            keyframes_by_sequence=keyframes_by_sequence,
-            text_embeddings=text_embeddings,
-            vision_embeddings=vision_embeddings,
+            chunk_media_refs=state["chunk_media_refs"],
+            analysis_window_media_refs=state["analysis_media_refs"],
+            keyframes_by_sequence=state["keyframes_by_sequence"],
+            text_embeddings=state["text_embeddings"],
+            vision_embeddings=state["vision_embeddings"],
         )
         report = self._videos.import_video_parse_for_job(prepared, lease)
         imported_ids = set(report.video_chunk_ids)
-        checkpoint_ids = {item.video_chunk_id for item in checkpoints.values()}
+        checkpoint_ids = {
+            item.video_chunk_id for item in state["checkpoints"].values()
+        }
         if imported_ids != checkpoint_ids:
             raise RuntimeError(
                 "persisted VideoChunk set disagrees with parse checkpoints"
             )
+        return {"video_chunk_ids": report.video_chunk_ids}
+
+    def _sync_index(self, state: VideoParseGraphState) -> dict:
+        lease = state["lease"]
+        checkpoints = dict(state["checkpoints"])
         for sequence_no in sorted(checkpoints):
             video_chunk_id = checkpoints[sequence_no].video_chunk_id
             # A fully indexed checkpoint is durable work from a prior attempt.
@@ -385,7 +531,7 @@ class VideoProcessingService:
                     requested_stage=VideoChunkCheckpointStage.INDEXED,
                     sequence_no=sequence_no,
                 )
-        return report.video_chunk_ids
+        return {"checkpoints": checkpoints}
 
     def _load_completed_prefix(
         self,
@@ -449,11 +595,11 @@ class VideoProcessingService:
             context_before = chunk.context_after
         return completed
 
-    def _ordered_candidate_transcripts(
+    def _ordered_asr_transcripts(
         self,
         lease: ParseJobLease,
         windows: Sequence[AnalysisWindow],
-    ) -> Iterator[tuple[AnalysisWindow, TranscriptAnalysis | None]]:
+    ) -> Iterator[tuple[AnalysisWindow, TranscriptAnalysis]]:
         if self._config.asr_mode == "none":
             for window in windows:
                 yield window, TranscriptAnalysis(transcript=[])
@@ -486,7 +632,7 @@ class VideoProcessingService:
                     outstanding += 1
                 try:
                     def transcribe_one() -> TranscriptAnalysis:
-                        return self._runtime.transcribe_chunk(window)
+                        return self._asr_agent.transcribe_chunk(window)
 
                     result: TranscriptAnalysis | BaseException = (
                         root_context.copy().run(transcribe_one)
@@ -639,7 +785,7 @@ class VideoProcessingService:
                     modality="text",
                     sequence_no=sequence_no,
                     input_hash=input_hash,
-                    create=lambda: self._embedder.embed_text(document.text),
+                    create=lambda: self._embedding_agent.embed_text(document.text),
                     lease=lease,
                 )
                 checkpoints[sequence_no] = self._save_checkpoint(
@@ -690,7 +836,7 @@ class VideoProcessingService:
                     modality="video",
                     sequence_no=sequence_no,
                     input_hash=input_hash,
-                    create=lambda media=media: self._embedder.embed_video(media),
+                    create=lambda media=media: self._embedding_agent.embed_video(media),
                     lease=lease,
                 )
                 checkpoints[sequence_no] = self._save_checkpoint(
@@ -938,7 +1084,9 @@ def _validate_checkpoint_models(
         "frame_fps": fallback.frame_fps,
         "group_duration_ms": fallback.group_duration_ms,
         "max_frames_per_group": fallback.max_frames_per_group,
-        "fallback_transcript_model": fallback.transcript_model,
+        "fallback_transcript_model": (
+            fallback.transcript_model if transcript_mode == "lite" else None
+        ),
         "visual_model": fallback.visual_model,
         "refiner_model": fallback.refiner_model,
     }

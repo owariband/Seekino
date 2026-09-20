@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from copy import deepcopy
 
@@ -28,11 +29,60 @@ from ..model.video import (
     VideoChunkRecord,
 )
 from ..mq.contracts import ParseJobLeaseLostError
-from ..schema import VideoChunkEvidence, VideoChunkKeyframeReference
+from ..schema import TranscriptCueView, VideoChunkEvidence, VideoChunkKeyframeReference
 from ..utils.media import merge_keyframe_uri_values
 from ..utils.time import now_unix_time_ms
 from ..utils.validation import require_nonempty_text
 from .index_sync import materialize_index_sync_intents
+
+
+_logger = logging.getLogger(__name__)
+
+
+def _soft_validated_transcript(
+    raw_cues: object,
+    *,
+    offset_ms: int,
+) -> tuple[list[TranscriptCueView], int, int]:
+    if not isinstance(raw_cues, list):
+        return [], 0, 1
+
+    cues: list[TranscriptCueView] = []
+    normalized_point_cue_count = 0
+    skipped_invalid_cue_count = 0
+    for raw_cue in raw_cues:
+        if not isinstance(raw_cue, dict):
+            skipped_invalid_cue_count += 1
+            continue
+        text = raw_cue.get("text")
+        start_ms = raw_cue.get("start_ms")
+        end_ms = raw_cue.get("end_ms")
+        if not isinstance(text, str) or not text.strip():
+            skipped_invalid_cue_count += 1
+            continue
+        if (
+            isinstance(start_ms, bool)
+            or not isinstance(start_ms, int)
+            or isinstance(end_ms, bool)
+            or not isinstance(end_ms, int)
+            or start_ms < 0
+            or end_ms < start_ms
+        ):
+            skipped_invalid_cue_count += 1
+            continue
+        if end_ms == start_ms:
+            end_ms += 1
+            normalized_point_cue_count += 1
+        speaker = raw_cue.get("speaker")
+        cues.append(
+            TranscriptCueView(
+                speaker=speaker if isinstance(speaker, str) else None,
+                text=text,
+                start_ms=offset_ms + start_ms,
+                end_ms=offset_ms + end_ms,
+            )
+        )
+    return cues, normalized_point_cue_count, skipped_invalid_cue_count
 
 
 class ParseImportConflictError(RuntimeError):
@@ -722,37 +772,30 @@ class VideoRepository:
             rows = session.execute(statement).all()
 
         documents: list[TranscriptChunkDocument] = []
+        normalized_point_cue_count = 0
+        skipped_invalid_cue_count = 0
+        affected_chunk_ids: set[str] = set()
         for row in rows:
             cues: list[TranscriptCueDocument] = []
-            for cue in row.transcript:
-                if not isinstance(cue, dict):
-                    raise ValueError(
-                        f"VideoChunk {row.video_chunk_id} has a malformed transcript cue"
-                    )
-                text = cue.get("text")
-                cue_start_ms = cue.get("start_ms")
-                cue_end_ms = cue.get("end_ms")
-                if not isinstance(text, str) or not text.strip():
-                    continue
-                if (
-                    isinstance(cue_start_ms, bool)
-                    or not isinstance(cue_start_ms, int)
-                    or isinstance(cue_end_ms, bool)
-                    or not isinstance(cue_end_ms, int)
-                ):
-                    raise ValueError(
-                        f"VideoChunk {row.video_chunk_id} has invalid transcript times"
-                    )
-                start_ms = row.analysis_window_start_ms + cue_start_ms
-                end_ms = row.analysis_window_start_ms + cue_end_ms
+            validated_cues, normalized_count, skipped_count = (
+                _soft_validated_transcript(
+                    row.transcript,
+                    offset_ms=row.analysis_window_start_ms,
+                )
+            )
+            normalized_point_cue_count += normalized_count
+            skipped_invalid_cue_count += skipped_count
+            if normalized_count or skipped_count:
+                affected_chunk_ids.add(row.video_chunk_id)
+            for cue in validated_cues:
                 document_cue = TranscriptCueDocument(
-                    text=text,
-                    start_ms=start_ms,
-                    end_ms=end_ms,
+                    text=cue.text,
+                    start_ms=cue.start_ms,
+                    end_ms=cue.end_ms,
                 )
                 # Analysis windows overlap. Assign each repeated cue to the
                 # canonical chunk containing its midpoint before ranking it.
-                midpoint_ms = start_ms + (end_ms - start_ms) // 2
+                midpoint_ms = cue.start_ms + (cue.end_ms - cue.start_ms) // 2
                 if not row.start_ms <= midpoint_ms < row.end_ms:
                     continue
                 cues.append(document_cue)
@@ -763,6 +806,18 @@ class VideoRepository:
                         cues=cues,
                     )
                 )
+        if normalized_point_cue_count or skipped_invalid_cue_count:
+            _logger.warning(
+                "event=persisted_transcript_cues_soft_validated "
+                "workspace_id=%s series_count=%s affected_chunk_count=%s "
+                "normalized_point_cue_count=%s skipped_invalid_cue_count=%s "
+                "action=continue",
+                normalized_workspace,
+                len(ordered_series_ids),
+                len(affected_chunk_ids),
+                normalized_point_cue_count,
+                skipped_invalid_cue_count,
+            )
         return documents
 
     def hydrate_video_chunk_states(
@@ -823,6 +878,12 @@ class VideoRepository:
 
         states_by_id: dict[str, HydratedVideoChunkState] = {}
         for series, video, chunk, info, embedding, intent in rows:
+            transcript, _normalized_count, _skipped_count = (
+                _soft_validated_transcript(
+                    chunk.transcript,
+                    offset_ms=chunk.analysis_window_start_ms,
+                )
+            )
             evidence = VideoChunkEvidence(
                 series_id=series.series_id,
                 workspace_id=series.workspace_id,
@@ -848,17 +909,7 @@ class VideoRepository:
                 analysis_window_end_ms=chunk.analysis_window_end_ms,
                 chunk_media_ref=chunk.chunk_media_ref,
                 analysis_window_media_ref=chunk.analysis_window_media_ref,
-                transcript=[
-                    {
-                        "speaker": cue.get("speaker"),
-                        "text": cue["text"],
-                        "start_ms": (
-                            chunk.analysis_window_start_ms + cue["start_ms"]
-                        ),
-                        "end_ms": chunk.analysis_window_start_ms + cue["end_ms"],
-                    }
-                    for cue in chunk.transcript
-                ],
+                transcript=transcript,
                 baseline_visual_caption=chunk.baseline_visual_caption,
                 keyframe_uris=chunk.keyframe_uris,
                 all_time_events=info.all_time_events,

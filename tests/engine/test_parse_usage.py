@@ -218,10 +218,10 @@ def test_runtime_single_chunk_calls_preserve_the_chunk_usage_scope(
 
     with capture_parse_usage(ledger.append):
         transcript = runtime.transcribe_chunk(window)
-        runtime.parse_chunk(
+        runtime.understand_chunk(
             compact,
             window,
-            candidate_transcript=transcript,
+            transcript=transcript,
         )
 
     assert [(item.sequence_no, item.call.operation) for item in ledger] == [
@@ -233,7 +233,15 @@ def test_runtime_single_chunk_calls_preserve_the_chunk_usage_scope(
 def test_pipeline_counts_each_fallback_call_and_does_not_recount_completed_chunks():
     ledger = []
     class Parser:
-        def analyze(self, path, *, context, duration_ms, candidate_transcript, background_images=()):
+        def understand(
+            self,
+            path,
+            *,
+            transcript,
+            context,
+            duration_ms,
+            background_images=(),
+        ):
             with pytest.raises(RuntimeError), track_model_call(provider="ark", model="pro", operation="video_timeline"):
                 raise RuntimeError("content filter")
             for operation in ["neutral_visual_evidence", "neutral_visual_evidence", "fallback_video_timeline"]:

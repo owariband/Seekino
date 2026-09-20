@@ -291,8 +291,18 @@ def test_get_usage_route_requires_workspace_and_enforces_ownership(accounting):
 
 def test_processing_capture_covers_failure_and_only_real_embedding_cache_misses(accounting, tmp_path, monkeypatch):
     lease = _lease(accounting)
-    processor = VideoProcessingService(None, None, None, None, None, None,
-                                       config=VideoProcessingConfig(embedding_dimensions=3), parse_usage=accounting.service)
+    processor = VideoProcessingService(
+        None,
+        None,
+        None,
+        None,
+        model_manifest=None,
+        asr_agent=None,
+        understanding_agent=None,
+        embedding_agent=None,
+        config=VideoProcessingConfig(embedding_dimensions=3),
+        parse_usage=accounting.service,
+    )
     def embed():
         with track_model_call(provider="fixture", model="embed", operation="video_embedding") as tracker:
             tracker.usage = TokenUsage(100, 0, 100, None, None, image_input_tokens=100)

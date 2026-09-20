@@ -6,12 +6,17 @@
 
 | 分类 | operation | 职责 |
 | --- | --- | --- |
-| parse | candidate_transcript | Lite 候选转写，包括 fallback 重新转写 |
-| parse | video_timeline | Pro 视频语义解析 |
+| parse | candidate_transcript | 独立 ASRAgent 阶段的转写；仅在启用 ASR 时产生 |
+| parse | video_timeline | VideoUnderstandingAgent 视频语义解析 |
 | parse | neutral_visual_evidence | fallback 分组视觉识别，每个实际请求单独计数 |
 | parse | fallback_video_timeline | fallback 证据整理 |
 | embedding | text_embedding | 建库文本向量 |
 | embedding | video_embedding | 建库视频向量 |
+
+`candidate_transcript` 是现有账本 operation 名，不代表 ASR 与理解 Agent 互调。内容审核
+fallback 只复用 Parse Graph 已传入的 Transcript，不会自行发起
+`candidate_transcript` 或其他 ASR 调用；因此 ASR 调用数和费用只来自启用后的独立
+ASRAgent 阶段。
 
 Query、Evaluator、Chat 和检索问题的 Embedding 不计入 Parse 账本。FFmpeg、切片、抽帧、数据库和 Qdrant 操作没有模型 Token。缓存复用没有发出模型请求时，不新增调用或费用记录；历史已经发生的调用仍保留。
 
