@@ -410,6 +410,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/conversations/delete",
         "/api/agent/messages/list",
         "/api/agent/messages/get",
+        "/api/agent/messages/options",
         "/api/agent/messages/send",
         "/api/agent/messages/events",
     } == paths
@@ -870,6 +871,10 @@ def test_agent_conversation_delete_rejects_processing_answer(tmp_path: Path) -> 
         content="找画面",
         model_name=service.model_name,
         requested_top_k=service.default_top_k,
+        requested_run_options={
+            "max_model_calls_per_turn": 6,
+            "max_tool_calls_per_turn": 24,
+        },
         idempotency_key="processing-delete",
         series_ids=[series_id],
         requested_series_ids=[series_id],
@@ -2230,21 +2235,55 @@ def test_upload_list_has_precise_total_and_cursor_bound_to_workspace(tmp_path):
         client.app.state.services.agent.close()
 
 
-def test_openapi_agent_top_k_comes_from_real_service_configuration(tmp_path):
+def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_path):
     from dataclasses import replace
 
     client, _, _ = _client(tmp_path)
     service = client.app.state.services.agent
     try:
-        service._config = replace(service._config, default_top_k=5, maximum_top_k=7)
+        service._config = replace(
+            service._config,
+            default_top_k=5,
+            maximum_top_k=7,
+            max_model_calls_per_turn=8,
+            maximum_model_calls_per_turn=10,
+            max_tool_calls_per_turn=30,
+            maximum_tool_calls_per_turn=40,
+        )
+        response = client.get("/api/agent/messages/options")
+        assert response.status_code == 200
+        assert response.json() == {
+            "topK": {"defaultValue": 5, "minimum": 1, "maximum": 7},
+            "maxModelCallsPerTurn": {
+                "defaultValue": 8,
+                "minimum": 1,
+                "maximum": 10,
+            },
+            "maxToolCallsPerTurn": {
+                "defaultValue": 30,
+                "minimum": 1,
+                "maximum": 40,
+            },
+        }
         schema = client.app.openapi()["components"]["schemas"]["AgentMessageSendRequest"]
-        top_k = schema["properties"]["topK"]
-        assert top_k["default"] == 5
-        assert next(value for value in top_k["anyOf"] if value["type"] == "integer")["maximum"] == 7
+        for name, default, maximum in (
+            ("topK", 5, 7),
+            ("maxModelCallsPerTurn", 8, 10),
+            ("maxToolCallsPerTurn", 30, 40),
+        ):
+            field = schema["properties"][name]
+            assert field["default"] == default
+            integer = next(value for value in field["anyOf"] if value["type"] == "integer")
+            assert integer["minimum"] == 1
+            assert integer["maximum"] == maximum
         conversation_id = _create_agent_conversation(client)
         rejected = client.post("/api/agent/messages/send", params={"conversationId": conversation_id},
             headers={"Idempotency-Key": "too-many-results"},
             json={"workspaceId": "local-default", "content": "找画面", "topK": 8})
+        assert rejected.status_code == 400
+        rejected = client.post("/api/agent/messages/send", params={"conversationId": conversation_id},
+            headers={"Idempotency-Key": "too-many-model-calls"},
+            json={"workspaceId": "local-default", "content": "找画面", "maxModelCallsPerTurn": 11})
         assert rejected.status_code == 400
     finally:
         service.close()

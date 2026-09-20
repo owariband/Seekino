@@ -22,7 +22,8 @@ from .output import (
 from .query import run_query
 from .state import (
     AgentFinalOutput, AnswerPhase, EvalDecision, ExecutionControl, LoopTurn,
-    ModelContextBudget, QueryDraft, RunInputs, RunState, SelectedVideoRange,
+    ModelContextBudget, QueryDraft, RunInputs, RunLimits, RunState,
+    SelectedVideoRange,
 )
 from .tools import (
     DraftReadAudit, build_chat_tools, build_evaluator_tools, build_query_tools,
@@ -124,6 +125,8 @@ class AgentRuntime:
         *,
         emit: Callable[[dict], None] | None = None,
         cancellation: Event | None = None,
+        max_model_calls_per_turn: int | None = None,
+        max_tool_calls_per_turn: int | None = None,
     ) -> AgentFinalOutput:
         if (
             not inputs["workspace_id"].strip()
@@ -139,6 +142,20 @@ class AgentRuntime:
             or not 1 <= top_k <= 100
         ):
             raise ValueError("requested_top_k must be between 1 and 100")
+        limits = RunLimits(
+            max_model_calls_per_turn=_positive_run_limit(
+                "max_model_calls_per_turn",
+                self._max_model_calls
+                if max_model_calls_per_turn is None
+                else max_model_calls_per_turn,
+            ),
+            max_tool_calls_per_turn=_positive_run_limit(
+                "max_tool_calls_per_turn",
+                self._max_tool_calls
+                if max_tool_calls_per_turn is None
+                else max_tool_calls_per_turn,
+            ),
+        )
         control = ExecutionControl(
             monotonic() + self._execution_timeout, cancellation, emit,
         )
@@ -153,6 +170,7 @@ class AgentRuntime:
                 "workspace": workspace,
                 "turns": [],
                 "control": control,
+                "limits": limits,
             },
             config={"recursion_limit": self._max_loop_turns + 5},
         )
@@ -164,6 +182,7 @@ class AgentRuntime:
         inputs = state["inputs"]
         workspace = state["workspace"]
         previous = state["turns"]
+        limits = state["limits"]
         control.check()
         if len(previous) >= self._max_loop_turns:
             raise AgentModelInvocationError(
@@ -182,7 +201,7 @@ class AgentRuntime:
             control=control,
             calls=calls,
             maximum_top_k=self._maximum_top_k,
-            maximum_tool_calls=self._max_tool_calls,
+            maximum_tool_calls=limits.max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
         )
@@ -192,7 +211,7 @@ class AgentRuntime:
             inputs,
             previous,
             tools=query_tools,
-            max_model_calls=self._max_model_calls,
+            max_model_calls=limits.max_model_calls_per_turn,
             control=control,
             selection_limit=selection_limit,
             context_budget=context_budget,
@@ -236,7 +255,7 @@ class AgentRuntime:
             control=control,
             calls=calls,
             maximum_top_k=self._maximum_top_k,
-            maximum_tool_calls=self._max_tool_calls,
+            maximum_tool_calls=limits.max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
             audit=audit,
@@ -249,7 +268,7 @@ class AgentRuntime:
             calls,
             sources,
             tools=evaluator_tools,
-            max_model_calls=self._max_model_calls,
+            max_model_calls=limits.max_model_calls_per_turn,
             control=control,
             max_prompt_chars=self._max_prompt_chars,
             workspace=workspace,
@@ -314,6 +333,7 @@ class AgentRuntime:
     def _chat(self, state: RunState) -> dict:
         current = state["turns"][-1]
         control = state["control"]
+        limits = state["limits"]
         control.publish(state["inputs"], {
             "type": "answer.progress",
             "phase": AnswerPhase.RESPONDING,
@@ -321,7 +341,7 @@ class AgentRuntime:
         chat_tools = build_chat_tools(
             workspace=state["workspace"],
             control=control,
-            maximum_tool_calls=self._max_tool_calls,
+            maximum_tool_calls=limits.max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
         )
@@ -333,7 +353,7 @@ class AgentRuntime:
             tools=chat_tools,
             control=control,
             max_prompt_chars=self._max_prompt_chars,
-            max_model_calls=self._max_model_calls,
+            max_model_calls=limits.max_model_calls_per_turn,
             retrieval_trace=build_retrieval_trace(state["turns"]),
         )
         return {
@@ -347,3 +367,9 @@ class AgentRuntime:
     def _output(state: RunState) -> dict:
         state["control"].check()
         return {"final_output": finalize_output(state["turns"], state["inputs"])}
+
+
+def _positive_run_limit(name: str, value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value

@@ -76,6 +76,22 @@ Content-Type: application/json
 省略标题时，后端根据首条问题生成短标题。自定义标题保留；默认创建请求的幂等重放不会因自动标题变化而失效。
 
 ```http
+GET /api/agent/messages/options
+```
+
+```json
+{
+  "topK":{"defaultValue":3,"minimum":1,"maximum":20},
+  "maxModelCallsPerTurn":{"defaultValue":6,"minimum":1,"maximum":12},
+  "maxToolCallsPerTurn":{"defaultValue":24,"minimum":1,"maximum":48}
+}
+```
+
+Chat 页在输入框附近读取这个接口，展示本次消息可调的检索数量和 Agent
+预算。前端不得写死默认值或上限；`recursion_limit`、超时、并发和上下文安全余量
+属于服务端实现约束，不是用户选项。
+
+```http
 POST /api/agent/messages/send?conversationId=<conversationId>
 Idempotency-Key: <本轮发送键>
 Accept: text/event-stream
@@ -86,11 +102,16 @@ Content-Type: application/json
   "content":"这段里发生了什么？",
   "seriesIds":["<seriesId>"],
   "topK":5,
+  "maxModelCallsPerTurn":8,
+  "maxToolCallsPerTurn":32,
   "reference":{"messageId":"<来源assistantId>","videoChunkId":"<真实候选Id>"}
 }
 ```
 
-reference 可省略 / 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。`messageId + videoChunkId` 会在服务端恢复该来源回答已审核的精确播放范围，无需让前端回传时间；旧消息缺失或非法范围不再扩大为 canonical Chunk，引用校验失败。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
+topK、maxModelCallsPerTurn、maxToolCallsPerTurn 均可省略，省略时使用 options
+接口返回的 defaultValue。服务端按动态 maximum 再校验，并把归一化后的预算作为本条
+USER 消息的幂等快照保存；同一 Idempotency-Key 不能换预算重放。reference 可省略 /
+解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。`messageId + videoChunkId` 会在服务端恢复该来源回答已审核的精确播放范围，无需让前端回传时间；旧消息缺失或非法范围不再扩大为 canonical Chunk，引用校验失败。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
 
 SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits，还包含可审计的 retrievalTrace（每次 Query、受限 topK、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID）。候选同时暴露 transcriptRank/transcriptScore、textRank/textScore、visionRank/visionScore；Transcript 命中说明使用真正匹配的 ASR cue 与媒体时间偏移。同一 Kick 的后续检索若再次命中已经交给模型的 Chunk，只回传轻量 `reusedHits`；完整 ASR 与 canonical 时间线引用首次结果，Server 仍保存每次检索的完整事实。事实性结论必须包含非空 `selected_video_ranges`；Query Agent 根据 ASR 和事件时间线为每个真实 Chunk 提出候选范围，Evaluator 审核越界、截断或前后冗余，不合理时通过 advice 要求 Query 修订。Evaluator 放行时，`selected_video_ranges` 必须与获批 Evidence 的 ID 集合完全一致，且每个范围都被其 canonical Evidence 包含；非法 complete 转为 continue，不产生降级范围。Agent 工具的 Schema 和构造统一收口在 `server/agent/tools.py`。Chat 的 `submit_video_item` 只接受 `video_chunk_id + claim`；存在 approved evidence 时首次使用 `tool_choice=required`，成功提交至少一个后恢复 `auto`。Output 按 ID 从获批 `selected_video_ranges` 原样绑定 `startMs/endMs`，不存在 Chat proposed range、approved range、canonical range 三层 fallback。Query、Evaluator、Chat 默认使用 `config.yaml` 的 `agent_model.model`（DeepSeek Flash）；Provider 请求或模型响应异常时，失败的单次模型调用在原消息 / Tool 状态上切换到 Ark Doubao Lite。已经完成的业务 Tool 及 acknowledgement 会保留，不重新执行；业务 Tool 错误、取消 / deadline / 预算等控制错误以及本地输入校验错误均不触发模型降级。旧消息的视频块缺少精确范围或范围非法时不渲染，不扩大为 canonical Chunk；Chunk ID 无法与同消息可信 hit 关联时同样不渲染。消息快照有 phase 与单调 version，前端拒绝旧版本覆盖新状态。phase 仅有 QUEUED / RETRIEVING / EVALUATING / RESPONDING，终态为 null，不包含私有推理。
 
@@ -117,7 +138,7 @@ videos/content 新增 variant=playback|original，默认 playback；原文件可
 | --- | --- |
 | series | transcript_language_hint VARCHAR(64) NULL |
 | agent_conversation | title_is_auto BOOLEAN NOT NULL DEFAULT FALSE |
-| agent_message | phase VARCHAR(16) NULL、version INT NOT NULL DEFAULT 1、reference JSON NULL、last_error_code VARCHAR(64) NULL、last_error_message LONGTEXT NULL |
+| agent_message | phase VARCHAR(16) NULL、version INT NOT NULL DEFAULT 1、reference JSON NULL、requested_run_options JSON NULL、last_error_code VARCHAR(64) NULL、last_error_message LONGTEXT NULL |
 | series_parse_job | version INT NOT NULL DEFAULT 1 |
 | video_chunk_checkpoint | chunk_start_ms BIGINT NULL、chunk_end_ms BIGINT NULL |
 | upload_session | content_sha256 VARCHAR(64) NULL、completion_stage VARCHAR(32) NULL、version INT NOT NULL DEFAULT 1、job_id VARCHAR(36) NULL、last_error_code VARCHAR(64) NULL、request_fingerprint VARCHAR(64) NULL |
@@ -127,8 +148,10 @@ videos/content 新增 variant=playback|original，默认 playback；原文件可
 计时完整性保存在 `series_parse_job.processing_duration_ms` 与
 `series_parse_job.processing_timing_complete`，见
 `docs/migrations/20260919_parse_job_processing_timing.sql`。
+Agent 每条消息的预算快照迁移见
+`docs/migrations/20260921_agent_message_run_options.sql`。
 
-为 Message / Job / Upload 添加 version>0 检查；Message phase 与 Upload completionStage 添加合法值检查。upload_session.job_id 关联实际 series_parse_job.job_id。旧上传完成记录应从 Video / 对应 pipeline Job 回填实际 SHA / Job；无法确认的值保留 null，禁止猜测关联。旧错误只能回填公开通用 Failure，不直接复制含内部诊断的信息到 last_error_message。已有 PROCESSING phase 不能凭空猜测，保持 null，直到真实运行阶段写入。init-db 会检查这些列并拒绝缺列结构；本次没有执行真实数据库 DDL。
+为 Message / Job / Upload 添加 version>0 检查；Message phase 与 Upload completionStage 添加合法值检查。upload_session.job_id 关联实际 series_parse_job.job_id。旧上传完成记录应从 Video / 对应 pipeline Job 回填实际 SHA / Job；无法确认的值保留 null，禁止猜测关联。旧错误只能回填公开通用 Failure，不直接复制含内部诊断的信息到 last_error_message。已有 PROCESSING phase 不能凭空猜测，保持 null，直到真实运行阶段写入。init-db 只检查这些列并拒绝缺列结构；升级已有数据库时必须显式执行对应迁移，不会自动补列。
 
 request_fingerprint 只保存原始规范化创建请求的摘要，不包含服务端分段配置、后续分配的顺序或计算出的实际 SHA；因此同键不同可选参数会冲突。历史上传无法从结果反推原始可选参数意图时保留 null，继续按旧字段校验；不填伪造指纹。新增上传均固定真实请求指纹。
 

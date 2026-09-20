@@ -125,6 +125,7 @@ class AgentMessageRecord(TimestampedRecord, Base):
     model_name: Mapped[str | None] = mapped_column(String(255))
     idempotency_key: Mapped[str | None] = mapped_column(String(128))
     requested_top_k: Mapped[int | None] = mapped_column(Integer)
+    requested_run_options: Mapped[dict[str, int] | None] = mapped_column(JSON)
     requested_series_ids: Mapped[list[str] | None] = mapped_column(JSON)
     reply_to_message_id: Mapped[str | None] = mapped_column(
         ForeignKey("agent_message.message_id", ondelete="CASCADE")

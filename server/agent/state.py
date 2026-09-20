@@ -237,6 +237,12 @@ class RunInputs(TypedDict):
 
 
 @dataclass(frozen=True, slots=True)
+class RunLimits:
+    max_model_calls_per_turn: int
+    max_tool_calls_per_turn: int
+
+
+@dataclass(frozen=True, slots=True)
 class RetrievalCall:
     query: str
     top_k: int
@@ -355,6 +361,7 @@ class RunState(TypedDict):
     workspace: Any
     turns: list[LoopTurn]
     control: ExecutionControl
+    limits: RunLimits
     final_output: AgentFinalOutput
 
 

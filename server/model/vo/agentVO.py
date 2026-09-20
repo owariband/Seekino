@@ -11,6 +11,18 @@ from .commonVO import Failure, UnixTimeMs
 from .searchVO import SearchEvidenceView
 
 
+class AgentIntegerOptionView(ContractModel):
+    default_value: int = Field(gt=0)
+    minimum: int = Field(gt=0)
+    maximum: int = Field(gt=0)
+
+
+class AgentMessageOptionsView(ContractModel):
+    top_k: AgentIntegerOptionView
+    max_model_calls_per_turn: AgentIntegerOptionView
+    max_tool_calls_per_turn: AgentIntegerOptionView
+
+
 class AgentMarkdownRenderBlockView(ContractModel):
     type: Literal["markdown"] = "markdown"
     markdown: str = Field(min_length=1, max_length=20_000)

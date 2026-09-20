@@ -202,6 +202,7 @@ class Evaluator:
         self.approve_at = approve_at
         self.prompts = []
         self.contexts = []
+        self.budgets = []
 
     def run_structured(
         self, prompt, *, tools, result_type, max_model_calls, check_control=None,
@@ -209,6 +210,7 @@ class Evaluator:
     ):
         self.prompts.append(prompt)
         self.contexts.append(json.loads(prompt.rsplit("\n\n", 1)[1]))
+        self.budgets.append(max_model_calls)
         tools_by_name = _tool_map(tools)
         cursor = None
         item_ids = []
@@ -807,6 +809,22 @@ def test_tool_scope_is_not_an_exposed_model_argument_and_top_k_is_bounded():
     assert query.budgets == [5]
 
 
+def test_kick_run_limits_override_only_the_current_execution():
+    runtime, query, evaluator, chat, _retrieval = _runtime()
+
+    runtime.kick(
+        _inputs(),
+        max_model_calls_per_turn=7,
+        max_tool_calls_per_turn=10,
+    )
+
+    assert query.budgets == [7]
+    assert evaluator.budgets == [7]
+    assert chat.model_call_budgets == [7]
+    assert runtime._max_model_calls == 6
+    assert runtime._max_tool_calls == 24
+
+
 def test_model_selected_weights_are_normalized_recorded_and_returned_to_agent():
     runtime, query, evaluator, _chat, retrieval = _runtime(
         query=Query(channel_weights=(0.6, 0.3, 0.1)),
@@ -887,6 +905,19 @@ def test_tool_budget_stops_before_an_extra_search_or_evaluation():
         runtime.kick(_inputs())
     assert len(retrieval.calls) == 1
     assert evaluator.contexts == chat.contexts == []
+
+
+def test_kick_can_lower_tool_budget_without_mutating_runtime_default():
+    runtime, _query, evaluator, chat, retrieval = _runtime(
+        query=Query(searches_per_round=2),
+    )
+
+    with pytest.raises(AgentModelInvocationError, match="Tool-call budget"):
+        runtime.kick(_inputs(), max_tool_calls_per_turn=1)
+
+    assert len(retrieval.calls) == 1
+    assert evaluator.contexts == chat.contexts == []
+    assert runtime._max_tool_calls == 24
 
 
 def test_prompt_character_budget_stops_before_the_query_provider():

@@ -16,6 +16,7 @@ from ..model.dto.agentDTO import (
 )
 from ..model.vo.agentVO import (
     AgentConversationView,
+    AgentMessageOptionsView,
     AgentMessageView,
     AgentMessageSendView,
     AgentMessageEventView,

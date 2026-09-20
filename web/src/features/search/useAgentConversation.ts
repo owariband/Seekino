@@ -15,6 +15,7 @@ import type {
   AgentAnswerEvent,
   AgentConversationView,
   AgentMessageTiming,
+  AgentMessageRunOptions,
   AgentMessageView,
   AgentRenderBlock,
   EvidenceReference,
@@ -204,12 +205,18 @@ export function useAgentConversation(requestedId: string | null = null) {
     }));
   }, []);
 
-  const send = useCallback(async (content: string, seriesIds: string[] = [], reference: EvidenceReference | null = null) => {
+  const send = useCallback(async (
+    content: string,
+    seriesIds: string[] = [],
+    reference: EvidenceReference | null = null,
+    options: AgentMessageRunOptions = {},
+  ) => {
     const active = activeRef.current;
     if (!content.trim() || !active?.conversationId || state.requestedId !== requestedId || active.sending || state.messages.some((message) => message.status === "PROCESSING")) return;
     const conversationId = active.conversationId;
     const scope = [...seriesIds];
     const frozenReference = reference ? { ...reference } : null;
+    const frozenOptions = { ...options };
     active.sending = true;
     active.recoveryMessageId = null;
     setState((current) => ({ ...current, sending: true, error: null }));
@@ -266,7 +273,16 @@ export function useAgentConversation(requestedId: string | null = null) {
       });
     };
     try {
-      await streamAgentMessage(conversationId, content.trim(), idempotencyKey, onEvent, active.controller.signal, scope, frozenReference);
+      await streamAgentMessage(
+        conversationId,
+        content.trim(),
+        idempotencyKey,
+        onEvent,
+        active.controller.signal,
+        scope,
+        frozenReference,
+        frozenOptions,
+      );
     } catch (error) {
       if (activeRef.current === active && !active.controller.signal.aborted) {
         active.recoveryMessageId = messageId;

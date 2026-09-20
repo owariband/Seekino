@@ -2,6 +2,8 @@ import type {
   AgentAnswerEvent,
   AgentConversationView,
   AgentMessageEventView,
+  AgentMessageOptions,
+  AgentMessageRunOptions,
   AgentMessageSendView,
   AgentMessageView,
   ApiErrorPayload,
@@ -296,6 +298,10 @@ export function getAgentMessage(conversationId: string, identity: { messageId: s
   return requestJson(`/api/agent/messages/get?${query}`);
 }
 
+export function getAgentMessageOptions(): Promise<AgentMessageOptions> {
+  return requestJson("/api/agent/messages/options");
+}
+
 export function getVideoChunk(videoChunkId: string, workspaceId = WORKSPACE_ID): Promise<VideoChunkEvidence> {
   return requestJson(`/api/video-chunks/get?${new URLSearchParams({ workspaceId, videoChunkId })}`);
 }
@@ -330,11 +336,12 @@ export function sendAgentMessage(
   idempotencyKey: string,
   seriesIds: string[] = [],
   reference: EvidenceReference | null = null,
+  options: AgentMessageRunOptions = {},
 ): Promise<AgentMessageSendView> {
   return requestJson(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, reference }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, reference, ...options }),
   });
 }
 
@@ -346,11 +353,12 @@ export async function streamAgentMessage(
   signal: AbortSignal,
   seriesIds: string[] = [],
   reference: EvidenceReference | null = null,
+  options: AgentMessageRunOptions = {},
 ): Promise<void> {
   const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`), {
     method: "POST",
     headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, reference }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, reference, ...options }),
     signal,
   });
   if (!response.ok) throw new ApiClientError(response.status, await readError(response));

@@ -6,11 +6,18 @@ from ..api import agent
 from ..model.vo.commonVO import Page
 from ..api.schema import (
     AgentConversationView,
+    AgentMessageOptionsView,
     AgentMessageSendView,
     AgentMessageView,
 )
 
 router = APIRouter()
+router.add_api_route(
+    "/api/agent/messages/options",
+    agent.get_agent_message_options,
+    methods=["GET"],
+    response_model=AgentMessageOptionsView,
+)
 router.add_api_route(
     "/api/agent/conversations/create",
     agent.create_agent_conversation,

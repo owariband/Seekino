@@ -105,6 +105,7 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
     assert "model_name VARCHAR(255)" in message_ddl
     assert "search_result JSON" in message_ddl
     assert "requested_top_k INTEGER" in message_ddl
+    assert "requested_run_options JSON" in message_ddl
     assert "ON DELETE CASCADE" in message_ddl
     assert "total_duration_ms BIGINT" in timing_ddl
     assert "started_at BIGINT NOT NULL" in timing_ddl

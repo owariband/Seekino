@@ -39,7 +39,9 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.maximum_top_k == 20
     assert settings.agent.max_loop_turns == 3
     assert settings.agent.max_model_calls_per_turn == 6
+    assert settings.agent.maximum_model_calls_per_turn == 12
     assert settings.agent.max_tool_calls_per_turn == 24
+    assert settings.agent.maximum_tool_calls_per_turn == 48
     assert settings.agent.max_output_tokens == 4096
     assert settings.agent.max_prompt_chars == 200_000
     assert settings.agent.context_window_tokens == 64_000
@@ -239,7 +241,9 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
         "ANIVAG_AGENT_FALLBACK_MODEL": "fallback-model",
         "ANIVAG_AGENT_MAX_LOOP_TURNS": "2",
         "ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN": "5",
+        "ANIVAG_AGENT_MAXIMUM_MODEL_CALLS_PER_TURN": "9",
         "ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN": "3",
+        "ANIVAG_AGENT_MAXIMUM_TOOL_CALLS_PER_TURN": "7",
         "ANIVAG_AGENT_MAX_OUTPUT_TOKENS": "2048",
         "ANIVAG_AGENT_MAX_PROMPT_CHARS": "120000",
         "ANIVAG_AGENT_CONTEXT_WINDOW_TOKENS": "32000",
@@ -262,7 +266,9 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
     ) == ("query-model", "review-model", "output-model", "fallback-model")
     assert settings.agent.max_loop_turns == 2
     assert settings.agent.max_model_calls_per_turn == 5
+    assert settings.agent.maximum_model_calls_per_turn == 9
     assert settings.agent.max_tool_calls_per_turn == 3
+    assert settings.agent.maximum_tool_calls_per_turn == 7
     assert settings.agent.max_output_tokens == 2048
     assert settings.agent.max_prompt_chars == 120_000
     assert settings.agent.context_window_tokens == 32_000
@@ -293,7 +299,9 @@ def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
 @pytest.mark.parametrize("name,value", [
     ("ANIVAG_AGENT_MAX_LOOP_TURNS", "4"),
     ("ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN", "0"),
+    ("ANIVAG_AGENT_MAXIMUM_MODEL_CALLS_PER_TURN", "0"),
     ("ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN", "0"),
+    ("ANIVAG_AGENT_MAXIMUM_TOOL_CALLS_PER_TURN", "0"),
     ("ANIVAG_AGENT_MAX_OUTPUT_TOKENS", "0"),
     ("ANIVAG_AGENT_MAX_PROMPT_CHARS", "0"),
     ("ANIVAG_AGENT_CONTEXT_WINDOW_TOKENS", "4096"),

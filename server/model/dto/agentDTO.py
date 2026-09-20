@@ -26,7 +26,29 @@ class AgentMessageSendRequest(ContractModel):
     content: str = Field(min_length=1, max_length=20_000)
     series_ids: list[str] = Field(default_factory=list)
     top_k: int | None = Field(default=None, gt=0, le=100)
+    max_model_calls_per_turn: int | None = Field(default=None, gt=0)
+    max_tool_calls_per_turn: int | None = Field(default=None, gt=0)
     reference: EvidenceReference | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRunOptionsState:
+    max_model_calls_per_turn: int
+    max_tool_calls_per_turn: int
+
+
+@dataclass(frozen=True, slots=True)
+class AgentIntegerOptionState:
+    default_value: int
+    minimum: int
+    maximum: int
+
+
+@dataclass(frozen=True, slots=True)
+class AgentMessageOptionsState:
+    top_k: AgentIntegerOptionState
+    max_model_calls_per_turn: AgentIntegerOptionState
+    max_tool_calls_per_turn: AgentIntegerOptionState
 
 
 @dataclass(frozen=True, slots=True)

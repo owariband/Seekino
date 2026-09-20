@@ -671,6 +671,59 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
     assert context["turns"][0]["review"]["advice"] == "补充摔杯子的动作，重新核验。"
     with pytest.raises(AgentConflictError, match="different request fields"):
         service.send_message(conversation.conversation_id, workspace_id="local-default", content="寻找摔杯子的片段", top_k=7, idempotency_key="message")
+    with pytest.raises(AgentConflictError, match="different request fields"):
+        service.send_message(
+            conversation.conversation_id,
+            workspace_id="local-default",
+            content="寻找摔杯子的片段",
+            idempotency_key="message",
+            max_model_calls_per_turn=7,
+        )
+
+
+def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
+    build_service,
+):
+    service, conversation, _, repository, _, _, _ = build_service()
+    observed = []
+    original_kick = service._runtime.kick
+
+    def capture_kick(*args, **kwargs):
+        observed.append((
+            kwargs["max_model_calls_per_turn"],
+            kwargs["max_tool_calls_per_turn"],
+        ))
+        return original_kick(*args, **kwargs)
+
+    service._runtime.kick = capture_kick
+    result = service.send_message(
+        conversation.conversation_id,
+        workspace_id="local-default",
+        content="寻找摔杯子的片段",
+        idempotency_key="custom-run-options",
+        max_model_calls_per_turn=9,
+        max_tool_calls_per_turn=33,
+    )
+
+    assert result.assistant_message.status == "COMPLETED"
+    assert observed == [(9, 33)]
+    with repository._session_factory() as session:
+        user = session.scalar(select(AgentMessageRecord).where(
+            AgentMessageRecord.idempotency_key == "custom-run-options",
+        ))
+        assert user is not None
+        assert user.requested_run_options == {
+            "max_model_calls_per_turn": 9,
+            "max_tool_calls_per_turn": 33,
+        }
+    with pytest.raises(ValueError, match="between 1 and 12"):
+        service.send_message(
+            conversation.conversation_id,
+            workspace_id="local-default",
+            content="再找一个片段",
+            idempotency_key="over-model-limit",
+            max_model_calls_per_turn=13,
+        )
 
 
 def test_third_continue_persists_failure_and_never_calls_chat(build_service):
@@ -1044,6 +1097,10 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
         content="new question",
         model_name="current-model",
         requested_top_k=8,
+        requested_run_options={
+            "max_model_calls_per_turn": 6,
+            "max_tool_calls_per_turn": 24,
+        },
         series_ids=[series.series_id],
         requested_series_ids=[series.series_id],
         idempotency_key="new-message",

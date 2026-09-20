@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -161,6 +161,13 @@ function renderApp(
       conversations = conversations.filter((item) => item.conversationId !== conversationId);
       conversationMessages.delete(String(conversationId));
       return jsonResponse(deleted);
+    }
+    if (url.includes("/api/agent/messages/options")) {
+      return jsonResponse({
+        topK: { defaultValue: 10, minimum: 1, maximum: 20 },
+        maxModelCallsPerTurn: { defaultValue: 6, minimum: 1, maximum: 12 },
+        maxToolCallsPerTurn: { defaultValue: 24, minimum: 1, maximum: 48 },
+      });
     }
     if (url.includes("/api/agent/messages/list")) {
       const conversationId = new URL(url, "http://localhost").searchParams.get("conversationId")!;
@@ -512,6 +519,7 @@ describe("application shell", () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
 
+    expect(await screen.findByText("10 段 · 6 次")).toBeInTheDocument();
     const composer = await screen.findByRole("textbox", {
       name: "向名场面检索助手提问",
     });
@@ -539,8 +547,37 @@ describe("application shell", () => {
       workspaceId: "local-default",
       content: "雨天门口",
       seriesIds: [],
-      topK: 10, reference: null,
+      topK: 10,
+      maxModelCallsPerTurn: 6,
+      maxToolCallsPerTurn: 24,
+      reference: null,
     });
+  });
+
+  it("sends the answer settings selected beside the Chat composer", async () => {
+    const { fetchMock, finishAnswer } = renderApp();
+    const user = userEvent.setup();
+    await user.click(await screen.findByLabelText("配置本次回答"));
+    fireEvent.change(screen.getByRole("slider", { name: "候选片段数量" }), { target: { value: "7" } });
+    fireEvent.change(screen.getByRole("slider", { name: "模型调用上限" }), { target: { value: "9" } });
+    fireEvent.change(screen.getByRole("slider", { name: "工具调用上限" }), { target: { value: "36" } });
+    await user.type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    const sendCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).includes("/api/agent/messages/send?conversationId=conversation"),
+    );
+    expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({
+      topK: 7,
+      maxModelCallsPerTurn: 9,
+      maxToolCallsPerTurn: 36,
+    });
+    expect(JSON.parse(localStorage.getItem("anivag-agent-message-options:local-default")!)).toEqual({
+      topK: 7,
+      maxModelCallsPerTurn: 9,
+      maxToolCallsPerTurn: 36,
+    });
+    act(finishAnswer);
   });
 
   it("announces an unfinished answer when sending fails before the stream starts", async () => {

@@ -11,7 +11,9 @@ class AgentServiceConfig:
     maximum_top_k: int = 20
     max_loop_turns: int = 3
     max_model_calls_per_turn: int = 6
+    maximum_model_calls_per_turn: int = 12
     max_tool_calls_per_turn: int = 24
+    maximum_tool_calls_per_turn: int = 48
     max_output_tokens: int = 4096
     max_prompt_chars: int = 200_000
     context_window_tokens: int = 64_000
@@ -37,7 +39,8 @@ class AgentServiceConfig:
         if not 1 <= self.max_loop_turns <= 3:
             raise ValueError("max_loop_turns must be between 1 and 3")
         for name in (
-            "max_model_calls_per_turn", "max_tool_calls_per_turn",
+            "max_model_calls_per_turn", "maximum_model_calls_per_turn",
+            "max_tool_calls_per_turn", "maximum_tool_calls_per_turn",
             "max_output_tokens", "max_prompt_chars", "max_tool_result_bytes",
             "context_window_tokens", "context_safety_margin_tokens",
             "auto_compact_tokens", "compact_target_tokens",
@@ -45,6 +48,16 @@ class AgentServiceConfig:
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be greater than zero")
+        if self.maximum_model_calls_per_turn < self.max_model_calls_per_turn:
+            raise ValueError(
+                "maximum_model_calls_per_turn must be at least "
+                "max_model_calls_per_turn"
+            )
+        if self.maximum_tool_calls_per_turn < self.max_tool_calls_per_turn:
+            raise ValueError(
+                "maximum_tool_calls_per_turn must be at least "
+                "max_tool_calls_per_turn"
+            )
         if self.max_tool_result_bytes < 512:
             raise ValueError("max_tool_result_bytes must be at least 512")
         if self.max_catalog_items_per_page > 100:

@@ -18,10 +18,13 @@ from ..config.agent import AgentServiceConfig
 from ..identity import canonical_uuid
 from ..model.dto.agentDTO import (
     AgentConversationState,
+    AgentIntegerOptionState,
+    AgentMessageOptionsState,
     AgentMessageSendState,
     AgentMessageState,
     AgentMessageTimingState,
     AgentPageState,
+    AgentRunOptionsState,
     AgentStageTimingState,
 )
 from ..repository.agent import (
@@ -223,6 +226,25 @@ class AgentChatService:
     def default_top_k(self) -> int:
         return self._config.default_top_k
 
+    def message_options(self) -> AgentMessageOptionsState:
+        return AgentMessageOptionsState(
+            top_k=AgentIntegerOptionState(
+                default_value=self._config.default_top_k,
+                minimum=1,
+                maximum=self._config.maximum_top_k,
+            ),
+            max_model_calls_per_turn=AgentIntegerOptionState(
+                default_value=self._config.max_model_calls_per_turn,
+                minimum=1,
+                maximum=self._config.maximum_model_calls_per_turn,
+            ),
+            max_tool_calls_per_turn=AgentIntegerOptionState(
+                default_value=self._config.max_tool_calls_per_turn,
+                minimum=1,
+                maximum=self._config.maximum_tool_calls_per_turn,
+            ),
+        )
+
     def create_conversation(
         self,
         *,
@@ -361,17 +383,23 @@ class AgentChatService:
     def send_message(
         self, conversation_id: str, *, workspace_id: str, content: str,
         idempotency_key: str, series_ids: list[str] | None = None, top_k: int | None = None,
+        max_model_calls_per_turn: int | None = None,
+        max_tool_calls_per_turn: int | None = None,
         reference: dict[str, str] | None = None,
     ) -> AgentMessageSendState:
         return self.start_message(
             conversation_id, workspace_id=workspace_id, content=content,
             idempotency_key=idempotency_key, series_ids=series_ids, top_k=top_k, reference=reference,
+            max_model_calls_per_turn=max_model_calls_per_turn,
+            max_tool_calls_per_turn=max_tool_calls_per_turn,
         ).result()
 
     def start_message(
         self, conversation_id: str, *, workspace_id: str, content: str,
         idempotency_key: str, series_ids: list[str] | None = None,
         top_k: int | None = None, stream: bool = False,
+        max_model_calls_per_turn: int | None = None,
+        max_tool_calls_per_turn: int | None = None,
         reference: dict[str, str] | None = None,
     ) -> AgentMessageExecution:
         normalized_workspace = require_nonempty_text(workspace_id, "workspace_id", maximum=64)
@@ -385,6 +413,21 @@ class AgentChatService:
             or not 0 < requested_top_k <= self._config.maximum_top_k
         ):
             raise ValueError(f"top_k must be between 1 and {self._config.maximum_top_k}")
+        run_options = AgentRunOptionsState(
+            max_model_calls_per_turn=_bounded_run_limit(
+                "max_model_calls_per_turn",
+                max_model_calls_per_turn,
+                default=self._config.max_model_calls_per_turn,
+                maximum=self._config.maximum_model_calls_per_turn,
+            ),
+            max_tool_calls_per_turn=_bounded_run_limit(
+                "max_tool_calls_per_turn",
+                max_tool_calls_per_turn,
+                default=self._config.max_tool_calls_per_turn,
+                maximum=self._config.maximum_tool_calls_per_turn,
+            ),
+        )
+        requested_run_options = asdict(run_options)
         normalized_key = require_nonempty_text(idempotency_key, "idempotency_key", maximum=128)
         timing_started_at: int | None = None
         timing_started_ns: int | None = None
@@ -396,6 +439,7 @@ class AgentChatService:
                 workspace_id=normalized_workspace, content=normalized_content,
                 requested_top_k=requested_top_k, idempotency_key=normalized_key,
                 requested_series_ids=requested_scope,
+                requested_run_options=requested_run_options,
                 reference=normalized_reference,
             )
             if started is None:
@@ -411,6 +455,7 @@ class AgentChatService:
                     model_name=require_nonempty_text(self.model_name, "chat_model.model_name", maximum=255),
                     requested_top_k=requested_top_k, idempotency_key=normalized_key,
                     series_ids=scope, requested_series_ids=requested_scope,
+                    requested_run_options=requested_run_options,
                     user_message_id=str(uuid4()), assistant_message_id=str(uuid4()),
                     now=timing_started_at,
                     reference=normalized_reference,
@@ -440,6 +485,7 @@ class AgentChatService:
             try:
                 execution.future = self._executor.submit(
                     self._execute, execution, normalized_workspace, requested_top_k,
+                    run_options,
                 )
             except Exception:
                 self._executions.pop(started.assistant_message.message_id, None)
@@ -517,6 +563,7 @@ class AgentChatService:
 
     def _execute(
         self, execution: AgentMessageExecution, workspace_id: str, requested_top_k: int,
+        run_options: AgentRunOptionsState,
     ) -> AgentMessageSendState:
         initial = execution.initial
         assistant_id = initial.assistant_message.message_id
@@ -582,6 +629,8 @@ class AgentChatService:
             try:
                 final = self._runtime.kick(
                     inputs, emit=publish_runtime, cancellation=execution.cancellation,
+                    max_model_calls_per_turn=run_options.max_model_calls_per_turn,
+                    max_tool_calls_per_turn=run_options.max_tool_calls_per_turn,
                 )
             except AgentToolInvocationError as exc:
                 if exc.__cause__ is None:
@@ -600,10 +649,14 @@ class AgentChatService:
                 execution.publish(event)
             _logger.info(
                 "agent_execution_completed conversation_id=%s message_id=%s "
-                "phase=%s duration_ms=%s stage_count=%s output_chars=%s evidence_hits=%s",
+                "phase=%s duration_ms=%s stage_count=%s output_chars=%s "
+                "evidence_hits=%s max_model_calls_per_turn=%s "
+                "max_tool_calls_per_turn=%s",
                 conversation_id, assistant_id, last_phase,
                 terminal_timing.total_duration_ms, len(terminal_timing.stages),
                 len(final.agent_reply.message), evidence_hit_count,
+                run_options.max_model_calls_per_turn,
+                run_options.max_tool_calls_per_turn,
             )
             result = AgentMessageSendState(initial.user_message, assistant)
             execution.publish(_terminal_event(result))
@@ -633,11 +686,14 @@ class AgentChatService:
                 "agent_execution_failed conversation_id=%s message_id=%s code=%s "
                 "phase=%s duration_ms=%s stage_count=%s partial_chars=%s "
                 "evidence_hits=%s error_type=%s "
-                "root_error_type=%s",
+                "root_error_type=%s max_model_calls_per_turn=%s "
+                "max_tool_calls_per_turn=%s",
                 conversation_id, assistant_id, public_code, last_phase,
                 terminal_timing.total_duration_ms, len(terminal_timing.stages),
                 0, evidence_hit_count,
                 type(exc).__name__, type(root_error).__name__,
+                run_options.max_model_calls_per_turn,
+                run_options.max_tool_calls_per_turn,
             )
             failed = None
             try:
@@ -691,6 +747,23 @@ def _canonical_scope(series_ids: list[str]) -> list[str]:
     if not isinstance(series_ids, list):
         raise ValueError("series_ids must be a list")
     return sorted({canonical_uuid(item, "series_id") for item in series_ids})
+
+
+def _bounded_run_limit(
+    name: str,
+    value: int | None,
+    *,
+    default: int,
+    maximum: int,
+) -> int:
+    resolved = default if value is None else value
+    if (
+        isinstance(resolved, bool)
+        or not isinstance(resolved, int)
+        or not 1 <= resolved <= maximum
+    ):
+        raise ValueError(f"{name} must be between 1 and {maximum}")
+    return resolved
 
 
 def _canonical_reference(reference):

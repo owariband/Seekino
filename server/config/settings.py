@@ -133,6 +133,28 @@ class ServerSettings:
             raise ValueError(
                 "ANIVAG_AGENT_MAX_TOP_K must be at least ANIVAG_AGENT_DEFAULT_TOP_K"
             )
+        agent_default_model_calls = _environment_int(
+            "ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN",
+            agent_defaults.max_model_calls_per_turn,
+        )
+        agent_maximum_model_calls = _environment_int(
+            "ANIVAG_AGENT_MAXIMUM_MODEL_CALLS_PER_TURN",
+            max(
+                agent_defaults.maximum_model_calls_per_turn,
+                agent_default_model_calls,
+            ),
+        )
+        agent_default_tool_calls = _environment_int(
+            "ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN",
+            agent_defaults.max_tool_calls_per_turn,
+        )
+        agent_maximum_tool_calls = _environment_int(
+            "ANIVAG_AGENT_MAXIMUM_TOOL_CALLS_PER_TURN",
+            max(
+                agent_defaults.maximum_tool_calls_per_turn,
+                agent_default_tool_calls,
+            ),
+        )
         return cls(
             environment=environment,
             database_url=database_url,
@@ -222,14 +244,10 @@ class ServerSettings:
                 max_loop_turns=_environment_int(
                     "ANIVAG_AGENT_MAX_LOOP_TURNS", agent_defaults.max_loop_turns,
                 ),
-                max_model_calls_per_turn=_environment_int(
-                    "ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN",
-                    agent_defaults.max_model_calls_per_turn,
-                ),
-                max_tool_calls_per_turn=_environment_int(
-                    "ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN",
-                    agent_defaults.max_tool_calls_per_turn,
-                ),
+                max_model_calls_per_turn=agent_default_model_calls,
+                maximum_model_calls_per_turn=agent_maximum_model_calls,
+                max_tool_calls_per_turn=agent_default_tool_calls,
+                maximum_tool_calls_per_turn=agent_maximum_tool_calls,
                 max_output_tokens=_environment_int(
                     "ANIVAG_AGENT_MAX_OUTPUT_TOKENS", agent_defaults.max_output_tokens,
                 ),

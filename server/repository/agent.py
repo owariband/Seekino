@@ -303,6 +303,7 @@ class AgentRepository:
         workspace_id: str,
         content: str,
         requested_top_k: int,
+        requested_run_options: dict[str, int],
         idempotency_key: str,
         requested_series_ids: list[str],
         reference: dict[str, str] | None = None,
@@ -314,6 +315,7 @@ class AgentRepository:
                 conversation_id=conversation_id,
                 content=content,
                 requested_top_k=requested_top_k,
+                requested_run_options=requested_run_options,
                 idempotency_key=idempotency_key,
                 requested_series_ids=requested_series_ids,
                 reference=reference,
@@ -382,6 +384,7 @@ class AgentRepository:
         content: str,
         model_name: str,
         requested_top_k: int,
+        requested_run_options: dict[str, int],
         idempotency_key: str,
         series_ids: list[str],
         requested_series_ids: list[str],
@@ -402,6 +405,7 @@ class AgentRepository:
                 conversation_id=conversation_id,
                 content=content,
                 requested_top_k=requested_top_k,
+                requested_run_options=requested_run_options,
                 idempotency_key=idempotency_key,
                 requested_series_ids=requested_series_ids,
                 reference=reference,
@@ -433,6 +437,7 @@ class AgentRepository:
                 model_name=None,
                 idempotency_key=idempotency_key,
                 requested_top_k=requested_top_k,
+                requested_run_options=requested_run_options,
                 requested_series_ids=requested_series_ids,
                 reference=reference,
                 version=1,
@@ -566,6 +571,7 @@ class AgentRepository:
         conversation_id: str,
         content: str,
         requested_top_k: int,
+        requested_run_options: dict[str, int],
         idempotency_key: str,
         requested_series_ids: list[str],
         reference: dict[str, str] | None = None,
@@ -582,6 +588,7 @@ class AgentRepository:
             existing_user.role != AgentMessageRole.USER.value
             or existing_user.content != content
             or existing_user.requested_top_k != requested_top_k
+            or existing_user.requested_run_options != requested_run_options
             or existing_user.requested_series_ids != requested_series_ids
             or existing_user.reference != reference
         ):

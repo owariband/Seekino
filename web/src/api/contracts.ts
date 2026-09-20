@@ -413,6 +413,24 @@ export interface AgentMessageSendView {
   assistantMessage: AgentMessageView;
 }
 
+export interface AgentIntegerOption {
+  defaultValue: number;
+  minimum: number;
+  maximum: number;
+}
+
+export interface AgentMessageOptions {
+  topK: AgentIntegerOption;
+  maxModelCallsPerTurn: AgentIntegerOption;
+  maxToolCallsPerTurn: AgentIntegerOption;
+}
+
+export interface AgentMessageRunOptions {
+  topK?: number;
+  maxModelCallsPerTurn?: number;
+  maxToolCallsPerTurn?: number;
+}
+
 export interface AgentMessageEventView {
   type: "messages";
   conversationId: string;

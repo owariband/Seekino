@@ -119,6 +119,7 @@
 .referenceChip span { min-width: 0; overflow-wrap: anywhere; }
 .referenceChip button { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; color: var(--ink-soft); border-radius: 6px; cursor: pointer; background: transparent; }
 .composerToolbar { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.composerControls { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px; }
 .keyboardHint { color: var(--ink-faint); font-size: .63rem; }
 .scopePicker { position: relative; }
 .scopePicker summary { display: flex; min-height: 34px; align-items: center; gap: 10px; padding: 0 12px; color: var(--ink-soft); border-radius: 10px; cursor: pointer; list-style: none; background: var(--surface); font-size: .74rem; }
@@ -132,6 +133,22 @@
 .scopeOptions small { margin-left: auto; color: var(--ink-faint); font-size: .63rem; white-space: nowrap; }
 .scopeOptions button { padding: 8px 4px; color: var(--teal-deep); cursor: pointer; background: transparent; font-size: .75rem; }
 .scopeOptions p { margin: 8px 4px; color: var(--ink-faint); font-size: .75rem; }
+.answerSettingsPicker summary { gap: 7px; }
+.answerSettingsPicker summary small { color: var(--ink-faint); font: 500 .6rem/1 var(--mono); }
+.answerSettings { width: 390px; }
+.answerSettings > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 4px 4px 12px; border-bottom: 1px solid var(--line); }
+.answerSettings > header > div { display: grid; gap: 5px; }
+.answerSettings > header strong { color: var(--ink); font-size: .76rem; font-weight: 550; }
+.answerSettings > header small { max-width: 240px; color: var(--ink-faint); font-size: .62rem; line-height: 1.55; }
+.answerSettings > header button { flex: 0 0 auto; padding: 2px 0; }
+.answerSettings > header button:disabled { color: var(--ink-faint); cursor: not-allowed; }
+.answerSettings .answerSettingRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 14px; align-items: center; padding: 12px 4px; border-bottom: 1px solid var(--line); }
+.answerSettingRow > span { display: grid; gap: 4px; }
+.answerSettingRow strong { color: var(--ink-soft); font-size: .7rem; font-weight: 500; }
+.answerSettingRow small { color: var(--ink-faint); font-size: .61rem; }
+.answerSettingValue { min-width: 30px; color: var(--teal-deep); font: 600 .72rem/1 var(--mono); text-align: right; }
+.answerSettings .answerSettingRow input { width: 100%; grid-column: 1 / -1; accent-color: var(--teal-deep); }
+.answerSettings .answerSettingRow input:disabled { opacity: .45; }
 
 .candidatesPanel { min-width: 0; margin-top: 24px; }
 .candidateHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
@@ -537,6 +554,10 @@
   .composerArea { padding: 0; }
   .composer { padding: 16px; border-radius: 18px; }
   .composer textarea { min-height: 48px; }
+  .composerToolbar { align-items: flex-start; }
+  .composerControls { gap: 4px; }
+  .scopePicker summary { min-height: 40px; }
+  .answerSettings { position: fixed; right: 12px; bottom: 94px; left: 12px; width: auto; max-width: none; }
   .keyboardHint { display: none; }
   .candidateList { grid-template-columns: minmax(0, 1fr); }
   .evidenceColumn { top: 76px; right: 12px; bottom: 94px; left: 12px; width: auto; }

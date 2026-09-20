@@ -1,17 +1,53 @@
-import { ArrowUp, ChevronDown, History, LoaderCircle, MessageCircleMore, Play, Plus, ScanSearch, Trash2, X } from "lucide-react";
+import { ArrowUp, ChevronDown, History, LoaderCircle, MessageCircleMore, Play, Plus, ScanSearch, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { useWorkspace } from "../../app/workspace";
-import { createAgentConversation, deleteAgentConversation, errorMessage, listAgentConversations, mediaUrl } from "../../api/client";
-import type { AgentConversationView, AgentMessageView, AgentRenderBlock, EvidenceReference } from "../../api/contracts";
+import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, listAgentConversations, mediaUrl, WORKSPACE_ID } from "../../api/client";
+import type { AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, EvidenceReference } from "../../api/contracts";
 import { clipText, episodeLabel, formatTimeRange } from "../../shared/format";
 import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
 import { explainHit, readableTranscript } from "./explain";
 import { useAgentConversation } from "./useAgentConversation";
 import styles from "./search.module.css";
+
+type SelectedMessageOptions = Required<AgentMessageRunOptions>;
+const messageOptionsStorageKey = `anivag-agent-message-options:${WORKSPACE_ID}`;
+
+function defaultMessageOptions(options: AgentMessageOptions): SelectedMessageOptions {
+  return {
+    topK: options.topK.defaultValue,
+    maxModelCallsPerTurn: options.maxModelCallsPerTurn.defaultValue,
+    maxToolCallsPerTurn: options.maxToolCallsPerTurn.defaultValue,
+  };
+}
+
+function storedMessageOptions(options: AgentMessageOptions): SelectedMessageOptions {
+  const defaults = defaultMessageOptions(options);
+  try {
+    const stored = JSON.parse(localStorage.getItem(messageOptionsStorageKey) ?? "null") as Partial<SelectedMessageOptions> | null;
+    if (!stored) return defaults;
+    const bounded = (name: keyof SelectedMessageOptions) => {
+      const value = stored[name];
+      const bounds = options[name];
+      return typeof value === "number"
+        && Number.isInteger(value)
+        && value >= bounds.minimum
+        && value <= bounds.maximum
+        ? value
+        : defaults[name];
+    };
+    return {
+      topK: bounded("topK"),
+      maxModelCallsPerTurn: bounded("maxModelCallsPerTurn"),
+      maxToolCallsPerTurn: bounded("maxToolCallsPerTurn"),
+    };
+  } catch {
+    return defaults;
+  }
+}
 
 function messageRenderBlocks(message: AgentMessageView): AgentRenderBlock[] {
   const blocks = Array.isArray(message.renderBlocks) && message.renderBlocks.length > 0
@@ -92,10 +128,15 @@ export function SearchPage() {
   const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [reference, setReference] = useState<EvidenceReference | null>(null);
+  const [messageOptionConfig, setMessageOptionConfig] = useState<AgentMessageOptions | null>(null);
+  const [messageOptions, setMessageOptions] = useState<SelectedMessageOptions | null>(null);
+  const [messageOptionsError, setMessageOptionsError] = useState<string | null>(null);
   const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string; startMs: number; endMs: number } | null>(null);
   const deleteWarningId = useId();
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const conversationPickerRef = useRef<HTMLDetailsElement>(null);
+  const scopePickerRef = useRef<HTMLDetailsElement>(null);
+  const answerSettingsRef = useRef<HTMLDetailsElement>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
   const conversationFailureRef = useRef<HTMLParagraphElement>(null);
@@ -119,6 +160,26 @@ export function SearchPage() {
     ? { startMs: referenceBlock.startMs, endMs: referenceBlock.endMs }
     : null;
   const activeConversation = conversations.find((item) => item.conversationId === conversationId) ?? null;
+
+  useEffect(() => {
+    let active = true;
+    void getAgentMessageOptions().then((options) => {
+      if (!active) return;
+      setMessageOptionConfig(options);
+      setMessageOptions(storedMessageOptions(options));
+      setMessageOptionsError(null);
+    }).catch((failure) => {
+      if (active) setMessageOptionsError(errorMessage(failure));
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!messageOptions) return;
+    try {
+      localStorage.setItem(messageOptionsStorageKey, JSON.stringify(messageOptions));
+    } catch { /* Browser storage is optional; the current tab still keeps the selection. */ }
+  }, [messageOptions]);
 
   const replaceConversations = useCallback((items: AgentConversationView[]) => {
     conversationsRef.current = items;
@@ -192,7 +253,7 @@ export function SearchPage() {
     if (!canSend) return;
     followThread.current = true;
     setConversationStatus("问题已发送，正在检索");
-    void send(query, selectedSeriesIds, reference);
+    void send(query, selectedSeriesIds, reference, messageOptions ?? {});
     setQuery("");
     setReference(null);
   };
@@ -508,25 +569,109 @@ export function SearchPage() {
               </button>
             </form>
             <div className={styles.composerToolbar}>
-              <details className={styles.scopePicker}>
-                <summary aria-label="选择检索视频系列">{selectedSeriesIds.length ? `已选 ${selectedSeriesIds.length} 个系列` : "全部视频系列"}<ChevronDown size={13} aria-hidden="true" /></summary>
-                <div className={styles.scopeOptions} role="group" aria-label="检索视频系列多选">
-                  <button type="button" onClick={() => setSelectedSeriesIds([])}>检索全部视频系列</button>
-                  {series.map((item) => (
-                    <label key={item.seriesId}>
-                      <input
-                        type="checkbox"
-                        checked={selectedSeriesIds.includes(item.seriesId)}
-                        disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
-                        onChange={(event) => setSelectedSeriesIds((current) => event.target.checked ? [...current, item.seriesId] : current.filter((id) => id !== item.seriesId))}
-                      />
-                      <span>{item.name}</span>
-                      <small>{isSearchable(item.status) ? `${item.readyVideoCount} 个视频可检索` : "暂不可检索"}</small>
-                    </label>
-                  ))}
-                  {!series.length ? <p>资料库还没有视频系列</p> : null}
-                </div>
-              </details>
+              <div className={styles.composerControls}>
+                <details
+                  className={styles.scopePicker}
+                  ref={scopePickerRef}
+                  onToggle={(event) => {
+                    if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
+                  }}
+                >
+                  <summary aria-label="选择检索视频系列">{selectedSeriesIds.length ? `已选 ${selectedSeriesIds.length} 个系列` : "全部视频系列"}<ChevronDown size={13} aria-hidden="true" /></summary>
+                  <div className={styles.scopeOptions} role="group" aria-label="检索视频系列多选">
+                    <button type="button" onClick={() => setSelectedSeriesIds([])}>检索全部视频系列</button>
+                    {series.map((item) => (
+                      <label key={item.seriesId}>
+                        <input
+                          type="checkbox"
+                          checked={selectedSeriesIds.includes(item.seriesId)}
+                          disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
+                          onChange={(event) => setSelectedSeriesIds((current) => event.target.checked ? [...current, item.seriesId] : current.filter((id) => id !== item.seriesId))}
+                        />
+                        <span>{item.name}</span>
+                        <small>{isSearchable(item.status) ? `${item.readyVideoCount} 个视频可检索` : "暂不可检索"}</small>
+                      </label>
+                    ))}
+                    {!series.length ? <p>资料库还没有视频系列</p> : null}
+                  </div>
+                </details>
+                <details
+                  className={`${styles.scopePicker} ${styles.answerSettingsPicker}`}
+                  ref={answerSettingsRef}
+                  onToggle={(event) => {
+                    if (event.currentTarget.open) scopePickerRef.current?.removeAttribute("open");
+                  }}
+                >
+                  <summary aria-label="配置本次回答">
+                    <SlidersHorizontal size={13} aria-hidden="true" />
+                    <span>回答设置</span>
+                    <small>{messageOptions ? `${messageOptions.topK} 段 · ${messageOptions.maxModelCallsPerTurn} 次` : "服务端默认"}</small>
+                    <ChevronDown size={13} aria-hidden="true" />
+                  </summary>
+                  <div className={`${styles.scopeOptions} ${styles.answerSettings}`} role="group" aria-label="本次回答设置">
+                    <header>
+                      <div><strong>本次回答</strong><small>提高预算通常更完整，也会更慢并增加模型费用。</small></div>
+                      <button
+                        type="button"
+                        disabled={!messageOptionConfig || !messageOptions || searching}
+                        onClick={() => messageOptionConfig && setMessageOptions(defaultMessageOptions(messageOptionConfig))}
+                      >恢复默认</button>
+                    </header>
+                    {messageOptionConfig && messageOptions ? (
+                      <>
+                        <label className={styles.answerSettingRow}>
+                          <span><strong>候选片段</strong><small>最多保留多少段证据</small></span>
+                          <span className={styles.answerSettingValue}>{messageOptions.topK}</span>
+                          <input
+                            aria-label="候选片段数量"
+                            type="range"
+                            min={messageOptionConfig.topK.minimum}
+                            max={messageOptionConfig.topK.maximum}
+                            value={messageOptions.topK}
+                            disabled={searching}
+                            onChange={(event) => {
+                              const topK = event.currentTarget.valueAsNumber;
+                              setMessageOptions((current) => current && ({ ...current, topK }));
+                            }}
+                          />
+                        </label>
+                        <label className={styles.answerSettingRow}>
+                          <span><strong>模型调用</strong><small>每个 Agent 阶段的调用上限</small></span>
+                          <span className={styles.answerSettingValue}>{messageOptions.maxModelCallsPerTurn}</span>
+                          <input
+                            aria-label="模型调用上限"
+                            type="range"
+                            min={messageOptionConfig.maxModelCallsPerTurn.minimum}
+                            max={messageOptionConfig.maxModelCallsPerTurn.maximum}
+                            value={messageOptions.maxModelCallsPerTurn}
+                            disabled={searching}
+                            onChange={(event) => {
+                              const maxModelCallsPerTurn = event.currentTarget.valueAsNumber;
+                              setMessageOptions((current) => current && ({ ...current, maxModelCallsPerTurn }));
+                            }}
+                          />
+                        </label>
+                        <label className={styles.answerSettingRow}>
+                          <span><strong>工具调用</strong><small>检索、读取和提交工具的调用上限</small></span>
+                          <span className={styles.answerSettingValue}>{messageOptions.maxToolCallsPerTurn}</span>
+                          <input
+                            aria-label="工具调用上限"
+                            type="range"
+                            min={messageOptionConfig.maxToolCallsPerTurn.minimum}
+                            max={messageOptionConfig.maxToolCallsPerTurn.maximum}
+                            value={messageOptions.maxToolCallsPerTurn}
+                            disabled={searching}
+                            onChange={(event) => {
+                              const maxToolCallsPerTurn = event.currentTarget.valueAsNumber;
+                              setMessageOptions((current) => current && ({ ...current, maxToolCallsPerTurn }));
+                            }}
+                          />
+                        </label>
+                      </>
+                    ) : <p role={messageOptionsError ? "alert" : "status"}>{messageOptionsError ? `暂时无法读取设置：${messageOptionsError}` : "正在读取服务端限制…"}</p>}
+                  </div>
+                </details>
+              </div>
               <span className={styles.keyboardHint}>Enter 发送 · Shift + Enter 换行</span>
             </div>
             {!scopeValid ? <p className={styles.messageError} role="alert">所选视频系列暂不可检索，请重新选择范围。</p> : null}

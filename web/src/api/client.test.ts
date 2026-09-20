@@ -10,6 +10,7 @@ import {
   createAgentConversation,
   deleteAgentConversation,
   getAgentConversation,
+  getAgentMessageOptions,
   getJob,
   getParseUsage,
   getSeries,
@@ -133,6 +134,41 @@ describe("API retry contract", () => {
 });
 
 describe("Agent Chat routes", () => {
+  it("reads server limits and sends a per-message option snapshot", async () => {
+    const payload = {
+      topK: { defaultValue: 3, minimum: 1, maximum: 20 },
+      maxModelCallsPerTurn: { defaultValue: 6, minimum: 1, maximum: 12 },
+      maxToolCallsPerTurn: { defaultValue: 24, minimum: 1, maximum: 48 },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(
+        String(input).endsWith("/options") ? JSON.stringify(payload) : "{}",
+        { headers: { "Content-Type": "application/json" } },
+      ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getAgentMessageOptions()).resolves.toEqual(payload);
+    await sendAgentMessage(
+      "conversation/id",
+      "找摔杯子的画面",
+      "message-key",
+      ["series/id"],
+      null,
+      { topK: 5, maxModelCallsPerTurn: 9, maxToolCallsPerTurn: 32 },
+    );
+
+    expect(String(fetchMock.mock.calls[0]![0])).toBe("/api/agent/messages/options");
+    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]?.body))).toEqual({
+      workspaceId: "local-default",
+      content: "找摔杯子的画面",
+      seriesIds: ["series/id"],
+      reference: null,
+      topK: 5,
+      maxModelCallsPerTurn: 9,
+      maxToolCallsPerTurn: 32,
+    });
+  });
+
   it("keeps identifiers in queries and sends each message's scope", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response("{}", { headers: { "Content-Type": "application/json" } }));

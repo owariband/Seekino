@@ -100,10 +100,20 @@ def create_app(
 
     def configured_openapi():
         schema = generate_openapi()
-        top_k = schema["components"]["schemas"]["AgentMessageSendRequest"]["properties"]["topK"]
-        integer_schema = next(item for item in top_k["anyOf"] if item.get("type") == "integer")
-        integer_schema["maximum"] = services.agent.maximum_top_k
-        top_k["default"] = services.agent.default_top_k
+        properties = schema["components"]["schemas"]["AgentMessageSendRequest"]["properties"]
+        options = services.agent.message_options()
+        for field_name, option in (
+            ("topK", options.top_k),
+            ("maxModelCallsPerTurn", options.max_model_calls_per_turn),
+            ("maxToolCallsPerTurn", options.max_tool_calls_per_turn),
+        ):
+            field = properties[field_name]
+            integer_schema = next(
+                item for item in field["anyOf"] if item.get("type") == "integer"
+            )
+            integer_schema["minimum"] = option.minimum
+            integer_schema["maximum"] = option.maximum
+            field["default"] = option.default_value
         return schema
 
     app.openapi = configured_openapi

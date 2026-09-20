@@ -153,7 +153,10 @@ def create_schema(engine: Engine) -> None:
     for table_name, required_columns in {
         "series": {"transcript_language_hint"},
         "agent_conversation": {"title_is_auto"},
-        "agent_message": {"phase", "version", "reference", "last_error_code", "last_error_message"},
+        "agent_message": {
+            "phase", "version", "reference", "requested_run_options",
+            "last_error_code", "last_error_message",
+        },
         "series_parse_job": {
             "version",
             "processing_duration_ms",

@@ -25,6 +25,7 @@ from .search import search_evidence_view
 from .context import get_services, get_sse_config
 from ..model.vo.agentVO import (
     AgentConversationView,
+    AgentMessageOptionsView,
     AgentAnswerStartedView,
     AgentAnswerEvidenceView,
     AgentAnswerBlockView,
@@ -45,6 +46,12 @@ from ..model.vo.agentVO import (
 from ..repository.agent import AgentConversationNotFoundError
 
 _logger = logging.getLogger(__name__)
+
+
+def get_agent_message_options(request: Request) -> AgentMessageOptionsView:
+    return AgentMessageOptionsView.model_validate(
+        get_services(request).agent.message_options()
+    )
 
 
 def create_agent_conversation(
@@ -170,6 +177,8 @@ async def send_agent_message(
             reference=body.reference.model_dump(by_alias=True) if body.reference is not None else None,
             idempotency_key=idempotency_key,
             top_k=body.top_k,
+            max_model_calls_per_turn=body.max_model_calls_per_turn,
+            max_tool_calls_per_turn=body.max_tool_calls_per_turn,
             stream=True,
         )
         return StreamingResponse(
@@ -187,6 +196,8 @@ async def send_agent_message(
         reference=body.reference.model_dump(by_alias=True) if body.reference is not None else None,
         idempotency_key=idempotency_key,
         top_k=body.top_k,
+        max_model_calls_per_turn=body.max_model_calls_per_turn,
+        max_tool_calls_per_turn=body.max_tool_calls_per_turn,
     )
     return AgentMessageSendView(
         user_message=_agent_message_view(result.user_message, media=get_services(request).media, workspace_id=body.workspace_id),
