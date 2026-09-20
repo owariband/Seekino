@@ -6,8 +6,9 @@ from time import monotonic
 import pytest
 
 from server.agent.context import build_workspace_checkpoint
+from server.agent.errors import AgentModelInvocationError, AgentToolInvocationError
 from server.agent.state import (
-    AgentModelInvocationError, AgentToolInvocationError, ExecutionControl, RunInputs,
+    DraftItem, ExecutionControl, RunInputs,
 )
 from server.agent.skills import (
     CHAT_SKILL_PROMPT, EVALUATOR_SKILL_PROMPT, QUERY_SKILL_PROMPT,
@@ -324,13 +325,48 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
     assert detail["draft"]["claim"] == "revised claim"
     assert detail["retrieval_item"]["evidence"]["videoChunkId"] == "chunk-1"
 
-    with pytest.raises(AgentModelInvocationError, match="canonical Evidence"):
-        tools["update_draft_tem"].invoke({
-            "video_chunk_id": "chunk-1",
-            "start_ms": 900,
-            "end_ms": 1_800,
-            "claim": "out of range",
-        })
+    out_of_range = tools["update_draft_tem"].invoke({
+        "video_chunk_id": "chunk-1",
+        "start_ms": 900,
+        "end_ms": 1_800,
+        "claim": "out of range",
+    })
+    empty_range = tools["update_draft_tem"].invoke({
+        "video_chunk_id": "chunk-1",
+        "start_ms": 1_500,
+        "end_ms": 1_500,
+        "claim": "empty range",
+    })
+    reversed_range = tools["update_draft_tem"].invoke({
+        "video_chunk_id": "chunk-1",
+        "start_ms": 1_600,
+        "end_ms": 1_500,
+        "claim": "reversed range",
+    })
+    negative_range = tools["update_draft_tem"].invoke({
+        "video_chunk_id": "chunk-1",
+        "start_ms": -1,
+        "end_ms": 1_500,
+        "claim": "negative range",
+    })
+
+    for rejected in (
+        out_of_range, empty_range, reversed_range, negative_range,
+    ):
+        assert rejected.startswith("时间区间不合法：")
+        assert "1000 <= start_ms < end_ms <= 2000" in rejected
+        assert "video_chunk_id='chunk-1' 的 canonical Evidence" in rejected
+        assert "重新调用 update_draft_tem" in rejected
+    assert "start_ms=900, end_ms=1800" in out_of_range
+    assert "start_ms=1500, end_ms=1500" in empty_range
+    assert "start_ms=1600, end_ms=1500" in reversed_range
+    assert "start_ms=-1, end_ms=1500" in negative_range
+    assert workspace.draft_item("chunk-1") == DraftItem(
+        video_chunk_id="chunk-1",
+        start_ms=1_200,
+        end_ms=1_800,
+        claim="revised claim",
+    )
 
     removed = json.loads(tools["remove_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
@@ -340,6 +376,26 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
         "video_chunk_id": "chunk-1",
         "draft_item_count": 0,
     }
+
+
+def test_update_draft_tool_does_not_mask_unexpected_errors(monkeypatch) -> None:
+    retrieval = Retrieval([_hit("chunk-1")])
+    workspace = AgentWorkspace("workspace", ("series",))
+    tools, _calls = _query_tools(retrieval, workspace)
+    _retrieve(tools, top_k=1)
+
+    def fail_upsert(_workspace: AgentWorkspace, **_values) -> bool:
+        raise RuntimeError("unexpected storage failure")
+
+    monkeypatch.setattr(AgentWorkspace, "upsert_draft_item", fail_upsert)
+
+    with pytest.raises(RuntimeError, match="unexpected storage failure"):
+        tools["update_draft_tem"].invoke({
+            "video_chunk_id": "chunk-1",
+            "start_ms": 1_100,
+            "end_ms": 1_800,
+            "claim": "valid range",
+        })
 
 
 def test_draft_catalog_cursor_is_rejected_after_draft_changes() -> None:

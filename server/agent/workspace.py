@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 from threading import RLock
 
 from ..schema import VideoChunkSearchHit, VideoChunkSearchResult
+from .errors import AgentModelInvocationError, InvalidDraftRangeError
 from .state import (
-    AgentModelInvocationError, ChatRenderDraft, ChatVideoBlock, DraftItem,
-    MarkdownRenderBlock,
+    ChatRenderDraft, ChatVideoBlock, DraftItem, MarkdownRenderBlock,
 )
 
 
@@ -79,9 +79,16 @@ class AgentWorkspace:
         with self._lock:
             return tuple(self._retrieval_items)
 
-    def upsert_draft_item(self, item: DraftItem) -> bool:
+    def upsert_draft_item(
+        self,
+        *,
+        video_chunk_id: str,
+        start_ms: int,
+        end_ms: int,
+        claim: str,
+    ) -> bool:
         with self._lock:
-            evidence_hit = self._retrieval_items.get(item.video_chunk_id)
+            evidence_hit = self._retrieval_items.get(video_chunk_id)
             if evidence_hit is None:
                 raise AgentModelInvocationError(
                     "Draft Item must reference retrieved Evidence"
@@ -89,17 +96,27 @@ class AgentWorkspace:
             evidence = evidence_hit.evidence
             if not (
                 evidence.start_ms
-                <= item.start_ms
-                < item.end_ms
+                <= start_ms
+                < end_ms
                 <= evidence.end_ms
             ):
-                raise AgentModelInvocationError(
-                    "Draft Item range must be contained in canonical Evidence"
+                raise InvalidDraftRangeError(
+                    video_chunk_id=video_chunk_id,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    evidence_start_ms=evidence.start_ms,
+                    evidence_end_ms=evidence.end_ms,
                 )
-            inserted = item.video_chunk_id not in self._draft_items
+            item = DraftItem(
+                video_chunk_id=video_chunk_id,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                claim=claim,
+            )
+            inserted = video_chunk_id not in self._draft_items
             if inserted:
-                self._draft_order.append(item.video_chunk_id)
-            self._draft_items[item.video_chunk_id] = item.model_copy(deep=True)
+                self._draft_order.append(video_chunk_id)
+            self._draft_items[video_chunk_id] = item.model_copy(deep=True)
             return inserted
 
     def remove_draft_item(self, video_chunk_id: str) -> bool:

@@ -7,7 +7,7 @@ import httpx
 import pytest
 from arkruntime import Ark
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import StructuredTool, ToolException
 from openai import APIConnectionError, APIError, OpenAI
 from pydantic import BaseModel, ConfigDict
 
@@ -132,6 +132,7 @@ def _run_agent(
     request_timeout_seconds: float | None = None,
     check_control=None,
     max_input_chars: int | None = None,
+    handle_tool_error: bool = False,
 ) -> None:
     def submit_video_item(video_chunk_id: str, claim: str) -> str:
         return invoke_tool(VideoItem(
@@ -144,6 +145,7 @@ def _run_agent(
         name="submit_video_item",
         description="Submit one approved video item.",
         args_schema=VideoItem,
+        handle_tool_error=handle_tool_error,
     )
     model.run_agent_loop(
         "根据审核后的证据回答",
@@ -748,6 +750,48 @@ def test_deepseek_agent_loop_propagates_tool_handler_error() -> None:
         _run_agent(model, invoke_tool=fail)
 
     assert len(completions.calls) == 1
+
+
+def test_deepseek_agent_loop_returns_recoverable_tool_error_for_retry() -> None:
+    model, completions = _function_model(
+        _agent_response(
+            None,
+            calls=[_tool_call(_video_item())],
+            finish_reason="tool_calls",
+        ),
+        _agent_response(
+            None,
+            calls=[_tool_call(_video_item(), call_id="call-2")],
+            finish_reason="tool_calls",
+        ),
+        _agent_response("answer"),
+    )
+    attempts = 0
+
+    def retry_once(_item: VideoItem) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ToolException("时间区间不合法，请修正后重试。")
+        return "accepted"
+
+    _run_agent(
+        model,
+        invoke_tool=retry_once,
+        handle_tool_error=True,
+    )
+
+    assert attempts == 2
+    assert completions.calls[1]["messages"][-1] == {
+        "role": "tool",
+        "tool_call_id": "call-1",
+        "content": "时间区间不合法，请修正后重试。",
+    }
+    assert completions.calls[2]["messages"][-1] == {
+        "role": "tool",
+        "tool_call_id": "call-2",
+        "content": "accepted",
+    }
 
 
 def test_deepseek_agent_loop_serializes_structured_tool_result() -> None:

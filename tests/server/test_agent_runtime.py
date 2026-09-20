@@ -152,6 +152,7 @@ class Query:
         self.prompts = []
         self.contexts = []
         self.tool_results = []
+        self.draft_tool_results = []
         self.budgets = []
 
     def run_structured(
@@ -182,10 +183,12 @@ class Query:
         )
         for item in ranges:
             _read_all(tools_by_name["read_trieve_item"], item["video_chunk_id"])
-            tools_by_name["update_draft_tem"].invoke({
-                **item,
-                "claim": f"Grounded evidence for {item['video_chunk_id']}.",
-            })
+            self.draft_tool_results.append(
+                tools_by_name["update_draft_tem"].invoke({
+                    **item,
+                    "claim": f"Grounded evidence for {item['video_chunk_id']}.",
+                })
+            )
         return result_type.model_validate({
             "plan_context": f"plan-{number}", "message": f"draft-{number}",
         })
@@ -483,14 +486,20 @@ def test_unknown_selected_id_fails_before_evaluator_or_chat():
     assert evaluator.contexts == chat.contexts == []
 
 
-def test_out_of_chunk_range_after_evaluator_approval_forces_query_revision():
+def test_out_of_chunk_range_is_returned_to_query_for_same_turn_revision():
     class CorrectingQuery(Query):
         def run_structured(self, prompt, **kwargs):
             self.selected_ranges = [
                 _selected_range("chunk-1", start_ms=999, end_ms=1500)
-                if not self.contexts else _selected_range("chunk-1")
             ]
-            return super().run_structured(prompt, **kwargs)
+            completion = super().run_structured(prompt, **kwargs)
+            self.draft_tool_results.append(
+                _tool_map(kwargs["tools"])["update_draft_tem"].invoke({
+                    **_selected_range("chunk-1"),
+                    "claim": "Corrected grounded evidence.",
+                })
+            )
+            return completion
 
     class AlwaysCompleteEvaluator(Evaluator):
         def run_structured(self, prompt, **kwargs):
@@ -502,12 +511,13 @@ def test_out_of_chunk_range_after_evaluator_approval_forces_query_revision():
         query=CorrectingQuery(), evaluator=AlwaysCompleteEvaluator(),
     )
 
-    with pytest.raises(
-        AgentModelInvocationError,
-        match="Draft Item range must be contained in canonical Evidence",
-    ):
-        runtime.kick(_inputs())
-    assert evaluator.contexts == chat.contexts == []
+    result = runtime.kick(_inputs())
+
+    assert query.draft_tool_results[0].startswith("时间区间不合法：")
+    assert json.loads(query.draft_tool_results[1])["accepted"] is True
+    assert len(query.contexts) == len(evaluator.contexts) == len(chat.contexts) == 1
+    assert result.render_blocks[1].start_ms == 1100
+    assert result.render_blocks[1].end_ms == 1900
 
 
 @pytest.mark.parametrize("start_ms,end_ms", [
@@ -1113,22 +1123,20 @@ def test_chat_tool_does_not_accept_a_playback_range() -> None:
         runtime.kick(_inputs())
 
 
-def test_approved_out_of_chunk_range_is_rejected_before_chat() -> None:
+def test_out_of_chunk_range_can_be_discarded_without_crashing_chat() -> None:
     runtime, query, evaluator, chat, _retrieval = _runtime(
         query=Query(selected_ranges=[
             _selected_range("chunk-1", start_ms=999, end_ms=1500)
         ]),
     )
 
-    with pytest.raises(
-        AgentModelInvocationError,
-        match="Draft Item range must be contained in canonical Evidence",
-    ):
-        runtime.kick(_inputs())
+    result = runtime.kick(_inputs())
 
     assert len(query.contexts) == 1
-    assert evaluator.contexts == []
-    assert chat.contexts == []
+    assert query.draft_tool_results[0].startswith("时间区间不合法：")
+    assert evaluator.contexts[0]["current_draft"]["video_chunk_ids"] == []
+    assert chat.contexts[0]["approved_turn"]["video_chunk_ids"] == []
+    assert result.hits == []
 
 
 def test_cancel_after_agent_loop_stops_before_output():

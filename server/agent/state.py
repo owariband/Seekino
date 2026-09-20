@@ -14,6 +14,7 @@ from pydantic import (
 
 from ..constants.retrieval import AGENT_RETRIEVAL_STRATEGY_VERSION
 from ..schema import ContractModel, VideoChunkSearchResult
+from .errors import AgentContextBudgetError, AgentModelInvocationError
 
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
 _EvidenceClaim = Annotated[
@@ -32,22 +33,6 @@ class AnswerPhase(StrEnum):
     RETRIEVING = "RETRIEVING"
     EVALUATING = "EVALUATING"
     RESPONDING = "RESPONDING"
-
-
-class AgentModelInvocationError(RuntimeError):
-    """A bounded execution could not produce an approved, valid answer."""
-
-
-class AgentContextBudgetError(AgentModelInvocationError):
-    """Model context exceeded the Server's explicit character budget."""
-
-
-class AgentToolInvocationError(RuntimeError):
-    """An injected tool failed; the application owns its cause's error mapping."""
-
-
-class AgentToolOutputError(AgentToolInvocationError):
-    """A Tool could not satisfy its bounded output contract."""
 
 
 class SelectedVideoRange(BaseModel):

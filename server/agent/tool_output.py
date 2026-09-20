@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from .state import AgentToolInvocationError, AgentToolOutputError
+from .errors import AgentToolInvocationError, AgentToolOutputError
 
 
 @dataclass(frozen=True, slots=True)

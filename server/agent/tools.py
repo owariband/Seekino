@@ -6,17 +6,20 @@ import json
 from threading import Lock
 from typing import Annotated, Any
 
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from engine.retrieval.video_retrieval import normalize_hybrid_retrieval_weights
 
 from ..constants.retrieval import AGENT_RETRIEVAL_STRATEGY_VERSION
 from ..schema import VideoChunkSearchHit, VideoChunkSearchResult
+from .errors import (
+    AgentModelInvocationError, AgentToolInvocationError, InvalidDraftRangeError,
+)
 from .output import validate_result
 from .state import (
-    AgentModelInvocationError, AgentToolInvocationError, ChatVideoBlock,
-    DraftItem, ExecutionControl, RetrievalCall, RetrievalChannelWeights, RunInputs,
+    ChatVideoBlock, DraftItem, ExecutionControl, RetrievalCall,
+    RetrievalChannelWeights, RunInputs,
 )
 from .tool_output import bounded_json, cursor_position, page_items, page_text
 from .workspace import AgentWorkspace
@@ -74,8 +77,8 @@ class UpdateDraftTemArguments(BaseModel):
         str,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=36),
     ]
-    start_ms: int = Field(strict=True, ge=0)
-    end_ms: int = Field(strict=True, gt=0)
+    start_ms: int = Field(strict=True)
+    end_ms: int = Field(strict=True)
     claim: Annotated[
         str,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000),
@@ -323,12 +326,24 @@ def build_update_draft_tem_tool(
         claim: str,
     ) -> str:
         _start_tool_call(control, budget, "update_draft_tem")
-        inserted = workspace.upsert_draft_item(DraftItem(
-            video_chunk_id=video_chunk_id,
-            start_ms=start_ms,
-            end_ms=end_ms,
-            claim=claim,
-        ))
+        try:
+            inserted = workspace.upsert_draft_item(
+                video_chunk_id=video_chunk_id,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                claim=claim,
+            )
+        except InvalidDraftRangeError as exc:
+            raise ToolException(
+                "时间区间不合法："
+                f"当前提交 start_ms={exc.start_ms}, end_ms={exc.end_ms}；"
+                "必须满足 "
+                f"{exc.evidence_start_ms} <= start_ms < end_ms "
+                f"<= {exc.evidence_end_ms}。"
+                f"合法范围来自 video_chunk_id={exc.video_chunk_id!r} 的 "
+                "canonical Evidence，"
+                "请修正后重新调用 update_draft_tem。"
+            ) from exc
         return bounded_json({
             "accepted": True,
             "operation": "inserted" if inserted else "updated",
@@ -341,9 +356,11 @@ def build_update_draft_tem_tool(
         name="update_draft_tem",
         description=(
             "Insert or update one Draft Item by video_chunk_id. The Evidence must have "
-            "been retrieved, and start_ms/end_ms must stay inside its canonical range."
+            "been retrieved, and the range must satisfy canonical_start_ms <= "
+            "start_ms < end_ms <= canonical_end_ms."
         ),
         args_schema=UpdateDraftTemArguments,
+        handle_tool_error=True,
     )
 
 
