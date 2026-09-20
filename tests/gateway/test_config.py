@@ -67,6 +67,7 @@ def test_default_config_uses_selected_models() -> None:
     assert config.agent_model.request_timeout_seconds == 180
     assert config.video_parser.transcript_model == "doubao-seed-2-0-lite-260428"
     assert config.video_parser.video_model == "doubao-seed-2-1-pro-260628"
+    assert config.video_parser.video_thinking == "disabled"
     assert config.multimodal_embedding.model == "doubao-embedding-vision-251215"
     assert config.multimodal_embedding.dimensions == 1024
 
@@ -98,6 +99,7 @@ def test_parse_only_config_uses_compatible_agent_defaults(tmp_path: Path) -> Non
     assert config.agent_model.model == "deepseek-flash"
     assert config.agent_model.base_url == "https://api.deepseek.com"
     assert config.agent_model.api_key_env == "DEEPSEEK_API_KEY"
+    assert config.video_parser.video_thinking is None
 
 
 def test_legacy_agent_chat_config_is_still_accepted(tmp_path: Path) -> None:

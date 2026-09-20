@@ -171,6 +171,7 @@ def main() -> None:
     video_model_client = ArkMultimodalModel(
         video_model,
         request_timeout_seconds=args.request_timeout_seconds,
+        thinking_mode=parser_config.video_thinking,
     )
     model_parser = VideoChunkParser(
         transcript_model_client,

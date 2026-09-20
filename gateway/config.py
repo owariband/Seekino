@@ -88,6 +88,7 @@ class VideoParseConfig(BaseModel):
 
     transcript_model: str = Field(min_length=1)
     video_model: str = Field(min_length=1)
+    video_thinking: Literal["enabled", "disabled", "auto"] | None = None
     transcript_fps: float = Field(ge=0.2, le=5.0)
     video_fps: float = Field(ge=0.2, le=5.0)
     fallback: VideoFallbackConfig

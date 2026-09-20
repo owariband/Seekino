@@ -10,6 +10,7 @@ agent_model:
 video_parser:
   transcript_model: doubao-seed-2-0-lite-260428
   video_model: doubao-seed-2-1-pro-260628
+  video_thinking: disabled
   transcript_fps: 1.0
   video_fps: 1.0
   fallback:

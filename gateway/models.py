@@ -32,6 +32,7 @@ _SUPPORTED_VIDEO_MIME_TYPES = {
 }
 
 _ResultModel = TypeVar("_ResultModel", bound=BaseModel)
+_ArkThinkingMode = Literal["enabled", "disabled", "auto"]
 _logger = logging.getLogger(__name__)
 
 
@@ -98,6 +99,7 @@ class ArkMultimodalModel:
         *,
         request_timeout_seconds: float | None = None,
         max_output_tokens: int | None = None,
+        thinking_mode: _ArkThinkingMode | None = None,
         fallback_model: str | None = None,
         client: Ark | None = None,
     ) -> None:
@@ -119,6 +121,7 @@ class ArkMultimodalModel:
             ARK_PROVIDER if self.fallback_model_name is not None else None
         )
         self.max_output_tokens = max_output_tokens
+        self.thinking_mode = thinking_mode
         self._request_timeout_seconds = request_timeout_seconds
         self._client = client
 
@@ -180,6 +183,8 @@ class ArkMultimodalModel:
         )
         if self.max_output_tokens is not None:
             request["max_output_tokens"] = self.max_output_tokens
+        if self.thinking_mode is not None:
+            request["thinking"] = {"type": self.thinking_mode}
         effective_timeout = request_timeout_seconds
         if self._request_timeout_seconds is not None:
             effective_timeout = min(
@@ -235,6 +240,8 @@ class ArkMultimodalModel:
         }
         if self.max_output_tokens is not None:
             request["max_output_tokens"] = self.max_output_tokens
+        if self.thinking_mode is not None:
+            request["thinking"] = {"type": self.thinking_mode}
         client = self._client or self._new_client()
         try:
             with track_model_call(provider=self.provider_name, model=self.model_name, operation="text_generation") as call:

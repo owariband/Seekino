@@ -49,6 +49,7 @@ class VideoParseRuntimeConfig:
     max_context_chars: int = 2000
     transcript_model: str | None = None
     video_model: str | None = None
+    video_thinking: Literal["enabled", "disabled", "auto"] | None = None
     transcript_fps: float | None = None
     video_fps: float | None = None
     fallback_enabled: bool | None = None
@@ -70,6 +71,7 @@ class VideoParseRuntimeConfig:
 class _ResolvedRuntimeConfig:
     transcript_model: str
     video_model: str
+    video_thinking: Literal["enabled", "disabled", "auto"] | None
     transcript_fps: float
     video_fps: float
     fallback_enabled: bool
@@ -289,6 +291,10 @@ class EngineVideoParseRuntime:
                         or os.getenv("ANIVAG_VIDEO_MODEL")
                         or parser_config.video_model
                     ),
+                    video_thinking=(
+                        self._config.video_thinking
+                        or parser_config.video_thinking
+                    ),
                     transcript_fps=(
                         self._config.transcript_fps
                         or float(
@@ -323,6 +329,7 @@ class EngineVideoParseRuntime:
                     request_timeout_seconds=(
                         self._config.request_timeout_seconds
                     ),
+                    thinking_mode=resolved.video_thinking,
                 )
                 self._transcript_client = transcript_client
                 self._model_parser = VideoChunkParser(

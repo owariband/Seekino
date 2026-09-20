@@ -121,6 +121,7 @@ VideoChunk 的算法降级链路为：
 
 ```yaml
 video_parser:
+  video_thinking: disabled
   fallback:
     enabled: true
     frame_fps: 0.5
@@ -136,6 +137,11 @@ video_parser:
       max_output_tokens: 8192
       request_timeout_seconds: 1200
 ```
+
+`video_thinking` 只控制主 `video_model` 的 Ark thinking 模式；默认配置显式关闭，
+避免逐片结构化时间线把大部分生成预算消耗在隐藏 reasoning 上。Lite 候选转写不受
+这个字段影响。当前不限制主模型的 `max_output_tokens`，防止繁忙片段的合法 JSON
+被截断后重新引入结构化解析错误。
 
 运行前需在 `.env.local` 中提供 `DEEPSEEK_API_KEY`；fallback 使用官方 API，不要求
 启动 Ollama 或 llama.cpp。`--fallback` 强制启用配置链路，`--no-fallback` 强制关闭，
