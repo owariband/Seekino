@@ -50,12 +50,12 @@ class TranscriptCueDocument(BaseModel):
 
     text: str = Field(min_length=1)
     start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
+    end_ms: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "TranscriptCueDocument":
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
+        if self.end_ms < self.start_ms:
+            raise ValueError("end_ms must not be less than start_ms")
         return self
 
 
@@ -73,7 +73,7 @@ class RankedTranscriptMatch(RankedVideoChunkMatch):
 
     matched_text: str = Field(min_length=1)
     start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
+    end_ms: int = Field(ge=0)
 
 
 class FusedVideoChunkRanking(BaseModel):

@@ -48,7 +48,7 @@ def _soft_validated_transcript(
         return [], 0, 1
 
     cues: list[TranscriptCueView] = []
-    normalized_point_cue_count = 0
+    retained_point_cue_count = 0
     skipped_invalid_cue_count = 0
     for raw_cue in raw_cues:
         if not isinstance(raw_cue, dict):
@@ -71,8 +71,7 @@ def _soft_validated_transcript(
             skipped_invalid_cue_count += 1
             continue
         if end_ms == start_ms:
-            end_ms += 1
-            normalized_point_cue_count += 1
+            retained_point_cue_count += 1
         speaker = raw_cue.get("speaker")
         cues.append(
             TranscriptCueView(
@@ -82,7 +81,7 @@ def _soft_validated_transcript(
                 end_ms=offset_ms + end_ms,
             )
         )
-    return cues, normalized_point_cue_count, skipped_invalid_cue_count
+    return cues, retained_point_cue_count, skipped_invalid_cue_count
 
 
 class ParseImportConflictError(RuntimeError):
@@ -772,20 +771,20 @@ class VideoRepository:
             rows = session.execute(statement).all()
 
         documents: list[TranscriptChunkDocument] = []
-        normalized_point_cue_count = 0
+        retained_point_cue_count = 0
         skipped_invalid_cue_count = 0
         affected_chunk_ids: set[str] = set()
         for row in rows:
             cues: list[TranscriptCueDocument] = []
-            validated_cues, normalized_count, skipped_count = (
+            validated_cues, retained_count, skipped_count = (
                 _soft_validated_transcript(
                     row.transcript,
                     offset_ms=row.analysis_window_start_ms,
                 )
             )
-            normalized_point_cue_count += normalized_count
+            retained_point_cue_count += retained_count
             skipped_invalid_cue_count += skipped_count
-            if normalized_count or skipped_count:
+            if retained_count or skipped_count:
                 affected_chunk_ids.add(row.video_chunk_id)
             for cue in validated_cues:
                 document_cue = TranscriptCueDocument(
@@ -806,16 +805,16 @@ class VideoRepository:
                         cues=cues,
                     )
                 )
-        if normalized_point_cue_count or skipped_invalid_cue_count:
+        if retained_point_cue_count or skipped_invalid_cue_count:
             _logger.warning(
                 "event=persisted_transcript_cues_soft_validated "
                 "workspace_id=%s series_count=%s affected_chunk_count=%s "
-                "normalized_point_cue_count=%s skipped_invalid_cue_count=%s "
+                "retained_point_cue_count=%s skipped_invalid_cue_count=%s "
                 "action=continue",
                 normalized_workspace,
                 len(ordered_series_ids),
                 len(affected_chunk_ids),
-                normalized_point_cue_count,
+                retained_point_cue_count,
                 skipped_invalid_cue_count,
             )
         return documents
@@ -878,7 +877,7 @@ class VideoRepository:
 
         states_by_id: dict[str, HydratedVideoChunkState] = {}
         for series, video, chunk, info, embedding, intent in rows:
-            transcript, _normalized_count, _skipped_count = (
+            transcript, _retained_count, _skipped_count = (
                 _soft_validated_transcript(
                     chunk.transcript,
                     offset_ms=chunk.analysis_window_start_ms,

@@ -25,12 +25,12 @@ class TranscriptCueView(ContractModel):
     speaker: str | None
     text: str = Field(min_length=1)
     start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
+    end_ms: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "TranscriptCueView":
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
+        if self.end_ms < self.start_ms:
+            raise ValueError("end_ms must not be less than start_ms")
         return self
 
 
@@ -119,9 +119,9 @@ class MatchedEvidence(ContractModel):
         if (
             self.start_ms is not None
             and self.end_ms is not None
-            and self.end_ms <= self.start_ms
+            and self.end_ms < self.start_ms
         ):
-            raise ValueError("end_ms must be greater than start_ms")
+            raise ValueError("end_ms must not be less than start_ms")
         return self
 
 

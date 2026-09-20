@@ -510,9 +510,9 @@ def test_transcript_retrieval_soft_validates_persisted_time_ranges(
             "kind": "TRANSCRIPT",
             "text": "瞬间回应",
             "start_ms": 1_000,
-            "end_ms": 1_001,
+            "end_ms": 1_000,
         }
-        assert "normalized_point_cue_count=1" in caplog.text
+        assert "retained_point_cue_count=1" in caplog.text
         assert "skipped_invalid_cue_count=1" in caplog.text
     finally:
         client.close()
