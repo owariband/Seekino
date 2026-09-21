@@ -1,8 +1,10 @@
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from scripts import local_services
 from scripts.local_services import api_ready, config_digest, dotenv_variable_names
@@ -84,6 +86,7 @@ def test_config_digest_tracks_configured_parse_fallback_api_key(monkeypatch) -> 
                 deepseek=SimpleNamespace(api_key_env="CUSTOM_DEEPSEEK_API_KEY"),
             ),
         ),
+        model_dump=lambda mode: {"agent_runtime": {}},
     )
     monkeypatch.setattr(local_services, "load_config", lambda: config)
     monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "first")
@@ -91,6 +94,28 @@ def test_config_digest_tracks_configured_parse_fallback_api_key(monkeypatch) -> 
     monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "second")
 
     assert config_digest() != initial
+
+
+def test_config_digest_distinguishes_hot_settings_from_restart_settings(
+    monkeypatch, tmp_path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config = yaml.safe_load((Path(local_services.ROOT) / "config.yaml").read_text())
+    config["agent_runtime"] = {
+        "evaluator_stage_timeout_seconds": 180,
+        "maximum_concurrent_kicks": 4,
+    }
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+    first = config_digest()
+
+    config["agent_runtime"]["evaluator_stage_timeout_seconds"] = 240
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    assert config_digest() == first
+
+    config["agent_runtime"]["maximum_concurrent_kicks"] = 6
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    assert config_digest() != first
 
 
 def test_launch_validates_digest_before_spawning(monkeypatch) -> None:

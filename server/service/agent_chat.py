@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from queue import Empty, Full, Queue
 from threading import Event, Lock
 from time import monotonic_ns
@@ -197,6 +197,9 @@ class AgentChatService:
         runtime: AgentRuntime,
         *,
         config: AgentServiceConfig | None = None,
+        config_loader: Callable[[], tuple[AgentServiceConfig, str]] | None = None,
+        runtime_factory: Callable[[AgentServiceConfig], AgentRuntime] | None = None,
+        config_revision: str | None = None,
         clock: Callable[[], int] = now_unix_time_ms,
         monotonic_clock: Callable[[], int] = monotonic_ns,
     ) -> None:
@@ -204,6 +207,11 @@ class AgentChatService:
         self._library = library
         self._runtime = runtime
         self._config = config or AgentServiceConfig()
+        self._config_loader = config_loader
+        self._runtime_factory = runtime_factory
+        self._config_revision = config_revision
+        self._runtimes = [runtime]
+        self._active_maximum_concurrent_kicks = self._config.maximum_concurrent_kicks
         self._clock = clock
         self._monotonic_clock = monotonic_clock
         self._executor = ThreadPoolExecutor(
@@ -216,32 +224,37 @@ class AgentChatService:
 
     @property
     def model_name(self) -> str:
-        return self._runtime.model_name
+        return self._current_config()[0].model_name
 
     @property
     def maximum_top_k(self) -> int:
-        return self._config.maximum_top_k
+        return self._current_config()[1].maximum_top_k
 
     @property
     def default_top_k(self) -> int:
-        return self._config.default_top_k
+        return self._current_config()[1].default_top_k
+
+    @property
+    def active_maximum_concurrent_kicks(self) -> int:
+        return self._active_maximum_concurrent_kicks
 
     def message_options(self) -> AgentMessageOptionsState:
+        _, config, _ = self._current_config()
         return AgentMessageOptionsState(
             top_k=AgentIntegerOptionState(
-                default_value=self._config.default_top_k,
+                default_value=config.default_top_k,
                 minimum=1,
-                maximum=self._config.maximum_top_k,
+                maximum=config.maximum_top_k,
             ),
             max_model_calls_per_turn=AgentIntegerOptionState(
-                default_value=self._config.max_model_calls_per_turn,
+                default_value=config.max_model_calls_per_turn,
                 minimum=1,
-                maximum=self._config.maximum_model_calls_per_turn,
+                maximum=config.maximum_model_calls_per_turn,
             ),
             max_tool_calls_per_turn=AgentIntegerOptionState(
-                default_value=self._config.max_tool_calls_per_turn,
+                default_value=config.max_tool_calls_per_turn,
                 minimum=1,
-                maximum=self._config.maximum_tool_calls_per_turn,
+                maximum=config.maximum_tool_calls_per_turn,
             ),
             max_loop_turns=AgentIntegerOptionState(
                 default_value=100,
@@ -249,6 +262,36 @@ class AgentChatService:
                 maximum=100,
             ),
         )
+
+    def _current_config(self) -> tuple[AgentRuntime, AgentServiceConfig, ThreadPoolExecutor]:
+        with self._lock:
+            if self._closed:
+                raise AgentMessageInProgressError("the Agent service is shutting down")
+            if self._config_loader is not None:
+                config, revision = self._config_loader()
+                if revision != self._config_revision:
+                    if config != self._config:
+                        active_config = replace(
+                            config,
+                            maximum_concurrent_kicks=self._active_maximum_concurrent_kicks,
+                        )
+                        previous_config = replace(
+                            self._config,
+                            maximum_concurrent_kicks=self._active_maximum_concurrent_kicks,
+                        )
+                        if active_config != previous_config:
+                            assert self._runtime_factory is not None
+                            self._runtime = self._runtime_factory(config)
+                            self._runtimes.append(self._runtime)
+                        self._config = config
+                        _logger.info(
+                            "agent_global_settings_reloaded revision=%s "
+                            "restart_required=%s",
+                            revision[:12],
+                            config.maximum_concurrent_kicks != self._active_maximum_concurrent_kicks,
+                        )
+                    self._config_revision = revision
+            return self._runtime, self._config, self._executor
 
     def create_conversation(
         self,
@@ -410,29 +453,30 @@ class AgentChatService:
         max_loop_turns: int | None = None,
         reference: dict[str, str] | None = None,
     ) -> AgentMessageExecution:
+        runtime, config, executor = self._current_config()
         normalized_workspace = require_nonempty_text(workspace_id, "workspace_id", maximum=64)
         normalized_conversation_id = canonical_uuid(conversation_id, "conversation_id")
         normalized_content = require_nonempty_text(content, "content", maximum=20_000)
         normalized_reference = _canonical_reference(reference)
         requested_scope = _canonical_scope([] if series_ids is None else series_ids)
-        requested_top_k = self._config.default_top_k if top_k is None else top_k
+        requested_top_k = config.default_top_k if top_k is None else top_k
         if (
             isinstance(requested_top_k, bool) or not isinstance(requested_top_k, int)
-            or not 0 < requested_top_k <= self._config.maximum_top_k
+            or not 0 < requested_top_k <= config.maximum_top_k
         ):
-            raise ValueError(f"top_k must be between 1 and {self._config.maximum_top_k}")
+            raise ValueError(f"top_k must be between 1 and {config.maximum_top_k}")
         run_options = AgentRunOptionsState(
             max_model_calls_per_turn=_bounded_run_limit(
                 "max_model_calls_per_turn",
                 max_model_calls_per_turn,
-                default=self._config.max_model_calls_per_turn,
-                maximum=self._config.maximum_model_calls_per_turn,
+                default=config.max_model_calls_per_turn,
+                maximum=config.maximum_model_calls_per_turn,
             ),
             max_tool_calls_per_turn=_bounded_run_limit(
                 "max_tool_calls_per_turn",
                 max_tool_calls_per_turn,
-                default=self._config.max_tool_calls_per_turn,
-                maximum=self._config.maximum_tool_calls_per_turn,
+                default=config.max_tool_calls_per_turn,
+                maximum=config.maximum_tool_calls_per_turn,
             ),
         )
         if max_loop_turns is not None and (
@@ -468,7 +512,7 @@ class AgentChatService:
                 started = self._repository.start_message(
                     conversation_id=normalized_conversation_id,
                     workspace_id=normalized_workspace, content=normalized_content,
-                    model_name=require_nonempty_text(self.model_name, "chat_model.model_name", maximum=255),
+                    model_name=require_nonempty_text(runtime.model_name, "chat_model.model_name", maximum=255),
                     requested_top_k=requested_top_k, idempotency_key=normalized_key,
                     series_ids=scope, requested_series_ids=requested_scope,
                     requested_run_options=requested_run_options,
@@ -499,9 +543,9 @@ class AgentChatService:
                 return execution
             self._executions[started.assistant_message.message_id] = execution
             try:
-                execution.future = self._executor.submit(
+                execution.future = executor.submit(
                     self._execute, execution, normalized_workspace, requested_top_k,
-                    run_options, max_loop_turns,
+                    run_options, max_loop_turns, runtime, config,
                 )
             except Exception:
                 self._executions.pop(started.assistant_message.message_id, None)
@@ -580,6 +624,7 @@ class AgentChatService:
     def _execute(
         self, execution: AgentMessageExecution, workspace_id: str, requested_top_k: int,
         run_options: AgentRunOptionsState, max_loop_turns: int | None,
+        runtime: AgentRuntime, config: AgentServiceConfig,
     ) -> AgentMessageSendState:
         initial = execution.initial
         assistant_id = initial.assistant_message.message_id
@@ -610,7 +655,7 @@ class AgentChatService:
             history = self._repository.list_recent_completed_messages(
                 conversation_id, workspace_id,
                 before_sequence_no=initial.user_message.sequence_no,
-                limit=self._config.history_message_limit,
+                limit=config.history_message_limit,
             )
             series = [
                 self._library.get_series(series_id, workspace_id=workspace_id)
@@ -643,7 +688,7 @@ class AgentChatService:
                 } for item in series],
             )
             try:
-                final = self._runtime.kick(
+                final = runtime.kick(
                     inputs, emit=publish_runtime, cancellation=execution.cancellation,
                     max_model_calls_per_turn=run_options.max_model_calls_per_turn,
                     max_tool_calls_per_turn=run_options.max_tool_calls_per_turn,
@@ -743,7 +788,8 @@ class AgentChatService:
         try:
             self._executor.shutdown(wait=True)
         finally:
-            self._runtime.close()
+            for runtime in self._runtimes:
+                runtime.close()
 
 
 def _message_pair(result: AgentMessageSendState) -> dict:

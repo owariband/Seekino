@@ -215,11 +215,25 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._limits_enabled is True
         assert runtime._max_prompt_chars == 120_000
         assert runtime._max_tool_result_bytes == 16_384
+        assert runtime._max_read_chars_per_call == 16_384
         assert runtime._max_catalog_items == 20
         assert runtime._stage_timeout == 45
         assert runtime._evaluator_stage_timeout == 210
         assert runtime._execution_timeout == 90
         assert services.agent._executor._max_workers == 2
+        updated = replace(
+            settings.agent, evaluator_stage_timeout_seconds=240,
+            max_tool_result_bytes=8_192, max_read_chars_per_call=4_096,
+            maximum_concurrent_kicks=5,
+        )
+        replacement = services.agent._runtime_factory(updated)
+        try:
+            assert replacement._evaluator_stage_timeout == 240
+            assert replacement._max_tool_result_bytes == 8_192
+            assert replacement._max_read_chars_per_call == 4_096
+            assert services.agent.active_maximum_concurrent_kicks == 2
+        finally:
+            replacement.close()
         app = create_app(services, settings=settings)
         assert app.state.sse_config == settings.sse
     finally:

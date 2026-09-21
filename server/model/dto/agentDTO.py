@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from pydantic import Field
 
@@ -30,6 +30,13 @@ class AgentMessageSendRequest(ContractModel):
     max_tool_calls_per_turn: int | None = Field(default=None, gt=0)
     max_loop_turns: int | None = Field(default=None, ge=0, le=100)
     reference: EvidenceReference | None = None
+
+
+class AgentGlobalSettingsPatchRequest(ContractModel):
+    """Patch global Agent defaults against the YAML revision last read by the UI."""
+
+    revision: str = Field(min_length=1)
+    values: dict[str, Any] = Field(min_length=1)
 
 
 @dataclass(frozen=True, slots=True)

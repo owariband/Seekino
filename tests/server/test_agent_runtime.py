@@ -318,6 +318,11 @@ def _runtime(query=None, evaluator=None, chat=None, retrieval=None, **kwargs):
     return AgentRuntime(query, evaluator, chat, retrieval.search, **kwargs), query, evaluator, chat, retrieval
 
 
+def test_runtime_rejects_nonpositive_read_character_limit() -> None:
+    with pytest.raises(ValueError, match="max_read_chars_per_call"):
+        _runtime(max_read_chars_per_call=0)
+
+
 @pytest.mark.parametrize("approve_at", [1, 2, 3])
 def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     runtime, query, evaluator, chat, retrieval = _runtime(evaluator=Evaluator(approve_at))

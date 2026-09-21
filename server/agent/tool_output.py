@@ -124,8 +124,11 @@ def range_text(
     start: int,
     end: int | None,
     maximum_bytes: int,
+    maximum_chars: int,
 ) -> str:
     _validate_maximum_bytes(maximum_bytes)
+    if maximum_chars <= 0:
+        raise ValueError("maximum_chars must be greater than zero")
     total_chars = len(content)
     if end is None:
         end = total_chars
@@ -153,25 +156,30 @@ def range_text(
 
     requested = _json(payload(end))
     requested_bytes = len(requested.encode("utf-8"))
-    if requested_bytes <= maximum_bytes:
+    requested_chars = end - start
+    if requested_chars <= maximum_chars and requested_bytes <= maximum_bytes:
         return requested
 
-    low, high, best = start, end, start
-    while low <= high:
-        middle = (low + high) // 2
-        if len(_json(payload(middle)).encode("utf-8")) <= maximum_bytes:
-            best = middle
-            low = middle + 1
-        else:
-            high = middle - 1
+    max_end = min(end, start + maximum_chars)
+    best = max_end
+    if len(_json(payload(max_end)).encode("utf-8")) > maximum_bytes:
+        low, high, best = start, max_end, start
+        while low <= high:
+            middle = (low + high) // 2
+            if len(_json(payload(middle)).encode("utf-8")) <= maximum_bytes:
+                best = middle
+                low = middle + 1
+            else:
+                high = middle - 1
     if best == start:
         raise AgentToolOutputError(
             "Tool result budget is too small for a readable content range"
         )
     raise AgentToolFeedbackError(
         "RANGE_TOO_LARGE",
-        f"Requested [{start}, {end}) from {section!r} needs "
-        f"{requested_bytes} UTF-8 bytes; the limit is {maximum_bytes}.",
+        f"Requested [{start}, {end}) from {section!r} spans "
+        f"{requested_chars} characters (limit {maximum_chars}) and needs "
+        f"{requested_bytes} UTF-8 bytes (limit {maximum_bytes}).",
         f"Retry the same section with start={start} and end<={best}; "
         f"then continue from start={best}.",
         suggested_end=best,

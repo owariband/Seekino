@@ -435,6 +435,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/agent/messages/list",
         "/api/agent/messages/get",
         "/api/agent/messages/options",
+        "/api/agent/global-settings",
         "/api/agent/messages/send",
         "/api/agent/messages/events",
     } == paths
@@ -2319,6 +2320,68 @@ def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_p
         service.close()
 
 
+def test_global_agent_settings_read_patch_and_revision_conflict(tmp_path):
+    client, _, _ = _client(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_bytes((Path(__file__).resolve().parents[2] / "config.yaml").read_bytes())
+    client.app.state.model_config_path = config_path
+    service = client.app.state.services.agent
+    try:
+        current = client.get("/api/agent/global-settings")
+        assert current.status_code == 200, current.text
+        before = current.json()
+        assert before["restartRequiredFields"] == ["maximum_concurrent_kicks"]
+        assert before["activeValues"] == {
+            "maximum_concurrent_kicks": service.active_maximum_concurrent_kicks,
+        }
+        assert "agent_model" not in before["values"]
+
+        changed_concurrency = before["values"]["maximum_concurrent_kicks"] + 1
+        changed_catalog = before["values"]["max_catalog_items_per_page"] - 1
+        patch = {
+            "revision": before["revision"],
+            "values": {
+                "maximum_concurrent_kicks": changed_concurrency,
+                "max_catalog_items_per_page": changed_catalog,
+            },
+        }
+        saved = client.patch("/api/agent/global-settings", json=patch)
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["revision"] != before["revision"]
+        assert saved.json()["values"]["maximum_concurrent_kicks"] == changed_concurrency
+        assert saved.json()["values"]["max_catalog_items_per_page"] == changed_catalog
+        assert saved.json()["activeValues"] == before["activeValues"]
+        assert client.get("/api/agent/global-settings").json() == saved.json()
+        assert "agent_runtime:" in config_path.read_text()
+
+        stale = client.patch("/api/agent/global-settings", json=patch)
+        assert stale.status_code == 409
+        assert stale.json()["code"] == "CONFLICT"
+        assert "X-Request-Id" in stale.headers
+        invalid = client.patch("/api/agent/global-settings", json={
+            "revision": saved.json()["revision"],
+            "values": {"unknown_setting": 1},
+        })
+        assert invalid.status_code == 400
+        assert invalid.json()["code"] == "INVALID_REQUEST"
+    finally:
+        service.close()
+
+
+def test_global_agent_settings_patch_requires_loopback(tmp_path):
+    client, _, _ = _client(tmp_path)
+    service = client.app.state.services.agent
+    try:
+        remote = TestClient(client.app, client=("192.0.2.2", 50000))
+        response = remote.patch("/api/agent/global-settings", json={
+            "revision": "unused",
+            "values": {"default_top_k": 3},
+        })
+        assert response.status_code == 403
+    finally:
+        service.close()
+
+
 def test_ui_cors_allows_stream_and_media_headers(tmp_path, monkeypatch):
     from server.config.settings import ServerSettings
 
@@ -2339,5 +2402,11 @@ def test_ui_cors_allows_stream_and_media_headers(tmp_path, monkeypatch):
         health = client.get("/healthz", headers={"Origin": "http://localhost:5173"})
         exposed = health.headers["Access-Control-Expose-Headers"]
         assert all(name in exposed for name in ("Content-Range", "Content-Length", "ETag", "X-Request-Id"))
+        settings_preflight = client.options("/api/agent/global-settings", headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "PATCH",
+            "Access-Control-Request-Headers": "Content-Type",
+        })
+        assert settings_preflight.status_code == 200, settings_preflight.text
     finally:
         service.close()

@@ -11,6 +11,7 @@ from engine.parse.runtime import VideoParseRuntimeConfig
 
 from ..database import DatabaseEnvironment
 from .agent import AgentServiceConfig
+from .global_agent_settings import read_global_agent_settings
 from .index_sync import IndexSyncConfig
 from .media import ImageUploadConfig
 from .logging import LoggingConfig
@@ -55,7 +56,6 @@ class ServerSettings:
     def from_environment(cls) -> "ServerSettings":
         upload_defaults = UploadServiceConfig()
         parse_defaults = VideoParseRuntimeConfig()
-        agent_defaults = AgentServiceConfig()
         sse_defaults = SSEConfig()
         retrieval_defaults = RetrievalConfig()
         index_sync_defaults = IndexSyncConfig()
@@ -123,38 +123,7 @@ class ServerSettings:
         )
         model_config = os.getenv("ANIVAG_MODEL_CONFIG")
         model_pricing_config = _optional_environment("ANIVAG_MODEL_PRICING_CONFIG")
-        agent_default_top_k = _environment_int(
-            "ANIVAG_AGENT_DEFAULT_TOP_K", agent_defaults.default_top_k
-        )
-        agent_maximum_top_k = _environment_int(
-            "ANIVAG_AGENT_MAX_TOP_K", agent_defaults.maximum_top_k
-        )
-        if agent_maximum_top_k < agent_default_top_k:
-            raise ValueError(
-                "ANIVAG_AGENT_MAX_TOP_K must be at least ANIVAG_AGENT_DEFAULT_TOP_K"
-            )
-        agent_default_model_calls = _environment_int(
-            "ANIVAG_AGENT_MAX_MODEL_CALLS_PER_TURN",
-            agent_defaults.max_model_calls_per_turn,
-        )
-        agent_maximum_model_calls = _environment_int(
-            "ANIVAG_AGENT_MAXIMUM_MODEL_CALLS_PER_TURN",
-            max(
-                agent_defaults.maximum_model_calls_per_turn,
-                agent_default_model_calls,
-            ),
-        )
-        agent_default_tool_calls = _environment_int(
-            "ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN",
-            agent_defaults.max_tool_calls_per_turn,
-        )
-        agent_maximum_tool_calls = _environment_int(
-            "ANIVAG_AGENT_MAXIMUM_TOOL_CALLS_PER_TURN",
-            max(
-                agent_defaults.maximum_tool_calls_per_turn,
-                agent_default_tool_calls,
-            ),
-        )
+        agent_config, _ = read_global_agent_settings(model_config)
         return cls(
             environment=environment,
             database_url=database_url,
@@ -234,70 +203,7 @@ class ServerSettings:
                     parse_defaults.max_context_chars,
                 ),
             ),
-            agent=AgentServiceConfig(
-                history_message_limit=_environment_int(
-                    "ANIVAG_AGENT_HISTORY_MESSAGE_LIMIT",
-                    agent_defaults.history_message_limit,
-                ),
-                default_top_k=agent_default_top_k,
-                maximum_top_k=agent_maximum_top_k,
-                max_loop_turns=_environment_int(
-                    "ANIVAG_AGENT_MAX_LOOP_TURNS", agent_defaults.max_loop_turns,
-                ),
-                max_model_calls_per_turn=agent_default_model_calls,
-                maximum_model_calls_per_turn=agent_maximum_model_calls,
-                max_tool_calls_per_turn=agent_default_tool_calls,
-                maximum_tool_calls_per_turn=agent_maximum_tool_calls,
-                limits_enabled=_environment_bool(
-                    "ANIVAG_AGENT_LIMITS_ENABLED", agent_defaults.limits_enabled,
-                ),
-                max_output_tokens=_environment_int(
-                    "ANIVAG_AGENT_MAX_OUTPUT_TOKENS", agent_defaults.max_output_tokens,
-                ),
-                max_prompt_chars=_environment_int(
-                    "ANIVAG_AGENT_MAX_PROMPT_CHARS", agent_defaults.max_prompt_chars,
-                ),
-                context_window_tokens=_environment_int(
-                    "ANIVAG_AGENT_CONTEXT_WINDOW_TOKENS",
-                    agent_defaults.context_window_tokens,
-                ),
-                context_safety_margin_tokens=_environment_int(
-                    "ANIVAG_AGENT_CONTEXT_SAFETY_MARGIN_TOKENS",
-                    agent_defaults.context_safety_margin_tokens,
-                ),
-                auto_compact_tokens=_environment_int(
-                    "ANIVAG_AGENT_AUTO_COMPACT_TOKENS",
-                    agent_defaults.auto_compact_tokens,
-                ),
-                compact_target_tokens=_environment_int(
-                    "ANIVAG_AGENT_COMPACT_TARGET_TOKENS",
-                    agent_defaults.compact_target_tokens,
-                ),
-                max_tool_result_bytes=_environment_int(
-                    "ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES",
-                    agent_defaults.max_tool_result_bytes,
-                ),
-                max_catalog_items_per_page=_environment_int(
-                    "ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE",
-                    agent_defaults.max_catalog_items_per_page,
-                ),
-                stage_timeout_seconds=_environment_float(
-                    "ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS",
-                    agent_defaults.stage_timeout_seconds,
-                ),
-                evaluator_stage_timeout_seconds=_environment_float(
-                    "ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS",
-                    agent_defaults.evaluator_stage_timeout_seconds,
-                ),
-                execution_timeout_seconds=_environment_float(
-                    "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS",
-                    agent_defaults.execution_timeout_seconds,
-                ),
-                maximum_concurrent_kicks=_environment_int(
-                    "ANIVAG_AGENT_MAX_CONCURRENT_KICKS",
-                    agent_defaults.maximum_concurrent_kicks,
-                ),
-            ),
+            agent=agent_config,
             agent_query_model=_optional_environment("ANIVAG_AGENT_QUERY_MODEL"),
             agent_chat_model=_optional_environment(
                 "ANIVAG_AGENT_CHAT_MODEL",
@@ -432,15 +338,6 @@ def _environment_float(
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be finite and greater than zero")
     return value
-
-
-def _environment_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name, str(default)).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"{name} must be a boolean")
 
 
 def _environment_nonnegative_int(name: str, default: int) -> int:

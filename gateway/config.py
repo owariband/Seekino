@@ -113,11 +113,19 @@ class GatewayConfig(BaseModel):
     # Keep the parser YAML key stable for the existing CLI and local run configuration.
     video_parser: VideoParseConfig
     multimodal_embedding: MultimodalEmbeddingConfig
+    # Runtime tuning is validated by the Server, which owns its constraints.
+    # Gateway still accepts the section so model and parser configuration can
+    # continue to share one YAML document.
+    agent_runtime: dict[str, object] = Field(default_factory=dict)
+
+
+def resolve_config_path(config_path: str | Path | None = None) -> Path:
+    configured_path = config_path or os.getenv("ANIVAG_MODEL_CONFIG")
+    return Path(configured_path or _DEFAULT_CONFIG_PATH).expanduser().resolve()
 
 
 def load_config(config_path: str | Path | None = None) -> GatewayConfig:
-    configured_path = config_path or os.getenv("ANIVAG_MODEL_CONFIG")
-    path = Path(configured_path or _DEFAULT_CONFIG_PATH).expanduser().resolve()
+    path = resolve_config_path(config_path)
     if not path.is_file():
         raise FileNotFoundError(f"gateway config does not exist: {path}")
 

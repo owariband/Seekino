@@ -7,6 +7,31 @@ agent_model:
   max_output_tokens: 8192
   request_timeout_seconds: 180
 
+# Global Chat Agent settings. Changes to these values apply to new messages,
+# except maximum_concurrent_kicks, which takes effect after restarting Server.
+agent_runtime:
+  history_message_limit: 12
+  default_top_k: 3
+  maximum_top_k: 20
+  max_loop_turns: 3
+  max_model_calls_per_turn: 6
+  maximum_model_calls_per_turn: 12
+  max_tool_calls_per_turn: 24
+  maximum_tool_calls_per_turn: 48
+  limits_enabled: false
+  max_output_tokens: 4096
+  max_prompt_chars: 200000
+  context_window_tokens: 64000
+  context_safety_margin_tokens: 4096
+  auto_compact_tokens: 48000
+  compact_target_tokens: 24000
+  max_tool_result_bytes: 16384
+  max_catalog_items_per_page: 20
+  stage_timeout_seconds: 120
+  evaluator_stage_timeout_seconds: 180
+  execution_timeout_seconds: 600
+  maximum_concurrent_kicks: 4
+
 video_parser:
   transcript_model: doubao-seed-2-0-lite-260428
   video_model: doubao-seed-2-1-pro-260628

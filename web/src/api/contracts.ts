@@ -426,6 +426,38 @@ export interface AgentMessageOptions {
   maxToolCallsPerTurn: AgentIntegerOption;
 }
 
+export interface AgentGlobalSettingsValues {
+  history_message_limit: number;
+  default_top_k: number;
+  maximum_top_k: number;
+  max_loop_turns: number;
+  max_model_calls_per_turn: number;
+  maximum_model_calls_per_turn: number;
+  max_tool_calls_per_turn: number;
+  maximum_tool_calls_per_turn: number;
+  limits_enabled: boolean;
+  max_output_tokens: number;
+  max_prompt_chars: number;
+  context_window_tokens: number;
+  context_safety_margin_tokens: number;
+  auto_compact_tokens: number;
+  compact_target_tokens: number;
+  max_tool_result_bytes: number;
+  max_read_chars_per_call: number;
+  max_catalog_items_per_page: number;
+  stage_timeout_seconds: number;
+  evaluator_stage_timeout_seconds: number;
+  execution_timeout_seconds: number;
+  maximum_concurrent_kicks: number;
+}
+
+export interface AgentGlobalSettings {
+  values: AgentGlobalSettingsValues;
+  revision: string;
+  restartRequiredFields: string[];
+  activeValues: Pick<AgentGlobalSettingsValues, "maximum_concurrent_kicks">;
+}
+
 export interface AgentMessageRunOptions {
   topK?: number;
   maxLoopTurns?: number;

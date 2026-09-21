@@ -1,6 +1,8 @@
 import type {
   AgentAnswerEvent,
   AgentConversationView,
+  AgentGlobalSettings,
+  AgentGlobalSettingsValues,
   AgentMessageEventView,
   AgentMessageOptions,
   AgentMessageRunOptions,
@@ -300,6 +302,21 @@ export function getAgentMessage(conversationId: string, identity: { messageId: s
 
 export function getAgentMessageOptions(): Promise<AgentMessageOptions> {
   return requestJson("/api/agent/messages/options");
+}
+
+export function getAgentGlobalSettings(): Promise<AgentGlobalSettings> {
+  return requestJson("/api/agent/global-settings");
+}
+
+export function updateAgentGlobalSettings(
+  values: Partial<AgentGlobalSettingsValues>,
+  revision: string,
+): Promise<AgentGlobalSettings> {
+  return requestJson("/api/agent/global-settings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ values, revision }),
+  });
 }
 
 export function getVideoChunk(videoChunkId: string, workspaceId = WORKSPACE_ID): Promise<VideoChunkEvidence> {

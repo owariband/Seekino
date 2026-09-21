@@ -52,6 +52,7 @@ class AgentRuntime:
         maximum_top_k: int = 20,
         max_prompt_chars: int = 200_000,
         max_tool_result_bytes: int = 16_384,
+        max_read_chars_per_call: int = 16_384,
         max_catalog_items_per_page: int = 20,
         stage_timeout_seconds: float = 120,
         evaluator_stage_timeout_seconds: float = 180,
@@ -64,6 +65,7 @@ class AgentRuntime:
             ("maximum_top_k", maximum_top_k, 100),
             ("max_prompt_chars", max_prompt_chars, None),
             ("max_tool_result_bytes", max_tool_result_bytes, None),
+            ("max_read_chars_per_call", max_read_chars_per_call, None),
             ("max_catalog_items_per_page", max_catalog_items_per_page, 100),
         ]:
             if (
@@ -100,6 +102,7 @@ class AgentRuntime:
         self._maximum_top_k = maximum_top_k
         self._max_prompt_chars = max_prompt_chars
         self._max_tool_result_bytes = max_tool_result_bytes
+        self._max_read_chars_per_call = max_read_chars_per_call
         self._max_catalog_items = max_catalog_items_per_page
         self._stage_timeout = stage_timeout_seconds
         self._evaluator_stage_timeout = evaluator_stage_timeout_seconds
@@ -240,6 +243,7 @@ class AgentRuntime:
             maximum_top_k=self._maximum_top_k,
             maximum_tool_calls=limits.max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
+            maximum_read_chars=self._max_read_chars_per_call,
             maximum_catalog_items=self._max_catalog_items,
         )
         attach_agent_tool_logging(query_tools, role="Query", inputs=inputs)
@@ -303,6 +307,7 @@ class AgentRuntime:
             maximum_top_k=self._maximum_top_k,
             maximum_tool_calls=limits.max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
+            maximum_read_chars=self._max_read_chars_per_call,
             maximum_catalog_items=self._max_catalog_items,
             audit=audit,
         )
@@ -402,6 +407,7 @@ class AgentRuntime:
             control=chat_control,
             maximum_tool_calls=limits.max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
+            maximum_read_chars=self._max_read_chars_per_call,
             maximum_catalog_items=self._max_catalog_items,
         )
         attach_agent_tool_logging(chat_tools, role="Chat", inputs=state["inputs"])

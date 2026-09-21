@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentConversationView, AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView, VideoEpisodeUpdateRequest, VideoSummary } from "../api/contracts";
+import type { AgentConversationView, AgentGlobalSettings, AgentMessageOptions, AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView, VideoEpisodeUpdateRequest, VideoSummary } from "../api/contracts";
 import { App } from "./App";
 import { ThemeProvider } from "./theme";
 import { WorkspaceProvider } from "./workspace";
@@ -29,6 +29,43 @@ const pendingUpload: UploadSessionView = {
   status: "UPLOADING", uploadedSegmentCount: 0, uploadedSizeBytes: 0, missingSegmentNumbers: [0],
   completionStage: null, completionProgress: null, estimatedRemainingMs: null, expiresAt: 100,
   videoId: null, jobId: null, lastError: null, version: 1, createdAt: 1, updatedAt: 1,
+};
+
+const initialMessageOptions: AgentMessageOptions = {
+  topK: { defaultValue: 10, minimum: 1, maximum: 20 },
+  maxLoopTurns: { defaultValue: 100, minimum: 1, maximum: 100 },
+  maxModelCallsPerTurn: { defaultValue: 6, minimum: 1, maximum: 12 },
+  maxToolCallsPerTurn: { defaultValue: 24, minimum: 1, maximum: 48 },
+};
+
+const initialGlobalSettings: AgentGlobalSettings = {
+  revision: "rev-1",
+  restartRequiredFields: ["maximum_concurrent_kicks"],
+  activeValues: { maximum_concurrent_kicks: 4 },
+  values: {
+    history_message_limit: 12,
+    default_top_k: 10,
+    maximum_top_k: 20,
+    max_loop_turns: 3,
+    max_model_calls_per_turn: 6,
+    maximum_model_calls_per_turn: 12,
+    max_tool_calls_per_turn: 24,
+    maximum_tool_calls_per_turn: 48,
+    limits_enabled: false,
+    max_output_tokens: 4096,
+    max_prompt_chars: 200000,
+    context_window_tokens: 64000,
+    context_safety_margin_tokens: 4096,
+    auto_compact_tokens: 48000,
+    compact_target_tokens: 24000,
+    max_tool_result_bytes: 16384,
+    max_read_chars_per_call: 16384,
+    max_catalog_items_per_page: 20,
+    stage_timeout_seconds: 120,
+    evaluator_stage_timeout_seconds: 180,
+    execution_timeout_seconds: 600,
+    maximum_concurrent_kicks: 4,
+  },
 };
 
 const videoWithoutProgress: VideoSummary = {
@@ -63,12 +100,14 @@ function jsonResponse(payload: unknown): Response {
 
 function renderApp(
   availableSeries: SeriesView[] = [apiSeries],
-  options: { failAgentSend?: boolean; failConversationList?: boolean; failInitialConversationCreation?: boolean } = {},
+  options: { failAgentSend?: boolean; failConversationList?: boolean; failInitialConversationCreation?: boolean; failGlobalSettingsSave?: boolean } = {},
 ) {
   let createdSeries: SeriesView | null = null;
   let finishAnswer: (() => void) | undefined;
   let messageSends = 0;
   let conversationCreates = 0;
+  let messageOptions = initialMessageOptions;
+  let globalSettings = initialGlobalSettings;
   const now = Date.parse("2026-09-15T00:00:00Z");
   const conversation: AgentConversationView = { conversationId: "conversation", workspaceId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
   let conversations: AgentConversationView[] = [conversation];
@@ -163,12 +202,19 @@ function renderApp(
       return jsonResponse(deleted);
     }
     if (url.includes("/api/agent/messages/options")) {
-      return jsonResponse({
-        topK: { defaultValue: 10, minimum: 1, maximum: 20 },
-        maxLoopTurns: { defaultValue: 100, minimum: 1, maximum: 100 },
-        maxModelCallsPerTurn: { defaultValue: 6, minimum: 1, maximum: 12 },
-        maxToolCallsPerTurn: { defaultValue: 24, minimum: 1, maximum: 48 },
-      });
+      return jsonResponse(messageOptions);
+    }
+    if (url.includes("/api/agent/global-settings")) {
+      if (_init?.method !== "PATCH") return jsonResponse(globalSettings);
+      if (options.failGlobalSettingsSave) {
+        return new Response(JSON.stringify({ code: "CONFIG_CONFLICT", message: "配置已变化" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const patch = JSON.parse(String(_init.body)) as { values: Partial<AgentGlobalSettings["values"]>; revision: string };
+      globalSettings = { ...globalSettings, revision: "rev-2", values: { ...globalSettings.values, ...patch.values } };
+      return jsonResponse(globalSettings);
     }
     if (url.includes("/api/agent/messages/list")) {
       const conversationId = new URL(url, "http://localhost").searchParams.get("conversationId")!;
@@ -233,7 +279,13 @@ function renderApp(
       </ThemeProvider>
     </QueryClientProvider>,
   );
-  return { ...view, fetchMock, queryClient, finishAnswer: () => finishAnswer?.() };
+  return {
+    ...view,
+    fetchMock,
+    queryClient,
+    finishAnswer: () => finishAnswer?.(),
+    setMessageOptions: (next: AgentMessageOptions) => { messageOptions = next; },
+  };
 }
 
 describe("application shell", () => {
@@ -302,6 +354,68 @@ describe("application shell", () => {
 
     await user.click(screen.getByRole("button", { name: "切换至黑夜模式" }));
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+  });
+
+  it("saves global Agent settings and shows saved versus active restart values", async () => {
+    const { fetchMock } = renderApp();
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
+    const concurrency = await screen.findByRole("spinbutton", { name: /并行任务上限/ });
+    await waitFor(() => expect(concurrency).toBeEnabled());
+    expect(concurrency).toHaveValue(4);
+    fireEvent.input(concurrency, { target: { value: "6" } });
+    expect(screen.getByRole("button", { name: "保存全局配置" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "保存全局配置" }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
+      String(input).includes("/api/agent/global-settings") && init?.method === "PATCH",
+    )).toBe(true));
+    const saveCall = fetchMock.mock.calls.find(([input, init]) =>
+      String(input).includes("/api/agent/global-settings") && init?.method === "PATCH",
+    );
+    expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
+      revision: "rev-1",
+      values: { maximum_concurrent_kicks: 6 },
+    });
+    expect(await screen.findByText(/并行任务上限已保存为/)).toHaveTextContent("当前服务仍使用 4");
+    expect(screen.getAllByText(/重启服务后生效/)).toHaveLength(2);
+  });
+
+  it("saves the read tool character limit from global settings", async () => {
+    const { fetchMock } = renderApp();
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
+    await user.click(screen.getByText("工具输出"));
+    expect(screen.getByText(/read 工具按片段内容的字符范围读取，不按行读取/)).toBeInTheDocument();
+    const readLimit = await screen.findByRole("spinbutton", { name: /read 单次最多读取字符数/ });
+    await waitFor(() => expect(readLimit).toBeEnabled());
+    expect(readLimit).toHaveValue(16384);
+    fireEvent.input(readLimit, { target: { value: "4096" } });
+    await user.click(screen.getByRole("button", { name: "保存全局配置" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
+      String(input).includes("/api/agent/global-settings") && init?.method === "PATCH",
+    )).toBe(true));
+    const saveCall = fetchMock.mock.calls.find(([input, init]) =>
+      String(input).includes("/api/agent/global-settings") && init?.method === "PATCH",
+    );
+    expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
+      revision: "rev-1",
+      values: { max_read_chars_per_call: 4096 },
+    });
+    expect(await screen.findByText("已保存。新的请求会使用更新后的全局配置。")).toBeInTheDocument();
+  });
+
+  it("preserves form edits and asks for a reload after a YAML revision conflict", async () => {
+    renderApp([apiSeries], { failGlobalSettingsSave: true });
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
+    const timeout = await screen.findByRole("spinbutton", { name: /审核阶段超时/ });
+    await waitFor(() => expect(timeout).toBeEnabled());
+    fireEvent.input(timeout, { target: { value: "240" } });
+    expect(screen.getByRole("button", { name: "保存全局配置" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "保存全局配置" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("请重新读取后再保存");
+    expect(timeout).toHaveValue(240);
   });
 
   it("collapses the desktop navigation without losing the draft and restores the preference", async () => {
@@ -549,7 +663,6 @@ describe("application shell", () => {
       content: "雨天门口",
       seriesIds: [],
       topK: 10,
-      maxLoopTurns: 0,
       maxModelCallsPerTurn: 6,
       maxToolCallsPerTurn: 24,
       reference: null,
@@ -558,9 +671,13 @@ describe("application shell", () => {
 
   it("sends the answer settings selected beside the Chat composer", async () => {
     localStorage.setItem("anivag-agent-message-options:local-default", JSON.stringify({
-      topK: 5,
-      maxModelCallsPerTurn: 9,
-      maxToolCallsPerTurn: 36,
+      serverOptions: initialMessageOptions,
+      selection: {
+        topK: 5,
+        maxLoopTurns: 0,
+        maxModelCallsPerTurn: 9,
+        maxToolCallsPerTurn: 36,
+      },
     }));
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
@@ -590,12 +707,38 @@ describe("application shell", () => {
       maxToolCallsPerTurn: 36,
     });
     expect(JSON.parse(localStorage.getItem("anivag-agent-message-options:local-default")!)).toEqual({
-      topK: 7,
+      serverOptions: initialMessageOptions,
+      selection: {
+        topK: 7,
+        maxLoopTurns: 100,
+        maxModelCallsPerTurn: 9,
+        maxToolCallsPerTurn: 36,
+      },
+    });
+    act(finishAnswer);
+  });
+
+  it("drops legacy browser overrides and refreshes defaults after a YAML change", async () => {
+    localStorage.setItem("anivag-agent-message-options:local-default", JSON.stringify({
+      topK: 5,
       maxLoopTurns: 100,
       maxModelCallsPerTurn: 9,
       maxToolCallsPerTurn: 36,
+    }));
+    const { setMessageOptions } = renderApp();
+    expect(await screen.findByText("10 段 · 自动")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByLabelText("配置本次回答"));
+    fireEvent.change(screen.getByRole("slider", { name: "候选片段数量" }), { target: { value: "7" } });
+    expect(screen.getByText("7 段 · 自动")).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(screen.getByText("7 段 · 自动")).toBeInTheDocument();
+
+    setMessageOptions({
+      ...initialMessageOptions,
+      topK: { ...initialMessageOptions.topK, defaultValue: 8 },
     });
-    act(finishAnswer);
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(await screen.findByText("8 段 · 自动")).toBeInTheDocument();
   });
 
   it("keeps an in-flight Auto request unchanged when the next answer is set to custom turns", async () => {
@@ -610,7 +753,7 @@ describe("application shell", () => {
     await user.click(screen.getByRole("button", { name: "自定义" }));
     fireEvent.change(screen.getByRole("slider", { name: "最多运行轮次" }), { target: { value: "42" } });
     const sendCalls = () => fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send?conversationId=conversation"));
-    expect(JSON.parse(String(sendCalls()[0]?.[1]?.body)).maxLoopTurns).toBe(0);
+    expect(JSON.parse(String(sendCalls()[0]?.[1]?.body))).not.toHaveProperty("maxLoopTurns");
 
     act(finishAnswer);
     await screen.findByText("这是 Agent Chat 保存的完整回答。");

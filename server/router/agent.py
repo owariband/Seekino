@@ -6,12 +6,25 @@ from ..api import agent
 from ..model.vo.commonVO import Page
 from ..api.schema import (
     AgentConversationView,
+    AgentGlobalSettingsView,
     AgentMessageOptionsView,
     AgentMessageSendView,
     AgentMessageView,
 )
 
 router = APIRouter()
+router.add_api_route(
+    "/api/agent/global-settings",
+    agent.get_agent_global_settings,
+    methods=["GET"],
+    response_model=AgentGlobalSettingsView,
+)
+router.add_api_route(
+    "/api/agent/global-settings",
+    agent.patch_agent_global_settings,
+    methods=["PATCH"],
+    response_model=AgentGlobalSettingsView,
+)
 router.add_api_route(
     "/api/agent/messages/options",
     agent.get_agent_message_options,

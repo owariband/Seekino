@@ -69,6 +69,7 @@ def test_default_config_uses_selected_models() -> None:
     assert config.video_parser.video_model == "doubao-seed-2-1-pro-260628"
     assert config.multimodal_embedding.model == "doubao-embedding-vision-251215"
     assert config.multimodal_embedding.dimensions == 1024
+    assert config.agent_runtime["evaluator_stage_timeout_seconds"] == 180
 
     fallback = config.video_parser.fallback
     assert fallback.enabled is True
@@ -98,6 +99,15 @@ def test_parse_only_config_uses_compatible_agent_defaults(tmp_path: Path) -> Non
     assert config.agent_model.model == "deepseek-flash"
     assert config.agent_model.base_url == "https://api.deepseek.com"
     assert config.agent_model.api_key_env == "DEEPSEEK_API_KEY"
+
+
+def test_gateway_accepts_agent_runtime_in_shared_yaml(tmp_path: Path) -> None:
+    payload = _config_payload()
+    payload["agent_runtime"] = {"max_tool_result_bytes": 8192}
+    config_path = tmp_path / "with-agent-runtime.yaml"
+    _write_config(config_path, payload)
+
+    assert load_config(config_path).agent_runtime == {"max_tool_result_bytes": 8192}
 
 
 def test_legacy_agent_chat_config_is_still_accepted(tmp_path: Path) -> None:

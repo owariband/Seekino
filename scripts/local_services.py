@@ -69,8 +69,19 @@ def config_digest() -> str:
             str(ROOT / "config/model-pricing.yaml"),
         )
     ).expanduser().resolve()
-    for path in (configured_model_path, configured_pricing_path):
-        values[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    # Agent run settings are reloaded for new messages. Keep the restart-only
+    # concurrency setting in the digest alongside model and parser settings.
+    model_values = model_config.model_dump(mode="json")
+    runtime_values = model_values.get("agent_runtime", {})
+    model_values["agent_runtime"] = {
+        "maximum_concurrent_kicks": runtime_values["maximum_concurrent_kicks"]
+    } if "maximum_concurrent_kicks" in runtime_values else {}
+    values[str(configured_model_path)] = hashlib.sha256(
+        json.dumps(model_values, sort_keys=True).encode()
+    ).hexdigest()
+    values[str(configured_pricing_path)] = hashlib.sha256(
+        configured_pricing_path.read_bytes()
+    ).hexdigest()
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 

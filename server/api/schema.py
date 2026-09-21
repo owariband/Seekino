@@ -11,11 +11,13 @@ from ..model.vo.searchVO import SearchHitView, SearchResultView, VideoChunkEvide
 from ..model.dto.searchDTO import VideoSearchRequest
 from ..model.dto.agentDTO import (
     AgentConversationCreateRequest,
+    AgentGlobalSettingsPatchRequest,
     AgentMessageSendRequest,
     EvidenceReference,
 )
 from ..model.vo.agentVO import (
     AgentConversationView,
+    AgentGlobalSettingsView,
     AgentMessageOptionsView,
     AgentMessageView,
     AgentMessageSendView,

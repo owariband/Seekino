@@ -51,6 +51,7 @@ def create_app(
     )
     app.state.services = services
     app.state.sse_config = resolved_settings.sse if resolved_settings else SSEConfig()
+    app.state.model_config_path = getattr(resolved_settings, "model_config_path", None)
 
     @app.middleware("http")
     async def request_identifier(request, call_next):
@@ -77,7 +78,7 @@ def create_app(
             CORSMiddleware,
             allow_origins=list(origins),
             allow_credentials=False,
-            allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+            allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
             allow_headers=[
                 "Content-Type",
                 "Content-Range",

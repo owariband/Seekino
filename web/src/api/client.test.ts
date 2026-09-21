@@ -10,6 +10,7 @@ import {
   createAgentConversation,
   deleteAgentConversation,
   getAgentConversation,
+  getAgentGlobalSettings,
   getAgentMessageOptions,
   getJob,
   getParseUsage,
@@ -30,6 +31,7 @@ import {
   subscribeAgentMessages,
   videoContentUrl,
   updateSeries,
+  updateAgentGlobalSettings,
   updateVideoEpisode,
   uploadSeriesImage,
 } from "./client";
@@ -134,6 +136,24 @@ describe("API retry contract", () => {
 });
 
 describe("Agent Chat routes", () => {
+  it("reads and patches global settings with the YAML revision", async () => {
+    const payload = { revision: "rev-1", values: { maximum_concurrent_kicks: 4 }, activeValues: { maximum_concurrent_kicks: 4 }, restartRequiredFields: ["maximum_concurrent_kicks"] };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getAgentGlobalSettings()).resolves.toEqual(payload);
+    await updateAgentGlobalSettings({ maximum_concurrent_kicks: 6 }, "rev-1");
+
+    expect(String(fetchMock.mock.calls[0]![0])).toBe("/api/agent/global-settings");
+    expect(String(fetchMock.mock.calls[1]![0])).toBe("/api/agent/global-settings");
+    expect(fetchMock.mock.calls[1]![1]?.method).toBe("PATCH");
+    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]?.body))).toEqual({
+      values: { maximum_concurrent_kicks: 6 },
+      revision: "rev-1",
+    });
+  });
+
   it("reads server limits and sends a per-message option snapshot", async () => {
     const payload = {
       topK: { defaultValue: 3, minimum: 1, maximum: 20 },

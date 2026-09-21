@@ -4,16 +4,18 @@ import asyncio
 import hashlib
 import logging
 import time
+from dataclasses import asdict
 from queue import Empty
 from typing import AsyncIterator
 
-from fastapi import Header, Query, Request
+from fastapi import Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from ..config.sse import SSEConfig
 from ..model.dto.agentDTO import (
     AgentConversationCreateRequest,
+    AgentGlobalSettingsPatchRequest,
     AgentMessageSendRequest,
     AgentMessageState,
 )
@@ -25,6 +27,7 @@ from .search import search_evidence_view
 from .context import get_services, get_sse_config
 from ..model.vo.agentVO import (
     AgentConversationView,
+    AgentGlobalSettingsView,
     AgentMessageOptionsView,
     AgentAnswerStartedView,
     AgentAnswerEvidenceView,
@@ -44,8 +47,44 @@ from ..model.vo.agentVO import (
     AgentVideoRenderBlockView,
 )
 from ..repository.agent import AgentConversationNotFoundError
+from ..config.global_agent_settings import (
+    patch_global_agent_settings,
+    read_global_agent_settings,
+)
 
 _logger = logging.getLogger(__name__)
+
+
+def get_agent_global_settings(request: Request) -> AgentGlobalSettingsView:
+    config, revision = read_global_agent_settings(request.app.state.model_config_path)
+    return AgentGlobalSettingsView(
+        revision=revision,
+        values=asdict(config),
+        restart_required_fields=["maximum_concurrent_kicks"],
+        active_values={
+            "maximum_concurrent_kicks": get_services(request).agent.active_maximum_concurrent_kicks,
+        },
+    )
+
+
+def patch_agent_global_settings(
+    request: Request,
+    body: AgentGlobalSettingsPatchRequest,
+) -> AgentGlobalSettingsView:
+    client_host = request.client.host if request.client else None
+    if client_host not in {"127.0.0.1", "::1", "testclient"}:
+        raise HTTPException(status_code=403, detail="全局设置只允许从本机修改")
+    config, revision = patch_global_agent_settings(
+        body.values, body.revision, request.app.state.model_config_path,
+    )
+    return AgentGlobalSettingsView(
+        revision=revision,
+        values=asdict(config),
+        restart_required_fields=["maximum_concurrent_kicks"],
+        active_values={
+            "maximum_concurrent_kicks": get_services(request).agent.active_maximum_concurrent_kicks,
+        },
+    )
 
 
 def get_agent_message_options(request: Request) -> AgentMessageOptionsView:

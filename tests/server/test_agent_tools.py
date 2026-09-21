@@ -136,6 +136,7 @@ def _query_tools(
     workspace: AgentWorkspace,
     *,
     maximum_result_bytes: int = 1_024,
+    maximum_read_chars: int = 16_384,
     maximum_catalog_items: int = 20,
     maximum_tool_calls: int | None = 100,
 ):
@@ -149,6 +150,7 @@ def _query_tools(
         maximum_top_k=20,
         maximum_tool_calls=maximum_tool_calls,
         maximum_result_bytes=maximum_result_bytes,
+        maximum_read_chars=maximum_read_chars,
         maximum_catalog_items=maximum_catalog_items,
     )
     return {tool.name: tool for tool in tools}, calls
@@ -388,6 +390,56 @@ def test_read_range_reports_oversize_and_retries_with_smaller_range() -> None:
         "start": total, "end": total,
     }))
     assert empty_tail["error"]["code"] == "INVALID_RANGE"
+
+
+def test_read_tools_enforce_character_limit_with_retryable_end() -> None:
+    retrieval = Retrieval([_hit("chunk-1", large_text="detail" * 500)])
+    workspace = AgentWorkspace("workspace", ("series",))
+    tools, _calls = _query_tools(
+        retrieval, workspace, maximum_result_bytes=4_096,
+        maximum_read_chars=80,
+    )
+    _retrieve(tools, top_k=1)
+    tools["update_draft_item"].invoke({
+        "video_chunk_id": "chunk-1", "start_ms": 1_100,
+        "end_ms": 1_900, "claim": "draft claim",
+    })
+
+    for name in ("read_trieve_item", "read_draft_item"):
+        tool = tools[name]
+        too_large = json.loads(tool.invoke({
+            "video_chunk_id": "chunk-1", "section": "evidence.text",
+            "start": 0, "end": 100,
+        }))
+        assert too_large["error"]["code"] == "RANGE_TOO_LARGE"
+        assert too_large["error"]["suggested_end"] == 80
+        smaller = json.loads(tool.invoke({
+            "video_chunk_id": "chunk-1", "section": "evidence.text",
+            "start": 0, "end": 80,
+        }))
+        assert smaller["end"] == 80
+        assert len(smaller["content"]) == 80
+
+
+def test_read_range_uses_smaller_of_character_and_byte_limits() -> None:
+    retrieval = Retrieval([_hit("chunk-1", large_text="杯子碎裂。" * 500)])
+    tools, _calls = _query_tools(
+        retrieval, AgentWorkspace("workspace", ("series",)),
+        maximum_result_bytes=700, maximum_read_chars=300,
+    )
+    _retrieve(tools, top_k=1)
+    too_large = json.loads(tools["read_trieve_item"].invoke({
+        "video_chunk_id": "chunk-1", "section": "evidence.text",
+        "start": 0, "end": 500,
+    }))
+    suggested_end = too_large["error"]["suggested_end"]
+    assert too_large["error"]["code"] == "RANGE_TOO_LARGE"
+    assert 0 < suggested_end < 300
+    smaller = json.loads(tools["read_trieve_item"].invoke({
+        "video_chunk_id": "chunk-1", "section": "evidence.text",
+        "start": 0, "end": suggested_end,
+    }))
+    assert smaller["end"] == suggested_end
 
 
 def test_read_range_uses_first_snapshot_after_same_id_is_retrieved_again() -> None:

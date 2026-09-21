@@ -22,6 +22,7 @@ class AgentServiceConfig:
     auto_compact_tokens: int = 48_000
     compact_target_tokens: int = 24_000
     max_tool_result_bytes: int = 16_384
+    max_read_chars_per_call: int = 16_384
     max_catalog_items_per_page: int = 20
     stage_timeout_seconds: float = 120
     evaluator_stage_timeout_seconds: float = 180
@@ -45,6 +46,7 @@ class AgentServiceConfig:
             "max_model_calls_per_turn", "maximum_model_calls_per_turn",
             "max_tool_calls_per_turn", "maximum_tool_calls_per_turn",
             "max_output_tokens", "max_prompt_chars", "max_tool_result_bytes",
+            "max_read_chars_per_call",
             "context_window_tokens", "context_safety_margin_tokens",
             "auto_compact_tokens", "compact_target_tokens",
             "max_catalog_items_per_page", "maximum_concurrent_kicks",

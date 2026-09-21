@@ -5,15 +5,34 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 
 from server.config import ServerSettings
+from server.config.global_agent_settings import (
+    GlobalAgentSettingsConflictError,
+    patch_global_agent_settings,
+    read_global_agent_settings,
+)
 from server.database import DatabaseEnvironment
 
 
+@pytest.fixture(autouse=True)
+def _legacy_config_without_agent_runtime(monkeypatch, tmp_path: Path) -> None:
+    """Keep existing environment override tests on a legacy YAML document."""
+    source = Path(__file__).resolve().parents[2] / "config.yaml"
+    payload = yaml.safe_load(source.read_text(encoding="utf-8"))
+    payload.pop("agent_runtime", None)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
+
+
 def _clean_anivag_environment(monkeypatch) -> None:
+    model_config_path = os.environ["ANIVAG_MODEL_CONFIG"]
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
             monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", model_config_path)
     monkeypatch.setenv(
         "ANIVAG_DATABASE_URL",
         "mysql+pymysql://user:password@127.0.0.1/anivag_development",
@@ -50,6 +69,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.auto_compact_tokens == 48_000
     assert settings.agent.compact_target_tokens == 24_000
     assert settings.agent.max_tool_result_bytes == 16_384
+    assert settings.agent.max_read_chars_per_call == 16_384
     assert settings.agent.max_catalog_items_per_page == 20
     assert settings.agent.stage_timeout_seconds == 120
     assert settings.agent.evaluator_stage_timeout_seconds == 180
@@ -255,6 +275,7 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
         "ANIVAG_AGENT_AUTO_COMPACT_TOKENS": "24000",
         "ANIVAG_AGENT_COMPACT_TARGET_TOKENS": "12000",
         "ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES": "8192",
+        "ANIVAG_AGENT_MAX_READ_CHARS_PER_CALL": "4096",
         "ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE": "10",
         "ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS": "45",
         "ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS": "210",
@@ -283,6 +304,7 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
     assert settings.agent.auto_compact_tokens == 24_000
     assert settings.agent.compact_target_tokens == 12_000
     assert settings.agent.max_tool_result_bytes == 8_192
+    assert settings.agent.max_read_chars_per_call == 4_096
     assert settings.agent.max_catalog_items_per_page == 10
     assert settings.agent.stage_timeout_seconds == 45
     assert settings.agent.evaluator_stage_timeout_seconds == 210
@@ -319,6 +341,7 @@ def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
     ("ANIVAG_AGENT_AUTO_COMPACT_TOKENS", "60000"),
     ("ANIVAG_AGENT_COMPACT_TARGET_TOKENS", "48000"),
     ("ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES", "511"),
+    ("ANIVAG_AGENT_MAX_READ_CHARS_PER_CALL", "0"),
     ("ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE", "101"),
     ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "nan"),
     ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "0"),
@@ -333,3 +356,130 @@ def test_invalid_agent_execution_budget_is_rejected(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError):
         ServerSettings.from_environment()
+
+
+def test_global_agent_settings_yaml_overrides_environment_and_keeps_fallbacks(
+    monkeypatch,
+) -> None:
+    _clean_anivag_environment(monkeypatch)
+    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    payload["agent_runtime"] = {"default_top_k": 5, "stage_timeout_seconds": 75}
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    monkeypatch.setenv("ANIVAG_AGENT_DEFAULT_TOP_K", "2")
+    monkeypatch.setenv("ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES", "4096")
+
+    config, revision = read_global_agent_settings(config_path)
+    settings = ServerSettings.from_environment()
+
+    assert len(revision) == 64
+    assert config.default_top_k == settings.agent.default_top_k == 5
+    assert config.stage_timeout_seconds == settings.agent.stage_timeout_seconds == 75
+    assert config.max_tool_result_bytes == settings.agent.max_tool_result_bytes == 4096
+
+
+def test_global_agent_settings_patch_preserves_other_sections_and_detects_edits(
+    monkeypatch,
+) -> None:
+    _clean_anivag_environment(monkeypatch)
+    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    before = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    _, revision = read_global_agent_settings(config_path)
+
+    updated, next_revision = patch_global_agent_settings(
+        {"evaluator_stage_timeout_seconds": 210, "max_read_chars_per_call": 4_096},
+        revision, config_path,
+    )
+    after = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert updated.evaluator_stage_timeout_seconds == 210
+    assert updated.max_read_chars_per_call == 4_096
+    assert next_revision != revision
+    assert after["agent_runtime"] == {
+        "evaluator_stage_timeout_seconds": 210.0,
+        "max_read_chars_per_call": 4_096,
+    }
+    for section in ("agent_model", "video_parser", "multimodal_embedding"):
+        assert after[section] == before[section]
+
+    after["agent_runtime"]["default_top_k"] = 7
+    config_path.write_text(yaml.safe_dump(after), encoding="utf-8")
+    assert read_global_agent_settings(config_path)[0].default_top_k == 7
+    with pytest.raises(GlobalAgentSettingsConflictError):
+        patch_global_agent_settings({"default_top_k": 6}, next_revision, config_path)
+    assert read_global_agent_settings(config_path)[0].default_top_k == 7
+
+
+def test_global_agent_settings_patch_preserves_external_yaml_comments(
+    monkeypatch,
+) -> None:
+    _clean_anivag_environment(monkeypatch)
+    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    original = "# model note\n" + config_path.read_text(encoding="utf-8")
+    original = original.replace(
+        "video_parser:\n",
+        "# runtime applies to new messages\nagent_runtime:\n"
+        "  default_top_k: 3\n\n# parser note\nvideo_parser:\n",
+        1,
+    )
+    config_path.write_text(original, encoding="utf-8")
+    before_runtime, after_runtime = original.split("agent_runtime:\n", 1)
+    _, revision = read_global_agent_settings(config_path)
+
+    patch_global_agent_settings({"default_top_k": 5}, revision, config_path)
+
+    updated = config_path.read_text(encoding="utf-8")
+    updated_prefix, updated_suffix = updated.split("agent_runtime:\n", 1)
+    assert updated_prefix == before_runtime
+    assert updated_suffix[updated_suffix.index("# parser note"):] == (
+        after_runtime[after_runtime.index("# parser note"):]
+    )
+    assert read_global_agent_settings(config_path)[0].default_top_k == 5
+
+
+def test_global_agent_settings_patch_rejects_external_alias_dependency(
+    monkeypatch,
+) -> None:
+    _clean_anivag_environment(monkeypatch)
+    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    original = (
+        "agent_runtime:\n  max_output_tokens: &output_budget 4096\n\n"
+        + config_path.read_text(encoding="utf-8")
+    ).replace("max_output_tokens: 8192", "max_output_tokens: *output_budget", 1)
+    config_path.write_text(original, encoding="utf-8")
+    _, revision = read_global_agent_settings(config_path)
+
+    with pytest.raises(ValueError, match="cannot be safely edited"):
+        patch_global_agent_settings({"default_top_k": 5}, revision, config_path)
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"unknown": 1},
+        {"default_top_k": True},
+        {"stage_timeout_seconds": float("nan")},
+        {"maximum_top_k": 101},
+        {"default_top_k": 21, "maximum_top_k": 20},
+    ],
+)
+def test_global_agent_settings_reject_invalid_patch_without_writing(
+    monkeypatch, values,
+) -> None:
+    _clean_anivag_environment(monkeypatch)
+    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    original = config_path.read_bytes()
+    _, revision = read_global_agent_settings(config_path)
+    with pytest.raises(ValueError):
+        patch_global_agent_settings(values, revision, config_path)
+    assert config_path.read_bytes() == original
+
+
+def test_global_agent_settings_reject_invalid_manual_yaml(monkeypatch) -> None:
+    _clean_anivag_environment(monkeypatch)
+    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    payload["agent_runtime"] = {"default_top_k": "five"}
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="agent_runtime.default_top_k"):
+        read_global_agent_settings(config_path)

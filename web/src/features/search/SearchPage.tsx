@@ -1,5 +1,5 @@
 import { ArrowUp, ChevronDown, History, LoaderCircle, MessageCircleMore, Play, Plus, ScanSearch, SlidersHorizontal, Trash2, X } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -15,6 +15,7 @@ import styles from "./search.module.css";
 
 type SelectedMessageOptions = Required<AgentMessageRunOptions>;
 const messageOptionsStorageKey = `anivag-agent-message-options:${WORKSPACE_ID}`;
+type StoredMessageOptions = { serverOptions: AgentMessageOptions; selection: SelectedMessageOptions };
 
 function defaultMessageOptions(options: AgentMessageOptions): SelectedMessageOptions {
   return {
@@ -28,8 +29,9 @@ function defaultMessageOptions(options: AgentMessageOptions): SelectedMessageOpt
 function storedMessageOptions(options: AgentMessageOptions): SelectedMessageOptions {
   const defaults = defaultMessageOptions(options);
   try {
-    const stored = JSON.parse(localStorage.getItem(messageOptionsStorageKey) ?? "null") as Partial<SelectedMessageOptions> | null;
-    if (!stored) return defaults;
+    const saved = JSON.parse(localStorage.getItem(messageOptionsStorageKey) ?? "null") as StoredMessageOptions | null;
+    if (!saved || JSON.stringify(saved.serverOptions) !== JSON.stringify(options)) return defaults;
+    const stored = saved.selection;
     const bounded = (name: keyof SelectedMessageOptions) => {
       const value = stored[name];
       const bounds = options[name];
@@ -134,6 +136,8 @@ export function SearchPage() {
   const [messageOptions, setMessageOptions] = useState<SelectedMessageOptions | null>(null);
   const [messageOptionsError, setMessageOptionsError] = useState<string | null>(null);
   const customLoopTurnsRef = useRef(100);
+  const messageOptionsFingerprintRef = useRef<string | null>(null);
+  const messageOptionsRequestRef = useRef(0);
   const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string; startMs: number; endMs: number } | null>(null);
   const deleteWarningId = useId();
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -154,6 +158,14 @@ export function SearchPage() {
   const isSearchable = (status: string) => status === "READY";
   const scopeValid = selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && isSearchable(item.status)));
   const canSend = Boolean(query.trim() && !loading && !searching && conversationId && !deletedConversationIdsRef.current.has(conversationId) && scopeValid && series.some((item) => isSearchable(item.status)) && mode === "live");
+
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = "auto";
+    composer.style.height = `${composer.scrollHeight}px`;
+  }, [query]);
+
   const evidenceMessage = selection?.conversationId === conversationId ? messages.find((message) => message.messageId === selection.messageId) : null;
   const selectedHit = evidenceMessage?.searchResult?.hits.find((hit) => hit.evidence.videoChunkId === selection?.chunkId) ?? null;
   const referenceMessage = reference ? messages.find((message) => message.messageId === reference.messageId) : null;
@@ -166,25 +178,34 @@ export function SearchPage() {
 
   useEffect(() => {
     let active = true;
-    void getAgentMessageOptions().then((options) => {
-      if (!active) return;
-      const selected = storedMessageOptions(options);
-      customLoopTurnsRef.current = selected.maxLoopTurns || options.maxLoopTurns.defaultValue;
-      setMessageOptionConfig(options);
-      setMessageOptions(selected);
-      setMessageOptionsError(null);
-    }).catch((failure) => {
-      if (active) setMessageOptionsError(errorMessage(failure));
-    });
+    const refresh = () => {
+      const requestId = ++messageOptionsRequestRef.current;
+      void getAgentMessageOptions().then((options) => {
+        if (!active || requestId !== messageOptionsRequestRef.current) return;
+        const fingerprint = JSON.stringify(options);
+        if (messageOptionsFingerprintRef.current !== fingerprint) {
+          const selected = storedMessageOptions(options);
+          customLoopTurnsRef.current = selected.maxLoopTurns || options.maxLoopTurns.defaultValue;
+          setMessageOptions(selected);
+          messageOptionsFingerprintRef.current = fingerprint;
+        }
+        setMessageOptionConfig(options);
+        setMessageOptionsError(null);
+      }).catch((failure) => {
+        if (active && requestId === messageOptionsRequestRef.current) setMessageOptionsError(errorMessage(failure));
+      });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
     return () => { active = false; };
   }, []);
 
   useEffect(() => {
-    if (!messageOptions) return;
+    if (!messageOptions || !messageOptionConfig) return;
     try {
-      localStorage.setItem(messageOptionsStorageKey, JSON.stringify(messageOptions));
+      localStorage.setItem(messageOptionsStorageKey, JSON.stringify({ serverOptions: messageOptionConfig, selection: messageOptions }));
     } catch { /* Browser storage is optional; the current tab still keeps the selection. */ }
-  }, [messageOptions]);
+  }, [messageOptions, messageOptionConfig]);
 
   const replaceConversations = useCallback((items: AgentConversationView[]) => {
     conversationsRef.current = items;
@@ -258,7 +279,10 @@ export function SearchPage() {
     if (!canSend) return;
     followThread.current = true;
     setConversationStatus("问题已发送，正在检索");
-    void send(query, selectedSeriesIds, reference, messageOptions ?? {});
+    const options = messageOptions
+      ? { ...messageOptions, maxLoopTurns: messageOptions.maxLoopTurns || undefined }
+      : {};
+    void send(query, selectedSeriesIds, reference, options);
     setQuery("");
     setReference(null);
   };
@@ -615,7 +639,7 @@ export function SearchPage() {
                   </summary>
                   <div className={`${styles.scopeOptions} ${styles.answerSettings}`} role="group" aria-label="本次回答设置">
                     <header>
-                      <div><strong>本次回答</strong><small>自动按运行超时控制；自定义可限制最多轮次。</small></div>
+                      <div><strong>本次回答</strong><small>自动使用全局运行限制；自定义可限制最多轮次。</small></div>
                       <button
                         type="button"
                         disabled={!messageOptionConfig || !messageOptions || searching}

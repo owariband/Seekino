@@ -32,7 +32,9 @@ State 只覆盖当前一次执行。
 
 ## 快速开始
 
-仓库根目录是运行配置的唯一入口：`config.yaml` 保存可提交的模型默认值，`config/model-pricing.yaml` 保存 Parse 模型人民币单价，`.env.local` 保存 API Key 和个人 Endpoint，不进入 Git。
+仓库根目录是运行配置的唯一入口：`config.yaml` 保存可提交的模型默认值和全局 Chat Agent 运行参数，`config/model-pricing.yaml` 保存 Parse 模型人民币单价，`.env.local` 保存 API Key 和个人 Endpoint，不进入 Git。Chat Agent 参数位于 `config.yaml` 的 `agent_runtime` 节，也可从前端「设置」页编辑。YAML 中显式填写的值优先于同名 `ANIVAG_AGENT_*` 环境变量；缺失字段沿用环境变量或程序默认值。
+
+设置页保存和手工编辑 `agent_runtime` 后，超时、上下文预算、检索及工具输出上限等参数由下一条新消息使用；进行中的回答继续使用开始时的参数。`maximum_concurrent_kicks` 保存后需要重启 Server，设置页会区分保存值和当前生效值。模型连接、数据库等启动配置仍需重启；配置错误会在读取或保存时报告。设置页通过 Server API 修改本机的 `config.yaml`，浏览器不会直接访问服务器文件。
 
 ```bash
 cp .env.example .env.local
@@ -75,7 +77,9 @@ Qdrant 集合，并校验现有 Schema；旧 Schema 会报错，需要按迁移�
 可在 `.env.local` 修改 `ANIVAG_HTTP_PORT`、`ANIVAG_WEB_PORT`、数据库 URL 端口和
 Qdrant URL 端口；自建 Qdrant 的 gRPC 端口由 `ANIVAG_QDRANT_GRPC_PORT` 指定（默认 6334）。
 Vite 代理会跟随 API 端口。此脚本仅用于 localhost development 环境。
-修改运行配置后，先 `./start.sh stop` 再启动；脚本会检查自管应用的配置摘要，防止复用旧配置。
+修改 `config.yaml` 中可即时生效的 `agent_runtime` 参数后，新消息直接使用新值；
+`maximum_concurrent_kicks`、模型/解析配置及其他启动配置修改后，先运行
+`./start.sh stop` 再启动。脚本会检查需要重启的配置摘要，防止复用旧配置。
 
 ## 仓库结构
 

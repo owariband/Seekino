@@ -33,6 +33,7 @@ from ..repository.video import (
     VideoChunkNotFoundError,
 )
 from ..agent.errors import AgentContextBudgetError, AgentModelInvocationError
+from ..config.global_agent_settings import GlobalAgentSettingsConflictError
 from ..service.upload import UploadChecksumMismatchError
 from ..service.qdrant_mutation_lock import QdrantMutationLockBusyError
 from ..service.video_retrieval import RetrievalIndexConsistencyError
@@ -56,6 +57,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         FileNotFoundError,
     )
     conflict = (
+        GlobalAgentSettingsConflictError,
         AgentConflictError,
         AgentMessageInProgressError,
         ArtifactIntegrityError,

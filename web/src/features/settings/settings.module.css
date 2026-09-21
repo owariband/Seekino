@@ -150,6 +150,90 @@
   font-size: .66rem;
 }
 
+.globalSettings {
+  min-width: 0;
+}
+
+.globalSettingsNote,
+.restartNotice,
+.settingsError,
+.settingsSuccess {
+  margin: 0 0 16px;
+  color: var(--ink-faint);
+  font-size: .68rem;
+  line-height: 1.65;
+}
+
+.restartNotice {
+  padding: 12px 14px;
+  color: var(--amber);
+  border-left: 2px solid var(--amber);
+  background: color-mix(in srgb, var(--amber) 6%, transparent);
+}
+
+.settingsError { color: var(--red); }
+.settingsSuccess { color: var(--teal-deep); }
+
+.globalSettingsToolbar,
+.globalSettingsActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 14px;
+}
+
+.globalSettingsToolbar strong { font-size: .78rem; }
+.globalSettingsToolbar button { font-size: .65rem; }
+
+.globalSettingToggle,
+.globalSettingField {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.globalSettingToggle > span,
+.globalSettingField > span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.globalSettingToggle strong,
+.globalSettingField strong { color: var(--ink-soft); font-size: .69rem; }
+.globalSettingToggle small,
+.globalSettingField small { color: var(--ink-faint); font-size: .59rem; }
+
+.globalSettingGroup { border-bottom: 1px solid var(--line); }
+.globalSettingGroup summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 0;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: .71rem;
+  font-weight: 600;
+}
+.globalSettingGroup summary span { color: var(--ink-faint); font-weight: 400; }
+.globalSettingFields { padding: 0 0 8px 16px; }
+.globalSettingInput { display: flex; align-items: center; gap: 8px; }
+.globalSettingInput input { width: 110px; }
+.globalSettingInput small { min-width: 28px; }
+.restartBadge {
+  width: fit-content;
+  padding: 2px 6px;
+  color: var(--amber);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: .54rem;
+  font-style: normal;
+}
+.globalSettingsActions { justify-content: flex-end; margin: 20px 0 0; }
+
 .boundaries {
   display: grid;
   gap: 0;
@@ -177,4 +261,5 @@
   .themeChoices { grid-template-columns: 1fr; }
   .connectionList > div,
   .boundaries article { grid-template-columns: 1fr; gap: 6px; }
+  .globalSettingField { align-items: flex-start; flex-direction: column; gap: 8px; }
 }

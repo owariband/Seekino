@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from queue import Empty
 from threading import Event
 from uuid import uuid4
@@ -15,6 +15,7 @@ from sqlalchemy import event, func, select, text
 from server.agent.context import _project_stored_search_result
 from server.agent.errors import AgentContextBudgetError, AgentModelInvocationError
 from server.agent.runtime import AgentRuntime
+from server.config.agent import AgentServiceConfig
 from server.database import (
     DatabaseEnvironment, create_database_engine, create_schema, create_session_factory,
 )
@@ -1104,6 +1105,73 @@ def test_shutdown_requests_stop_and_waits_before_resources_close(build_service):
     assert service.list_all_messages(conversation.conversation_id, workspace_id="local-default")[-1].status == "FAILED"
     with pytest.raises(AgentMessageInProgressError, match="shutting down"):
         _send(service, conversation, key="late")
+
+
+def test_global_settings_reload_applies_to_new_messages_only(build_service):
+    release = Event()
+    entered = Event()
+    old_chat = _ChatModel(release=release)
+    original_run = old_chat.run_agent_loop
+
+    def wait_in_old_runtime(*args, **kwargs):
+        entered.set()
+        return original_run(*args, **kwargs)
+
+    old_chat.run_agent_loop = wait_in_old_runtime
+    initial_config = AgentServiceConfig()
+    service, conversation, retrieval, repository, *_ = build_service(
+        chat=old_chat, service_kwargs={"config": initial_config},
+    )
+    old_runtime = service._runtime
+    config = initial_config
+    revision = "before"
+    service._config_loader = lambda: (config, revision)
+    service._config_revision = revision
+    service._runtime_factory = lambda current: AgentRuntime(
+        _QueryModel(), _EvaluatorModel(), _ChatModel(), retrieval.search,
+        evaluator_stage_timeout_seconds=current.evaluator_stage_timeout_seconds,
+    )
+    history_limits = []
+    original_history = repository.list_recent_completed_messages
+
+    def record_history_limit(*args, **kwargs):
+        history_limits.append(kwargs["limit"])
+        return original_history(*args, **kwargs)
+
+    repository.list_recent_completed_messages = record_history_limit
+    before = service.start_message(
+        conversation.conversation_id, workspace_id="local-default",
+        content="改配置前", idempotency_key="before",
+    )
+    try:
+        assert entered.wait(5)
+        config = replace(
+            initial_config, history_message_limit=2,
+            evaluator_stage_timeout_seconds=240,
+            maximum_concurrent_kicks=7,
+        )
+        revision = "after"
+        next_conversation = service.create_conversation(
+            workspace_id="local-default", idempotency_key="next-conversation",
+        )
+        after = service.start_message(
+            next_conversation.conversation_id, workspace_id="local-default",
+            content="改配置后", idempotency_key="after",
+        )
+        assert after.result().assistant_message.status == "COMPLETED"
+        assert service._runtime is not old_runtime
+        assert service._runtime._evaluator_stage_timeout == 240
+        assert service.active_maximum_concurrent_kicks == initial_config.maximum_concurrent_kicks
+        assert history_limits == [initial_config.history_message_limit, 2]
+        updated_runtime = service._runtime
+        config = replace(config, maximum_concurrent_kicks=8)
+        revision = "concurrency-only"
+        service.message_options()
+        assert service._runtime is updated_runtime
+        assert service.active_maximum_concurrent_kicks == initial_config.maximum_concurrent_kicks
+    finally:
+        release.set()
+    assert before.result().assistant_message.status == "COMPLETED"
 
 
 @pytest.mark.parametrize("final_status", ["COMPLETED", "FAILED"])

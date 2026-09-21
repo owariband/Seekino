@@ -470,6 +470,7 @@ def _read_detail_section(
     start: int,
     end: int | None,
     maximum_result_bytes: int,
+    maximum_read_chars: int,
 ) -> str:
     if section == "overview":
         if start != 0 or end is not None:
@@ -498,6 +499,7 @@ def _read_detail_section(
         start=start,
         end=end,
         maximum_bytes=maximum_result_bytes,
+        maximum_chars=maximum_read_chars,
     )
 
 
@@ -642,6 +644,7 @@ def build_read_trieve_item_tool(
     workspace: AgentWorkspace,
     control: ExecutionControl,
     maximum_result_bytes: int,
+    maximum_read_chars: int = 16_384,
     budget: _ToolCallBudget | None = None,
 ) -> StructuredTool:
     def read_trieve_item(
@@ -658,6 +661,7 @@ def build_read_trieve_item_tool(
             start=start,
             end=end,
             maximum_result_bytes=maximum_result_bytes,
+            maximum_read_chars=maximum_read_chars,
         )
 
     return _build_agent_tool(
@@ -805,6 +809,7 @@ def build_read_draft_item_tool(
     workspace: AgentWorkspace,
     control: ExecutionControl,
     maximum_result_bytes: int,
+    maximum_read_chars: int = 16_384,
     approved: bool = False,
     budget: _ToolCallBudget | None = None,
     audit: DraftReadAudit | None = None,
@@ -826,6 +831,7 @@ def build_read_draft_item_tool(
             start=start,
             end=end,
             maximum_result_bytes=maximum_result_bytes,
+            maximum_read_chars=maximum_read_chars,
         )
         if audit is not None:
             if section == "overview":
@@ -920,6 +926,7 @@ def build_query_tools(
     maximum_tool_calls: int | None,
     maximum_result_bytes: int,
     maximum_catalog_items: int,
+    maximum_read_chars: int = 16_384,
 ) -> list[StructuredTool]:
     budget = (
         _ToolCallBudget(maximum_tool_calls, "Query")
@@ -941,6 +948,7 @@ def build_query_tools(
             workspace=workspace,
             control=control,
             maximum_result_bytes=maximum_result_bytes,
+            maximum_read_chars=maximum_read_chars,
             budget=budget,
         ),
         build_update_draft_item_tool(
@@ -966,6 +974,7 @@ def build_query_tools(
             workspace=workspace,
             control=control,
             maximum_result_bytes=maximum_result_bytes,
+            maximum_read_chars=maximum_read_chars,
             budget=budget,
         ),
     ]
@@ -982,6 +991,7 @@ def build_evaluator_tools(
     maximum_tool_calls: int | None,
     maximum_result_bytes: int,
     maximum_catalog_items: int,
+    maximum_read_chars: int = 16_384,
     audit: DraftReadAudit | None = None,
 ) -> list[StructuredTool]:
     budget = (
@@ -1004,6 +1014,7 @@ def build_evaluator_tools(
             workspace=workspace,
             control=control,
             maximum_result_bytes=maximum_result_bytes,
+            maximum_read_chars=maximum_read_chars,
             budget=budget,
         ),
         build_get_draft_catelog_tool(
@@ -1018,6 +1029,7 @@ def build_evaluator_tools(
             workspace=workspace,
             control=control,
             maximum_result_bytes=maximum_result_bytes,
+            maximum_read_chars=maximum_read_chars,
             budget=budget,
             audit=audit,
         ),
@@ -1031,6 +1043,7 @@ def build_chat_tools(
     maximum_tool_calls: int | None,
     maximum_result_bytes: int,
     maximum_catalog_items: int,
+    maximum_read_chars: int = 16_384,
 ) -> list[StructuredTool]:
     budget = (
         _ToolCallBudget(maximum_tool_calls, "Chat")
@@ -1061,6 +1074,7 @@ def build_chat_tools(
             workspace=workspace,
             control=control,
             maximum_result_bytes=maximum_result_bytes,
+            maximum_read_chars=maximum_read_chars,
             approved=True,
             budget=budget,
         ),

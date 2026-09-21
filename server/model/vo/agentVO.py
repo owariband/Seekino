@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, model_validator
 
@@ -22,6 +22,15 @@ class AgentMessageOptionsView(ContractModel):
     max_model_calls_per_turn: AgentIntegerOptionView
     max_tool_calls_per_turn: AgentIntegerOptionView
     max_loop_turns: AgentIntegerOptionView
+
+
+class AgentGlobalSettingsView(ContractModel):
+    """Effective global Agent settings; value keys match config.yaml exactly."""
+
+    revision: str = Field(min_length=1)
+    values: dict[str, Any]
+    restart_required_fields: list[str]
+    active_values: dict[str, Any]
 
 
 class AgentMarkdownRenderBlockView(ContractModel):

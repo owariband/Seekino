@@ -19,6 +19,8 @@ from qdrant_client import QdrantClient
 from sqlalchemy import Engine
 
 from .config import ServerSettings
+from .config.agent import AgentServiceConfig
+from .config.global_agent_settings import read_global_agent_settings
 from .config.usage import load_model_pricing
 from .config.video_processing import VideoProcessingConfig
 from .agent.runtime import AgentRuntime
@@ -163,72 +165,84 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
     query_model_name = settings.agent_query_model or agent_model_config.model
     evaluator_model_name = settings.agent_evaluator_model or agent_model_config.model
     chat_model_name = settings.agent_chat_model or agent_model_config.model
-    request_timeout = min(
-        settings.agent_request_timeout_seconds,
-        settings.agent.execution_timeout_seconds,
-        agent_model_config.request_timeout_seconds,
-    )
-    max_output_tokens = min(
-        settings.agent.max_output_tokens,
-        agent_model_config.max_output_tokens,
-    )
-    context_window_policy = ContextWindowPolicy(
-        context_window_tokens=settings.agent.context_window_tokens,
-        output_reserve_tokens=max_output_tokens,
-        safety_margin_tokens=settings.agent.context_safety_margin_tokens,
-        auto_compact_tokens=settings.agent.auto_compact_tokens,
-        compact_target_tokens=settings.agent.compact_target_tokens,
-    )
-    runtime = AgentRuntime(
-        SDKStructuredToolAgentModel(
-            model=query_model_name,
-            provider=DEEPSEEK_PROVIDER,
-            base_url=agent_model_config.base_url,
-            api_key=agent_api_key,
-            request_timeout_seconds=request_timeout,
-            max_output_tokens=max_output_tokens,
-            max_input_chars=settings.agent.max_prompt_chars,
-            context_window_policy=context_window_policy,
-            fallback_model=fallback_agent_model,
-            fallback_provider=ARK_PROVIDER,
-        ),
-        SDKStructuredToolAgentModel(
-            model=evaluator_model_name,
-            provider=DEEPSEEK_PROVIDER,
-            base_url=agent_model_config.base_url,
-            api_key=agent_api_key,
-            request_timeout_seconds=request_timeout,
-            max_output_tokens=max_output_tokens,
-            max_input_chars=settings.agent.max_prompt_chars,
-            context_window_policy=context_window_policy,
-            fallback_model=fallback_agent_model,
-            fallback_provider=ARK_PROVIDER,
-        ),
-        DeepSeekFunctionCallingModel(
-            model=chat_model_name,
-            base_url=agent_model_config.base_url,
-            api_key=agent_api_key,
-            fallback_model=fallback_agent_model,
-            request_timeout_seconds=request_timeout,
-            max_output_tokens=max_output_tokens,
-            context_window_policy=context_window_policy,
-        ),
-        retrieval.search,
-        max_loop_turns=settings.agent.max_loop_turns,
-        max_model_calls_per_turn=settings.agent.max_model_calls_per_turn,
-        max_tool_calls_per_turn=settings.agent.max_tool_calls_per_turn,
-        limits_enabled=settings.agent.limits_enabled,
-        maximum_top_k=settings.agent.maximum_top_k,
-        max_prompt_chars=settings.agent.max_prompt_chars,
-        max_tool_result_bytes=settings.agent.max_tool_result_bytes,
-        max_catalog_items_per_page=settings.agent.max_catalog_items_per_page,
-        stage_timeout_seconds=settings.agent.stage_timeout_seconds,
-        evaluator_stage_timeout_seconds=settings.agent.evaluator_stage_timeout_seconds,
-        execution_timeout_seconds=settings.agent.execution_timeout_seconds,
-    )
+    def build_agent_runtime(agent_config: AgentServiceConfig) -> AgentRuntime:
+        request_timeout = min(
+            settings.agent_request_timeout_seconds,
+            agent_config.execution_timeout_seconds,
+            agent_model_config.request_timeout_seconds,
+        )
+        max_output_tokens = min(
+            agent_config.max_output_tokens,
+            agent_model_config.max_output_tokens,
+        )
+        context_window_policy = ContextWindowPolicy(
+            context_window_tokens=agent_config.context_window_tokens,
+            output_reserve_tokens=max_output_tokens,
+            safety_margin_tokens=agent_config.context_safety_margin_tokens,
+            auto_compact_tokens=agent_config.auto_compact_tokens,
+            compact_target_tokens=agent_config.compact_target_tokens,
+        )
+        return AgentRuntime(
+            SDKStructuredToolAgentModel(
+                model=query_model_name,
+                provider=DEEPSEEK_PROVIDER,
+                base_url=agent_model_config.base_url,
+                api_key=agent_api_key,
+                request_timeout_seconds=request_timeout,
+                max_output_tokens=max_output_tokens,
+                max_input_chars=agent_config.max_prompt_chars,
+                context_window_policy=context_window_policy,
+                fallback_model=fallback_agent_model,
+                fallback_provider=ARK_PROVIDER,
+            ),
+            SDKStructuredToolAgentModel(
+                model=evaluator_model_name,
+                provider=DEEPSEEK_PROVIDER,
+                base_url=agent_model_config.base_url,
+                api_key=agent_api_key,
+                request_timeout_seconds=request_timeout,
+                max_output_tokens=max_output_tokens,
+                max_input_chars=agent_config.max_prompt_chars,
+                context_window_policy=context_window_policy,
+                fallback_model=fallback_agent_model,
+                fallback_provider=ARK_PROVIDER,
+            ),
+            DeepSeekFunctionCallingModel(
+                model=chat_model_name,
+                base_url=agent_model_config.base_url,
+                api_key=agent_api_key,
+                fallback_model=fallback_agent_model,
+                request_timeout_seconds=request_timeout,
+                max_output_tokens=max_output_tokens,
+                context_window_policy=context_window_policy,
+            ),
+            retrieval.search,
+            max_loop_turns=agent_config.max_loop_turns,
+            max_model_calls_per_turn=agent_config.max_model_calls_per_turn,
+            max_tool_calls_per_turn=agent_config.max_tool_calls_per_turn,
+            limits_enabled=agent_config.limits_enabled,
+            maximum_top_k=agent_config.maximum_top_k,
+            max_prompt_chars=agent_config.max_prompt_chars,
+            max_tool_result_bytes=agent_config.max_tool_result_bytes,
+            max_read_chars_per_call=agent_config.max_read_chars_per_call,
+            max_catalog_items_per_page=agent_config.max_catalog_items_per_page,
+            stage_timeout_seconds=agent_config.stage_timeout_seconds,
+            evaluator_stage_timeout_seconds=agent_config.evaluator_stage_timeout_seconds,
+            execution_timeout_seconds=agent_config.execution_timeout_seconds,
+        )
+
+    runtime = build_agent_runtime(settings.agent)
+
+    def load_agent_config() -> tuple[AgentServiceConfig, str]:
+        return read_global_agent_settings(settings.model_config_path)
+
+    _, config_revision = load_agent_config()
     agent = AgentChatService(
         AgentRepository(session_factory), library, runtime,
         config=settings.agent,
+        config_loader=load_agent_config,
+        runtime_factory=build_agent_runtime,
+        config_revision=config_revision,
     )
     index_sync = IndexSyncService(
         IndexSyncRepository(session_factory),
