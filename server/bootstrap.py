@@ -217,10 +217,12 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         max_loop_turns=settings.agent.max_loop_turns,
         max_model_calls_per_turn=settings.agent.max_model_calls_per_turn,
         max_tool_calls_per_turn=settings.agent.max_tool_calls_per_turn,
+        limits_enabled=settings.agent.limits_enabled,
         maximum_top_k=settings.agent.maximum_top_k,
         max_prompt_chars=settings.agent.max_prompt_chars,
         max_tool_result_bytes=settings.agent.max_tool_result_bytes,
         max_catalog_items_per_page=settings.agent.max_catalog_items_per_page,
+        stage_timeout_seconds=settings.agent.stage_timeout_seconds,
         execution_timeout_seconds=settings.agent.execution_timeout_seconds,
     )
     agent = AgentChatService(

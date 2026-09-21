@@ -271,7 +271,7 @@ class _AgentModelStub:
 
         update_video_item = next(tool for tool in tools if tool.name == "update_video_item")
         assert set(update_video_item.args_schema.model_fields) == {"video_chunk_id", "claim"}
-        assert max_model_calls > 0
+        assert max_model_calls is None or (type(max_model_calls) is int and max_model_calls > 0)
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
         context = json.loads(prompt.rsplit("\n\n", 1)[1])
@@ -1987,6 +1987,7 @@ def test_rejected_loop_sends_failed_event_and_json_maps_harness_error(tmp_path):
     _create_series(client)
     conversation_id = _create_agent_conversation(client)
     runtime = client.app.state.services.agent._runtime
+    runtime._limits_enabled = True
 
     class RejectModel:
         model_name = "reject-model"

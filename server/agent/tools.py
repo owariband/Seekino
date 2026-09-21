@@ -532,11 +532,14 @@ def build_query_tools(
     control: ExecutionControl,
     calls: list[RetrievalCall],
     maximum_top_k: int,
-    maximum_tool_calls: int,
+    maximum_tool_calls: int | None,
     maximum_result_bytes: int,
     maximum_catalog_items: int,
 ) -> list[StructuredTool]:
-    budget = _ToolCallBudget(maximum_tool_calls, "Query")
+    budget = (
+        _ToolCallBudget(maximum_tool_calls, "Query")
+        if maximum_tool_calls is not None else None
+    )
     return [
         build_retrieve_tool(
             search,
@@ -591,12 +594,15 @@ def build_evaluator_tools(
     control: ExecutionControl,
     calls: list[RetrievalCall],
     maximum_top_k: int,
-    maximum_tool_calls: int,
+    maximum_tool_calls: int | None,
     maximum_result_bytes: int,
     maximum_catalog_items: int,
     audit: DraftReadAudit | None = None,
 ) -> list[StructuredTool]:
-    budget = _ToolCallBudget(maximum_tool_calls, "Evaluator")
+    budget = (
+        _ToolCallBudget(maximum_tool_calls, "Evaluator")
+        if maximum_tool_calls is not None else None
+    )
     return [
         build_retrieve_tool(
             search,
@@ -637,11 +643,14 @@ def build_chat_tools(
     *,
     workspace: AgentWorkspace,
     control: ExecutionControl,
-    maximum_tool_calls: int,
+    maximum_tool_calls: int | None,
     maximum_result_bytes: int,
     maximum_catalog_items: int,
 ) -> list[StructuredTool]:
-    budget = _ToolCallBudget(maximum_tool_calls, "Chat")
+    budget = (
+        _ToolCallBudget(maximum_tool_calls, "Chat")
+        if maximum_tool_calls is not None else None
+    )
     return [
         build_remove_video_item_tool(
             workspace=workspace,

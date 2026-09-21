@@ -7,6 +7,7 @@ docs/notes/
 docs/ui-design/
 /transfer.md
 /.baoyu-skills/
+/.agents/skills/anivag-change-gate/
 /diagrams/
 /infographic/
 /docs/*.dataflow.json

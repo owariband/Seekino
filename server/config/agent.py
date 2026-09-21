@@ -14,6 +14,7 @@ class AgentServiceConfig:
     maximum_model_calls_per_turn: int = 12
     max_tool_calls_per_turn: int = 24
     maximum_tool_calls_per_turn: int = 48
+    limits_enabled: bool = False
     max_output_tokens: int = 4096
     max_prompt_chars: int = 200_000
     context_window_tokens: int = 64_000
@@ -22,8 +23,7 @@ class AgentServiceConfig:
     compact_target_tokens: int = 24_000
     max_tool_result_bytes: int = 16_384
     max_catalog_items_per_page: int = 20
-    # Covers up to three Query/Evaluator turns plus final Chat. Individual
-    # Provider requests keep their own, shorter timeout.
+    stage_timeout_seconds: float = 120
     execution_timeout_seconds: float = 600
     maximum_concurrent_kicks: int = 4
 
@@ -38,6 +38,8 @@ class AgentServiceConfig:
             raise ValueError("maximum_top_k must not exceed 100")
         if not 1 <= self.max_loop_turns <= 3:
             raise ValueError("max_loop_turns must be between 1 and 3")
+        if not isinstance(self.limits_enabled, bool):
+            raise ValueError("limits_enabled must be a boolean")
         for name in (
             "max_model_calls_per_turn", "maximum_model_calls_per_turn",
             "max_tool_calls_per_turn", "maximum_tool_calls_per_turn",
@@ -80,8 +82,7 @@ class AgentServiceConfig:
             raise ValueError(
                 "compact_target_tokens must be lower than auto_compact_tokens"
             )
-        if (
-            not math.isfinite(self.execution_timeout_seconds)
-            or self.execution_timeout_seconds <= 0
-        ):
-            raise ValueError("execution_timeout_seconds must be finite and positive")
+        for name in ("stage_timeout_seconds", "execution_timeout_seconds"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive")

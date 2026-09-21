@@ -132,7 +132,7 @@ def _query_tools(
     *,
     maximum_result_bytes: int = 1_024,
     maximum_catalog_items: int = 20,
-    maximum_tool_calls: int = 100,
+    maximum_tool_calls: int | None = 100,
 ):
     calls = []
     tools = build_query_tools(
@@ -540,3 +540,16 @@ def test_shared_role_tool_budget_counts_every_tool() -> None:
     _retrieve(tools, top_k=1)
     with pytest.raises(AgentModelInvocationError, match="Tool-call budget exceeded"):
         tools["read_trieve_item"].invoke({"video_chunk_id": "chunk-1"})
+
+
+def test_tool_budget_can_be_disabled() -> None:
+    retrieval = Retrieval([_hit("chunk-1")])
+    workspace = AgentWorkspace("workspace", ("series",))
+    tools, _calls = _query_tools(retrieval, workspace, maximum_tool_calls=None)
+
+    _retrieve(tools, top_k=1)
+    for _ in range(101):
+        response = tools["read_trieve_item"].invoke({
+            "video_chunk_id": "chunk-1",
+        })
+        assert json.loads(response)["id"] == "chunk-1"

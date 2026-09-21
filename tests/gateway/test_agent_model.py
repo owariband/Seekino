@@ -125,7 +125,7 @@ def _function_model(*responses):
 def _run_agent(
     model,
     *,
-    max_model_calls: int = 4,
+    max_model_calls: int | None = 4,
     handle_text=lambda _text: None,
     invoke_tool=lambda _item: "accepted",
     require_tool_call: bool = False,
@@ -649,6 +649,21 @@ def test_deepseek_agent_loop_stops_at_model_call_budget() -> None:
     assert len(completions.calls) == 1
 
 
+def test_deepseek_agent_loop_without_budget_continues_past_old_limit() -> None:
+    responses = [
+        _agent_response(
+            calls=[_tool_call(_video_item(), call_id=f"call-{index}")],
+            finish_reason="tool_calls",
+        )
+        for index in range(5)
+    ]
+    model, completions = _function_model(*responses, _agent_response("回答"))
+
+    _run_agent(model, max_model_calls=None)
+
+    assert len(completions.calls) == 6
+
+
 def test_deepseek_agent_loop_uses_one_total_deadline(monkeypatch) -> None:
     ticks = iter([100.0, 100.25, 101.0])
     monkeypatch.setattr(agent_model_module, "monotonic", lambda: next(ticks))
@@ -1034,7 +1049,13 @@ def test_deepseek_agent_loop_rejects_invalid_completion_envelope() -> None:
         _run_agent(model)
 
 
-def _completion(name: str, arguments: dict, *, reason: str = "tool_calls") -> dict:
+def _completion(
+    name: str,
+    arguments: dict,
+    *,
+    reason: str = "tool_calls",
+    call_id: str = "call-1",
+) -> dict:
     return {
         "id": "completion-test",
         "model": "ark-test",
@@ -1049,7 +1070,7 @@ def _completion(name: str, arguments: dict, *, reason: str = "tool_calls") -> di
                     "content": "",
                     "tool_calls": [
                         {
-                            "id": "call-1",
+                            "id": call_id,
                             "type": "function",
                             "function": {
                                 "name": name,
@@ -1188,6 +1209,67 @@ def test_query_does_not_fallback_for_programming_errors(
 
     assert calls == [("deepseek-flash", 3.0)]
     assert primary._fallback_active is False
+
+
+def test_sdk_query_model_requests_use_remaining_stage_timeout() -> None:
+    remaining = iter([1.75, 1.0])
+    seen_timeouts = []
+    checks = 0
+
+    def check() -> None:
+        nonlocal checks
+        checks += 1
+
+    def override(**changes):
+        return SimpleNamespace(model_settings=changes["model_settings"])
+
+    request = SimpleNamespace(
+        model_settings={"timeout": 3},
+        override=override,
+    )
+    middleware = agent_model_module._ExecutionControlMiddleware(
+        check,
+        lambda: next(remaining),
+    )
+
+    for _ in range(2):
+        middleware.wrap_model_call(
+            request,
+            lambda updated: seen_timeouts.append(
+                updated.model_settings["timeout"]
+            ),
+        )
+
+    assert seen_timeouts == [1.75, 1.0]
+    assert checks == 4
+
+
+def test_sdk_query_stops_when_stage_deadline_expires(monkeypatch) -> None:
+    ticks = iter([100.0, 100.0, 102.1])
+    monkeypatch.setattr(agent_model_module, "monotonic", lambda: next(ticks))
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    client = Ark(
+        api_key="test-ark-key",
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    model = SDKQueryAgentModel(
+        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
+    )
+
+    with pytest.raises(TimeoutError, match="execution deadline expired"):
+        model.run_query(
+            "检索", tools=[], result_type=QueryDraft,
+            max_model_calls=None,
+            request_timeout_seconds=2,
+        )
+
+    assert requests == []
+    client.close()
 
 
 def test_sdk_query_runs_actual_tool_round_trip_over_ark_transport() -> None:
@@ -1677,6 +1759,55 @@ def test_sdk_query_budget_stops_before_extra_model_request() -> None:
             "检索", tools=[_tool(retrieve)], result_type=QueryDraft, max_model_calls=1
         )
     assert len(requests) == 1
+    client.close()
+
+
+def test_sdk_query_continues_past_previous_model_call_limit() -> None:
+    requests = []
+    searches = []
+
+    def retrieve(query: str) -> dict:
+        searches.append(query)
+        return {"query": query, "hits": []}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        turn = len(requests)
+        if turn > 13:
+            return httpx.Response(200, json=_completion(
+                "QueryDraft",
+                {
+                    "plan_context": "已完成多轮检索",
+                    "message": "无匹配片段",
+                    "selected_video_chunk_ids": [],
+                },
+                call_id=f"call-{turn}",
+            ))
+        return httpx.Response(
+            200,
+            json=_completion(
+                "search_video_chunk_evidence",
+                {"query": f"第 {turn} 轮"},
+                call_id=f"call-{turn}",
+            ),
+        )
+
+    client = Ark(
+        api_key="test-ark-key",
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    model = SDKQueryAgentModel(
+        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
+    )
+    result = model.run_query(
+        "检索", tools=[_tool(retrieve)], result_type=QueryDraft,
+        max_model_calls=None,
+        request_timeout_seconds=30,
+    )
+
+    assert result.selected_video_chunk_ids == []
+    assert len(requests) == 14
+    assert len(searches) == 13
     client.close()
 
 

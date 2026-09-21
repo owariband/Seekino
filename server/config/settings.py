@@ -248,6 +248,9 @@ class ServerSettings:
                 maximum_model_calls_per_turn=agent_maximum_model_calls,
                 max_tool_calls_per_turn=agent_default_tool_calls,
                 maximum_tool_calls_per_turn=agent_maximum_tool_calls,
+                limits_enabled=_environment_bool(
+                    "ANIVAG_AGENT_LIMITS_ENABLED", agent_defaults.limits_enabled,
+                ),
                 max_output_tokens=_environment_int(
                     "ANIVAG_AGENT_MAX_OUTPUT_TOKENS", agent_defaults.max_output_tokens,
                 ),
@@ -277,6 +280,10 @@ class ServerSettings:
                 max_catalog_items_per_page=_environment_int(
                     "ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE",
                     agent_defaults.max_catalog_items_per_page,
+                ),
+                stage_timeout_seconds=_environment_float(
+                    "ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS",
+                    agent_defaults.stage_timeout_seconds,
                 ),
                 execution_timeout_seconds=_environment_float(
                     "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS",
@@ -421,6 +428,15 @@ def _environment_float(
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be finite and greater than zero")
     return value
+
+
+def _environment_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name, str(default)).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
 
 
 def _environment_nonnegative_int(name: str, default: int) -> int:

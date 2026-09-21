@@ -154,15 +154,18 @@ class Query:
         self.tool_results = []
         self.draft_tool_results = []
         self.budgets = []
+        self.request_timeouts = []
 
     def run_structured(
-        self, prompt, *, tools, result_type, max_model_calls, check_control=None,
-        max_input_chars=None,
+        self, prompt, *, tools, result_type, max_model_calls, request_timeout_seconds,
+        check_control=None, max_input_chars=None,
     ):
         self.prompts.append(prompt)
         context = json.loads(prompt.rsplit("\n\n", 1)[1])
         self.contexts.append(context)
         self.budgets.append(max_model_calls)
+        assert request_timeout_seconds > 0
+        self.request_timeouts.append(request_timeout_seconds)
         number = context["turn_number"]
         tools_by_name = _tool_map(tools)
         if number in self.search_rounds:
@@ -203,14 +206,17 @@ class Evaluator:
         self.prompts = []
         self.contexts = []
         self.budgets = []
+        self.request_timeouts = []
 
     def run_structured(
-        self, prompt, *, tools, result_type, max_model_calls, check_control=None,
-        max_input_chars=None,
+        self, prompt, *, tools, result_type, max_model_calls, request_timeout_seconds,
+        check_control=None, max_input_chars=None,
     ):
         self.prompts.append(prompt)
         self.contexts.append(json.loads(prompt.rsplit("\n\n", 1)[1]))
         self.budgets.append(max_model_calls)
+        assert request_timeout_seconds > 0
+        self.request_timeouts.append(request_timeout_seconds)
         tools_by_name = _tool_map(tools)
         cursor = None
         item_ids = []
@@ -243,8 +249,7 @@ class Chat:
         self.require_tool_calls = []
 
     def run_agent_loop(
-        self, prompt, *, tools, max_model_calls, handle_text,
-        require_tool_call=False,
+        self, prompt, *, tools, max_model_calls, handle_text, require_tool_call=False,
         request_timeout_seconds=None, check_control=None, max_input_chars=None,
     ):
         assert [tool.name for tool in tools] == [
@@ -260,7 +265,6 @@ class Chat:
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
         self.request_timeouts.append(request_timeout_seconds)
-        assert max_model_calls > 0
         self.model_call_budgets.append(max_model_calls)
         assert check_control is not None
         chunk_ids = context["approved_turn"]["video_chunk_ids"]
@@ -303,8 +307,7 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     result = runtime.kick(_inputs(), emit=events.append)
     assert len(query.contexts) == len(evaluator.contexts) == approve_at
     assert len(chat.contexts) == len(retrieval.calls) == 1
-    assert 0 < chat.request_timeouts[0] <= 180
-    assert chat.model_call_budgets == [6]
+    assert 0 < chat.request_timeouts[0] <= 120
     assert result.agent_reply.message == "## Final answer\n\nGrounded answer."
     assert result.agent_reply.result_count == 1
     assert result.hits[0].evidence.start_ms == 1000
@@ -364,14 +367,26 @@ def test_agent_logs_retrieved_selected_and_submitted_hit_counts(caplog):
     assert "approved_hit_count=1 submitted_hit_count=1" in caplog.text
 
 
-def test_third_rejection_is_failure_and_never_starts_final_chat():
-    runtime, query, evaluator, chat, _retrieval = _runtime(evaluator=Evaluator(99))
+def test_fourth_turn_runs_after_three_rejections_and_can_be_approved():
+    runtime, query, evaluator, chat, _retrieval = _runtime(evaluator=Evaluator(4))
     events = []
+    result = runtime.kick(_inputs(), emit=events.append)
+    assert len(query.contexts) == len(evaluator.contexts) == 4
+    assert len(chat.contexts) == 1
+    assert result.agent_reply.message == "## Final answer\n\nGrounded answer."
+    assert [event["phase"] for event in events if event["type"] == "answer.progress"] == [
+        *(["RETRIEVING", "EVALUATING"] * 4), "RESPONDING",
+    ]
+
+
+def test_enabled_turn_budget_rejects_third_continue() -> None:
+    runtime, query, evaluator, chat, _retrieval = _runtime(
+        evaluator=Evaluator(99), limits_enabled=True,
+    )
     with pytest.raises(AgentModelInvocationError, match="after 3 turns"):
-        runtime.kick(_inputs(), emit=events.append)
+        runtime.kick(_inputs())
     assert len(query.contexts) == len(evaluator.contexts) == 3
     assert chat.contexts == []
-    assert [event["phase"] for event in events] == ["RETRIEVING", "EVALUATING"] * 3
 
 
 def test_evaluator_cannot_complete_without_reading_the_full_draft() -> None:
@@ -390,7 +405,7 @@ def test_evaluator_cannot_complete_without_reading_the_full_draft() -> None:
 
     evaluator = BlindEvaluator()
     runtime, _query, _evaluator, chat, _retrieval = _runtime(
-        evaluator=evaluator,
+        evaluator=evaluator, limits_enabled=True,
     )
 
     with pytest.raises(AgentModelInvocationError, match="after 3 turns"):
@@ -717,7 +732,7 @@ def test_multi_turn_context_keeps_one_canonical_evidence_copy():
     marker = "canonical-evidence-copy-marker"
     retrieval = Retrieval()
     retrieval.hits[0].evidence.baseline_visual_caption = marker
-    runtime, query, evaluator, _chat, _retrieval = _runtime(
+    runtime, query, evaluator, chat, _retrieval = _runtime(
         query=Query(search_rounds=(1,)), evaluator=Evaluator(3), retrieval=retrieval,
     )
 
@@ -785,10 +800,7 @@ def test_empty_real_retrieval_can_deliver_an_approved_uncertain_answer():
 
 def test_tool_scope_is_not_an_exposed_model_argument_and_top_k_is_bounded():
     class InspectQuery(Query):
-        def run_structured(
-            self, prompt, *, tools, result_type, max_model_calls,
-            check_control=None, max_input_chars=None,
-        ):
+        def run_structured(self, prompt, *, tools, result_type, **kwargs):
             assert "# Video Retrieval Skill" in prompt
             assert set(tools[0].args_schema.model_fields) == {
                 "query", "top_k", "channel_weights", "cursor",
@@ -797,11 +809,12 @@ def test_tool_scope_is_not_an_exposed_model_argument_and_top_k_is_bounded():
                 prompt,
                 tools=tools,
                 result_type=result_type,
-                max_model_calls=max_model_calls,
+                **kwargs,
             )
 
     runtime, query, _evaluator, _chat, retrieval = _runtime(
         query=InspectQuery(), maximum_top_k=2, max_model_calls_per_turn=5,
+        limits_enabled=True,
     )
     runtime.kick(_inputs())
     assert retrieval.calls == [("query-1-0", "workspace", ["series"], 2)]
@@ -810,19 +823,71 @@ def test_tool_scope_is_not_an_exposed_model_argument_and_top_k_is_bounded():
 
 
 def test_kick_run_limits_override_only_the_current_execution():
-    runtime, query, evaluator, chat, _retrieval = _runtime()
-
+    runtime, query, evaluator, chat, _retrieval = _runtime(limits_enabled=True)
     runtime.kick(
         _inputs(),
         max_model_calls_per_turn=7,
         max_tool_calls_per_turn=10,
     )
-
     assert query.budgets == [7]
     assert evaluator.budgets == [7]
     assert chat.model_call_budgets == [7]
     assert runtime._max_model_calls == 6
     assert runtime._max_tool_calls == 24
+
+
+def test_disabled_limits_ignore_count_but_preserve_run_options():
+    runtime, query, evaluator, chat, _retrieval = _runtime()
+    runtime.kick(
+        _inputs(), max_model_calls_per_turn=1, max_tool_calls_per_turn=1,
+    )
+    assert query.budgets == evaluator.budgets == chat.model_call_budgets == [None]
+
+
+@pytest.mark.parametrize(
+    ("execution_timeout_seconds", "expected_timeout_seconds"),
+    [(300, 120), (45, 45)],
+)
+def test_query_and_evaluator_timeouts_use_stage_or_global_remaining_minimum(
+    monkeypatch,
+    execution_timeout_seconds,
+    expected_timeout_seconds,
+):
+    clock = 100.0
+    monkeypatch.setattr("server.agent.runtime.monotonic", lambda: clock)
+    monkeypatch.setattr("server.agent.state.monotonic", lambda: clock)
+    runtime, query, evaluator, chat, _retrieval = _runtime(
+        stage_timeout_seconds=120,
+        execution_timeout_seconds=execution_timeout_seconds,
+    )
+
+    runtime.kick(_inputs())
+
+    assert query.request_timeouts == [pytest.approx(expected_timeout_seconds)]
+    assert evaluator.request_timeouts == [pytest.approx(expected_timeout_seconds)]
+    assert chat.request_timeouts == [pytest.approx(expected_timeout_seconds)]
+
+
+def test_query_stage_deadline_stops_before_evaluator(monkeypatch):
+    clock = 100.0
+    monkeypatch.setattr("server.agent.runtime.monotonic", lambda: clock)
+    monkeypatch.setattr("server.agent.state.monotonic", lambda: clock)
+
+    class ExpiredQuery(Query):
+        def run_structured(self, _prompt, *, result_type, **_kwargs):
+            nonlocal clock
+            clock = 221.0
+            return result_type.model_validate({
+                "plan_context": "late", "message": "late",
+            })
+
+    runtime, _query, evaluator, chat, _retrieval = _runtime(
+        query=ExpiredQuery(), stage_timeout_seconds=120,
+        execution_timeout_seconds=300,
+    )
+    with pytest.raises(AgentModelInvocationError, match="deadline exceeded"):
+        runtime.kick(_inputs())
+    assert evaluator.contexts == chat.contexts == []
 
 
 def test_model_selected_weights_are_normalized_recorded_and_returned_to_agent():
@@ -897,9 +962,21 @@ def test_legacy_two_channel_trace_weights_default_transcript_to_zero():
     }
 
 
-def test_tool_budget_stops_before_an_extra_search_or_evaluation():
+def test_query_can_make_more_tool_calls_than_the_removed_budget():
+    runtime, _query, evaluator, chat, retrieval = _runtime(
+        query=Query(searches_per_round=25),
+    )
+
+    runtime.kick(_inputs())
+
+    assert len(retrieval.calls) == 25
+    assert len(evaluator.contexts) == len(chat.contexts) == 1
+
+
+def test_enabled_tool_budget_stops_before_an_extra_search_or_evaluation():
     runtime, _query, evaluator, chat, retrieval = _runtime(
         query=Query(searches_per_round=2), max_tool_calls_per_turn=1,
+        limits_enabled=True,
     )
     with pytest.raises(AgentModelInvocationError, match="Tool-call budget"):
         runtime.kick(_inputs())
@@ -909,12 +986,10 @@ def test_tool_budget_stops_before_an_extra_search_or_evaluation():
 
 def test_kick_can_lower_tool_budget_without_mutating_runtime_default():
     runtime, _query, evaluator, chat, retrieval = _runtime(
-        query=Query(searches_per_round=2),
+        query=Query(searches_per_round=2), limits_enabled=True,
     )
-
     with pytest.raises(AgentModelInvocationError, match="Tool-call budget"):
         runtime.kick(_inputs(), max_tool_calls_per_turn=1)
-
     assert len(retrieval.calls) == 1
     assert evaluator.contexts == chat.contexts == []
     assert runtime._max_tool_calls == 24
@@ -946,14 +1021,13 @@ def test_parallel_tool_calls_share_one_turn_budget_and_keep_actual_records():
     class ParallelQuery(Query):
         def run_structured(
             self, prompt, *, tools, result_type, max_model_calls,
-            check_control=None, max_input_chars=None,
+            request_timeout_seconds, check_control=None, max_input_chars=None,
         ):
             with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = [executor.submit(
                     tools[0].invoke,
                     _retrieval_args(f"parallel-{i}", 2),
-                )
-                           for i in range(2)]
+                ) for i in range(2)]
                 for future in futures:
                     future.result(timeout=5)
             return result_type.model_validate({
@@ -963,6 +1037,7 @@ def test_parallel_tool_calls_share_one_turn_budget_and_keep_actual_records():
 
     runtime, _query, evaluator, chat, retrieval = _runtime(
         query=ParallelQuery(), max_tool_calls_per_turn=1,
+        limits_enabled=True,
     )
     with pytest.raises(AgentModelInvocationError, match="Tool-call budget"):
         runtime.kick(_inputs())
@@ -1224,8 +1299,10 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
 
         def run_structured(
             self, prompt, *, tools, result_type, max_model_calls,
+            request_timeout_seconds,
             check_control=None, max_input_chars=None,
         ):
+            assert request_timeout_seconds > 0
             context = json.loads(prompt.rsplit("\n\n", 1)[1])
             assert context["turns"] == []
             name = context["inputs"]["conversation_id"]

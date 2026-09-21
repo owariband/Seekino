@@ -77,8 +77,10 @@ def test_process_assembly_receives_runtime_configuration(
         images=ImageUploadConfig(maximum_upload_size_bytes=2048, maximum_pixels=1_000_000, model_max_edge=512),
         agent=AgentServiceConfig(
             max_loop_turns=2, max_model_calls_per_turn=4,
-            max_tool_calls_per_turn=2, max_output_tokens=2048,
+            max_tool_calls_per_turn=2, limits_enabled=True,
+            max_output_tokens=2048,
             max_prompt_chars=120_000,
+            stage_timeout_seconds=45,
             execution_timeout_seconds=90, maximum_concurrent_kicks=2,
         ),
     )
@@ -178,6 +180,9 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._query_model.model_name == expected_models[0]
         assert runtime._evaluator_model.model_name == expected_models[1]
         assert runtime._chat_model.model_name == expected_models[2]
+        assert runtime._query_model.request_timeout_seconds == 90
+        assert runtime._evaluator_model.request_timeout_seconds == 90
+        assert runtime._chat_model._request_timeout_seconds == 90
         assert isinstance(
             runtime._evaluator_model,
             bootstrap.SDKStructuredToolAgentModel,
@@ -206,9 +211,11 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._max_loop_turns == 2
         assert runtime._max_model_calls == 4
         assert runtime._max_tool_calls == 2
+        assert runtime._limits_enabled is True
         assert runtime._max_prompt_chars == 120_000
         assert runtime._max_tool_result_bytes == 16_384
         assert runtime._max_catalog_items == 20
+        assert runtime._stage_timeout == 45
         assert runtime._execution_timeout == 90
         assert services.agent._executor._max_workers == 2
         app = create_app(services, settings=settings)

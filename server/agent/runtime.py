@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
@@ -46,11 +47,13 @@ class AgentRuntime:
         max_loop_turns: int = 3,
         max_model_calls_per_turn: int = 6,
         max_tool_calls_per_turn: int = 24,
+        limits_enabled: bool = False,
         maximum_top_k: int = 20,
         max_prompt_chars: int = 200_000,
         max_tool_result_bytes: int = 16_384,
         max_catalog_items_per_page: int = 20,
-        execution_timeout_seconds: float = 180,
+        stage_timeout_seconds: float = 120,
+        execution_timeout_seconds: float = 600,
     ) -> None:
         for name, value, maximum in [
             ("max_loop_turns", max_loop_turns, 3),
@@ -75,12 +78,14 @@ class AgentRuntime:
                 raise ValueError(f"{name} must be {bounds}")
         if max_tool_result_bytes < 512:
             raise ValueError("max_tool_result_bytes must be at least 512")
-        if (
-            isinstance(execution_timeout_seconds, bool)
-            or not isfinite(execution_timeout_seconds)
-            or execution_timeout_seconds <= 0
+        if not isinstance(limits_enabled, bool):
+            raise ValueError("limits_enabled must be a boolean")
+        for name, value in (
+            ("stage_timeout_seconds", stage_timeout_seconds),
+            ("execution_timeout_seconds", execution_timeout_seconds),
         ):
-            raise ValueError("execution_timeout_seconds must be positive and finite")
+            if isinstance(value, bool) or not isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be positive and finite")
         self._query_model = query_model
         self._evaluator_model = evaluator_model
         self._chat_model = chat_model
@@ -88,10 +93,12 @@ class AgentRuntime:
         self._max_loop_turns = max_loop_turns
         self._max_model_calls = max_model_calls_per_turn
         self._max_tool_calls = max_tool_calls_per_turn
+        self._limits_enabled = limits_enabled
         self._maximum_top_k = maximum_top_k
         self._max_prompt_chars = max_prompt_chars
         self._max_tool_result_bytes = max_tool_result_bytes
         self._max_catalog_items = max_catalog_items_per_page
+        self._stage_timeout = stage_timeout_seconds
         self._execution_timeout = execution_timeout_seconds
         builder = StateGraph(RunState)
         builder.add_node("turn", self.turn)
@@ -172,7 +179,10 @@ class AgentRuntime:
                 "control": control,
                 "limits": limits,
             },
-            config={"recursion_limit": self._max_loop_turns + 5},
+            config={
+                "recursion_limit": self._max_loop_turns + 5
+                if self._limits_enabled else sys.maxsize,
+            },
         )
         control.check()
         return result["final_output"]
@@ -184,7 +194,7 @@ class AgentRuntime:
         previous = state["turns"]
         limits = state["limits"]
         control.check()
-        if len(previous) >= self._max_loop_turns:
+        if self._limits_enabled and len(previous) >= self._max_loop_turns:
             raise AgentModelInvocationError(
                 "Query / Evaluator loop-turn budget exceeded"
             )
@@ -194,14 +204,23 @@ class AgentRuntime:
         })
         calls = []
         context_budget = ModelContextBudget(self._max_prompt_chars)
+        query_control = replace(
+            control,
+            deadline=min(
+                control.deadline,
+                monotonic() + self._stage_timeout,
+            ),
+        )
         query_tools = build_query_tools(
             self._retrieve,
             workspace=workspace,
             inputs=inputs,
-            control=control,
+            control=query_control,
             calls=calls,
             maximum_top_k=self._maximum_top_k,
-            maximum_tool_calls=limits.max_tool_calls_per_turn,
+            maximum_tool_calls=(
+                limits.max_tool_calls_per_turn if self._limits_enabled else None
+            ),
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
         )
@@ -211,12 +230,15 @@ class AgentRuntime:
             inputs,
             previous,
             tools=query_tools,
-            max_model_calls=limits.max_model_calls_per_turn,
-            control=control,
+            max_model_calls=(
+                limits.max_model_calls_per_turn if self._limits_enabled else None
+            ),
+            control=query_control,
             selection_limit=selection_limit,
             context_budget=context_budget,
             workspace=workspace,
         )
+        query_control.check()
         control.check()
         draft_items = workspace.draft_items()
         if len(draft_items) > selection_limit:
@@ -248,14 +270,23 @@ class AgentRuntime:
             "phase": AnswerPhase.EVALUATING,
         })
         audit = DraftReadAudit()
+        evaluator_control = replace(
+            control,
+            deadline=min(
+                control.deadline,
+                monotonic() + self._stage_timeout,
+            ),
+        )
         evaluator_tools = build_evaluator_tools(
             self._retrieve,
             workspace=workspace,
             inputs=inputs,
-            control=control,
+            control=evaluator_control,
             calls=calls,
             maximum_top_k=self._maximum_top_k,
-            maximum_tool_calls=limits.max_tool_calls_per_turn,
+            maximum_tool_calls=(
+                limits.max_tool_calls_per_turn if self._limits_enabled else None
+            ),
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
             audit=audit,
@@ -268,11 +299,14 @@ class AgentRuntime:
             calls,
             sources,
             tools=evaluator_tools,
-            max_model_calls=limits.max_model_calls_per_turn,
-            control=control,
+            max_model_calls=(
+                limits.max_model_calls_per_turn if self._limits_enabled else None
+            ),
+            control=evaluator_control,
             max_prompt_chars=self._max_prompt_chars,
             workspace=workspace,
         )
+        evaluator_control.check()
         control.check()
         if review.action == "complete" and not audit.covers(
             item.video_chunk_id for item in draft_items
@@ -320,7 +354,11 @@ class AgentRuntime:
             len(selected.hits),
             review.action,
         )
-        if review.action == "continue" and current.number >= self._max_loop_turns:
+        if (
+            self._limits_enabled
+            and review.action == "continue"
+            and current.number >= self._max_loop_turns
+        ):
             raise AgentModelInvocationError(
                 f"Evaluator rejected the Query draft after {current.number} turns"
             )
@@ -338,10 +376,19 @@ class AgentRuntime:
             "type": "answer.progress",
             "phase": AnswerPhase.RESPONDING,
         })
+        chat_control = replace(
+            control,
+            deadline=min(
+                control.deadline,
+                monotonic() + self._stage_timeout,
+            ),
+        )
         chat_tools = build_chat_tools(
             workspace=state["workspace"],
-            control=control,
-            maximum_tool_calls=limits.max_tool_calls_per_turn,
+            control=chat_control,
+            maximum_tool_calls=(
+                limits.max_tool_calls_per_turn if self._limits_enabled else None
+            ),
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
         )
@@ -351,11 +398,14 @@ class AgentRuntime:
             current,
             state["workspace"],
             tools=chat_tools,
-            control=control,
+            control=chat_control,
             max_prompt_chars=self._max_prompt_chars,
-            max_model_calls=limits.max_model_calls_per_turn,
+            max_model_calls=(
+                limits.max_model_calls_per_turn if self._limits_enabled else None
+            ),
             retrieval_trace=build_retrieval_trace(state["turns"]),
         )
+        chat_control.check()
         return {
             "turns": [
                 *state["turns"][:-1],

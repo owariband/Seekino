@@ -163,7 +163,7 @@ class _ChatModel:
         self.prompts.append(prompt)
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
-        assert max_model_calls > 0
+        assert max_model_calls is None or (type(max_model_calls) is int and max_model_calls > 0)
         assert check_control is not None
         if self.release is not None:
             assert self.release.wait(5), "test did not release provider"
@@ -727,7 +727,10 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
 
 
 def test_third_continue_persists_failure_and_never_calls_chat(build_service):
-    service, conversation, _, _, _, evaluator, chat = build_service(evaluator=_EvaluatorModel(approve_after=4))
+    service, conversation, _, _, _, evaluator, chat = build_service(
+        evaluator=_EvaluatorModel(approve_after=4),
+        runtime_kwargs={"limits_enabled": True},
+    )
     with pytest.raises(AgentModelInvocationError, match="after 3 turns"):
         _send(service, conversation)
     assert evaluator.calls == 3 and not chat.prompts

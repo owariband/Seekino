@@ -30,7 +30,7 @@ def render_chat(
     tools: Sequence[BaseTool],
     control: ExecutionControl,
     max_prompt_chars: int,
-    max_model_calls: int,
+    max_model_calls: int | None,
     retrieval_trace: list[RetrievalTraceEntry],
 ) -> ChatRenderDraft:
     if turn.review.action != "complete":

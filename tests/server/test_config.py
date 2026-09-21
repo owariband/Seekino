@@ -42,6 +42,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.maximum_model_calls_per_turn == 12
     assert settings.agent.max_tool_calls_per_turn == 24
     assert settings.agent.maximum_tool_calls_per_turn == 48
+    assert settings.agent.limits_enabled is False
     assert settings.agent.max_output_tokens == 4096
     assert settings.agent.max_prompt_chars == 200_000
     assert settings.agent.context_window_tokens == 64_000
@@ -50,6 +51,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.compact_target_tokens == 24_000
     assert settings.agent.max_tool_result_bytes == 16_384
     assert settings.agent.max_catalog_items_per_page == 20
+    assert settings.agent.stage_timeout_seconds == 120
     assert settings.agent.execution_timeout_seconds == 600
     assert settings.agent.maximum_concurrent_kicks == 4
     assert settings.agent_query_model is None
@@ -232,7 +234,7 @@ def test_server_settings_reject_agent_default_above_maximum(monkeypatch) -> None
         ServerSettings.from_environment()
 
 
-def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
+def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch):
     _clean_anivag_environment(monkeypatch)
     overrides = {
         "ANIVAG_AGENT_QUERY_MODEL": "query-model",
@@ -244,6 +246,7 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
         "ANIVAG_AGENT_MAXIMUM_MODEL_CALLS_PER_TURN": "9",
         "ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN": "3",
         "ANIVAG_AGENT_MAXIMUM_TOOL_CALLS_PER_TURN": "7",
+        "ANIVAG_AGENT_LIMITS_ENABLED": "true",
         "ANIVAG_AGENT_MAX_OUTPUT_TOKENS": "2048",
         "ANIVAG_AGENT_MAX_PROMPT_CHARS": "120000",
         "ANIVAG_AGENT_CONTEXT_WINDOW_TOKENS": "32000",
@@ -252,6 +255,7 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
         "ANIVAG_AGENT_COMPACT_TARGET_TOKENS": "12000",
         "ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES": "8192",
         "ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE": "10",
+        "ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS": "45",
         "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS": "90",
         "ANIVAG_AGENT_MAX_CONCURRENT_KICKS": "2",
     }
@@ -269,6 +273,7 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
     assert settings.agent.maximum_model_calls_per_turn == 9
     assert settings.agent.max_tool_calls_per_turn == 3
     assert settings.agent.maximum_tool_calls_per_turn == 7
+    assert settings.agent.limits_enabled is True
     assert settings.agent.max_output_tokens == 2048
     assert settings.agent.max_prompt_chars == 120_000
     assert settings.agent.context_window_tokens == 32_000
@@ -277,6 +282,7 @@ def test_agent_roles_and_execution_budgets_load_from_settings(monkeypatch):
     assert settings.agent.compact_target_tokens == 12_000
     assert settings.agent.max_tool_result_bytes == 8_192
     assert settings.agent.max_catalog_items_per_page == 10
+    assert settings.agent.stage_timeout_seconds == 45
     assert settings.agent.execution_timeout_seconds == 90
     assert settings.agent.maximum_concurrent_kicks == 2
 
@@ -302,6 +308,7 @@ def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
     ("ANIVAG_AGENT_MAXIMUM_MODEL_CALLS_PER_TURN", "0"),
     ("ANIVAG_AGENT_MAX_TOOL_CALLS_PER_TURN", "0"),
     ("ANIVAG_AGENT_MAXIMUM_TOOL_CALLS_PER_TURN", "0"),
+    ("ANIVAG_AGENT_LIMITS_ENABLED", "maybe"),
     ("ANIVAG_AGENT_MAX_OUTPUT_TOKENS", "0"),
     ("ANIVAG_AGENT_MAX_PROMPT_CHARS", "0"),
     ("ANIVAG_AGENT_CONTEXT_WINDOW_TOKENS", "4096"),
@@ -310,6 +317,8 @@ def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
     ("ANIVAG_AGENT_COMPACT_TARGET_TOKENS", "48000"),
     ("ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES", "511"),
     ("ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE", "101"),
+    ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "nan"),
+    ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "nan"),
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_MAX_CONCURRENT_KICKS", "0"),

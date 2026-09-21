@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from copy import deepcopy
@@ -70,7 +71,8 @@ class StructuredToolAgentModel(Protocol):
         *,
         tools: Sequence[BaseTool],
         result_type: type[_ResultModel],
-        max_model_calls: int,
+        max_model_calls: int | None,
+        request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
@@ -91,7 +93,7 @@ class AgentLoopModel(Protocol):
         prompt: str,
         *,
         tools: Sequence[BaseTool],
-        max_model_calls: int,
+        max_model_calls: int | None,
         handle_text: Callable[[str], None],
         require_tool_call: bool = False,
         request_timeout_seconds: float | None = None,
@@ -162,7 +164,7 @@ class DeepSeekFunctionCallingModel:
         prompt: str,
         *,
         tools: Sequence[BaseTool],
-        max_model_calls: int,
+        max_model_calls: int | None,
         handle_text: Callable[[str], None],
         require_tool_call: bool = False,
         request_timeout_seconds: float | None = None,
@@ -486,7 +488,7 @@ class ArkFunctionCallingModel:
         prompt: str,
         *,
         tools: Sequence[BaseTool],
-        max_model_calls: int,
+        max_model_calls: int | None,
         handle_text: Callable[[str], None],
         require_tool_call: bool = False,
         request_timeout_seconds: float | None = None,
@@ -625,7 +627,7 @@ def _run_function_calling_loop(
     *,
     prompt: str,
     tools: Sequence[BaseTool],
-    max_model_calls: int,
+    max_model_calls: int | None,
     handle_text: Callable[[str], None],
     require_tool_call: bool,
     request_timeout_seconds: float,
@@ -652,7 +654,7 @@ def _run_function_calling_loop(
         raise ValueError("tool names must be unique")
     if any(not tool.description.strip() for tool in tools):
         raise ValueError("tool descriptions must not be empty")
-    if (
+    if max_model_calls is not None and (
         isinstance(max_model_calls, bool)
         or not isinstance(max_model_calls, int)
         or max_model_calls <= 0
@@ -687,7 +689,8 @@ def _run_function_calling_loop(
     emitted_text = False
     submitted_tool = False
 
-    for model_call_index in range(max_model_calls):
+    model_call_index = 0
+    while max_model_calls is None or model_call_index < max_model_calls:
         if model_call_index > 0 and check_control is not None:
             check_control()
         remaining_timeout = deadline - monotonic()
@@ -719,6 +722,7 @@ def _run_function_calling_loop(
             seen_tool_call_ids,
             not emitted_text,
         )
+        model_call_index += 1
         context_window.record_provider_input_tokens(
             provider_input_tokens,
             request_estimated_tokens=measure_context(
@@ -1036,15 +1040,37 @@ class _AgentChatOpenAI(ChatOpenAI):
 
 
 class _ExecutionControlMiddleware(AgentMiddleware):
-    def __init__(self, check: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        check: Callable[[], None],
+        remaining_seconds: Callable[[], float],
+    ) -> None:
         super().__init__()
         self._check = check
+        self._remaining_seconds = remaining_seconds
 
-    def before_model(self, state: Any, runtime: Any) -> None:
+    def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
         self._check()
+        settings = dict(request.model_settings or {})
+        timeout = self._remaining_seconds()
+        configured = settings.get("timeout")
+        if (
+            not isinstance(configured, bool)
+            and isinstance(configured, (int, float))
+            and configured > 0
+        ):
+            timeout = min(timeout, float(configured))
+        try:
+            return handler(request.override(model_settings={**settings, "timeout": timeout}))
+        finally:
+            self._check()
 
-    def after_model(self, state: Any, runtime: Any) -> None:
+    def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
         self._check()
+        try:
+            return handler(request)
+        finally:
+            self._check()
 
 
 class _ContextWindowMiddleware(AgentMiddleware):
@@ -1244,14 +1270,27 @@ class SDKStructuredToolAgentModel:
         *,
         tools: Sequence[BaseTool],
         result_type: type[_ResultModel],
-        max_model_calls: int,
+        max_model_calls: int | None,
+        request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
     ) -> _ResultModel:
-        if not prompt.strip() or max_model_calls <= 0:
-            raise ValueError("Agent prompt and model call budget must be positive")
+        if not prompt.strip():
+            raise ValueError("Agent prompt must not be empty")
+        if max_model_calls is not None and (
+            isinstance(max_model_calls, bool)
+            or not isinstance(max_model_calls, int)
+            or max_model_calls <= 0
+        ):
+            raise ValueError("max_model_calls must be a positive integer")
+        effective_timeout = (
+            self.request_timeout_seconds
+            if request_timeout_seconds is None else request_timeout_seconds
+        )
+        if effective_timeout <= 0:
+            raise ValueError("request_timeout_seconds must be greater than zero")
         if initial_messages is not None and not initial_messages:
             raise ValueError("initial_messages must not be empty when provided")
         if max_input_chars is not None and (
@@ -1260,8 +1299,19 @@ class SDKStructuredToolAgentModel:
             or max_input_chars <= 0
         ):
             raise ValueError("max_input_chars must be positive when provided")
-        if check_control is not None:
-            check_control()
+        deadline = monotonic() + effective_timeout
+
+        def check_run() -> None:
+            if check_control is not None:
+                check_control()
+            if monotonic() >= deadline:
+                raise TimeoutError("Structured Agent execution deadline expired")
+
+        def remaining_seconds() -> float:
+            check_run()
+            return deadline - monotonic()
+
+        check_run()
         with ExitStack() as cleanup:
             if self._chat_model is not None:
                 model = self._chat_model
@@ -1311,14 +1361,13 @@ class SDKStructuredToolAgentModel:
                         fallback_model_name=None,
                     )
                     model.set_cross_provider_fallback(fallback)
-            middleware = [
-                ModelCallLimitMiddleware(
+            middleware = []
+            if max_model_calls is not None:
+                middleware.append(ModelCallLimitMiddleware(
                     run_limit=max_model_calls,
                     exit_behavior="error",
-                )
-            ]
-            if check_control is not None:
-                middleware.append(_ExecutionControlMiddleware(check_control))
+                ))
+            middleware.append(_ExecutionControlMiddleware(check_run, remaining_seconds))
             effective_input_chars = (
                 min(self.max_input_chars, max_input_chars)
                 if self.max_input_chars is not None and max_input_chars is not None
@@ -1350,10 +1399,14 @@ class SDKStructuredToolAgentModel:
                     )
                 },
                 config={
-                    "recursion_limit": max_model_calls * 6 + 10,
+                    "recursion_limit": (
+                        max_model_calls * 6 + 10
+                        if max_model_calls is not None else sys.maxsize
+                    ),
                     "max_concurrency": 1,
                 },
             )
+            check_run()
             result = state.get("structured_response")
             if not isinstance(result, result_type):
                 raise MissingStructuredQueryDraftError(
@@ -1367,7 +1420,8 @@ class SDKStructuredToolAgentModel:
         *,
         tools: Sequence[BaseTool],
         result_type: type[_ResultModel],
-        max_model_calls: int,
+        max_model_calls: int | None,
+        request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
@@ -1380,6 +1434,7 @@ class SDKStructuredToolAgentModel:
             tools=tools,
             result_type=result_type,
             max_model_calls=max_model_calls,
+            request_timeout_seconds=request_timeout_seconds,
             check_control=check_control,
             max_input_chars=max_input_chars,
             context_checkpoint=context_checkpoint,
