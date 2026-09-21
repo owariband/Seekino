@@ -111,7 +111,8 @@
 .composerArea { width: min(100%, 880px); flex: 0 0 auto; align-self: center; padding: 0 8px; }
 .composer { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 36px; gap: 12px; align-items: end; padding: 20px 18px 16px; border: 1px solid transparent; border-radius: 22px; background: var(--surface-raised); box-shadow: var(--shadow-small); }
 .composer:focus-within { border-color: var(--line-strong); }
-.composer textarea { width: 100%; min-height: 54px; max-height: 180px; padding: 0; resize: none; color: var(--ink); border: 0; outline: 0; background: transparent; font-size: .88rem; line-height: 1.7; }
+.composer textarea { width: 100%; min-height: 54px; max-height: 180px; padding: 0; resize: none; color: var(--ink); border: 0; outline: 0; background: transparent; font-size: .88rem; line-height: 1.7; scrollbar-width: none; }
+.composer textarea::-webkit-scrollbar { display: none; }
 .composer textarea::placeholder { color: var(--ink-faint); }
 .sendButton { display: grid; width: 36px; height: 36px; place-items: center; color: var(--canvas); border-radius: 12px; cursor: pointer; background: var(--teal-deep); }
 .sendButton:disabled { opacity: .42; cursor: not-allowed; }

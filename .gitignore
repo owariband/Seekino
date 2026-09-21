@@ -8,6 +8,7 @@ docs/ui-design/
 /transfer.md
 /.baoyu-skills/
 /.agents/skills/anivag-change-gate/
+/engines/VideoRAG/
 /diagrams/
 /infographic/
 /docs/*.dataflow.json

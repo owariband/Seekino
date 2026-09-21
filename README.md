@@ -92,8 +92,6 @@ AniVAG/
 ├── evals/                            # 算法评测工具、数据集与报告
 ├── outputs/                          # 本地运行产物，不进入 Git
 ├── deploy/                           # 本地基础设施与部署配置
-├── engines/
-│   └── VideoRAG/                     # 上游算法参考（Git submodule）
 ├── assets/                           # 本地样例素材与领域参考
 └── docs/                             # 方案、决策与开发记录
 ```
@@ -127,5 +125,3 @@ uv run python -m server.mq --once
 前端请求与公开返回模型见 [UI DTO / VO 契约](docs/api-ui-views.md)，包含逐消息 Series 范围、分页 / SSE、媒体读取与旧数据库迁移说明。
 
 解析任务的模型 Token、视频与职责归属、人民币预估费用及查询接口见 [Parse 模型消耗统计](docs/parse-model-usage.md)。任务页展开“模型消耗”查看；价格配置变更只影响后续调用。
-
-`engines/VideoRAG` 来源于 [Slimzeo/VideoRAG](https://github.com/Slimzeo/VideoRAG)。AniVAG 会保留上游许可证与提交历史，并明确区分 Adapter 集成、独立复现和动画领域改造三类贡献。
