@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from time import monotonic
 
 import pytest
@@ -14,7 +15,10 @@ from server.agent.skills import (
     CHAT_SKILL_PROMPT, EVALUATOR_SKILL_PROMPT, QUERY_SKILL_PROMPT,
     RETRIEVAL_SKILL_PROMPT,
 )
-from server.agent.tools import build_chat_tools, build_evaluator_tools, build_query_tools
+from server.agent.tools import (
+    attach_agent_tool_logging, build_chat_tools, build_evaluator_tools,
+    build_query_tools,
+)
 from server.agent.workspace import AgentWorkspace
 from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkEvidence,
@@ -215,7 +219,7 @@ def test_role_registries_expose_only_the_exact_tools() -> None:
     assert {tool.name for tool in query_tools} == {
         "retrieve",
         "read_trieve_item",
-        "update_draft_tem",
+        "update_draft_item",
         "remove_draft_item",
         "get_draft_catelog",
         "read_draft_item",
@@ -245,6 +249,43 @@ def test_agent_skills_are_explicitly_work_agnostic() -> None:
     assert all("作品无关" in skill for skill in skills)
     assert all("不得写入或依赖任何具体动画" in skill for skill in skills)
     assert all("丰川祥子" not in skill for skill in skills)
+
+
+def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="server.agent.tools")
+    tools, _calls = _query_tools(
+        Retrieval([_hit("chunk-1", large_text="private evidence " * 100)]),
+        AgentWorkspace("workspace", ("series",)),
+    )
+    attach_agent_tool_logging(list(tools.values()), role="Query", inputs=_inputs())
+
+    _retrieve(tools, top_k=1)
+    tools["read_trieve_item"].invoke({"video_chunk_id": "chunk-1"})
+    tools["update_draft_item"].invoke({
+        "video_chunk_id": "chunk-1",
+        "start_ms": 1_100,
+        "end_ms": 1_900,
+        "claim": "private claim text",
+    })
+    with pytest.raises(AgentModelInvocationError, match="retrieved Evidence"):
+        tools["update_draft_item"].invoke({
+            "video_chunk_id": "unknown-chunk",
+            "start_ms": 1_100,
+            "end_ms": 1_900,
+            "claim": "private claim text",
+        })
+
+    assert "event=agent_tool_started role=Query conversation_id=conversation message_id=answer" in caplog.text
+    assert '"top_k":1' in caplog.text
+    assert '"item_video_chunk_ids":["chunk-1"]' in caplog.text
+    assert '"content_chars":' in caplog.text
+    assert '"video_chunk_id":"unknown-chunk"' in caplog.text
+    assert "event=agent_tool_failed" in caplog.text
+    assert "error_type=AgentModelInvocationError" in caplog.text
+    assert "error_message=Draft Item must reference retrieved Evidence" in caplog.text
+    assert "broken cup" not in caplog.text
+    assert "private claim text" not in caplog.text
+    assert "private evidence" not in caplog.text
 
 
 def test_retrieve_returns_catalog_and_read_trieve_item_pages_full_evidence() -> None:
@@ -296,13 +337,13 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
     )
     _retrieve(tools, top_k=1)
 
-    inserted = json.loads(tools["update_draft_tem"].invoke({
+    inserted = json.loads(tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
         "start_ms": 1_100,
         "end_ms": 1_900,
         "claim": "first claim",
     }))
-    updated = json.loads(tools["update_draft_tem"].invoke({
+    updated = json.loads(tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
         "start_ms": 1_200,
         "end_ms": 1_800,
@@ -325,25 +366,25 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
     assert detail["draft"]["claim"] == "revised claim"
     assert detail["retrieval_item"]["evidence"]["videoChunkId"] == "chunk-1"
 
-    out_of_range = tools["update_draft_tem"].invoke({
+    out_of_range = tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
         "start_ms": 900,
         "end_ms": 1_800,
         "claim": "out of range",
     })
-    empty_range = tools["update_draft_tem"].invoke({
+    empty_range = tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
         "start_ms": 1_500,
         "end_ms": 1_500,
         "claim": "empty range",
     })
-    reversed_range = tools["update_draft_tem"].invoke({
+    reversed_range = tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
         "start_ms": 1_600,
         "end_ms": 1_500,
         "claim": "reversed range",
     })
-    negative_range = tools["update_draft_tem"].invoke({
+    negative_range = tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
         "start_ms": -1,
         "end_ms": 1_500,
@@ -356,7 +397,7 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
         assert rejected.startswith("时间区间不合法：")
         assert "1000 <= start_ms < end_ms <= 2000" in rejected
         assert "video_chunk_id='chunk-1' 的 canonical Evidence" in rejected
-        assert "重新调用 update_draft_tem" in rejected
+        assert "重新调用 update_draft_item" in rejected
     assert "start_ms=900, end_ms=1800" in out_of_range
     assert "start_ms=1500, end_ms=1500" in empty_range
     assert "start_ms=1600, end_ms=1500" in reversed_range
@@ -390,7 +431,7 @@ def test_update_draft_tool_does_not_mask_unexpected_errors(monkeypatch) -> None:
     monkeypatch.setattr(AgentWorkspace, "upsert_draft_item", fail_upsert)
 
     with pytest.raises(RuntimeError, match="unexpected storage failure"):
-        tools["update_draft_tem"].invoke({
+        tools["update_draft_item"].invoke({
             "video_chunk_id": "chunk-1",
             "start_ms": 1_100,
             "end_ms": 1_800,
@@ -406,7 +447,7 @@ def test_draft_catalog_cursor_is_rejected_after_draft_changes() -> None:
     )
     _retrieve(tools, top_k=2)
     for chunk_id in ("chunk-1", "chunk-2"):
-        tools["update_draft_tem"].invoke({
+        tools["update_draft_item"].invoke({
             "video_chunk_id": chunk_id,
             "start_ms": 1_100,
             "end_ms": 1_900,
@@ -415,7 +456,7 @@ def test_draft_catalog_cursor_is_rejected_after_draft_changes() -> None:
     first = json.loads(tools["get_draft_catelog"].invoke({}))
     assert first["next_cursor"]
 
-    tools["update_draft_tem"].invoke({
+    tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
         "start_ms": 1_200,
         "end_ms": 1_800,
@@ -432,7 +473,7 @@ def test_chat_tools_use_approved_snapshot_and_update_video_in_place() -> None:
     query_tools, _calls = _query_tools(retrieval, workspace)
     _retrieve(query_tools, top_k=2)
     for chunk_id in ("chunk-1", "chunk-2"):
-        query_tools["update_draft_tem"].invoke({
+        query_tools["update_draft_item"].invoke({
             "video_chunk_id": chunk_id,
             "start_ms": 1_100,
             "end_ms": 1_900,
@@ -482,7 +523,7 @@ def test_workspace_checkpoint_contains_handles_without_full_evidence() -> None:
     workspace = AgentWorkspace("workspace", ("series",))
     query_tools, _calls = _query_tools(retrieval, workspace)
     _retrieve(query_tools, top_k=1)
-    query_tools["update_draft_tem"].invoke({
+    query_tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
         "start_ms": 1_100,
         "end_ms": 1_900,

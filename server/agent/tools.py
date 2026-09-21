@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
+from hashlib import sha256
 import json
+import logging
+from math import isfinite
 from threading import Lock
+from time import monotonic
 from typing import Annotated, Any
+from uuid import UUID
 
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -23,6 +30,160 @@ from .state import (
 )
 from .tool_output import bounded_json, cursor_position, page_items, page_text
 from .workspace import AgentWorkspace
+
+
+_logger = logging.getLogger(__name__)
+
+
+class AgentToolTraceHandler(BaseCallbackHandler):
+    """Trace actual Tool calls without logging user text or full Evidence."""
+
+    def __init__(self, role: str, inputs: RunInputs) -> None:
+        self.role = role
+        self.conversation_id = inputs["conversation_id"]
+        self.message_id = inputs["assistant_message_id"]
+        self._active: dict[UUID, tuple[str, float]] = {}
+        self._lock = Lock()
+
+    def on_tool_start(
+        self,
+        serialized: dict[str, Any] | None,
+        input_str: str,
+        *,
+        run_id: UUID,
+        inputs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        name = serialized.get("name", "unknown") if serialized else "unknown"
+        with self._lock:
+            self._active[run_id] = (name, monotonic())
+        _logger.info(
+            "event=agent_tool_started role=%s conversation_id=%s message_id=%s "
+            "tool=%s tool_run_id=%s arguments_summary=%s",
+            self.role, self.conversation_id, self.message_id, name, run_id,
+            _trace_json(_trace_tool_arguments(inputs)),
+        )
+
+    def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
+        name, duration_ms = self._finish(run_id)
+        status, result = _trace_tool_result(output)
+        _logger.info(
+            "event=agent_tool_finished role=%s conversation_id=%s message_id=%s "
+            "tool=%s tool_run_id=%s status=%s duration_ms=%s result_summary=%s",
+            self.role, self.conversation_id, self.message_id, name, run_id,
+            status, duration_ms, _trace_json(result),
+        )
+
+    def on_tool_error(
+        self, error: BaseException, *, run_id: UUID, **kwargs: Any,
+    ) -> None:
+        name, duration_ms = self._finish(run_id)
+        error_message = (
+            str(error).replace("\n", " ")[:256]
+            if isinstance(error, (AgentModelInvocationError, AgentToolInvocationError))
+            else "-"
+        )
+        _logger.warning(
+            "event=agent_tool_failed role=%s conversation_id=%s message_id=%s "
+            "tool=%s tool_run_id=%s duration_ms=%s error_type=%s error_message=%s",
+            self.role, self.conversation_id, self.message_id, name, run_id,
+            duration_ms, type(error).__name__, error_message,
+        )
+
+    def _finish(self, run_id: UUID) -> tuple[str, int | None]:
+        with self._lock:
+            active = self._active.pop(run_id, None)
+        if active is None:
+            return "unknown", None
+        name, started = active
+        return name, round((monotonic() - started) * 1_000)
+
+
+def attach_agent_tool_logging(
+    tools: list[StructuredTool], *, role: str, inputs: RunInputs,
+) -> None:
+    handler = AgentToolTraceHandler(role, inputs)
+    for tool in tools:
+        tool.callbacks = [*(tool.callbacks or []), handler]
+
+
+def _trace_tool_arguments(inputs: dict[str, Any] | None) -> dict[str, Any]:
+    if inputs is None:
+        return {"input_type": "text"}
+    summary: dict[str, Any] = {}
+    video_chunk_id = inputs.get("video_chunk_id")
+    if isinstance(video_chunk_id, str):
+        if len(video_chunk_id) <= 64:
+            summary["video_chunk_id"] = video_chunk_id
+        else:
+            summary["video_chunk_id_chars"] = len(video_chunk_id)
+            summary["video_chunk_id_sha256"] = sha256(
+                video_chunk_id.encode("utf-8", "replace")
+            ).hexdigest()[:16]
+    for key in ("start_ms", "end_ms", "top_k"):
+        value = inputs.get(key)
+        if type(value) is int:
+            summary[key] = value
+    for key in ("query", "claim"):
+        value = inputs.get(key)
+        if isinstance(value, str):
+            summary[f"{key}_chars"] = len(value)
+            summary[f"{key}_sha256"] = sha256(
+                value.encode("utf-8", "replace")
+            ).hexdigest()[:16]
+    weights = inputs.get("channel_weights")
+    if isinstance(weights, dict):
+        summary["channel_weights"] = {
+            key: weights[key]
+            for key in ("transcript", "semantic", "visual")
+            if key in weights
+            and isinstance(weights[key], (int, float))
+            and not isinstance(weights[key], bool)
+            and isfinite(weights[key])
+        }
+    cursor = inputs.get("cursor")
+    summary["cursor_present"] = isinstance(cursor, str) and bool(cursor)
+    return summary
+
+
+def _trace_tool_result(output: Any) -> tuple[str, dict[str, Any]]:
+    status = output.status if isinstance(output, ToolMessage) else "success"
+    content = output.content if isinstance(output, ToolMessage) else output
+    if not isinstance(content, str):
+        return status, {"result_type": type(content).__name__}
+    summary: dict[str, Any] = {
+        "result_bytes": len(content.encode("utf-8", "replace"))
+    }
+    try:
+        payload = json.loads(content)
+    except ValueError:
+        return ("feedback" if status == "success" else status), summary
+    if not isinstance(payload, dict):
+        return status, summary
+    for key in (
+        "accepted", "operation", "removed", "video_chunk_id", "id",
+        "draft_item_count", "video_item_count", "result_count", "total", "partial",
+    ):
+        if key in payload:
+            summary[key] = payload[key]
+    items = payload.get("items")
+    if isinstance(items, list):
+        summary["item_count"] = len(items)
+        summary["item_video_chunk_ids"] = [
+            item["video_chunk_id"] for item in items[:20]
+            if isinstance(item, dict) and isinstance(item.get("video_chunk_id"), str)
+        ]
+    if isinstance(payload.get("content"), str):
+        summary["content_chars"] = len(payload["content"])
+    if isinstance(payload.get("warnings"), list):
+        summary["warning_count"] = len(payload["warnings"])
+    if "next_cursor" in payload:
+        summary["next_cursor_present"] = payload["next_cursor"] is not None
+    return status, summary
+
+
+def _trace_json(value: dict[str, Any]) -> str:
+    return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
 
 
 _OptionalCursor = Annotated[
@@ -312,20 +473,20 @@ def build_read_trieve_item_tool(
     )
 
 
-def build_update_draft_tem_tool(
+def build_update_draft_item_tool(
     *,
     workspace: AgentWorkspace,
     control: ExecutionControl,
     maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
 ) -> StructuredTool:
-    def update_draft_tem(
+    def update_draft_item(
         video_chunk_id: str,
         start_ms: int,
         end_ms: int,
         claim: str,
     ) -> str:
-        _start_tool_call(control, budget, "update_draft_tem")
+        _start_tool_call(control, budget, "update_draft_item")
         try:
             inserted = workspace.upsert_draft_item(
                 video_chunk_id=video_chunk_id,
@@ -342,7 +503,7 @@ def build_update_draft_tem_tool(
                 f"<= {exc.evidence_end_ms}。"
                 f"合法范围来自 video_chunk_id={exc.video_chunk_id!r} 的 "
                 "canonical Evidence，"
-                "请修正后重新调用 update_draft_tem。"
+                "请修正后重新调用 update_draft_item。"
             ) from exc
         return bounded_json({
             "accepted": True,
@@ -352,8 +513,8 @@ def build_update_draft_tem_tool(
         }, maximum_result_bytes)
 
     return StructuredTool.from_function(
-        func=update_draft_tem,
-        name="update_draft_tem",
+        func=update_draft_item,
+        name="update_draft_item",
         description=(
             "Insert or update one Draft Item by video_chunk_id. The Evidence must have "
             "been retrieved, and the range must satisfy canonical_start_ms <= "
@@ -558,7 +719,7 @@ def build_query_tools(
             maximum_result_bytes=maximum_result_bytes,
             budget=budget,
         ),
-        build_update_draft_tem_tool(
+        build_update_draft_item_tool(
             workspace=workspace,
             control=control,
             maximum_result_bytes=maximum_result_bytes,

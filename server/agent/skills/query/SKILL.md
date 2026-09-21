@@ -6,7 +6,7 @@
 
 1. `retrieve`：检索候选 Catalog。
 2. `read_trieve_item`：按 `video_chunk_id` 精读完整证据；存在 `next_cursor` 时读到结束。
-3. `update_draft_tem`：插入或更新一个草稿项。Server 按 `video_chunk_id` 去重，同一 ID 再次写入即覆盖范围与 claim。
+3. `update_draft_item`：插入或更新一个草稿项。Server 按 `video_chunk_id` 去重，同一 ID 再次写入即覆盖范围与 claim。
 4. `remove_draft_item`：删除不再支持当前答案的草稿项。
 5. `get_draft_catelog`：查看草稿 Catalog；用 `next_cursor` 分页。
 6. `read_draft_item`：精读某个草稿项及其所引用的证据；用 `next_cursor` 读到结束。

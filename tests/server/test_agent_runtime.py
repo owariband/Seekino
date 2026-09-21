@@ -187,7 +187,7 @@ class Query:
         for item in ranges:
             _read_all(tools_by_name["read_trieve_item"], item["video_chunk_id"])
             self.draft_tool_results.append(
-                tools_by_name["update_draft_tem"].invoke({
+                tools_by_name["update_draft_item"].invoke({
                     **item,
                     "claim": f"Grounded evidence for {item['video_chunk_id']}.",
                 })
@@ -314,7 +314,7 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     assert result.hits[0].evidence.end_ms == 2000
     assert result.render_blocks[1].start_ms == 1100
     assert result.render_blocks[1].end_ms == 1900
-    assert "update_draft_tem" in query.prompts[0]
+    assert "update_draft_item" in query.prompts[0]
     assert "read_trieve_item" in query.prompts[0]
     assert "事实性结论" in query.prompts[0]
     assert "用户意图" in evaluator.prompts[0]
@@ -365,6 +365,10 @@ def test_agent_logs_retrieved_selected_and_submitted_hit_counts(caplog):
     assert "retrieved_hit_count=2 selected_hit_count=1" in caplog.text
     assert "event=agent_chat_rendered" in caplog.text
     assert "approved_hit_count=1 submitted_hit_count=1" in caplog.text
+    for role in ("Query", "Evaluator", "Chat"):
+        assert f"event=agent_tool_started role={role}" in caplog.text
+        assert f"event=agent_tool_finished role={role}" in caplog.text
+    assert "conversation_id=conversation message_id=conversation-answer" in caplog.text
 
 
 def test_fourth_turn_runs_after_three_rejections_and_can_be_approved():
@@ -610,7 +614,7 @@ def test_out_of_chunk_range_is_returned_to_query_for_same_turn_revision():
             ]
             completion = super().run_structured(prompt, **kwargs)
             self.draft_tool_results.append(
-                _tool_map(kwargs["tools"])["update_draft_tem"].invoke({
+                _tool_map(kwargs["tools"])["update_draft_item"].invoke({
                     **_selected_range("chunk-1"),
                     "claim": "Corrected grounded evidence.",
                 })
@@ -1410,7 +1414,7 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
             result = _invoke_json(tools_by_name["retrieve"], _retrieval_args(name, 1))
             video_chunk_id = result["items"][0]["video_chunk_id"]
             _read_all(tools_by_name["read_trieve_item"], video_chunk_id)
-            tools_by_name["update_draft_tem"].invoke({
+            tools_by_name["update_draft_item"].invoke({
                 "video_chunk_id": video_chunk_id,
                 "start_ms": 1100,
                 "end_ms": 1900,

@@ -98,7 +98,7 @@ class _QueryModel:
                 cursor = page["next_cursor"]
                 if cursor is None:
                     break
-            tools_by_name["update_draft_tem"].invoke({
+            tools_by_name["update_draft_item"].invoke({
                 "video_chunk_id": video_chunk_id,
                 "start_ms": start_ms,
                 "end_ms": end_ms,

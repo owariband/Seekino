@@ -27,7 +27,8 @@ from .state import (
     SelectedVideoRange,
 )
 from .tools import (
-    DraftReadAudit, build_chat_tools, build_evaluator_tools, build_query_tools,
+    DraftReadAudit, attach_agent_tool_logging, build_chat_tools,
+    build_evaluator_tools, build_query_tools,
 )
 from .workspace import AgentWorkspace
 
@@ -238,6 +239,7 @@ class AgentRuntime:
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
         )
+        attach_agent_tool_logging(query_tools, role="Query", inputs=inputs)
         selection_limit = min(inputs["requested_top_k"], self._maximum_top_k)
         completion = run_query(
             self._query_model,
@@ -301,6 +303,7 @@ class AgentRuntime:
             maximum_catalog_items=self._max_catalog_items,
             audit=audit,
         )
+        attach_agent_tool_logging(evaluator_tools, role="Evaluator", inputs=inputs)
         review = evaluate(
             self._evaluator_model,
             inputs,
@@ -398,6 +401,7 @@ class AgentRuntime:
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
         )
+        attach_agent_tool_logging(chat_tools, role="Chat", inputs=state["inputs"])
         rendered = render_chat(
             self._chat_model,
             state["inputs"],

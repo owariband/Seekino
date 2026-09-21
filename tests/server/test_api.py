@@ -1829,7 +1829,7 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                     cursor = page["next_cursor"]
                     if cursor is None:
                         break
-                tools_by_name["update_draft_tem"].invoke({
+                tools_by_name["update_draft_item"].invoke({
                     "video_chunk_id": item["video_chunk_id"],
                     "start_ms": item["start_ms"],
                     "end_ms": item["end_ms"],
