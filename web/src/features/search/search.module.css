@@ -150,6 +150,14 @@
 .answerSettingValue { min-width: 30px; color: var(--teal-deep); font: 600 .72rem/1 var(--mono); text-align: right; }
 .answerSettings .answerSettingRow input { width: 100%; grid-column: 1 / -1; accent-color: var(--teal-deep); }
 .answerSettings .answerSettingRow input:disabled { opacity: .45; }
+.answerMode { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--line); }
+.answerMode > span { display: grid; gap: 4px; }
+.answerMode strong { color: var(--ink-soft); font-size: .7rem; font-weight: 500; }
+.answerMode small { margin-left: 0; color: var(--ink-faint); font-size: .61rem; white-space: normal; }
+.answerModeChoices { display: flex; flex: 0 0 auto; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.answerModeChoices button { padding: 6px 9px; color: var(--ink-faint); border-radius: 6px; font-size: .68rem; }
+.answerModeChoices button[aria-pressed="true"] { color: var(--teal-deep); background: var(--surface-muted); }
+.answerModeChoices button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 
 .candidatesPanel { min-width: 0; margin-top: 24px; }
 .candidateHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }

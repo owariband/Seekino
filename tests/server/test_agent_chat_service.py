@@ -692,6 +692,7 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
         observed.append((
             kwargs["max_model_calls_per_turn"],
             kwargs["max_tool_calls_per_turn"],
+            kwargs["max_loop_turns"],
         ))
         return original_kick(*args, **kwargs)
 
@@ -706,7 +707,7 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
     )
 
     assert result.assistant_message.status == "COMPLETED"
-    assert observed == [(9, 33)]
+    assert observed == [(9, 33, None)]
     with repository._session_factory() as session:
         user = session.scalar(select(AgentMessageRecord).where(
             AgentMessageRecord.idempotency_key == "custom-run-options",
@@ -716,6 +717,44 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
             "max_model_calls_per_turn": 9,
             "max_tool_calls_per_turn": 33,
         }
+    service.send_message(
+        conversation.conversation_id,
+        workspace_id="local-default",
+        content="再找一个片段",
+        idempotency_key="auto-loop-options",
+        max_loop_turns=0,
+    )
+    service.send_message(
+        conversation.conversation_id,
+        workspace_id="local-default",
+        content="换个片段",
+        idempotency_key="custom-loop-options",
+        max_loop_turns=100,
+    )
+    assert observed[-2:] == [(6, 24, 0), (6, 24, 100)]
+    with repository._session_factory() as session:
+        users = session.scalars(select(AgentMessageRecord).where(
+            AgentMessageRecord.idempotency_key.in_(["auto-loop-options", "custom-loop-options"]),
+        )).all()
+        snapshots = {user.idempotency_key: user.requested_run_options for user in users}
+    assert snapshots["auto-loop-options"]["max_loop_turns"] == 0
+    assert snapshots["custom-loop-options"]["max_loop_turns"] == 100
+    with pytest.raises(AgentConflictError, match="different request fields"):
+        service.send_message(
+            conversation.conversation_id,
+            workspace_id="local-default",
+            content="换个片段",
+            idempotency_key="custom-loop-options",
+            max_loop_turns=0,
+        )
+    with pytest.raises(ValueError, match="between 0 and 100"):
+        service.send_message(
+            conversation.conversation_id,
+            workspace_id="local-default",
+            content="轮次过高",
+            idempotency_key="over-loop-limit",
+            max_loop_turns=101,
+        )
     with pytest.raises(ValueError, match="between 1 and 12"):
         service.send_message(
             conversation.conversation_id,

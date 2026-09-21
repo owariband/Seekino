@@ -134,6 +134,7 @@ class AgentRuntime:
         cancellation: Event | None = None,
         max_model_calls_per_turn: int | None = None,
         max_tool_calls_per_turn: int | None = None,
+        max_loop_turns: int | None = None,
     ) -> AgentFinalOutput:
         if (
             not inputs["workspace_id"].strip()
@@ -149,18 +150,33 @@ class AgentRuntime:
             or not 1 <= top_k <= 100
         ):
             raise ValueError("requested_top_k must be between 1 and 100")
+        if max_loop_turns is not None and (
+            isinstance(max_loop_turns, bool)
+            or not isinstance(max_loop_turns, int)
+            or not 0 <= max_loop_turns <= 100
+        ):
+            raise ValueError("max_loop_turns must be between 0 and 100")
+        model_call_limit = _positive_run_limit(
+            "max_model_calls_per_turn",
+            self._max_model_calls
+            if max_model_calls_per_turn is None else max_model_calls_per_turn,
+        )
+        tool_call_limit = _positive_run_limit(
+            "max_tool_calls_per_turn",
+            self._max_tool_calls
+            if max_tool_calls_per_turn is None else max_tool_calls_per_turn,
+        )
+        legacy_limits_enabled = max_loop_turns is None and self._limits_enabled
         limits = RunLimits(
-            max_model_calls_per_turn=_positive_run_limit(
-                "max_model_calls_per_turn",
-                self._max_model_calls
-                if max_model_calls_per_turn is None
-                else max_model_calls_per_turn,
+            max_loop_turns=(
+                self._max_loop_turns if legacy_limits_enabled
+                else max_loop_turns or None
             ),
-            max_tool_calls_per_turn=_positive_run_limit(
-                "max_tool_calls_per_turn",
-                self._max_tool_calls
-                if max_tool_calls_per_turn is None
-                else max_tool_calls_per_turn,
+            max_model_calls_per_turn=(
+                model_call_limit if legacy_limits_enabled else None
+            ),
+            max_tool_calls_per_turn=(
+                tool_call_limit if legacy_limits_enabled else None
             ),
         )
         control = ExecutionControl(
@@ -180,8 +196,8 @@ class AgentRuntime:
                 "limits": limits,
             },
             config={
-                "recursion_limit": self._max_loop_turns + 5
-                if self._limits_enabled else sys.maxsize,
+                "recursion_limit": limits.max_loop_turns + 5
+                if limits.max_loop_turns is not None else sys.maxsize,
             },
         )
         control.check()
@@ -194,7 +210,7 @@ class AgentRuntime:
         previous = state["turns"]
         limits = state["limits"]
         control.check()
-        if self._limits_enabled and len(previous) >= self._max_loop_turns:
+        if limits.max_loop_turns is not None and len(previous) >= limits.max_loop_turns:
             raise AgentModelInvocationError(
                 "Query / Evaluator loop-turn budget exceeded"
             )
@@ -218,9 +234,7 @@ class AgentRuntime:
             control=query_control,
             calls=calls,
             maximum_top_k=self._maximum_top_k,
-            maximum_tool_calls=(
-                limits.max_tool_calls_per_turn if self._limits_enabled else None
-            ),
+            maximum_tool_calls=limits.max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
         )
@@ -230,9 +244,7 @@ class AgentRuntime:
             inputs,
             previous,
             tools=query_tools,
-            max_model_calls=(
-                limits.max_model_calls_per_turn if self._limits_enabled else None
-            ),
+            max_model_calls=limits.max_model_calls_per_turn,
             control=query_control,
             selection_limit=selection_limit,
             context_budget=context_budget,
@@ -284,9 +296,7 @@ class AgentRuntime:
             control=evaluator_control,
             calls=calls,
             maximum_top_k=self._maximum_top_k,
-            maximum_tool_calls=(
-                limits.max_tool_calls_per_turn if self._limits_enabled else None
-            ),
+            maximum_tool_calls=limits.max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
             audit=audit,
@@ -299,9 +309,7 @@ class AgentRuntime:
             calls,
             sources,
             tools=evaluator_tools,
-            max_model_calls=(
-                limits.max_model_calls_per_turn if self._limits_enabled else None
-            ),
+            max_model_calls=limits.max_model_calls_per_turn,
             control=evaluator_control,
             max_prompt_chars=self._max_prompt_chars,
             workspace=workspace,
@@ -355,9 +363,9 @@ class AgentRuntime:
             review.action,
         )
         if (
-            self._limits_enabled
+            limits.max_loop_turns is not None
             and review.action == "continue"
-            and current.number >= self._max_loop_turns
+            and current.number >= limits.max_loop_turns
         ):
             raise AgentModelInvocationError(
                 f"Evaluator rejected the Query draft after {current.number} turns"
@@ -386,9 +394,7 @@ class AgentRuntime:
         chat_tools = build_chat_tools(
             workspace=state["workspace"],
             control=chat_control,
-            maximum_tool_calls=(
-                limits.max_tool_calls_per_turn if self._limits_enabled else None
-            ),
+            maximum_tool_calls=limits.max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_catalog_items=self._max_catalog_items,
         )
@@ -400,9 +406,7 @@ class AgentRuntime:
             tools=chat_tools,
             control=chat_control,
             max_prompt_chars=self._max_prompt_chars,
-            max_model_calls=(
-                limits.max_model_calls_per_turn if self._limits_enabled else None
-            ),
+            max_model_calls=limits.max_model_calls_per_turn,
             retrieval_trace=build_retrieval_trace(state["turns"]),
         )
         chat_control.check()

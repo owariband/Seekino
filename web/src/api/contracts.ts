@@ -421,12 +421,14 @@ export interface AgentIntegerOption {
 
 export interface AgentMessageOptions {
   topK: AgentIntegerOption;
+  maxLoopTurns: AgentIntegerOption;
   maxModelCallsPerTurn: AgentIntegerOption;
   maxToolCallsPerTurn: AgentIntegerOption;
 }
 
 export interface AgentMessageRunOptions {
   topK?: number;
+  maxLoopTurns?: number;
   maxModelCallsPerTurn?: number;
   maxToolCallsPerTurn?: number;
 }

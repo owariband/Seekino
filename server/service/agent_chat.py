@@ -243,6 +243,11 @@ class AgentChatService:
                 minimum=1,
                 maximum=self._config.maximum_tool_calls_per_turn,
             ),
+            max_loop_turns=AgentIntegerOptionState(
+                default_value=100,
+                minimum=1,
+                maximum=100,
+            ),
         )
 
     def create_conversation(
@@ -385,6 +390,7 @@ class AgentChatService:
         idempotency_key: str, series_ids: list[str] | None = None, top_k: int | None = None,
         max_model_calls_per_turn: int | None = None,
         max_tool_calls_per_turn: int | None = None,
+        max_loop_turns: int | None = None,
         reference: dict[str, str] | None = None,
     ) -> AgentMessageSendState:
         return self.start_message(
@@ -392,6 +398,7 @@ class AgentChatService:
             idempotency_key=idempotency_key, series_ids=series_ids, top_k=top_k, reference=reference,
             max_model_calls_per_turn=max_model_calls_per_turn,
             max_tool_calls_per_turn=max_tool_calls_per_turn,
+            max_loop_turns=max_loop_turns,
         ).result()
 
     def start_message(
@@ -400,6 +407,7 @@ class AgentChatService:
         top_k: int | None = None, stream: bool = False,
         max_model_calls_per_turn: int | None = None,
         max_tool_calls_per_turn: int | None = None,
+        max_loop_turns: int | None = None,
         reference: dict[str, str] | None = None,
     ) -> AgentMessageExecution:
         normalized_workspace = require_nonempty_text(workspace_id, "workspace_id", maximum=64)
@@ -427,7 +435,15 @@ class AgentChatService:
                 maximum=self._config.maximum_tool_calls_per_turn,
             ),
         )
+        if max_loop_turns is not None and (
+            isinstance(max_loop_turns, bool)
+            or not isinstance(max_loop_turns, int)
+            or not 0 <= max_loop_turns <= 100
+        ):
+            raise ValueError("max_loop_turns must be between 0 and 100")
         requested_run_options = asdict(run_options)
+        if max_loop_turns is not None:
+            requested_run_options["max_loop_turns"] = max_loop_turns
         normalized_key = require_nonempty_text(idempotency_key, "idempotency_key", maximum=128)
         timing_started_at: int | None = None
         timing_started_ns: int | None = None
@@ -485,7 +501,7 @@ class AgentChatService:
             try:
                 execution.future = self._executor.submit(
                     self._execute, execution, normalized_workspace, requested_top_k,
-                    run_options,
+                    run_options, max_loop_turns,
                 )
             except Exception:
                 self._executions.pop(started.assistant_message.message_id, None)
@@ -563,7 +579,7 @@ class AgentChatService:
 
     def _execute(
         self, execution: AgentMessageExecution, workspace_id: str, requested_top_k: int,
-        run_options: AgentRunOptionsState,
+        run_options: AgentRunOptionsState, max_loop_turns: int | None,
     ) -> AgentMessageSendState:
         initial = execution.initial
         assistant_id = initial.assistant_message.message_id
@@ -631,6 +647,7 @@ class AgentChatService:
                     inputs, emit=publish_runtime, cancellation=execution.cancellation,
                     max_model_calls_per_turn=run_options.max_model_calls_per_turn,
                     max_tool_calls_per_turn=run_options.max_tool_calls_per_turn,
+                    max_loop_turns=max_loop_turns,
                 )
             except AgentToolInvocationError as exc:
                 if exc.__cause__ is None:

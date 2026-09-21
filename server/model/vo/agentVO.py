@@ -21,6 +21,7 @@ class AgentMessageOptionsView(ContractModel):
     top_k: AgentIntegerOptionView
     max_model_calls_per_turn: AgentIntegerOptionView
     max_tool_calls_per_turn: AgentIntegerOptionView
+    max_loop_turns: AgentIntegerOptionView
 
 
 class AgentMarkdownRenderBlockView(ContractModel):

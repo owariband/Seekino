@@ -165,6 +165,7 @@ function renderApp(
     if (url.includes("/api/agent/messages/options")) {
       return jsonResponse({
         topK: { defaultValue: 10, minimum: 1, maximum: 20 },
+        maxLoopTurns: { defaultValue: 100, minimum: 1, maximum: 100 },
         maxModelCallsPerTurn: { defaultValue: 6, minimum: 1, maximum: 12 },
         maxToolCallsPerTurn: { defaultValue: 24, minimum: 1, maximum: 48 },
       });
@@ -519,7 +520,7 @@ describe("application shell", () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
 
-    expect(await screen.findByText("10 段 · 6 次")).toBeInTheDocument();
+    expect(await screen.findByText("10 段 · 自动")).toBeInTheDocument();
     const composer = await screen.findByRole("textbox", {
       name: "向名场面检索助手提问",
     });
@@ -548,6 +549,7 @@ describe("application shell", () => {
       content: "雨天门口",
       seriesIds: [],
       topK: 10,
+      maxLoopTurns: 0,
       maxModelCallsPerTurn: 6,
       maxToolCallsPerTurn: 24,
       reference: null,
@@ -555,12 +557,26 @@ describe("application shell", () => {
   });
 
   it("sends the answer settings selected beside the Chat composer", async () => {
+    localStorage.setItem("anivag-agent-message-options:local-default", JSON.stringify({
+      topK: 5,
+      maxModelCallsPerTurn: 9,
+      maxToolCallsPerTurn: 36,
+    }));
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
     await user.click(await screen.findByLabelText("配置本次回答"));
+    expect(screen.getByRole("button", { name: "自动" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("slider", { name: "模型调用上限" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "工具调用上限" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("slider", { name: "候选片段数量" }), { target: { value: "7" } });
-    fireEvent.change(screen.getByRole("slider", { name: "模型调用上限" }), { target: { value: "9" } });
-    fireEvent.change(screen.getByRole("slider", { name: "工具调用上限" }), { target: { value: "36" } });
+    await user.click(screen.getByRole("button", { name: "自定义" }));
+    expect(screen.getByRole("slider", { name: "最多运行轮次" })).toHaveAttribute("max", "100");
+    expect(screen.getByRole("slider", { name: "最多运行轮次" })).toHaveValue("100");
+    fireEvent.change(screen.getByRole("slider", { name: "最多运行轮次" }), { target: { value: "37" } });
+    await user.click(screen.getByRole("button", { name: "自动" }));
+    await user.click(screen.getByRole("button", { name: "自定义" }));
+    expect(screen.getByRole("slider", { name: "最多运行轮次" })).toHaveValue("37");
+    fireEvent.change(screen.getByRole("slider", { name: "最多运行轮次" }), { target: { value: "100" } });
     await user.type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
@@ -569,14 +585,40 @@ describe("application shell", () => {
     );
     expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({
       topK: 7,
+      maxLoopTurns: 100,
       maxModelCallsPerTurn: 9,
       maxToolCallsPerTurn: 36,
     });
     expect(JSON.parse(localStorage.getItem("anivag-agent-message-options:local-default")!)).toEqual({
       topK: 7,
+      maxLoopTurns: 100,
       maxModelCallsPerTurn: 9,
       maxToolCallsPerTurn: 36,
     });
+    act(finishAnswer);
+  });
+
+  it("keeps an in-flight Auto request unchanged when the next answer is set to custom turns", async () => {
+    const { fetchMock, finishAnswer } = renderApp();
+    const user = userEvent.setup();
+    const composer = await screen.findByRole("textbox", { name: "向名场面检索助手提问" });
+    await user.type(composer, "第一个问题");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("配置本次回答"));
+    await user.click(screen.getByRole("button", { name: "自定义" }));
+    fireEvent.change(screen.getByRole("slider", { name: "最多运行轮次" }), { target: { value: "42" } });
+    const sendCalls = () => fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send?conversationId=conversation"));
+    expect(JSON.parse(String(sendCalls()[0]?.[1]?.body)).maxLoopTurns).toBe(0);
+
+    act(finishAnswer);
+    await screen.findByText("这是 Agent Chat 保存的完整回答。");
+    await user.type(composer, "第二个问题");
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(sendCalls()).toHaveLength(2));
+    expect(JSON.parse(String(sendCalls()[1]?.[1]?.body)).maxLoopTurns).toBe(42);
     act(finishAnswer);
   });
 

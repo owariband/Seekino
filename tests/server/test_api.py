@@ -2265,6 +2265,11 @@ def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_p
                 "minimum": 1,
                 "maximum": 40,
             },
+            "maxLoopTurns": {
+                "defaultValue": 100,
+                "minimum": 1,
+                "maximum": 100,
+            },
         }
         schema = client.app.openapi()["components"]["schemas"]["AgentMessageSendRequest"]
         for name, default, maximum in (
@@ -2277,6 +2282,10 @@ def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_p
             integer = next(value for value in field["anyOf"] if value["type"] == "integer")
             assert integer["minimum"] == 1
             assert integer["maximum"] == maximum
+        loop_field = schema["properties"]["maxLoopTurns"]
+        loop_integer = next(value for value in loop_field["anyOf"] if value["type"] == "integer")
+        assert loop_integer["minimum"] == 0
+        assert loop_integer["maximum"] == 100
         conversation_id = _create_agent_conversation(client)
         rejected = client.post("/api/agent/messages/send", params={"conversationId": conversation_id},
             headers={"Idempotency-Key": "too-many-results"},
@@ -2286,6 +2295,10 @@ def test_agent_message_options_and_openapi_come_from_service_configuration(tmp_p
             headers={"Idempotency-Key": "too-many-model-calls"},
             json={"workspaceId": "local-default", "content": "找画面", "maxModelCallsPerTurn": 11})
         assert rejected.status_code == 400
+        rejected = client.post("/api/agent/messages/send", params={"conversationId": conversation_id},
+            headers={"Idempotency-Key": "too-many-loop-turns"},
+            json={"workspaceId": "local-default", "content": "找画面", "maxLoopTurns": 101})
+        assert rejected.status_code == 422
     finally:
         service.close()
 

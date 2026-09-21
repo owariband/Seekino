@@ -19,6 +19,7 @@ const messageOptionsStorageKey = `anivag-agent-message-options:${WORKSPACE_ID}`;
 function defaultMessageOptions(options: AgentMessageOptions): SelectedMessageOptions {
   return {
     topK: options.topK.defaultValue,
+    maxLoopTurns: 0,
     maxModelCallsPerTurn: options.maxModelCallsPerTurn.defaultValue,
     maxToolCallsPerTurn: options.maxToolCallsPerTurn.defaultValue,
   };
@@ -41,6 +42,7 @@ function storedMessageOptions(options: AgentMessageOptions): SelectedMessageOpti
     };
     return {
       topK: bounded("topK"),
+      maxLoopTurns: bounded("maxLoopTurns"),
       maxModelCallsPerTurn: bounded("maxModelCallsPerTurn"),
       maxToolCallsPerTurn: bounded("maxToolCallsPerTurn"),
     };
@@ -131,6 +133,7 @@ export function SearchPage() {
   const [messageOptionConfig, setMessageOptionConfig] = useState<AgentMessageOptions | null>(null);
   const [messageOptions, setMessageOptions] = useState<SelectedMessageOptions | null>(null);
   const [messageOptionsError, setMessageOptionsError] = useState<string | null>(null);
+  const customLoopTurnsRef = useRef(100);
   const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string; startMs: number; endMs: number } | null>(null);
   const deleteWarningId = useId();
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -165,8 +168,10 @@ export function SearchPage() {
     let active = true;
     void getAgentMessageOptions().then((options) => {
       if (!active) return;
+      const selected = storedMessageOptions(options);
+      customLoopTurnsRef.current = selected.maxLoopTurns || options.maxLoopTurns.defaultValue;
       setMessageOptionConfig(options);
-      setMessageOptions(storedMessageOptions(options));
+      setMessageOptions(selected);
       setMessageOptionsError(null);
     }).catch((failure) => {
       if (active) setMessageOptionsError(errorMessage(failure));
@@ -605,16 +610,20 @@ export function SearchPage() {
                   <summary aria-label="配置本次回答">
                     <SlidersHorizontal size={13} aria-hidden="true" />
                     <span>回答设置</span>
-                    <small>{messageOptions ? `${messageOptions.topK} 段 · ${messageOptions.maxModelCallsPerTurn} 次` : "服务端默认"}</small>
+                    <small>{messageOptions ? `${messageOptions.topK} 段 · ${messageOptions.maxLoopTurns === 0 ? "自动" : `${messageOptions.maxLoopTurns} 轮`}` : "服务端默认"}</small>
                     <ChevronDown size={13} aria-hidden="true" />
                   </summary>
                   <div className={`${styles.scopeOptions} ${styles.answerSettings}`} role="group" aria-label="本次回答设置">
                     <header>
-                      <div><strong>本次回答</strong><small>提高预算通常更完整，也会更慢并增加模型费用。</small></div>
+                      <div><strong>本次回答</strong><small>自动按运行超时控制；自定义可限制最多轮次。</small></div>
                       <button
                         type="button"
                         disabled={!messageOptionConfig || !messageOptions || searching}
-                        onClick={() => messageOptionConfig && setMessageOptions(defaultMessageOptions(messageOptionConfig))}
+                        onClick={() => {
+                          if (!messageOptionConfig) return;
+                          customLoopTurnsRef.current = messageOptionConfig.maxLoopTurns.defaultValue;
+                          setMessageOptions(defaultMessageOptions(messageOptionConfig));
+                        }}
                       >恢复默认</button>
                     </header>
                     {messageOptionConfig && messageOptions ? (
@@ -635,38 +644,36 @@ export function SearchPage() {
                             }}
                           />
                         </label>
-                        <label className={styles.answerSettingRow}>
-                          <span><strong>模型调用</strong><small>每个 Agent 阶段的调用上限</small></span>
-                          <span className={styles.answerSettingValue}>{messageOptions.maxModelCallsPerTurn}</span>
-                          <input
-                            aria-label="模型调用上限"
-                            type="range"
-                            min={messageOptionConfig.maxModelCallsPerTurn.minimum}
-                            max={messageOptionConfig.maxModelCallsPerTurn.maximum}
-                            value={messageOptions.maxModelCallsPerTurn}
-                            disabled={searching}
-                            onChange={(event) => {
-                              const maxModelCallsPerTurn = event.currentTarget.valueAsNumber;
-                              setMessageOptions((current) => current && ({ ...current, maxModelCallsPerTurn }));
-                            }}
-                          />
-                        </label>
-                        <label className={styles.answerSettingRow}>
-                          <span><strong>工具调用</strong><small>检索、读取和提交工具的调用上限</small></span>
-                          <span className={styles.answerSettingValue}>{messageOptions.maxToolCallsPerTurn}</span>
-                          <input
-                            aria-label="工具调用上限"
-                            type="range"
-                            min={messageOptionConfig.maxToolCallsPerTurn.minimum}
-                            max={messageOptionConfig.maxToolCallsPerTurn.maximum}
-                            value={messageOptions.maxToolCallsPerTurn}
-                            disabled={searching}
-                            onChange={(event) => {
-                              const maxToolCallsPerTurn = event.currentTarget.valueAsNumber;
-                              setMessageOptions((current) => current && ({ ...current, maxToolCallsPerTurn }));
-                            }}
-                          />
-                        </label>
+                        <div className={styles.answerMode}>
+                          <span><strong>运行轮次</strong><small>自定义最多可设 {messageOptionConfig.maxLoopTurns.maximum} 轮</small></span>
+                          <div className={styles.answerModeChoices} role="group" aria-label="运行轮次模式">
+                            <button type="button" aria-pressed={messageOptions.maxLoopTurns === 0} onClick={() => {
+                              if (messageOptions.maxLoopTurns > 0) customLoopTurnsRef.current = messageOptions.maxLoopTurns;
+                              setMessageOptions({ ...messageOptions, maxLoopTurns: 0 });
+                            }}>自动</button>
+                            <button type="button" aria-pressed={messageOptions.maxLoopTurns > 0} onClick={() => {
+                              setMessageOptions({ ...messageOptions, maxLoopTurns: customLoopTurnsRef.current });
+                            }}>自定义</button>
+                          </div>
+                        </div>
+                        {messageOptions.maxLoopTurns > 0 ? (
+                          <label className={styles.answerSettingRow}>
+                            <span><strong>最多轮次</strong><small>检索与核验的循环上限</small></span>
+                            <span className={styles.answerSettingValue}>{messageOptions.maxLoopTurns}</span>
+                            <input
+                              aria-label="最多运行轮次"
+                              type="range"
+                              min={messageOptionConfig.maxLoopTurns.minimum}
+                              max={messageOptionConfig.maxLoopTurns.maximum}
+                              value={messageOptions.maxLoopTurns}
+                              onChange={(event) => {
+                                const maxLoopTurns = event.currentTarget.valueAsNumber;
+                                customLoopTurnsRef.current = maxLoopTurns;
+                                setMessageOptions((current) => current && ({ ...current, maxLoopTurns }));
+                              }}
+                            />
+                          </label>
+                        ) : null}
                       </>
                     ) : <p role={messageOptionsError ? "alert" : "status"}>{messageOptionsError ? `暂时无法读取设置：${messageOptionsError}` : "正在读取服务端限制…"}</p>}
                   </div>

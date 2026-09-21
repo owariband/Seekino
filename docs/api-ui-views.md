@@ -83,13 +83,16 @@ GET /api/agent/messages/options
 {
   "topK":{"defaultValue":3,"minimum":1,"maximum":20},
   "maxModelCallsPerTurn":{"defaultValue":6,"minimum":1,"maximum":12},
-  "maxToolCallsPerTurn":{"defaultValue":24,"minimum":1,"maximum":48}
+  "maxToolCallsPerTurn":{"defaultValue":24,"minimum":1,"maximum":48},
+  "maxLoopTurns":{"defaultValue":100,"minimum":1,"maximum":100}
 }
 ```
 
-Chat 页在输入框附近读取这个接口，展示本次消息可调的检索数量和 Agent
-预算。前端不得写死默认值或上限；`recursion_limit`、超时、并发和上下文安全余量
-属于服务端实现约束，不是用户选项。
+Chat 页在输入框附近读取这个接口，展示本次消息可调的检索数量和循环轮次。
+Auto 不设轮次或调用次数上限，仍受既有阶段与整次超时及上下文安全边界约束；
+自定义轮次为 1–100。模型/工具调用预算字段
+保留给旧客户端，当前 Chat 页不展示。前端不得写死轮次上限；超时、并发和上下文
+安全余量属于服务端实现约束，不是用户选项。
 
 ```http
 POST /api/agent/messages/send?conversationId=<conversationId>
@@ -102,15 +105,16 @@ Content-Type: application/json
   "content":"这段里发生了什么？",
   "seriesIds":["<seriesId>"],
   "topK":5,
-  "maxModelCallsPerTurn":8,
-  "maxToolCallsPerTurn":32,
+  "maxLoopTurns":100,
   "reference":{"messageId":"<来源assistantId>","videoChunkId":"<真实候选Id>"}
 }
 ```
 
-topK、maxModelCallsPerTurn、maxToolCallsPerTurn 均可省略，省略时使用 options
-接口返回的 defaultValue。服务端按动态 maximum 再校验，并把归一化后的预算作为本条
-USER 消息的幂等快照保存；同一 Idempotency-Key 不能换预算重放。reference 可省略 /
+`maxLoopTurns=0` 表示 Auto，`1–100` 表示自定义；不传时保留旧客户端的全局限制行为。
+模型/工具调用预算在 Auto 和自定义模式下均不生效，旧请求未传 `maxLoopTurns` 时仍沿用
+原有处理。topK、maxModelCallsPerTurn、maxToolCallsPerTurn 均可省略，省略时使用 options
+接口返回的 defaultValue。服务端把本条请求的选项作为 USER 消息的幂等快照保存；
+同一 Idempotency-Key 不能换选项重放。reference 可省略 /
 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。`messageId + videoChunkId` 会在服务端恢复该来源回答已审核的精确播放范围，无需让前端回传时间；旧消息缺失或非法范围不再扩大为 canonical Chunk，引用校验失败。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
 
 SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits，还包含可审计的 retrievalTrace（每次 Query、受限 topK、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID）。候选同时暴露 transcriptRank/transcriptScore、textRank/textScore、visionRank/visionScore；Transcript 命中说明使用真正匹配的 ASR cue 与媒体时间偏移。同一 Kick 的后续检索若再次命中已经交给模型的 Chunk，只回传轻量 `reusedHits`；完整 ASR 与 canonical 时间线引用首次结果，Server 仍保存每次检索的完整事实。事实性结论必须包含非空 `selected_video_ranges`；Query Agent 根据 ASR 和事件时间线为每个真实 Chunk 提出候选范围，Evaluator 审核越界、截断或前后冗余，不合理时通过 advice 要求 Query 修订。Evaluator 放行时，`selected_video_ranges` 必须与获批 Evidence 的 ID 集合完全一致，且每个范围都被其 canonical Evidence 包含；非法 complete 转为 continue，不产生降级范围。Agent 工具的 Schema 和构造统一收口在 `server/agent/tools.py`。Chat 的 `submit_video_item` 只接受 `video_chunk_id + claim`；存在 approved evidence 时首次使用 `tool_choice=required`，成功提交至少一个后恢复 `auto`。Output 按 ID 从获批 `selected_video_ranges` 原样绑定 `startMs/endMs`，不存在 Chat proposed range、approved range、canonical range 三层 fallback。Query、Evaluator、Chat 默认使用 `config.yaml` 的 `agent_model.model`（DeepSeek Flash）；Provider 请求或模型响应异常时，失败的单次模型调用在原消息 / Tool 状态上切换到 Ark Doubao Lite。已经完成的业务 Tool 及 acknowledgement 会保留，不重新执行；业务 Tool 错误、取消 / deadline / 预算等控制错误以及本地输入校验错误均不触发模型降级。旧消息的视频块缺少精确范围或范围非法时不渲染，不扩大为 canonical Chunk；Chunk ID 无法与同消息可信 hit 关联时同样不渲染。消息快照有 phase 与单调 version，前端拒绝旧版本覆盖新状态。phase 仅有 QUEUED / RETRIEVING / EVALUATING / RESPONDING，终态为 null，不包含私有推理。

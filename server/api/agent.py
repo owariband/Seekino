@@ -179,6 +179,7 @@ async def send_agent_message(
             top_k=body.top_k,
             max_model_calls_per_turn=body.max_model_calls_per_turn,
             max_tool_calls_per_turn=body.max_tool_calls_per_turn,
+            max_loop_turns=body.max_loop_turns,
             stream=True,
         )
         return StreamingResponse(
@@ -198,6 +199,7 @@ async def send_agent_message(
         top_k=body.top_k,
         max_model_calls_per_turn=body.max_model_calls_per_turn,
         max_tool_calls_per_turn=body.max_tool_calls_per_turn,
+        max_loop_turns=body.max_loop_turns,
     )
     return AgentMessageSendView(
         user_message=_agent_message_view(result.user_message, media=get_services(request).media, workspace_id=body.workspace_id),

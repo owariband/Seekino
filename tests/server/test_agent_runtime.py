@@ -389,6 +389,105 @@ def test_enabled_turn_budget_rejects_third_continue() -> None:
     assert chat.contexts == []
 
 
+def test_auto_mode_ignores_legacy_count_limits_without_changing_runtime() -> None:
+    runtime, query, evaluator, chat, _retrieval = _runtime(
+        evaluator=Evaluator(4), limits_enabled=True,
+        max_model_calls_per_turn=1, max_tool_calls_per_turn=1,
+    )
+
+    runtime.kick(_inputs(), max_loop_turns=0)
+
+    assert len(query.contexts) == len(evaluator.contexts) == 4
+    assert query.budgets == evaluator.budgets == [None] * 4
+    assert chat.model_call_budgets == [None]
+    assert runtime._limits_enabled is True
+    assert runtime._max_loop_turns == 3
+
+
+def test_custom_mode_limits_only_query_evaluator_turns_up_to_100() -> None:
+    runtime, query, evaluator, chat, _retrieval = _runtime(
+        evaluator=Evaluator(4), limits_enabled=True,
+        max_model_calls_per_turn=1, max_tool_calls_per_turn=1,
+    )
+
+    runtime.kick(_inputs(), max_loop_turns=100)
+
+    assert len(query.contexts) == len(evaluator.contexts) == 4
+    assert query.budgets == evaluator.budgets == [None] * 4
+    assert chat.model_call_budgets == [None]
+    assert runtime._max_loop_turns == 3
+
+
+def test_custom_mode_rejects_at_its_own_turn_limit() -> None:
+    runtime, query, evaluator, chat, _retrieval = _runtime(
+        evaluator=Evaluator(4), limits_enabled=False,
+    )
+
+    with pytest.raises(AgentModelInvocationError, match="after 2 turns"):
+        runtime.kick(_inputs(), max_loop_turns=2)
+
+    assert len(query.contexts) == len(evaluator.contexts) == 2
+    assert chat.contexts == []
+
+
+def test_concurrent_kicks_keep_auto_and_custom_limits_isolated() -> None:
+    rendezvous = Barrier(2)
+
+    class OverlappingQuery(Query):
+        def run_structured(self, prompt, **kwargs):
+            context = json.loads(prompt.rsplit("\n\n", 1)[1])
+            if context["turn_number"] == 1:
+                rendezvous.wait(timeout=5)
+            return super().run_structured(prompt, **kwargs)
+
+    class PerRunEvaluator:
+        model_name = "per-run-evaluator"
+
+        def run_structured(self, prompt, *, tools, result_type, max_model_calls, **_kwargs):
+            assert max_model_calls is None
+            context = json.loads(prompt.rsplit("\n\n", 1)[1])
+            tools_by_name = _tool_map(tools)
+            catalog = _invoke_json(tools_by_name["get_draft_catelog"], {})
+            for item in catalog["items"]:
+                _read_all(tools_by_name["read_draft_item"], item["video_chunk_id"])
+            return result_type.model_validate({
+                "action": (
+                    "complete"
+                    if context["inputs"]["conversation_id"] == "auto"
+                    and len(context["turns"]) == 3
+                    else "continue"
+                ),
+                "advice": "retry",
+            })
+
+    runtime, query, _evaluator, _chat, _retrieval = _runtime(
+        query=OverlappingQuery(), evaluator=PerRunEvaluator(),
+        limits_enabled=True,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        auto = executor.submit(runtime.kick, _inputs("auto"), max_loop_turns=0)
+        custom = executor.submit(runtime.kick, _inputs("custom"), max_loop_turns=2)
+        assert auto.result(timeout=5).agent_reply.result_count == 1
+        with pytest.raises(AgentModelInvocationError, match="after 2 turns"):
+            custom.result(timeout=5)
+
+    assert len([c for c in query.contexts if c["inputs"]["conversation_id"] == "auto"]) == 4
+    assert len([c for c in query.contexts if c["inputs"]["conversation_id"] == "custom"]) == 2
+    assert query.budgets == [None] * 6
+    assert runtime._limits_enabled is True
+    assert runtime._max_loop_turns == 3
+
+
+@pytest.mark.parametrize("value", [-1, 101, True, 1.5, "2"])
+def test_kick_rejects_invalid_loop_turn_limit(value) -> None:
+    runtime, query, evaluator, chat, _retrieval = _runtime()
+
+    with pytest.raises(ValueError, match="max_loop_turns must be between 0 and 100"):
+        runtime.kick(_inputs(), max_loop_turns=value)
+
+    assert query.contexts == evaluator.contexts == chat.contexts == []
+
+
 def test_evaluator_cannot_complete_without_reading_the_full_draft() -> None:
     class BlindEvaluator:
         model_name = "blind-evaluator"

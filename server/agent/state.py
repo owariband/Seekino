@@ -238,8 +238,9 @@ class RunInputs(TypedDict):
 
 @dataclass(frozen=True, slots=True)
 class RunLimits:
-    max_model_calls_per_turn: int
-    max_tool_calls_per_turn: int
+    max_loop_turns: int | None
+    max_model_calls_per_turn: int | None
+    max_tool_calls_per_turn: int | None
 
 
 @dataclass(frozen=True, slots=True)

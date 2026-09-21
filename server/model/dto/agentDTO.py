@@ -28,6 +28,7 @@ class AgentMessageSendRequest(ContractModel):
     top_k: int | None = Field(default=None, gt=0, le=100)
     max_model_calls_per_turn: int | None = Field(default=None, gt=0)
     max_tool_calls_per_turn: int | None = Field(default=None, gt=0)
+    max_loop_turns: int | None = Field(default=None, ge=0, le=100)
     reference: EvidenceReference | None = None
 
 
@@ -49,6 +50,7 @@ class AgentMessageOptionsState:
     top_k: AgentIntegerOptionState
     max_model_calls_per_turn: AgentIntegerOptionState
     max_tool_calls_per_turn: AgentIntegerOptionState
+    max_loop_turns: AgentIntegerOptionState
 
 
 @dataclass(frozen=True, slots=True)
