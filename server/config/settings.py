@@ -285,6 +285,10 @@ class ServerSettings:
                     "ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS",
                     agent_defaults.stage_timeout_seconds,
                 ),
+                evaluator_stage_timeout_seconds=_environment_float(
+                    "ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS",
+                    agent_defaults.evaluator_stage_timeout_seconds,
+                ),
                 execution_timeout_seconds=_environment_float(
                     "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS",
                     agent_defaults.execution_timeout_seconds,

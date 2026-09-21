@@ -25,7 +25,7 @@ from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from openai import APIError, OpenAI, OpenAIError
-from pydantic import BaseModel, PrivateAttr
+from pydantic import BaseModel, PrivateAttr, ValidationError
 
 from .constants import ARK_OPENAI_BASE_URL, ARK_PROVIDER, DEEPSEEK_PROVIDER
 from .context_window import (
@@ -745,11 +745,15 @@ def _run_function_calling_loop(
             return
 
         messages.append(assistant_message)
-        for tool_call_id, tool, arguments in validated_calls:
+        for tool_call_id, tool, arguments_or_error in validated_calls:
             if check_control is not None:
                 check_control()
-            output = tool.invoke(arguments)
-            submitted_tool = True
+            if tool is None:
+                output = arguments_or_error
+            else:
+                assert isinstance(arguments_or_error, dict)
+                output = tool.invoke(arguments_or_error)
+                submitted_tool = True
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call_id,
@@ -773,7 +777,7 @@ def _validated_agent_turn(
     str,
     str | None,
     dict[str, Any],
-    list[tuple[str, BaseTool, dict[str, Any]]],
+    list[tuple[str, BaseTool | None, dict[str, Any] | str]],
 ]:
     tools_by_name = {tool.name: tool for tool in tools}
     choice = _single_completion_choice(
@@ -837,7 +841,7 @@ def _validated_agent_turn(
 
     new_tool_call_ids: set[str] = set()
     rendered_calls: list[dict[str, Any]] = []
-    validated_calls: list[tuple[str, BaseTool, dict[str, Any]]] = []
+    validated_calls: list[tuple[str, BaseTool | None, dict[str, Any] | str]] = []
     for tool_call in tool_calls:
         tool_call_id = getattr(tool_call, "id", None)
         if (
@@ -855,25 +859,16 @@ def _validated_agent_turn(
         function_name = getattr(function, "name", None)
         if (
             getattr(tool_call, "type", None) != "function"
-            or function_name not in tools_by_name
+            or not isinstance(function_name, str)
         ):
             raise error_type(
                 f"{provider_label} called an unexpected function"
             )
         arguments = getattr(function, "arguments", None)
-        if not isinstance(arguments, str) or not arguments.strip():
+        if not isinstance(arguments, str):
             raise error_type(
-                f"{provider_label} returned empty function arguments"
+                f"{provider_label} returned invalid function arguments"
             )
-        try:
-            tool = tools_by_name[function_name]
-            result = tool.get_input_schema().model_validate_json(arguments)
-        except (ValueError, TypeError) as error:
-            raise error_type(
-                f"{provider_label} function arguments do not match schema "
-                f"{function_name}"
-            ) from error
-
         rendered_calls.append({
             "id": tool_call_id,
             "type": "function",
@@ -882,6 +877,37 @@ def _validated_agent_turn(
                 "arguments": arguments,
             },
         })
+        tool = tools_by_name.get(function_name)
+        if tool is None:
+            available = ", ".join(tools_by_name)[:400]
+            validated_calls.append((
+                tool_call_id,
+                None,
+                f"Unknown tool {function_name[:80]!r}. Use one of: {available}.",
+            ))
+            continue
+        if not arguments.strip():
+            validated_calls.append((
+                tool_call_id,
+                None,
+                f"Invalid arguments for {function_name}: provide a JSON object "
+                "matching the tool schema.",
+            ))
+            continue
+        try:
+            result = tool.get_input_schema().model_validate_json(arguments)
+        except ValidationError as error:
+            details = "; ".join(
+                f"{'.'.join(map(str, issue['loc'])) or 'arguments'}: {issue['msg']}"
+                for issue in error.errors(include_input=False, include_url=False)[:3]
+            )[:400]
+            validated_calls.append((
+                tool_call_id,
+                None,
+                f"Invalid arguments for {function_name}: {details}. "
+                "Fix them and call the tool again.",
+            ))
+            continue
         validated_calls.append((
             tool_call_id,
             tool,

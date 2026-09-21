@@ -54,6 +54,7 @@ class AgentRuntime:
         max_tool_result_bytes: int = 16_384,
         max_catalog_items_per_page: int = 20,
         stage_timeout_seconds: float = 120,
+        evaluator_stage_timeout_seconds: float = 180,
         execution_timeout_seconds: float = 600,
     ) -> None:
         for name, value, maximum in [
@@ -83,6 +84,7 @@ class AgentRuntime:
             raise ValueError("limits_enabled must be a boolean")
         for name, value in (
             ("stage_timeout_seconds", stage_timeout_seconds),
+            ("evaluator_stage_timeout_seconds", evaluator_stage_timeout_seconds),
             ("execution_timeout_seconds", execution_timeout_seconds),
         ):
             if isinstance(value, bool) or not isfinite(value) or value <= 0:
@@ -100,6 +102,7 @@ class AgentRuntime:
         self._max_tool_result_bytes = max_tool_result_bytes
         self._max_catalog_items = max_catalog_items_per_page
         self._stage_timeout = stage_timeout_seconds
+        self._evaluator_stage_timeout = evaluator_stage_timeout_seconds
         self._execution_timeout = execution_timeout_seconds
         builder = StateGraph(RunState)
         builder.add_node("turn", self.turn)
@@ -288,7 +291,7 @@ class AgentRuntime:
             control,
             deadline=min(
                 control.deadline,
-                monotonic() + self._stage_timeout,
+                monotonic() + self._evaluator_stage_timeout,
             ),
         )
         evaluator_tools = build_evaluator_tools(

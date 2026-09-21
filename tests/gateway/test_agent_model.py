@@ -499,13 +499,14 @@ def test_deepseek_validates_full_tool_batch_before_any_callback() -> None:
             calls=[
                 _tool_call(_video_item(), call_id="call-1"),
                 _tool_call("not-json", call_id="call-2"),
+                _tool_call(_video_item(), call_id="call-1"),
             ],
             finish_reason="tool_calls",
         ),
     )
     events = []
 
-    with pytest.raises(DeepSeekFunctionCallingError, match="do not match schema"):
+    with pytest.raises(DeepSeekFunctionCallingError, match="unique nonempty IDs"):
         _run_agent(
             model,
             handle_text=lambda text: events.append(("text", text)),
@@ -551,10 +552,6 @@ def test_deepseek_agent_loop_rejects_invalid_turn(response, message) -> None:
     ("calls", "message"),
     [
         (
-            [_tool_call(_video_item(), tool_name="unexpected")],
-            "unexpected function",
-        ),
-        (
             [_tool_call(_video_item(), call_id="")],
             "unique nonempty IDs",
         ),
@@ -568,11 +565,6 @@ def test_deepseek_agent_loop_rejects_invalid_turn(response, message) -> None:
         (
             [_tool_call(_video_item(), call_type="custom")],
             "unexpected function",
-        ),
-        ([_tool_call(" ")], "empty function arguments"),
-        (
-            [_tool_call({**_video_item(), "invented": True})],
-            "do not match schema",
         ),
     ],
 )
@@ -594,6 +586,75 @@ def test_deepseek_agent_loop_rejects_invalid_tool_calls(calls, message) -> None:
         )
 
     assert events == []
+
+
+@pytest.mark.parametrize(
+    ("bad_call", "error_text"),
+    [
+        (_tool_call(_video_item(), tool_name="unexpected"), "Unknown tool 'unexpected'"),
+        (_tool_call("not-json"), "Invalid arguments for submit_video_item"),
+        (_tool_call(" "), "provide a JSON object"),
+        (
+            _tool_call({**_video_item(), "invented": True}),
+            "invented: Extra inputs are not permitted",
+        ),
+    ],
+)
+def test_deepseek_agent_loop_returns_invalid_call_to_model_for_retry(
+    bad_call, error_text
+) -> None:
+    model, completions = _function_model(
+        _agent_response(calls=[bad_call], finish_reason="tool_calls"),
+        _agent_response(
+            calls=[_tool_call(_video_item(), call_id="call-2")],
+            finish_reason="tool_calls",
+        ),
+        _agent_response("answer"),
+    )
+    invoked = []
+
+    _run_agent(
+        model,
+        invoke_tool=lambda item: invoked.append(item.video_chunk_id) or "accepted",
+        require_tool_call=True,
+    )
+
+    assert invoked == ["chunk-1"]
+    assert len(completions.calls) == 3
+    assert completions.calls[1]["messages"][-1]["tool_call_id"] == "call-1"
+    assert error_text in completions.calls[1]["messages"][-1]["content"]
+    assert len(completions.calls[1]["messages"][-1]["content"]) < 600
+    assert [call["tool_choice"] for call in completions.calls] == [
+        "required", "required", "auto",
+    ]
+
+
+def test_deepseek_agent_loop_reports_each_call_in_mixed_batch() -> None:
+    model, completions = _function_model(
+        _agent_response(
+            calls=[
+                _tool_call(_video_item(), call_id="call-1"),
+                _tool_call("not-json", call_id="call-2"),
+            ],
+            finish_reason="tool_calls",
+        ),
+        _agent_response("answer"),
+    )
+    invoked = []
+
+    _run_agent(
+        model,
+        invoke_tool=lambda item: invoked.append(item.video_chunk_id) or "accepted",
+    )
+
+    assert invoked == ["chunk-1"]
+    results = completions.calls[1]["messages"][-2:]
+    assert results[0] == {
+        "role": "tool", "tool_call_id": "call-1", "content": "accepted",
+    }
+    assert results[1]["role"] == "tool"
+    assert results[1]["tool_call_id"] == "call-2"
+    assert "Invalid arguments" in results[1]["content"]
 
 
 def test_deepseek_agent_loop_rejects_reused_tool_id_across_turns() -> None:

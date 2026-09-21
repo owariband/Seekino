@@ -39,7 +39,11 @@ Catalog 中常用字段：
 
 ## 第二层：read_trieve_item
 
-对 Catalog 中可能直接支撑答案的 `video_chunk_id` 调用 `read_trieve_item`。它返回该片段的完整 Transcript、视觉事件、语义上下文、来源信息和 canonical 时间范围。若返回 `next_cursor`，继续调用同一个 Tool，传入同一 `video_chunk_id` 和游标，直到为空；分页只是有界传输，不是第三层数据模型。
+对 Catalog 中可能直接支撑答案的 `video_chunk_id` 调用 `read_trieve_item`。先用 `section="overview"` 查看可读 section 和长度，再用同一 `video_chunk_id`、所需 `section` 和起始位置读取内容，必要时指定结束位置。可读 section 为 `candidate`、`selection_reason`、`evidence.transcript`、`evidence.events`、`evidence.text`、`evidence.series_context`、`evidence.metadata`。Transcript、视觉事件、语义上下文、来源信息和 canonical 时间范围都应从相关 section 核验。
+
+精读不使用 cursor。读取 `overview` 时只需传 `video_chunk_id` 和 `section="overview"`，可省略 `start`、`end`；它列出有限、互不重叠的 section 及字符长度。读取其他 section 时可指定字符半开范围 `[start, end)`，返回值包含 `total_chars`。若请求范围过大，按工具提示缩小范围并再次调用；需要更多内容时用相邻范围继续读。同一 ID 可以按显式范围反复读取，不依赖此前返回的书签。Catalog 的 `next_cursor` 仍只用于 `retrieve` 翻页。
+
+要读到当前 section 末尾可省略 `end`；要读完整 section 时先用 `start=0` 且省略 `end`。如果工具返回 `RANGE_TOO_LARGE`，按 `suggested_end` 分段读取。显式填写 `end` 时必须满足 `start < end <=` 当前 `video_chunk_id`、当前 section 的 `total_chars`；不同片段的长度不能互用。
 
 只允许读取当前 Workspace 中已经由 `retrieve` 发现的 ID。最终结论、claim 和播放范围必须来自精读后的证据，不能只根据 Catalog 描述决定。
 

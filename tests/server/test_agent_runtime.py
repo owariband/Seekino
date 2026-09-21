@@ -60,17 +60,35 @@ def _invoke_json(tool, arguments):
 
 
 def _read_all(tool, video_chunk_id):
-    pages = []
-    cursor = None
-    while True:
-        page = _invoke_json(tool, {
-            "video_chunk_id": video_chunk_id,
-            "cursor": cursor,
-        })
-        pages.append(page)
-        cursor = page["next_cursor"]
-        if cursor is None:
-            return pages
+    overview = _invoke_json(tool, {
+        "video_chunk_id": video_chunk_id,
+        "section": "overview",
+    })
+    sections = {}
+    for item in overview["sections"]:
+        name, total = item["name"], item["total_chars"]
+        start = 0
+        content = []
+        while start < total:
+            end = total
+            while True:
+                page = _invoke_json(tool, {
+                    "video_chunk_id": video_chunk_id,
+                    "section": name,
+                    "start": start,
+                    "end": end,
+                })
+                if page.get("ok") is not False:
+                    break
+                assert page["error"]["code"] == "RANGE_TOO_LARGE"
+                end = page["error"]["suggested_end"]
+                assert start < end < total
+            assert page["start"] == start
+            assert page["end"] == end
+            content.append(page["content"])
+            start = end
+        sections[name] = json.loads("".join(content))
+    return sections
 
 
 def _hit(chunk_id="chunk-1", *, workspace="workspace", series="series"):
@@ -599,11 +617,21 @@ def test_invalid_retrieved_scope_or_time_fails_before_evaluation(mutation, expec
     assert evaluator.contexts == chat.contexts == []
 
 
-def test_unknown_selected_id_fails_before_evaluator_or_chat():
-    runtime, _query, evaluator, chat, _retrieval = _runtime(query=Query(selected=("invented",)))
-    with pytest.raises(AgentModelInvocationError, match="Unknown retrieved video_chunk_id"):
-        runtime.kick(_inputs())
-    assert evaluator.contexts == chat.contexts == []
+def test_unknown_selected_id_can_be_corrected_before_evaluator_or_chat():
+    class CorrectingQuery(Query):
+        def run_structured(self, prompt, **kwargs):
+            feedback = _invoke_json(
+                _tool_map(kwargs["tools"])["read_trieve_item"],
+                {"video_chunk_id": "invented", "section": "overview"},
+            )
+            assert feedback["error"]["code"] == "UNKNOWN_ITEM"
+            return super().run_structured(prompt, **kwargs)
+
+    runtime, _query, evaluator, chat, _retrieval = _runtime(query=CorrectingQuery())
+    result = runtime.kick(_inputs())
+
+    assert len(evaluator.contexts) == len(chat.contexts) == 1
+    assert [item.candidate.video_chunk_id for item in result.hits] == ["chunk-1"]
 
 
 def test_out_of_chunk_range_is_returned_to_query_for_same_turn_revision():
@@ -633,7 +661,9 @@ def test_out_of_chunk_range_is_returned_to_query_for_same_turn_revision():
 
     result = runtime.kick(_inputs())
 
-    assert query.draft_tool_results[0].startswith("时间区间不合法：")
+    feedback = json.loads(query.draft_tool_results[0])
+    assert feedback["error"]["code"] == "INVALID_DRAFT_RANGE"
+    assert feedback["error"]["message"].startswith("时间区间不合法：")
     assert json.loads(query.draft_tool_results[1])["accepted"] is True
     assert len(query.contexts) == len(evaluator.contexts) == len(chat.contexts) == 1
     assert result.render_blocks[1].start_ms == 1100
@@ -948,27 +978,39 @@ def test_disabled_limits_ignore_count_but_preserve_run_options():
 
 
 @pytest.mark.parametrize(
-    ("execution_timeout_seconds", "expected_timeout_seconds"),
-    [(300, 120), (45, 45)],
+    (
+        "execution_timeout_seconds",
+        "evaluator_stage_timeout_seconds",
+        "expected_query_chat_timeout_seconds",
+        "expected_evaluator_timeout_seconds",
+    ),
+    [
+        (300, 180, 120, 180),
+        (300, 75, 120, 75),
+        (45, 180, 45, 45),
+    ],
 )
-def test_query_and_evaluator_timeouts_use_stage_or_global_remaining_minimum(
+def test_role_timeouts_use_stage_or_global_remaining_minimum(
     monkeypatch,
     execution_timeout_seconds,
-    expected_timeout_seconds,
+    evaluator_stage_timeout_seconds,
+    expected_query_chat_timeout_seconds,
+    expected_evaluator_timeout_seconds,
 ):
     clock = 100.0
     monkeypatch.setattr("server.agent.runtime.monotonic", lambda: clock)
     monkeypatch.setattr("server.agent.state.monotonic", lambda: clock)
     runtime, query, evaluator, chat, _retrieval = _runtime(
         stage_timeout_seconds=120,
+        evaluator_stage_timeout_seconds=evaluator_stage_timeout_seconds,
         execution_timeout_seconds=execution_timeout_seconds,
     )
 
     runtime.kick(_inputs())
 
-    assert query.request_timeouts == [pytest.approx(expected_timeout_seconds)]
-    assert evaluator.request_timeouts == [pytest.approx(expected_timeout_seconds)]
-    assert chat.request_timeouts == [pytest.approx(expected_timeout_seconds)]
+    assert query.request_timeouts == [pytest.approx(expected_query_chat_timeout_seconds)]
+    assert evaluator.request_timeouts == [pytest.approx(expected_evaluator_timeout_seconds)]
+    assert chat.request_timeouts == [pytest.approx(expected_query_chat_timeout_seconds)]
 
 
 def test_query_stage_deadline_stops_before_evaluator(monkeypatch):
@@ -1209,21 +1251,18 @@ def test_chat_cannot_submit_unapproved_evidence_ids() -> None:
         def run_agent_loop(
             self, prompt, *, tools, **kwargs,
         ):
-            _tool_map(tools)["update_video_item"].invoke({
+            feedback = _invoke_json(_tool_map(tools)["update_video_item"], {
                 "video_chunk_id": "invented-chunk",
                 "claim": "Invented evidence.",
             })
+            assert feedback["error"]["code"] == "UNKNOWN_ITEM"
+            return super().run_agent_loop(prompt, tools=tools, **kwargs)
 
     runtime, *_ = _runtime(chat=InventedEvidenceChat())
     events = []
+    result = runtime.kick(_inputs(), emit=events.append)
 
-    with pytest.raises(
-        AgentModelInvocationError,
-        match="approved Draft Evidence",
-    ):
-        runtime.kick(_inputs(), emit=events.append)
-
-    assert [event for event in events if event["type"] != "answer.progress"] == []
+    assert [item.candidate.video_chunk_id for item in result.hits] == ["chunk-1"]
 
 
 def test_chat_cannot_silently_drop_all_approved_evidence() -> None:
@@ -1319,17 +1358,18 @@ def test_chat_may_choose_an_approved_subset_in_any_order(submitted_ids) -> None:
 def test_chat_tool_does_not_accept_a_playback_range() -> None:
     class RangeSubmittingChat(Chat):
         def run_agent_loop(self, prompt, *, tools, **kwargs):
-            _tool_map(tools)["update_video_item"].invoke({
+            feedback = _invoke_json(_tool_map(tools)["update_video_item"], {
                 "video_chunk_id": "chunk-1",
                 "start_ms": 1000,
                 "end_ms": 2000,
                 "claim": "Grounded evidence.",
             })
+            assert feedback["error"]["code"] == "INVALID_ARGUMENTS"
+            return super().run_agent_loop(prompt, tools=tools, **kwargs)
 
     runtime, *_ = _runtime(chat=RangeSubmittingChat())
-
-    with pytest.raises(AgentModelInvocationError, match="Chat Agent model"):
-        runtime.kick(_inputs())
+    result = runtime.kick(_inputs())
+    assert [item.candidate.video_chunk_id for item in result.hits] == ["chunk-1"]
 
 
 def test_out_of_chunk_range_can_be_discarded_without_crashing_chat() -> None:
@@ -1342,7 +1382,9 @@ def test_out_of_chunk_range_can_be_discarded_without_crashing_chat() -> None:
     result = runtime.kick(_inputs())
 
     assert len(query.contexts) == 1
-    assert query.draft_tool_results[0].startswith("时间区间不合法：")
+    feedback = json.loads(query.draft_tool_results[0])
+    assert feedback["error"]["code"] == "INVALID_DRAFT_RANGE"
+    assert feedback["error"]["message"].startswith("时间区间不合法：")
     assert evaluator.contexts[0]["current_draft"]["video_chunk_ids"] == []
     assert chat.contexts[0]["approved_turn"]["video_chunk_ids"] == []
     assert result.hits == []

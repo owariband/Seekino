@@ -60,6 +60,38 @@ from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
 
 
+def _read_all(tool, video_chunk_id: str) -> dict:
+    overview = json.loads(tool.invoke({
+        "video_chunk_id": video_chunk_id,
+        "section": "overview",
+    }))
+    sections = {}
+    for item in overview["sections"]:
+        name, total = item["name"], item["total_chars"]
+        start = 0
+        content = []
+        while start < total:
+            end = total
+            while True:
+                page = json.loads(tool.invoke({
+                    "video_chunk_id": video_chunk_id,
+                    "section": name,
+                    "start": start,
+                    "end": end,
+                }))
+                if page.get("ok") is not False:
+                    break
+                assert page["error"]["code"] == "RANGE_TOO_LARGE"
+                end = page["error"]["suggested_end"]
+                assert start < end < total
+            assert page["start"] == start
+            assert page["end"] == end
+            content.append(page["content"])
+            start = end
+        sections[name] = json.loads("".join(content))
+    return sections
+
+
 @dataclass
 class _RetrievalStub:
     calls: list[tuple[str, list[str], int, str]]
@@ -238,15 +270,7 @@ class _AgentModelStub:
         if "action" in result_type.model_fields:
             catalog = json.loads(tools_by_name["get_draft_catelog"].invoke({}))
             for item in catalog["items"]:
-                cursor = None
-                while True:
-                    page = json.loads(tools_by_name["read_draft_item"].invoke({
-                        "video_chunk_id": item["video_chunk_id"],
-                        "cursor": cursor,
-                    }))
-                    cursor = page["next_cursor"]
-                    if cursor is None:
-                        break
+                _read_all(tools_by_name["read_draft_item"], item["video_chunk_id"])
             return result_type.model_validate({
                 "action": "complete", "advice": "回答与证据一致，可以交付。",
             })
@@ -1820,15 +1844,7 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                 },
             }))
             for item in result["items"]:
-                cursor = None
-                while True:
-                    page = json.loads(tools_by_name["read_trieve_item"].invoke({
-                        "video_chunk_id": item["video_chunk_id"],
-                        "cursor": cursor,
-                    }))
-                    cursor = page["next_cursor"]
-                    if cursor is None:
-                        break
+                _read_all(tools_by_name["read_trieve_item"], item["video_chunk_id"])
                 tools_by_name["update_draft_item"].invoke({
                     "video_chunk_id": item["video_chunk_id"],
                     "start_ms": item["start_ms"],

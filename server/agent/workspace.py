@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 from threading import RLock
 
 from ..schema import VideoChunkSearchHit, VideoChunkSearchResult
-from .errors import AgentModelInvocationError, InvalidDraftRangeError
+from .errors import (
+    AgentModelInvocationError, InvalidDraftRangeError, UnknownToolItemError,
+)
 from .state import (
     ChatRenderDraft, ChatVideoBlock, DraftItem, MarkdownRenderBlock,
 )
@@ -17,6 +19,9 @@ class AgentWorkspace:
     workspace_id: str
     series_ids: tuple[str, ...]
     _retrieval_items: dict[str, VideoChunkSearchHit] = field(
+        default_factory=dict, init=False, repr=False,
+    )
+    _retrieval_snapshots: dict[str, VideoChunkSearchHit] = field(
         default_factory=dict, init=False, repr=False,
     )
     _draft_items: dict[str, DraftItem] = field(default_factory=dict, init=False, repr=False)
@@ -64,20 +69,34 @@ class AgentWorkspace:
                 )
             incoming[video_chunk_id] = hit.model_copy(deep=True)
         with self._lock:
+            for video_chunk_id, hit in incoming.items():
+                if video_chunk_id not in self._retrieval_snapshots:
+                    self._retrieval_snapshots[video_chunk_id] = hit.model_copy(deep=True)
             self._retrieval_items.update(incoming)
 
     def retrieval_item(self, video_chunk_id: str) -> VideoChunkSearchHit:
         with self._lock:
             item = self._retrieval_items.get(video_chunk_id)
             if item is None:
-                raise AgentModelInvocationError(
-                    f"Unknown retrieved video_chunk_id {video_chunk_id!r}"
+                raise UnknownToolItemError(
+                    f"Unknown retrieved video_chunk_id {video_chunk_id!r}",
+                    "Call retrieve to obtain a valid video_chunk_id, then retry.",
                 )
             return item.model_copy(deep=True)
 
     def retrieval_item_ids(self) -> tuple[str, ...]:
         with self._lock:
             return tuple(self._retrieval_items)
+
+    def retrieval_snapshot(self, video_chunk_id: str) -> VideoChunkSearchHit:
+        with self._lock:
+            item = self._retrieval_snapshots.get(video_chunk_id)
+            if item is None:
+                raise UnknownToolItemError(
+                    f"Unknown retrieved video_chunk_id {video_chunk_id!r}",
+                    "Call retrieve to obtain a valid video_chunk_id, then retry.",
+                )
+            return item.model_copy(deep=True)
 
     def upsert_draft_item(
         self,
@@ -90,8 +109,9 @@ class AgentWorkspace:
         with self._lock:
             evidence_hit = self._retrieval_items.get(video_chunk_id)
             if evidence_hit is None:
-                raise AgentModelInvocationError(
-                    "Draft Item must reference retrieved Evidence"
+                raise UnknownToolItemError(
+                    "Draft Item must reference retrieved Evidence",
+                    "Call retrieve and use one of its video_chunk_id values, then retry.",
                 )
             evidence = evidence_hit.evidence
             if not (
@@ -137,8 +157,9 @@ class AgentWorkspace:
             item = items.get(video_chunk_id)
             if item is None:
                 label = "approved Draft" if approved else "Draft"
-                raise AgentModelInvocationError(
-                    f"Unknown {label} video_chunk_id {video_chunk_id!r}"
+                raise UnknownToolItemError(
+                    f"Unknown {label} video_chunk_id {video_chunk_id!r}",
+                    "Read the Draft catalog and use one of its video_chunk_id values.",
                 )
             return item.model_copy(deep=True)
 
@@ -158,8 +179,9 @@ class AgentWorkspace:
         with self._lock:
             approved, _order = self._draft_state(approved=True)
             if item.video_chunk_id not in approved:
-                raise AgentModelInvocationError(
-                    "Video Item must reference approved Draft Evidence"
+                raise UnknownToolItemError(
+                    "Video Item must reference approved Draft Evidence",
+                    "Read the approved Draft catalog and use one of its video_chunk_id values.",
                 )
             for index, block in enumerate(self._render_blocks):
                 if (

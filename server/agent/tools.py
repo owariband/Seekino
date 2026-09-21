@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
+from functools import wraps
 from hashlib import sha256
 import json
 import logging
@@ -21,14 +22,15 @@ from engine.retrieval.video_retrieval import normalize_hybrid_retrieval_weights
 from ..constants.retrieval import AGENT_RETRIEVAL_STRATEGY_VERSION
 from ..schema import VideoChunkSearchHit, VideoChunkSearchResult
 from .errors import (
-    AgentModelInvocationError, AgentToolInvocationError, InvalidDraftRangeError,
+    AgentModelInvocationError, AgentToolFeedbackError, AgentToolInvocationError,
+    AgentToolOutputError, InvalidDraftRangeError, UnknownToolItemError,
 )
 from .output import validate_result
 from .state import (
     ChatVideoBlock, DraftItem, ExecutionControl, RetrievalCall,
     RetrievalChannelWeights, RunInputs,
 )
-from .tool_output import bounded_json, cursor_position, page_items, page_text
+from .tool_output import bounded_json, cursor_position, page_items, range_text
 from .workspace import AgentWorkspace
 
 
@@ -107,6 +109,67 @@ def attach_agent_tool_logging(
         tool.callbacks = [*(tool.callbacks or []), handler]
 
 
+def _build_agent_tool(
+    *,
+    func: Callable[..., str],
+    name: str,
+    description: str,
+    args_schema: type[BaseModel],
+    maximum_result_bytes: int,
+) -> StructuredTool:
+    """Keep correctable Tool failures model-visible across both Agent runners."""
+
+    @wraps(func)
+    def invoke(*args: Any, **kwargs: Any) -> str:
+        try:
+            return func(*args, **kwargs)
+        except AgentToolFeedbackError as exc:
+            raise ToolException(bounded_json({
+                "ok": False,
+                "error": {
+                    "code": exc.code,
+                    "message": str(exc),
+                    "retry_hint": exc.retry_hint,
+                    **(
+                        {"suggested_end": exc.suggested_end}
+                        if exc.suggested_end is not None else {}
+                    ),
+                },
+            }, maximum_result_bytes)) from exc
+        except UnknownToolItemError as exc:
+            raise ToolException(bounded_json({
+                "ok": False,
+                "error": {
+                    "code": "UNKNOWN_ITEM",
+                    "message": str(exc),
+                    "retry_hint": exc.retry_hint,
+                },
+            }, maximum_result_bytes)) from exc
+
+    def validation_feedback(error: Any) -> str:
+        fields = [
+            ".".join(map(str, item.get("loc", ()))) or "arguments"
+            for item in error.errors(include_input=False, include_url=False)[:4]
+        ]
+        return bounded_json({
+            "ok": False,
+            "error": {
+                "code": "INVALID_ARGUMENTS",
+                "message": f"Invalid arguments for {name}: {', '.join(fields)}.",
+                "retry_hint": "Check the Tool schema and call it again with valid arguments.",
+            },
+        }, maximum_result_bytes)
+
+    return StructuredTool.from_function(
+        func=invoke,
+        name=name,
+        description=description,
+        args_schema=args_schema,
+        handle_tool_error=True,
+        handle_validation_error=validation_feedback,
+    )
+
+
 def _trace_tool_arguments(inputs: dict[str, Any] | None) -> dict[str, Any]:
     if inputs is None:
         return {"input_type": "text"}
@@ -120,10 +183,13 @@ def _trace_tool_arguments(inputs: dict[str, Any] | None) -> dict[str, Any]:
             summary["video_chunk_id_sha256"] = sha256(
                 video_chunk_id.encode("utf-8", "replace")
             ).hexdigest()[:16]
-    for key in ("start_ms", "end_ms", "top_k"):
+    for key in ("start_ms", "end_ms", "top_k", "start", "end"):
         value = inputs.get(key)
         if type(value) is int:
             summary[key] = value
+    section = inputs.get("section")
+    if isinstance(section, str):
+        summary["section"] = section[:64]
     for key in ("query", "claim"):
         value = inputs.get(key)
         if isinstance(value, str):
@@ -160,9 +226,15 @@ def _trace_tool_result(output: Any) -> tuple[str, dict[str, Any]]:
         return ("feedback" if status == "success" else status), summary
     if not isinstance(payload, dict):
         return status, summary
+    if payload.get("ok") is False:
+        status = "error"
+        error = payload.get("error")
+        if isinstance(error, dict) and isinstance(error.get("code"), str):
+            summary["error_code"] = error["code"]
     for key in (
         "accepted", "operation", "removed", "video_chunk_id", "id",
         "draft_item_count", "video_item_count", "result_count", "total", "partial",
+        "section", "start", "end", "total_chars",
     ):
         if key in payload:
             summary[key] = payload[key]
@@ -222,7 +294,12 @@ class ReadItemArguments(BaseModel):
         str,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=36),
     ]
-    cursor: _OptionalCursor = None
+    section: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=80),
+    ] = "overview"
+    start: int = Field(default=0, ge=0, strict=True)
+    end: int | None = Field(default=None, ge=0, strict=True)
 
 
 class DraftCatalogArguments(BaseModel):
@@ -295,20 +372,133 @@ class _ToolCallBudget:
 @dataclass(slots=True)
 class DraftReadAudit:
     catalog_complete: bool = False
-    item_ids: set[str] = field(default_factory=set)
+    expected: dict[str, dict[str, int]] = field(default_factory=dict)
+    ranges: dict[str, dict[str, list[tuple[int, int]]]] = field(default_factory=dict)
     _lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     def mark_catalog_complete(self) -> None:
         with self._lock:
             self.catalog_complete = True
 
-    def mark_item_complete(self, video_chunk_id: str) -> None:
+    def mark_overview(self, video_chunk_id: str, sections: dict[str, str]) -> None:
         with self._lock:
-            self.item_ids.add(video_chunk_id)
+            lengths = {name: len(content) for name, content in sections.items()}
+            if self.expected.get(video_chunk_id) != lengths:
+                self.expected[video_chunk_id] = lengths
+                self.ranges[video_chunk_id] = {name: [] for name in lengths}
+
+    def mark_range(
+        self, video_chunk_id: str, section: str, start: int, end: int,
+    ) -> None:
+        with self._lock:
+            ranges = self.ranges.get(video_chunk_id)
+            if ranges is not None and section in ranges:
+                ranges[section].append((start, end))
 
     def covers(self, video_chunk_ids: Collection[str]) -> bool:
         with self._lock:
-            return self.catalog_complete and set(video_chunk_ids) <= self.item_ids
+            return self.catalog_complete and all(
+                video_chunk_id in self.expected
+                and all(
+                    _ranges_cover(
+                        self.ranges[video_chunk_id][section], total_chars,
+                    )
+                    for section, total_chars in self.expected[video_chunk_id].items()
+                )
+                for video_chunk_id in video_chunk_ids
+            )
+
+
+def _ranges_cover(ranges: list[tuple[int, int]], total_chars: int) -> bool:
+    covered = 0
+    for start, end in sorted(ranges):
+        if start > covered:
+            return False
+        covered = max(covered, end)
+        if covered >= total_chars:
+            return True
+    return covered >= total_chars
+
+
+_EVIDENCE_SECTION_FIELDS = {
+    "evidence.transcript": ("transcript",),
+    "evidence.events": ("allTimeEvents", "allTimeEventText"),
+    "evidence.text": (
+        "baselineVisualCaption", "retrievalText", "videoCompact",
+        "contextBeforeCompact", "contextAfterCompact", "windowSummary",
+    ),
+    "evidence.series_context": (
+        "seriesDescription", "importantExtraData", "characterBible",
+    ),
+}
+
+
+def _detail_sections(
+    hit: VideoChunkSearchHit, draft: DraftItem | None = None,
+) -> dict[str, str]:
+    evidence = hit.evidence.model_dump(mode="json", by_alias=True)
+    grouped = {
+        name: {field_name: evidence[field_name] for field_name in field_names}
+        for name, field_names in _EVIDENCE_SECTION_FIELDS.items()
+    }
+    grouped_fields = {
+        field_name
+        for field_names in _EVIDENCE_SECTION_FIELDS.values()
+        for field_name in field_names
+    }
+    grouped["evidence.metadata"] = {
+        name: value for name, value in evidence.items() if name not in grouped_fields
+    }
+    sections = {
+        "candidate": hit.candidate.model_dump(mode="json", by_alias=True),
+        "selection_reason": hit.selection_reason.model_dump(mode="json", by_alias=True),
+        **grouped,
+    }
+    if draft is not None:
+        sections = {"draft": draft.model_dump(mode="json"), **sections}
+    return {
+        name: json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        for name, value in sections.items()
+    }
+
+
+def _read_detail_section(
+    video_chunk_id: str,
+    sections: dict[str, str],
+    *,
+    section: str,
+    start: int,
+    end: int | None,
+    maximum_result_bytes: int,
+) -> str:
+    if section == "overview":
+        if start != 0 or end is not None:
+            raise AgentToolFeedbackError(
+                "INVALID_RANGE", "overview does not accept a character range.",
+                "Call with video_chunk_id and section='overview' only.",
+            )
+        return bounded_json({
+            "id": video_chunk_id,
+            "section": "overview",
+            "sections": [
+                {"name": name, "total_chars": len(content)}
+                for name, content in sections.items()
+            ],
+        }, maximum_result_bytes)
+    content = sections.get(section)
+    if content is None:
+        raise AgentToolFeedbackError(
+            "UNKNOWN_SECTION", f"Unknown section {section!r}.",
+            "Read section='overview' to see the available section names.",
+        )
+    return range_text(
+        content,
+        resource_id=video_chunk_id,
+        section=section,
+        start=start,
+        end=end,
+        maximum_bytes=maximum_result_bytes,
+    )
 
 
 def build_retrieve_tool(
@@ -337,20 +527,28 @@ def build_retrieve_tool(
         with invocation_lock:
             _start_tool_call(control, budget, "retrieve")
             if cursor is not None:
-                position = cursor_position(cursor, namespace="retrieve")
-                catalog = catalogs.get(position.resource_id)
-                if catalog is None:
-                    raise AgentToolInvocationError("Unknown or expired retrieve cursor")
-                items, metadata = catalog
-                return page_items(
-                    items,
-                    namespace="retrieve",
-                    resource_id=position.resource_id,
-                    cursor=cursor,
-                    maximum_items=maximum_catalog_items,
-                    maximum_bytes=maximum_result_bytes,
-                    metadata=metadata,
-                )
+                try:
+                    position = cursor_position(cursor, namespace="retrieve")
+                    catalog = catalogs.get(position.resource_id)
+                    if catalog is None:
+                        raise AgentToolInvocationError("Unknown or expired retrieve cursor")
+                    items, metadata = catalog
+                    return page_items(
+                        items,
+                        namespace="retrieve",
+                        resource_id=position.resource_id,
+                        cursor=cursor,
+                        maximum_items=maximum_catalog_items,
+                        maximum_bytes=maximum_result_bytes,
+                        metadata=metadata,
+                    )
+                except AgentToolOutputError:
+                    raise
+                except AgentToolInvocationError as exc:
+                    raise AgentToolFeedbackError(
+                        "INVALID_CATALOG_CURSOR", str(exc),
+                        "Call retrieve again with query, top_k and channel_weights.",
+                    ) from exc
             if query is None or top_k is None or channel_weights is None:
                 raise AgentToolInvocationError(
                     "retrieve requires query, top_k and channel_weights"
@@ -425,7 +623,7 @@ def build_retrieve_tool(
                 metadata=metadata,
             )
 
-    return StructuredTool.from_function(
+    return _build_agent_tool(
         func=retrieve,
         name="retrieve",
         description=(
@@ -435,6 +633,7 @@ def build_retrieve_tool(
             "When next_cursor is present, call retrieve with cursor only."
         ),
         args_schema=RetrieveArguments,
+        maximum_result_bytes=maximum_result_bytes,
     )
 
 
@@ -445,31 +644,34 @@ def build_read_trieve_item_tool(
     maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
 ) -> StructuredTool:
-    def read_trieve_item(video_chunk_id: str, cursor: str | None = None) -> str:
+    def read_trieve_item(
+        video_chunk_id: str,
+        section: str = "overview",
+        start: int = 0,
+        end: int | None = None,
+    ) -> str:
         _start_tool_call(control, budget, "read_trieve_item")
-        hit = workspace.retrieval_item(video_chunk_id)
-        content = json.dumps(
-            hit.model_dump(mode="json", by_alias=True),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        return page_text(
-            content,
-            namespace="read_trieve_item",
-            resource_id=video_chunk_id,
-            cursor=cursor,
-            maximum_bytes=maximum_result_bytes,
+        sections = _detail_sections(workspace.retrieval_snapshot(video_chunk_id))
+        return _read_detail_section(
+            video_chunk_id, sections,
+            section=section,
+            start=start,
+            end=end,
+            maximum_result_bytes=maximum_result_bytes,
         )
 
-    return StructuredTool.from_function(
+    return _build_agent_tool(
         func=read_trieve_item,
         name="read_trieve_item",
         description=(
-            "Read one canonical Evidence item by video_chunk_id. The response contains "
-            "a page of the full serialized item and may include next_cursor. Continue "
-            "with the same video_chunk_id and cursor until next_cursor is null."
+            "Read a stable Evidence snapshot by video_chunk_id. First request "
+            "section='overview' to get section names and character lengths. Then "
+            "read a named section with start/end character offsets [start,end); "
+            "omit end to read to this section's end, and never reuse another ID's end. "
+            "If a range is too large, retry with the suggested smaller end."
         ),
         args_schema=ReadItemArguments,
+        maximum_result_bytes=maximum_result_bytes,
     )
 
 
@@ -495,15 +697,14 @@ def build_update_draft_item_tool(
                 claim=claim,
             )
         except InvalidDraftRangeError as exc:
-            raise ToolException(
+            raise AgentToolFeedbackError(
+                "INVALID_DRAFT_RANGE",
                 "时间区间不合法："
                 f"当前提交 start_ms={exc.start_ms}, end_ms={exc.end_ms}；"
                 "必须满足 "
                 f"{exc.evidence_start_ms} <= start_ms < end_ms "
-                f"<= {exc.evidence_end_ms}。"
-                f"合法范围来自 video_chunk_id={exc.video_chunk_id!r} 的 "
-                "canonical Evidence，"
-                "请修正后重新调用 update_draft_item。"
+                f"<= {exc.evidence_end_ms}。",
+                "请按 canonical Evidence 的时间范围修正后重新调用 update_draft_item。",
             ) from exc
         return bounded_json({
             "accepted": True,
@@ -512,7 +713,7 @@ def build_update_draft_item_tool(
             "draft_item_count": len(workspace.draft_items()),
         }, maximum_result_bytes)
 
-    return StructuredTool.from_function(
+    return _build_agent_tool(
         func=update_draft_item,
         name="update_draft_item",
         description=(
@@ -521,7 +722,7 @@ def build_update_draft_item_tool(
             "start_ms < end_ms <= canonical_end_ms."
         ),
         args_schema=UpdateDraftTemArguments,
-        handle_tool_error=True,
+        maximum_result_bytes=maximum_result_bytes,
     )
 
 
@@ -541,11 +742,12 @@ def build_remove_draft_item_tool(
             "draft_item_count": len(workspace.draft_items()),
         }, maximum_result_bytes)
 
-    return StructuredTool.from_function(
+    return _build_agent_tool(
         func=remove_draft_item,
         name="remove_draft_item",
         description="Remove one Draft Item by video_chunk_id.",
         args_schema=RemoveItemArguments,
+        maximum_result_bytes=maximum_result_bytes,
     )
 
 
@@ -566,19 +768,27 @@ def build_get_draft_catelog_tool(
         items = [_draft_card(workspace, item) for item in workspace.draft_items(
             approved=approved,
         )]
-        result = page_items(
-            items,
-            namespace="get_draft_catelog",
-            resource_id=resource_id,
-            cursor=cursor,
-            maximum_items=maximum_catalog_items,
-            maximum_bytes=maximum_result_bytes,
-        )
+        try:
+            result = page_items(
+                items,
+                namespace="get_draft_catelog",
+                resource_id=resource_id,
+                cursor=cursor,
+                maximum_items=maximum_catalog_items,
+                maximum_bytes=maximum_result_bytes,
+            )
+        except AgentToolOutputError:
+            raise
+        except AgentToolInvocationError as exc:
+            raise AgentToolFeedbackError(
+                "INVALID_CATALOG_CURSOR", str(exc),
+                "Call get_draft_catelog without cursor to read the current catalog.",
+            ) from exc
         if audit is not None and json.loads(result)["next_cursor"] is None:
             audit.mark_catalog_complete()
         return result
 
-    return StructuredTool.from_function(
+    return _build_agent_tool(
         func=get_draft_catelog,
         name="get_draft_catelog",
         description=(
@@ -586,6 +796,7 @@ def build_get_draft_catelog_tool(
             "read_draft_item for the full Draft Item and its canonical Evidence."
         ),
         args_schema=DraftCatalogArguments,
+        maximum_result_bytes=maximum_result_bytes,
     )
 
 
@@ -598,35 +809,46 @@ def build_read_draft_item_tool(
     budget: _ToolCallBudget | None = None,
     audit: DraftReadAudit | None = None,
 ) -> StructuredTool:
-    namespace = "read_approved_draft_item" if approved else "read_draft_item"
-
-    def read_draft_item(video_chunk_id: str, cursor: str | None = None) -> str:
+    def read_draft_item(
+        video_chunk_id: str,
+        section: str = "overview",
+        start: int = 0,
+        end: int | None = None,
+    ) -> str:
         _start_tool_call(control, budget, "read_draft_item")
         item = workspace.draft_item(video_chunk_id, approved=approved)
-        hit = workspace.retrieval_item(video_chunk_id)
-        content = json.dumps({
-            "draft": item.model_dump(mode="json"),
-            "retrieval_item": hit.model_dump(mode="json", by_alias=True),
-        }, ensure_ascii=False, separators=(",", ":"))
-        result = page_text(
-            content,
-            namespace=namespace,
-            resource_id=video_chunk_id,
-            cursor=cursor,
-            maximum_bytes=maximum_result_bytes,
+        sections = _detail_sections(
+            workspace.retrieval_snapshot(video_chunk_id), item,
         )
-        if audit is not None and json.loads(result)["next_cursor"] is None:
-            audit.mark_item_complete(video_chunk_id)
+        result = _read_detail_section(
+            video_chunk_id, sections,
+            section=section,
+            start=start,
+            end=end,
+            maximum_result_bytes=maximum_result_bytes,
+        )
+        if audit is not None:
+            if section == "overview":
+                audit.mark_overview(video_chunk_id, sections)
+            else:
+                response = json.loads(result)
+                audit.mark_range(
+                    video_chunk_id, section, response["start"], response["end"],
+                )
         return result
 
-    return StructuredTool.from_function(
+    return _build_agent_tool(
         func=read_draft_item,
         name="read_draft_item",
         description=(
-            "Read one Draft Item and its canonical Evidence by video_chunk_id. Continue "
-            "with next_cursor until the complete serialized detail has been read."
+            "Read a Draft Item and its stable Evidence snapshot by video_chunk_id. "
+            "First request section='overview'; then read every required section "
+            "with start/end character offsets [start,end). Omit end to read to this "
+            "section's end; never reuse another ID's end. Retry oversized ranges "
+            "with the suggested smaller end."
         ),
         args_schema=ReadItemArguments,
+        maximum_result_bytes=maximum_result_bytes,
     )
 
 
@@ -650,7 +872,7 @@ def build_update_video_item_tool(
             "video_item_count": workspace.video_item_count(),
         }, maximum_result_bytes)
 
-    return StructuredTool.from_function(
+    return _build_agent_tool(
         func=update_video_item,
         name="update_video_item",
         description=(
@@ -658,6 +880,7 @@ def build_update_video_item_tool(
             "provide playback times; the Server binds the approved Draft range."
         ),
         args_schema=UpdateVideoItemArguments,
+        maximum_result_bytes=maximum_result_bytes,
     )
 
 
@@ -677,11 +900,12 @@ def build_remove_video_item_tool(
             "video_item_count": workspace.video_item_count(),
         }, maximum_result_bytes)
 
-    return StructuredTool.from_function(
+    return _build_agent_tool(
         func=remove_video_item,
         name="remove_video_item",
         description="Remove one final Video Item by video_chunk_id.",
         args_schema=RemoveItemArguments,
+        maximum_result_bytes=maximum_result_bytes,
     )
 
 

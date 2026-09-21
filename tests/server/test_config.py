@@ -52,6 +52,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.max_tool_result_bytes == 16_384
     assert settings.agent.max_catalog_items_per_page == 20
     assert settings.agent.stage_timeout_seconds == 120
+    assert settings.agent.evaluator_stage_timeout_seconds == 180
     assert settings.agent.execution_timeout_seconds == 600
     assert settings.agent.maximum_concurrent_kicks == 4
     assert settings.agent_query_model is None
@@ -256,6 +257,7 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
         "ANIVAG_AGENT_MAX_TOOL_RESULT_BYTES": "8192",
         "ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE": "10",
         "ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS": "45",
+        "ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS": "210",
         "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS": "90",
         "ANIVAG_AGENT_MAX_CONCURRENT_KICKS": "2",
     }
@@ -283,6 +285,7 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
     assert settings.agent.max_tool_result_bytes == 8_192
     assert settings.agent.max_catalog_items_per_page == 10
     assert settings.agent.stage_timeout_seconds == 45
+    assert settings.agent.evaluator_stage_timeout_seconds == 210
     assert settings.agent.execution_timeout_seconds == 90
     assert settings.agent.maximum_concurrent_kicks == 2
 
@@ -319,6 +322,8 @@ def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
     ("ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE", "101"),
     ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "nan"),
     ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "0"),
+    ("ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS", "nan"),
+    ("ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "nan"),
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_MAX_CONCURRENT_KICKS", "0"),

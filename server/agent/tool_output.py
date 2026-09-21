@@ -7,7 +7,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from .errors import AgentToolInvocationError, AgentToolOutputError
+from .errors import (
+    AgentToolFeedbackError, AgentToolInvocationError, AgentToolOutputError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,56 +116,66 @@ def page_items(
     )
 
 
-def page_text(
+def range_text(
     content: str,
     *,
-    namespace: str,
     resource_id: str,
-    cursor: str | None,
+    section: str,
+    start: int,
+    end: int | None,
     maximum_bytes: int,
 ) -> str:
     _validate_maximum_bytes(maximum_bytes)
-    fingerprint = _fingerprint(content)
-    offset = 0
-    if cursor is not None:
-        position = cursor_position(cursor, namespace=namespace)
-        if position.resource_id != resource_id or position.fingerprint != fingerprint:
-            raise AgentToolInvocationError("Stale or mismatched Tool cursor")
-        offset = position.offset
-    if offset > len(content):
-        raise AgentToolInvocationError("Tool cursor offset is outside the resource")
+    total_chars = len(content)
+    if end is None:
+        end = total_chars
+    if (
+        start < 0
+        or end > total_chars
+        or (start >= end and (start != 0 or total_chars != 0))
+    ):
+        raise AgentToolFeedbackError(
+            "INVALID_RANGE",
+            f"Requested [{start}, {end}) is outside section {section!r} "
+            f"with {total_chars} characters.",
+            f"Use 0 <= start < end <= {total_chars}, or [0, 0) if empty.",
+        )
 
-    low, high, best = offset, len(content), offset
-    while low <= high:
-        end = (low + high) // 2
-        next_cursor = (
-            _cursor(namespace, resource_id, end, fingerprint)
-            if end < len(content)
-            else None
-        )
-        payload = {
+    def payload(stop: int) -> dict[str, Any]:
+        return {
             "id": resource_id,
-            "content": content[offset:end],
-            "next_cursor": next_cursor,
+            "section": section,
+            "start": start,
+            "end": stop,
+            "total_chars": total_chars,
+            "content": content[start:stop],
         }
-        if len(_json(payload).encode("utf-8")) <= maximum_bytes:
-            best = end
-            low = end + 1
+
+    requested = _json(payload(end))
+    requested_bytes = len(requested.encode("utf-8"))
+    if requested_bytes <= maximum_bytes:
+        return requested
+
+    low, high, best = start, end, start
+    while low <= high:
+        middle = (low + high) // 2
+        if len(_json(payload(middle)).encode("utf-8")) <= maximum_bytes:
+            best = middle
+            low = middle + 1
         else:
-            high = end - 1
-    if best == offset and offset < len(content):
+            high = middle - 1
+    if best == start:
         raise AgentToolOutputError(
-            "Tool result budget is too small for a readable content page"
+            "Tool result budget is too small for a readable content range"
         )
-    return bounded_json({
-        "id": resource_id,
-        "content": content[offset:best],
-        "next_cursor": (
-            _cursor(namespace, resource_id, best, fingerprint)
-            if best < len(content)
-            else None
-        ),
-    }, maximum_bytes)
+    raise AgentToolFeedbackError(
+        "RANGE_TOO_LARGE",
+        f"Requested [{start}, {end}) from {section!r} needs "
+        f"{requested_bytes} UTF-8 bytes; the limit is {maximum_bytes}.",
+        f"Retry the same section with start={start} and end<={best}; "
+        f"then continue from start={best}.",
+        suggested_end=best,
+    )
 
 
 def _item_page_payload(

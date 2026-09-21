@@ -81,6 +81,7 @@ def test_process_assembly_receives_runtime_configuration(
             max_output_tokens=2048,
             max_prompt_chars=120_000,
             stage_timeout_seconds=45,
+            evaluator_stage_timeout_seconds=210,
             execution_timeout_seconds=90, maximum_concurrent_kicks=2,
         ),
     )
@@ -216,6 +217,7 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._max_tool_result_bytes == 16_384
         assert runtime._max_catalog_items == 20
         assert runtime._stage_timeout == 45
+        assert runtime._evaluator_stage_timeout == 210
         assert runtime._execution_timeout == 90
         assert services.agent._executor._max_workers == 2
         app = create_app(services, settings=settings)

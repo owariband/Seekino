@@ -223,6 +223,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         max_tool_result_bytes=settings.agent.max_tool_result_bytes,
         max_catalog_items_per_page=settings.agent.max_catalog_items_per_page,
         stage_timeout_seconds=settings.agent.stage_timeout_seconds,
+        evaluator_stage_timeout_seconds=settings.agent.evaluator_stage_timeout_seconds,
         execution_timeout_seconds=settings.agent.execution_timeout_seconds,
     )
     agent = AgentChatService(

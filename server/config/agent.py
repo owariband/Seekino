@@ -24,6 +24,7 @@ class AgentServiceConfig:
     max_tool_result_bytes: int = 16_384
     max_catalog_items_per_page: int = 20
     stage_timeout_seconds: float = 120
+    evaluator_stage_timeout_seconds: float = 180
     execution_timeout_seconds: float = 600
     maximum_concurrent_kicks: int = 4
 
@@ -82,7 +83,10 @@ class AgentServiceConfig:
             raise ValueError(
                 "compact_target_tokens must be lower than auto_compact_tokens"
             )
-        for name in ("stage_timeout_seconds", "execution_timeout_seconds"):
+        for name in (
+            "stage_timeout_seconds", "evaluator_stage_timeout_seconds",
+            "execution_timeout_seconds",
+        ):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")

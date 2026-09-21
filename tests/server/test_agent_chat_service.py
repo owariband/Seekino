@@ -66,6 +66,38 @@ class _RetrievalStub:
         )
 
 
+def _read_all(tool, video_chunk_id: str) -> dict:
+    overview = json.loads(tool.invoke({
+        "video_chunk_id": video_chunk_id,
+        "section": "overview",
+    }))
+    sections = {}
+    for item in overview["sections"]:
+        name, total = item["name"], item["total_chars"]
+        start = 0
+        content = []
+        while start < total:
+            end = total
+            while True:
+                page = json.loads(tool.invoke({
+                    "video_chunk_id": video_chunk_id,
+                    "section": name,
+                    "start": start,
+                    "end": end,
+                }))
+                if page.get("ok") is not False:
+                    break
+                assert page["error"]["code"] == "RANGE_TOO_LARGE"
+                end = page["error"]["suggested_end"]
+                assert start < end < total
+            assert page["start"] == start
+            assert page["end"] == end
+            content.append(page["content"])
+            start = end
+        sections[name] = json.loads("".join(content))
+    return sections
+
+
 @dataclass
 class _QueryModel:
     model_name: str = "query-test"
@@ -89,15 +121,7 @@ class _QueryModel:
                 },
             })
         for video_chunk_id, start_ms, end_ms in self.selected_ranges:
-            cursor = None
-            while True:
-                page = json.loads(tools_by_name["read_trieve_item"].invoke({
-                    "video_chunk_id": video_chunk_id,
-                    "cursor": cursor,
-                }))
-                cursor = page["next_cursor"]
-                if cursor is None:
-                    break
+            _read_all(tools_by_name["read_trieve_item"], video_chunk_id)
             tools_by_name["update_draft_item"].invoke({
                 "video_chunk_id": video_chunk_id,
                 "start_ms": start_ms,
@@ -129,15 +153,7 @@ class _EvaluatorModel:
             if cursor is None:
                 break
         for video_chunk_id in item_ids:
-            cursor = None
-            while True:
-                page = json.loads(tools_by_name["read_draft_item"].invoke({
-                    "video_chunk_id": video_chunk_id,
-                    "cursor": cursor,
-                }))
-                cursor = page["next_cursor"]
-                if cursor is None:
-                    break
+            _read_all(tools_by_name["read_draft_item"], video_chunk_id)
         self.calls += 1
         return result_type.model_validate({
             "action": "complete" if self.calls >= self.approve_after else "continue",
