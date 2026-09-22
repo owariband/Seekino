@@ -145,11 +145,15 @@ export function UploadProvider({ children }: PropsWithChildren) {
           originalFilename: task.file.name,
           mediaType,
           totalSizeBytes: task.file.size,
+          parseConfig: task.parseConfig,
         });
       }
 
       sessions.current.set(task.taskId, session);
-      updateTask(task.taskId, (current) => ({ ...current, session, episodeOrder: session.episodeOrder }));
+      updateTask(task.taskId, (current) => ({
+        ...current, session, episodeOrder: session.episodeOrder,
+        parseConfig: session.parseConfig ?? current.parseConfig,
+      }));
       signal.throwIfAborted();
       if (session.seriesId !== task.seriesId) {
         throw new Error("上传会话不属于当前视频系列");
@@ -317,6 +321,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
         inFlightBytes: 0,
         status: session.status === "COMPLETING" ? "completing" : "paused",
         idempotencyKey: "",
+        parseConfig: session.parseConfig ?? undefined,
         session,
         error: session.status === "COMPLETING" ? undefined : session.lastError?.message ?? "请重新选择同一个原视频，系统会从服务端已确认的分片继续上传",
       }))];
@@ -345,7 +350,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
   const enqueue = useCallback(
     (inputs: UploadInput[]) => {
       if (!selectedSeries || inputs.length === 0) return;
-      const additions = inputs.map<UploadTask>(({ file, episodeOrder }) => ({
+      const additions = inputs.map<UploadTask>(({ file, episodeOrder, parseConfig }) => ({
         taskId: crypto.randomUUID(),
         seriesId: selectedSeries.seriesId,
         file,
@@ -356,6 +361,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
         inFlightBytes: 0,
         status: "queued",
         idempotencyKey: crypto.randomUUID(),
+        parseConfig,
       }));
       setTasks((current) => [...current, ...additions]);
     },
@@ -411,6 +417,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
           session = await createUploadSession(task.seriesId, task.idempotencyKey, {
             workspaceId: WORKSPACE_ID, episodeOrder: task.episodeOrder,
             originalFilename: task.file.name, mediaType, totalSizeBytes: task.file.size,
+            parseConfig: task.parseConfig,
           });
           sessions.current.set(taskId, session);
         }

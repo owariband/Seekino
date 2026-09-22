@@ -11,6 +11,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import event, select
 
+from engine.parse.runtime import VideoParseRuntimeConfig
+from gateway.config import load_config
+from server.config.media import ImageUploadConfig
+from server.config.parse_profile import ParseConfig
 from server.database import DatabaseEnvironment, create_session_factory
 from server.model.index_sync import IndexSyncIntentRecord, IndexSyncOperation, IndexSyncStatus
 from server.model.job import (
@@ -66,7 +70,7 @@ def _config() -> UploadServiceConfig:
     )
 
 
-def _upload_service(repository, tmp_path, *, clock=None):
+def _upload_service(repository, tmp_path, *, clock=None, parse_defaults=None):
     engine, _video_repository = repository
     with engine.begin() as connection:
         connection.execute(
@@ -92,6 +96,7 @@ def _upload_service(repository, tmp_path, *, clock=None):
             config=_config(),
             probe_duration=lambda _path: 12_345,
             clock=clock,
+            parse_defaults=parse_defaults,
             qdrant_mutation_lock=QdrantMutationLock(
                 engine,
                 environment=DatabaseEnvironment.TEST,
@@ -167,6 +172,63 @@ def test_upload_session_is_idempotent_and_reports_progress(
         assert connection.execute(
             select(UploadSegmentRecord.segment_number)
         ).all() == [(0,), (1,)]
+
+
+def test_selected_parse_config_survives_upload_completion_and_job_claim(
+    repository, tmp_path,
+) -> None:
+    defaults = ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(), gateway=load_config(),
+        upload=_config(), images=ImageUploadConfig(),
+        embedding_model="test-embedding", embedding_dimensions=1024,
+        embedding_fps=1.0,
+    )
+    selected = defaults.model_copy(update={
+        "window": defaults.window.model_copy(update={"analysis_max_height": 480}),
+        "vision": defaults.vision.model_copy(update={"fps": 0.5}),
+    })
+    engine, _store, _upload_repository, service = _upload_service(
+        repository, tmp_path, parse_defaults=defaults,
+    )
+    request = dict(
+        workspace_id="local-default",
+        series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        original_filename="episode-07.mp4",
+        media_type="video/mp4",
+        total_size_bytes=10,
+        idempotency_key="configured-upload",
+    )
+    upload = service.create_session(**request, parse_config=selected)
+    assert upload.parse_config == selected.model_dump(mode="json")
+    assert service.create_session(**request, parse_config=selected).upload_session_id == upload.upload_session_id
+    with pytest.raises(UploadConflictError, match="idempotency"):
+        service.create_session(**request, parse_config=defaults)
+
+    default_request = {**request, "idempotency_key": "default-config-upload"}
+    default_upload = service.create_session(**default_request)
+    service._parse_defaults = selected
+    replay = service.create_session(**default_request)
+    assert replay.upload_session_id == default_upload.upload_session_id
+    assert replay.parse_config == defaults.model_dump(mode="json")
+
+    service._parse_defaults = None
+    legacy_request = {**request, "idempotency_key": "legacy-config-upload"}
+    legacy_upload = service.create_session(**legacy_request)
+    assert legacy_upload.parse_config is None
+    service._parse_defaults = defaults
+    with pytest.raises(UploadConflictError, match="idempotency"):
+        service.create_session(**legacy_request, parse_config=selected)
+
+    _put(service, upload.upload_session_id, 0, b"abcd")
+    _put(service, upload.upload_session_id, 1, b"efgh")
+    _put(service, upload.upload_session_id, 2, b"ij")
+    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    lease = MySqlParseJobQueue(create_session_factory(engine)).claim_next(
+        "configured-worker", lease_duration=timedelta(minutes=5),
+    )
+    assert lease is not None and lease.job_id == completed.job_id
+    assert ParseConfig.model_validate(lease.parse_config) == selected
+    assert ParseJobRepository(create_session_factory(engine)).get(completed.job_id).parse_config == upload.parse_config
 
 
 def test_service_checks_workspace_and_session_range_before_writing_bytes(

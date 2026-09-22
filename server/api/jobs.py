@@ -236,6 +236,7 @@ def project_job(detail: ParseJobDetail) -> ParseJobView:
         workspace_id=job.workspace_id, series_id=job.series_id,
         video_id=job.video_id, series_name=job.series_name, episode_order=job.episode_order,
         original_filename=job.original_filename, pipeline_version=job.pipeline_version,
+        parse_config=job.parse_config,
         retry_of_job_id=None, status=job.status, stage=job.stage, progress=job.progress,
         overall_progress=overall_progress, stage_progress=stage_progress,
         completed_duration_ms=completed_duration_ms,

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from pydantic import Field
 
+from ...config.parse_profile import ParseConfig
 from ...schema import ContractModel
 from ..upload import UploadSessionStatus
 
@@ -44,6 +45,7 @@ class UploadSessionState:
     version: int = 1
     missing_segment_numbers: tuple[int, ...] = ()
     last_error_code: str | None = None
+    parse_config: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,3 +96,4 @@ class UploadSessionCreateRequest(ContractModel):
     media_type: str = Field(min_length=1, max_length=255)
     total_size_bytes: int = Field(gt=0, le=9_007_199_254_740_991, strict=True)
     content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    parse_config: ParseConfig | None = None

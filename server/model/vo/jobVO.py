@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from ...config.parse_profile import ParseConfig
 from ...schema import ContractModel
 from ..job import ParseJobStatus, ParseJobStage, VideoChunkCheckpointStage
 from .commonVO import Failure, UnixTimeMs
@@ -61,6 +62,7 @@ class ParseJobView(ContractModel):
     version: int = Field(ge=1)
     created_at: UnixTimeMs
     updated_at: UnixTimeMs
+    parse_config: ParseConfig | None = None
 
 
 class JobCounts(ContractModel):

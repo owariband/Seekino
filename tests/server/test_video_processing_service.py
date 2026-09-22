@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 from PIL import Image
+from engine.parse.runtime import VideoParseRuntimeConfig
+from gateway.config import load_config
 from engine.parse.schemas import (
     TranscriptAnalysis,
     VideoChunkCheckpoint,
@@ -23,6 +25,8 @@ from gateway.schemas import EmbeddingResult
 from sqlalchemy import select
 
 from server.database import DatabaseEnvironment, create_session_factory
+from server.config.media import ImageUploadConfig
+from server.config.parse_profile import ParseConfig
 from server.identity import derive_video_chunk_id, derive_video_id
 from server.model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
 from server.model.index_sync import IndexSyncIntentRecord, IndexSyncStatus
@@ -48,6 +52,105 @@ from server.storage.artifact import LocalArtifactStore
 from server.service.video_processing import VideoProcessingConfig, VideoProcessingService
 from server.utils.time import now_unix_time_ms, timedelta_to_ms
 from server.storage.artifact import ArtifactIntegrityError
+
+
+def test_worker_uses_the_config_snapshot_instead_of_its_startup_processor() -> None:
+    selected = ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(), gateway=load_config(),
+        upload=UploadServiceConfig(), images=ImageUploadConfig(),
+        embedding_model="test-embedding", embedding_dimensions=1024,
+        embedding_fps=1,
+    )
+    observed = []
+
+    class ConfiguredProcessor:
+        def process(self, lease):
+            observed.append(lease.job_id)
+            return ["configured-chunk"]
+
+    def build(config):
+        observed.append(config.window.analysis_max_height)
+        return ConfiguredProcessor()
+
+    processor = VideoProcessingService(
+        object(), object(), object(), object(), object(), object(),
+        object(), object(), processor_factory=build,
+    )
+    lease = SimpleNamespace(job_id="configured-job", parse_config=selected.model_dump(mode="json"))
+    assert processor.process(lease) == ["configured-chunk"]
+    assert observed == [720, "configured-job"]
+
+
+def test_background_limits_are_applied_and_reused_from_the_job_snapshot(tmp_path) -> None:
+    selected = ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(), gateway=load_config(),
+        upload=UploadServiceConfig(), images=ImageUploadConfig(),
+        embedding_model="test-embedding", embedding_dimensions=1024,
+        embedding_fps=1,
+    )
+    selected = selected.model_copy(update={
+        "context": selected.context.model_copy(update={
+            "background_text_max_chars": 256,
+            "max_background_images": 1,
+            "background_image_max_edge": 128,
+        }),
+    })
+    image_paths = {}
+    for image_id in ("first", "second"):
+        path = tmp_path / f"{image_id}.png"
+        Image.new("RGB", (512, 256), "blue").save(path)
+        image_paths[image_id] = path
+
+    class Artifacts:
+        def resolve_series_image(self, image_id, **_kwargs):
+            return image_paths[image_id]
+
+        def uri_for_path(self, path):
+            return str(path)
+
+        def fingerprint(self, path):
+            return SimpleNamespace(sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest())
+
+    processor = VideoProcessingService(
+        _MemoryJobs(), object(), object(), Artifacts(), object(), object(),
+        object(), object(), parse_config=selected,
+    )
+    lease = replace(_lease(), important_extra_data={
+        "format": "markdown",
+        "content": "asset://first asset://second " + "背景资料" * 100,
+    })
+    work_directory = tmp_path / "work"
+    work_directory.mkdir()
+    text, references, missing = processor._parse_background(lease, work_directory, {})
+    assert not missing
+    assert text is not None and len(text) == 256
+    assert [item.image_id for item in references] == ["first"]
+    with Image.open(references[0].path) as image:
+        assert image.size == (128, 64)
+    snapshot = json.loads((work_directory / "background.snapshot.json").read_text())
+    assert snapshot["version"] == 2
+    assert len(snapshot["images"]) == 1
+    changed = replace(lease, important_extra_data={"format": "markdown", "content": "新背景"})
+    assert processor._parse_background(changed, work_directory, {}) == (text, references, False)
+
+    no_background = selected.model_copy(update={
+        "context": selected.context.model_copy(update={
+            "background_text_enabled": False,
+            "background_images_enabled": False,
+        }),
+    })
+    no_background_processor = VideoProcessingService(
+        _MemoryJobs(), object(), object(), Artifacts(), object(), object(),
+        object(), object(), parse_config=no_background,
+    )
+    disabled_directory = tmp_path / "disabled"
+    disabled_directory.mkdir()
+    invalid_unused_background = replace(
+        lease, important_extra_data={"format": "json", "content": "{invalid"},
+    )
+    assert no_background_processor._parse_background(
+        invalid_unused_background, disabled_directory, {},
+    ) == (None, [], False)
 
 
 class _Algorithm:

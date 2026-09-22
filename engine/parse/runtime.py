@@ -30,6 +30,7 @@ from .schemas import (
 from .video_chunk_parse import (
     ContentFilterVideoUnderstandingAgent,
     FrameFallbackVideoUnderstandingAgent,
+    OrderedFrameVideoUnderstandingAgent,
     VideoASRAgent,
     VideoUnderstandingAgent,
     VideoUnderstandingAgentProtocol,
@@ -53,6 +54,11 @@ class VideoParseRuntimeConfig:
     transcript_fps: float | None = None
     video_fps: float | None = None
     fallback_enabled: bool | None = None
+    fallback_config: VideoFallbackConfig | None = None
+    video_input_mode: Literal["video", "ordered_frames"] = "video"
+    video_max_frames_per_window: int | None = None
+    transcript_max_output_tokens: int | None = None
+    video_max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
         if self.chunk_duration_ms <= 0:
@@ -65,6 +71,16 @@ class VideoParseRuntimeConfig:
             raise ValueError("asr_concurrency must be greater than zero")
         if self.request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be greater than zero")
+        if (self.video_input_mode == "ordered_frames") != (
+            self.video_max_frames_per_window is not None
+        ):
+            raise ValueError("ordered_frames requires video_max_frames_per_window")
+        if self.video_max_frames_per_window is not None and self.video_max_frames_per_window <= 0:
+            raise ValueError("video_max_frames_per_window must be positive")
+        for name in ("transcript_max_output_tokens", "video_max_output_tokens"):
+            value = getattr(self, name)
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,7 +380,7 @@ class EngineVideoParseRuntime:
                         )
                     ),
                     fallback_enabled=fallback_enabled,
-                    fallback=parser_config.fallback,
+                    fallback=self._config.fallback_config or parser_config.fallback,
                 )
             return self._resolved
 
@@ -377,6 +393,7 @@ class EngineVideoParseRuntime:
                     request_timeout_seconds=(
                         self._config.request_timeout_seconds
                     ),
+                    max_output_tokens=self._config.transcript_max_output_tokens,
                 )
                 self._asr_agent = VideoASRAgent(
                     client,
@@ -393,13 +410,21 @@ class EngineVideoParseRuntime:
             video_client = ArkMultimodalModel(
                 resolved.video_model,
                 request_timeout_seconds=self._config.request_timeout_seconds,
+                max_output_tokens=self._config.video_max_output_tokens,
             )
-            understanding_agent: VideoUnderstandingAgentProtocol = (
-                VideoUnderstandingAgent(
+            if self._config.video_input_mode == "ordered_frames":
+                assert self._config.video_max_frames_per_window is not None
+                understanding_agent: VideoUnderstandingAgentProtocol = OrderedFrameVideoUnderstandingAgent(
+                    video_client,
+                    frame_fps=resolved.video_fps,
+                    max_frames=self._config.video_max_frames_per_window,
+                    max_height=self._config.max_height,
+                )
+            else:
+                understanding_agent = VideoUnderstandingAgent(
                     video_client,
                     fps=resolved.video_fps,
                 )
-            )
             if resolved.fallback_enabled:
                 deepseek = resolved.fallback.deepseek
                 api_key = os.getenv(deepseek.api_key_env)

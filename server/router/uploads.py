@@ -5,9 +5,14 @@ from fastapi import APIRouter
 from ..api import uploads
 from ..model.vo.commonVO import Page
 from ..api.schema import UploadCompleteView, UploadSegmentView, UploadSessionView
+from ..config.parse_profile import ParseConfig
 from ..model.vo.jobVO import ParseJobView
 
 router = APIRouter()
+router.add_api_route(
+    "/api/uploads/parse-config", uploads.get_parse_config, methods=["GET"],
+    response_model=ParseConfig,
+)
 router.add_api_route(
     "/api/uploads/list", uploads.list_upload_sessions, methods=["GET"],
     response_model=Page[UploadSessionView],

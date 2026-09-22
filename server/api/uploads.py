@@ -10,6 +10,7 @@ from ..model.dto.uploadDTO import (
     UploadSessionDetail,
     UploadSessionState,
 )
+from ..config.parse_profile import ParseConfig
 from ..service.pagination import decode_cursor, encode_cursor
 from ..model.vo.commonVO import Failure, Page
 from .context import get_services
@@ -18,6 +19,13 @@ from ..model.vo.jobVO import ParseJobView
 from .jobs import project_job
 
 _CONTENT_RANGE_PATTERN = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
+
+
+def get_parse_config(request: Request) -> ParseConfig:
+    defaults = get_services(request).uploads.parse_defaults
+    if defaults is None:
+        raise RuntimeError("parse configuration is unavailable")
+    return defaults
 
 
 def create_upload_session(
@@ -35,6 +43,7 @@ def create_upload_session(
         total_size_bytes=body.total_size_bytes,
         idempotency_key=idempotency_key,
         content_sha256=body.content_sha256,
+        parse_config=body.parse_config,
     )
     detail = service.get_detail(
         state.upload_session_id,
@@ -231,4 +240,5 @@ def project_upload_session(state: UploadSessionState) -> UploadSessionView:
         estimated_remaining_ms=None, expires_at=state.expires_at,
         video_id=state.video_id, job_id=state.job_id, last_error=error,
         version=state.version, created_at=state.created_at, updated_at=state.updated_at,
+        parse_config=state.parse_config,
     )

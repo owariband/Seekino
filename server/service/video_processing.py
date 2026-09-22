@@ -14,6 +14,7 @@ from threading import Condition, Event
 from time import monotonic_ns
 from typing import Literal, Protocol, TypedDict
 
+from PIL import Image
 from engine.parse.analysis_windows import (
     materialize_analysis_window,
     materialize_canonical_chunk,
@@ -43,6 +44,7 @@ from gateway.schemas import EmbeddingResult
 from langgraph.graph import END, START, StateGraph
 
 from ..config.video_processing import VideoProcessingConfig
+from ..config.parse_profile import ParseConfig
 from ..identity import derive_video_chunk_id
 from ..model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
 from ..model.dto.parseDTO import PreparedEmbedding
@@ -128,6 +130,8 @@ class VideoProcessingService:
         config: VideoProcessingConfig | None = None,
         parse_usage: ParseUsageService | None = None,
         monotonic_clock: Callable[[], int] = monotonic_ns,
+        parse_config: ParseConfig | None = None,
+        processor_factory: Callable[[ParseConfig], "VideoProcessingService"] | None = None,
     ) -> None:
         self._jobs = jobs
         self._videos = videos
@@ -140,6 +144,8 @@ class VideoProcessingService:
         self._config = config or VideoProcessingConfig()
         self._parse_usage = parse_usage
         self._monotonic_clock = monotonic_clock
+        self._parse_config = parse_config
+        self._processor_factory = processor_factory
         self._graph = self._build_graph()
 
     def _build_graph(self):
@@ -169,6 +175,9 @@ class VideoProcessingService:
         return builder.compile()
 
     def process(self, lease: ParseJobLease) -> list[str]:
+        if lease.parse_config is not None and self._processor_factory is not None:
+            selected = ParseConfig.model_validate(lease.parse_config)
+            return self._processor_factory(selected).process(lease)
         capture = (
             self._parse_usage.capture(lease)
             if self._parse_usage
@@ -584,6 +593,10 @@ class VideoProcessingService:
                 artifact,
                 models=models,
                 transcript_mode=self._config.asr_mode,
+                primary_input_mode=(
+                    self._parse_config.vision.input_mode
+                    if self._parse_config is not None else "video"
+                ),
             )
             if not _analysis_windows_match(artifact.chunk.window, window):
                 raise ArtifactIntegrityError(
@@ -688,9 +701,28 @@ class VideoProcessingService:
             # 已完成的旧片段仍可恢复入库；部分解析不能冒用当前背景续跑。
             if legacy_parse:
                 return None, [], True
-            text = prepare_background_text(lease.character_bible, lease.important_extra_data)
+            context = self._parse_config.context if self._parse_config is not None else None
+            source_text = (
+                prepare_background_text(lease.character_bible, lease.important_extra_data)
+                if context is None or context.background_text_enabled or context.background_images_enabled
+                else None
+            )
+            text = source_text
+            image_ids = (
+                extract_background_image_ids(source_text or "")
+                if context is None or context.background_images_enabled else []
+            )
+            if context is not None:
+                if not context.background_text_enabled:
+                    text = None
+                elif text is not None and context.background_text_max_chars is not None:
+                    text = text[: context.background_text_max_chars]
+                if not context.background_images_enabled:
+                    image_ids = []
+                elif context.max_background_images is not None:
+                    image_ids = image_ids[: context.max_background_images]
             images = []
-            for image_id in extract_background_image_ids(text or ""):
+            for image_id in image_ids:
                 path = self._artifacts.resolve_series_image(
                     image_id, series_id=lease.series_id, variant="model",
                 )
@@ -706,7 +738,7 @@ class VideoProcessingService:
             write_json_once(
                 snapshot_path,
                 {
-                    "version": 1,
+                    "version": 2 if context is not None else 1,
                     "job_id": lease.job_id,
                     "workspace_id": lease.workspace_id,
                     "series_id": lease.series_id,
@@ -717,9 +749,9 @@ class VideoProcessingService:
             )
 
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        if not isinstance(snapshot, dict) or any(
+        if not isinstance(snapshot, dict) or snapshot.get("version") not in {1, 2} or any(
             snapshot.get(key) != expected for key, expected in {
-                "version": 1, "job_id": lease.job_id, "workspace_id": lease.workspace_id,
+                "job_id": lease.job_id, "workspace_id": lease.workspace_id,
                 "series_id": lease.series_id, "content_hash": lease.content_hash,
             }.items()
         ):
@@ -731,7 +763,10 @@ class VideoProcessingService:
         if any(
             not isinstance(item, dict) or not isinstance(item.get("image_id"), str)
             or not isinstance(item.get("sha256"), str) for item in images
-        ) or [item["image_id"] for item in images] != extract_background_image_ids(text or ""):
+        ) or (
+            snapshot["version"] == 1
+            and [item["image_id"] for item in images] != extract_background_image_ids(text or "")
+        ) or len({item["image_id"] for item in images}) != len(images):
             raise ArtifactIntegrityError("解析背景快照图片引用不一致")
         references = []
         for item in images:
@@ -746,6 +781,33 @@ class VideoProcessingService:
                 raise ArtifactIntegrityError("解析背景参考图内容已改变")
             references.append(BackgroundImage(image_id=item["image_id"], path=path))
         self._jobs.assert_current_lease(lease)
+        selected = self._parse_config
+        if selected is None:
+            return text, references, False
+        context = selected.context
+        if not context.background_text_enabled:
+            text = None
+        elif text is not None and context.background_text_max_chars is not None:
+            text = text[: context.background_text_max_chars]
+        if not context.background_images_enabled:
+            references = []
+        elif context.max_background_images is not None:
+            references = references[: context.max_background_images]
+        if references:
+            limited: list[BackgroundImage] = []
+            for reference in references:
+                with Image.open(reference.path) as image:
+                    if max(image.size) <= context.background_image_max_edge:
+                        limited.append(reference)
+                        continue
+                    output = work_directory / "background-input" / f"{reference.image_id}.png"
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    if not output.is_file():
+                        resized = image.copy()
+                        resized.thumbnail((context.background_image_max_edge,) * 2)
+                        resized.convert("RGB").save(output, format="PNG")
+                    limited.append(BackgroundImage(image_id=reference.image_id, path=output))
+            references = limited
         return text, references, False
 
     def _embed_text_chunks(
@@ -1058,6 +1120,7 @@ def _validate_checkpoint_models(
     *,
     models: VideoParseModels,
     transcript_mode: Literal["lite", "none"],
+    primary_input_mode: Literal["video", "ordered_frames"] = "video",
 ) -> None:
     if checkpoint.transcript_model != models.fallback.transcript_model:
         raise ArtifactIntegrityError("transcript model changed for parsed VideoChunk")
@@ -1070,7 +1133,7 @@ def _validate_checkpoint_models(
     if provenance is None:
         return
     if provenance.provider == "doubao":
-        if provenance.model != models.video_parser or provenance.input_mode != "video":
+        if provenance.model != models.video_parser or provenance.input_mode != primary_input_mode:
             raise ArtifactIntegrityError(
                 "primary parser changed for parsed VideoChunk"
             )

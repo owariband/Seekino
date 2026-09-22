@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiClientError } from "../../api/client";
-import type { ParseJobView, UploadSessionView } from "../../api/contracts";
+import type { ParseConfig, ParseJobView, UploadSessionView } from "../../api/contracts";
 import { UploadDialog } from "./UploadDialog";
 import { UploadProvider, useUploads } from "./UploadProvider";
 
@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   selectedSeries: { seriesId: "series-a", name: "测试系列", videos: [], pendingUploads: [] as UploadSessionView[] },
   refreshSeries: vi.fn(),
   createUploadSession: vi.fn(),
+  getParseConfig: vi.fn(),
   getUploadSession: vi.fn(),
   deleteUploadSession: vi.fn(),
   completeUpload: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock("../../app/workspace", () => ({ useWorkspace: () => ({ ...mocks, mode: "
 vi.mock("../../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../api/client")>(),
   createUploadSession: mocks.createUploadSession,
+  getParseConfig: mocks.getParseConfig,
   getUploadSession: mocks.getUploadSession,
   deleteUploadSession: mocks.deleteUploadSession,
   completeUpload: mocks.completeUpload,
@@ -27,6 +29,18 @@ vi.mock("../../api/client", async (importOriginal) => ({
 }));
 
 const file = new File(["abcdefghij"], "episode.mp4", { type: "video/mp4" });
+const parseConfig: ParseConfig = {
+  version: 1,
+  window: { chunkDurationMs: 60000, contextOverlapMs: 3000, analysisMaxHeight: 720, canonicalMaxHeight: 720 },
+  asr: { mode: "lite", model: "lite", fps: 1, maxOutputTokens: null, concurrency: 4 },
+  vision: { model: "pro", inputMode: "video", fps: 1, maxFramesPerWindow: null, maxOutputTokens: null },
+  context: { maxEvents: 8, maxChars: 2000, backgroundTextEnabled: true, backgroundTextMaxChars: null,
+    backgroundImagesEnabled: true, maxBackgroundImages: null, backgroundImageMaxEdge: 1024 },
+  fallback: { enabled: true, model: "flash", frameFps: 0.5, groupDurationMs: 30000, maxFramesPerGroup: 15,
+    maxHeight: 720, reasoningEffort: "none", maxOutputTokens: 8192, requestTimeoutSeconds: 1200 },
+  embedding: { model: "embedding", dimensions: 1024, videoFps: 1 },
+  execution: { requestTimeoutSeconds: 600, maxAttempts: 3 },
+};
 const session: UploadSessionView = {
   uploadSessionId: "session-a", workspaceId: "local-default", seriesId: "series-a",
   episodeOrder: 1, uploadSequence: 1, originalFilename: file.name, mediaType: file.type,
@@ -73,6 +87,7 @@ beforeEach(() => {
   mocks.selectedSeries.pendingUploads = [];
   mocks.refreshSeries.mockReset().mockResolvedValue(undefined);
   mocks.createUploadSession.mockReset().mockResolvedValue(session);
+  mocks.getParseConfig.mockReset().mockResolvedValue(parseConfig);
   mocks.getUploadSession.mockReset().mockResolvedValue(session);
   mocks.deleteUploadSession.mockReset().mockResolvedValue({ ...session, status: "EXPIRED" });
   mocks.completeUpload.mockReset();
@@ -81,6 +96,29 @@ beforeEach(() => {
       signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
     }),
   );
+});
+
+it("sends the selected frame rate and analysis height with an upload", async () => {
+  const { container } = render(<UploadProvider><Controls /></UploadProvider>);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "上传面板" }));
+  await waitFor(() => expect(mocks.getParseConfig).toHaveBeenCalled());
+  const input = container.querySelector<HTMLInputElement>('input[type="file"][multiple]');
+  expect(input).not.toBeNull();
+  await user.upload(input!, file);
+  await user.click(screen.getByRole("radio", { name: "自定义" }));
+  const height = screen.getByRole("spinbutton", { name: "解析输入高度（像素）" });
+  await user.clear(height);
+  await user.type(height, "480");
+  const fps = screen.getByRole("spinbutton", { name: "取帧 FPS" });
+  await user.clear(fps);
+  await user.type(fps, "0.5");
+  await user.click(screen.getByRole("button", { name: "开始并行上传" }));
+  await waitFor(() => expect(mocks.createUploadSession).toHaveBeenCalled());
+  expect(mocks.createUploadSession.mock.calls[0]?.[2].parseConfig).toMatchObject({
+    window: { analysisMaxHeight: 480, canonicalMaxHeight: 720 },
+    vision: { fps: 0.5 },
+  });
 });
 
 describe("upload deletion", () => {

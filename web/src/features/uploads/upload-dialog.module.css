@@ -153,6 +153,51 @@
   margin: 25px 34px 0;
 }
 
+.parseConfig {
+  margin: 25px 34px 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface-raised);
+}
+
+.configChoices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.configChoices label,
+.configSwitch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: .77rem;
+}
+
+.configSummary,
+.configEstimate,
+.configLocked {
+  color: var(--ink-soft);
+  font-size: .71rem;
+  line-height: 1.55;
+}
+
+.configSections { display: grid; gap: 8px; margin-top: 12px; }
+.configEstimate { margin: 0 0 4px; }
+.configGroup { border-top: 1px solid var(--line); padding: 10px 0; }
+.configGroup summary { color: var(--teal-deep); cursor: pointer; font-size: .78rem; font-weight: 650; }
+.configGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; padding-top: 14px; }
+.configField { display: grid; min-width: 0; gap: 5px; color: var(--ink-soft); font-size: .7rem; }
+.configField input, .configField select { width: 100%; min-width: 0; }
+.configSwitch { align-self: end; min-height: 36px; }
+.configLocked { align-self: end; }
+.resetConfig, .lockConfig { color: var(--teal-deep); cursor: pointer; background: transparent; font-size: .7rem; }
+.resetConfig { margin-top: 10px; }
+.lockedConfig { color: var(--teal-deep); font-size: .7rem; }
+
 .sectionTitle {
   display: flex;
   min-height: 32px;
@@ -186,7 +231,7 @@
 
 .pendingRow {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   gap: 13px;
   align-items: center;
   padding: 11px 0;
@@ -273,6 +318,12 @@
 
 .taskBody {
   min-width: 0;
+}
+
+.taskConfig {
+  margin: 8px 0 0;
+  color: var(--ink-faint);
+  font-size: .68rem;
 }
 
 .taskHeading {
@@ -388,6 +439,10 @@
   .dropzone { grid-template-columns: auto 1fr; margin: 20px 20px 0; }
   .dropzone button { grid-column: 1 / -1; }
   .pending, .queue { margin: 20px 20px 0; }
+  .parseConfig { margin: 20px 20px 0; }
+  .configGrid { grid-template-columns: 1fr; }
+  .pendingRow { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .lockConfig, .lockedConfig { grid-column: 2; justify-self: start; }
   .pendingActions { align-items: stretch; flex-direction: column; }
   .task { grid-template-columns: 34px minmax(0, 1fr); }
   .taskActions { grid-column: 2; }

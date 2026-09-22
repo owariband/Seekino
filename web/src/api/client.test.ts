@@ -13,6 +13,7 @@ import {
   getAgentGlobalSettings,
   getAgentMessageOptions,
   getJob,
+  getParseConfig,
   getParseUsage,
   getSeries,
   getUploadSession,
@@ -37,6 +38,14 @@ import {
 } from "./client";
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("loads the server parse defaults before an upload is configured", async () => {
+  const defaults = { version: 1, vision: { fps: 1 } };
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify(defaults)));
+  vi.stubGlobal("fetch", fetchMock);
+  expect(await getParseConfig()).toEqual(defaults);
+  expect(String(fetchMock.mock.calls[0]![0])).toBe("/api/uploads/parse-config");
+});
 
 describe("Series background routes", () => {
   it("distinguishes omitted fields from explicit clearing and preserves raw JSON text", async () => {

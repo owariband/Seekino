@@ -112,6 +112,60 @@ export interface UploadSessionCreateRequest {
   mediaType: string;
   totalSizeBytes: number;
   contentSha256?: string | null;
+  parseConfig?: ParseConfig | null;
+}
+
+export interface ParseConfig {
+  version: 1;
+  window: {
+    chunkDurationMs: number;
+    contextOverlapMs: number;
+    analysisMaxHeight: number;
+    canonicalMaxHeight: number;
+  };
+  asr: {
+    mode: "lite" | "none";
+    model: string;
+    fps: number;
+    maxOutputTokens: number | null;
+    concurrency: number;
+  };
+  vision: {
+    model: string;
+    inputMode: "video" | "ordered_frames";
+    fps: number;
+    maxFramesPerWindow: number | null;
+    maxOutputTokens: number | null;
+  };
+  context: {
+    maxEvents: number;
+    maxChars: number;
+    backgroundTextEnabled: boolean;
+    backgroundTextMaxChars: number | null;
+    backgroundImagesEnabled: boolean;
+    maxBackgroundImages: number | null;
+    backgroundImageMaxEdge: number;
+  };
+  fallback: {
+    enabled: boolean;
+    model: string;
+    frameFps: number;
+    groupDurationMs: number;
+    maxFramesPerGroup: number;
+    maxHeight: number;
+    reasoningEffort: "none" | "low" | "high" | "max";
+    maxOutputTokens: number;
+    requestTimeoutSeconds: number;
+  };
+  embedding: {
+    model: string;
+    dimensions: number;
+    videoFps: number;
+  };
+  execution: {
+    requestTimeoutSeconds: number;
+    maxAttempts: number;
+  };
 }
 
 export interface UploadSessionView {
@@ -140,6 +194,7 @@ export interface UploadSessionView {
   version: number;
   createdAt: UnixTimeMs;
   updatedAt: UnixTimeMs;
+  parseConfig?: ParseConfig | null;
 }
 
 export interface UploadCompleteView {
@@ -205,6 +260,7 @@ export interface ParseJobView {
   checkpoints: VideoChunkCheckpointView[];
   createdAt: UnixTimeMs;
   updatedAt: UnixTimeMs;
+  parseConfig?: ParseConfig | null;
 }
 
 export type ParseUsageCoverage = "not_started" | "recorded" | "partial" | "unknown";

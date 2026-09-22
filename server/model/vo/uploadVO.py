@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from ...config.parse_profile import ParseConfig
 from ..upload import UploadSessionStatus, UploadCompletionStage
 from ...schema import ContractModel
 from .commonVO import Failure, UnixTimeMs
@@ -33,6 +34,7 @@ class UploadSessionView(ContractModel):
     version: int = Field(ge=1)
     created_at: UnixTimeMs
     updated_at: UnixTimeMs
+    parse_config: ParseConfig | None = None
 
 
 class UploadSegmentView(ContractModel):

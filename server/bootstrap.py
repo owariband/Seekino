@@ -6,7 +6,7 @@ import os
 from typing import Any
 
 from arkruntime import Ark
-from engine.parse.runtime import EngineVideoParseRuntime
+from engine.parse.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
 from gateway.config import load_config
 from gateway.agent_model import (
     DeepSeekFunctionCallingModel, SDKStructuredToolAgentModel,
@@ -19,6 +19,7 @@ from qdrant_client import QdrantClient
 from sqlalchemy import Engine
 
 from .config import ServerSettings
+from .config.parse_profile import ParseConfig
 from .config.agent import AgentServiceConfig
 from .config.global_agent_settings import read_global_agent_settings
 from .config.usage import load_model_pricing
@@ -129,22 +130,34 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         environment=settings.environment,
         collection_name=settings.qdrant_collection,
     )
+    embedding_config = gateway_config.multimodal_embedding
+    embedding_model = settings.video_embedding_model or embedding_config.model
+    embedding_fps = (
+        settings.video_embedding_fps
+        if settings.video_embedding_fps is not None
+        else embedding_config.fps
+    )
+    parse_defaults = ParseConfig.from_defaults(
+        runtime=settings.parse,
+        gateway=gateway_config,
+        upload=settings.upload,
+        images=settings.images,
+        embedding_model=embedding_model,
+        embedding_dimensions=settings.text_vector_dimensions,
+        embedding_fps=embedding_fps,
+    )
     uploads = UploadService(
         UploadRepository(session_factory),
         artifact_store,
         config=settings.upload,
         video_chunk_store=vector_store,
         qdrant_mutation_lock=qdrant_mutation_lock,
+        parse_defaults=parse_defaults,
     )
-    embedding_config = gateway_config.multimodal_embedding
     embedder = _LazyQueryEmbedder(
-        model=settings.video_embedding_model or embedding_config.model,
+        model=embedding_model,
         dimensions=settings.text_vector_dimensions,
-        fps=(
-            settings.video_embedding_fps
-            if settings.video_embedding_fps is not None
-            else embedding_config.fps
-        ),
+        fps=embedding_fps,
         request_timeout_seconds=min(
             settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
         ),
@@ -255,19 +268,87 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         retry_max_seconds=settings.index_sync.retry_max_seconds,
     )
     processing_embedder = DoubaoMultimodalEmbedder(
-        settings.video_embedding_model or embedding_config.model,
+        embedding_model,
         output_dimensionality=settings.text_vector_dimensions,
-        fps=(
-            settings.video_embedding_fps
-            if settings.video_embedding_fps is not None
-            else embedding_config.fps
-        ),
+        fps=embedding_fps,
     )
     parse_runtime = EngineVideoParseRuntime(
         model_config_path=settings.model_config_path,
         config=settings.parse,
         on_log=_logger.info,
     )
+
+    def processor_for_config(selected: ParseConfig) -> VideoProcessingService:
+        selected.require_active_index(
+            embedding_model=embedding_model,
+            dimensions=settings.text_vector_dimensions,
+            image_max_edge=settings.images.model_max_edge,
+        )
+        fallback = gateway_config.video_parser.fallback
+        deepseek = fallback.deepseek.model_copy(update={
+            "model": selected.fallback.model,
+            "reasoning_effort": selected.fallback.reasoning_effort,
+            "max_output_tokens": selected.fallback.max_output_tokens,
+            "request_timeout_seconds": selected.fallback.request_timeout_seconds,
+        })
+        fallback = fallback.model_copy(update={
+            "enabled": selected.fallback.enabled,
+            "frame_fps": selected.fallback.frame_fps,
+            "group_duration_ms": selected.fallback.group_duration_ms,
+            "max_frames_per_group": selected.fallback.max_frames_per_group,
+            "max_height": selected.fallback.max_height,
+            "deepseek": deepseek,
+        })
+        runtime = EngineVideoParseRuntime(
+            model_config_path=settings.model_config_path,
+            config=VideoParseRuntimeConfig(
+                chunk_duration_ms=selected.window.chunk_duration_ms,
+                context_overlap_ms=selected.window.context_overlap_ms,
+                max_height=selected.window.analysis_max_height,
+                asr_concurrency=selected.asr.concurrency,
+                asr_mode=selected.asr.mode,
+                request_timeout_seconds=selected.execution.request_timeout_seconds,
+                max_context_events=selected.context.max_events,
+                max_context_chars=selected.context.max_chars,
+                transcript_model=selected.asr.model,
+                video_model=selected.vision.model,
+                transcript_fps=selected.asr.fps,
+                video_fps=selected.vision.fps,
+                fallback_enabled=selected.fallback.enabled,
+                fallback_config=fallback,
+                video_input_mode=selected.vision.input_mode,
+                video_max_frames_per_window=selected.vision.max_frames_per_window,
+                transcript_max_output_tokens=selected.asr.max_output_tokens,
+                video_max_output_tokens=selected.vision.max_output_tokens,
+            ),
+            on_log=_logger.info,
+        )
+        return VideoProcessingService(
+            job_repository,
+            video_repository,
+            index_sync,
+            artifact_store,
+            model_manifest=runtime,
+            asr_agent=runtime.server_asr_agent,
+            understanding_agent=runtime.server_understanding_agent,
+            embedding_agent=DoubaoMultimodalEmbedder(
+                selected.embedding.model,
+                output_dimensionality=selected.embedding.dimensions,
+                fps=selected.embedding.video_fps,
+            ),
+            parse_usage=parse_usage,
+            config=VideoProcessingConfig(
+                embedding_dimensions=selected.embedding.dimensions,
+                chunk_duration_ms=selected.window.chunk_duration_ms,
+                context_overlap_ms=selected.window.context_overlap_ms,
+                analysis_max_height=selected.window.analysis_max_height,
+                canonical_max_height=selected.window.canonical_max_height,
+                asr_concurrency=selected.asr.concurrency,
+                asr_mode=selected.asr.mode,
+            ),
+            parse_config=selected,
+        )
+
     processor = VideoProcessingService(
         job_repository,
         video_repository,
@@ -287,6 +368,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             asr_concurrency=settings.parse.asr_concurrency,
             asr_mode=settings.parse.asr_mode,
         ),
+        processor_factory=processor_for_config,
     )
     queue = MySqlParseJobQueue(session_factory)
     parse_consumer = ParseJobConsumer(

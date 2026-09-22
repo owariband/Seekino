@@ -17,12 +17,15 @@ from fastapi.testclient import TestClient
 from langchain_core.tools import BaseTool
 from PIL import Image
 
+from engine.parse.runtime import VideoParseRuntimeConfig
+from gateway.config import load_config
 from server.api.app import create_app
 from server.agent.runtime import AgentRuntime
 from server.api.agent import _agent_render_blocks
 from server.api.jobs import _job_event_fingerprint, _job_view
 from server.bootstrap import ApplicationServices
 from server.config.media import ImageUploadConfig
+from server.config.parse_profile import ParseConfig
 from server.utils.logging import RequestIdFilter, request_id_context
 from server.database import (
     DatabaseEnvironment,
@@ -412,6 +415,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/videos/update_episode",
         "/api/series/images/upload",
         "/api/uploads/create",
+        "/api/uploads/parse-config",
         "/api/uploads/get",
         "/api/uploads/list",
         "/api/uploads/delete",
@@ -573,6 +577,53 @@ def _background_png() -> bytes:
     image_bytes = BytesIO()
     Image.new("RGB", (32, 16), color="red").save(image_bytes, format="PNG")
     return image_bytes.getvalue()
+
+
+def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_path: Path) -> None:
+    client, _retrieval, _jobs = _client(tmp_path)
+    defaults = ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(), gateway=load_config(),
+        upload=UploadServiceConfig(), images=ImageUploadConfig(),
+        embedding_model="test-embedding", embedding_dimensions=1024,
+        embedding_fps=1.0,
+    )
+    client.app.state.services.uploads._parse_defaults = defaults
+    response = client.get("/api/uploads/parse-config")
+    assert response.status_code == 200
+    assert response.json()["vision"]["fps"] == 1.0
+
+    invalid = response.json()
+    invalid["vision"]["maxFramesPerWindow"] = 12
+    rejected = client.post(
+        "/api/uploads/create?seriesId=invalid",
+        headers={"Idempotency-Key": "invalid-parse-config"},
+        json={
+            "workspaceId": "local-default", "originalFilename": "ep.mp4",
+            "mediaType": "video/mp4", "totalSizeBytes": 10,
+            "parseConfig": invalid,
+        },
+    )
+    assert rejected.status_code == 422
+
+    series_id = _create_series(client)
+    selected = response.json()
+    selected["window"]["analysisMaxHeight"] = 480
+    created = client.post(
+        f"/api/uploads/create?seriesId={series_id}",
+        headers={"Idempotency-Key": "configured-parse-upload"},
+        json={
+            "workspaceId": "local-default", "originalFilename": "ep.mp4",
+            "mediaType": "video/mp4", "totalSizeBytes": 10,
+            "parseConfig": selected,
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["parseConfig"]["window"]["analysisMaxHeight"] == 480
+    restored = client.get(
+        "/api/uploads/get",
+        params={"workspaceId": "local-default", "uploadSessionId": created.json()["uploadSessionId"]},
+    )
+    assert restored.json()["parseConfig"] == created.json()["parseConfig"]
 
 
 def test_series_background_upload_save_and_read_back(tmp_path: Path) -> None:

@@ -81,6 +81,8 @@ class UploadRepository:
         expires_at: int,
         now: int,
         content_sha256: str | None = None,
+        parse_config: dict | None = None,
+        requested_parse_config: dict | None = None,
     ) -> UploadSessionState:
         requested = {
             "workspace_id": workspace_id,
@@ -91,6 +93,8 @@ class UploadRepository:
             "idempotency_key": idempotency_key,
             "content_sha256": content_sha256,
         }
+        if requested_parse_config is not None:
+            requested["parse_config"] = requested_parse_config
         request_fingerprint = hashlib.sha256(json.dumps(requested, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         for attempt in range(2):
             try:
@@ -149,6 +153,7 @@ class UploadRepository:
                         preferred_segment_size_bytes=preferred_segment_size_bytes,
                         total_segments=total_segments,
                         content_sha256=content_sha256,
+                        parse_config=parse_config,
                         status=UploadSessionStatus.UPLOADING.value,
                         idempotency_key=idempotency_key,
                         request_fingerprint=request_fingerprint,
@@ -961,6 +966,7 @@ class UploadRepository:
                     series_id=upload.series_id,
                     video_id=video_id,
                     pipeline_version=pipeline_version,
+                    parse_config=upload.parse_config,
                     status=ParseJobStatus.QUEUED.value,
                     stage=ParseJobStage.QUEUED.value,
                     progress=0,
@@ -1083,6 +1089,7 @@ class UploadRepository:
             content_sha256=upload.content_sha256,
             completion_stage=upload.completion_stage,
             job_id=upload.job_id,
+            parse_config=upload.parse_config,
             version=upload.version,
             missing_segment_numbers=tuple(n for n in range(upload.total_segments) if n not in present),
             last_error_code=upload.last_error_code,

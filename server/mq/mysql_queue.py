@@ -133,6 +133,7 @@ class MySqlParseJobQueue:
                 series_id=job.series_id,
                 video_id=job.video_id,
                 pipeline_version=job.pipeline_version,
+                parse_config=job.parse_config,
                 worker_id=normalized_worker_id,
                 lease_version=job.lease_version,
                 lease_expires_at=expires_at,

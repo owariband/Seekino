@@ -12,6 +12,7 @@ from engine.parse.analysis_windows import plan_analysis_windows
 from engine.parse.background import BackgroundImage
 from engine.parse.checkpoints import write_json
 from engine.parse.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from engine.parse.video_chunk_parse import OrderedFrameVideoUnderstandingAgent
 from engine.parse.schemas import (
     ContextSnapshot,
     TranscriptAnalysis,
@@ -99,6 +100,35 @@ def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
     assert constructed == ["test-lite", "test-pro"]
     assert parsed.window == window
     assert parsed.window_summary == "片段完成"
+
+
+def test_runtime_uses_ordered_frames_when_a_real_frame_cap_is_selected(monkeypatch) -> None:
+    constructed = []
+
+    class Model:
+        provider_name = "ark"
+
+        def __init__(self, model, **kwargs):
+            self.model_name = model
+            constructed.append(kwargs)
+
+    monkeypatch.setattr("engine.parse.runtime.ArkMultimodalModel", Model)
+    runtime = EngineVideoParseRuntime(config=VideoParseRuntimeConfig(
+        fallback_enabled=False,
+        video_model="test-vision",
+        video_fps=0.5,
+        video_input_mode="ordered_frames",
+        video_max_frames_per_window=18,
+        video_max_output_tokens=4096,
+        max_height=480,
+    ))
+
+    agent = runtime._get_understanding_agent()
+    assert isinstance(agent, OrderedFrameVideoUnderstandingAgent)
+    assert agent.frame_fps == 0.5
+    assert agent.max_frames == 18
+    assert agent.max_height == 480
+    assert constructed[0]["max_output_tokens"] == 4096
 
 
 def test_runtime_resumes_a_fully_parsed_video_without_model_credentials(

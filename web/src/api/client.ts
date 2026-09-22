@@ -12,6 +12,7 @@ import type {
   EvidenceReference,
   ImageAsset,
   Page,
+  ParseConfig,
   ParseJobView,
   ParseUsageVO,
   SeriesCreateRequest,
@@ -162,6 +163,10 @@ export function createUploadSession(
       body: JSON.stringify(body),
     },
   );
+}
+
+export function getParseConfig(signal?: AbortSignal): Promise<ParseConfig> {
+  return requestJson("/api/uploads/parse-config", { signal });
 }
 
 export function getUploadSession(

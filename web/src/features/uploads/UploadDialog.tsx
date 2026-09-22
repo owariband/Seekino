@@ -11,11 +11,13 @@ import {
 } from "lucide-react";
 import { type ChangeEvent, type DragEvent, useEffect, useRef, useState } from "react";
 
+import { errorMessage, getParseConfig } from "../../api/client";
+import type { ParseConfig } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import { formatBytes, formatTimecode, formatTimeRange, inferEpisodeOrder, publicParseStageLabel } from "../../shared/format";
 import { useUploads } from "./UploadProvider";
 import type { UploadInput, UploadTask } from "./upload-types";
-import { mediaTypeForFile, taskProgress, taskStatusLabel } from "./upload-types";
+import { configuredMax, configuredMin, mediaTypeForFile, taskProgress, taskStatusLabel, validateParseConfig } from "./upload-types";
 import styles from "./upload-dialog.module.css";
 
 function TaskRow({ task }: { task: UploadTask }) {
@@ -33,6 +35,7 @@ function TaskRow({ task }: { task: UploadTask }) {
     : task.job?.completedThroughMs !== null && task.job?.completedThroughMs !== undefined
       ? `连续解析到 ${formatTimecode(task.job.completedThroughMs)} / ${formatTimecode(task.job.totalDurationMs)}`
       : "等待精确检查点";
+  const selectedConfig = task.job?.parseConfig ?? task.session?.parseConfig ?? task.parseConfig;
 
   return (
     <article className={styles.task} data-status={task.status}>
@@ -63,6 +66,12 @@ function TaskRow({ task }: { task: UploadTask }) {
             <span>{task.job.attemptCount}/{task.job.maxAttempts} 次尝试</span>
           </div>
         ) : null}
+        {selectedConfig ? <p className={styles.taskConfig}>
+          解析配置：{selectedConfig.window.analysisMaxHeight}p · {selectedConfig.vision.fps} FPS ·
+          {selectedConfig.vision.inputMode === "ordered_frames"
+            ? ` 每段最多 ${selectedConfig.vision.maxFramesPerWindow} 帧`
+            : "直传视频"}
+        </p> : task.session ? <p className={styles.taskConfig}>历史任务未记录解析配置</p> : null}
         {task.error ? <p className={styles.error}>{task.error}</p> : null}
       </div>
       <div className={styles.taskActions}>
@@ -114,6 +123,126 @@ function TaskRow({ task }: { task: UploadTask }) {
   );
 }
 
+function ConfigNumber({ label, value, onChange, min, max, step = 1, optional = false }: {
+  label: string;
+  value: number | null;
+  onChange: (value: number | null) => void;
+  min: number;
+  max: number;
+  step?: number | "any";
+  optional?: boolean;
+}) {
+  return <label className={styles.configField}>
+    <span>{label}</span>
+    <input type="number" className="field" value={value ?? ""} min={min} max={max} step={step}
+      placeholder={optional ? "不限" : undefined}
+      onChange={(event) => onChange(event.target.value === "" && optional ? null : Number(event.target.value))} />
+  </label>;
+}
+
+function ConfigText({ label, value, onChange }: {
+  label: string; value: string; onChange: (value: string) => void;
+}) {
+  return <label className={styles.configField}>
+    <span>{label}</span>
+    <input className="field" value={value} onChange={(event) => onChange(event.target.value)} />
+  </label>;
+}
+
+function ConfigSwitch({ label, checked, onChange }: {
+  label: string; checked: boolean; onChange: (value: boolean) => void;
+}) {
+  return <label className={styles.configSwitch}>
+    <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+    <span>{label}</span>
+  </label>;
+}
+
+function ParseConfigFields({ value, defaults, onChange }: {
+  value: ParseConfig; defaults: ParseConfig; onChange: (value: ParseConfig) => void;
+}) {
+  const update = <K extends Exclude<keyof ParseConfig, "version">>(section: K, patch: Partial<ParseConfig[K]>) => {
+    onChange({ ...value, [section]: { ...value[section], ...patch } });
+  };
+  const estimatedFrames = Math.ceil(
+    value.vision.fps * (value.window.chunkDurationMs + 2 * value.window.contextOverlapMs) / 1000,
+  );
+
+  return <div className={styles.configSections}>
+    <p className={styles.configEstimate}>
+      主解析每段约 {estimatedFrames} 帧；最终 Token 和费用以模型实际返回为准。
+      {value.vision.inputMode === "ordered_frames" ? `逐帧模式每段最多 ${value.vision.maxFramesPerWindow} 帧。` : "直传视频按 FPS 取帧。"}
+    </p>
+    <details className={styles.configGroup} open>
+      <summary>切段与画面</summary>
+      <div className={styles.configGrid}>
+        <ConfigNumber label="每段时长（毫秒）" value={value.window.chunkDurationMs} min={configuredMin(1000, defaults.window.chunkDurationMs)} max={configuredMax(120000, defaults.window.chunkDurationMs)} onChange={(v) => update("window", { chunkDurationMs: v ?? 0 })} />
+        <ConfigNumber label="上下文重叠（毫秒）" value={value.window.contextOverlapMs} min={0} max={configuredMax(30000, defaults.window.contextOverlapMs)} onChange={(v) => update("window", { contextOverlapMs: v ?? 0 })} />
+        <ConfigNumber label="解析输入高度（像素）" value={value.window.analysisMaxHeight} min={configuredMin(64, defaults.window.analysisMaxHeight)} max={configuredMax(2160, defaults.window.analysisMaxHeight)} onChange={(v) => update("window", { analysisMaxHeight: v ?? 0 })} />
+        <ConfigNumber label="回放与入库高度（像素）" value={value.window.canonicalMaxHeight} min={configuredMin(64, defaults.window.canonicalMaxHeight)} max={configuredMax(2160, defaults.window.canonicalMaxHeight)} onChange={(v) => update("window", { canonicalMaxHeight: v ?? 0 })} />
+      </div>
+    </details>
+    <details className={styles.configGroup} open>
+      <summary>主视觉解析</summary>
+      <div className={styles.configGrid}>
+        <ConfigText label="Ark 主视觉模型 ID" value={value.vision.model} onChange={(v) => update("vision", { model: v })} />
+        <label className={styles.configField}><span>输入方式</span><select className="field" value={value.vision.inputMode} onChange={(event) => update("vision", {
+          inputMode: event.target.value as ParseConfig["vision"]["inputMode"],
+          maxFramesPerWindow: event.target.value === "ordered_frames" ? 24 : null,
+        })}><option value="video">直传视频</option><option value="ordered_frames">逐帧图片</option></select></label>
+        <ConfigNumber label="取帧 FPS" value={value.vision.fps} min={0.2} max={5} step="any" onChange={(v) => update("vision", { fps: v ?? 0 })} />
+        {value.vision.inputMode === "ordered_frames" ? <ConfigNumber label="每段最多帧数" value={value.vision.maxFramesPerWindow} min={1} max={600} onChange={(v) => update("vision", { maxFramesPerWindow: v ?? 0 })} /> : null}
+        <ConfigNumber label="最大输出 Token" value={value.vision.maxOutputTokens} min={256} max={32768} optional onChange={(v) => update("vision", { maxOutputTokens: v })} />
+      </div>
+    </details>
+    <details className={styles.configGroup}>
+      <summary>ASR</summary>
+      <div className={styles.configGrid}>
+        <label className={styles.configField}><span>转写方式</span><select className="field" value={value.asr.mode} onChange={(event) => update("asr", { mode: event.target.value as ParseConfig["asr"]["mode"] })}><option value="lite">Lite 转写</option><option value="none">关闭 ASR</option></select></label>
+        <ConfigText label="Ark ASR 模型 ID" value={value.asr.model} onChange={(v) => update("asr", { model: v })} />
+        <ConfigNumber label="ASR 视频 FPS" value={value.asr.fps} min={0.2} max={5} step="any" onChange={(v) => update("asr", { fps: v ?? 0 })} />
+        <ConfigNumber label="ASR 最大输出 Token" value={value.asr.maxOutputTokens} min={256} max={32768} optional onChange={(v) => update("asr", { maxOutputTokens: v })} />
+        <ConfigNumber label="ASR 并发" value={value.asr.concurrency} min={1} max={configuredMax(16, defaults.asr.concurrency)} onChange={(v) => update("asr", { concurrency: v ?? 0 })} />
+      </div>
+    </details>
+    <details className={styles.configGroup}>
+      <summary>上下文与背景</summary>
+      <div className={styles.configGrid}>
+        <ConfigNumber label="前序事件数" value={value.context.maxEvents} min={1} max={configuredMax(100, defaults.context.maxEvents)} onChange={(v) => update("context", { maxEvents: v ?? 0 })} />
+        <ConfigNumber label="前序上下文字数" value={value.context.maxChars} min={256} max={configuredMax(100000, defaults.context.maxChars)} onChange={(v) => update("context", { maxChars: v ?? 0 })} />
+        <ConfigSwitch label="输入背景文字" checked={value.context.backgroundTextEnabled} onChange={(v) => update("context", { backgroundTextEnabled: v })} />
+        <ConfigNumber label="背景文字最多字符" value={value.context.backgroundTextMaxChars} min={256} max={200000} optional onChange={(v) => update("context", { backgroundTextMaxChars: v })} />
+        <ConfigSwitch label="输入背景参考图" checked={value.context.backgroundImagesEnabled} onChange={(v) => update("context", { backgroundImagesEnabled: v })} />
+        <ConfigNumber label="最多背景参考图" value={value.context.maxBackgroundImages} min={1} max={64} optional onChange={(v) => update("context", { maxBackgroundImages: v })} />
+        <ConfigNumber label="背景参考图最大边长" value={value.context.backgroundImageMaxEdge} min={configuredMin(64, defaults.context.backgroundImageMaxEdge)} max={defaults.context.backgroundImageMaxEdge} onChange={(v) => update("context", { backgroundImageMaxEdge: v ?? 0 })} />
+      </div>
+    </details>
+    <details className={styles.configGroup}>
+      <summary>内容过滤兜底</summary>
+      <div className={styles.configGrid}>
+        <ConfigSwitch label="启用兜底" checked={value.fallback.enabled} onChange={(v) => update("fallback", { enabled: v })} />
+        <ConfigText label="DeepSeek 兜底模型 ID" value={value.fallback.model} onChange={(v) => update("fallback", { model: v })} />
+        <ConfigNumber label="抽帧 FPS" value={value.fallback.frameFps} min={0.2} max={5} step="any" onChange={(v) => update("fallback", { frameFps: v ?? 0 })} />
+        <ConfigNumber label="每组时长（毫秒）" value={value.fallback.groupDurationMs} min={1000} max={120000} onChange={(v) => update("fallback", { groupDurationMs: v ?? 0 })} />
+        <ConfigNumber label="每组最多帧数" value={value.fallback.maxFramesPerGroup} min={1} max={128} onChange={(v) => update("fallback", { maxFramesPerGroup: v ?? 0 })} />
+        <ConfigNumber label="图片最大高度" value={value.fallback.maxHeight} min={64} max={2160} onChange={(v) => update("fallback", { maxHeight: v ?? 0 })} />
+        <label className={styles.configField}><span>推理强度</span><select className="field" value={value.fallback.reasoningEffort} onChange={(event) => update("fallback", { reasoningEffort: event.target.value as ParseConfig["fallback"]["reasoningEffort"] })}><option value="none">不启用</option><option value="low">低</option><option value="high">高</option><option value="max">最高</option></select></label>
+        <ConfigNumber label="最大输出 Token" value={value.fallback.maxOutputTokens} min={256} max={32768} onChange={(v) => update("fallback", { maxOutputTokens: v ?? 0 })} />
+        <ConfigNumber label="超时（秒）" value={value.fallback.requestTimeoutSeconds} min={configuredMin(0.01, defaults.fallback.requestTimeoutSeconds)} max={configuredMax(3600, defaults.fallback.requestTimeoutSeconds)} step="any" onChange={(v) => update("fallback", { requestTimeoutSeconds: v ?? 0 })} />
+      </div>
+    </details>
+    <details className={styles.configGroup}>
+      <summary>向量化与执行</summary>
+      <div className={styles.configGrid}>
+        <div className={styles.configLocked}>索引模型：{value.embedding.model} · {value.embedding.dimensions} 维</div>
+        <ConfigNumber label="视频向量化 FPS" value={value.embedding.videoFps} min={0.2} max={5} step="any" onChange={(v) => update("embedding", { videoFps: v ?? 0 })} />
+        <ConfigNumber label="模型请求超时（秒）" value={value.execution.requestTimeoutSeconds} min={configuredMin(0.01, defaults.execution.requestTimeoutSeconds)} max={configuredMax(3600, defaults.execution.requestTimeoutSeconds)} step="any" onChange={(v) => update("execution", { requestTimeoutSeconds: v ?? 0 })} />
+        <ConfigNumber label="最多尝试次数" value={value.execution.maxAttempts} min={1} max={configuredMax(10, defaults.execution.maxAttempts)} onChange={(v) => update("execution", { maxAttempts: v ?? 0 })} />
+      </div>
+    </details>
+  </div>;
+}
+
 export function UploadDialog() {
   const {
     dialogOpen,
@@ -127,10 +256,27 @@ export function UploadDialog() {
   const { mode, selectedSeries } = useWorkspace();
   const [pending, setPending] = useState<UploadInput[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [parseDefaults, setParseDefaults] = useState<ParseConfig | null>(null);
+  const [parseConfig, setParseConfig] = useState<ParseConfig | null>(null);
+  const [customConfig, setCustomConfig] = useState(false);
+  const [parseConfigError, setParseConfigError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!dialogOpen) setDragging(false);
+  }, [dialogOpen]);
+
+  useEffect(() => {
+    if (!dialogOpen) return;
+    const controller = new AbortController();
+    void getParseConfig(controller.signal).then((defaults) => {
+      setParseDefaults(defaults);
+      setParseConfig(defaults);
+      setParseConfigError(null);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setParseConfigError(errorMessage(error));
+    });
+    return () => controller.abort();
   }, [dialogOpen]);
 
   if (!dialogOpen) return null;
@@ -163,7 +309,25 @@ export function UploadDialog() {
   };
 
   const start = () => {
-    enqueue(pending);
+    if (customConfig && !parseConfig) {
+      setParseConfigError("解析配置尚未加载完成");
+      return;
+    }
+    for (const item of pending) {
+      const selected = item.parseConfig ?? (customConfig ? parseConfig : null);
+      if (selected && parseDefaults) {
+        const problem = validateParseConfig(selected, parseDefaults);
+        if (problem) {
+          setParseConfigError(problem);
+          return;
+        }
+      }
+    }
+    setParseConfigError(null);
+    enqueue(pending.map((item) => ({
+      ...item,
+      parseConfig: item.parseConfig ?? (customConfig ? parseConfig ?? undefined : undefined),
+    })));
     setPending([]);
   };
 
@@ -213,6 +377,25 @@ export function UploadDialog() {
           <input ref={inputRef} className="sr-only" type="file" accept=".mp4,.mov,.avi,video/mp4,video/quicktime,video/x-msvideo" multiple onChange={onInput} />
         </div>
 
+        <section className={styles.parseConfig} aria-label="解析配置">
+          <div className={styles.sectionTitle}>
+            <span>解析配置</span>
+            <small>上传前确定；任务重试沿用同一份参数</small>
+          </div>
+          <div className={styles.configChoices}>
+            <label><input type="radio" name="parse-config-mode" checked={!customConfig} onChange={() => setCustomConfig(false)} /> 当前默认配置</label>
+            <label><input type="radio" name="parse-config-mode" checked={customConfig} disabled={!parseDefaults} onChange={() => setCustomConfig(true)} /> 自定义</label>
+          </div>
+          {parseDefaults ? <p className={styles.configSummary}>
+            默认：{parseDefaults.window.analysisMaxHeight}p · 主解析 {parseDefaults.vision.fps} FPS · 每段 {parseDefaults.window.chunkDurationMs / 1000} 秒
+          </p> : null}
+          {parseConfigError ? <p className={styles.error} role="alert">解析配置：{parseConfigError}</p> : null}
+          {customConfig && parseConfig && parseDefaults ? <>
+            <ParseConfigFields value={parseConfig} defaults={parseDefaults} onChange={setParseConfig} />
+            <button className={styles.resetConfig} type="button" onClick={() => setParseConfig(structuredClone(parseDefaults))}>恢复当前默认值</button>
+          </> : null}
+        </section>
+
         {pending.length > 0 ? (
           <section className={styles.pending} aria-label="待上传文件">
             <div className={styles.sectionTitle}>
@@ -244,6 +427,12 @@ export function UploadDialog() {
                     }
                   />
                 </label>
+                {customConfig && parseConfig ? <button className={styles.lockConfig} type="button"
+                  onClick={() => setPending((current) => current.map((entry, entryIndex) =>
+                    entryIndex === index ? { ...entry, parseConfig: structuredClone(parseConfig) } : entry,
+                  ))}>
+                  {item.parseConfig ? "已锁定本集配置" : "锁定本集配置"}
+                </button> : item.parseConfig ? <span className={styles.lockedConfig}>本集独立配置</span> : null}
                 <button
                   className={styles.iconButton}
                   type="button"

@@ -483,6 +483,7 @@ class ParseJobRepository:
             original_filename=original_filename,
             duration_ms=duration_ms,
             pipeline_version=record.pipeline_version,
+            parse_config=record.parse_config,
             status=record.status,
             stage=record.stage,
             progress=record.progress,

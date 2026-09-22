@@ -34,6 +34,7 @@ class ParseJobState:
     duration_ms: int
     upload_session_id: str | None = None
     is_primary_upload_job: bool = False
+    parse_config: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +62,7 @@ class ParseJobLease:
     important_extra_data: dict | None
     character_bible: list[dict]
     preserve_existing_result: bool = False
+    parse_config: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)

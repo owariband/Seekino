@@ -10,6 +10,7 @@ from pathlib import Path
 
 from engine.parse.analysis_windows import probe_video_duration_ms
 
+from ..config.parse_profile import ParseConfig
 from ..config.upload import UploadServiceConfig
 from ..identity import canonical_uuid, derive_video_id
 from ..model.upload import UploadSessionStatus, UploadCompletionStage
@@ -59,6 +60,7 @@ class UploadService:
         clock: Callable[[], int] | None = None,
         video_chunk_store: QdrantVideoChunkStore | None = None,
         qdrant_mutation_lock: QdrantMutationLock | None = None,
+        parse_defaults: ParseConfig | None = None,
     ) -> None:
         if video_chunk_store is not None and qdrant_mutation_lock is None:
             raise ValueError(
@@ -71,6 +73,11 @@ class UploadService:
         self._clock = clock or now_unix_time_ms
         self._video_chunk_store = video_chunk_store
         self._qdrant_mutation_lock = qdrant_mutation_lock
+        self._parse_defaults = parse_defaults
+
+    @property
+    def parse_defaults(self) -> ParseConfig | None:
+        return self._parse_defaults
 
     def create_session(
         self,
@@ -84,6 +91,7 @@ class UploadService:
         idempotency_key: str,
         upload_sequence: int | None = None,
         content_sha256: str | None = None,
+        parse_config: ParseConfig | None = None,
     ) -> UploadSessionState:
         normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
         normalized_series_id = canonical_uuid(series_id, "series_id")
@@ -104,6 +112,14 @@ class UploadService:
         if content_sha256 is not None and not _SHA256_PATTERN.fullmatch(content_sha256):
             raise ValueError("content_sha256 must be 64 lowercase hex characters")
 
+        selected_config = parse_config or self._parse_defaults
+        if selected_config is not None and self._parse_defaults is not None:
+            selected_config.require_active_index(
+                embedding_model=self._parse_defaults.embedding.model,
+                dimensions=self._parse_defaults.embedding.dimensions,
+                image_max_edge=self._parse_defaults.context.background_image_max_edge,
+            )
+
         segment_size = self._config.preferred_segment_size_bytes
         total_segments = math.ceil(total_size_bytes / segment_size)
         now = self._clock()
@@ -119,6 +135,8 @@ class UploadService:
             expires_at=now + timedelta_to_ms(self._config.session_ttl),
             now=now,
             content_sha256=content_sha256,
+            parse_config=(selected_config.model_dump(mode="json") if selected_config else None),
+            requested_parse_config=(parse_config.model_dump(mode="json") if parse_config else None),
         )
         _logger.info(
             "upload_session_created upload_session_id=%s series_id=%s episode_order=%s size_bytes=%s segments=%s status=%s",
@@ -205,11 +223,19 @@ class UploadService:
         ):
             raise ValueError("expected_job_version must be a positive integer")
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
+        upload = self.get_session(session_id, workspace_id=workspace_id)
+        selected_config = (
+            ParseConfig.model_validate(upload.parse_config)
+            if upload.parse_config is not None else None
+        )
         job_id = self._repository.reparse(
             session_id,
             workspace_id=require_nonempty_text(workspace_id, "workspace_id"),
             expected_job_version=expected_job_version,
-            additional_attempts=self._config.max_job_attempts,
+            additional_attempts=(
+                selected_config.execution.max_attempts
+                if selected_config is not None else self._config.max_job_attempts
+            ),
             now=self._clock(),
         )
         _logger.info(
@@ -446,7 +472,11 @@ class UploadService:
                 content_hash=published.sha256,
                 duration_ms=duration_ms,
                 pipeline_version=self._config.pipeline_version,
-                max_job_attempts=self._config.max_job_attempts,
+                max_job_attempts=(
+                    ParseConfig.model_validate(claim.session.parse_config).execution.max_attempts
+                    if claim.session.parse_config is not None
+                    else self._config.max_job_attempts
+                ),
                 now=self._clock(),
             )
         except Exception as exc:

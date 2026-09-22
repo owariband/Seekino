@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     UniqueConstraint,
 )
@@ -104,6 +105,7 @@ class SeriesParseJobRecord(TimestampedRecord, Base):
         index=True,
     )
     pipeline_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    parse_config: Mapped[dict | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     stage: Mapped[str] = mapped_column(String(32), nullable=False)
     progress: Mapped[int] = mapped_column(Integer, nullable=False)

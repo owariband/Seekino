@@ -5,7 +5,8 @@ import sys
 from dataclasses import replace
 
 import pytest
-from engine.parse.runtime import EngineASRAgent, EngineVideoUnderstandingAgent
+from engine.parse.runtime import EngineASRAgent, EngineVideoUnderstandingAgent, VideoParseRuntimeConfig
+from gateway.config import load_config
 
 from server import bootstrap
 from server.api.app import create_app
@@ -13,7 +14,9 @@ from server.config import ServerSettings
 from server.config.retrieval import RetrievalConfig
 from server.config.agent import AgentServiceConfig
 from server.config.media import ImageUploadConfig
+from server.config.parse_profile import ParseConfig
 from server.config.sse import SSEConfig
+from server.config.upload import UploadServiceConfig
 from server.database import create_schema
 from server.mq import __main__ as mq_main
 
@@ -24,6 +27,25 @@ class _QdrantClient:
 
     def close(self):
         self.closed = True
+
+
+def test_parse_defaults_accept_existing_runtime_values_beyond_ui_recommendations() -> None:
+    config = ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(
+            chunk_duration_ms=150_000, context_overlap_ms=40_000,
+            max_height=3000, asr_concurrency=20,
+            max_context_events=150, max_context_chars=150_000,
+            request_timeout_seconds=4000,
+        ),
+        gateway=load_config(),
+        upload=UploadServiceConfig(max_job_attempts=12),
+        images=ImageUploadConfig(model_max_edge=5000),
+        embedding_model="test-embedding", embedding_dimensions=1024,
+        embedding_fps=1,
+    )
+    assert config.window.analysis_max_height == 3000
+    assert config.context.background_image_max_edge == 5000
+    assert config.execution.max_attempts == 12
 
 
 @pytest.mark.parametrize(
@@ -177,6 +199,17 @@ def test_process_assembly_receives_runtime_configuration(
         assert processing_config.canonical_max_height == settings.parse.max_height
         assert processing_config.asr_concurrency == settings.parse.asr_concurrency
         assert processing_config.asr_mode == settings.parse.asr_mode
+        defaults = services.uploads.parse_defaults
+        assert defaults is not None
+        assert defaults.embedding.model == settings.video_embedding_model
+        selected = defaults.model_copy(update={
+            "window": defaults.window.model_copy(update={"analysis_max_height": 480}),
+            "vision": defaults.vision.model_copy(update={"fps": 0.5}),
+        })
+        configured = processor._processor_factory(selected)
+        assert configured._config.analysis_max_height == 480
+        assert configured._model_manifest._config.video_fps == 0.5
+        assert configured._parse_config == selected
         assert received["consumer"]["worker_id"] == settings.mq.consumer_id
         assert received["consumer"]["poll_interval_seconds"] == settings.mq.poll_interval_seconds
         assert received["consumer"]["lease_duration"] == settings.mq.lease_duration

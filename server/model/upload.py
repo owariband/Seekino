@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
     Integer,
+    JSON,
     String,
     UniqueConstraint,
 )
@@ -94,6 +95,7 @@ class UploadSessionRecord(TimestampedRecord, Base):
     )
     total_segments: Mapped[int] = mapped_column(Integer, nullable=False)
     content_sha256: Mapped[str | None] = mapped_column(String(64))
+    parse_config: Mapped[dict | None] = mapped_column(JSON)
     completion_stage: Mapped[str | None] = mapped_column(String(32))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
