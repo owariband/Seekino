@@ -7,7 +7,7 @@ from gateway.agent_model import AgentLoopModel, ModelInputTooLargeError
 from langchain_core.tools import BaseTool
 
 from .context import build_workspace_checkpoint, project_inputs
-from .errors import (
+from ..common.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
 )
 from .output import build_chat_output
@@ -101,6 +101,12 @@ def render_chat(
                     ),
                 },
             ]
+        if approved_ids and getattr(model, "supports_stop_feedback", False):
+            context_options["stop_feedback"] = lambda: (
+                "已有获批视频证据，请先调用 update_video_item 放入至少一个视频块，"
+                "再结束回答。"
+                if workspace.video_item_count() == 0 else None
+            )
         model.run_agent_loop(
             prompt,
             tools=list(tools),

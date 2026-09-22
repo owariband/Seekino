@@ -12,14 +12,16 @@ from typing import Annotated
 
 from gateway.agent_model import AgentLoopModel, ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
+from gateway.sse_proxy import ContentFilterError
 from langchain_core.tools import ToolException
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from .errors import AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError
-from .runtime import AgentRuntime
-from .state import AgentFinalOutput, AnswerPhase, ExecutionControl, RunInputs, context_json
-from .tool_output import bounded_json
-from .tools import attach_agent_tool_logging, build_agent_tool
+from .common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
+from .common.tooling import attach_agent_tool_logging, build_agent_tool
+from .common.errors import AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError
+from .common.tool_output import bounded_json
+from .video_search.runtime import AgentRuntime
+from .video_search.state import AgentFinalOutput
 
 _logger = logging.getLogger(__name__)
 _URL = re.compile(r"https?://[^\s<>\])]+")
@@ -54,6 +56,8 @@ class SupervisorRuntime:
         execution_timeout_seconds: float,
         max_tool_result_bytes: int,
         max_prompt_chars: int,
+        supervisor_timeout_seconds: float = 480,
+        limits_enabled: bool = False,
     ) -> None:
         if not 1 <= max_web_results <= 20:
             raise ValueError("max_web_results must be between 1 and 20")
@@ -61,6 +65,10 @@ class SupervisorRuntime:
             raise ValueError("web_timeout_seconds must be between 0 and 60")
         if not isfinite(execution_timeout_seconds) or execution_timeout_seconds <= 0:
             raise ValueError("execution_timeout_seconds must be finite and positive")
+        if not isfinite(supervisor_timeout_seconds) or supervisor_timeout_seconds <= 0:
+            raise ValueError("supervisor_timeout_seconds must be finite and positive")
+        if not isinstance(limits_enabled, bool):
+            raise ValueError("limits_enabled must be a boolean")
         if max_tool_result_bytes < 512 or max_prompt_chars <= 0:
             raise ValueError("Supervisor output and prompt budgets must be positive")
         self._video_runtime = video_runtime
@@ -69,6 +77,8 @@ class SupervisorRuntime:
         self._max_web_results = max_web_results
         self._web_timeout_seconds = web_timeout_seconds
         self._execution_timeout_seconds = execution_timeout_seconds
+        self._supervisor_timeout_seconds = supervisor_timeout_seconds
+        self._limits_enabled = limits_enabled
         self._max_tool_result_bytes = max_tool_result_bytes
         self._max_prompt_chars = max_prompt_chars
 
@@ -96,7 +106,9 @@ class SupervisorRuntime:
         if not inputs["workspace_id"].strip() or not inputs["user_message"].strip():
             raise ValueError("Supervisor requires workspace and user message")
         control = ExecutionControl(
-            monotonic() + self._execution_timeout_seconds, cancellation, emit,
+            monotonic() + min(
+                self._execution_timeout_seconds, self._supervisor_timeout_seconds,
+            ), cancellation, emit,
         )
         video_result: AgentFinalOutput | None = None
         video_query: str | None = None
@@ -108,7 +120,10 @@ class SupervisorRuntime:
             nonlocal tool_calls
             control.check()
             tool_calls += 1
-            if max_tool_calls_per_turn is not None and tool_calls > max_tool_calls_per_turn:
+            if (
+                self._limits_enabled and max_tool_calls_per_turn is not None
+                and tool_calls > max_tool_calls_per_turn
+            ):
                 raise AgentModelInvocationError("Supervisor Tool call budget exceeded")
 
         def search_web(query: str) -> str:
@@ -186,17 +201,31 @@ class SupervisorRuntime:
                     video_query = query
                 except Exception as exc:
                     control.check()
+                    if isinstance(exc, ContentFilterError) or isinstance(
+                        exc.__cause__, ContentFilterError
+                    ):
+                        raise
+                    error_code = (
+                        "VIDEO_AGENT_FAILED"
+                        if isinstance(exc, AgentModelInvocationError)
+                        else "VIDEO_SEARCH_FAILED"
+                    )
                     _logger.warning(
                         "event=agent_supervisor_video_failed conversation_id=%s "
-                        "message_id=%s error_type=%s",
+                        "message_id=%s error_type=%s root_error_type=%s code=%s",
                         inputs["conversation_id"], inputs["assistant_message_id"],
                         type(exc).__name__,
+                        type(exc.__cause__ or exc).__name__, error_code,
                     )
                     raise ToolException(bounded_json({
                         "ok": False,
                         "error": {
-                            "code": "VIDEO_SEARCH_FAILED",
-                            "message": "Video search could not complete.",
+                            "code": error_code,
+                            "message": (
+                                "Video agent could not complete its evidence review."
+                                if error_code == "VIDEO_AGENT_FAILED"
+                                else "Video search could not complete."
+                            ),
                             "retry_hint": (
                                 "Explain that the video evidence is unavailable; "
                                 "web search cannot verify claims about the selected video."
@@ -298,7 +327,9 @@ class SupervisorRuntime:
             self._model.run_agent_loop(
                 prompt,
                 tools=tools,
-                max_model_calls=max_model_calls_per_turn,
+                max_model_calls=(
+                    max_model_calls_per_turn if self._limits_enabled else None
+                ),
                 handle_text=lambda value: text_parts.append(value),
                 request_timeout_seconds=control.remaining_seconds(),
                 check_control=control.check,

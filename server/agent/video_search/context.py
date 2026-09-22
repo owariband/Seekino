@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Any, Literal
 
-from ..schema import VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
+from ...schema import VideoChunkEvidence, VideoChunkSearchHit, VideoChunkSearchResult
 
 if TYPE_CHECKING:
     from .state import RunInputs

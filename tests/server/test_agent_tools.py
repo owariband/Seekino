@@ -7,20 +7,20 @@ from time import monotonic
 import pytest
 from langchain_core.messages import ToolMessage
 
-from server.agent.context import build_workspace_checkpoint
-from server.agent.errors import AgentModelInvocationError
-from server.agent.state import (
-    DraftItem, ExecutionControl, RunInputs,
-)
-from server.agent.skills import (
+from server.agent.common.tooling import attach_agent_tool_logging
+from server.agent.video_search.context import build_workspace_checkpoint
+from server.agent.common.errors import AgentModelInvocationError
+from server.agent.common.state import ExecutionControl, RunInputs
+from server.agent.video_search.state import DraftItem
+from server.agent.video_search.skills import (
     CHAT_SKILL_PROMPT, EVALUATOR_SKILL_PROMPT, QUERY_SKILL_PROMPT,
     RETRIEVAL_SKILL_PROMPT,
 )
-from server.agent.tools import (
-    DraftReadAudit, attach_agent_tool_logging, build_chat_tools, build_evaluator_tools,
+from server.agent.video_search.tools import (
+    DraftReadAudit, build_chat_tools, build_evaluator_tools,
     build_query_tools,
 )
-from server.agent.workspace import AgentWorkspace
+from server.agent.video_search.workspace import AgentWorkspace
 from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkEvidence,
     VideoChunkSearchHit, VideoChunkSearchResult,
@@ -273,7 +273,7 @@ def test_agent_skills_are_explicitly_work_agnostic() -> None:
 
 
 def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> None:
-    caplog.set_level(logging.INFO, logger="server.agent.tools")
+    caplog.set_level(logging.INFO, logger="server.agent.common.tooling")
     tools, _calls = _query_tools(
         Retrieval([_hit("chunk-1", large_text="private evidence " * 100)]),
         AgentWorkspace("workspace", ("series",)),

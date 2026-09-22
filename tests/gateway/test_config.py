@@ -67,9 +67,13 @@ def test_default_config_uses_selected_models() -> None:
     assert config.agent_model.request_timeout_seconds == 180
     assert config.video_parser.transcript_model == "doubao-seed-2-0-lite-260428"
     assert config.video_parser.video_model == "doubao-seed-2-1-pro-260628"
-    assert config.multimodal_embedding.model == "doubao-embedding-vision-251215"
+    assert config.multimodal_embedding.model == "doubao-embedding-vision-250615"
     assert config.multimodal_embedding.dimensions == 1024
-    assert config.agent_runtime["evaluator_stage_timeout_seconds"] == 180
+    assert config.agent_runtime["stage_timeout_seconds"] == 480
+    assert config.agent_runtime["evaluator_stage_timeout_seconds"] == 480
+    assert config.agent_runtime["chat_timeout_seconds"] == 480
+    assert config.agent_runtime["supervisor_timeout_seconds"] == 480
+    assert config.agent_runtime["execution_timeout_seconds"] == 480
 
     fallback = config.video_parser.fallback
     assert fallback.enabled is True

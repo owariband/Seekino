@@ -5,7 +5,7 @@ import json
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
-from ..agent.state import AnswerPhase
+from ..agent.common.state import AnswerPhase
 
 from ..model.agent import (
     AgentConversationRecord,

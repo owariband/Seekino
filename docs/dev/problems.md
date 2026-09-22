@@ -91,7 +91,7 @@
 | server/model/agent.py | 内部截止时间字段和迁移要求 |
 | server/repository/agent.py | 过期终结方法，沿用终态写保护并补截止判定 |
 | server/service/agent_chat.py | 发送前收尾、定期扫描、取消与输出停止、已有终态处理 |
-| server/agent/runtime.py、state.py | 接收剩余预算，保持 Harness 独立于数据库／HTTP |
+| server/agent/video_search/runtime.py、server/agent/common/state.py | 接收剩余预算，保持 Harness 独立于数据库／HTTP |
 | server/api/app.py、bootstrap.py、config/agent.py | 扫描任务的启动／关闭与配置装配 |
 
 #### 验收条件
@@ -102,7 +102,7 @@
 - 排队耗尽预算的任务不再开始新的模型调用；旧幂等 Key 不会偷偷重跑模型。
 - 终态写库暂时失败后，数据库恢复时扫描能够完成失败收尾。
 
-依据：[agent_chat.py](../../server/service/agent_chat.py) 的 start_message / _execute / close；[agent.py](../../server/repository/agent.py) 的 start_message / checkpoint_assistant_message / complete_assistant_message / fail_assistant_message；[runtime.py](../../server/agent/runtime.py)、[state.py](../../server/agent/state.py)。
+依据：[agent_chat.py](../../server/service/agent_chat.py) 的 start_message / _execute / close；[agent.py](../../server/repository/agent.py) 的 start_message / checkpoint_assistant_message / complete_assistant_message / fail_assistant_message；[runtime.py](../../server/agent/video_search/runtime.py)、[state.py](../../server/agent/video_search/state.py)。
 
 ### B02：上传提交成功后，临时目录清理失败导致接口误报失败
 
@@ -246,7 +246,7 @@ return completed
 - 已做：`update_draft_tem` 已统一更名为 `update_draft_item`（代码、Query Skill 与测试，提交 `b41b1f5`）。工具调用现在记录 `Query`／`Evaluator`／`Chat` 角色、对话与消息 ID、工具名、调用 ID、参数摘要、结果摘要或错误、耗时；自由文本用长度与哈希代替原文。业务日志持续写入 `outputs/server/logs/development/api.log`，并按大小轮转。
 - 待办：明确未知 Evidence ID 的可恢复 Tool 错误语义，给 Agent 返回可操作的纠正信息；验证失败后能继续检索或改用已召回 ID，同时不能放行未检索证据。`read_trieve_item`、`get_draft_catelog` 也存在拼写异常，目前仍是实际 Tool 名，尚未更名，改名时须同步 Tool、Skill 和回归测试。
 
-依据：[workspace.py](../../server/agent/workspace.py) 的 `upsert_draft_item`；[tools.py](../../server/agent/tools.py) 的 Tool 定义与调用追踪；[agent_chat.py](../../server/service/agent_chat.py) 的失败收尾；[query/SKILL.md](../../server/agent/skills/query/SKILL.md) 的工具清单。
+依据：[workspace.py](../../server/agent/video_search/workspace.py) 的 `upsert_draft_item`；[tools/](../../server/agent/video_search/tools/) 的 Tool 定义与 [tooling.py](../../server/agent/common/tooling.py) 的调用追踪；[agent_chat.py](../../server/service/agent_chat.py) 的失败收尾；[query/SKILL.md](../../server/agent/video_search/skills/query/SKILL.md) 的工具清单。
 
 ### C02：多次“回答未完成”仍需逐条归因
 
@@ -254,7 +254,7 @@ return completed
 - 同期日志线索：同一会话在 10:41 检索阶段约 8 秒、10:45 与 10:52 审核阶段各约 29 秒失败，错误类型均为 `GraphRecursionError`；16:22 另有检索阶段约 8 秒的 `AGENT_MODEL_ERROR`。17:09 还出现 `read_trieve_item` 游标不匹配，最终以 `PROCESSING_FAILED` 结束。页面摘录没有 `message_id`，这些日志尚未与摘录中的每次失败逐一关联。工具名拼写异常本身也不能据此判定为游标错误的根因。
 - 待办：用 `conversation_id`／`message_id` 对齐页面失败与 `agent_execution_failed`、`agent_tool_failed`；分别排查模型错误、游标误用和 Evidence ID 校验。对游标错误检查 Agent 是否把某个证据的 `next_cursor` 用于另一证据，及 Tool 返回的纠错信息是否足够；复测失败后的继续发送。
 
-依据：`outputs/server/logs/development/api.log` 中 2026-09-21 10:41、10:45、10:52、16:22 和 17:09 的失败记录；[tools.py](../../server/agent/tools.py) 的 Tool 追踪；[agent_chat.py](../../server/service/agent_chat.py) 的公开错误映射。
+依据：`outputs/server/logs/development/api.log` 中 2026-09-21 10:41、10:45、10:52、16:22 和 17:09 的失败记录；[tooling.py](../../server/agent/common/tooling.py) 的 Tool 追踪；[agent_chat.py](../../server/service/agent_chat.py) 的公开错误映射。
 
 ### C03：“怎么认识的”被回答成后续组队过程
 
@@ -262,7 +262,7 @@ return completed
 - 同一问题还包含“谁是咕咕嘎嘎？”。首答只称在“第 1–3 集范围”未找到，并推测可能是别的译名或粉丝梗；用户选择的是 MyGO，不能凭这次未命中断言全系列没有，也需要核查为何回答自行收窄到第 1–3 集。该称呼所指目前仍未核实。
 - 待办：复盘首轮 Query 检索词、候选排序、精读与 Evaluator 放行记录，确认 04:00 片段是未召回、被忽略还是在审核时被遗漏。对“初次／最早／怎么认识”类问题检查时间线完整性，对包含多个子问题的提问逐项核验；未找到时准确说明实际检索范围和限制。回归用此对话验证首答能区分“首次碰面、正式自我介绍、后来组队”。
 
-依据：用户提供的本次对话页面记录；[query/SKILL.md](../../server/agent/skills/query/SKILL.md) 与 [evaluator/SKILL.md](../../server/agent/skills/evaluator/SKILL.md) 的检索及审核流程。04:00 等情节来自后续答案所展示的视频片段，仍需在回归时独立核验。
+依据：用户提供的本次对话页面记录；[query/SKILL.md](../../server/agent/video_search/skills/query/SKILL.md) 与 [evaluator/SKILL.md](../../server/agent/video_search/skills/evaluator/SKILL.md) 的检索及审核流程。04:00 等情节来自后续答案所展示的视频片段，仍需在回归时独立核验。
 
 ### C04：失败信息与下一轮 Context 的边界
 
@@ -276,7 +276,7 @@ return completed
 - 状态：页面摘录中的成功回答末尾出现“已按获批草稿整理完成”“三个视频块分别对应”等内部整理说明，首答还说“正好用满本次上限”。这些句子没有回答用户的剧情问题，也把草稿审批和视频块上限暴露到正文中；当前仅凭页面文本不能断定是哪个 Agent 阶段生成的。
 - 待办：按消息 ID 对照 Chat Agent 输出、服务端正文组装和前端渲染，确认该内容的来源；让最终回答只保留用户需要的结论、依据和必要的不确定性说明，并用这段对话做回归。
 
-依据：用户提供的本次对话页面记录；[chat/SKILL.md](../../server/agent/skills/chat/SKILL.md) 的最终回答流程；[SearchPage.tsx](../../web/src/features/search/SearchPage.tsx) 的消息展示。
+依据：用户提供的本次对话页面记录；[chat/SKILL.md](../../server/agent/video_search/skills/chat/SKILL.md) 的最终回答流程；[SearchPage.tsx](../../web/src/features/search/SearchPage.tsx) 的消息展示。
 
 ### C06：Query Tool 将 topK 误用为整轮草稿数量上限
 
@@ -285,7 +285,7 @@ return completed
 - 已做：草稿按稳定 `video_chunk_id` 去重；原样重复返回 `already_present`，内容变化返回 `updated`。`retrieve`、`update_draft_item`、`remove_draft_item` 向 Query Agent 返回当前 `draft_item_count`。
 - 已做：Chat 只保存和发送用户显式覆盖的选项，默认值由服务端当前配置决定；页面将 `topK` 明确标为单次检索候选数。相关后端和前端回归测试已通过。
 
-依据：[tools.py](../../server/agent/tools.py) 的 `retrieve`／`update_draft_item`；[workspace.py](../../server/agent/workspace.py) 的片段与草稿去重；[runtime.py](../../server/agent/runtime.py) 和 [output.py](../../server/agent/output.py) 的草稿绑定；[query.py](../../server/agent/query.py) 的提示词。
+依据：[tools/](../../server/agent/video_search/tools/) 的 `retrieve`／`update_draft_item`；[workspace.py](../../server/agent/video_search/workspace.py) 的片段与草稿去重；[runtime.py](../../server/agent/video_search/runtime.py) 和 [output.py](../../server/agent/video_search/output.py) 的草稿绑定；[query.py](../../server/agent/video_search/query.py) 的提示词。
 
 ## 联调与验收
 
@@ -315,7 +315,7 @@ return completed
 - [ ] 对可修正的 Tool 参数、未知条目、读取范围、Catalog 游标和输出过大错误，统一返回有错误码、纠正提示及必要有效范围的受限结果，使 Agent 能在当轮缩小请求或重试；对必须终止的错误保留清晰的阶段、原因和日志，不用通用 Tool 错误掩盖根因。
 - [ ] 按盘点结果逐项修复并补回归：合法的多次检索及重复片段可继续完成；超范围读取能缩小后重试；无效证据不能进入最终答案；Context 溢出、模型失败和超时各有可定位的终止原因。
 
-依据：[tools.py](../../server/agent/tools.py) 的 Tool 包装和调用预算；[tool_output.py](../../server/agent/tool_output.py) 的输出限制；[runtime.py](../../server/agent/runtime.py) 与 [context.py](../../server/agent/context.py) 的执行及 Context 预算；[agent_chat.py](../../server/service/agent_chat.py) 的失败收尾。
+依据：[tooling.py](../../server/agent/common/tooling.py) 的 Tool 包装和 [shared.py](../../server/agent/video_search/tools/shared.py) 的调用预算；[tool_output.py](../../server/agent/common/tool_output.py) 的输出限制；[runtime.py](../../server/agent/video_search/runtime.py) 与 [context.py](../../server/agent/video_search/context.py) 的执行及 Context 预算；[agent_chat.py](../../server/service/agent_chat.py) 的失败收尾。
 
 ### B06：缺少可复用的结构化 Context Canvas 与受限 Patch 框架
 

@@ -25,7 +25,7 @@ from .config.agent import AgentServiceConfig
 from .config.global_agent_settings import read_global_agent_settings
 from .config.usage import load_model_pricing
 from .config.video_processing import VideoProcessingConfig
-from .agent.runtime import AgentRuntime
+from .agent.video_search.runtime import AgentRuntime
 from .agent.supervisor import SupervisorRuntime
 from .database import create_database_engine, create_session_factory
 from .mq.consumer import ParseJobConsumer
@@ -246,6 +246,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             max_catalog_items_per_page=agent_config.max_catalog_items_per_page,
             stage_timeout_seconds=agent_config.stage_timeout_seconds,
             evaluator_stage_timeout_seconds=agent_config.evaluator_stage_timeout_seconds,
+            chat_timeout_seconds=agent_config.chat_timeout_seconds,
             execution_timeout_seconds=agent_config.execution_timeout_seconds,
         )
     def build_supervisor_runtime(
@@ -283,6 +284,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             max_web_results=agent_config.web_search_max_results,
             web_timeout_seconds=agent_config.web_search_timeout_seconds,
             execution_timeout_seconds=agent_config.execution_timeout_seconds,
+            supervisor_timeout_seconds=agent_config.supervisor_timeout_seconds,
+            limits_enabled=agent_config.limits_enabled,
             max_tool_result_bytes=agent_config.max_tool_result_bytes,
             max_prompt_chars=agent_config.max_prompt_chars,
         )

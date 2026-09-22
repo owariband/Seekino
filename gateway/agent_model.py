@@ -12,11 +12,12 @@ from typing import Any, Literal, Protocol, TypeVar
 from arkruntime import Ark
 from arkruntime._exceptions import ArkError
 from langchain.agents import create_agent
-from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware
+from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware, hook_config
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
+    HumanMessage,
     RemoveMessage,
     convert_to_messages,
     convert_to_openai_messages,
@@ -61,6 +62,10 @@ class MissingStructuredQueryDraftError(RuntimeError):
     """The Query loop ended without the required structured draft."""
 
 
+class MissingRequiredFunctionCallError(RuntimeError):
+    """A model stopped before making a required function call."""
+
+
 class StructuredToolAgentModel(Protocol):
     provider_name: str
     model_name: str
@@ -96,6 +101,7 @@ class AgentLoopModel(Protocol):
         max_model_calls: int | None,
         handle_text: Callable[[str], None],
         require_tool_call: bool = False,
+        stop_feedback: Callable[[], str | None] | None = None,
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
         max_input_chars: int | None = None,
@@ -118,6 +124,7 @@ class DeepSeekFunctionCallingModel:
     provider_name = DEEPSEEK_PROVIDER
     supports_context_checkpoints = True
     supports_context_messages = True
+    supports_stop_feedback = True
 
     def __init__(
         self,
@@ -171,15 +178,16 @@ class DeepSeekFunctionCallingModel:
         max_model_calls: int | None,
         handle_text: Callable[[str], None],
         require_tool_call: bool = False,
+        stop_feedback: Callable[[], str | None] | None = None,
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
     ) -> None:
-        effective_timeout = min(
-            self._request_timeout_seconds,
-            request_timeout_seconds or self._request_timeout_seconds,
+        effective_timeout = (
+            self._request_timeout_seconds
+            if request_timeout_seconds is None else request_timeout_seconds
         )
         with ExitStack() as cleanup:
             client = self._client
@@ -209,6 +217,7 @@ class DeepSeekFunctionCallingModel:
                 require_visible_text_on_stop: bool,
             ):
                 nonlocal active_provider
+                timeout = min(timeout, self._request_timeout_seconds)
                 if active_provider == ARK_PROVIDER:
                     return _request_ark_function_turn(
                         fallback_client,
@@ -238,7 +247,7 @@ class DeepSeekFunctionCallingModel:
                         seen_tool_call_ids=seen_tool_call_ids,
                         require_visible_text_on_stop=require_visible_text_on_stop,
                     )
-                except (DeepSeekFunctionCallingError, ContentFilterError) as exc:
+                except DeepSeekFunctionCallingError as exc:
                     if self.fallback_model_name is None:
                         raise
                     assert attempt_started_at is not None
@@ -275,6 +284,7 @@ class DeepSeekFunctionCallingModel:
                 max_model_calls=max_model_calls,
                 handle_text=handle_text,
                 require_tool_call=require_tool_call,
+                stop_feedback=stop_feedback,
                 request_timeout_seconds=effective_timeout,
                 check_control=check_control,
                 max_input_chars=max_input_chars,
@@ -448,6 +458,14 @@ def _request_ark_function_turn(
             )
         except Exception as exc:
             call.capture_response(exc)
+            if isinstance(exc, ContentFilterError) or getattr(exc, "code", None) in {
+                "content_filter", "OutputTextSensitiveContentDetected",
+            }:
+                raise ContentFilterError(
+                    "Ark filtered generated output",
+                    code="content_filter",
+                    response_id=getattr(exc, "request_id", None),
+                ) from exc
             raise ArkFunctionCallingError(
                 f"Ark request failed for model {model_name!r}"
             ) from exc
@@ -470,6 +488,7 @@ class ArkFunctionCallingModel:
     provider_name = ARK_PROVIDER
     supports_context_checkpoints = True
     supports_context_messages = True
+    supports_stop_feedback = True
 
     def __init__(
         self,
@@ -512,15 +531,16 @@ class ArkFunctionCallingModel:
         max_model_calls: int | None,
         handle_text: Callable[[str], None],
         require_tool_call: bool = False,
+        stop_feedback: Callable[[], str | None] | None = None,
         request_timeout_seconds: float | None = None,
         check_control: Callable[[], None] | None = None,
         max_input_chars: int | None = None,
         context_checkpoint: ContextCheckpoint | None = None,
         initial_messages: Sequence[dict[str, Any]] | None = None,
     ) -> None:
-        effective_timeout = min(
-            self._request_timeout_seconds,
-            request_timeout_seconds or self._request_timeout_seconds,
+        effective_timeout = (
+            self._request_timeout_seconds
+            if request_timeout_seconds is None else request_timeout_seconds
         )
         client = self._client or Ark.volc(
             timeout=self._request_timeout_seconds,
@@ -537,6 +557,7 @@ class ArkFunctionCallingModel:
                 require_visible_text_on_stop: bool,
             ):
                 nonlocal active_model
+                timeout = min(timeout, self._request_timeout_seconds)
 
                 def invoke(model_name: str, request_timeout: float):
                     return _request_ark_function_turn(
@@ -555,7 +576,7 @@ class ArkFunctionCallingModel:
                 try:
                     attempt_started_at = monotonic()
                     return invoke(active_model, timeout)
-                except (ArkFunctionCallingError, ContentFilterError) as exc:
+                except ArkFunctionCallingError as exc:
                     if active_model != self.model_name or self.fallback_model_name is None:
                         raise
                     fallback_timeout = timeout - (monotonic() - attempt_started_at)
@@ -580,6 +601,7 @@ class ArkFunctionCallingModel:
                 max_model_calls=max_model_calls,
                 handle_text=handle_text,
                 require_tool_call=require_tool_call,
+                stop_feedback=stop_feedback,
                 request_timeout_seconds=effective_timeout,
                 check_control=check_control,
                 max_input_chars=max_input_chars,
@@ -661,6 +683,7 @@ def _run_function_calling_loop(
     max_model_calls: int | None,
     handle_text: Callable[[str], None],
     require_tool_call: bool,
+    stop_feedback: Callable[[], str | None] | None,
     request_timeout_seconds: float,
     check_control: Callable[[], None] | None,
     max_input_chars: int | None,
@@ -719,6 +742,7 @@ def _run_function_calling_loop(
     seen_tool_call_ids: set[str] = set()
     emitted_text = False
     submitted_tool = False
+    missing_call_corrected = False
 
     model_call_index = 0
     while max_model_calls is None or model_call_index < max_model_calls:
@@ -739,21 +763,35 @@ def _run_function_calling_loop(
             messages = context_update.messages
             _log_context_window_update(provider_label, context_update)
         tool_choice = "required" if require_tool_call and not submitted_tool else "auto"
-        (
-            finish_reason,
-            content,
-            assistant_message,
-            validated_calls,
-            provider_input_tokens,
-        ) = request_turn(
-            messages,
-            tool_specs,
-            tool_choice,
-            remaining_timeout,
-            seen_tool_call_ids,
-            not emitted_text,
-        )
+        try:
+            (
+                finish_reason,
+                content,
+                assistant_message,
+                validated_calls,
+                provider_input_tokens,
+            ) = request_turn(
+                messages,
+                tool_specs,
+                tool_choice,
+                remaining_timeout,
+                seen_tool_call_ids,
+                not emitted_text,
+            )
+        except MissingRequiredFunctionCallError as exc:
+            model_call_index += 1
+            if missing_call_corrected:
+                raise error_type(
+                    f"{provider_label} stopped twice without the required function call"
+                ) from exc
+            missing_call_corrected = True
+            messages.append({
+                "role": "user",
+                "content": "请调用一个可用工具，不要只返回文字。",
+            })
+            continue
         model_call_index += 1
+        missing_call_corrected = False
         context_window.record_provider_input_tokens(
             provider_input_tokens,
             request_estimated_tokens=measure_context(
@@ -773,6 +811,13 @@ def _run_function_calling_loop(
                 raise error_type(
                     f"{provider_label} agent loop completed without visible text"
                 )
+            feedback = stop_feedback() if stop_feedback is not None else None
+            if feedback:
+                messages.extend((
+                    assistant_message,
+                    {"role": "user", "content": feedback[:500]},
+                ))
+                continue
             return
 
         messages.append(assistant_message)
@@ -850,7 +895,7 @@ def _validated_agent_turn(
                 f"{provider_label} stop response must not contain tool calls"
             )
         if require_tool_call:
-            raise error_type(
+            raise MissingRequiredFunctionCallError(
                 f"{provider_label} stopped before the required function call"
             )
         if require_visible_text_on_stop and not (
@@ -987,6 +1032,23 @@ class _AgentChatOpenAI(ChatOpenAI):
         )
         self.fallback_model_name = str(getattr(fallback, "model_name", "unknown"))
 
+    def activate_fallback(self, error: Exception) -> bool:
+        if self._fallback_active or self.fallback_model_name is None:
+            return False
+        primary_model = self.model_name
+        self._fallback_active = True
+        log_model_fallback(
+            _logger,
+            primary_provider=self.provider_name,
+            primary_model=primary_model,
+            fallback_provider=self.fallback_provider_name or self.provider_name,
+            fallback_model=self.fallback_model_name,
+            error=error,
+        )
+        if self._fallback_chat_model is None:
+            self.model_name = self.fallback_model_name
+        return True
+
     def _generate(self, *args: Any, **kwargs: Any):
         requested_timeout = kwargs.get("timeout")
         request_timeout = self.request_timeout_seconds
@@ -1012,6 +1074,8 @@ class _AgentChatOpenAI(ChatOpenAI):
             QueryModelIncompleteError,
             MissingStructuredQueryToolCallError,
         ) as exc:
+            if getattr(exc, "code", None) == "content_filter":
+                raise
             if self._fallback_active or self.fallback_model_name is None:
                 raise
             assert attempt_started_at is not None
@@ -1020,25 +1084,13 @@ class _AgentChatOpenAI(ChatOpenAI):
             )
             if fallback_timeout <= 0:
                 raise
-            primary_model = self.model_name
-            self._fallback_active = True
-            log_model_fallback(
-                _logger,
-                primary_provider=self.provider_name,
-                primary_model=primary_model,
-                fallback_provider=(
-                    self.fallback_provider_name or self.provider_name
-                ),
-                fallback_model=self.fallback_model_name,
-                error=exc,
-            )
+            self.activate_fallback(exc)
             fallback_kwargs = dict(kwargs)
             fallback_kwargs["timeout"] = fallback_timeout
             if self._fallback_chat_model is not None:
                 return self._fallback_chat_model._generate(
                     *args, **fallback_kwargs
                 )
-            self.model_name = self.fallback_model_name
             return super()._generate(*args, **fallback_kwargs)
 
     def _get_request_payload(self, input_: Any, *, stop: Any = None, **kwargs: Any):
@@ -1074,9 +1126,32 @@ class _AgentChatOpenAI(ChatOpenAI):
     def _create_chat_result(self, response: Any, generation_info: Any = None):
         if isinstance(response, BaseModel):
             response = response.model_dump()
+        usage = response.get("usage")
+        completion_tokens = (
+            usage.get("completion_tokens") if isinstance(usage, Mapping) else None
+        )
         for choice in response.get("choices", []):
             reason = choice.get("finish_reason")
+            if reason == "content_filter":
+                raise ContentFilterError(
+                    "Query model filtered generated output",
+                    code="content_filter",
+                    response_id=response.get("id"),
+                )
             if reason not in {"stop", "tool_calls"}:
+                raw_calls = (choice.get("message") or {}).get("tool_calls")
+                _logger.warning(
+                    "event=query_model_incomplete provider=%s model=%s "
+                    "response_id=%s finish_reason=%s completion_tokens=%s "
+                    "max_completion_tokens=%s raw_tool_call_count=%s",
+                    self.provider_name,
+                    self.model_name,
+                    response.get("id"),
+                    reason,
+                    completion_tokens,
+                    self.max_tokens,
+                    len(raw_calls) if isinstance(raw_calls, list) else None,
+                )
                 raise QueryModelIncompleteError(
                     f"Query model did not complete: {reason}"
                 )
@@ -1101,15 +1176,66 @@ class _AgentChatOpenAI(ChatOpenAI):
                 for generation in result.generations
             )
             _logger.warning(
-                "event=query_model_invalid_tool_response model=%s "
-                "valid_tool_call_count=0 invalid_tool_call_count=%s",
+                "event=query_model_invalid_tool_response provider=%s model=%s "
+                "response_id=%s finish_reason=%s valid_tool_call_count=0 "
+                "invalid_tool_call_count=%s",
+                self.provider_name,
                 self.model_name,
+                response.get("id"),
+                response.get("choices", [{}])[0].get("finish_reason")
+                if response.get("choices") else None,
                 invalid_tool_call_count,
             )
-            raise MissingStructuredQueryToolCallError(
-                "Query model returned no valid retrieval or structured-draft tool call"
-            )
         return result
+
+
+class _StructuredToolRepairMiddleware(AgentMiddleware):
+    """Give a model one in-context correction before switching providers or failing."""
+
+    def __init__(self, model: BaseChatModel, result_name: str) -> None:
+        super().__init__()
+        self._model = model
+        self._result_name = result_name
+        self._corrected_once = False
+
+    @hook_config(can_jump_to=["model"])
+    def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        messages = state.get("messages", [])
+        if not messages or not isinstance(messages[-1], AIMessage):
+            return None
+        if messages[-1].tool_calls or state.get("structured_response") is not None:
+            self._corrected_once = False
+            return None
+
+        error = MissingStructuredQueryToolCallError(
+            "Structured Agent response contained no valid tool call"
+        )
+        if self._corrected_once:
+            activate_fallback = getattr(self._model, "activate_fallback", None)
+            if not callable(activate_fallback) or not activate_fallback(error):
+                _logger.warning(
+                    "event=structured_tool_repair action=exhausted result_type=%s",
+                    self._result_name,
+                )
+                raise error
+            self._corrected_once = False
+            action = "fallback"
+        else:
+            self._corrected_once = True
+            action = "guide"
+        _logger.warning(
+            "event=structured_tool_repair action=%s result_type=%s",
+            action,
+            self._result_name,
+        )
+        return {
+            "messages": [HumanMessage(content=(
+                "上一个响应没有有效的工具调用。请调用可用工具；如果任务已完成，"
+                f"请调用 {self._result_name} 并传入符合 schema 的 JSON 参数。"
+                "不要只返回文字。"
+            ))],
+            "jump_to": "model",
+        }
 
 
 class _ExecutionControlMiddleware(AgentMiddleware):
@@ -1446,7 +1572,9 @@ class SDKStructuredToolAgentModel:
                         fallback_model_name=None,
                     )
                     model.set_cross_provider_fallback(fallback)
-            middleware = []
+            middleware = [
+                _StructuredToolRepairMiddleware(model, result_type.__name__)
+            ]
             if max_model_calls is not None:
                 middleware.append(ModelCallLimitMiddleware(
                     run_limit=max_model_calls,
@@ -1472,7 +1600,7 @@ class SDKStructuredToolAgentModel:
             agent = create_agent(
                 model,
                 tools=list(tools),
-                response_format=ToolStrategy(result_type, handle_errors=False),
+                response_format=ToolStrategy(result_type, handle_errors=True),
                 middleware=middleware,
             )
             state = agent.invoke(

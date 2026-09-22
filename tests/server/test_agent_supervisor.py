@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from gateway.web_search import WebSearchError, WebSearchHit
+from gateway.sse_proxy import ContentFilterError
+from server.agent.common.errors import AgentModelInvocationError, AgentToolInvocationError
 from server.agent.supervisor import SupervisorRuntime
 
 
@@ -52,12 +56,16 @@ class FakeSupervisorModel:
         self.answer = answer
         self.tool_results = []
         self.prompts = []
+        self.model_call_limits = []
+        self.request_timeouts = []
 
     def run_agent_loop(
         self, prompt, *, tools, max_model_calls, handle_text,
         request_timeout_seconds, check_control, max_input_chars,
     ):
         self.prompts.append(prompt)
+        self.model_call_limits.append(max_model_calls)
+        self.request_timeouts.append(request_timeout_seconds)
         assert request_timeout_seconds > 0
         assert max_input_chars > 0
         check_control()
@@ -68,11 +76,16 @@ class FakeSupervisorModel:
         handle_text(self.answer)
 
 
-def _runtime(model, *, video=None, web=None):
+def _runtime(
+    model, *, video=None, web=None, execution_timeout_seconds=60,
+    supervisor_timeout_seconds=480, limits_enabled=False,
+):
     return SupervisorRuntime(
         video or FakeVideoRuntime(), model, web or FakeWebSearcher(),
         max_web_results=5, web_timeout_seconds=12,
-        execution_timeout_seconds=60, max_tool_result_bytes=4096,
+        execution_timeout_seconds=execution_timeout_seconds,
+        supervisor_timeout_seconds=supervisor_timeout_seconds,
+        limits_enabled=limits_enabled, max_tool_result_bytes=4096,
         max_prompt_chars=10000,
     )
 
@@ -110,6 +123,47 @@ def test_video_tool_loads_context_once_and_preserves_approved_answer():
     assert "Course" in prompt_context["video_scope_description"]
 
 
+def test_supervisor_video_time_counts_toward_its_configured_deadline(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("server.agent.supervisor.monotonic", lambda: clock[0])
+    monkeypatch.setattr("server.agent.common.state.monotonic", lambda: clock[0])
+
+    class SlowVideo(FakeVideoRuntime):
+        def kick(self, inputs, **kwargs):
+            clock[0] += 240
+            return super().kick(inputs, **kwargs)
+
+    model = FakeSupervisorModel(calls=("search_video_graph",))
+    runtime = _runtime(
+        model, video=SlowVideo(), execution_timeout_seconds=480,
+        supervisor_timeout_seconds=300,
+    )
+    result = runtime.kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+    assert result.content == "Approved video explanation."
+    assert model.request_timeouts == [pytest.approx(300)]
+
+    clock[0] = 100.0
+    runtime = _runtime(
+        FakeSupervisorModel(calls=("search_video_graph",)),
+        video=SlowVideo(), execution_timeout_seconds=480,
+        supervisor_timeout_seconds=180,
+    )
+    with pytest.raises(AgentModelInvocationError, match="deadline exceeded"):
+        runtime.kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+
+
+def test_supervisor_ignores_call_limits_when_disabled():
+    model = FakeSupervisorModel(calls=("search_video_graph", "search_video_graph"))
+    result = _runtime(model).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+        max_model_calls_per_turn=1, max_tool_calls_per_turn=1,
+    )
+    assert result.content == "Approved video explanation."
+    assert model.model_call_limits == [None]
+
+
 def test_supervisor_can_use_web_and_video_in_same_turn():
     model = FakeSupervisorModel(
         calls=("search_web", "search_video_graph"),
@@ -133,10 +187,13 @@ def test_web_failure_is_tool_feedback_and_does_not_fail_direct_chat():
     assert result.content == "Search is unavailable."
 
 
-def test_video_failure_is_tool_feedback_and_web_cannot_verify_video_claims():
+@pytest.mark.parametrize("failure", [
+    RuntimeError("runtime failed"), AgentToolInvocationError("retrieval failed"),
+])
+def test_video_failure_is_tool_feedback_and_web_cannot_verify_video_claims(failure):
     class FailingVideo(FakeVideoRuntime):
         def kick(self, inputs, **kwargs):
-            raise RuntimeError("model unavailable")
+            raise failure
 
     model = FakeSupervisorModel(calls=("search_video_graph",), answer="Video unavailable.")
     result = _runtime(model, video=FailingVideo()).kick(
@@ -145,6 +202,41 @@ def test_video_failure_is_tool_feedback_and_web_cannot_verify_video_claims():
     assert model.tool_results[0]["error"]["code"] == "VIDEO_SEARCH_FAILED"
     assert result.video_result is None
     assert result.content == "Video unavailable."
+
+
+def test_video_agent_failure_is_distinct_feedback_and_allows_web_fallback():
+    class FailingVideo(FakeVideoRuntime):
+        def kick(self, inputs, **kwargs):
+            raise AgentModelInvocationError("model response did not contain a tool call")
+
+    model = FakeSupervisorModel(
+        calls=("search_video_graph", "search_web"),
+        answer="External context from [the page](https://example.org/source).",
+    )
+    result = _runtime(model, video=FailingVideo()).kick(
+        _inputs(series_ids=["series"]), load_video_context=lambda: [],
+    )
+    assert model.tool_results[0]["error"]["code"] == "VIDEO_AGENT_FAILED"
+    assert model.tool_results[1]["ok"] is True
+    assert result.video_result is None
+    assert len(result.web_sources) == 1
+
+
+def test_video_content_filter_does_not_become_tool_feedback():
+    class FilteredVideo(FakeVideoRuntime):
+        def kick(self, inputs, **kwargs):
+            raise AgentModelInvocationError("filtered") from ContentFilterError(
+                "filtered", code="content_filter",
+            )
+
+    web = FakeWebSearcher()
+    model = FakeSupervisorModel(calls=("search_video_graph", "search_web"))
+    with pytest.raises(AgentModelInvocationError):
+        _runtime(model, video=FilteredVideo(), web=web).kick(
+            _inputs(series_ids=["series"]), load_video_context=lambda: [],
+        )
+    assert model.tool_results == []
+    assert web.calls == []
 
 
 def test_unreferenced_web_hits_are_labelled_as_search_results():

@@ -5,7 +5,7 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import Field
 
-from ...agent.state import AnswerPhase
+from ...agent.common.state import AnswerPhase
 from ...schema import ContractModel
 
 _Item = TypeVar("_Item")

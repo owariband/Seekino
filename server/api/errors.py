@@ -32,7 +32,7 @@ from ..repository.video import (
     SeriesScopeNotFoundError,
     VideoChunkNotFoundError,
 )
-from ..agent.errors import AgentContextBudgetError, AgentModelInvocationError
+from ..agent.common.errors import AgentContextBudgetError, AgentModelInvocationError
 from ..config.global_agent_settings import GlobalAgentSettingsConflictError
 from ..service.upload import UploadChecksumMismatchError
 from ..service.qdrant_mutation_lock import QdrantMutationLockBusyError

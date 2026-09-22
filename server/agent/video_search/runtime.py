@@ -12,9 +12,9 @@ from time import monotonic
 from gateway.agent_model import AgentLoopModel, StructuredToolAgentModel
 from langgraph.graph import END, START, StateGraph
 
-from ..schema import VideoChunkSearchResult
+from ...schema import VideoChunkSearchResult
 from .chat import render_chat
-from .errors import AgentModelInvocationError
+from ..common.errors import AgentModelInvocationError
 from .evaluator import evaluate
 from .output import (
     bind_draft, build_retrieval_trace, finalize_output,
@@ -54,9 +54,10 @@ class AgentRuntime:
         max_tool_result_bytes: int = 16_384,
         max_read_chars_per_call: int = 16_384,
         max_catalog_items_per_page: int = 20,
-        stage_timeout_seconds: float = 120,
-        evaluator_stage_timeout_seconds: float = 180,
-        execution_timeout_seconds: float = 600,
+        stage_timeout_seconds: float = 480,
+        evaluator_stage_timeout_seconds: float = 480,
+        chat_timeout_seconds: float = 480,
+        execution_timeout_seconds: float = 480,
     ) -> None:
         for name, value, maximum in [
             ("max_loop_turns", max_loop_turns, 3),
@@ -87,6 +88,7 @@ class AgentRuntime:
         for name, value in (
             ("stage_timeout_seconds", stage_timeout_seconds),
             ("evaluator_stage_timeout_seconds", evaluator_stage_timeout_seconds),
+            ("chat_timeout_seconds", chat_timeout_seconds),
             ("execution_timeout_seconds", execution_timeout_seconds),
         ):
             if isinstance(value, bool) or not isfinite(value) or value <= 0:
@@ -106,6 +108,7 @@ class AgentRuntime:
         self._max_catalog_items = max_catalog_items_per_page
         self._stage_timeout = stage_timeout_seconds
         self._evaluator_stage_timeout = evaluator_stage_timeout_seconds
+        self._chat_timeout = chat_timeout_seconds
         self._execution_timeout = execution_timeout_seconds
         builder = StateGraph(RunState)
         builder.add_node("turn", self.turn)
@@ -406,7 +409,7 @@ class AgentRuntime:
             control,
             deadline=min(
                 control.deadline,
-                monotonic() + self._stage_timeout,
+                monotonic() + self._chat_timeout,
             ),
         )
         chat_tools = build_chat_tools(

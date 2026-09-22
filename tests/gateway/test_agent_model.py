@@ -33,6 +33,13 @@ class QueryDraft(BaseModel):
     selected_video_chunk_ids: list[str]
 
 
+class ReviewDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: str
+    advice: str
+
+
 class VideoItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -168,6 +175,7 @@ def _run_agent(
     handle_text=lambda _text: None,
     invoke_tool=lambda _item: "accepted",
     require_tool_call: bool = False,
+    stop_feedback=None,
     request_timeout_seconds: float | None = None,
     check_control=None,
     max_input_chars: int | None = None,
@@ -192,6 +200,7 @@ def _run_agent(
         max_model_calls=max_model_calls,
         handle_text=handle_text,
         require_tool_call=require_tool_call,
+        stop_feedback=stop_feedback,
         request_timeout_seconds=request_timeout_seconds,
         check_control=check_control,
         max_input_chars=max_input_chars,
@@ -331,7 +340,7 @@ def test_deepseek_agent_loop_allows_first_turn_text_stop() -> None:
     assert completions.calls[0]["tool_choice"] == "auto"
 
 
-def test_ark_agent_loop_requires_video_tool_and_falls_back_to_lite() -> None:
+def test_ark_agent_loop_guides_missing_required_tool_before_completion() -> None:
     completions = _FunctionCompletions(
         _agent_response("Pro skipped the required tool."),
         _agent_response(
@@ -339,7 +348,7 @@ def test_ark_agent_loop_requires_video_tool_and_falls_back_to_lite() -> None:
             calls=[_tool_call(_video_item())],
             finish_reason="tool_calls",
         ),
-        _agent_response("Lite completed the answer."),
+        _agent_response("Pro completed the answer."),
     )
     model = ArkFunctionCallingModel(
         "doubao-pro",
@@ -361,14 +370,134 @@ def test_ark_agent_loop_requires_video_tool_and_falls_back_to_lite() -> None:
 
     assert events == [
         ("tool", "chunk-1"),
-        ("text", "Lite completed the answer."),
+        ("text", "Pro completed the answer."),
     ]
     assert [call["model"] for call in completions.calls] == [
-        "doubao-pro", "doubao-lite", "doubao-lite",
+        "doubao-pro", "doubao-pro", "doubao-pro",
     ]
     assert [call["tool_choice"] for call in completions.calls] == [
         "required", "required", "auto",
     ]
+    assert completions.calls[1]["messages"][-1]["role"] == "user"
+    assert "工具" in completions.calls[1]["messages"][-1]["content"]
+
+
+def test_ark_agent_loop_does_not_fallback_after_content_filter() -> None:
+    filtered = RuntimeError("filtered")
+    filtered.code = "OutputTextSensitiveContentDetected"
+    completions = _FunctionCompletions(filtered, _agent_response("fallback"))
+    model = ArkFunctionCallingModel(
+        "doubao-pro", fallback_model="doubao-lite",
+        max_output_tokens=2048, request_timeout_seconds=30,
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+
+    with pytest.raises(ContentFilterError):
+        _run_agent(model)
+
+    assert len(completions.calls) == 1
+
+
+def test_deepseek_agent_loop_guides_missing_tool_without_switching_provider() -> None:
+    primary = _FunctionCompletions(
+        _agent_response("缺少必需工具。"),
+        _agent_response(
+            None,
+            calls=[_tool_call(_video_item())],
+            finish_reason="tool_calls",
+        ),
+        _agent_response("回答完成。"),
+    )
+    fallback = _FunctionCompletions(_agent_response("不应调用备用模型。"))
+    model = DeepSeekFunctionCallingModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=2048,
+        request_timeout_seconds=30,
+        fallback_model="doubao-lite",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=primary)),
+        fallback_client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
+    )
+    texts = []
+
+    _run_agent(model, require_tool_call=True, handle_text=texts.append)
+
+    assert texts == ["回答完成。"]
+    assert len(primary.calls) == 3
+    assert primary.calls[1]["messages"][-1]["role"] == "user"
+    assert "工具" in primary.calls[1]["messages"][-1]["content"]
+    assert fallback.calls == []
+
+
+def test_agent_loop_stop_feedback_requests_missing_business_tool() -> None:
+    model, completions = _function_model(
+        _agent_response("先整理草稿。"),
+        _agent_response(
+            None,
+            calls=[_tool_call(_video_item(), call_id="call-2")],
+            finish_reason="tool_calls",
+        ),
+        _agent_response("已放入视频证据。"),
+    )
+    submitted = []
+    texts = []
+
+    _run_agent(
+        model,
+        handle_text=texts.append,
+        invoke_tool=lambda item: submitted.append(item.video_chunk_id) or "accepted",
+        stop_feedback=lambda: (
+            None if submitted else "请先调用 submit_video_item 放入视频证据。"
+        ),
+    )
+
+    assert submitted == ["chunk-1"]
+    assert texts == ["先整理草稿。", "已放入视频证据。"]
+    assert len(completions.calls) == 3
+    assert completions.calls[1]["messages"][-2:] == [
+        {"role": "assistant", "content": "先整理草稿。"},
+        {"role": "user", "content": "请先调用 submit_video_item 放入视频证据。"},
+    ]
+    assert completions.calls[2]["messages"][-1] == {
+        "role": "tool", "tool_call_id": "call-2", "content": "accepted",
+    }
+
+
+def test_agent_loop_rejects_second_missing_required_tool_without_fallback() -> None:
+    primary = _FunctionCompletions(
+        _agent_response("第一次漏调。"),
+        _agent_response("第二次漏调。"),
+    )
+    fallback = _FunctionCompletions(_agent_response("不应调用备用模型。"))
+    model = DeepSeekFunctionCallingModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=2048,
+        request_timeout_seconds=30,
+        fallback_model="doubao-lite",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=primary)),
+        fallback_client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
+    )
+
+    with pytest.raises(DeepSeekFunctionCallingError, match="stopped twice"):
+        _run_agent(model, require_tool_call=True)
+
+    assert len(primary.calls) == 2
+    assert fallback.calls == []
+
+
+def test_agent_loop_missing_required_tool_respects_model_call_budget() -> None:
+    model, completions = _function_model(
+        _agent_response("漏调必需工具。"),
+        _agent_response("不应发起第二次请求。"),
+    )
+
+    with pytest.raises(DeepSeekFunctionCallingError, match="exhausted max_model_calls"):
+        _run_agent(model, require_tool_call=True, max_model_calls=1)
+
+    assert len(completions.calls) == 1
 
 
 def test_ark_agent_loop_does_not_fallback_after_tool_handler_error() -> None:
@@ -782,6 +911,51 @@ def test_deepseek_agent_loop_uses_one_total_deadline(monkeypatch) -> None:
     assert completions.calls[1]["timeout"] == 1.0
 
 
+@pytest.mark.parametrize("provider", ["deepseek", "ark"])
+def test_agent_loop_keeps_caller_deadline_after_long_tool_call(
+    monkeypatch, provider: str,
+) -> None:
+    now = [0.0]
+    monkeypatch.setattr(agent_model_module, "monotonic", lambda: now[0])
+    completions = _FunctionCompletions(
+        _agent_response(
+            calls=[_tool_call(_video_item())],
+            finish_reason="tool_calls",
+        ),
+        _agent_response("回答"),
+    )
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    if provider == "deepseek":
+        model = DeepSeekFunctionCallingModel(
+            "deepseek-flash",
+            base_url="https://api.deepseek.com",
+            api_key="test-key",
+            max_output_tokens=2048,
+            request_timeout_seconds=180,
+            client=client,
+        )
+    else:
+        model = ArkFunctionCallingModel(
+            "doubao-pro",
+            fallback_model=None,
+            max_output_tokens=2048,
+            request_timeout_seconds=180,
+            client=client,
+        )
+
+    def spend_tool_time(_item: VideoItem) -> str:
+        now[0] = 360.0
+        return "accepted"
+
+    _run_agent(
+        model,
+        request_timeout_seconds=480,
+        invoke_tool=spend_tool_time,
+    )
+
+    assert [call["timeout"] for call in completions.calls] == [180, 120]
+
+
 def test_deepseek_agent_loop_does_not_request_after_deadline(monkeypatch) -> None:
     ticks = iter([100.0, 100.5, 102.1])
     monkeypatch.setattr(agent_model_module, "monotonic", lambda: next(ticks))
@@ -985,6 +1159,29 @@ def test_deepseek_agent_loop_reports_content_filter() -> None:
     assert error.value.response_id == "filtered-response"
 
 
+def test_deepseek_agent_loop_does_not_fallback_after_content_filter() -> None:
+    primary = _FunctionCompletions(_agent_response(
+        None, finish_reason="content_filter", response_id="filtered-response",
+    ))
+    fallback = _FunctionCompletions(_agent_response("must not be used"))
+    model = DeepSeekFunctionCallingModel(
+        "deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        max_output_tokens=2048,
+        request_timeout_seconds=30,
+        fallback_model="doubao-lite",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=primary)),
+        fallback_client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
+    )
+
+    with pytest.raises(ContentFilterError):
+        _run_agent(model)
+
+    assert len(primary.calls) == 1
+    assert fallback.calls == []
+
+
 def test_deepseek_agent_loop_wraps_api_error_without_provider_text() -> None:
     provider_error = APIConnectionError(
         request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),
@@ -1181,6 +1378,24 @@ def _completion(
                 },
             }
         ],
+    }
+
+
+def _completion_without_tool(model: str) -> dict:
+    return {
+        "id": f"completion-{model}-without-tool",
+        "model": model,
+        "created": 1,
+        "object": "chat.completion",
+        "choices": [{
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": "未按要求调用工具。",
+                "tool_calls": None,
+            },
+        }],
     }
 
 
@@ -1588,6 +1803,147 @@ def test_sdk_query_falls_back_to_lite_only_after_provider_failure() -> None:
     client.close()
 
 
+@pytest.mark.parametrize(
+    ("result_type", "arguments"),
+    [
+        (QueryDraft, {
+            "plan_context": "检索完成",
+            "message": "没有匹配片段",
+            "selected_video_chunk_ids": [],
+        }),
+        (ReviewDecision, {"action": "continue", "advice": "继续核验证据"}),
+    ],
+)
+def test_structured_agent_guides_missing_tool_call_in_same_session(
+    result_type, arguments,
+) -> None:
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if len(requests) == 1:
+            return httpx.Response(200, json=_completion_without_tool("ark-test"))
+        return httpx.Response(
+            200,
+            json=_completion(result_type.__name__, arguments, call_id="call-2"),
+        )
+
+    client = Ark(
+        api_key="test-ark-key",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    model = SDKQueryAgentModel(
+        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
+    )
+
+    result = model.run_structured(
+        "审核检索结果", tools=[], result_type=result_type, max_model_calls=2,
+    )
+
+    assert result == result_type.model_validate(arguments)
+    assert len(requests) == 2
+    assert [request["model"] for request in requests] == ["ark-test"] * 2
+    assert requests[1]["messages"][:len(requests[0]["messages"])] == (
+        requests[0]["messages"]
+    )
+    assert requests[1]["messages"][-2]["role"] == "assistant"
+    assert requests[1]["messages"][-1]["role"] == "user"
+    guidance = requests[1]["messages"][-1]["content"]
+    assert isinstance(guidance, str) and 0 < len(guidance) <= 500
+    client.close()
+
+
+def test_structured_agent_guides_malformed_tool_arguments() -> None:
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            malformed = _completion("QueryDraft", {})
+            malformed["choices"][0]["message"]["tool_calls"][0]["function"][
+                "arguments"
+            ] = "{invalid"
+            return httpx.Response(200, json=malformed)
+        return httpx.Response(200, json=_completion("QueryDraft", {
+            "plan_context": "检索完成",
+            "message": "没有匹配片段",
+            "selected_video_chunk_ids": [],
+        }, call_id="call-2"))
+
+    client = Ark(
+        api_key="test-ark-key", max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    model = SDKQueryAgentModel(
+        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
+    )
+
+    result = model.run_query(
+        "检索", tools=[], result_type=QueryDraft, max_model_calls=2,
+    )
+
+    assert result.message == "没有匹配片段"
+    assert len(requests) == 2
+    assert requests[1]["messages"][-1]["role"] == "user"
+    client.close()
+
+
+def test_structured_missing_tool_retry_respects_model_call_limit() -> None:
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=_completion_without_tool("ark-test"))
+
+    client = Ark(
+        api_key="test-ark-key",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    model = SDKQueryAgentModel(
+        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
+    )
+
+    with pytest.raises(ModelCallLimitExceededError):
+        model.run_query(
+            "检索", tools=[], result_type=QueryDraft, max_model_calls=1,
+        )
+
+    assert len(requests) == 1
+    client.close()
+
+
+def test_structured_missing_tool_retry_respects_stage_deadline(monkeypatch) -> None:
+    now = [100.0]
+    monkeypatch.setattr(agent_model_module, "monotonic", lambda: now[0])
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        now[0] = 103.0
+        return httpx.Response(200, json=_completion_without_tool("ark-test"))
+
+    client = Ark(
+        api_key="test-ark-key",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    model = SDKQueryAgentModel(
+        "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
+    )
+
+    with pytest.raises(TimeoutError, match="execution deadline expired"):
+        model.run_query(
+            "检索", tools=[], result_type=QueryDraft, max_model_calls=3,
+            request_timeout_seconds=2,
+        )
+
+    assert len(requests) == 1
+    client.close()
+
+
 def test_sdk_query_falls_back_from_deepseek_to_ark_with_same_request_state() -> None:
     deepseek_requests = []
     ark_requests = []
@@ -1595,21 +1951,9 @@ def test_sdk_query_falls_back_from_deepseek_to_ark_with_same_request_state() -> 
     def deepseek_respond(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         deepseek_requests.append(payload)
-        return httpx.Response(200, json={
-            "id": "deepseek-missing-tool",
-            "model": "deepseek-flash",
-            "created": 1,
-            "object": "chat.completion",
-            "choices": [{
-                "index": 0,
-                "finish_reason": "stop",
-                "message": {
-                    "role": "assistant",
-                    "content": "未按要求调用工具",
-                    "tool_calls": None,
-                },
-            }],
-        })
+        return httpx.Response(
+            200, json=_completion_without_tool("deepseek-flash"),
+        )
 
     def ark_respond(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
@@ -1653,17 +1997,23 @@ def test_sdk_query_falls_back_from_deepseek_to_ark_with_same_request_state() -> 
     )
 
     result = model.run_query(
-        "检索", tools=[], result_type=QueryDraft, max_model_calls=1,
+        "检索", tools=[], result_type=QueryDraft, max_model_calls=3,
     )
 
     assert result.selected_video_chunk_ids == []
-    assert len(deepseek_requests) == len(ark_requests) == 1
+    assert len(deepseek_requests) == 2
+    assert len(ark_requests) == 1
     assert deepseek_requests[0]["model"] == "deepseek-flash"
     assert deepseek_requests[0]["thinking"] == {"type": "disabled"}
     assert deepseek_requests[0]["tool_choice"] == "required"
+    assert deepseek_requests[1]["model"] == "deepseek-flash"
+    assert deepseek_requests[1]["messages"][-2]["role"] == "assistant"
+    assert deepseek_requests[1]["messages"][-1]["role"] == "user"
     assert ark_requests[0]["model"] == "doubao-lite"
     assert ark_requests[0]["tool_choice"] == "required"
-    assert ark_requests[0]["messages"] == deepseek_requests[0]["messages"]
+    assert ark_requests[0]["messages"][:len(deepseek_requests[1]["messages"])] == (
+        deepseek_requests[1]["messages"]
+    )
     assert [
         item["function"]["name"] for item in ark_requests[0]["tools"]
     ] == [
@@ -1690,21 +2040,9 @@ def test_sdk_query_cross_provider_fallback_keeps_completed_tool_result() -> None
                 200,
                 json=_completion("search_video_chunk_evidence", {"query": "KTV"}),
             )
-        return httpx.Response(200, json={
-            "id": "deepseek-missing-draft",
-            "model": "deepseek-flash",
-            "created": 1,
-            "object": "chat.completion",
-            "choices": [{
-                "index": 0,
-                "finish_reason": "stop",
-                "message": {
-                    "role": "assistant",
-                    "content": "没有提交 QueryDraft",
-                    "tool_calls": None,
-                },
-            }],
-        })
+        return httpx.Response(
+            200, json=_completion_without_tool("deepseek-flash"),
+        )
 
     def ark_respond(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
@@ -1750,16 +2088,17 @@ def test_sdk_query_cross_provider_fallback_keeps_completed_tool_result() -> None
     result = model.run_query(
         "检索 KTV",
         tools=[_tool(retrieve)],
-        result_type=QueryDraft,
-        max_model_calls=2,
+        result_type=QueryDraft, max_model_calls=4,
     )
 
     assert result.selected_video_chunk_ids == ["chunk-real"]
     assert searches == ["KTV"]
-    assert len(deepseek_requests) == 2
+    assert len(deepseek_requests) == 3
     assert len(ark_requests) == 1
-    assert ark_requests[0]["messages"] == deepseek_requests[1]["messages"]
-    assert [message["role"] for message in ark_requests[0]["messages"]] == [
+    assert ark_requests[0]["messages"][:len(deepseek_requests[2]["messages"])] == (
+        deepseek_requests[2]["messages"]
+    )
+    assert [message["role"] for message in ark_requests[0]["messages"][:3]] == [
         "user", "assistant", "tool",
     ]
     assert "chunk-real" in ark_requests[0]["messages"][2]["content"]
@@ -1767,10 +2106,111 @@ def test_sdk_query_cross_provider_fallback_keeps_completed_tool_result() -> None
     ark_client.close()
 
 
-def test_sdk_query_falls_back_in_place_when_pro_omits_structured_draft(
-    caplog,
+@pytest.mark.parametrize("ark_recovers", [True, False])
+def test_query_logs_incomplete_deepseek_then_guides_ark_without_tool(
+    caplog, ark_recovers,
 ) -> None:
+    deepseek_requests = []
+    ark_requests = []
+    searches = []
+
+    def retrieve(query: str) -> dict:
+        searches.append(query)
+        return {"hits": [{"video_chunk_id": "chunk-real"}]}
+
+    def deepseek_respond(request: httpx.Request) -> httpx.Response:
+        deepseek_requests.append(json.loads(request.content))
+        if len(deepseek_requests) == 1:
+            return httpx.Response(200, json=_completion(
+                "search_video_chunk_evidence", {"query": "KTV"},
+            ))
+        incomplete = _completion("QueryDraft", {
+            "plan_context": "incomplete", "message": "incomplete",
+            "selected_video_chunk_ids": ["chunk-real"],
+        }, reason="length", call_id="partial-call")
+        incomplete["id"] = "deepseek-incomplete"
+        incomplete["usage"] = {"completion_tokens": 400}
+        return httpx.Response(200, json=incomplete)
+
+    def ark_respond(request: httpx.Request) -> httpx.Response:
+        ark_requests.append(json.loads(request.content))
+        if len(ark_requests) == 1 or not ark_recovers:
+            return httpx.Response(200, json=_completion_without_tool("doubao-lite"))
+        return httpx.Response(200, json=_completion("QueryDraft", {
+            "plan_context": "Ark completed", "message": "Found KTV",
+            "selected_video_chunk_ids": ["chunk-real"],
+        }, call_id="ark-complete"))
+
+    deepseek_client = OpenAI(
+        api_key="test-deepseek-key", base_url="https://api.deepseek.test/v1",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(deepseek_respond)),
+    )
+    ark_client = Ark(
+        api_key="test-ark-key", max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(ark_respond)),
+    )
+    model = SDKQueryAgentModel(
+        "deepseek-flash", provider="deepseek",
+        base_url="https://api.deepseek.test/v1", api_key="test-deepseek-key",
+        fallback_model="doubao-lite", fallback_provider="ark",
+        request_timeout_seconds=3, max_output_tokens=400,
+        client=deepseek_client, fallback_client=ark_client,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        if ark_recovers:
+            result = model.run_query(
+                "检索 KTV", tools=[_tool(retrieve)], result_type=QueryDraft,
+                max_model_calls=4,
+            )
+        else:
+            with pytest.raises(MissingStructuredQueryToolCallError):
+                model.run_query(
+                    "检索 KTV", tools=[_tool(retrieve)], result_type=QueryDraft,
+                    max_model_calls=4,
+                )
+
+    if ark_recovers:
+        assert result.selected_video_chunk_ids == ["chunk-real"]
+    assert searches == ["KTV"]
+    assert len(deepseek_requests) == 2
+    assert len(ark_requests) == 2
+    assert "chunk-real" in next(
+        message["content"] for message in ark_requests[0]["messages"]
+        if message["role"] == "tool"
+    )
+    assert "partial-call" not in json.dumps(ark_requests[0]["messages"])
+    assert ark_requests[1]["messages"][-1]["role"] == "user"
+    assert "QueryDraft" in ark_requests[1]["messages"][-1]["content"]
+    events = [record.message for record in caplog.records]
+    incomplete_index = next(i for i, message in enumerate(events)
+                            if "event=query_model_incomplete" in message)
+    fallback_index = next(i for i, message in enumerate(events)
+                          if "event=agent_model_fallback" in message)
+    no_tool_index = next(i for i, message in enumerate(events)
+                         if "event=query_model_invalid_tool_response" in message)
+    guide_index = next(i for i, message in enumerate(events)
+                       if "event=structured_tool_repair action=guide" in message)
+    assert incomplete_index < fallback_index < no_tool_index < guide_index
+    assert "provider=deepseek" in events[incomplete_index]
+    assert "response_id=deepseek-incomplete" in events[incomplete_index]
+    assert "finish_reason=length" in events[incomplete_index]
+    assert "completion_tokens=400" in events[incomplete_index]
+    assert "provider=ark" in events[no_tool_index]
+    assert "valid_tool_call_count=0 invalid_tool_call_count=0" in events[no_tool_index]
+    if not ark_recovers:
+        assert any(
+            "event=structured_tool_repair action=exhausted" in message
+            for message in events
+        )
+    deepseek_client.close()
+    ark_client.close()
+
+
+def test_sdk_query_retries_invalid_structured_draft_with_tool_feedback() -> None:
     requested_models = []
+    requests = []
     searches = []
 
     def retrieve(query: str) -> dict:
@@ -1780,6 +2220,7 @@ def test_sdk_query_falls_back_in_place_when_pro_omits_structured_draft(
     def respond(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         requested_models.append(payload["model"])
+        requests.append(payload)
         if len(requested_models) == 1:
             return httpx.Response(
                 200,
@@ -1787,38 +2228,26 @@ def test_sdk_query_falls_back_in_place_when_pro_omits_structured_draft(
                     "search_video_chunk_evidence", {"query": "KTV"}
                 ),
             )
-        if payload["model"] == "doubao-pro":
-            return httpx.Response(200, json={
-                "id": "completion-pro-invalid-tool",
-                "model": "doubao-pro",
-                "created": 1,
-                "object": "chat.completion",
-                "choices": [{
-                    "index": 0,
-                    "finish_reason": "tool_calls",
-                    "message": {
-                        "role": "assistant",
-                        "content": "",
-                        "tool_calls": [{
-                            "id": "call-invalid",
-                            "type": "function",
-                            "function": {
-                                "name": "QueryDraft",
-                                "arguments": "{",
-                            },
-                        }],
-                    },
-                }],
-            })
+        if len(requested_models) == 2:
+            return httpx.Response(200, json=_completion(
+                "QueryDraft",
+                {
+                    "plan_context": "草稿待修正",
+                    "message": "找到了 KTV 片段",
+                    "selected_video_chunk_ids": "chunk-real",
+                },
+                call_id="call-invalid",
+            ))
         return httpx.Response(
             200,
             json=_completion(
                 "QueryDraft",
                 {
-                    "plan_context": "Lite 补齐结构化草稿",
+                    "plan_context": "Pro 修正结构化草稿",
                     "message": "找到了 KTV 片段",
                     "selected_video_chunk_ids": ["chunk-real"],
                 },
+                call_id="call-3",
             ),
         )
 
@@ -1835,42 +2264,32 @@ def test_sdk_query_falls_back_in_place_when_pro_omits_structured_draft(
         client=client,
     )
 
-    with caplog.at_level(logging.WARNING, logger="gateway.agent_model"):
-        result = model.run_query(
-            "检索 KTV",
-            tools=[_tool(retrieve)],
-            result_type=QueryDraft,
-            max_model_calls=2,
-        )
+    result = model.run_query(
+        "检索 KTV", tools=[_tool(retrieve)], result_type=QueryDraft,
+        max_model_calls=3,
+    )
 
     assert result.selected_video_chunk_ids == ["chunk-real"]
-    assert requested_models == ["doubao-pro", "doubao-pro", "doubao-lite"]
+    assert requested_models == ["doubao-pro"] * 3
     assert searches == ["KTV"]
-    assert "error_type=MissingStructuredQueryToolCallError" in caplog.text
+    feedback = next(
+        message for message in requests[2]["messages"]
+        if message["role"] == "tool"
+        and message["tool_call_id"] == "call-invalid"
+    )
+    assert "selected_video_chunk_ids" in feedback["content"]
     client.close()
 
 
 def test_sdk_query_stops_after_lite_also_omits_required_tool() -> None:
-    requested_models = []
+    requests = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
-        requested_models.append(payload["model"])
-        return httpx.Response(200, json={
-            "id": f"completion-{payload['model']}",
-            "model": payload["model"],
-            "created": 1,
-            "object": "chat.completion",
-            "choices": [{
-                "index": 0,
-                "finish_reason": "stop",
-                "message": {
-                    "role": "assistant",
-                    "content": "没有调用必需工具。",
-                    "tool_calls": None,
-                },
-            }],
-        })
+        requests.append(payload)
+        return httpx.Response(
+            200, json=_completion_without_tool(payload["model"]),
+        )
 
     client = Ark(
         api_key="test-ark-key",
@@ -1887,11 +2306,77 @@ def test_sdk_query_stops_after_lite_also_omits_required_tool() -> None:
 
     with pytest.raises(MissingStructuredQueryToolCallError):
         model.run_query(
-            "检索", tools=[], result_type=QueryDraft, max_model_calls=1,
+            "检索", tools=[], result_type=QueryDraft, max_model_calls=4,
         )
 
-    assert requested_models == ["doubao-pro", "doubao-lite"]
+    assert [request["model"] for request in requests] == [
+        "doubao-pro", "doubao-pro", "doubao-lite", "doubao-lite",
+    ]
+    for index in (1, 3):
+        assert requests[index]["messages"][-2]["role"] == "assistant"
+        assert requests[index]["messages"][-1]["role"] == "user"
     client.close()
+
+
+def test_sdk_query_does_not_fallback_after_content_filter() -> None:
+    deepseek_requests = []
+    ark_requests = []
+
+    def deepseek_respond(request: httpx.Request) -> httpx.Response:
+        deepseek_requests.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            **_completion_without_tool("deepseek-flash"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "content_filter",
+                "message": {"role": "assistant", "content": None},
+            }],
+        })
+
+    def ark_respond(request: httpx.Request) -> httpx.Response:
+        ark_requests.append(json.loads(request.content))
+        return httpx.Response(200, json=_completion(
+            "QueryDraft",
+            {
+                "plan_context": "不应使用备用模型",
+                "message": "不应使用备用模型",
+                "selected_video_chunk_ids": [],
+            },
+        ))
+
+    deepseek_client = OpenAI(
+        api_key="test-deepseek-key",
+        base_url="https://api.deepseek.test/v1",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(deepseek_respond)),
+    )
+    ark_client = Ark(
+        api_key="test-ark-key",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(ark_respond)),
+    )
+    model = SDKQueryAgentModel(
+        "deepseek-flash",
+        provider="deepseek",
+        base_url="https://api.deepseek.test/v1",
+        api_key="test-deepseek-key",
+        fallback_model="doubao-lite",
+        fallback_provider="ark",
+        request_timeout_seconds=3,
+        max_output_tokens=400,
+        client=deepseek_client,
+        fallback_client=ark_client,
+    )
+
+    with pytest.raises(ContentFilterError):
+        model.run_query(
+            "检索", tools=[], result_type=QueryDraft, max_model_calls=3,
+        )
+
+    assert len(deepseek_requests) == 1
+    assert ark_requests == []
+    deepseek_client.close()
+    ark_client.close()
 
 
 def test_sdk_query_compacts_complete_messages_before_second_model_request() -> None:

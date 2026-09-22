@@ -6,7 +6,7 @@ from gateway.agent_model import ModelInputTooLargeError, StructuredToolAgentMode
 from langchain_core.tools import BaseTool
 
 from .context import build_workspace_checkpoint, project_inputs
-from .errors import (
+from ..common.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
 )
 from .skills import QUERY_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT

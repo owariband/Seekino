@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-import json
-from collections.abc import Callable
 from dataclasses import dataclass
-from enum import StrEnum
-from threading import Event
-from time import monotonic
-from typing import Any, Annotated, Literal, NotRequired, TypedDict
+from typing import Any, Annotated, Literal, TypedDict
 
 from pydantic import (
     BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator,
 )
 
-from ..constants.retrieval import AGENT_RETRIEVAL_STRATEGY_VERSION
-from ..schema import ContractModel, VideoChunkSearchResult
-from .errors import AgentContextBudgetError, AgentModelInvocationError
+from ...constants.retrieval import AGENT_RETRIEVAL_STRATEGY_VERSION
+from ...schema import ContractModel, VideoChunkSearchResult
+from ..common.errors import AgentContextBudgetError
+from ..common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
 
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
 _EvidenceClaim = Annotated[
@@ -26,13 +22,6 @@ _VideoChunkId = Annotated[
     StringConstraints(strip_whitespace=True, min_length=1, max_length=36),
 ]
 _Markdown = Annotated[str, StringConstraints(min_length=1, max_length=20_000)]
-
-
-class AnswerPhase(StrEnum):
-    QUEUED = "QUEUED"
-    RETRIEVING = "RETRIEVING"
-    EVALUATING = "EVALUATING"
-    RESPONDING = "RESPONDING"
 
 
 class SelectedVideoRange(BaseModel):
@@ -224,18 +213,6 @@ class EvalDecision(BaseModel):
         return self
 
 
-class RunInputs(TypedDict):
-    conversation_id: str
-    assistant_message_id: str
-    workspace_id: str
-    series_ids: list[str]
-    series_context: list[dict]
-    user_message: str
-    history: list[dict]
-    requested_top_k: int
-    reference_context: NotRequired[dict | None]
-
-
 @dataclass(frozen=True, slots=True)
 class RunLimits:
     max_loop_turns: int | None
@@ -301,38 +278,6 @@ class LoopTurn:
 
 
 @dataclass(slots=True)
-class ExecutionControl:
-    deadline: float
-    cancellation: Event | None = None
-    emit: Callable[[dict], None] | None = None
-
-    def check(self) -> None:
-        if self.cancellation is not None and self.cancellation.is_set():
-            raise AgentModelInvocationError("Agent execution cancelled")
-        if monotonic() >= self.deadline:
-            raise AgentModelInvocationError("Agent execution deadline exceeded")
-
-    def remaining_seconds(self) -> float:
-        """Return the current Provider budget without extending the Kick deadline."""
-
-        if self.cancellation is not None and self.cancellation.is_set():
-            raise AgentModelInvocationError("Agent execution cancelled")
-        remaining = self.deadline - monotonic()
-        if remaining <= 0:
-            raise AgentModelInvocationError("Agent execution deadline exceeded")
-        return remaining
-
-    def publish(self, inputs: RunInputs, event: dict) -> None:
-        self.check()
-        if self.emit is not None:
-            self.emit({
-                "conversationId": inputs["conversation_id"],
-                "messageId": inputs["assistant_message_id"],
-                **event,
-            })
-
-
-@dataclass(slots=True)
 class ModelContextBudget:
     maximum_chars: int
     consumed_chars: int = 0
@@ -364,7 +309,3 @@ class RunState(TypedDict):
     control: ExecutionControl
     limits: RunLimits
     final_output: AgentFinalOutput
-
-
-def context_json(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))

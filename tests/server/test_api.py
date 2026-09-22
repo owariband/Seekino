@@ -20,7 +20,7 @@ from PIL import Image
 from engine.parse.runtime import VideoParseRuntimeConfig
 from gateway.config import load_config
 from server.api.app import create_app
-from server.agent.runtime import AgentRuntime
+from server.agent.video_search.runtime import AgentRuntime
 from server.api.agent import _agent_render_blocks
 from server.api.jobs import _job_event_fingerprint, _job_view
 from server.bootstrap import ApplicationServices

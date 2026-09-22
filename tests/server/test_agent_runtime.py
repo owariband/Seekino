@@ -10,10 +10,11 @@ import pytest
 
 from gateway.agent_model import ModelInputTooLargeError
 from server.agent import AgentContextBudgetError, AgentModelInvocationError, AgentRuntime
-from server.agent.state import (
-    QueryDraft, RetrievalChannelWeights, RunInputs,
+from server.agent.common.state import RunInputs
+from server.agent.video_search.state import (
+    QueryDraft, RetrievalChannelWeights,
 )
-from server.agent.tools import UpdateVideoItemArguments
+from server.agent.video_search.tools import UpdateVideoItemArguments
 from server.schema import (
     AgentReply,
     MatchedEvidence,
@@ -324,6 +325,12 @@ def test_runtime_rejects_nonpositive_read_character_limit() -> None:
         _runtime(max_read_chars_per_call=0)
 
 
+@pytest.mark.parametrize("value", [0, float("inf"), float("nan")])
+def test_runtime_rejects_invalid_chat_timeout(value) -> None:
+    with pytest.raises(ValueError, match="chat_timeout_seconds"):
+        _runtime(chat_timeout_seconds=value)
+
+
 def test_runtime_obeys_outer_deadline_before_starting_video_graph():
     runtime, query, _, _, _ = _runtime()
     with pytest.raises(AgentModelInvocationError, match="deadline exceeded"):
@@ -338,7 +345,7 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     result = runtime.kick(_inputs(), emit=events.append)
     assert len(query.contexts) == len(evaluator.contexts) == approve_at
     assert len(chat.contexts) == len(retrieval.calls) == 1
-    assert 0 < chat.request_timeouts[0] <= 120
+    assert 0 < chat.request_timeouts[0] <= 480
     assert result.agent_reply.message == "## Final answer\n\nGrounded answer."
     assert result.agent_reply.result_count == 1
     assert result.hits[0].evidence.start_ms == 1000
@@ -1009,42 +1016,47 @@ def test_disabled_limits_ignore_count_but_preserve_run_options():
     (
         "execution_timeout_seconds",
         "evaluator_stage_timeout_seconds",
-        "expected_query_chat_timeout_seconds",
+        "chat_timeout_seconds",
+        "expected_query_timeout_seconds",
         "expected_evaluator_timeout_seconds",
+        "expected_chat_timeout_seconds",
     ),
     [
-        (300, 180, 120, 180),
-        (300, 75, 120, 75),
-        (45, 180, 45, 45),
+        (300, 180, 240, 120, 180, 240),
+        (300, 75, 60, 120, 75, 60),
+        (45, 180, 240, 45, 45, 45),
     ],
 )
 def test_role_timeouts_use_stage_or_global_remaining_minimum(
     monkeypatch,
     execution_timeout_seconds,
     evaluator_stage_timeout_seconds,
-    expected_query_chat_timeout_seconds,
+    chat_timeout_seconds,
+    expected_query_timeout_seconds,
     expected_evaluator_timeout_seconds,
+    expected_chat_timeout_seconds,
 ):
     clock = 100.0
-    monkeypatch.setattr("server.agent.runtime.monotonic", lambda: clock)
-    monkeypatch.setattr("server.agent.state.monotonic", lambda: clock)
+    monkeypatch.setattr("server.agent.video_search.runtime.monotonic", lambda: clock)
+    monkeypatch.setattr("server.agent.common.state.monotonic", lambda: clock)
     runtime, query, evaluator, chat, _retrieval = _runtime(
         stage_timeout_seconds=120,
         evaluator_stage_timeout_seconds=evaluator_stage_timeout_seconds,
+        chat_timeout_seconds=chat_timeout_seconds,
         execution_timeout_seconds=execution_timeout_seconds,
     )
 
     runtime.kick(_inputs())
 
-    assert query.request_timeouts == [pytest.approx(expected_query_chat_timeout_seconds)]
+    assert query.request_timeouts == [pytest.approx(expected_query_timeout_seconds)]
     assert evaluator.request_timeouts == [pytest.approx(expected_evaluator_timeout_seconds)]
-    assert chat.request_timeouts == [pytest.approx(expected_query_chat_timeout_seconds)]
+    assert chat.request_timeouts == [pytest.approx(expected_chat_timeout_seconds)]
 
 
 def test_query_stage_deadline_stops_before_evaluator(monkeypatch):
     clock = 100.0
-    monkeypatch.setattr("server.agent.runtime.monotonic", lambda: clock)
-    monkeypatch.setattr("server.agent.state.monotonic", lambda: clock)
+    monkeypatch.setattr("server.agent.video_search.runtime.monotonic", lambda: clock)
+    monkeypatch.setattr("server.agent.common.state.monotonic", lambda: clock)
 
     class ExpiredQuery(Query):
         def run_structured(self, _prompt, *, result_type, **_kwargs):
@@ -1311,6 +1323,37 @@ def test_chat_cannot_silently_drop_all_approved_evidence() -> None:
     assert [event for event in events if event["type"] != "answer.progress"] == []
 
 
+def test_chat_stop_feedback_guides_missing_video_item_and_allows_correction() -> None:
+    class CorrectingChat(Chat):
+        supports_stop_feedback = True
+
+        def __init__(self):
+            super().__init__()
+            self.stop_feedback_messages = []
+
+        def run_agent_loop(
+            self, prompt, *, tools, handle_text, stop_feedback, **kwargs,
+        ):
+            assert kwargs["require_tool_call"] is True
+            handle_text("Grounded answer.")
+            self.stop_feedback_messages.append(stop_feedback())
+            assert "update_video_item" in self.stop_feedback_messages[0]
+            assert _invoke_json(_tool_map(tools)["update_video_item"], {
+                "video_chunk_id": "chunk-1",
+                "claim": "Grounded evidence.",
+            })["accepted"] is True
+            self.stop_feedback_messages.append(stop_feedback())
+
+    chat = CorrectingChat()
+    runtime, *_ = _runtime(chat=chat)
+    result = runtime.kick(_inputs())
+
+    assert chat.stop_feedback_messages[1] is None
+    assert result.agent_reply.message == "Grounded answer."
+    assert [block.type for block in result.render_blocks] == ["markdown", "video"]
+    assert [hit.candidate.video_chunk_id for hit in result.hits] == ["chunk-1"]
+
+
 def test_chat_updates_the_same_approved_id_in_place() -> None:
     class DuplicateEvidenceChat(Chat):
         def run_agent_loop(
@@ -1436,8 +1479,8 @@ def test_cancel_after_agent_loop_stops_before_output():
 
 def test_deadline_after_a_model_call_stops_before_chat(monkeypatch):
     clock = [100.0]
-    monkeypatch.setattr("server.agent.runtime.monotonic", lambda: clock[0])
-    monkeypatch.setattr("server.agent.state.monotonic", lambda: clock[0])
+    monkeypatch.setattr("server.agent.video_search.runtime.monotonic", lambda: clock[0])
+    monkeypatch.setattr("server.agent.common.state.monotonic", lambda: clock[0])
 
     class SlowEvaluator(Evaluator):
         def run_structured(self, prompt, **kwargs):

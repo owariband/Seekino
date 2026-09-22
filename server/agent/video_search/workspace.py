@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from threading import RLock
 
-from ..schema import VideoChunkSearchHit, VideoChunkSearchResult
-from .errors import (
-    AgentModelInvocationError, InvalidDraftRangeError, UnknownToolItemError,
+from ...schema import VideoChunkSearchHit, VideoChunkSearchResult
+from ..common.errors import (
+    AgentModelInvocationError, UnknownToolItemError,
 )
+from .errors import InvalidDraftRangeError
 from .state import (
     ChatRenderDraft, ChatVideoBlock, DraftItem, MarkdownRenderBlock,
 )

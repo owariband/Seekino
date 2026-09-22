@@ -74,9 +74,11 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.max_tool_result_bytes == 16_384
     assert settings.agent.max_read_chars_per_call == 16_384
     assert settings.agent.max_catalog_items_per_page == 20
-    assert settings.agent.stage_timeout_seconds == 120
-    assert settings.agent.evaluator_stage_timeout_seconds == 180
-    assert settings.agent.execution_timeout_seconds == 600
+    assert settings.agent.stage_timeout_seconds == 480
+    assert settings.agent.evaluator_stage_timeout_seconds == 480
+    assert settings.agent.chat_timeout_seconds == 480
+    assert settings.agent.supervisor_timeout_seconds == 480
+    assert settings.agent.execution_timeout_seconds == 480
     assert settings.agent.maximum_concurrent_kicks == 4
     assert settings.agent_query_model is None
     assert settings.agent_chat_model is None
@@ -104,6 +106,19 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.logging.level == "info"
     assert settings.logging.maximum_file_size_bytes == 10 * 1024 * 1024
     assert settings.logging.backup_count == 5
+
+
+def test_config_yaml_exposes_agent_timeouts() -> None:
+    source = Path(__file__).resolve().parents[2] / "config.yaml"
+    settings, _ = read_global_agent_settings(source)
+
+    assert (
+        settings.stage_timeout_seconds,
+        settings.evaluator_stage_timeout_seconds,
+        settings.chat_timeout_seconds,
+        settings.supervisor_timeout_seconds,
+        settings.execution_timeout_seconds,
+    ) == (480, 480, 480, 480, 480)
 
 
 def test_server_settings_reject_cross_modal_dimension_mismatch(monkeypatch) -> None:
@@ -282,6 +297,8 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
         "ANIVAG_AGENT_MAX_CATALOG_ITEMS_PER_PAGE": "10",
         "ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS": "45",
         "ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS": "210",
+        "ANIVAG_AGENT_CHAT_TIMEOUT_SECONDS": "150",
+        "ANIVAG_AGENT_SUPERVISOR_TIMEOUT_SECONDS": "300",
         "ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS": "90",
         "ANIVAG_AGENT_MAX_CONCURRENT_KICKS": "2",
     }
@@ -311,6 +328,8 @@ def test_agent_roles_context_budgets_and_timeouts_load_from_settings(monkeypatch
     assert settings.agent.max_catalog_items_per_page == 10
     assert settings.agent.stage_timeout_seconds == 45
     assert settings.agent.evaluator_stage_timeout_seconds == 210
+    assert settings.agent.chat_timeout_seconds == 150
+    assert settings.agent.supervisor_timeout_seconds == 300
     assert settings.agent.execution_timeout_seconds == 90
     assert settings.agent.maximum_concurrent_kicks == 2
 
@@ -350,6 +369,10 @@ def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
     ("ANIVAG_AGENT_STAGE_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS", "nan"),
     ("ANIVAG_AGENT_EVALUATOR_STAGE_TIMEOUT_SECONDS", "0"),
+    ("ANIVAG_AGENT_CHAT_TIMEOUT_SECONDS", "nan"),
+    ("ANIVAG_AGENT_CHAT_TIMEOUT_SECONDS", "0"),
+    ("ANIVAG_AGENT_SUPERVISOR_TIMEOUT_SECONDS", "nan"),
+    ("ANIVAG_AGENT_SUPERVISOR_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "nan"),
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_MAX_CONCURRENT_KICKS", "0"),
@@ -428,15 +451,24 @@ def test_global_agent_settings_patch_preserves_other_sections_and_detects_edits(
     _, revision = read_global_agent_settings(config_path)
 
     updated, next_revision = patch_global_agent_settings(
-        {"evaluator_stage_timeout_seconds": 210, "max_read_chars_per_call": 4_096},
+        {
+            "evaluator_stage_timeout_seconds": 210,
+            "chat_timeout_seconds": 300,
+            "supervisor_timeout_seconds": 420,
+            "max_read_chars_per_call": 4_096,
+        },
         revision, config_path,
     )
     after = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert updated.evaluator_stage_timeout_seconds == 210
+    assert updated.chat_timeout_seconds == 300
+    assert updated.supervisor_timeout_seconds == 420
     assert updated.max_read_chars_per_call == 4_096
     assert next_revision != revision
     assert after["agent_runtime"] == {
         "evaluator_stage_timeout_seconds": 210.0,
+        "chat_timeout_seconds": 300.0,
+        "supervisor_timeout_seconds": 420.0,
         "max_read_chars_per_call": 4_096,
     }
     for section in ("agent_model", "video_parser", "multimodal_embedding"):
@@ -500,6 +532,8 @@ def test_global_agent_settings_patch_rejects_external_alias_dependency(
         {"unknown": 1},
         {"default_top_k": True},
         {"stage_timeout_seconds": float("nan")},
+        {"chat_timeout_seconds": 0},
+        {"supervisor_timeout_seconds": float("inf")},
         {"maximum_top_k": 101},
         {"default_top_k": 21, "maximum_top_k": 20},
         {"query_reasoning_effort": "medium"},

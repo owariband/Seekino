@@ -31,9 +31,11 @@ class AgentServiceConfig:
     max_tool_result_bytes: int = 16_384
     max_read_chars_per_call: int = 16_384
     max_catalog_items_per_page: int = 20
-    stage_timeout_seconds: float = 120
-    evaluator_stage_timeout_seconds: float = 180
-    execution_timeout_seconds: float = 600
+    stage_timeout_seconds: float = 480
+    evaluator_stage_timeout_seconds: float = 480
+    chat_timeout_seconds: float = 480
+    supervisor_timeout_seconds: float = 480
+    execution_timeout_seconds: float = 480
     maximum_concurrent_kicks: int = 4
 
     def __post_init__(self) -> None:
@@ -105,6 +107,7 @@ class AgentServiceConfig:
             )
         for name in (
             "stage_timeout_seconds", "evaluator_stage_timeout_seconds",
+            "chat_timeout_seconds", "supervisor_timeout_seconds",
             "execution_timeout_seconds",
             "web_search_timeout_seconds",
         ):

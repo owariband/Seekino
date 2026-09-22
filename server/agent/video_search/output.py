@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from ..schema import AgentReply, VideoChunkSearchHit, VideoChunkSearchResult
-from .errors import AgentModelInvocationError
+from ...schema import AgentReply, VideoChunkSearchHit, VideoChunkSearchResult
+from ..common.errors import AgentModelInvocationError
 from .state import (
     AgentFinalOutput, ChatRenderDraft, LoopTurn, MarkdownRenderBlock, QueryDraft,
     RetrievalCall, RetrievalTraceEntry, RunInputs, VideoRenderBlock,
