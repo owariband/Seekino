@@ -251,6 +251,14 @@ class SupervisorRuntime:
             for item in inputs["series_context"]
             if isinstance(item, dict)
         ]
+        scope_description = (
+            "本次可检索的视频系列："
+            + "、".join(str(item["name"] or item["seriesId"]) for item in scope)
+            + "。仅这些系列可提供视频证据。"
+            if scope else
+            "当前没有可检索的视频系列。用户询问本地视频内容时，请先告知目前"
+            "没有可核验的视频证据；网页资料不能代替视频证据。"
+        )
         history = [{
             "role": item.get("role"),
             "content": str(item.get("content") or "")[:2_000],
@@ -266,8 +274,9 @@ class SupervisorRuntime:
             "你是 anivag 对话 Supervisor。根据用户问题自行决定直接回答、调用 "
             "search_web、调用 search_video_graph，或两个工具都调用。问题涉及所选"
             "视频中的人物、情节、讲解内容，或引用了视频片段时，应调用视频工具核验。"
-            "没有视频范围时可直接聊天或搜索网页；若问题指向本地视频，应说明当前"
-            "无法核验该视频，不得用网页信息冒充视频证据。search_video_graph "
+            "先读 video_scope_description，确认本次可检索的视频范围。没有可检索"
+            "系列时仍可直接聊天或搜索网页；若问题指向本地视频，必须先说明无法"
+            "核验该视频，不得用网页信息冒充视频证据。search_video_graph "
             "返回的结论已由内部 Query/Evaluator/Chat 审核，不得重写、否定或补造视频"
             "证据；如果同时使用网页，最终文本只写网页补充，视频答案由系统原文呈现。"
             "网页摘要只是线索，准确说明来源和不确定性；只能引用 search_web 实际"
@@ -278,6 +287,7 @@ class SupervisorRuntime:
                 "user_message": inputs["user_message"],
                 "history": history,
                 "video_scope": scope,
+                "video_scope_description": scope_description,
                 "video_reference": reference_summary,
             })
         )

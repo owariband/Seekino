@@ -295,7 +295,8 @@ class UploadRepository:
                 "COMPLETED",
             }:
                 video.parse_status = ParseJobStatus.QUEUED.value
-                series.status = "INDEXING"
+                if series.status != "READY":
+                    refresh_series_statuses(session, {upload.series_id})
             return job.job_id
 
     def reparse(
@@ -429,7 +430,8 @@ class UploadRepository:
             }:
                 video.parse_status = ParseJobStatus.QUEUED.value
                 video.parse_progress = 0
-                series.status = "INDEXING"
+                if series.status != "READY":
+                    refresh_series_statuses(session, {upload.series_id})
             return job.job_id
 
     def list_pending_deletions(
@@ -982,7 +984,6 @@ class UploadRepository:
                 raise UploadSeriesNotFoundError(
                     f"seriesId {upload.series_id!r} disappeared during completion"
                 )
-            series.status = "INDEXING"
             upload.status = UploadSessionStatus.COMPLETED.value
             upload.video_id = video_id
             upload.completed_at = completed_at
@@ -996,6 +997,8 @@ class UploadRepository:
             upload.version += 1
             upload.updated_at = completed_at
             session.flush()
+            if series.status != "READY":
+                refresh_series_statuses(session, {upload.series_id})
             return CompletedUploadState(
                 session=self._snapshot(session, upload),
                 video_id=video_id,

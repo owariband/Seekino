@@ -226,6 +226,7 @@ class QdrantVideoChunkStore:
         query_vector: Sequence[float],
         *,
         series_ids: Sequence[str],
+        video_ids: Sequence[str],
         limit: int,
         exact: bool = False,
     ) -> list[VideoChunkIndexMatch]:
@@ -234,6 +235,7 @@ class QdrantVideoChunkStore:
             vector_name=TEXT_VECTOR_NAME,
             expected_dimensions=self.text_dimensions,
             series_ids=series_ids,
+            video_ids=video_ids,
             limit=limit,
             exact=exact,
         )
@@ -243,6 +245,7 @@ class QdrantVideoChunkStore:
         query_vector: Sequence[float],
         *,
         series_ids: Sequence[str],
+        video_ids: Sequence[str],
         limit: int,
         exact: bool = False,
     ) -> list[VideoChunkIndexMatch]:
@@ -251,6 +254,7 @@ class QdrantVideoChunkStore:
             vector_name=VISION_VECTOR_NAME,
             expected_dimensions=self.vision_dimensions,
             series_ids=series_ids,
+            video_ids=video_ids,
             limit=limit,
             exact=exact,
         )
@@ -262,6 +266,7 @@ class QdrantVideoChunkStore:
         vector_name: str,
         expected_dimensions: int,
         series_ids: Sequence[str],
+        video_ids: Sequence[str],
         limit: int,
         exact: bool,
     ) -> list[VideoChunkIndexMatch]:
@@ -276,6 +281,7 @@ class QdrantVideoChunkStore:
                 f"for the {vector_name!r} channel"
             )
         scope = _validated_series_scope(series_ids)
+        video_scope = _validated_video_scope(video_ids)
         if not self._client.collection_exists(self.collection_name):
             raise QdrantCollectionNotFoundError(
                 f"Qdrant collection {self.collection_name!r} does not exist"
@@ -305,7 +311,11 @@ class QdrantVideoChunkStore:
                         models.FieldCondition(
                             key=SERIES_ID_PAYLOAD_KEY,
                             match=models.MatchAny(any=scope),
-                        )
+                        ),
+                        models.FieldCondition(
+                            key=VIDEO_ID_PAYLOAD_KEY,
+                            match=models.MatchAny(any=video_scope),
+                        ),
                     ]
                 ),
                 search_params=search_params,
@@ -341,6 +351,8 @@ class QdrantVideoChunkStore:
                     payload[VIDEO_ID_PAYLOAD_KEY],
                     "payload videoId",
                 )
+                if video_id not in video_scope:
+                    raise ValueError("payload videoId is outside the requested scope")
                 source_revision = require_nonempty_text(
                     payload[SOURCE_REVISION_PAYLOAD_KEY],
                     "payload sourceRevision",
@@ -461,6 +473,20 @@ def _validated_series_scope(series_ids: Sequence[str]) -> list[str]:
         raise ValueError("series_ids must be a sequence of IDs") from exc
     if not scope:
         raise ValueError("series_ids must not be empty")
+    return scope
+
+
+def _validated_video_scope(video_ids: Sequence[str]) -> list[str]:
+    if isinstance(video_ids, (str, bytes)):
+        raise ValueError("video_ids must be a sequence of IDs")
+    try:
+        scope = list(
+            dict.fromkeys(require_nonempty_text(item, "video_id") for item in video_ids)
+        )
+    except TypeError as exc:
+        raise ValueError("video_ids must be a sequence of IDs") from exc
+    if not scope:
+        raise ValueError("video_ids must not be empty")
     return scope
 
 

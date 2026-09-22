@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
 
 import pytest
 
 from server.database import create_session_factory
+from server.model.dto.parseDTO import PreparedEmbedding
 from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
 from server.model.upload import UploadSessionRecord, UploadSessionStatus
 from server.model.video import SeriesRecord, VideoRecord
 from server.mq.mysql_queue import MySqlParseJobQueue
+from server.repository.index_sync import IndexSyncRepository
 from server.repository.job import ParseJobRepository
 from server.utils.time import timedelta_to_ms
 
@@ -107,6 +110,46 @@ def test_mysql_queue_claims_heartbeats_retries_and_acknowledges(repository) -> N
     completed = jobs.get(job_id)
     assert completed.status == ParseJobStatus.SUCCEEDED.value
     assert completed.progress == 100
+
+
+def test_claiming_new_episode_keeps_indexed_sibling_searchable(
+    repository, prepared_import,
+) -> None:
+    engine, video_repository = repository
+    _jobs, queue, _job_id, queued_video_id, now = _seed(repository)
+    session_factory = create_session_factory(engine)
+    with session_factory.begin() as session:
+        queued_video = session.get(VideoRecord, queued_video_id)
+        queued_video.episode_order = 2
+        queued_video.upload_sequence = 2
+        series = session.get(SeriesRecord, queued_video.series_id)
+        series_id, series_name = series.series_id, series.name
+
+    video_repository.import_video_parse(replace(
+        prepared_import,
+        series_id=series_id,
+        series_name=series_name,
+        episode_order=1,
+        upload_sequence=1,
+        chunks=tuple(replace(
+            chunk,
+            text_embedding=PreparedEmbedding([0.1], {"model": "test"}),
+            vision_embedding=PreparedEmbedding([0.2], {"model": "test"}),
+        ) for chunk in prepared_import.chunks),
+    ))
+    index_repository = IndexSyncRepository(session_factory)
+    for item in index_repository.list_all():
+        assert index_repository.mark_synced(
+            item.video_chunk_id, item.source_revision, item.operation,
+            item.generation,
+        )
+    with session_factory() as session:
+        assert session.get(SeriesRecord, series_id).status == "READY"
+
+    lease = queue.claim_next("worker", lease_duration=timedelta(minutes=2), now=now)
+    assert lease is not None and lease.video_id == queued_video_id
+    with session_factory() as session:
+        assert session.get(SeriesRecord, series_id).status == "READY"
 
 
 def test_mysql_queue_reaps_an_expired_final_attempt(repository) -> None:

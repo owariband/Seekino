@@ -23,7 +23,9 @@ from server.model.video import (
 )
 from server.repository.index_sync import (
     IndexSyncRepository,
+    list_ready_video_ids,
     materialize_index_sync_intents,
+    refresh_series_statuses,
 )
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.utils.time import now_unix_time_ms, timedelta_to_ms
@@ -168,7 +170,7 @@ def test_same_desired_state_stays_synced_and_all_chunks_gate_ready(
     assert _series_status(engine, prepared_import.series_id) == "READY"
 
 
-def test_unparsed_video_keeps_series_out_of_ready(
+def test_unparsed_sibling_does_not_hide_ready_video(
     prepared_import,
     repository,
 ) -> None:
@@ -208,7 +210,27 @@ def test_unparsed_video_keeps_series_out_of_ready(
         )
 
     assert index_repository.materialize_all() == 0
-    assert _series_status(engine, prepared_import.series_id) == "INDEXING"
+    assert _series_status(engine, prepared_import.series_id) == "READY"
+    with session_factory() as session:
+        assert list_ready_video_ids(session, [prepared_import.series_id]) == [
+            prepared_import.video_id
+        ]
+
+    with session_factory.begin() as session:
+        queued_video = session.get(VideoRecord, queued_video_id)
+        queued_video.parse_status = "FAILED"
+        refresh_series_statuses(session, {prepared_import.series_id})
+    assert _series_status(engine, prepared_import.series_id) == "READY"
+
+    with session_factory.begin() as session:
+        queued_video = session.get(VideoRecord, queued_video_id)
+        queued_video.parse_status = "SUCCEEDED"
+        refresh_series_statuses(session, {prepared_import.series_id})
+        assert list_ready_video_ids(session, []) == []
+        assert list_ready_video_ids(session, [prepared_import.series_id]) == [
+            prepared_import.video_id
+        ]
+    assert _series_status(engine, prepared_import.series_id) == "READY"
 
 
 def test_changed_vector_resets_only_current_intent_and_series(

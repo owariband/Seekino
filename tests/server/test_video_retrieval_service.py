@@ -317,7 +317,7 @@ def test_retrieval_reports_a_qdrant_orphan_instead_of_dropping_it(
     store.upsert(
         VideoChunkIndexPoint(
             series_id=prepared.series_id,
-            video_id=str(uuid4()),
+            video_id=prepared.video_id,
             video_chunk_id=str(uuid4()),
             source_revision="orphan-revision",
             is_fallback=False,
@@ -337,6 +337,44 @@ def test_retrieval_reports_a_qdrant_orphan_instead_of_dropping_it(
             top_k=1,
         )
     client.close()
+
+
+def test_retrieval_excludes_unavailable_video_points_before_channel_top_k(
+    repository,
+    prepared_import,
+) -> None:
+    service, store, client, _embedder, prepared, report = _ready_retrieval(
+        repository,
+        prepared_import,
+        channel_top_k=1,
+    )
+    unavailable_video_id = str(uuid4())
+    store.upsert(
+        VideoChunkIndexPoint(
+            series_id=prepared.series_id,
+            video_id=unavailable_video_id,
+            video_chunk_id=str(uuid4()),
+            source_revision="stale-revision",
+            is_fallback=False,
+            text_vector=[1.0, 0.0],
+            vision_vector=[1.0, 0.0],
+        )
+    )
+
+    try:
+        result = service.search(
+            "find available video",
+            workspace_id=prepared.workspace_id,
+            series_ids=[prepared.series_id],
+            top_k=1,
+        )
+
+        assert result.searched_video_ids == [prepared.video_id]
+        assert [hit.candidate.video_chunk_id for hit in result.hits] == [
+            report.video_chunk_ids[0]
+        ]
+    finally:
+        client.close()
 
 
 def test_retrieval_detects_a_stale_qdrant_source_revision(

@@ -115,6 +115,40 @@ def test_latest_job_failure_and_index_error_are_actual_and_workspace_scoped(repo
         library.get_video(report.video_id, workspace_id="other-workspace")
 
 
+def test_ready_video_count_keeps_an_indexed_video_during_failed_reparse(
+    repository, prepared_import,
+):
+    factory, videos, library = _library(repository)
+    report = videos.import_video_parse(prepared_import)
+    now = now_unix_time_ms()
+    with factory.begin() as session:
+        for chunk in session.scalars(select(VideoChunkEmbeddingRecord)):
+            chunk.text_vector = [0.1, 0.2]
+            chunk.vision_vector = [0.2, 0.3]
+        for intent in session.scalars(select(IndexSyncIntentRecord)):
+            intent.operation = "UPSERT"
+            intent.status = "SYNCED"
+        session.add(SeriesParseJobRecord(
+            job_id=str(uuid4()),
+            series_id=report.series_id,
+            video_id=report.video_id,
+            pipeline_version="failed-reparse",
+            status="FAILED",
+            stage="PARSING",
+            progress=42,
+            attempt_count=3,
+            max_attempts=3,
+            available_at=now,
+            completed_at=now,
+            last_error="reparse failed before replacing the indexed result",
+        ))
+
+    state = library.get_series(report.series_id, workspace_id="local-default")
+    assert state.ready_video_count == 1
+    assert state.videos[0].parse_status == "FAILED"
+    assert state.videos[0].index_status == VideoIndexStatus.READY
+
+
 def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent(
     repository,
     prepared_import,

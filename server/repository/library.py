@@ -21,6 +21,7 @@ from ..model.video import (
 )
 from ..utils.media import stored_keyframe_uri
 from ..utils.time import now_unix_time_ms
+from .index_sync import list_ready_video_ids
 from .upload import UploadRepository
 
 
@@ -292,6 +293,7 @@ class LibraryRepository:
         videos = self._video_states(
             session, workspace_id=records[0].workspace_id, series_ids=series_ids,
         )
+        ready_video_ids = set(list_ready_video_ids(session, series_ids))
         pending = dict(session.execute(
             select(UploadSessionRecord.series_id, func.count(UploadSessionRecord.upload_session_id))
             .where(
@@ -330,8 +332,7 @@ class LibraryRepository:
                 if include_videos else (),
                 ready_video_count=sum(
                     video.series_id == record.series_id
-                    and video.parse_status in {"SUCCEEDED", "COMPLETED"}
-                    and video.index_status == VideoIndexStatus.READY
+                    and video.video_id in ready_video_ids
                     for video in videos
                 ),
                 failed_video_count=sum(

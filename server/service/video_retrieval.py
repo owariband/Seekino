@@ -136,12 +136,17 @@ class VideoRetrievalService:
             scope,
             workspace_id=workspace_id,
         )
+        if not searched_video_ids:
+            raise RetrievalIndexConsistencyError(
+                "a READY Series scope has no fully indexed video"
+            )
         transcript_matches = (
             rank_transcript_chunks(
                 normalized_query,
                 self._repository.list_searchable_transcripts(
                     scope,
                     workspace_id=workspace_id,
+                    video_ids=searched_video_ids,
                 ),
                 limit=self._channel_top_k,
             )
@@ -161,6 +166,7 @@ class VideoRetrievalService:
                     self._store.search_text(
                         embedding.vector,
                         series_ids=scope,
+                        video_ids=searched_video_ids,
                         limit=self._channel_top_k,
                         exact=self._exact,
                     )
@@ -171,6 +177,7 @@ class VideoRetrievalService:
                     self._store.search_vision(
                         embedding.vector,
                         series_ids=scope,
+                        video_ids=searched_video_ids,
                         limit=self._channel_top_k,
                         exact=self._exact,
                     )

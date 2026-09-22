@@ -298,7 +298,11 @@ class _DirectSupervisorModel:
     model_name = "supervisor-test"
     provider_name = "fake"
 
-    def run_agent_loop(self, _prompt, *, tools, handle_text, check_control, **_kwargs):
+    def __init__(self):
+        self.prompts = []
+
+    def run_agent_loop(self, prompt, *, tools, handle_text, check_control, **_kwargs):
+        self.prompts.append(prompt)
         assert {tool.name for tool in tools} == {"search_web", "search_video_graph"}
         check_control()
         handle_text("你好，我可以直接回答。")
@@ -338,8 +342,9 @@ class _WebSearcherStub:
 
 
 def test_supervisor_chat_without_ready_video_series(build_service):
+    model = _DirectSupervisorModel()
     service, conversation, _, repository, *_ = build_service(
-        supervisor_model=_DirectSupervisorModel(),
+        supervisor_model=model,
     )
     with repository._session_factory.begin() as session:
         session.query(SeriesRecord).update({SeriesRecord.status: "EMPTY"})
@@ -352,6 +357,9 @@ def test_supervisor_chat_without_ready_video_series(build_service):
     assert completed.assistant_message.retrieval_query is None
     assert completed.assistant_message.search_result is None
     assert _agent_message_view(completed.assistant_message).series_ids == []
+    prompt_context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
+    assert prompt_context["video_scope"] == []
+    assert "没有可检索的视频系列" in prompt_context["video_scope_description"]
 
 
 @pytest.mark.parametrize("include_web", [False, True])

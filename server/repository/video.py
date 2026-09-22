@@ -33,7 +33,7 @@ from ..schema import TranscriptCueView, VideoChunkEvidence, VideoChunkKeyframeRe
 from ..utils.media import merge_keyframe_uri_values
 from ..utils.time import now_unix_time_ms
 from ..utils.validation import require_nonempty_text
-from .index_sync import materialize_index_sync_intents
+from .index_sync import list_ready_video_ids, materialize_index_sync_intents
 
 
 _logger = logging.getLogger(__name__)
@@ -709,26 +709,25 @@ class VideoRepository:
         return ordered_ids
 
     def list_indexed_video_ids(self, series_ids: Sequence[str], *, workspace_id: str) -> list[str]:
-        statement = (
-            select(VideoRecord.video_id).distinct()
-            .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
-            .join(VideoChunkRecord, VideoChunkRecord.video_id == VideoRecord.video_id)
-            .join(IndexSyncIntentRecord, IndexSyncIntentRecord.video_chunk_id == VideoChunkRecord.video_chunk_id)
-            .where(SeriesRecord.workspace_id == workspace_id, SeriesRecord.series_id.in_(series_ids),
-                   IndexSyncIntentRecord.status == IndexSyncStatus.SYNCED.value,
-                   IndexSyncIntentRecord.operation == IndexSyncOperation.UPSERT.value)
-            .order_by(VideoRecord.video_id)
-        )
+        if not series_ids:
+            return []
         with self._session_factory() as session:
-            return list(session.scalars(statement))
+            scoped_series_ids = list(session.scalars(
+                select(SeriesRecord.series_id).where(
+                    SeriesRecord.workspace_id == workspace_id,
+                    SeriesRecord.series_id.in_(series_ids),
+                )
+            ))
+            return list_ready_video_ids(session, scoped_series_ids)
 
     def list_searchable_transcripts(
         self,
         series_ids: Sequence[str],
         *,
         workspace_id: str,
+        video_ids: Sequence[str],
     ) -> list[TranscriptChunkDocument]:
-        """Load ASR cues only for chunks whose current index snapshot is searchable."""
+        """Load ASR cues only for complete, searchable videos in the scope."""
 
         if isinstance(series_ids, (str, bytes)):
             raise ValueError("series_ids must be a sequence of IDs")
@@ -740,6 +739,8 @@ class VideoRepository:
         if not ordered_series_ids:
             raise ValueError("series_ids must not be empty")
         normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        if not video_ids:
+            return []
         statement = (
             select(
                 VideoChunkRecord.video_chunk_id,
@@ -758,6 +759,7 @@ class VideoRepository:
             .where(
                 SeriesRecord.workspace_id == normalized_workspace,
                 SeriesRecord.series_id.in_(ordered_series_ids),
+                VideoRecord.video_id.in_(video_ids),
                 IndexSyncIntentRecord.status == IndexSyncStatus.SYNCED.value,
                 IndexSyncIntentRecord.operation == IndexSyncOperation.UPSERT.value,
             )

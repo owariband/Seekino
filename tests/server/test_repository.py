@@ -5,7 +5,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlparse
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 from engine.retrieval.video_retrieval import VideoChunkRetrievalDocument
@@ -640,6 +640,66 @@ def test_ready_series_scope_is_complete_ordered_and_deduplicated(
             [prepared_import.series_id, missing_id],
             workspace_id=prepared_import.workspace_id,
         )
+
+
+def test_searchable_video_requires_every_chunk_and_transcripts_follow_video_scope(
+    prepared_import,
+    repository,
+) -> None:
+    engine, video_repository = repository
+    report = video_repository.import_video_parse(prepared_import)
+    with engine.begin() as connection:
+        connection.execute(
+            update(VideoChunkEmbeddingRecord).values(
+                text_vector=[0.1, 0.2],
+                vision_vector=[0.3, 0.4],
+            )
+        )
+        connection.execute(
+            update(VideoChunkRecord)
+            .where(VideoChunkRecord.video_chunk_id == report.video_chunk_ids[0])
+            .values(transcript=[{"text": "企鹅", "start_ms": 1000, "end_ms": 2000}])
+        )
+        connection.execute(
+            update(IndexSyncIntentRecord)
+            .where(IndexSyncIntentRecord.video_chunk_id == report.video_chunk_ids[0])
+            .values(operation="UPSERT", status="SYNCED")
+        )
+
+    assert video_repository.list_indexed_video_ids(
+        [report.series_id], workspace_id=prepared_import.workspace_id,
+    ) == []
+    with engine.begin() as connection:
+        connection.execute(
+            update(IndexSyncIntentRecord)
+            .where(IndexSyncIntentRecord.video_chunk_id == report.video_chunk_ids[1])
+            .values(operation="UPSERT", status="SYNCED")
+        )
+
+    assert video_repository.list_indexed_video_ids(
+        [report.series_id], workspace_id=prepared_import.workspace_id,
+    ) == [report.video_id]
+    assert video_repository.list_indexed_video_ids(
+        [report.series_id], workspace_id="other-workspace",
+    ) == []
+    assert video_repository.list_searchable_transcripts(
+        [report.series_id],
+        workspace_id=prepared_import.workspace_id,
+        video_ids=[],
+    ) == []
+    assert video_repository.list_searchable_transcripts(
+        [report.series_id],
+        workspace_id=prepared_import.workspace_id,
+        video_ids=[str(uuid4())],
+    ) == []
+    documents = video_repository.list_searchable_transcripts(
+        [report.series_id],
+        workspace_id=prepared_import.workspace_id,
+        video_ids=[report.video_id],
+    )
+    assert [document.video_chunk_id for document in documents] == [
+        report.video_chunk_ids[0]
+    ]
 
 
 def test_hydrate_state_includes_current_index_revision_in_the_same_result(

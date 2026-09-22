@@ -105,6 +105,9 @@ def test_video_tool_loads_context_once_and_preserves_approved_answer():
     assert video.calls[0][1]["deadline"] > 0
     assert model.tool_results[0]["ok"] is True
     assert model.tool_results[1]["reused"] is True
+    prompt_context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
+    assert prompt_context["video_scope"] == [{"seriesId": "series", "name": "Course"}]
+    assert "Course" in prompt_context["video_scope_description"]
 
 
 def test_supervisor_can_use_web_and_video_in_same_turn():
@@ -169,3 +172,7 @@ def test_video_tool_without_scope_returns_feedback():
     result = _runtime(model).kick(_inputs(), load_video_context=lambda: [])
     assert model.tool_results[0]["error"]["code"] == "NO_VIDEO_SCOPE"
     assert result.video_result is None
+    prompt_context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
+    assert prompt_context["video_scope"] == []
+    assert "没有可检索的视频系列" in prompt_context["video_scope_description"]
+    assert "先告知" in prompt_context["video_scope_description"]

@@ -16,6 +16,7 @@ from gateway.config import load_config
 from server.config.media import ImageUploadConfig
 from server.config.parse_profile import ParseConfig
 from server.database import DatabaseEnvironment, create_session_factory
+from server.model.dto.parseDTO import PreparedEmbedding
 from server.model.index_sync import IndexSyncIntentRecord, IndexSyncOperation, IndexSyncStatus
 from server.model.job import (
     ParseJobStage,
@@ -46,6 +47,7 @@ from server.repository.upload import (
     UploadStateError,
 )
 from server.repository.job import ParseJobRepository
+from server.repository.index_sync import IndexSyncRepository
 from server.service.upload import (
     UploadChecksumMismatchError,
     UploadService,
@@ -172,6 +174,56 @@ def test_upload_session_is_idempotent_and_reports_progress(
         assert connection.execute(
             select(UploadSegmentRecord.segment_number)
         ).all() == [(0,), (1,)]
+
+
+def test_new_upload_and_retry_keep_ready_sibling_searchable(
+    repository, prepared_import, tmp_path,
+) -> None:
+    engine, video_repository = repository
+    _engine, _store, _upload_repository, service = _upload_service(repository, tmp_path)
+    series_id = "77285f16-3e5b-592e-ba15-8b224b619806"
+    video_repository.import_video_parse(replace(
+        prepared_import,
+        series_id=series_id,
+        series_name="Test Upload Series",
+        episode_order=6,
+        upload_sequence=1,
+        chunks=tuple(replace(
+            chunk,
+            text_embedding=PreparedEmbedding([0.1], {"model": "test"}),
+            vision_embedding=PreparedEmbedding([0.2], {"model": "test"}),
+        ) for chunk in prepared_import.chunks),
+    ))
+    session_factory = create_session_factory(engine)
+    index_repository = IndexSyncRepository(session_factory)
+    for item in index_repository.list_all():
+        assert index_repository.mark_synced(
+            item.video_chunk_id, item.source_revision, item.operation,
+            item.generation,
+        )
+    with session_factory() as session:
+        assert session.get(SeriesRecord, series_id).status == "READY"
+
+    upload = _create(service)
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    with session_factory() as session:
+        assert session.get(SeriesRecord, series_id).status == "READY"
+
+    with session_factory.begin() as session:
+        job = session.get(SeriesParseJobRecord, completed.job_id)
+        job.status = ParseJobStatus.FAILED.value
+        job.attempt_count = job.max_attempts
+        job.version = 7
+        session.get(VideoRecord, completed.video_id).parse_status = ParseJobStatus.FAILED.value
+    service.retry_parse(
+        upload.upload_session_id,
+        workspace_id="local-default",
+        expected_job_version=7,
+    )
+    with session_factory() as session:
+        assert session.get(SeriesRecord, series_id).status == "READY"
 
 
 def test_selected_parse_config_survives_upload_completion_and_job_claim(

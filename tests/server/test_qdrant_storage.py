@@ -181,18 +181,37 @@ def test_search_filters_multi_series_scope_before_each_channel_top_k() -> None:
         text_vector=[1.0, 0.0],
         vision_vector=[1.0, 0.0],
     )
-    for point in (text_winner, vision_winner, excluded_global_winner):
+    excluded_same_series_winner = _point(
+        series_id=first_series_id,
+        text_vector=[1.0, 0.0],
+        vision_vector=[1.0, 0.0],
+    )
+    for point in (
+        text_winner,
+        vision_winner,
+        excluded_global_winner,
+        excluded_same_series_winner,
+    ):
         store.upsert(point)
 
     scope = [first_series_id, second_series_id]
-    text = store.search_text([1.0, 0.0], series_ids=scope, limit=1)
-    vision = store.search_vision([1.0, 0.0], series_ids=scope, limit=1)
+    video_scope = [text_winner.video_id, vision_winner.video_id]
+    text = store.search_text(
+        [1.0, 0.0], series_ids=scope, video_ids=video_scope, limit=1
+    )
+    vision = store.search_vision(
+        [1.0, 0.0], series_ids=scope, video_ids=video_scope, limit=1
+    )
 
     assert [item.video_chunk_id for item in text] == [text_winner.video_chunk_id]
     assert [item.video_chunk_id for item in vision] == [vision_winner.video_chunk_id]
     assert text[0].rank == vision[0].rank == 1
     assert {text[0].series_id, vision[0].series_id} == set(scope)
     assert excluded_global_winner.video_chunk_id not in {
+        text[0].video_chunk_id,
+        vision[0].video_chunk_id,
+    }
+    assert excluded_same_series_winner.video_chunk_id not in {
         text[0].video_chunk_id,
         vision[0].video_chunk_id,
     }
@@ -204,6 +223,7 @@ def test_search_rejects_a_payload_id_that_disagrees_with_point_id() -> None:
     store.ensure_collection()
     point_id = str(uuid4())
     series_id = str(uuid4())
+    video_id = str(uuid4())
     client.upsert(
         collection_name=store.collection_name,
         points=[
@@ -212,7 +232,7 @@ def test_search_rejects_a_payload_id_that_disagrees_with_point_id() -> None:
                 vector={"text": [1.0, 0.0], "vision": [1.0, 0.0]},
                 payload={
                     "seriesId": series_id,
-                    "videoId": str(uuid4()),
+                    "videoId": video_id,
                     "videoChunkId": str(uuid4()),
                     "sourceRevision": "revision-1",
                     "isFallback": False,
@@ -226,6 +246,7 @@ def test_search_rejects_a_payload_id_that_disagrees_with_point_id() -> None:
         store.search_text(
             [1.0, 0.0],
             series_ids=[series_id],
+            video_ids=[video_id],
             limit=1,
         )
 
@@ -238,9 +259,20 @@ def test_search_rejects_empty_scope_and_missing_collection() -> None:
     )
 
     with pytest.raises(ValueError, match="series_ids must not be empty"):
-        store.search_text([1.0, 0.0], series_ids=[], limit=1)
+        store.search_text(
+            [1.0, 0.0], series_ids=[], video_ids=[str(uuid4())], limit=1
+        )
+    with pytest.raises(ValueError, match="video_ids must not be empty"):
+        store.search_text(
+            [1.0, 0.0], series_ids=[str(uuid4())], video_ids=[], limit=1
+        )
     with pytest.raises(QdrantCollectionNotFoundError, match="does not exist"):
-        store.search_text([1.0, 0.0], series_ids=[str(uuid4())], limit=1)
+        store.search_text(
+            [1.0, 0.0],
+            series_ids=[str(uuid4())],
+            video_ids=[str(uuid4())],
+            limit=1,
+        )
 
 
 def test_delete_is_idempotent_and_waits_for_completion() -> None:

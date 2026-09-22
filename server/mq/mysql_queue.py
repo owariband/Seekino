@@ -127,7 +127,8 @@ class MySqlParseJobQueue:
             job.version += 1
             if not preserve_existing_result:
                 video.parse_status = ParseJobStatus.RUNNING.value
-                series.status = "INDEXING"
+                if series.status != "READY":
+                    refresh_series_statuses(session, {job.series_id})
             lease = ParseJobLease(
                 job_id=job.job_id,
                 series_id=job.series_id,
