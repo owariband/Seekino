@@ -1,1 +1,1 @@
-"""AniVAG algorithm modules."""
+"""anivag algorithm modules."""

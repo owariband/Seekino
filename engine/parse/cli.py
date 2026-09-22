@@ -39,7 +39,7 @@ _RUNTIME_CONTEXT_END = "<!-- ANIVAG_RUNTIME_CONTEXT_END -->"
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m engine.parse.cli",
-        description="Run AniVAG domain pipelines.",
+        description="Run anivag domain pipelines.",
     )
     parser.add_argument(
         "--config",

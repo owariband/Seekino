@@ -170,7 +170,7 @@ describe("Search assistant presentation", () => {
     expect(screen.getByRole("link", { name: "公开资料" })).toHaveAttribute("href", "https://example.com/source");
     expect(screen.queryByText(/可用视频范围/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("回答过程")).toBeInTheDocument();
-    await user.type(screen.getByRole("textbox", { name: "向 AniVAG 助手提问" }), "你好");
+    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "你好");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
     expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {});

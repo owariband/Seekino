@@ -403,7 +403,7 @@ export function SearchPage() {
     <main className={`${styles.page} page`}>
       <header className={styles.pageHeader}>
         <div className={styles.chatHeading}>
-          <h1 className={styles.chatTitle}>AniVAG 助手</h1>
+          <h1 className={styles.chatTitle}>anivag 助手</h1>
           {activeConversation ? <span title={activeConversation.title}>{activeConversation.title}</span> : null}
         </div>
         <div className={styles.conversationActions}>
@@ -510,7 +510,7 @@ export function SearchPage() {
       </header>
 
       <div className={selectedHit ? `${styles.workspace} ${styles.withEvidence}` : styles.workspace}>
-        <section className={styles.agentPanel} aria-label="与 AniVAG 助手对话">
+        <section className={styles.agentPanel} aria-label="与 anivag 助手对话">
           <div className={styles.thread} ref={threadRef} onScroll={(event) => {
             const thread = event.currentTarget;
             followThread.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
@@ -604,7 +604,7 @@ export function SearchPage() {
                 }}
                 placeholder="提问视频内容，或聊聊其他问题…"
                 rows={2}
-                aria-label="向 AniVAG 助手提问"
+                aria-label="向 anivag 助手提问"
               />
               <button className={styles.sendButton} type="submit" disabled={!canSend} aria-label="发送问题">
                 {searching ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <ArrowUp size={19} aria-hidden="true" />}

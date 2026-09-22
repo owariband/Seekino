@@ -1,1 +1,1 @@
-"""Model-provider adapters used by AniVAG."""
+"""Model-provider adapters used by anivag."""

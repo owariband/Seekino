@@ -1,4 +1,4 @@
-# AniVAG Multi-Agent API 对接文档
+# anivag Multi-Agent API 对接文档
 
 > 状态：首个可运行纵向闭环
 >

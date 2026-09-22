@@ -240,14 +240,14 @@ export function SettingsPage() {
         </section>
 
         <section className={styles.settingsSection}>
-          <div className={styles.sectionIntro}><span>02</span><div><h2>连接</h2><p>页面始终请求真实 AniVAG API；服务不可用时展示错误和空态，不注入演示数据。</p></div></div>
+          <div className={styles.sectionIntro}><span>02</span><div><h2>连接</h2><p>页面始终请求真实 anivag API；服务不可用时展示错误和空态，不注入演示数据。</p></div></div>
           <dl className={styles.connectionList}>
             <div><dt><Server size={16} />API 状态</dt><dd data-mode={mode}><i />{mode === "live" ? "已连接" : mode === "offline" ? "不可用" : "正在检查"}</dd></div>
             <div><dt><Database size={16} />API 地址</dt><dd>{shownApiUrl}</dd></div>
             <div><dt><ShieldCheck size={16} />Workspace</dt><dd>{WORKSPACE_ID}</dd></div>
           </dl>
           {mode === "offline" ? (
-            <p className={styles.modeNote}>当前无法连接 API。请确认 AniVAG Server 已启动；恢复连接后页面会重新读取真实 Series 和任务状态。</p>
+            <p className={styles.modeNote}>当前无法连接 API。请确认 anivag Server 已启动；恢复连接后页面会重新读取真实 Series 和任务状态。</p>
           ) : null}
         </section>
 

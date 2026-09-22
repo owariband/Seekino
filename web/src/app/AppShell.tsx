@@ -55,9 +55,9 @@ export function AppShell() {
         {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
       </button>
       <aside id="anivag-sidebar" className={styles.sidebar} hidden={sidebarCollapsed}>
-        <NavLink className={styles.brand} to="/search" aria-label="AniVAG 首页">
+        <NavLink className={styles.brand} to="/search" aria-label="anivag 首页">
           <img src="/anivag-mark.svg" alt="" />
-          <strong>AniVAG</strong>
+          <strong>anivag</strong>
         </NavLink>
 
         <nav className={styles.navigation} aria-label="主导航">
@@ -110,7 +110,7 @@ export function AppShell() {
 
       <div className={styles.content}>
         <header className={styles.mobileHeader}>
-          <NavLink className={styles.mobileBrand} to="/search"><img src="/anivag-mark.svg" alt="" /><strong>AniVAG</strong></NavLink>
+          <NavLink className={styles.mobileBrand} to="/search"><img src="/anivag-mark.svg" alt="" /><strong>anivag</strong></NavLink>
           <div>
             <button type="button" onClick={openDialog} aria-label="打开上传面板"><ArrowUpFromLine size={17} /><span>{activeCount || "上传"}</span></button>
             <button type="button" onClick={toggleTheme} aria-label="切换明暗主题">{theme === "light" ? <Moon size={17} /> : <Sun size={17} />}</button>

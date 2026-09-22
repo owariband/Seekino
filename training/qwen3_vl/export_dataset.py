@@ -211,7 +211,7 @@ def _write_jsonl(path: Path, records: Iterable[dict[str, object]]) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Export committed AniVAG parse checkpoints as Qwen3-VL SFT data."
+        description="Export committed anivag parse checkpoints as Qwen3-VL SFT data."
     )
     parser.add_argument("--train-job", action="append", required=True)
     parser.add_argument("--validation-job", action="append", required=True)

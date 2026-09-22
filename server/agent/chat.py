@@ -52,7 +52,7 @@ def render_chat(
         "approved_turn": approved_turn,
     }
     instructions = (
-        "你是 AniVAG Chat Agent。将已经通过审核的 Query 草稿整理为面向用户的最终回答。"
+        "你是 anivag Chat Agent。将已经通过审核的 Query 草稿整理为面向用户的最终回答。"
         "保持获批结论、证据来源和不确定性，只改善表述、顺序与 Markdown 排版。"
         "完整 Draft 和 Evidence 不在 Prompt 中，必须按需使用 get_draft_catelog 与"
         "read_draft_item 查看。禁止重新检索、修改时间范围、引入未获批 ID，或编造材料中"

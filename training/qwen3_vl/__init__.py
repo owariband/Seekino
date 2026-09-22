@@ -1,1 +1,1 @@
-"""Qwen3-VL post-training pipeline for AniVAG video parsing."""
+"""Qwen3-VL post-training pipeline for anivag video parsing."""

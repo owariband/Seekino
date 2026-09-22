@@ -1,4 +1,4 @@
-# AniVAG 前端 API 对接文档
+# anivag 前端 API 对接文档
 
 > 状态：Upload-to-Search M1 与 Agent Chat 基础接口已实现；真实模型聊天联调与异常恢复仍待验收/补齐
 >
@@ -1159,7 +1159,7 @@ uv run --env-file .env.local python -m server.cli init-db
 uv run --env-file .env.local python -m server.api
 ```
 
-`server.api` 是唯一常驻的 AniVAG Server 进程。它同时提供 HTTP API，并在进程内启动
+`server.api` 是唯一常驻的 anivag Server 进程。它同时提供 HTTP API，并在进程内启动
 ParseJobConsumer，从 MySQL DB Queue Claim ParseJob；任务持久性、Lease 和 Fencing
 仍以 MySQL 为准，不依赖进程内内存队列。
 

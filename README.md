@@ -1,12 +1,12 @@
-# AniVAG
+# anivag
 
-AniVAG 是一个面向事件级视频检索与时间证据定位的多模态视频理解产品。M1 以动画名场面为首个落地场景：用户导入若干集动画视频后，可以用自然语言查询梗、动作、人物关系或情绪变化，并获得可跳转的集数、时间戳与关键帧证据。
+anivag 是一个面向事件级视频检索与时间证据定位的多模态视频理解产品。M1 以动画名场面为首个落地场景：用户导入若干集动画视频后，可以用自然语言查询梗、动作、人物关系或情绪变化，并获得可跳转的集数、时间戳与关键帧证据。
 
-## 一张图看懂 AniVAG
+## 一张图看懂 anivag
 
-从私有视频到有据可查的回答：AniVAG 在后台解析语音、画面与时间线，建立可检索的多模态索引，再把自然语言问题对应到具体片段。
+从私有视频到有据可查的回答：anivag 在后台解析语音、画面与时间线，建立可检索的多模态索引，再把自然语言问题对应到具体片段。
 
-[![AniVAG 架构图：私有视频输入、持久化解析、多模态索引、检索 Agent 与可跳转的视频证据](diagrams/anivag-open-source-architecture.png)](diagrams/anivag-open-source-architecture.png)
+[![anivag 架构图：私有视频输入、持久化解析、多模态索引、检索 Agent 与可跳转的视频证据](diagrams/anivag-open-source-architecture.png)](diagrams/anivag-open-source-architecture.png)
 
 *点击图片查看完整架构图。*
 
@@ -14,7 +14,7 @@ AniVAG 是一个面向事件级视频检索与时间证据定位的多模态视�
 - **一次解析，多路检索**：语音文本、场景与关键帧汇入时间线，支持文本、语义和视觉证据召回。
 - **答案能回到原片**：结果附带集数、时间段与关键帧，方便核对并跳转到对应视频位置。
 
-仓库根目录就是 AniVAG 的工程边界，不再额外套 `packages/`、`src/` 或
+仓库根目录就是 anivag 的工程边界，不再额外套 `packages/`、`src/` 或
 `anivag_*` 分发包。`server/`、`engine/`、`gateway/` 是产品内部模块命名空间，
 不是三个需要独立发布的 Python 包，也不通过 `__init__.py` 批量暴露实现。
 
@@ -24,7 +24,7 @@ AniVAG 是一个面向事件级视频检索与时间证据定位的多模态视�
 - Video-only：用户不需要上传外挂字幕文件。
 - 语音、镜头与关键帧进入查询前的异步建库链路；生产 Parse 由 Server LangGraph 编排独立的 ASR、视频理解与 Embedding Agent。烧录字幕 OCR 暂不阻塞第一版。
 - 在线查询融合语音文本、视觉与角色事件候选，返回时间证据。
-- V1 使用 MySQL 持久化 Queue + AniVAG Server 进程内 Consumer；RocketMQ 不是单用户 MVP 的前置依赖。
+- V1 使用 MySQL 持久化 Queue + anivag Server 进程内 Consumer；RocketMQ 不是单用户 MVP 的前置依赖。
 
 ## 生产 Parse Graph
 
@@ -60,7 +60,7 @@ uv run --env-file .env.local python -m gateway.cli --help
 冒烟见 [`gateway/README.md`](gateway/README.md)，业务事实与索引同步命令见
 [`server/README.md`](server/README.md)。所有命令都从仓库根目录运行。
 
-本地验证时，可直接懒启动 MySQL、原生 Qdrant、AniVAG Server（API + 进程内
+本地验证时，可直接懒启动 MySQL、原生 Qdrant、anivag Server（API + 进程内
 ParseJobConsumer）和 Web：
 
 ```bash
@@ -78,7 +78,7 @@ ParseJobConsumer）和 Web：
 需要本机已有 `uv`、Node、npm、MySQL 8、Qdrant 和 ffmpeg / ffprobe。
 脚本会在缺少 `.venv` / Web 依赖时执行 `uv sync` / `npm ci`。
 可通过 `ANIVAG_MYSQLD_BIN` / `ANIVAG_QDRANT_BIN` 指定二进制；也会查找 Homebrew
-MySQL 8.4 和 `~/.local/bin/qdrant`。Gateway / Engine 由 AniVAG Server 进程内调用，
+MySQL 8.4 和 `~/.local/bin/qdrant`。Gateway / Engine 由 anivag Server 进程内调用，
 无需额外进程。
 
 自建数据、PID 与日志保存在 `outputs/local-services/`，媒体仍使用
@@ -96,7 +96,7 @@ Vite 代理会跟随 API 端口。此脚本仅用于 localhost development 环�
 ## 仓库结构
 
 ```text
-AniVAG/
+anivag/
 ├── pyproject.toml                    # 统一依赖与测试配置；package = false
 ├── uv.lock                           # 全仓唯一依赖锁
 ├── config.yaml                       # 可提交的模型默认配置

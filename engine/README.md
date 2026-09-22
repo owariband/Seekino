@@ -1,6 +1,6 @@
-# AniVAG Engine
+# anivag Engine
 
-Engine 是 AniVAG 的算法边界：它负责单个 VideoChunk 的模型调用、证据解析和
+Engine 是 anivag 的算法边界：它负责单个 VideoChunk 的模型调用、证据解析和
 Context 演进，不负责生产 Job 的调度与持久化生命周期。外部模型请求仍由根目录下的
 `gateway/` 负责。Engine 当前与 Server 在同一进程内装配；是否独立部署不改变这个边界。
 

@@ -45,7 +45,7 @@ def create_app(
             await run_in_threadpool(services.close)
 
     app = FastAPI(
-        title="AniVAG Server",
+        title="anivag Server",
         version="0.1.0",
         lifespan=lifespan,
     )

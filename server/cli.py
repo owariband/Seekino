@@ -31,13 +31,13 @@ from .storage.qdrant import QdrantVideoChunkStore
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="anivag-server",
-        description="Manage AniVAG persistence and formal video retrieval.",
+        description="Manage anivag persistence and formal video retrieval.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_database = subparsers.add_parser(
         "init-db",
-        help="Create the initial AniVAG persistence schema.",
+        help="Create the initial anivag persistence schema.",
     )
     _add_database_arguments(init_database)
 

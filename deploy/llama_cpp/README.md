@@ -1,6 +1,6 @@
 # llama.cpp direct-video runtime
 
-该 runtime 保留为 AniVAG 本地 Qwen3-VL 的直接视频 A/B 实验入口。Gateway 仍保留
+该 runtime 保留为 anivag 本地 Qwen3-VL 的直接视频 A/B 实验入口。Gateway 仍保留
 HTTP adapter，但当前正式 `parse-video` fallback 已改为官方 DeepSeek Flash 的分组抽帧
 链路，不会读取本目录配置，也不负责启动或停止本进程。
 

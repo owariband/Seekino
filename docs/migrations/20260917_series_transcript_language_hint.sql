@@ -1,4 +1,4 @@
--- AniVAG controlled migration: Series-level ASR retrieval language hint.
+-- anivag controlled migration: Series-level ASR retrieval language hint.
 -- Existing Series remain unset until a user confirms the stored transcript language.
 
 ALTER TABLE series

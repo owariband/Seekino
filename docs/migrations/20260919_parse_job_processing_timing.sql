@@ -1,4 +1,4 @@
--- AniVAG controlled migration: keep ParseJob processing time on the job row.
+-- anivag controlled migration: keep ParseJob processing time on the job row.
 --
 -- Stop parse workers first. This migration folds the now-removed attempt
 -- timing history into series_parse_job, then drops the two detail tables.

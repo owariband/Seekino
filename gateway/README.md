@@ -1,6 +1,6 @@
-# AniVAG Gateway
+# anivag Gateway
 
-Gateway 是 AniVAG 的模型调用边界。它只负责把统一的多模态输入转换成
+Gateway 是 anivag 的模型调用边界。它只负责把统一的多模态输入转换成
 Provider 请求，并把严格 JSON Schema 输出校验成调用方指定的 Pydantic 模型。
 
 ## 多模态模型接口

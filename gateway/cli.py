@@ -15,7 +15,7 @@ from .multimodal_embedder import DoubaoMultimodalEmbedder
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m gateway.cli",
-        description="Smoke-test AniVAG model gateway capabilities.",
+        description="Smoke-test anivag model gateway capabilities.",
     )
     parser.add_argument(
         "--config",

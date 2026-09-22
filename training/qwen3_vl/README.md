@@ -1,6 +1,6 @@
 # Qwen3-VL post-training
 
-This directory contains the project-specific part of AniVAG's Qwen3-VL SFT
+This directory contains the project-specific part of anivag's Qwen3-VL SFT
 pipeline. It exports committed parse checkpoints, validates the resulting
 dataset, and starts a QLoRA run through ms-swift. CUDA, PyTorch, and ms-swift
 remain outside the application's root dependency set.
@@ -39,7 +39,7 @@ changes into the dataset directory before invoking ms-swift.
 
 ## Export locally
 
-Load the normal AniVAG persistence variables, then assign complete episodes to
+Load the normal anivag persistence variables, then assign complete episodes to
 different splits:
 
 ```bash

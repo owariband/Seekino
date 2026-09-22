@@ -7,17 +7,17 @@ parse(Compact, VideoChunk) -> Result
 retrieve(...) -> RetrievalResult
 ```
 
-算法是否作为独立 PSM、独立进程运行并不是关键。当前只有 AniVAG Server 一个调用方，算法层本质上只是 Server 调用的 `parse` 和 `retrieve` 两个函数，因此完全可以与 Server 运行在同一个进程中。算法层需要保持清晰的函数边界，但不应仅仅为了边界而被强制拆成独立服务。
+算法是否作为独立 PSM、独立进程运行并不是关键。当前只有 anivag Server 一个调用方，算法层本质上只是 Server 调用的 `parse` 和 `retrieve` 两个函数，因此完全可以与 Server 运行在同一个进程中。算法层需要保持清晰的函数边界，但不应仅仅为了边界而被强制拆成独立服务。
 
 当前架构真正的问题，是把 DB Queue、Queue Consumer 和算法接口混在了一起：上传工程被当作 Producer，算法接口被当作 Consumer，又额外启动了一个 `server.mq` 进程放在二者之间。这样相当于把本应属于 Server 内部的后台消费循环提升成了独立 MQ/Worker 服务，同时把算法运行时也装进了这个进程，导致持久化、任务消费、业务编排和算法调用的职责边界全部混乱。
 
-DB Queue 没有必要单独做成一个进程。Queue 中的任务已经存放在数据库里，事务提交后天然具备持久性；任务能否在 Server 重启后恢复，取决于数据库中的 Job 状态、Claim、Lease 和 Fencing，而不是取决于是否存在一个独立 Worker 进程。Producer 和 Consumer 都可以属于同一个 AniVAG Server：上传接口负责写入任务，Server 内部的后台线程负责领取任务，再直接调用 `parse` 或 `retrieve`。
+DB Queue 没有必要单独做成一个进程。Queue 中的任务已经存放在数据库里，事务提交后天然具备持久性；任务能否在 Server 重启后恢复，取决于数据库中的 Job 状态、Claim、Lease 和 Fencing，而不是取决于是否存在一个独立 Worker 进程。Producer 和 Consumer 都可以属于同一个 anivag Server：上传接口负责写入任务，Server 内部的后台线程负责领取任务，再直接调用 `parse` 或 `retrieve`。
 
 因此需要重新区分三个概念：
 
 ```text
 DB Queue  = MySQL 表、事务和任务状态，不是一个进程
-Consumer  = AniVAG Server 内部的后台消费循环，不是一个独立 PSM
+Consumer  = anivag Server 内部的后台消费循环，不是一个独立 PSM
 Algorithm = parse / retrieve 两个清晰的算法接口，不要求独立部署
 ```
 
@@ -53,7 +53,7 @@ Algorithm    = Server 调用的 parse / retrieve 函数
                   │ enqueue         │ claim
                   │                 ▼
 
-┌──────────────── AniVAG Server：唯一 PSM / 单进程 ────────────────┐
+┌──────────────── anivag Server：唯一 PSM / 单进程 ────────────────┐
 │                                                                 │
 │  HTTP API                                                       │
 │  ├── Upload API                                                 │
@@ -211,7 +211,7 @@ DELETE 请求
 删除独立常驻 Worker 进程：是
 删除 server/mq package：否
 保留 server/mq 作为消息基础设施边界：是
-ParseJobConsumer 在 AniVAG Server 进程内运行：是
+ParseJobConsumer 在 anivag Server 进程内运行：是
 ```
 
 `server/mq` 与“是否单独部署一个进程”是两个不同维度。当前用 MySQL 实现持久化 Queue，未来接入 RocketMQ 时也继续由 `server/mq` 承接消息投递和消费适配；Algorithm、Checkpoint、Artifact 和索引业务不能因此进入 MQ 层。
@@ -223,7 +223,7 @@ ParseJobConsumer 在 AniVAG Server 进程内运行：是
 最终运行结构收敛为：
 
 ```text
-AniVAG Server：唯一 Backend PSM / 单进程
+anivag Server：唯一 Backend PSM / 单进程
 │
 ├── FastAPI / Control Plane
 │   ├── UploadSession API
@@ -271,7 +271,7 @@ MySQL
 
 ```text
 当前：API Process + 独立 server.mq Worker Process
-目标：一个 AniVAG Server Process + 进程内 ParseJobConsumer Thread
+目标：一个 anivag Server Process + 进程内 ParseJobConsumer Thread
 ```
 
 MySQL Claim、Lease、Heartbeat、Retry、Reaper 和 Fencing 全部保留。进程合并不等于删除这些机制，它们仍负责重启恢复、多实例误启动保护和迟到结果隔离。
@@ -388,7 +388,7 @@ shutdown
 
 ### 验收条件
 
-- 本地启动后只有一个 AniVAG Server 进程，不再有常驻 Worker 子进程；
+- 本地启动后只有一个 anivag Server 进程，不再有常驻 Worker 子进程；
 - Upload complete 创建的 QUEUED Job 能由进程内 Consumer 正常处理；
 - Retry、Reaper、Heartbeat 和 Fencing 行为与改造前一致；
 - API shutdown 不出现后台线程继续使用已关闭资源；
@@ -409,7 +409,7 @@ shutdown
 - `bootstrap.py` 成为 API 与单任务诊断入口共用的唯一 Composition Root；
 - `/healthz` 已暴露 `components.parseConsumer.status`，fatal 时返回 `degraded`，且不公开
   数据库或 Provider 异常正文；
-- `scripts/local_services.py` 只启动 AniVAG Server，不再管理 Worker PID、进程、readiness
+- `scripts/local_services.py` 只启动 anivag Server，不再管理 Worker PID、进程、readiness
   或 `worker.log`；
 - `python -m server.mq` 只允许 `--once`，写独立的 `mq.log`，不再提供常驻运行方式；
 - MQ 与 IndexSync retry 配置已经解耦；新配置使用 `ANIVAG_MQ_*` 和

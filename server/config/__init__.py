@@ -1,4 +1,4 @@
-"""Validated runtime configuration for the AniVAG Server process."""
+"""Validated runtime configuration for the anivag Server process."""
 
 from .index_sync import IndexSyncConfig
 from .mq import MQConsumerConfig

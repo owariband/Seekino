@@ -237,7 +237,7 @@ class SupervisorRuntime:
             build_agent_tool(
                 func=search_video_graph, name="search_video_graph",
                 description=(
-                    "Search the selected AniVAG videos through the full Query, "
+                    "Search the selected anivag videos through the full Query, "
                     "Evaluator and Chat review process. Pass a self-contained video "
                     "question. The returned answer is already approved."
                 ),
@@ -263,7 +263,7 @@ class SupervisorRuntime:
             "sourceStatus": reference.get("sourceStatus"),
         } if isinstance(evidence, dict) else None
         prompt = (
-            "你是 AniVAG 对话 Supervisor。根据用户问题自行决定直接回答、调用 "
+            "你是 anivag 对话 Supervisor。根据用户问题自行决定直接回答、调用 "
             "search_web、调用 search_video_graph，或两个工具都调用。问题涉及所选"
             "视频中的人物、情节、讲解内容，或引用了视频片段时，应调用视频工具核验。"
             "没有视频范围时可直接聊天或搜索网页；若问题指向本地视频，应说明当前"

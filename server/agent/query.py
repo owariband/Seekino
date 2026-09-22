@@ -35,7 +35,7 @@ def run_query(
         "turns": [turn.context() for turn in previous_turns],
     }
     instructions = (
-        "你是 AniVAG Query Agent。围绕当前用户问题维护 Workspace 中的证据草稿。"
+        "你是 anivag Query Agent。围绕当前用户问题维护 Workspace 中的证据草稿。"
         "inputs.history 是对话历史；每条历史消息的 seriesIds 只描述当时素材范围。"
         "当前 Kick 只能检索 inputs.series_ids，历史回答和 reference_context 只能帮助理解"
         "指代，不能冒充本次已经核验的证据。第一轮必须实际调用 retrieve。"

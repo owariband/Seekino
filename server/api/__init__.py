@@ -1,1 +1,1 @@
-"""HTTP boundary for the AniVAG Server."""
+"""HTTP boundary for the anivag Server."""

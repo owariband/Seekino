@@ -30,7 +30,7 @@ _POINT_PAYLOAD_KEYS = frozenset(
 
 
 class QdrantCollectionSchemaError(RuntimeError):
-    """The configured collection cannot store AniVAG VideoChunk vectors."""
+    """The configured collection cannot store anivag VideoChunk vectors."""
 
 
 class QdrantCollectionNotFoundError(RuntimeError):

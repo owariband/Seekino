@@ -341,14 +341,14 @@ def start_applications() -> None:
     api_base = f"http://127.0.0.1:{api_port}"
     if listening(api_port):
         if not api_ready(api_base):
-            raise RuntimeError(f"API 端口 {api_port} 已占用，未识别到 AniVAG API。")
+            raise RuntimeError(f"API 端口 {api_port} 已占用，未识别到 anivag API。")
         print(f"[复用] API :{api_port}", flush=True)
     else:
         if owned_pid("api"):
             raise RuntimeError("已有脚本启动的 API 尚未就绪，请查看 api.log。")
         if not os.environ.get("ARK_API_KEY"):
             raise RuntimeError(
-                "请在 .env.local 填写 ARK_API_KEY，AniVAG Server 的 Parse Consumer 需要它完成启动。"
+                "请在 .env.local 填写 ARK_API_KEY，anivag Server 的 Parse Consumer 需要它完成启动。"
             )
         model_config = load_config()
         deepseek_key_names = {model_config.agent_model.api_key_env}
@@ -363,7 +363,7 @@ def start_applications() -> None:
             raise RuntimeError(
                 "请在 .env.local 填写 "
                 + "、".join(missing_deepseek_keys)
-                + "；AniVAG Agent 或已启用的 DeepSeek 解析需要它完成启动。"
+                + "；anivag Agent 或已启用的 DeepSeek 解析需要它完成启动。"
             )
         launch("api", [sys.executable, "-u", "-m", "server.api"])
         wait_ready("api", lambda: api_ready(api_base))
@@ -374,8 +374,8 @@ def start_applications() -> None:
     web_base = f"http://127.0.0.1:{web_port}"
     if listening(web_port):
         page = get(web_base)
-        if page is None or b"/@vite/client" not in page or b"AniVAG" not in page:
-            raise RuntimeError(f"Web 端口 {web_port} 已占用，未识别到 AniVAG Vite。")
+        if page is None or b"/@vite/client" not in page or b"anivag" not in page:
+            raise RuntimeError(f"Web 端口 {web_port} 已占用，未识别到 anivag Vite。")
         print(f"[复用] Web :{web_port}", flush=True)
     else:
         if owned_pid("web"):
@@ -422,7 +422,7 @@ def stop() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="懒启动 AniVAG 全部 localhost 服务。")
+    parser = argparse.ArgumentParser(description="懒启动 anivag 全部 localhost 服务。")
     parser.add_argument(
         "command",
         choices=("start", "status", "stop", "_env-names"),

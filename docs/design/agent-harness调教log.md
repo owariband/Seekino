@@ -329,7 +329,7 @@ Evaluator 输出 EvalDecision(action, advice)
 |---|---|
 | `gateway/context_window.py` | Provider 无关的 token ledger、阈值判断、replacement history、window identity 与硬上限恢复 |
 | `gateway/agent_model.py` | 把相同 Controller 接入自定义 function loop 和 LangChain/LangGraph middleware，并采集真实 Provider usage |
-| `server/agent/context.py` | 将 AniVAG canonical Workspace 投影成有界 navigation checkpoint |
+| `server/agent/context.py` | 将 anivag canonical Workspace 投影成有界 navigation checkpoint |
 | `server/agent/workspace.py` | 保存模型消息之外的 Retrieval/Draft/approved Draft/render canonical state |
 | `server/agent/query.py` / `evaluator.py` / `chat.py` | 定义角色固定锚点、一次性初始快照和 checkpoint callback |
 | `server/config/agent.py` / `settings.py` | 保存窗口、预留、软阈值和目标阈值配置 |

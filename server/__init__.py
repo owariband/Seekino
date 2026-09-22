@@ -1,1 +1,1 @@
-"""AniVAG server-side engineering modules."""
+"""anivag server-side engineering modules."""

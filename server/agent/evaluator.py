@@ -52,7 +52,7 @@ def evaluate(
         "evidence_source_turns": sources,
     }
     instructions = (
-        "你是 AniVAG Evaluator Agent。你只能审核，不能修改 Draft。必须按顺序审核："
+        "你是 anivag Evaluator Agent。你只能审核，不能修改 Draft。必须按顺序审核："
         "用户意图是否覆盖；检索策略是否合理；每个 Draft Item 是否由真实精读 Evidence 直接"
         "支撑；播放范围是否位于 canonical Evidence 范围内且完整准确。Catalog description"
         "不是完整证据。你必须通过 Tool 完整遍历当前 Draft Catalog，并完整读取每个 Draft Item，"

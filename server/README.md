@@ -1,10 +1,10 @@
-# AniVAG Server
+# anivag Server
 
 Server 当前实现 M1 的 Upload-to-Search 纵向闭环：分片上传与断点续传、环境隔离的
 Artifact Store、MySQL 事实与 DB Queue、带 Lease/Heartbeat/Retry/Reaper 的进程内
 ParseJobConsumer、VideoChunk checkpoint、持久化 Index Sync Intent、Qdrant 派生索引，
 以及按 `seriesIds` 限定的 ASR/Semantic/Vision 三路召回、RRF 和 `videoChunkId[]` 批量回源。模型协议仍由
-Gateway 实现，AniVAG Server 进程内直接复用 Engine 的解析链路。
+Gateway 实现，anivag Server 进程内直接复用 Engine 的解析链路。
 
 Multi-Agent 对话作为独立领域建立在正式检索之上：Workspace 直接拥有
 AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存每次发送的 Series Scope，
@@ -24,7 +24,7 @@ Embedding 的 durable source 是 MySQL，Qdrant 始终只是可重建派生索�
 server/router/      URL、Method、Response Model 和 API Handler 的绑定
 server/api/         参数/Header/Body 校验、HTTP 响应映射、SSE、异常转 HTTP
 server/service/     业务用例、资源归属与状态校验、跨资源编排
-server/bootstrap.py AniVAG Server 的数据库、Storage、Gateway、Queue 和 Service 装配
+server/bootstrap.py anivag Server 的数据库、Storage、Gateway、Queue 和 Service 装配
 ```
 
 调用方向为 `router → api → service → repository/storage`。Router 不实现 Handler；
@@ -39,7 +39,7 @@ HTTP 专用 Request/View 位于 `server/api/schema.py`；API、CLI、Agent 共�
 ## 后台任务与共享代码
 
 `server/mq/` 是消息基础设施边界，当前使用 MySQL DB Queue，不依赖外部消息中间件。
-AniVAG Server 启动进程内 ParseJobConsumer 领取任务，再调用业务处理服务；Event 仍只
+anivag Server 启动进程内 ParseJobConsumer 领取任务，再调用业务处理服务；Event 仍只
 表达已经发生的事实。API 保存完整视频并提交 ParseJob 后，Consumer 在同一 Server 进程
 继续处理，浏览器关闭不影响已经入队的任务。
 
@@ -125,7 +125,7 @@ MySQL 表使用 InnoDB。
 前端对接所需的完整请求、响应、分片续传、任务 SSE 与检索契约见
 [前端 API 对接文档](../docs/design/frontend-api.md)。
 
-先初始化 MySQL，再启动唯一常驻的 AniVAG Server：
+先初始化 MySQL，再启动唯一常驻的 anivag Server：
 
 ```bash
 uv run python -m server.cli init-db
@@ -248,7 +248,7 @@ VideoChunk MP4。Text vector 读取同一 VideoChunk 的完整 retrieval documen
 
 ## 运行日志
 
-AniVAG Server 在进程启动时配置 Python logging，同时写入终端和轮转文件，默认
+anivag Server 在进程启动时配置 Python logging，同时写入终端和轮转文件，默认
 `ANIVAG_LOG_LEVEL=info`；也可用 `python -m server.api --log-level debug` 覆盖。
 日志文件不依赖 `./start.sh`，直接启动 Server 也会落盘：
 

@@ -1,6 +1,6 @@
-# AniVAG Web
+# anivag Web
 
-AniVAG 的正式 Web 前端。视觉基于已确认的 A「青瓷札记」，通过同一套功能组件连接
+anivag 的正式 Web 前端。视觉基于已确认的 A「青瓷札记」，通过同一套功能组件连接
 FastAPI 正式数据。前端不内置 Series、视频、任务或检索结果；API 不可用时只展示明确的
 连接错误与空态。
 
@@ -15,7 +15,7 @@ FastAPI 正式数据。前端不内置 Series、视频、任务或检索结果�
 - Vitest + Testing Library：业务逻辑与主流程组件测试。
 - Playwright：预留浏览器端验收测试入口。
 
-上传没有引入通用上传面板。AniVAG 使用自定义分片号、`Content-Range`、SHA-256、
+上传没有引入通用上传面板。anivag 使用自定义分片号、`Content-Range`、SHA-256、
 `Idempotency-Key` 和服务端恢复点；将这段协议收敛在 `UploadProvider` 中，比在通用库上
 叠加适配层更短，也更容易保证进度语义准确。
 
@@ -37,7 +37,7 @@ src/
 主要数据流：
 
 ```text
-AniVAG HTTP API
+anivag HTTP API
        ↓
 WorkspaceProvider ── Series 选择与运行模式
        ↓

@@ -1,4 +1,4 @@
--- AniVAG controlled migration: durable canonical VideoChunk ranges.
+-- anivag controlled migration: durable canonical VideoChunk ranges.
 -- Run this before deploying code that requires the new checkpoint columns.
 
 ALTER TABLE video_chunk_checkpoint

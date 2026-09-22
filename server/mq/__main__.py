@@ -10,7 +10,7 @@ from ..utils.logging import configure_logging
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m server.mq",
-        description="Run at most one due AniVAG parse job for diagnostics.",
+        description="Run at most one due anivag parse job for diagnostics.",
     )
     parser.add_argument(
         "--once",

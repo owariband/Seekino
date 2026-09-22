@@ -13,7 +13,7 @@ from ..config import ServerSettings
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="python -m server.api",
-        description="Run the AniVAG HTTP API process.",
+        description="Run the anivag HTTP API process.",
     )
     parser.add_argument(
         "--host",
