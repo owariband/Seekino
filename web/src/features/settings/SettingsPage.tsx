@@ -2,13 +2,23 @@ import { Check, Database, Moon, Server, ShieldCheck, Sun } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { API_BASE_URL, ApiClientError, errorMessage, getAgentGlobalSettings, updateAgentGlobalSettings, WORKSPACE_ID } from "../../api/client";
-import type { AgentGlobalSettings, AgentGlobalSettingsValues } from "../../api/contracts";
+import type { AgentGlobalSettings, AgentGlobalSettingsValues, AgentReasoningEffort } from "../../api/contracts";
 import { useTheme } from "../../app/theme";
 import { useWorkspace } from "../../app/workspace";
 import styles from "./settings.module.css";
 
-type NumericSettingKey = Exclude<keyof AgentGlobalSettingsValues, "limits_enabled">;
+type ReasoningSettingKey = "query_reasoning_effort" | "evaluator_reasoning_effort" | "chat_reasoning_effort";
+type NumericSettingKey = Exclude<keyof AgentGlobalSettingsValues, "limits_enabled" | ReasoningSettingKey>;
 type SettingField = readonly [NumericSettingKey, string, string];
+
+const reasoningFields: ReadonlyArray<readonly [ReasoningSettingKey, string]> = [
+  ["query_reasoning_effort", "Query 检索"],
+  ["evaluator_reasoning_effort", "Evaluator 审核"],
+  ["chat_reasoning_effort", "Chat 回答"],
+];
+const reasoningOptions: ReadonlyArray<readonly [AgentReasoningEffort, string]> = [
+  ["none", "关闭"], ["low", "低"], ["high", "高"], ["max", "最大"],
+];
 
 const settingGroups: ReadonlyArray<{ title: string; fields: ReadonlyArray<SettingField> }> = [
   { title: "回答与检索", fields: [
@@ -88,7 +98,7 @@ function GlobalAgentSettings({ mode }: { mode: string }) {
     event.preventDefault();
     if (!settings || saving || loading || mode !== "live") return;
     const form = new FormData(event.currentTarget);
-    const changes: Record<string, number | boolean> = {};
+    const changes: Record<string, number | boolean | AgentReasoningEffort> = {};
     for (const group of settingGroups) {
       for (const [key] of group.fields) {
         const raw = form.get(key);
@@ -102,6 +112,14 @@ function GlobalAgentSettings({ mode }: { mode: string }) {
     }
     const limitsEnabled = form.has("limits_enabled");
     if (limitsEnabled !== settings.values.limits_enabled) changes.limits_enabled = limitsEnabled;
+    for (const [key] of reasoningFields) {
+      const value = form.get(key);
+      if (value !== "none" && value !== "low" && value !== "high" && value !== "max") {
+        setError(`请为 ${key} 选择有效的思考模式。`);
+        return;
+      }
+      if (value !== settings.values[key]) changes[key] = value;
+    }
     if (!Object.keys(changes).length) {
       setDirty(false);
       setNotice("配置没有变化。");
@@ -166,6 +184,22 @@ function GlobalAgentSettings({ mode }: { mode: string }) {
                 </div>
               </details>
             ))}
+            <details className={styles.globalSettingGroup}>
+              <summary>模型思考<span>{reasoningFields.length} 项</span></summary>
+              <p className={styles.globalSettingsNote}>分别设置 Query、Evaluator 和 Chat 的思考强度；关闭时不使用思考模式。保存后用于新的请求。</p>
+              <div className={styles.globalSettingFields}>
+                {reasoningFields.map(([key, label]) => (
+                  <label className={styles.globalSettingField} key={key}>
+                    <span><strong>{label}</strong><small>{key}</small></span>
+                    <span className={styles.globalSettingInput}>
+                      <select className="field" name={key} defaultValue={settings.values[key]} disabled={saving || loading || mode !== "live"} style={{ width: 110 }}>
+                        {reasoningOptions.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
+                      </select>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </details>
             <p className={styles.globalSettingsNote}>相关参数之间的约束由服务端检查；保存失败时当前输入会保留，便于修改。</p>
             <div className={styles.globalSettingsActions}><button className="button-primary" type="submit" disabled={saving || loading || !dirty || mode !== "live"}>{saving ? "正在保存…" : "保存全局配置"}</button></div>
           </form>

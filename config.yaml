@@ -19,6 +19,9 @@ agent_runtime:
   max_tool_calls_per_turn: 24
   maximum_tool_calls_per_turn: 48
   limits_enabled: false
+  query_reasoning_effort: low
+  evaluator_reasoning_effort: low
+  chat_reasoning_effort: low
   max_output_tokens: 4096
   max_prompt_chars: 200000
   context_window_tokens: 64000

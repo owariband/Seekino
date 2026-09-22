@@ -154,6 +154,8 @@ def _effective_config(yaml_values: Mapping[str, object]) -> AgentServiceConfig:
                     raise ValueError("must be a boolean")
             elif isinstance(default, int):
                 environment_values[name] = int(raw)
+            elif isinstance(default, str):
+                environment_values[name] = raw.strip().casefold()
             else:
                 environment_values[name] = float(raw)
         except ValueError as exc:
@@ -180,6 +182,8 @@ def _validate_values(values: Mapping[str, object]) -> dict[str, object]:
             valid = isinstance(value, bool)
         elif isinstance(default, int):
             valid = isinstance(value, int) and not isinstance(value, bool)
+        elif isinstance(default, str):
+            valid = isinstance(value, str)
         else:
             valid = (
                 isinstance(value, (int, float))

@@ -7,6 +7,7 @@ import httpx
 import pytest
 from arkruntime import Ark
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langchain_core.tools import StructuredTool, ToolException
 from openai import APIConnectionError, APIError, OpenAI
 from pydantic import BaseModel, ConfigDict
@@ -82,6 +83,7 @@ def _agent_response(
     role: str = "assistant",
     response_id: str = "deepseek-response",
     total_tokens: int = 15,
+    reasoning_content: str | None = None,
 ):
     return SimpleNamespace(
         id=response_id,
@@ -98,6 +100,7 @@ def _agent_response(
                     role=role,
                     content=content,
                     tool_calls=calls,
+                    reasoning_content=reasoning_content,
                 ),
             )
         ],
@@ -108,7 +111,7 @@ def _video_item(chunk_id: str = "chunk-1", claim: str = "杯子落地") -> dict:
     return {"video_chunk_id": chunk_id, "claim": claim}
 
 
-def _function_model(*responses):
+def _function_model(*responses, reasoning_effort: str | None = None):
     completions = _FunctionCompletions(*responses)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     model = DeepSeekFunctionCallingModel(
@@ -118,8 +121,44 @@ def _function_model(*responses):
         max_output_tokens=2048,
         request_timeout_seconds=30,
         client=client,
+        **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
     )
     return model, completions
+
+
+def test_deepseek_thinking_replays_each_tool_turn_reasoning() -> None:
+    model, completions = _function_model(
+        _agent_response(
+            calls=[_tool_call(_video_item(), call_id="call-1")],
+            finish_reason="tool_calls",
+            reasoning_content="first reasoning",
+        ),
+        _agent_response(
+            calls=[_tool_call(_video_item("chunk-2"), call_id="call-2")],
+            finish_reason="tool_calls",
+            reasoning_content="second reasoning",
+        ),
+        _agent_response("answer"),
+        reasoning_effort="low",
+    )
+
+    _run_agent(model, require_tool_call=True)
+
+    assert len(completions.calls) == 3
+    assert all(call["tool_choice"] == "auto" for call in completions.calls)
+    assert all(
+        call["extra_body"]["thinking"] == {"type": "enabled"}
+        for call in completions.calls
+    )
+    assert all(call["reasoning_effort"] == "low" for call in completions.calls)
+    assert completions.calls[1]["messages"][1]["reasoning_content"] == (
+        "first reasoning"
+    )
+    assert [
+        message["reasoning_content"]
+        for message in completions.calls[2]["messages"]
+        if message["role"] == "assistant"
+    ] == ["first reasoning", "second reasoning"]
 
 
 def _run_agent(
@@ -1392,6 +1431,119 @@ def test_sdk_query_runs_actual_tool_round_trip_over_ark_transport() -> None:
         for request in requests
     )
     client.close()
+
+
+def test_deepseek_structured_agent_replays_reasoning_after_tool_call() -> None:
+    requests = []
+
+    def retrieve(query: str) -> dict:
+        return {"hits": [{"video_chunk_id": "chunk-real", "query": query}]}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if len(requests) == 1:
+            completion = _completion(
+                "search_video_chunk_evidence", {"query": "摔杯子"}
+            )
+            completion["choices"][0]["message"]["reasoning_content"] = (
+                "find matching evidence"
+            )
+        else:
+            completion = _completion(
+                "QueryDraft",
+                {
+                    "plan_context": "已确认片段",
+                    "message": "找到了片段",
+                    "selected_video_chunk_ids": ["chunk-real"],
+                },
+                call_id="call-2",
+            )
+        return httpx.Response(200, json=completion)
+
+    client = OpenAI(
+        api_key="test-key",
+        base_url="https://api.deepseek.test/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    model = SDKQueryAgentModel(
+        "deepseek-flash",
+        provider="deepseek",
+        base_url="https://api.deepseek.test/v1",
+        request_timeout_seconds=3,
+        max_output_tokens=400,
+        reasoning_effort="low",
+        client=client,
+    )
+
+    result = model.run_structured(
+        "找到摔杯子的片段",
+        tools=[_tool(retrieve)],
+        result_type=QueryDraft,
+        max_model_calls=2,
+    )
+
+    assert result.selected_video_chunk_ids == ["chunk-real"]
+    assert len(requests) == 2
+    assert all(request["tool_choice"] == "auto" for request in requests)
+    assert all(
+        request["thinking"] == {"type": "enabled"}
+        and request["reasoning_effort"] == "low"
+        for request in requests
+    )
+    assistant = next(
+        message
+        for message in requests[1]["messages"]
+        if message["role"] == "assistant"
+    )
+    assert assistant["reasoning_content"] == "find matching evidence"
+    assert assistant["tool_calls"][0]["id"] == "call-1"
+    client.close()
+
+
+def test_context_middleware_keeps_recent_tool_reasoning_when_compacting() -> None:
+    def assistant(call_id: str, reasoning: str) -> AIMessage:
+        return AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "search_video_chunk_evidence",
+                "args": {"query": call_id},
+                "id": call_id,
+            }],
+            additional_kwargs={"reasoning_content": reasoning},
+        )
+
+    middleware = agent_model_module._ContextWindowMiddleware(
+        policy=None,
+        maximum_input_characters=2_000,
+        contract={},
+        checkpoint=None,
+        label="thinking-test",
+    )
+    update = middleware.before_model(
+        {
+            "messages": [
+                HumanMessage(content="检索"),
+                assistant("old-call", "old reasoning"),
+                ToolMessage(content="x" * 3_000, tool_call_id="old-call"),
+                assistant("recent-call", "recent reasoning"),
+                ToolMessage(content="recent result", tool_call_id="recent-call"),
+            ]
+        },
+        None,
+    )
+
+    assert update is not None
+    assert isinstance(update["messages"][0], RemoveMessage)
+    assistants = [
+        message
+        for message in update["messages"]
+        if isinstance(message, AIMessage)
+    ]
+    assert len(assistants) == 1
+    assert assistants[0].additional_kwargs["reasoning_content"] == (
+        "recent reasoning"
+    )
 
 
 def test_sdk_query_falls_back_to_lite_only_after_provider_failure() -> None:

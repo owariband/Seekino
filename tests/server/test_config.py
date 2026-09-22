@@ -62,6 +62,9 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.max_tool_calls_per_turn == 24
     assert settings.agent.maximum_tool_calls_per_turn == 48
     assert settings.agent.limits_enabled is False
+    assert settings.agent.query_reasoning_effort == "none"
+    assert settings.agent.evaluator_reasoning_effort == "none"
+    assert settings.agent.chat_reasoning_effort == "none"
     assert settings.agent.max_output_tokens == 4096
     assert settings.agent.max_prompt_chars == 200_000
     assert settings.agent.context_window_tokens == 64_000
@@ -378,6 +381,41 @@ def test_global_agent_settings_yaml_overrides_environment_and_keeps_fallbacks(
     assert config.max_tool_result_bytes == settings.agent.max_tool_result_bytes == 4096
 
 
+def test_global_agent_reasoning_settings_support_yaml_patch_and_environment(
+    monkeypatch,
+) -> None:
+    _clean_anivag_environment(monkeypatch)
+    config_path = Path(os.environ["ANIVAG_MODEL_CONFIG"])
+    monkeypatch.setenv("ANIVAG_AGENT_QUERY_REASONING_EFFORT", " HIGH ")
+    config, revision = read_global_agent_settings(config_path)
+    assert config.query_reasoning_effort == "high"
+    assert config.evaluator_reasoning_effort == "none"
+    assert config.chat_reasoning_effort == "none"
+
+    updated, _ = patch_global_agent_settings(
+        {
+            "query_reasoning_effort": "low",
+            "evaluator_reasoning_effort": "high",
+            "chat_reasoning_effort": "max",
+        },
+        revision, config_path,
+    )
+    assert (
+        updated.query_reasoning_effort,
+        updated.evaluator_reasoning_effort,
+        updated.chat_reasoning_effort,
+    ) == ("low", "high", "max")
+    assert read_global_agent_settings(config_path)[0] == updated
+    runtime_values = yaml.safe_load(config_path.read_text(encoding="utf-8"))[
+        "agent_runtime"
+    ]
+    assert runtime_values == {
+        "query_reasoning_effort": "low",
+        "evaluator_reasoning_effort": "high",
+        "chat_reasoning_effort": "max",
+    }
+
+
 def test_global_agent_settings_patch_preserves_other_sections_and_detects_edits(
     monkeypatch,
 ) -> None:
@@ -461,6 +499,9 @@ def test_global_agent_settings_patch_rejects_external_alias_dependency(
         {"stage_timeout_seconds": float("nan")},
         {"maximum_top_k": 101},
         {"default_top_k": 21, "maximum_top_k": 20},
+        {"query_reasoning_effort": "medium"},
+        {"evaluator_reasoning_effort": 1},
+        {"chat_reasoning_effort": None},
     ],
 )
 def test_global_agent_settings_reject_invalid_patch_without_writing(

@@ -78,6 +78,9 @@ def test_process_assembly_receives_runtime_configuration(
         agent=AgentServiceConfig(
             max_loop_turns=2, max_model_calls_per_turn=4,
             max_tool_calls_per_turn=2, limits_enabled=True,
+            query_reasoning_effort="low",
+            evaluator_reasoning_effort="high",
+            chat_reasoning_effort="max",
             max_output_tokens=2048,
             max_prompt_chars=120_000,
             stage_timeout_seconds=45,
@@ -191,6 +194,9 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._query_model.provider_name == "deepseek"
         assert runtime._evaluator_model.provider_name == "deepseek"
         assert runtime._chat_model.provider_name == "deepseek"
+        assert runtime._query_model.reasoning_effort == "low"
+        assert runtime._evaluator_model.reasoning_effort == "high"
+        assert runtime._chat_model.reasoning_effort == "max"
         assert runtime._query_model.fallback_provider_name == "ark"
         assert runtime._evaluator_model.fallback_provider_name == "ark"
         assert runtime._chat_model.fallback_provider_name == "ark"
@@ -224,6 +230,8 @@ def test_process_assembly_receives_runtime_configuration(
         updated = replace(
             settings.agent, evaluator_stage_timeout_seconds=240,
             max_tool_result_bytes=8_192, max_read_chars_per_call=4_096,
+            query_reasoning_effort="max", evaluator_reasoning_effort="none",
+            chat_reasoning_effort="low",
             maximum_concurrent_kicks=5,
         )
         replacement = services.agent._runtime_factory(updated)
@@ -231,6 +239,9 @@ def test_process_assembly_receives_runtime_configuration(
             assert replacement._evaluator_stage_timeout == 240
             assert replacement._max_tool_result_bytes == 8_192
             assert replacement._max_read_chars_per_call == 4_096
+            assert replacement._query_model.reasoning_effort == "max"
+            assert replacement._evaluator_model.reasoning_effort == "none"
+            assert replacement._chat_model.reasoning_effort == "low"
             assert services.agent.active_maximum_concurrent_kicks == 2
         finally:
             replacement.close()

@@ -426,6 +426,8 @@ export interface AgentMessageOptions {
   maxToolCallsPerTurn: AgentIntegerOption;
 }
 
+export type AgentReasoningEffort = "none" | "low" | "high" | "max";
+
 export interface AgentGlobalSettingsValues {
   history_message_limit: number;
   default_top_k: number;
@@ -436,6 +438,9 @@ export interface AgentGlobalSettingsValues {
   max_tool_calls_per_turn: number;
   maximum_tool_calls_per_turn: number;
   limits_enabled: boolean;
+  query_reasoning_effort: AgentReasoningEffort;
+  evaluator_reasoning_effort: AgentReasoningEffort;
+  chat_reasoning_effort: AgentReasoningEffort;
   max_output_tokens: number;
   max_prompt_chars: number;
   context_window_tokens: number;

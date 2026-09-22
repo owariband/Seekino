@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +16,9 @@ class AgentServiceConfig:
     max_tool_calls_per_turn: int = 24
     maximum_tool_calls_per_turn: int = 48
     limits_enabled: bool = False
+    query_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
+    evaluator_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
+    chat_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     max_output_tokens: int = 4096
     max_prompt_chars: int = 200_000
     context_window_tokens: int = 64_000
@@ -42,6 +46,12 @@ class AgentServiceConfig:
             raise ValueError("max_loop_turns must be between 1 and 3")
         if not isinstance(self.limits_enabled, bool):
             raise ValueError("limits_enabled must be a boolean")
+        for name in (
+            "query_reasoning_effort", "evaluator_reasoning_effort",
+            "chat_reasoning_effort",
+        ):
+            if getattr(self, name) not in ("none", "low", "high", "max"):
+                raise ValueError(f"{name} must be none, low, high, or max")
         for name in (
             "max_model_calls_per_turn", "maximum_model_calls_per_turn",
             "max_tool_calls_per_turn", "maximum_tool_calls_per_turn",

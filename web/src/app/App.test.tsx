@@ -52,6 +52,9 @@ const initialGlobalSettings: AgentGlobalSettings = {
     max_tool_calls_per_turn: 24,
     maximum_tool_calls_per_turn: 48,
     limits_enabled: false,
+    query_reasoning_effort: "low",
+    evaluator_reasoning_effort: "low",
+    chat_reasoning_effort: "low",
     max_output_tokens: 4096,
     max_prompt_chars: 200000,
     context_window_tokens: 64000,
@@ -401,6 +404,40 @@ describe("application shell", () => {
     expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
       revision: "rev-1",
       values: { max_read_chars_per_call: 4096 },
+    });
+    expect(await screen.findByText("已保存。新的请求会使用更新后的全局配置。")).toBeInTheDocument();
+  });
+
+  it("saves independent thinking modes for Query, Evaluator, and Chat", async () => {
+    const { fetchMock } = renderApp();
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
+    await screen.findByRole("spinbutton", { name: /并行任务上限/ });
+    await user.click(screen.getByText("模型思考"));
+    const query = screen.getByRole("combobox", { name: /Query 检索/ });
+    const evaluator = screen.getByRole("combobox", { name: /Evaluator 审核/ });
+    const chat = screen.getByRole("combobox", { name: /Chat 回答/ });
+    expect(query).toHaveValue("low");
+    expect(evaluator).toHaveValue("low");
+    expect(chat).toHaveValue("low");
+    await user.selectOptions(query, "high");
+    await user.selectOptions(evaluator, "max");
+    await user.selectOptions(chat, "none");
+    await user.click(screen.getByRole("button", { name: "保存全局配置" }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
+      String(input).includes("/api/agent/global-settings") && init?.method === "PATCH",
+    )).toBe(true));
+    const saveCall = fetchMock.mock.calls.find(([input, init]) =>
+      String(input).includes("/api/agent/global-settings") && init?.method === "PATCH",
+    );
+    expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
+      revision: "rev-1",
+      values: {
+        query_reasoning_effort: "high",
+        evaluator_reasoning_effort: "max",
+        chat_reasoning_effort: "none",
+      },
     });
     expect(await screen.findByText("已保存。新的请求会使用更新后的全局配置。")).toBeInTheDocument();
   });

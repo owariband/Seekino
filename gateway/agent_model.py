@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from copy import deepcopy
 from time import monotonic
-from typing import Any, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeVar
 
 from arkruntime import Ark
 from arkruntime._exceptions import ArkError
@@ -127,6 +127,7 @@ class DeepSeekFunctionCallingModel:
         api_key: str,
         max_output_tokens: int,
         request_timeout_seconds: float,
+        reasoning_effort: Literal["none", "low", "high", "max"] = "none",
         fallback_model: str | None = None,
         context_window_policy: ContextWindowPolicy | None = None,
         client: Any | None = None,
@@ -144,6 +145,8 @@ class DeepSeekFunctionCallingModel:
             raise ValueError("request_timeout_seconds must be greater than zero")
         if fallback_model is not None and not fallback_model.strip():
             raise ValueError("fallback_model must not be empty")
+        if reasoning_effort not in {"none", "low", "high", "max"}:
+            raise ValueError("unsupported reasoning_effort")
 
         self.model_name = model
         self.primary_model_name = model
@@ -153,6 +156,7 @@ class DeepSeekFunctionCallingModel:
         self.fallback_model_name = fallback_model
         self.base_url = base_url.rstrip("/")
         self.max_output_tokens = max_output_tokens
+        self.reasoning_effort = reasoning_effort
         self.context_window_policy = context_window_policy
         self._api_key = api_key
         self._request_timeout_seconds = request_timeout_seconds
@@ -300,12 +304,15 @@ class DeepSeekFunctionCallingModel:
             model=model_name,
             operation=",".join(tool.name for tool in tools),
         ) as call:
+            effective_tool_choice = (
+                "auto" if self.reasoning_effort != "none" else tool_choice
+            )
             _logger.info(
                 "event=chat_model_request_contract provider=%s model=%s "
                 "tool_choice=%s tool_count=%s tool_names=%s",
                 self.provider_name,
                 model_name,
-                tool_choice,
+                effective_tool_choice,
                 len(tools),
                 ",".join(tool.name for tool in tools),
             )
@@ -314,7 +321,7 @@ class DeepSeekFunctionCallingModel:
                 call,
                 messages=messages,
                 tools=tool_specs,
-                tool_choice=tool_choice,
+                tool_choice=effective_tool_choice,
                 timeout=timeout,
             )
             turn = _validated_agent_turn(
@@ -338,6 +345,7 @@ class DeepSeekFunctionCallingModel:
         **tool_options: Any,
     ) -> Any:
         try:
+            thinking_enabled = self.reasoning_effort != "none"
             response = client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
@@ -345,7 +353,14 @@ class DeepSeekFunctionCallingModel:
                 temperature=0,
                 max_tokens=self.max_output_tokens,
                 timeout=timeout,
-                extra_body=deepseek_non_thinking_extra_body(),
+                extra_body=(
+                    {"thinking": {"type": "enabled"}}
+                    if thinking_enabled else deepseek_non_thinking_extra_body()
+                ),
+                **(
+                    {"reasoning_effort": self.reasoning_effort}
+                    if thinking_enabled else {}
+                ),
                 **tool_options,
             )
         except APIError as error:
@@ -417,7 +432,13 @@ def _request_ark_function_turn(
             )
             response = client.chat.completions.create(
                 model=model_name,
-                messages=messages,
+                messages=[
+                    {
+                        key: value for key, value in message.items()
+                        if key != "reasoning_content"
+                    }
+                    for message in messages
+                ],
                 stream=False,
                 temperature=0,
                 max_completion_tokens=max_output_tokens,
@@ -598,6 +619,16 @@ def _tool_output_text(output: object) -> str:
         separators=(",", ":"),
         default=str,
     )
+
+
+def _copy_assistant_reasoning(
+    messages: Sequence[Any], rendered: list[dict[str, Any]],
+) -> None:
+    for source, target in zip(messages, rendered):
+        if isinstance(source, AIMessage) and target.get("role") == "assistant":
+            reasoning = source.additional_kwargs.get("reasoning_content")
+            if isinstance(reasoning, str):
+                target["reasoning_content"] = reasoning
 
 
 def _log_context_window_update(
@@ -839,6 +870,7 @@ def _validated_agent_turn(
             f"{provider_label} tool_calls response contained no tool calls"
         )
 
+    reasoning_content = getattr(message, "reasoning_content", None)
     new_tool_call_ids: set[str] = set()
     rendered_calls: list[dict[str, Any]] = []
     validated_calls: list[tuple[str, BaseTool | None, dict[str, Any] | str]] = []
@@ -915,16 +947,12 @@ def _validated_agent_turn(
         ))
 
     seen_tool_call_ids.update(new_tool_call_ids)
-    return (
-        finish_reason,
-        content,
-        {
-            "role": "assistant",
-            "content": content,
-            "tool_calls": rendered_calls,
-        },
-        validated_calls,
-    )
+    assistant_message = {
+        "role": "assistant", "content": content, "tool_calls": rendered_calls,
+    }
+    if provider_label == "DeepSeek" and isinstance(reasoning_content, str):
+        assistant_message["reasoning_content"] = reasoning_content
+    return finish_reason, content, assistant_message, validated_calls
 
 
 def _single_completion_choice(
@@ -1017,6 +1045,15 @@ class _AgentChatOpenAI(ChatOpenAI):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
         if self.use_legacy_token_parameter and "max_completion_tokens" in payload:
             payload["max_tokens"] = payload.pop("max_completion_tokens")
+        if (
+            self.provider_name == DEEPSEEK_PROVIDER
+            and self.reasoning_effort in {"low", "high", "max"}
+        ):
+            if payload.get("tool_choice") not in (None, "auto", "none"):
+                payload["tool_choice"] = "auto"
+            _copy_assistant_reasoning(
+                self._convert_input(input_).to_messages(), payload["messages"],
+            )
         tools = payload.get("tools")
         tool_names = [
             str(tool.get("function", {}).get("name", ""))
@@ -1044,6 +1081,16 @@ class _AgentChatOpenAI(ChatOpenAI):
                     f"Query model did not complete: {reason}"
                 )
         result = super()._create_chat_result(response, generation_info)
+        if (
+            self.provider_name == DEEPSEEK_PROVIDER
+            and self.reasoning_effort in {"low", "high", "max"}
+        ):
+            for choice, generation in zip(
+                response.get("choices", []), result.generations,
+            ):
+                reasoning = choice.get("message", {}).get("reasoning_content")
+                if isinstance(reasoning, str):
+                    generation.message.additional_kwargs["reasoning_content"] = reasoning
         valid_tool_call_count = sum(
             len(getattr(generation.message, "tool_calls", None) or [])
             for generation in result.generations
@@ -1126,6 +1173,7 @@ class _ContextWindowMiddleware(AgentMiddleware):
         messages = state.get("messages", [])
         rendered = convert_to_openai_messages(messages)
         payload = [rendered] if isinstance(rendered, dict) else rendered
+        _copy_assistant_reasoning(messages, payload)
         try:
             update = self._controller.prepare(
                 payload,
@@ -1194,10 +1242,16 @@ def _build_query_chat_model(
     max_output_tokens: int,
     request_timeout_seconds: float,
     fallback_model_name: str | None,
+    reasoning_effort: Literal["none", "low", "high", "max"] = "none",
 ) -> _AgentChatOpenAI:
     options: dict[str, Any] = {}
     if provider == DEEPSEEK_PROVIDER:
-        options["extra_body"] = deepseek_non_thinking_extra_body()
+        options["extra_body"] = (
+            {"thinking": {"type": "enabled"}}
+            if reasoning_effort != "none" else deepseek_non_thinking_extra_body()
+        )
+        if reasoning_effort != "none":
+            options["reasoning_effort"] = reasoning_effort
     return _AgentChatOpenAI(
         model=model_name,
         provider_name=provider,
@@ -1238,6 +1292,7 @@ class SDKStructuredToolAgentModel:
         provider: str = "ark",
         base_url: str | None = None,
         api_key: str | None = None,
+        reasoning_effort: Literal["none", "low", "high", "max"] = "none",
         client: Any | None = None,
         fallback_client: Any | None = None,
         chat_model: BaseChatModel | None = None,
@@ -1262,6 +1317,8 @@ class SDKStructuredToolAgentModel:
             raise ValueError(f"unsupported Query fallback provider: {fallback_provider}")
         if fallback_provider is not None and fallback_model is None:
             raise ValueError("fallback_provider requires fallback_model")
+        if reasoning_effort not in {"none", "low", "high", "max"}:
+            raise ValueError("unsupported reasoning_effort")
         if (
             fallback_provider is not None
             and fallback_provider not in {provider, ARK_PROVIDER}
@@ -1286,6 +1343,7 @@ class SDKStructuredToolAgentModel:
         )
         self.base_url = base_url
         self.api_key = api_key
+        self.reasoning_effort = reasoning_effort
         self._client = client
         self._fallback_client = fallback_client
         self._chat_model = chat_model
@@ -1363,6 +1421,7 @@ class SDKStructuredToolAgentModel:
                         if self.fallback_provider_name == self.provider_name
                         else None
                     ),
+                    reasoning_effort=self.reasoning_effort,
                 )
                 if (
                     self.fallback_model_name is not None
