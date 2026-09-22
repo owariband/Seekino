@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { Link } from "react-router";
 
 import { errorMessage } from "../../api/client";
 import type { VideoSummary } from "../../api/contracts";
@@ -203,6 +204,7 @@ export function LibraryPage() {
                       {video.indexStatus === "READY" ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
                       {video.indexStatus === "READY" ? "可检索" : video.indexStatus === "FAILED" ? "索引失败" : "索引未就绪"}
                       <small>{video.playbackStatus === "READY" ? "可播放" : video.playbackStatus === "MISSING" ? "原视频已丢失" : "播放未就绪"}</small>
+                      {video.playbackStatus === "READY" ? <Link className="button-quiet" to={`/watch/${encodeURIComponent(selectedSeries.seriesId)}/${encodeURIComponent(video.videoId)}`}>观看整集</Link> : null}
                       {video.lastError ? <small>{video.lastError.message}</small> : null}
                     </div>
                     {episodeError?.videoId === video.videoId ? <p className={`${styles.error} ${styles.episodeError}`} role="alert">{episodeError.message}</p> : null}

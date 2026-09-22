@@ -15,6 +15,11 @@ import styles from "./search.module.css";
 
 type SelectedMessageOptions = Required<AgentMessageRunOptions>;
 type MessageOptionOverrides = AgentMessageRunOptions;
+type SearchPageProps = {
+  embedded?: boolean;
+  initialSeriesId?: string;
+  onOpenVideo?: (target: { seriesId: string; videoId: string; startMs: number }) => void;
+};
 const messageOptionsStorageKey = `anivag-agent-message-options:${WORKSPACE_ID}`;
 type StoredMessageOptions = { overrides?: MessageOptionOverrides; serverOptions?: AgentMessageOptions; selection?: SelectedMessageOptions };
 const messageOptionNames = ["topK", "maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"] as const;
@@ -122,8 +127,8 @@ function MarkdownAnswer({ markdown }: { markdown: string }) {
   );
 }
 
-export function SearchPage() {
-  const { mode, series } = useWorkspace();
+export function SearchPage({ embedded = false, initialSeriesId, onOpenVideo }: SearchPageProps = {}) {
+  const { mode, series, isLoading: workspaceLoading } = useWorkspace();
   const [requestedConversationId, setRequestedConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<AgentConversationView[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
@@ -134,6 +139,7 @@ export function SearchPage() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [conversationStatus, setConversationStatus] = useState("");
   const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
+  const scopeTouchedRef = useRef(false);
   const [query, setQuery] = useState("");
   const [reference, setReference] = useState<EvidenceReference | null>(null);
   const [messageOptionConfig, setMessageOptionConfig] = useState<AgentMessageOptions | null>(null);
@@ -166,8 +172,15 @@ export function SearchPage() {
   const followThread = useRef(true);
   const { conversationId, messages, progress, loading, searching, error, clear: clearConversation, send } = useAgentConversation(requestedConversationId);
   const isSearchable = (status: string) => status === "READY";
+  const initialSeries = initialSeriesId ? series.find((item) => item.seriesId === initialSeriesId) : null;
   const scopeValid = selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && isSearchable(item.status)));
   const canSend = Boolean(query.trim() && !loading && !searching && conversationId && !deletedConversationIdsRef.current.has(conversationId) && scopeValid && mode === "live");
+
+  useEffect(() => {
+    if (!embedded || !initialSeriesId || scopeTouchedRef.current) return;
+    const next = initialSeries?.status === "READY" ? [initialSeriesId] : [];
+    setSelectedSeriesIds((current) => current.length === next.length && current.every((id, index) => id === next[index]) ? current : next);
+  }, [embedded, initialSeriesId, initialSeries?.status]);
 
   useLayoutEffect(() => {
     const composer = composerRef.current;
@@ -399,12 +412,21 @@ export function SearchPage() {
     }
   };
 
+  const Root = embedded ? "section" : "main";
   return (
-    <main className={`${styles.page} page`}>
+    <Root className={`${styles.page} ${embedded ? styles.embeddedPage : "page"}`}>
       <header className={styles.pageHeader}>
         <div className={styles.chatHeading}>
-          <h1 className={styles.chatTitle}>anivag 助手</h1>
-          {activeConversation ? <span title={activeConversation.title}>{activeConversation.title}</span> : null}
+          {embedded ? (
+            <h2 className={styles.chatTitle} title={activeConversation?.title ?? "当前对话"}>
+              {activeConversation?.title ?? "当前对话"}
+            </h2>
+          ) : (
+            <>
+              <h1 className={styles.chatTitle}>anivag 助手</h1>
+              {activeConversation ? <span title={activeConversation.title}>{activeConversation.title}</span> : null}
+            </>
+          )}
         </div>
         <div className={styles.conversationActions}>
           <p className="sr-only" role="status" aria-live="polite">{conversationStatus}</p>
@@ -509,7 +531,7 @@ export function SearchPage() {
         </div>
       </header>
 
-      <div className={selectedHit ? `${styles.workspace} ${styles.withEvidence}` : styles.workspace}>
+      <div className={selectedHit && !onOpenVideo ? `${styles.workspace} ${styles.withEvidence}` : styles.workspace}>
         <section className={styles.agentPanel} aria-label="与 anivag 助手对话">
           <div className={styles.thread} ref={threadRef} onScroll={(event) => {
             const thread = event.currentTarget;
@@ -550,8 +572,15 @@ export function SearchPage() {
                             <button
                               type="button"
                               className={selected ? styles.candidateSelected : styles.candidate}
-                              onClick={() => setSelection({ conversationId: message.conversationId, messageId: message.messageId, chunkId: hit.evidence.videoChunkId, ...playbackRange })}
+                              onClick={() => {
+                                if (onOpenVideo) {
+                                  onOpenVideo({ seriesId: hit.evidence.seriesId, videoId: hit.evidence.videoId, startMs: playbackRange.startMs });
+                                } else {
+                                  setSelection({ conversationId: message.conversationId, messageId: message.messageId, chunkId: hit.evidence.videoChunkId, ...playbackRange });
+                                }
+                              }}
                               aria-pressed={selected}
+                              title={onOpenVideo ? "打开整集并定位到片段" : undefined}
                             >
                               <div className={styles.candidateTop}>
                                 <span className={styles.rank}>{hit.candidate.rank}</span>
@@ -619,16 +648,21 @@ export function SearchPage() {
                     if (event.currentTarget.open) answerSettingsRef.current?.removeAttribute("open");
                   }}
                 >
-                  <summary aria-label="选择检索视频系列">{selectedSeriesIds.length ? `已选 ${selectedSeriesIds.length} 个系列` : "全部视频系列"}<ChevronDown size={13} aria-hidden="true" /></summary>
+                  <summary aria-label="选择检索视频系列">{embedded && selectedSeriesIds.length === 1
+                    ? series.find((item) => item.seriesId === selectedSeriesIds[0])?.name ?? "已选 1 个系列"
+                    : selectedSeriesIds.length ? `已选 ${selectedSeriesIds.length} 个系列` : "全部视频系列"}<ChevronDown size={13} aria-hidden="true" /></summary>
                   <div className={styles.scopeOptions} role="group" aria-label="检索视频系列多选">
-                    <button type="button" onClick={() => setSelectedSeriesIds([])}>检索全部视频系列</button>
+                    <button type="button" onClick={() => { scopeTouchedRef.current = true; setSelectedSeriesIds([]); }}>检索全部视频系列</button>
                     {series.map((item) => (
                       <label key={item.seriesId}>
                         <input
                           type="checkbox"
                           checked={selectedSeriesIds.includes(item.seriesId)}
                           disabled={!isSearchable(item.status) && !selectedSeriesIds.includes(item.seriesId)}
-                          onChange={(event) => setSelectedSeriesIds((current) => event.target.checked ? [...current, item.seriesId] : current.filter((id) => id !== item.seriesId))}
+                          onChange={(event) => {
+                            scopeTouchedRef.current = true;
+                            setSelectedSeriesIds((current) => event.target.checked ? [...current, item.seriesId] : current.filter((id) => id !== item.seriesId));
+                          }}
                         />
                         <span>{item.name}</span>
                         <small>{isSearchable(item.status) ? `${item.readyVideoCount} 个视频可检索` : "暂不可检索"}</small>
@@ -730,10 +764,13 @@ export function SearchPage() {
               <span className={styles.keyboardHint}>Enter 发送 · Shift + Enter 换行</span>
             </div>
             {!scopeValid ? <p className={styles.messageError} role="alert">所选视频系列暂不可检索，请重新选择范围。</p> : null}
+            {embedded && initialSeriesId && !workspaceLoading && initialSeries?.status !== "READY" ? (
+              <p className={styles.scopeNotice} role="status">当前系列暂不可检索；{selectedSeriesIds.length ? "目前选择的是其他视频系列。" : "未限定当前系列，视频检索将使用全部可检索系列。"}仍可继续聊天。</p>
+            ) : null}
           </div>
         </section>
 
-        {selectedHit && evidenceMessage && selection ? (
+        {!onOpenVideo && selectedHit && evidenceMessage && selection ? (
           <section className={styles.evidenceColumn} aria-label="片段详情" onKeyDown={(event) => {
             if (event.key === "Escape") setSelection(null);
           }}>
@@ -750,6 +787,6 @@ export function SearchPage() {
           </section>
         ) : null}
       </div>
-    </main>
+    </Root>
   );
 }

@@ -336,8 +336,8 @@ describe("application shell", () => {
     renderApp();
     const user = userEvent.setup();
 
-    expect(screen.getByRole("heading", { name: "名场面检索助手", level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("名场面检索助手")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "anivag 助手", level: 1 })).toBeInTheDocument();
+    expect(screen.getByText("anivag 助手")).toBeInTheDocument();
     expect(screen.queryByText(/影像札记|问记忆，找画面|当前检索范围/)).not.toBeInTheDocument();
 
     await user.click(screen.getAllByRole("link", { name: /资料库/ })[0]!);
@@ -458,7 +458,7 @@ describe("application shell", () => {
   it("collapses the desktop navigation without losing the draft and restores the preference", async () => {
     const { unmount } = renderApp();
     const user = userEvent.setup();
-    const composer = screen.getByRole("textbox", { name: "向名场面检索助手提问" });
+    const composer = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
     await user.type(composer, "还未发送的问题");
     await user.click(screen.getByRole("button", { name: "收起导航" }));
 
@@ -673,7 +673,7 @@ describe("application shell", () => {
 
     expect(await screen.findByText("服务端默认")).toBeInTheDocument();
     const composer = await screen.findByRole("textbox", {
-      name: "向名场面检索助手提问",
+      name: "向 anivag 助手提问",
     });
     await user.type(composer, "雨天门口");
     await waitFor(() =>
@@ -729,7 +729,7 @@ describe("application shell", () => {
     await user.click(screen.getByRole("button", { name: "自定义" }));
     expect(screen.getByRole("slider", { name: "最多运行轮次" })).toHaveValue("37");
     fireEvent.change(screen.getByRole("slider", { name: "最多运行轮次" }), { target: { value: "100" } });
-    await user.type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
     const sendCall = fetchMock.mock.calls.find(([input]) =>
@@ -773,7 +773,7 @@ describe("application shell", () => {
     });
     act(() => window.dispatchEvent(new Event("focus")));
     expect(await screen.findByText("每次检索 7 段")).toBeInTheDocument();
-    await userEvent.setup().type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await userEvent.setup().type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await userEvent.setup().click(screen.getByRole("button", { name: "发送问题" }));
     const sendCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/messages/send?conversationId=conversation"));
     expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({ topK: 7 });
@@ -791,7 +791,7 @@ describe("application shell", () => {
     act(() => window.dispatchEvent(new Event("focus")));
     await userEvent.setup().click(screen.getByLabelText("配置本次回答"));
     expect(screen.getByRole("slider", { name: "单次检索候选片段数量" })).toHaveValue("8");
-    await userEvent.setup().type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await userEvent.setup().type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await userEvent.setup().click(screen.getByRole("button", { name: "发送问题" }));
     const sendCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/messages/send?conversationId=conversation"));
     expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("topK");
@@ -802,7 +802,7 @@ describe("application shell", () => {
   it("keeps an in-flight Auto request unchanged when the next answer is set to custom turns", async () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
-    const composer = await screen.findByRole("textbox", { name: "向名场面检索助手提问" });
+    const composer = await screen.findByRole("textbox", { name: "向 anivag 助手提问" });
     await user.type(composer, "第一个问题");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
@@ -826,7 +826,7 @@ describe("application shell", () => {
   it("announces an unfinished answer when sending fails before the stream starts", async () => {
     renderApp([apiSeries], { failAgentSend: true });
     const user = userEvent.setup();
-    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.type(await screen.findByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
     expect(await screen.findByText("模型暂时不可用")).toHaveAttribute("role", "alert");
@@ -837,7 +837,7 @@ describe("application shell", () => {
   it("creates, lists, and switches between Conversations without duplicating an empty one", async () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
-    const composer = await screen.findByRole("textbox", { name: "向名场面检索助手提问" });
+    const composer = await screen.findByRole("textbox", { name: "向 anivag 助手提问" });
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
@@ -851,7 +851,7 @@ describe("application shell", () => {
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(2));
     await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
-    expect(await screen.findByText("描述你记得的对白、人物或动作。")).toBeInTheDocument();
+    expect(await screen.findByText("可以聊天，也可以询问视频内容或查找资料。")).toBeInTheDocument();
 
     await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
@@ -862,11 +862,11 @@ describe("application shell", () => {
   it("reuses the recovered empty Conversation when the history list is unavailable", async () => {
     const { fetchMock } = renderApp([apiSeries], { failConversationList: true });
     const user = userEvent.setup();
-    await screen.findByRole("textbox", { name: "向名场面检索助手提问" });
+    await screen.findByRole("textbox", { name: "向 anivag 助手提问" });
     await user.click(screen.getByRole("button", { name: "新建对话" }));
 
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
-    expect(screen.getByRole("textbox", { name: "向名场面检索助手提问" })).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: "向 anivag 助手提问" })).toHaveFocus();
   });
 
   it("loads Conversation history on mount even when automatic creation fails", async () => {
@@ -877,7 +877,7 @@ describe("application shell", () => {
     await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 Test，/ }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation"));
-    expect(screen.getByRole("textbox", { name: "向名场面检索助手提问" })).toBeEnabled();
+    expect(screen.getByRole("textbox", { name: "向 anivag 助手提问" })).toBeEnabled();
   });
 
   it("focuses the readable error when an explicit Conversation switch fails", async () => {
@@ -928,7 +928,7 @@ describe("application shell", () => {
   it("keeps current deletion disabled while an answer is running", async () => {
     const { finishAnswer } = renderApp();
     const user = userEvent.setup();
-    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.type(await screen.findByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
 
@@ -944,7 +944,7 @@ describe("application shell", () => {
   it("locks deletion while a new Conversation request is in flight", async () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
-    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.type(await screen.findByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     await screen.findByText("这是 Agent Chat");
     act(finishAnswer);
@@ -982,7 +982,7 @@ describe("application shell", () => {
   it("locks every deletion target while an explicitly selected Conversation is loading", async () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
-    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.type(await screen.findByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     await screen.findByText("这是 Agent Chat");
     act(finishAnswer);
@@ -1020,7 +1020,7 @@ describe("application shell", () => {
   it("deletes only after confirmation and replaces the final active Conversation", async () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
-    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.type(await screen.findByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
     act(finishAnswer);
@@ -1061,7 +1061,7 @@ describe("application shell", () => {
       return original(input, init);
     });
     const user = userEvent.setup();
-    await user.type(await screen.findByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.type(await screen.findByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
     act(finishAnswer);
@@ -1095,7 +1095,7 @@ describe("application shell", () => {
       return original(input, init);
     });
     const user = userEvent.setup();
-    await screen.findByRole("textbox", { name: "向名场面检索助手提问" });
+    await screen.findByRole("textbox", { name: "向 anivag 助手提问" });
     await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 Test，/ }));
@@ -1124,18 +1124,18 @@ describe("application shell", () => {
       return original(input, init);
     });
     const user = userEvent.setup();
-    await screen.findByRole("textbox", { name: "向名场面检索助手提问" });
+    await screen.findByRole("textbox", { name: "向 anivag 助手提问" });
     await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^删除对话 Test，/ }));
     await user.click(screen.getByRole("button", { name: /^确认删除对话 Test，/ }));
     expect(await screen.findByText("对话已删除，但新对话创建失败：暂时无法新建对话")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^删除对话 Test，/ })).not.toBeInTheDocument();
-    await user.type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "不能发给已删除的对话");
+    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "不能发给已删除的对话");
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
-    expect(await screen.findByText("描述你记得的对白、人物或动作。")).toBeInTheDocument();
+    expect(await screen.findByText("可以聊天，也可以询问视频内容或查找资料。")).toBeInTheDocument();
   });
 
   it("allows multi-selection and keeps a running answer and its scope when the next selection changes", async () => {
@@ -1150,13 +1150,13 @@ describe("application shell", () => {
     await user.click(firstChoice);
     await user.click(secondChoice);
     expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("已选 2 个系列");
-    await user.type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(await screen.findByText("这是 Agent Chat")).toBeInTheDocument();
     await user.click(firstChoice);
     expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("已选 1 个系列");
-    expect(screen.getByText(`检索范围：${apiSeries.name}、第二部动画`)).toBeInTheDocument();
+    expect(screen.getByText(`可用视频范围：${apiSeries.name}、第二部动画`)).toBeInTheDocument();
     act(finishAnswer);
     expect(await screen.findByText("这是 Agent Chat 保存的完整回答。")).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(1);
@@ -1165,7 +1165,7 @@ describe("application shell", () => {
     expect(sendCall?.[1]?.signal?.aborted).toBe(false);
     await user.click(secondChoice);
     expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("全部视频系列");
-    await user.type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send"))).toHaveLength(2));
     const calls = fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send"));
@@ -1180,7 +1180,7 @@ describe("application shell", () => {
     await user.click(await screen.findByLabelText("选择检索视频系列"));
     const firstChoice = await screen.findByRole("checkbox", { name: new RegExp(apiSeries.name) });
     await user.click(firstChoice);
-    const composer = screen.getByRole("textbox", { name: "向名场面检索助手提问" });
+    const composer = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
     await user.type(composer, "雨天门口");
     await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled());
     act(() => queryClient.setQueryData(["series"], [{ ...apiSeries, status: "INDEXING" }, secondSeries]));
@@ -1203,14 +1203,16 @@ describe("application shell", () => {
     act(finishAnswer);
   });
 
-  it("does not send or discard a question on Enter when no animation is ready", async () => {
-    const { fetchMock } = renderApp([{ ...apiSeries, status: "INDEXING" }]);
+  it("lets the Supervisor answer without video scope when no animation is ready", async () => {
+    const { fetchMock, finishAnswer } = renderApp([{ ...apiSeries, status: "INDEXING" }]);
     const user = userEvent.setup();
     await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/messages/list"))).toBe(true));
-    const composer = screen.getByRole("textbox", { name: "向名场面检索助手提问" });
+    const composer = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
     await user.type(composer, "雨天门口{Enter}");
-    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
-    expect(composer).toHaveValue("雨天门口");
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/messages/send"))).toBe(false);
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/messages/send"))).toHaveLength(1));
+    const sendCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/messages/send"));
+    expect(JSON.parse(String(sendCall?.[1]?.body)).seriesIds).toEqual([]);
+    expect(composer).toHaveValue("");
+    act(finishAnswer);
   });
 });

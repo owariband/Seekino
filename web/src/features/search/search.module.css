@@ -576,6 +576,61 @@
   .evidenceContent { padding: 18px; }
 }
 
+.page.embeddedPage { width: 100%; max-width: none; height: 100%; min-height: 0; padding: 8px 14px 12px; }
+.embeddedPage .pageHeader { min-width: 0; min-height: 38px; gap: 8px; align-items: center; margin-bottom: 0; }
+.embeddedPage .chatHeading { display: flex; min-width: 0; flex: 1; align-items: center; }
+.embeddedPage .chatTitle { overflow: hidden; font-size: .78rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.embeddedPage .conversationActions { gap: 5px; }
+.embeddedPage .conversationPicker > summary span, .embeddedPage .newConversation span { display: none; }
+.embeddedPage .conversationPicker > summary, .embeddedPage .newConversation { width: 30px; min-height: 30px; justify-content: center; padding: 0; border-color: transparent; background: transparent; }
+.embeddedPage .conversationPicker > summary svg:last-child { display: none; }
+.embeddedPage .conversationMenu { position: absolute; top: calc(100% + 9px); right: 0; bottom: auto; left: auto; width: min(360px, calc(100vw - 24px)); max-height: min(480px, 65dvh); }
+.embeddedPage .workspace { min-height: 0; gap: 0; }
+.embeddedPage .thread { gap: 18px; padding: 14px 0 16px; }
+.embeddedPage .userMessage > div { max-width: 88%; padding: 9px 11px; border-radius: 12px 12px 3px 12px; }
+.embeddedPage .userMessage p, .embeddedPage .answerText { font-size: .82rem; line-height: 1.58; }
+.embeddedPage .answerText :is(h1, h2, h3, h4) { margin: .9em 0 .4em; line-height: 1.4; }
+.embeddedPage .answerText h1 { font-size: 1rem; }
+.embeddedPage .answerText h2 { font-size: .92rem; }
+.embeddedPage .answerText :is(h3, h4) { font-size: .86rem; }
+.embeddedPage .answerText :is(p, ul, ol, blockquote, pre) { margin: .5em 0; }
+.embeddedPage .answerText li + li { margin-top: .2em; }
+.embeddedPage .messageScope { margin-top: 5px; font-size: .62rem; }
+.embeddedPage .messageError { margin: 8px 0; font-size: .76rem; line-height: 1.5; }
+.embeddedPage .progressCard { margin-bottom: 8px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+.embeddedPage .progressCard summary { min-height: 38px; gap: 6px; padding: 7px 2px; font-size: .74rem; }
+.embeddedPage .progressCard small { font-size: .64rem; }
+.embeddedPage .progressSteps { padding: 4px 2px 12px; }
+.embeddedPage .progressSteps li { grid-template-columns: 28px minmax(0, 1fr); gap: 8px; padding-bottom: 16px; }
+.embeddedPage .progressSteps li:not(:last-child)::after { top: 34px; left: 13px; }
+.embeddedPage .stepIcon { width: 28px; height: 28px; }
+.embeddedPage .progressNote { padding: 8px 2px; }
+.embeddedPage .candidatesPanel { margin-top: 14px; }
+.embeddedPage .candidateHeading { margin-bottom: 7px; }
+.embeddedPage .candidateList { grid-template-columns: minmax(0, 1fr); }
+.embeddedPage .candidate, .embeddedPage .candidateSelected { grid-template-columns: 96px minmax(0, 1fr); gap: 4px 10px; padding: 9px; border-radius: 9px; }
+.embeddedPage .candidateTop { display: flex; grid-column: 2; flex-wrap: wrap; gap: 2px 7px; align-items: baseline; }
+.embeddedPage .candidateTop time { grid-column: auto; }
+.embeddedPage .rank { width: 17px; height: 17px; grid-row: auto; border-radius: 4px; font-size: .58rem; }
+.embeddedPage .candidateThumbnail, .embeddedPage .candidateThumbnailFallback { width: 96px; grid-column: 1; grid-row: 1 / span 3; align-self: start; }
+.embeddedPage .candidateThumbnailFallback { gap: 0; }
+.embeddedPage .candidateThumbnailFallback > span { display: none; }
+.embeddedPage .candidate > strong, .embeddedPage .candidateSelected > strong { grid-column: 2; font-size: .75rem; line-height: 1.4; }
+.embeddedPage .candidate blockquote, .embeddedPage .candidateSelected blockquote { grid-column: 2; overflow: hidden; font-size: .69rem; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.embeddedPage .whyLine { grid-column: 1 / -1; margin-top: 2px; }
+.embeddedPage .whyLine span { font-size: .69rem; line-height: 1.4; }
+.embeddedPage .composerArea { width: 100%; padding: 8px 0 0; border-top: 1px solid var(--line); }
+.embeddedPage .composer { gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; box-shadow: none; }
+.embeddedPage .composer textarea { min-height: 38px; max-height: 130px; font-size: .82rem; line-height: 1.5; }
+.embeddedPage .composerToolbar { min-height: 28px; gap: 6px; margin-top: 3px; }
+.embeddedPage .composerControls { flex-wrap: nowrap; gap: 4px; }
+.embeddedPage .scopePicker summary { min-height: 28px; padding: 0 6px; background: transparent; font-size: .67rem; }
+.embeddedPage .answerSettingsPicker summary small { display: none; }
+.embeddedPage .scopeOptions { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; width: min(340px, calc(100vw - 24px)); max-width: none; }
+.embeddedPage .answerSettings { right: 0; left: auto; }
+.embeddedPage .keyboardHint { display: none; }
+.scopeNotice { margin: 6px 2px 0; color: var(--ink-soft); font-size: .68rem; line-height: 1.5; }
+
 @media (prefers-reduced-motion: reduce) {
   .spinning { animation: none; }
   .conversationPicker > summary svg, .conversationChoice, .deleteConversation, .conversationMenuClose { transition: none; }

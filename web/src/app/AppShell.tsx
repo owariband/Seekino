@@ -7,6 +7,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  PlaySquare,
   Search,
   Settings,
   Sun,
@@ -21,6 +22,7 @@ import { useWorkspace } from "./workspace";
 import styles from "./app-shell.module.css";
 
 const navigation = [
+  { to: "/watch", label: "视频观看", icon: PlaySquare },
   { to: "/search", label: "名场面检索", icon: Search },
   { to: "/library", label: "资料库", icon: LibraryBig },
   { to: "/tasks", label: "解析任务", icon: Activity },
@@ -55,7 +57,7 @@ export function AppShell() {
         {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
       </button>
       <aside id="anivag-sidebar" className={styles.sidebar} hidden={sidebarCollapsed}>
-        <NavLink className={styles.brand} to="/search" aria-label="anivag 首页">
+        <NavLink className={styles.brand} to="/watch" aria-label="anivag 首页">
           <img src="/anivag-mark.svg" alt="" />
           <strong>anivag</strong>
         </NavLink>
@@ -110,7 +112,7 @@ export function AppShell() {
 
       <div className={styles.content}>
         <header className={styles.mobileHeader}>
-          <NavLink className={styles.mobileBrand} to="/search"><img src="/anivag-mark.svg" alt="" /><strong>anivag</strong></NavLink>
+          <NavLink className={styles.mobileBrand} to="/watch"><img src="/anivag-mark.svg" alt="" /><strong>anivag</strong></NavLink>
           <div>
             <button type="button" onClick={openDialog} aria-label="打开上传面板"><ArrowUpFromLine size={17} /><span>{activeCount || "上传"}</span></button>
             <button type="button" onClick={toggleTheme} aria-label="切换明暗主题">{theme === "light" ? <Moon size={17} /> : <Sun size={17} />}</button>

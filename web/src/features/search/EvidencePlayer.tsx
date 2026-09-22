@@ -207,6 +207,7 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
           <h2>{evidence.seriesName}</h2>
           <p>片段范围 {formatTimeRange(playbackRange.startMs, playbackRange.endMs)}</p>
         </div>
+        {playbackUrl ? <a className="button-quiet" href={`/watch/${encodeURIComponent(evidence.seriesId)}/${encodeURIComponent(evidence.videoId)}?atMs=${playbackRange.startMs}`}>在整集中观看</a> : null}
       </div>
 
       {playError ? <p className={styles.messageError} role="alert">{playError}</p> : null}

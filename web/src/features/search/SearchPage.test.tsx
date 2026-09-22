@@ -133,8 +133,12 @@ function assistantMessage(content: string, hits: VideoChunkSearchHit[] = []): Ag
   };
 }
 
-function renderPage(message: AgentMessageView, videoSeries: SeriesSummary[] = [series]) {
-  mocks.useWorkspace.mockReturnValue({ mode: "live", series: videoSeries });
+function renderPage(
+  message: AgentMessageView,
+  videoSeries: SeriesSummary[] = [series],
+  props: { embedded?: boolean; initialSeriesId?: string; onOpenVideo?: (target: { seriesId: string; videoId: string; startMs: number }) => void } = {},
+) {
+  mocks.useWorkspace.mockReturnValue({ mode: "live", series: videoSeries, isLoading: false });
   mocks.useAgentConversation.mockReturnValue({
     conversationId: "conversation-1",
     messages: [message],
@@ -144,7 +148,7 @@ function renderPage(message: AgentMessageView, videoSeries: SeriesSummary[] = [s
     error: null,
     send: mocks.send,
   });
-  return render(<SearchPage />);
+  return render(<SearchPage {...props} />);
 }
 
 beforeEach(() => {
@@ -159,6 +163,43 @@ afterEach(() => {
 });
 
 describe("Search assistant presentation", () => {
+  it("uses the current ready series for an embedded conversation and opens evidence in the whole-video player", async () => {
+    const hit = searchHit("chunk-1", 1, "片段首帧");
+    const onOpenVideo = vi.fn();
+    renderPage(assistantMessage("找到片段", [hit]), [series], {
+      embedded: true, initialSeriesId: series.seriesId, onOpenVideo,
+    });
+    const user = userEvent.setup();
+
+    expect(screen.getByRole("heading", { name: "当前对话", level: 2 })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "anivag 助手" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("打开对话记录")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
+    expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent(series.name);
+    expect(screen.getByRole("textbox", { name: "向 anivag 助手提问" }).closest(".page")).toBeNull();
+    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "这段发生了什么？");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(mocks.send).toHaveBeenCalledWith("这段发生了什么？", [series.seriesId], null, {});
+
+    await user.click(screen.getByRole("img", { name: "片段首帧" }));
+    expect(onOpenVideo).toHaveBeenCalledWith({ seriesId: series.seriesId, videoId: "video-1", startMs: hit.evidence.startMs });
+    expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("片段详情")).not.toBeInTheDocument();
+  });
+
+  it("states when the watched series is not searchable instead of presenting a global scope as current", async () => {
+    renderPage(assistantMessage("可以继续聊天"), [{ ...series, status: "PARTIAL" }], {
+      embedded: true, initialSeriesId: series.seriesId,
+    });
+    const user = userEvent.setup();
+
+    expect(screen.getByText(/当前系列暂不可检索/)).toHaveTextContent("全部可检索系列");
+    expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("全部视频系列");
+    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "你好");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+    expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {});
+  });
+
   it("allows a conversation without ready videos and displays a web source link", async () => {
     renderPage({
       ...assistantMessage("[公开资料](https://example.com/source)"),
@@ -167,6 +208,7 @@ describe("Search assistant presentation", () => {
     }, []);
     const user = userEvent.setup();
 
+    expect(screen.getByRole("heading", { name: "anivag 助手", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "公开资料" })).toHaveAttribute("href", "https://example.com/source");
     expect(screen.queryByText(/可用视频范围/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("回答过程")).toBeInTheDocument();
