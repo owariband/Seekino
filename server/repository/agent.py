@@ -480,8 +480,8 @@ class AgentRepository:
         message_id: str,
         *,
         content: str,
-        retrieval_query: str,
-        search_result: dict,
+        retrieval_query: str | None,
+        search_result: dict | None,
         now: int,
         timing: AgentMessageTimingState | None = None,
     ) -> AgentMessageState:

@@ -48,7 +48,7 @@ models:
         cached_input_cny_per_unit: '1.2'
 
   - provider: ark
-    model: doubao-embedding-vision-251215
+    model: doubao-embedding-vision-250615
     category: embedding
     source_url: https://www.volcengine.com/docs/82379/1544106?lang=zh
     checked_at: '2026-09-15T11:27:39Z'

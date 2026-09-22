@@ -4,6 +4,7 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
+from time import monotonic
 
 import pytest
 
@@ -321,6 +322,13 @@ def _runtime(query=None, evaluator=None, chat=None, retrieval=None, **kwargs):
 def test_runtime_rejects_nonpositive_read_character_limit() -> None:
     with pytest.raises(ValueError, match="max_read_chars_per_call"):
         _runtime(max_read_chars_per_call=0)
+
+
+def test_runtime_obeys_outer_deadline_before_starting_video_graph():
+    runtime, query, _, _, _ = _runtime()
+    with pytest.raises(AgentModelInvocationError, match="deadline exceeded"):
+        runtime.kick(_inputs(), deadline=monotonic() - 1)
+    assert query.prompts == []
 
 
 @pytest.mark.parametrize("approve_at", [1, 2, 3])

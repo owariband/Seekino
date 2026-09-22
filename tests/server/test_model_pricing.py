@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 
+from gateway.config import load_config
 from gateway.usage import TokenUsage
 from server.config.usage import PriceTier, load_model_pricing
 from server.service.parse_usage import estimate_cost_cny
@@ -55,7 +56,14 @@ def test_default_lite_audio_cache_and_output_are_charged_once():
 ])
 def test_default_embedding_prices_real_modality_counts(operation, text, image, amount):
     usage = TokenUsage(100, 0, 100, None, None, text_input_tokens=text, image_input_tokens=image)
-    assert _estimate("doubao-embedding-vision-251215", usage, category="embedding", operation=operation) == Decimal(amount)
+    assert _estimate("doubao-embedding-vision-250615", usage, category="embedding", operation=operation) == Decimal(amount)
+
+
+def test_default_embedding_model_has_matching_price():
+    model = load_config().multimodal_embedding.model
+    assert model == "doubao-embedding-vision-250615"
+    assert any(price.provider == "ark" and price.category == "embedding" and price.model == model
+               for price in load_model_pricing().models)
 
 
 @pytest.mark.parametrize(("instant", "amount"), [
@@ -74,7 +82,7 @@ def test_default_deepseek_uses_cny_and_beijing_weekday_peak_boundaries(instant, 
 def test_default_pricing_does_not_invent_historical_or_missing_modality_costs():
     usage = TokenUsage(100, 0, 100, 0, 0)
     assert _estimate("doubao-seed-2-0-lite-260428", usage) is None
-    assert _estimate("doubao-embedding-vision-251215", usage, category="embedding", operation="video_embedding") is None
+    assert _estimate("doubao-embedding-vision-250615", usage, category="embedding", operation="video_embedding") is None
     assert _estimate("deepseek-flash", usage, instant=datetime(2026, 9, 10, 3, 59, 59)) is None
     assert _estimate("custom-model-with-no-rate", usage) is None
 

@@ -14,6 +14,7 @@ from gateway.agent_model import (
 from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
 from gateway.context_window import ContextWindowPolicy
 from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
+from gateway.web_search import WebSearcher
 from gateway.schemas import EmbeddingResult
 from qdrant_client import QdrantClient
 from sqlalchemy import Engine
@@ -25,6 +26,7 @@ from .config.global_agent_settings import read_global_agent_settings
 from .config.usage import load_model_pricing
 from .config.video_processing import VideoProcessingConfig
 from .agent.runtime import AgentRuntime
+from .agent.supervisor import SupervisorRuntime
 from .database import create_database_engine, create_session_factory
 from .mq.consumer import ParseJobConsumer
 from .mq.mysql_queue import MySqlParseJobQueue
@@ -246,8 +248,47 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             evaluator_stage_timeout_seconds=agent_config.evaluator_stage_timeout_seconds,
             execution_timeout_seconds=agent_config.execution_timeout_seconds,
         )
+    def build_supervisor_runtime(
+        video_runtime: AgentRuntime, agent_config: AgentServiceConfig,
+    ) -> SupervisorRuntime:
+        request_timeout = min(
+            settings.agent_request_timeout_seconds,
+            agent_config.execution_timeout_seconds,
+            agent_model_config.request_timeout_seconds,
+        )
+        max_output_tokens = min(
+            agent_config.max_output_tokens,
+            agent_model_config.max_output_tokens,
+        )
+        context_window_policy = ContextWindowPolicy(
+            context_window_tokens=agent_config.context_window_tokens,
+            output_reserve_tokens=max_output_tokens,
+            safety_margin_tokens=agent_config.context_safety_margin_tokens,
+            auto_compact_tokens=agent_config.auto_compact_tokens,
+            compact_target_tokens=agent_config.compact_target_tokens,
+        )
+        return SupervisorRuntime(
+            video_runtime,
+            DeepSeekFunctionCallingModel(
+                model=chat_model_name,
+                base_url=agent_model_config.base_url,
+                api_key=agent_api_key,
+                fallback_model=fallback_agent_model,
+                request_timeout_seconds=request_timeout,
+                max_output_tokens=max_output_tokens,
+                context_window_policy=context_window_policy,
+                reasoning_effort=agent_config.supervisor_reasoning_effort,
+            ),
+            WebSearcher(),
+            max_web_results=agent_config.web_search_max_results,
+            web_timeout_seconds=agent_config.web_search_timeout_seconds,
+            execution_timeout_seconds=agent_config.execution_timeout_seconds,
+            max_tool_result_bytes=agent_config.max_tool_result_bytes,
+            max_prompt_chars=agent_config.max_prompt_chars,
+        )
 
     runtime = build_agent_runtime(settings.agent)
+    supervisor_runtime = build_supervisor_runtime(runtime, settings.agent)
 
     def load_agent_config() -> tuple[AgentServiceConfig, str]:
         return read_global_agent_settings(settings.model_config_path)
@@ -255,9 +296,11 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
     _, config_revision = load_agent_config()
     agent = AgentChatService(
         AgentRepository(session_factory), library, runtime,
+        supervisor_runtime=supervisor_runtime,
         config=settings.agent,
         config_loader=load_agent_config,
         runtime_factory=build_agent_runtime,
+        supervisor_factory=build_supervisor_runtime,
         config_revision=config_revision,
     )
     index_sync = IndexSyncService(

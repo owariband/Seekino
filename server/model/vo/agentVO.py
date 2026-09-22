@@ -86,7 +86,7 @@ class AgentSearchEvidenceView(SearchEvidenceView):
 class AgentMessageView(ContractModel):
     message_id: str
     conversation_id: str
-    series_ids: list[str] = Field(min_length=1)
+    series_ids: list[str]
     sequence_no: int = Field(ge=0)
     role: Literal["USER", "ASSISTANT"]
     status: Literal["PROCESSING", "COMPLETED", "FAILED"]

@@ -6,10 +6,10 @@ import type { AgentProgressEvent } from "./useAgentConversation";
 import styles from "./search.module.css";
 
 const phases: Record<AnswerPhase, { label: string; detail: string; icon: typeof Clock3 }> = {
-  QUEUED: { label: "等待执行", detail: "服务端已接收请求。", icon: Clock3 },
-  RETRIEVING: { label: "检索片段", detail: "查找与描述相关的视频证据。", icon: ScanSearch },
-  EVALUATING: { label: "核验候选", detail: "检查候选片段是否符合描述。", icon: ShieldCheck },
-  RESPONDING: { label: "生成回答", detail: "整理回答与可核验的视频证据。", icon: MessageSquareText },
+  QUEUED: { label: "等待处理", detail: "服务端已接收问题。", icon: Clock3 },
+  RETRIEVING: { label: "查找资料", detail: "查找回答问题所需的资料。", icon: ScanSearch },
+  EVALUATING: { label: "核验资料", detail: "检查资料是否支持回答。", icon: ShieldCheck },
+  RESPONDING: { label: "生成回答", detail: "整理回答和已查到的资料。", icon: MessageSquareText },
 };
 
 type VisibleStage = {
@@ -76,9 +76,9 @@ export function AgentProgress({ message, steps }: { message: AgentMessageView; s
 
   return (
     <details className={styles.progressCard} open={processing}>
-      <summary aria-label="检索过程">
+      <summary aria-label="回答过程">
         {processing ? <LoaderCircle size={15} className={styles.spinning} aria-hidden="true" /> : failed ? <CircleAlert size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}
-        <span>检索过程</span><small className={failed ? styles.messageError : undefined}>{timingStatus}</small>
+        <span>回答过程</span><small className={failed ? styles.messageError : undefined}>{timingStatus}</small>
         <ChevronDown size={14} className={styles.progressChevron} aria-hidden="true" />
       </summary>
       {visibleSteps.length ? (

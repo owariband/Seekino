@@ -62,6 +62,8 @@ export function UsagePage() {
   const incomplete = visible.filter(({ usage }) => usage && (usage.coverage !== "recorded" || usage.missingUsageCount || usage.unpricedCallCount));
   const unknown = visible.filter(({ usage }) => usage?.coverage === "unknown");
   const ready = usageQuery.isSuccess || usageQuery.data !== undefined;
+  const knownTokenSubtotal = ready && totals.totalTokens === null && totals.knownTokens !== null;
+  const knownCostSubtotal = ready && totals.estimatedCostCny === null && totals.knownCostCny !== null;
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["parse-usage", WORKSPACE_ID], refetchType: "none" });
     await usageQuery.refetch();
@@ -86,8 +88,8 @@ export function UsagePage() {
       </div>
 
       <dl className={styles.totals} aria-label="模型消耗概况">
-        <div><dt>累计 Token</dt><dd>{ready ? formatTokens(totals.totalTokens) : "—"}</dd><small>{ready && totals.totalTokens === null ? totals.knownTokens === null ? "尚无完整用量记录" : `已知合计 ${formatTokens(totals.knownTokens)} · 记录不完整` : "输入 + 输出"}</small></div>
-        <div><dt>累计预估费用</dt><dd>{ready ? formatCostCny(totals.estimatedCostCny) : "—"}</dd><small>{ready && totals.estimatedCostCny === null ? totals.knownCostCny === null ? "尚无完整计价记录" : `已知合计 ${formatCostCny(totals.knownCostCny)} · 计价不完整` : "按后端配置单价估算"}</small></div>
+        <div><dt>{knownTokenSubtotal ? "已记录 Token 小计" : "累计 Token"}</dt><dd>{ready ? formatTokens(totals.totalTokens ?? totals.knownTokens) : "—"}</dd><small>{knownTokenSubtotal ? "记录不完整，不能代表总消耗" : ready && totals.totalTokens === null ? "尚无完整用量记录" : "输入 + 输出"}</small></div>
+        <div><dt>{knownCostSubtotal ? "已估算费用小计" : "累计预估费用"}</dt><dd>{ready ? formatCostCny(totals.estimatedCostCny ?? totals.knownCostCny) : "—"}</dd><small>{knownCostSubtotal ? "计价不完整，不能代表总费用" : ready && totals.estimatedCostCny === null ? "尚无完整计价记录" : "按后端配置单价估算"}</small></div>
         <div><dt>已记录模型调用</dt><dd>{ready && (visible.length === 0 || visible.some(({ usage }) => usage)) ? formatTokens(totals.callCount) : "—"}</dd><small>{ready ? `${visible.filter(({ usage }) => usage).length} / ${visible.length} 个任务读取成功` : usageQuery.isError ? "请刷新重试" : "正在连接 API"}</small></div>
       </dl>
 

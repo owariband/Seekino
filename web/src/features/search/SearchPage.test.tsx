@@ -133,8 +133,8 @@ function assistantMessage(content: string, hits: VideoChunkSearchHit[] = []): Ag
   };
 }
 
-function renderPage(message: AgentMessageView) {
-  mocks.useWorkspace.mockReturnValue({ mode: "live", series: [series] });
+function renderPage(message: AgentMessageView, videoSeries: SeriesSummary[] = [series]) {
+  mocks.useWorkspace.mockReturnValue({ mode: "live", series: videoSeries });
   mocks.useAgentConversation.mockReturnValue({
     conversationId: "conversation-1",
     messages: [message],
@@ -159,6 +159,24 @@ afterEach(() => {
 });
 
 describe("Search assistant presentation", () => {
+  it("allows a conversation without ready videos and displays a web source link", async () => {
+    renderPage({
+      ...assistantMessage("[公开资料](https://example.com/source)"),
+      seriesIds: [],
+      retrievalQuery: null,
+    }, []);
+    const user = userEvent.setup();
+
+    expect(screen.getByRole("link", { name: "公开资料" })).toHaveAttribute("href", "https://example.com/source");
+    expect(screen.queryByText(/可用视频范围/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("回答过程")).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "向 AniVAG 助手提问" }), "你好");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {});
+    expect(screen.getByText("问题已发送，正在处理")).toBeInTheDocument();
+  });
+
   it("distinguishes retrieved candidates from a truly empty retrieval", () => {
     const message = {
       ...assistantMessage("只生成了文字"),

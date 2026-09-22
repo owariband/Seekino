@@ -167,7 +167,7 @@ export function SearchPage() {
   const { conversationId, messages, progress, loading, searching, error, clear: clearConversation, send } = useAgentConversation(requestedConversationId);
   const isSearchable = (status: string) => status === "READY";
   const scopeValid = selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && isSearchable(item.status)));
-  const canSend = Boolean(query.trim() && !loading && !searching && conversationId && !deletedConversationIdsRef.current.has(conversationId) && scopeValid && series.some((item) => isSearchable(item.status)) && mode === "live");
+  const canSend = Boolean(query.trim() && !loading && !searching && conversationId && !deletedConversationIdsRef.current.has(conversationId) && scopeValid && mode === "live");
 
   useLayoutEffect(() => {
     const composer = composerRef.current;
@@ -291,7 +291,7 @@ export function SearchPage() {
     event.preventDefault();
     if (!canSend) return;
     followThread.current = true;
-    setConversationStatus("问题已发送，正在检索");
+    setConversationStatus("问题已发送，正在处理");
     const options = messageOptionOverrides
       ? { ...messageOptionOverrides, maxLoopTurns: messageOptionOverrides.maxLoopTurns || undefined }
       : {};
@@ -403,7 +403,7 @@ export function SearchPage() {
     <main className={`${styles.page} page`}>
       <header className={styles.pageHeader}>
         <div className={styles.chatHeading}>
-          <h1 className={styles.chatTitle}>名场面检索助手</h1>
+          <h1 className={styles.chatTitle}>AniVAG 助手</h1>
           {activeConversation ? <span title={activeConversation.title}>{activeConversation.title}</span> : null}
         </div>
         <div className={styles.conversationActions}>
@@ -510,7 +510,7 @@ export function SearchPage() {
       </header>
 
       <div className={selectedHit ? `${styles.workspace} ${styles.withEvidence}` : styles.workspace}>
-        <section className={styles.agentPanel} aria-label="与名场面检索助手对话">
+        <section className={styles.agentPanel} aria-label="与 AniVAG 助手对话">
           <div className={styles.thread} ref={threadRef} onScroll={(event) => {
             const thread = event.currentTarget;
             followThread.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
@@ -518,7 +518,7 @@ export function SearchPage() {
             {!messages.length && !loading ? (
               <div className={styles.welcome}>
                 <ScanSearch size={24} strokeWidth={1.4} aria-hidden="true" />
-                <p>描述你记得的对白、人物或动作。</p>
+                <p>可以聊天，也可以询问视频内容或查找资料。</p>
               </div>
             ) : null}
             {messages.map((message) => (
@@ -526,7 +526,7 @@ export function SearchPage() {
                 {message.role === "USER" ? (
                   <div>
                     <p>{message.content}</p>
-                    {message.seriesIds.length ? <small className={styles.messageScope}>检索范围：{message.seriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join("、")}</small> : null}
+                    {message.seriesIds.length ? <small className={styles.messageScope}>可用视频范围：{message.seriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join("、")}</small> : null}
                   </div>
                 ) : (
                   <div>
@@ -585,7 +585,7 @@ export function SearchPage() {
                 )}
               </article>
             ))}
-            {loading || (searching && !messages.some((message) => message.status === "PROCESSING")) ? <p className={styles.connectionState} role="status"><LoaderCircle size={15} className={styles.spinning} aria-hidden="true" />{loading ? "正在恢复会话…" : "正在连接检索助手…"}</p> : null}
+            {loading || (searching && !messages.some((message) => message.status === "PROCESSING")) ? <p className={styles.connectionState} role="status"><LoaderCircle size={15} className={styles.spinning} aria-hidden="true" />{loading ? "正在恢复会话…" : "正在连接助手…"}</p> : null}
             {error && !messages.some((message) => message.status === "FAILED" && message.lastError?.message === error) ? <p ref={conversationFailureRef} className={styles.messageError} role="alert" tabIndex={-1}>{error}</p> : null}
           </div>
 
@@ -602,9 +602,9 @@ export function SearchPage() {
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder="描述你记得的对白、人物或动作…"
+                placeholder="提问视频内容，或聊聊其他问题…"
                 rows={2}
-                aria-label="向名场面检索助手提问"
+                aria-label="向 AniVAG 助手提问"
               />
               <button className={styles.sendButton} type="submit" disabled={!canSend} aria-label="发送问题">
                 {searching ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <ArrowUp size={19} aria-hidden="true" />}

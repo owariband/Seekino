@@ -109,7 +109,7 @@ def attach_agent_tool_logging(
         tool.callbacks = [*(tool.callbacks or []), handler]
 
 
-def _build_agent_tool(
+def build_agent_tool(
     *,
     func: Callable[..., str],
     name: str,
@@ -240,7 +240,7 @@ def _trace_tool_result(output: Any) -> tuple[str, dict[str, Any]]:
     for key in (
         "accepted", "operation", "removed", "video_chunk_id", "id",
         "draft_item_count", "video_item_count", "result_count", "total", "partial",
-        "section", "start", "end", "total_chars",
+        "section", "start", "end", "total_chars", "omitted_count",
     ):
         if key in payload:
             summary[key] = payload[key]
@@ -635,7 +635,7 @@ def build_retrieve_tool(
                 metadata=metadata,
             )
 
-    return _build_agent_tool(
+    return build_agent_tool(
         func=retrieve,
         name="retrieve",
         description=(
@@ -675,7 +675,7 @@ def build_read_trieve_item_tool(
             maximum_read_chars=maximum_read_chars,
         )
 
-    return _build_agent_tool(
+    return build_agent_tool(
         func=read_trieve_item,
         name="read_trieve_item",
         description=(
@@ -732,7 +732,7 @@ def build_update_draft_item_tool(
             ),
         }, maximum_result_bytes)
 
-    return _build_agent_tool(
+    return build_agent_tool(
         func=update_draft_item,
         name="update_draft_item",
         description=(
@@ -762,7 +762,7 @@ def build_remove_draft_item_tool(
             "draft_item_count": draft_item_count,
         }, maximum_result_bytes)
 
-    return _build_agent_tool(
+    return build_agent_tool(
         func=remove_draft_item,
         name="remove_draft_item",
         description="Remove one Draft Item by video_chunk_id.",
@@ -809,7 +809,7 @@ def build_get_draft_catelog_tool(
             audit.mark_catalog_complete()
         return result
 
-    return _build_agent_tool(
+    return build_agent_tool(
         func=get_draft_catelog,
         name="get_draft_catelog",
         description=(
@@ -860,7 +860,7 @@ def build_read_draft_item_tool(
                 )
         return result
 
-    return _build_agent_tool(
+    return build_agent_tool(
         func=read_draft_item,
         name="read_draft_item",
         description=(
@@ -895,7 +895,7 @@ def build_update_video_item_tool(
             "video_item_count": workspace.video_item_count(),
         }, maximum_result_bytes)
 
-    return _build_agent_tool(
+    return build_agent_tool(
         func=update_video_item,
         name="update_video_item",
         description=(
@@ -923,7 +923,7 @@ def build_remove_video_item_tool(
             "video_item_count": workspace.video_item_count(),
         }, maximum_result_bytes)
 
-    return _build_agent_tool(
+    return build_agent_tool(
         func=remove_video_item,
         name="remove_video_item",
         description="Remove one final Video Item by video_chunk_id.",

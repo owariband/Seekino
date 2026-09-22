@@ -124,10 +124,12 @@ describe("model usage page", () => {
     expect(await screen.findByText(/1 个任务的用量读取失败/)).toBeInTheDocument();
     expect(screen.getByText(/1 个历史任务没有用量记录/)).toBeInTheDocument();
     const overview = within(screen.getByLabelText("模型消耗概况"));
-    expect(overview.getByText("未记录")).toBeInTheDocument();
-    expect(overview.getByText("未估算")).toBeInTheDocument();
-    expect(overview.queryByText("¥0.00")).not.toBeInTheDocument();
-    expect(overview.getByText(/已知合计 1,200/)).toBeInTheDocument();
+    expect(overview.getByText("已记录 Token 小计")).toBeInTheDocument();
+    expect(overview.getByText("已估算费用小计")).toBeInTheDocument();
+    expect(overview.getByText("1,200")).toBeInTheDocument();
+    expect(overview.getByText("¥0.00000004")).toBeInTheDocument();
+    expect(overview.getByText("记录不完整，不能代表总消耗")).toBeInTheDocument();
+    expect(overview.getByText("计价不完整，不能代表总费用")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "按任务" }));
     expect(screen.getByText("用量暂不可读")).toBeInTheDocument();
     expect(screen.getByText("历史未记录")).toBeInTheDocument();
@@ -135,7 +137,7 @@ describe("model usage page", () => {
     await waitFor(() => expect(screen.queryByText(/1 个任务的用量读取失败/)).not.toBeInTheDocument());
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("jobId=good"))).toHaveLength(2);
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("jobId=failed"))).toHaveLength(2);
-    expect(screen.getByText(/已知合计 2,400/)).toBeInTheDocument();
+    expect(overview.getByText("2,400")).toBeInTheDocument();
   });
 
   it("keeps the page accessible with no jobs and does not request invented usage", async () => {

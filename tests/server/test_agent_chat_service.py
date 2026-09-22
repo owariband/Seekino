@@ -15,6 +15,9 @@ from sqlalchemy import event, func, select, text
 from server.agent.context import _project_stored_search_result
 from server.agent.errors import AgentContextBudgetError, AgentModelInvocationError
 from server.agent.runtime import AgentRuntime
+from server.agent.supervisor import SupervisorRuntime
+from gateway.web_search import WebSearchHit, WebSearcher
+from server.api.agent import _agent_message_view
 from server.config.agent import AgentServiceConfig
 from server.database import (
     DatabaseEnvironment, create_database_engine, create_schema, create_session_factory,
@@ -217,7 +220,8 @@ def build_service(tmp_path):
 
     def build(
         *, query=None, evaluator=None, chat=None, runtime_kwargs=None,
-        service_kwargs=None, enforce_foreign_keys=False,
+        service_kwargs=None, enforce_foreign_keys=False, supervisor_model=None,
+        web_searcher=None,
     ):
         engine = create_database_engine(
             f"sqlite+pysqlite:///{tmp_path / f'agent-{len(resources)}.sqlite'}",
@@ -231,12 +235,20 @@ def build_service(tmp_path):
         library = LibraryService(LibraryRepository(factory))
         retrieval = _RetrievalStub()
         query, evaluator, chat = query or _QueryModel(), evaluator or _EvaluatorModel(), chat or _ChatModel()
+        video_runtime = AgentRuntime(
+            query, evaluator, chat, retrieval.search, **(runtime_kwargs or {}),
+        )
+        runtime = (
+            SupervisorRuntime(
+                video_runtime, supervisor_model, web_searcher or WebSearcher(),
+                max_web_results=5, web_timeout_seconds=12,
+                execution_timeout_seconds=60, max_tool_result_bytes=16_384,
+                max_prompt_chars=200_000,
+            )
+            if supervisor_model is not None else video_runtime
+        )
         service = AgentChatService(
-            repository, library,
-            AgentRuntime(
-                query, evaluator, chat, retrieval.search, **(runtime_kwargs or {}),
-            ),
-            **(service_kwargs or {}),
+            repository, library, runtime, **(service_kwargs or {}),
         )
         resources.append((service, engine))
         series = library.create_series(workspace_id="local-default", name="Test Series")
@@ -280,6 +292,114 @@ def _collect(execution):
         if event is None:
             return events
         events.append(event)
+
+
+class _DirectSupervisorModel:
+    model_name = "supervisor-test"
+    provider_name = "fake"
+
+    def run_agent_loop(self, _prompt, *, tools, handle_text, check_control, **_kwargs):
+        assert {tool.name for tool in tools} == {"search_web", "search_video_graph"}
+        check_control()
+        handle_text("你好，我可以直接回答。")
+
+
+class _VideoSupervisorModel:
+    model_name = "supervisor-test"
+    provider_name = "fake"
+
+    def __init__(self, *, include_web: bool = False):
+        self.include_web = include_web
+
+    def run_agent_loop(self, _prompt, *, tools, handle_text, check_control, **_kwargs):
+        check_control()
+        if self.include_web:
+            web = json.loads(next(
+                tool for tool in tools if tool.name == "search_web"
+            ).invoke({"query": "补充信息"}))
+            assert web["result_count"] == 1
+        result = json.loads(next(
+            tool for tool in tools if tool.name == "search_video_graph"
+        ).invoke({"query": "视频里发生了什么？"}))
+        assert result["ok"] is True
+        handle_text(
+            "网页补充 [来源](https://example.org/source)"
+            if self.include_web else "未经视频审核的另一种说法。"
+        )
+
+
+class _WebSearcherStub:
+    def search(self, _query, *, max_results, timeout_seconds):
+        assert max_results == 5
+        assert timeout_seconds > 0
+        return [WebSearchHit(
+            title="网页来源", url="https://example.org/source", snippet="补充信息。",
+        )]
+
+
+def test_supervisor_chat_without_ready_video_series(build_service):
+    service, conversation, _, repository, *_ = build_service(
+        supervisor_model=_DirectSupervisorModel(),
+    )
+    with repository._session_factory.begin() as session:
+        session.query(SeriesRecord).update({SeriesRecord.status: "EMPTY"})
+
+    completed = _send(service, conversation, content="你好")
+
+    assert completed.user_message.series_ids == ()
+    assert completed.assistant_message.series_ids == ()
+    assert completed.assistant_message.content == "你好，我可以直接回答。"
+    assert completed.assistant_message.retrieval_query is None
+    assert completed.assistant_message.search_result is None
+    assert _agent_message_view(completed.assistant_message).series_ids == []
+
+
+@pytest.mark.parametrize("include_web", [False, True])
+def test_supervisor_preserves_approved_video_answer(
+    build_service, prepared_import, include_web,
+):
+    service, conversation, retrieval, repository, query, *_ = build_service(
+        supervisor_model=_VideoSupervisorModel(include_web=include_web),
+        web_searcher=_WebSearcherStub(),
+    )
+    videos = VideoRepository(repository._session_factory)
+    report = videos.import_video_parse(prepared_import)
+    with repository._session_factory.begin() as session:
+        session.get(SeriesRecord, report.series_id).status = "READY"
+    chunks = videos.hydrate_video_chunks(report.video_chunk_ids)
+    retrieval.hits = [VideoChunkSearchHit(
+        candidate=VideoChunkCandidate(
+            video_chunk_id=chunk.video_chunk_id, fused_rank=index + 1,
+            fused_score=1,
+        ),
+        selection_reason=SelectionReason(
+            summary=chunk.window_summary, matched_evidence=[], limitations=[],
+        ),
+        evidence=chunk,
+    ) for index, chunk in enumerate(chunks)]
+    query.selected_ranges = tuple(
+        (chunk.video_chunk_id, chunk.start_ms, chunk.end_ms)
+        for chunk in chunks
+    )
+
+    completed = _send(service, conversation, content="视频里发生了什么？")
+
+    assert completed.assistant_message.search_result is not None
+    assert completed.assistant_message.content == (
+        completed.assistant_message.search_result["agentReply"]["message"]
+    )
+    assert "未经视频审核" not in completed.assistant_message.content
+    assert any(
+        block["type"] == "video"
+        for block in completed.assistant_message.search_result["renderBlocks"]
+    )
+    if include_web:
+        assert completed.assistant_message.content.startswith(
+            completed.assistant_message.search_result["renderBlocks"][0]["markdown"]
+        )
+        assert "https://example.org/source" in (
+            completed.assistant_message.search_result["renderBlocks"][-1]["markdown"]
+        )
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ from ..agent.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
 )
 from ..agent.runtime import AgentRuntime
+from ..agent.supervisor import SupervisorRuntime
 from ..agent.state import AnswerPhase, RunInputs
 from ..config.agent import AgentServiceConfig
 from ..identity import canonical_uuid
@@ -194,11 +195,13 @@ class AgentChatService:
         self,
         repository: AgentRepository,
         library: LibraryService,
-        runtime: AgentRuntime,
+        runtime: AgentRuntime | SupervisorRuntime,
         *,
+        supervisor_runtime: SupervisorRuntime | None = None,
         config: AgentServiceConfig | None = None,
         config_loader: Callable[[], tuple[AgentServiceConfig, str]] | None = None,
-        runtime_factory: Callable[[AgentServiceConfig], AgentRuntime] | None = None,
+        runtime_factory: Callable[[AgentServiceConfig], AgentRuntime | SupervisorRuntime] | None = None,
+        supervisor_factory: Callable[[AgentRuntime, AgentServiceConfig], SupervisorRuntime] | None = None,
         config_revision: str | None = None,
         clock: Callable[[], int] = now_unix_time_ms,
         monotonic_clock: Callable[[], int] = monotonic_ns,
@@ -206,11 +209,13 @@ class AgentChatService:
         self._repository = repository
         self._library = library
         self._runtime = runtime
+        self._supervisor_runtime = supervisor_runtime
         self._config = config or AgentServiceConfig()
         self._config_loader = config_loader
         self._runtime_factory = runtime_factory
+        self._supervisor_factory = supervisor_factory
         self._config_revision = config_revision
-        self._runtimes = [runtime]
+        self._runtimes = [supervisor_runtime or runtime]
         self._active_maximum_concurrent_kicks = self._config.maximum_concurrent_kicks
         self._clock = clock
         self._monotonic_clock = monotonic_clock
@@ -263,7 +268,7 @@ class AgentChatService:
             ),
         )
 
-    def _current_config(self) -> tuple[AgentRuntime, AgentServiceConfig, ThreadPoolExecutor]:
+    def _current_config(self) -> tuple[AgentRuntime | SupervisorRuntime, AgentServiceConfig, ThreadPoolExecutor]:
         with self._lock:
             if self._closed:
                 raise AgentMessageInProgressError("the Agent service is shutting down")
@@ -281,8 +286,21 @@ class AgentChatService:
                         )
                         if active_config != previous_config:
                             assert self._runtime_factory is not None
-                            self._runtime = self._runtime_factory(config)
-                            self._runtimes.append(self._runtime)
+                            new_runtime = self._runtime_factory(config)
+                            if self._supervisor_factory is not None:
+                                assert isinstance(new_runtime, AgentRuntime)
+                                try:
+                                    new_supervisor = self._supervisor_factory(
+                                        new_runtime, config,
+                                    )
+                                except Exception:
+                                    new_runtime.close()
+                                    raise
+                            else:
+                                new_supervisor = None
+                            self._runtime = new_runtime
+                            self._supervisor_runtime = new_supervisor
+                            self._runtimes.append(new_supervisor or new_runtime)
                         self._config = config
                         _logger.info(
                             "agent_global_settings_reloaded revision=%s "
@@ -291,7 +309,7 @@ class AgentChatService:
                             config.maximum_concurrent_kicks != self._active_maximum_concurrent_kicks,
                         )
                     self._config_revision = revision
-            return self._runtime, self._config, self._executor
+            return self._supervisor_runtime or self._runtime, self._config, self._executor
 
     def create_conversation(
         self,
@@ -503,7 +521,10 @@ class AgentChatService:
                 reference=normalized_reference,
             )
             if started is None:
-                scope = self._resolve_scope(requested_scope, normalized_workspace)
+                scope = self._resolve_scope(
+                    requested_scope, normalized_workspace,
+                    allow_empty=isinstance(runtime, SupervisorRuntime),
+                )
                 reference_context = self._load_reference(
                     normalized_reference, normalized_conversation_id, normalized_workspace, scope,
                 )
@@ -604,7 +625,9 @@ class AgentChatService:
         except (AgentMessageNotFoundError, VideoChunkNotFoundError) as exc:
             raise AgentReferenceInvalidError("引用的消息或片段已失效。") from exc
 
-    def _resolve_scope(self, requested: list[str], workspace_id: str) -> list[str]:
+    def _resolve_scope(
+        self, requested: list[str], workspace_id: str, *, allow_empty: bool,
+    ) -> list[str]:
         if requested:
             series = [
                 self._library.get_series(series_id, workspace_id=workspace_id)
@@ -617,14 +640,14 @@ class AgentChatService:
                 item for item in self._library.list_series(workspace_id=workspace_id)
                 if item.status == "READY"
             ]
-        if not series:
+        if not series and not allow_empty:
             raise SeriesNotReadyError("this workspace has no READY Series to retrieve")
         return sorted(item.series_id for item in series)
 
     def _execute(
         self, execution: AgentMessageExecution, workspace_id: str, requested_top_k: int,
         run_options: AgentRunOptionsState, max_loop_turns: int | None,
-        runtime: AgentRuntime, config: AgentServiceConfig,
+        runtime: AgentRuntime | SupervisorRuntime, config: AgentServiceConfig,
     ) -> AgentMessageSendState:
         initial = execution.initial
         assistant_id = initial.assistant_message.message_id
@@ -657,10 +680,24 @@ class AgentChatService:
                 before_sequence_no=initial.user_message.sequence_no,
                 limit=config.history_message_limit,
             )
-            series = [
-                self._library.get_series(series_id, workspace_id=workspace_id)
-                for series_id in initial.user_message.series_ids
-            ]
+            def load_video_context() -> list[dict]:
+                series = [
+                    self._library.get_series(series_id, workspace_id=workspace_id)
+                    for series_id in initial.user_message.series_ids
+                ]
+                return [{
+                    "seriesId": item.series_id, "name": item.name,
+                    "description": item.description,
+                    "transcriptLanguageHint": item.transcript_language_hint,
+                    "importantExtraData": item.important_extra_data,
+                    "characterBible": item.character_bible,
+                    "videos": [{
+                        "episodeOrder": video.episode_order,
+                        "originalFilename": video.original_filename,
+                        "parseStatus": video.parse_status,
+                    } for video in item.videos],
+                } for item in series]
+
             inputs = RunInputs(
                 conversation_id=conversation_id, assistant_message_id=assistant_id,
                 workspace_id=workspace_id, series_ids=list(initial.user_message.series_ids),
@@ -674,37 +711,68 @@ class AgentChatService:
                     "searchResult": item.search_result,
                 } for item in history],
                 reference_context=execution.reference_context,
-                series_context=[{
-                    "seriesId": item.series_id, "name": item.name,
-                    "description": item.description,
-                    "transcriptLanguageHint": item.transcript_language_hint,
-                    "importantExtraData": item.important_extra_data,
-                    "characterBible": item.character_bible,
-                    "videos": [{
-                        "episodeOrder": video.episode_order,
-                        "originalFilename": video.original_filename,
-                        "parseStatus": video.parse_status,
-                    } for video in item.videos],
-                } for item in series],
+                series_context=(
+                    [{
+                        "seriesId": series_id,
+                        "name": self._library.get_series(
+                            series_id, workspace_id=workspace_id,
+                        ).name,
+                    } for series_id in initial.user_message.series_ids]
+                    if isinstance(runtime, SupervisorRuntime)
+                    else load_video_context()
+                ),
             )
             try:
-                final = runtime.kick(
-                    inputs, emit=publish_runtime, cancellation=execution.cancellation,
-                    max_model_calls_per_turn=run_options.max_model_calls_per_turn,
-                    max_tool_calls_per_turn=run_options.max_tool_calls_per_turn,
-                    max_loop_turns=max_loop_turns,
+                run_kwargs = {
+                    "emit": publish_runtime,
+                    "cancellation": execution.cancellation,
+                    "max_model_calls_per_turn": run_options.max_model_calls_per_turn,
+                    "max_tool_calls_per_turn": run_options.max_tool_calls_per_turn,
+                    "max_loop_turns": max_loop_turns,
+                }
+                final = (
+                    runtime.kick(
+                        inputs, load_video_context=load_video_context,
+                        **run_kwargs,
+                    )
+                    if isinstance(runtime, SupervisorRuntime)
+                    else runtime.kick(inputs, **run_kwargs)
                 )
             except AgentToolInvocationError as exc:
                 if exc.__cause__ is None:
                     raise
                 raise exc.__cause__ from None
             terminal_timing = timer.finish()
+            if isinstance(runtime, SupervisorRuntime):
+                content = final.content
+                video_result = final.video_result
+                search_result = (
+                    video_result.model_dump(mode="json", by_alias=True)
+                    if video_result is not None else None
+                )
+                retrieval_query = video_result.query if video_result is not None else None
+                if search_result is not None and content != video_result.agent_reply.message:
+                    video_answer = video_result.agent_reply.message
+                    if not content.startswith(video_answer):
+                        raise AgentModelInvocationError(
+                            "Supervisor changed the approved video answer"
+                        )
+                    supplement = content[len(video_answer):].strip()
+                    if supplement:
+                        search_result["renderBlocks"].append({
+                            "type": "markdown", "markdown": supplement,
+                        })
+                    search_result["agentReply"]["message"] = content
+            else:
+                content = final.agent_reply.message
+                retrieval_query = final.query
+                search_result = final.model_dump(mode="json", by_alias=True)
             assistant = self._repository.complete_assistant_message(
-                assistant_id, content=final.agent_reply.message, retrieval_query=final.query,
-                search_result=final.model_dump(mode="json", by_alias=True), now=self._clock(),
+                assistant_id, content=content, retrieval_query=retrieval_query,
+                search_result=search_result, now=self._clock(),
                 timing=terminal_timing,
             )
-            for event in pending_answer_events:
+            for event in pending_answer_events if search_result is not None else ():
                 if event["type"] == "answer.evidence":
                     hits = event["searchResult"].get("hits")
                     evidence_hit_count = len(hits) if isinstance(hits, list) else 0
@@ -716,7 +784,7 @@ class AgentChatService:
                 "max_tool_calls_per_turn=%s",
                 conversation_id, assistant_id, last_phase,
                 terminal_timing.total_duration_ms, len(terminal_timing.stages),
-                len(final.agent_reply.message), evidence_hit_count,
+                len(content), evidence_hit_count,
                 run_options.max_model_calls_per_turn,
                 run_options.max_tool_calls_per_turn,
             )

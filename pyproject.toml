@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "arkruntime>=0.6,<1",
+    "ddgs>=9.16,<10",
     "fastapi>=0.115,<1",
     "httpx[socks]>=0.28,<1",
     "langchain>=1.2,<2",

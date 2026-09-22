@@ -19,6 +19,9 @@ class AgentServiceConfig:
     query_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     evaluator_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     chat_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
+    supervisor_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
+    web_search_max_results: int = 5
+    web_search_timeout_seconds: float = 12.0
     max_output_tokens: int = 4096
     max_prompt_chars: int = 200_000
     context_window_tokens: int = 64_000
@@ -48,7 +51,7 @@ class AgentServiceConfig:
             raise ValueError("limits_enabled must be a boolean")
         for name in (
             "query_reasoning_effort", "evaluator_reasoning_effort",
-            "chat_reasoning_effort",
+            "chat_reasoning_effort", "supervisor_reasoning_effort",
         ):
             if getattr(self, name) not in ("none", "low", "high", "max"):
                 raise ValueError(f"{name} must be none, low, high, or max")
@@ -60,6 +63,7 @@ class AgentServiceConfig:
             "context_window_tokens", "context_safety_margin_tokens",
             "auto_compact_tokens", "compact_target_tokens",
             "max_catalog_items_per_page", "maximum_concurrent_kicks",
+            "web_search_max_results",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be greater than zero")
@@ -77,6 +81,10 @@ class AgentServiceConfig:
             raise ValueError("max_tool_result_bytes must be at least 512")
         if self.max_catalog_items_per_page > 100:
             raise ValueError("max_catalog_items_per_page must not exceed 100")
+        if self.web_search_max_results > 20:
+            raise ValueError("web_search_max_results must not exceed 20")
+        if self.web_search_timeout_seconds > 60:
+            raise ValueError("web_search_timeout_seconds must not exceed 60")
         maximum_input_tokens = (
             self.context_window_tokens
             - self.max_output_tokens
@@ -98,6 +106,7 @@ class AgentServiceConfig:
         for name in (
             "stage_timeout_seconds", "evaluator_stage_timeout_seconds",
             "execution_timeout_seconds",
+            "web_search_timeout_seconds",
         ):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:

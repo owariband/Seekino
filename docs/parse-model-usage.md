@@ -39,7 +39,7 @@ Query、Evaluator、Chat 和检索问题的 Embedding 不计入 Parse 账本。F
 
 方舟价格以常规在线推理为口径，档位依据官方表头“千 Token”转换为整数区间；价格版本从本次核对日期起使用，不补算未记录的历史请求。[方舟模型价格](https://www.volcengine.com/docs/82379/1544106?lang=zh)、[模型列表](https://www.volcengine.com/docs/82379/1330310?lang=zh)
 
-`doubao-embedding-vision-251215` 的文本输入为 `0.7`，图像输入为 `1.8`；视频帧消耗读取 Embedding 响应的 `image_tokens`。[方舟模型价格](https://www.volcengine.com/docs/82379/1544106?lang=zh)
+`doubao-embedding-vision-250615` 的文本输入为 `0.7`，图像输入为 `1.8`；视频帧消耗读取 Embedding 响应的 `image_tokens`。[方舟模型价格](https://www.volcengine.com/docs/82379/1544106?lang=zh)
 
 DeepSeek 峰价为北京时间周一至周五 `09:00–12:00`、`14:00–18:00`，其余为谷价；此版本价格于北京时间 2026-09-10 12:00 生效，直接采用官方人民币价格。[DeepSeek 模型与价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)
 

@@ -22,6 +22,9 @@ agent_runtime:
   query_reasoning_effort: low
   evaluator_reasoning_effort: low
   chat_reasoning_effort: low
+  supervisor_reasoning_effort: none
+  web_search_max_results: 5
+  web_search_timeout_seconds: 12
   max_output_tokens: 4096
   max_prompt_chars: 200000
   context_window_tokens: 64000
@@ -56,6 +59,6 @@ video_parser:
       request_timeout_seconds: 1200
 
 multimodal_embedding:
-  model: doubao-embedding-vision-251215
+  model: doubao-embedding-vision-250615
   dimensions: 1024
   fps: 1.0

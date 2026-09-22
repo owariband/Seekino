@@ -142,6 +142,7 @@ class AgentRuntime:
         max_model_calls_per_turn: int | None = None,
         max_tool_calls_per_turn: int | None = None,
         max_loop_turns: int | None = None,
+        deadline: float | None = None,
     ) -> AgentFinalOutput:
         if (
             not inputs["workspace_id"].strip()
@@ -186,8 +187,12 @@ class AgentRuntime:
                 tool_call_limit if legacy_limits_enabled else None
             ),
         )
+        own_deadline = monotonic() + self._execution_timeout
+        if deadline is not None and (not isfinite(deadline) or deadline <= 0):
+            raise ValueError("deadline must be positive and finite")
         control = ExecutionControl(
-            monotonic() + self._execution_timeout, cancellation, emit,
+            min(own_deadline, deadline) if deadline is not None else own_deadline,
+            cancellation, emit,
         )
         workspace = AgentWorkspace(
             workspace_id=inputs["workspace_id"],

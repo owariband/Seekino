@@ -353,6 +353,9 @@ def test_legacy_deepseek_chat_model_environment_is_still_supported(monkeypatch):
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "nan"),
     ("ANIVAG_AGENT_EXECUTION_TIMEOUT_SECONDS", "0"),
     ("ANIVAG_AGENT_MAX_CONCURRENT_KICKS", "0"),
+    ("ANIVAG_AGENT_WEB_SEARCH_MAX_RESULTS", "21"),
+    ("ANIVAG_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "61"),
+    ("ANIVAG_AGENT_SUPERVISOR_REASONING_EFFORT", "invalid"),
 ])
 def test_invalid_agent_execution_budget_is_rejected(monkeypatch, name, value):
     _clean_anivag_environment(monkeypatch)
