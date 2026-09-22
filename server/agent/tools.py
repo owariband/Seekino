@@ -116,15 +116,21 @@ def _build_agent_tool(
     description: str,
     args_schema: type[BaseModel],
     maximum_result_bytes: int,
+    draft_item_count: Callable[[], int] | None = None,
 ) -> StructuredTool:
     """Keep correctable Tool failures model-visible across both Agent runners."""
+
+    def with_draft_count(payload: dict[str, Any]) -> dict[str, Any]:
+        if draft_item_count is not None:
+            payload["draft_item_count"] = draft_item_count()
+        return payload
 
     @wraps(func)
     def invoke(*args: Any, **kwargs: Any) -> str:
         try:
             return func(*args, **kwargs)
         except AgentToolFeedbackError as exc:
-            raise ToolException(bounded_json({
+            raise ToolException(bounded_json(with_draft_count({
                 "ok": False,
                 "error": {
                     "code": exc.code,
@@ -135,30 +141,30 @@ def _build_agent_tool(
                         if exc.suggested_end is not None else {}
                     ),
                 },
-            }, maximum_result_bytes)) from exc
+            }), maximum_result_bytes)) from exc
         except UnknownToolItemError as exc:
-            raise ToolException(bounded_json({
+            raise ToolException(bounded_json(with_draft_count({
                 "ok": False,
                 "error": {
                     "code": "UNKNOWN_ITEM",
                     "message": str(exc),
                     "retry_hint": exc.retry_hint,
                 },
-            }, maximum_result_bytes)) from exc
+            }), maximum_result_bytes)) from exc
 
     def validation_feedback(error: Any) -> str:
         fields = [
             ".".join(map(str, item.get("loc", ()))) or "arguments"
             for item in error.errors(include_input=False, include_url=False)[:4]
         ]
-        return bounded_json({
+        return bounded_json(with_draft_count({
             "ok": False,
             "error": {
                 "code": "INVALID_ARGUMENTS",
                 "message": f"Invalid arguments for {name}: {', '.join(fields)}.",
                 "retry_hint": "Check the Tool schema and call it again with valid arguments.",
             },
-        }, maximum_result_bytes)
+        }), maximum_result_bytes)
 
     return StructuredTool.from_function(
         func=invoke,
@@ -542,7 +548,10 @@ def build_retrieve_tool(
                         cursor=cursor,
                         maximum_items=maximum_catalog_items,
                         maximum_bytes=maximum_result_bytes,
-                        metadata=metadata,
+                        metadata={
+                            **metadata,
+                            "draft_item_count": workspace.draft_item_count(),
+                        },
                     )
                 except AgentToolOutputError:
                     raise
@@ -606,6 +615,7 @@ def build_retrieve_tool(
             metadata = {
                 "query": query,
                 "result_count": len(items),
+                "draft_item_count": workspace.draft_item_count(),
                 "partial": result.partial,
                 "warnings": [_bounded_text(value, 500) for value in result.warnings[:8]],
                 "retrieval_strategy": {
@@ -636,6 +646,7 @@ def build_retrieve_tool(
         ),
         args_schema=RetrieveArguments,
         maximum_result_bytes=maximum_result_bytes,
+        draft_item_count=workspace.draft_item_count,
     )
 
 
@@ -694,7 +705,7 @@ def build_update_draft_item_tool(
     ) -> str:
         _start_tool_call(control, budget, "update_draft_item")
         try:
-            inserted = workspace.upsert_draft_item(
+            operation, draft_item_count = workspace.upsert_draft_item(
                 video_chunk_id=video_chunk_id,
                 start_ms=start_ms,
                 end_ms=end_ms,
@@ -712,9 +723,13 @@ def build_update_draft_item_tool(
             ) from exc
         return bounded_json({
             "accepted": True,
-            "operation": "inserted" if inserted else "updated",
+            "operation": operation,
             "video_chunk_id": video_chunk_id,
-            "draft_item_count": len(workspace.draft_items()),
+            "draft_item_count": draft_item_count,
+            **(
+                {"message": "该片段已在草稿中，提交内容未变。"}
+                if operation == "already_present" else {}
+            ),
         }, maximum_result_bytes)
 
     return _build_agent_tool(
@@ -727,6 +742,7 @@ def build_update_draft_item_tool(
         ),
         args_schema=UpdateDraftTemArguments,
         maximum_result_bytes=maximum_result_bytes,
+        draft_item_count=workspace.draft_item_count,
     )
 
 
@@ -739,11 +755,11 @@ def build_remove_draft_item_tool(
 ) -> StructuredTool:
     def remove_draft_item(video_chunk_id: str) -> str:
         _start_tool_call(control, budget, "remove_draft_item")
-        removed = workspace.remove_draft_item(video_chunk_id)
+        removed, draft_item_count = workspace.remove_draft_item(video_chunk_id)
         return bounded_json({
             "removed": removed,
             "video_chunk_id": video_chunk_id,
-            "draft_item_count": len(workspace.draft_items()),
+            "draft_item_count": draft_item_count,
         }, maximum_result_bytes)
 
     return _build_agent_tool(
@@ -752,6 +768,7 @@ def build_remove_draft_item_tool(
         description="Remove one Draft Item by video_chunk_id.",
         args_schema=RemoveItemArguments,
         maximum_result_bytes=maximum_result_bytes,
+        draft_item_count=workspace.draft_item_count,
     )
 
 

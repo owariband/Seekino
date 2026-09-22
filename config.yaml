@@ -30,7 +30,7 @@ agent_runtime:
   compact_target_tokens: 24000
   max_tool_result_bytes: 16384
   max_catalog_items_per_page: 20
-  stage_timeout_seconds: 120
+  stage_timeout_seconds: 240
   evaluator_stage_timeout_seconds: 180
   execution_timeout_seconds: 600
   maximum_concurrent_kicks: 4

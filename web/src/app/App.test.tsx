@@ -671,7 +671,7 @@ describe("application shell", () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
 
-    expect(await screen.findByText("10 段 · 自动")).toBeInTheDocument();
+    expect(await screen.findByText("服务端默认")).toBeInTheDocument();
     const composer = await screen.findByRole("textbox", {
       name: "向名场面检索助手提问",
     });
@@ -699,9 +699,6 @@ describe("application shell", () => {
       workspaceId: "local-default",
       content: "雨天门口",
       seriesIds: [],
-      topK: 10,
-      maxModelCallsPerTurn: 6,
-      maxToolCallsPerTurn: 24,
       reference: null,
     });
   });
@@ -722,7 +719,8 @@ describe("application shell", () => {
     expect(screen.getByRole("button", { name: "自动" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("slider", { name: "模型调用上限" })).not.toBeInTheDocument();
     expect(screen.queryByRole("slider", { name: "工具调用上限" })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole("slider", { name: "候选片段数量" }), { target: { value: "7" } });
+    expect(screen.getByText("每次检索最多返回多少段候选片段")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("slider", { name: "单次检索候选片段数量" }), { target: { value: "7" } });
     await user.click(screen.getByRole("button", { name: "自定义" }));
     expect(screen.getByRole("slider", { name: "最多运行轮次" })).toHaveAttribute("max", "100");
     expect(screen.getByRole("slider", { name: "最多运行轮次" })).toHaveValue("100");
@@ -744,8 +742,7 @@ describe("application shell", () => {
       maxToolCallsPerTurn: 36,
     });
     expect(JSON.parse(localStorage.getItem("anivag-agent-message-options:local-default")!)).toEqual({
-      serverOptions: initialMessageOptions,
-      selection: {
+      overrides: {
         topK: 7,
         maxLoopTurns: 100,
         maxModelCallsPerTurn: 9,
@@ -755,27 +752,51 @@ describe("application shell", () => {
     act(finishAnswer);
   });
 
-  it("drops legacy browser overrides and refreshes defaults after a YAML change", async () => {
+  it("keeps explicit overrides after a YAML change and omits untouched defaults", async () => {
     localStorage.setItem("anivag-agent-message-options:local-default", JSON.stringify({
       topK: 5,
       maxLoopTurns: 100,
       maxModelCallsPerTurn: 9,
       maxToolCallsPerTurn: 36,
     }));
-    const { setMessageOptions } = renderApp();
-    expect(await screen.findByText("10 段 · 自动")).toBeInTheDocument();
+    const { fetchMock, setMessageOptions, finishAnswer } = renderApp();
+    expect(await screen.findByText("服务端默认")).toBeInTheDocument();
     await userEvent.setup().click(screen.getByLabelText("配置本次回答"));
-    fireEvent.change(screen.getByRole("slider", { name: "候选片段数量" }), { target: { value: "7" } });
-    expect(screen.getByText("7 段 · 自动")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("slider", { name: "单次检索候选片段数量" }), { target: { value: "7" } });
+    expect(screen.getByText("每次检索 7 段")).toBeInTheDocument();
     act(() => window.dispatchEvent(new Event("focus")));
-    expect(screen.getByText("7 段 · 自动")).toBeInTheDocument();
+    expect(screen.getByText("每次检索 7 段")).toBeInTheDocument();
 
     setMessageOptions({
       ...initialMessageOptions,
       topK: { ...initialMessageOptions.topK, defaultValue: 8 },
     });
     act(() => window.dispatchEvent(new Event("focus")));
-    expect(await screen.findByText("8 段 · 自动")).toBeInTheDocument();
+    expect(await screen.findByText("每次检索 7 段")).toBeInTheDocument();
+    await userEvent.setup().type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await userEvent.setup().click(screen.getByRole("button", { name: "发送问题" }));
+    const sendCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/messages/send?conversationId=conversation"));
+    expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({ topK: 7 });
+    expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("maxModelCallsPerTurn");
+    act(finishAnswer);
+  });
+
+  it("uses a refreshed server default when Chat has no override", async () => {
+    const { fetchMock, setMessageOptions, finishAnswer } = renderApp();
+    expect(await screen.findByText("服务端默认")).toBeInTheDocument();
+    setMessageOptions({
+      ...initialMessageOptions,
+      topK: { ...initialMessageOptions.topK, defaultValue: 8 },
+    });
+    act(() => window.dispatchEvent(new Event("focus")));
+    await userEvent.setup().click(screen.getByLabelText("配置本次回答"));
+    expect(screen.getByRole("slider", { name: "单次检索候选片段数量" })).toHaveValue("8");
+    await userEvent.setup().type(screen.getByRole("textbox", { name: "向名场面检索助手提问" }), "雨天门口");
+    await userEvent.setup().click(screen.getByRole("button", { name: "发送问题" }));
+    const sendCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/messages/send?conversationId=conversation"));
+    expect(JSON.parse(String(sendCall?.[1]?.body))).not.toHaveProperty("topK");
+    expect(JSON.parse(localStorage.getItem("anivag-agent-message-options:local-default")!)).toEqual({ overrides: {} });
+    act(finishAnswer);
   });
 
   it("keeps an in-flight Auto request unchanged when the next answer is set to custom turns", async () => {

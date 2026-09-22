@@ -48,8 +48,6 @@ def bind_draft(
     previous_turns: list[LoopTurn],
     calls: list[RetrievalCall],
     draft: QueryDraft,
-    *,
-    max_selected_hits: int,
 ) -> tuple[VideoChunkSearchResult, VideoChunkSearchResult, dict[str, int]]:
     # Later calls supersede the same chunk; every value still comes from a real call.
     by_id: dict[str, VideoChunkSearchHit] = {}
@@ -87,8 +85,6 @@ def bind_draft(
             )
         selected_ids.add(selected_range.video_chunk_id)
         selected_ranges.append(selected_range)
-    if len(selected_ranges) > max_selected_hits:
-        raise AgentModelInvocationError("Query draft exceeds the final selected-hit budget")
     if any(item.video_chunk_id not in by_id for item in selected_ranges):
         raise AgentModelInvocationError("Query Agent selected a VideoChunk outside retrieved evidence")
     selected = [

@@ -330,18 +330,32 @@ def test_retrieve_returns_catalog_and_read_trieve_item_ranges_full_evidence() ->
     assert retrieval.calls == 1
     assert len(calls) == 1
     assert first["total"] == 2
+    assert first["draft_item_count"] == 0
     assert len(first["items"]) == 1
     assert first["items"][0]["video_chunk_id"] == "chunk-1"
     assert "杯子碎裂" not in json.dumps(first, ensure_ascii=False)
     assert "evidence" not in first["items"][0]
     assert first["next_cursor"]
 
+    inserted = json.loads(tools["update_draft_item"].invoke({
+        "video_chunk_id": "chunk-1",
+        "start_ms": 1_100,
+        "end_ms": 1_900,
+        "claim": "first claim",
+    }))
+    assert inserted["draft_item_count"] == 1
+
     second_raw = tools["retrieve"].invoke({"cursor": first["next_cursor"]})
     second = json.loads(second_raw)
     assert len(second_raw.encode("utf-8")) <= maximum_result_bytes
     assert retrieval.calls == 1
     assert [item["video_chunk_id"] for item in second["items"]] == ["chunk-2"]
+    assert second["draft_item_count"] == 1
     assert second["next_cursor"] is None
+
+    invalid_cursor = json.loads(tools["retrieve"].invoke({"cursor": "invalid"}))
+    assert invalid_cursor["error"]["code"] == "INVALID_CATALOG_CURSOR"
+    assert invalid_cursor["draft_item_count"] == 1
 
     detail = _read_all(
         tools["read_trieve_item"], "chunk-1", maximum_result_bytes,
@@ -531,14 +545,17 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
     tools, _calls = _query_tools(
         retrieval, workspace, maximum_result_bytes=maximum_result_bytes,
     )
-    _retrieve(tools, top_k=1)
+    retrieved = _retrieve(tools, top_k=1)
+    assert retrieved["draft_item_count"] == 0
 
-    inserted = json.loads(tools["update_draft_item"].invoke({
+    first_item = {
         "video_chunk_id": "chunk-1",
         "start_ms": 1_100,
         "end_ms": 1_900,
         "claim": "first claim",
-    }))
+    }
+    inserted = json.loads(tools["update_draft_item"].invoke(first_item))
+    repeated = json.loads(tools["update_draft_item"].invoke(first_item))
     updated = json.loads(tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
         "start_ms": 1_200,
@@ -547,6 +564,9 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
     }))
 
     assert inserted["operation"] == "inserted"
+    assert inserted["draft_item_count"] == 1
+    assert repeated["operation"] == "already_present"
+    assert repeated["draft_item_count"] == 1
     assert updated["operation"] == "updated"
     assert updated["draft_item_count"] == 1
     catalog = json.loads(tools["get_draft_catelog"].invoke({}))
@@ -591,6 +611,7 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
         out_of_range, empty_range, reversed_range, negative_range,
     ):
         failure = json.loads(rejected)
+        assert failure["draft_item_count"] == 1
         assert failure["error"]["code"] == "INVALID_DRAFT_RANGE"
         assert "1000 <= start_ms < end_ms <= 2000" in failure["error"]["message"]
         assert "重新调用 update_draft_item" in failure["error"]["retry_hint"]

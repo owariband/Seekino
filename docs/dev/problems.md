@@ -1,6 +1,6 @@
 # 项目问题清单
 
-更新日期：2026-09-20。依据当前源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。
+更新日期：2026-09-21。依据当前源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。
 
 ## frontend
 
@@ -237,6 +237,56 @@ return completed
 
 依据：[video_processing.py](../../server/service/video_processing.py) 的 Graph、State 与节点顺序；[runtime.py](../../engine/parse/runtime.py) 和 [video_chunk_parse.py](../../engine/parse/video_chunk_parse.py) 的 Agent/fallback 契约；[consumer.py](../../server/mq/consumer.py) 与 [job.py](../../server/repository/job.py) 的 Queue retry、Checkpoint 和 Lease；[test_video_processing_service.py](../../tests/server/test_video_processing_service.py) 的阶段顺序与恢复回归测试。
 
+## Chat 联调问题（2026-09-21）
+
+### C01：草稿引用未召回的 Evidence 导致回答失败
+
+- 状态：故障原因已定位，校验和失败路径仍待改进。此前 Chat 日志中的 `Draft Item must reference retrieved Evidence` 来自 `AgentWorkspace.upsert_draft_item()`：Query Agent 提交的 `video_chunk_id` 不在本轮已召回的 Evidence 集合中。这里的 Evidence ID 是视频证据片段的 `video_chunk_id`，不是日志或请求的追踪 ID。
+- 影响：该错误抛出 `AgentModelInvocationError`，本次 Assistant 消息被标记为 FAILED，页面显示“这次对话未能完成，请稍后重试。”；不是服务进程 panic。合法性校验必须保留，但目前未知 ID 没有像非法时间范围那样返回可供 Agent 修正的 Tool 反馈。
+- 已做：`update_draft_tem` 已统一更名为 `update_draft_item`（代码、Query Skill 与测试，提交 `b41b1f5`）。工具调用现在记录 `Query`／`Evaluator`／`Chat` 角色、对话与消息 ID、工具名、调用 ID、参数摘要、结果摘要或错误、耗时；自由文本用长度与哈希代替原文。业务日志持续写入 `outputs/server/logs/development/api.log`，并按大小轮转。
+- 待办：明确未知 Evidence ID 的可恢复 Tool 错误语义，给 Agent 返回可操作的纠正信息；验证失败后能继续检索或改用已召回 ID，同时不能放行未检索证据。`read_trieve_item`、`get_draft_catelog` 也存在拼写异常，目前仍是实际 Tool 名，尚未更名，改名时须同步 Tool、Skill 和回归测试。
+
+依据：[workspace.py](../../server/agent/workspace.py) 的 `upsert_draft_item`；[tools.py](../../server/agent/tools.py) 的 Tool 定义与调用追踪；[agent_chat.py](../../server/service/agent_chat.py) 的失败收尾；[query/SKILL.md](../../server/agent/skills/query/SKILL.md) 的工具清单。
+
+### C02：多次“回答未完成”仍需逐条归因
+
+- 状态：页面现象由用户提供的记录确认，具体失败并非同一种。原问题“爱音和灯是怎么认识的？谁是咕咕嘎嘎？”连续出现约 8 秒、29 秒、29 秒的失败，后来一次约 1 分 17 秒完成；追问“为什么没解释清楚？”也先经历约 8 秒失败，随后约 31 秒完成。仅靠页面通用文案和耗时，不能把这些失败全部归因于 C01。
+- 同期日志线索：同一会话在 10:41 检索阶段约 8 秒、10:45 与 10:52 审核阶段各约 29 秒失败，错误类型均为 `GraphRecursionError`；16:22 另有检索阶段约 8 秒的 `AGENT_MODEL_ERROR`。17:09 还出现 `read_trieve_item` 游标不匹配，最终以 `PROCESSING_FAILED` 结束。页面摘录没有 `message_id`，这些日志尚未与摘录中的每次失败逐一关联。工具名拼写异常本身也不能据此判定为游标错误的根因。
+- 待办：用 `conversation_id`／`message_id` 对齐页面失败与 `agent_execution_failed`、`agent_tool_failed`；分别排查模型错误、游标误用和 Evidence ID 校验。对游标错误检查 Agent 是否把某个证据的 `next_cursor` 用于另一证据，及 Tool 返回的纠错信息是否足够；复测失败后的继续发送。
+
+依据：`outputs/server/logs/development/api.log` 中 2026-09-21 10:41、10:45、10:52、16:22 和 17:09 的失败记录；[tools.py](../../server/agent/tools.py) 的 Tool 追踪；[agent_chat.py](../../server/service/agent_chat.py) 的公开错误映射。
+
+### C03：“怎么认识的”被回答成后续组队过程
+
+- 状态：回答质量缺陷，尚未完成根因定位。首个成功回答把第 1 集约 11:00–21:00 的追人、摔倒、创可贴、卡拉 OK 邀请当作“相识”的完整起点。用户继续追问后，系统才检索到第 1 集约 04:00 的校外偶遇、04:24 后的教室邻座再碰面、约 05:02 的自我介绍。按后续提供的片段，11:27 起是认识后的组队接近，首答遗漏了更早的接触。
+- 同一问题还包含“谁是咕咕嘎嘎？”。首答只称在“第 1–3 集范围”未找到，并推测可能是别的译名或粉丝梗；用户选择的是 MyGO，不能凭这次未命中断言全系列没有，也需要核查为何回答自行收窄到第 1–3 集。该称呼所指目前仍未核实。
+- 待办：复盘首轮 Query 检索词、候选排序、精读与 Evaluator 放行记录，确认 04:00 片段是未召回、被忽略还是在审核时被遗漏。对“初次／最早／怎么认识”类问题检查时间线完整性，对包含多个子问题的提问逐项核验；未找到时准确说明实际检索范围和限制。回归用此对话验证首答能区分“首次碰面、正式自我介绍、后来组队”。
+
+依据：用户提供的本次对话页面记录；[query/SKILL.md](../../server/agent/skills/query/SKILL.md) 与 [evaluator/SKILL.md](../../server/agent/skills/evaluator/SKILL.md) 的检索及审核流程。04:00 等情节来自后续答案所展示的视频片段，仍需在回归时独立核验。
+
+### C04：失败信息与下一轮 Context 的边界
+
+- 状态：当前行为已确认。页面对 FAILED Assistant 展示 `lastError.message`，下一轮历史只读取 `COMPLETED` 消息，构造 Agent 输入时也不带 `lastError`；因此页面异常文案不会直接注入下一轮 Context。
+- 注意：失败请求对应的 USER 消息仍为 `COMPLETED`，下一轮可能再次看到原问题。可恢复的 Tool 错误若作为结果返回，则会进入**当轮**模型上下文；这与页面上的失败提示不是同一条路径。
+
+依据：[SearchPage.tsx](../../web/src/features/search/SearchPage.tsx) 的失败展示；[agent.py](../../server/repository/agent.py) 的 `list_recent_completed_messages`；[agent_chat.py](../../server/service/agent_chat.py) 的历史构造。
+
+### C05：用户可见回答混入 Agent 流程描述
+
+- 状态：页面摘录中的成功回答末尾出现“已按获批草稿整理完成”“三个视频块分别对应”等内部整理说明，首答还说“正好用满本次上限”。这些句子没有回答用户的剧情问题，也把草稿审批和视频块上限暴露到正文中；当前仅凭页面文本不能断定是哪个 Agent 阶段生成的。
+- 待办：按消息 ID 对照 Chat Agent 输出、服务端正文组装和前端渲染，确认该内容的来源；让最终回答只保留用户需要的结论、依据和必要的不确定性说明，并用这段对话做回归。
+
+依据：用户提供的本次对话页面记录；[chat/SKILL.md](../../server/agent/skills/chat/SKILL.md) 的最终回答流程；[SearchPage.tsx](../../web/src/features/search/SearchPage.tsx) 的消息展示。
+
+### C06：Query Tool 将 topK 误用为整轮草稿数量上限
+
+- 状态：已修复，待服务重启后整链复测。`topK` 只控制单次 `retrieve` 的候选数；Query 草稿不再受其限制，合法性、Tool 输出大小、精读范围和模型 Context 的保护仍保留。
+- 已做：移除 Query Prompt、Runtime、输出绑定和草稿模型中的整轮条目上限；多次检索可累计选择超过单次 `topK` 的不同片段。
+- 已做：草稿按稳定 `video_chunk_id` 去重；原样重复返回 `already_present`，内容变化返回 `updated`。`retrieve`、`update_draft_item`、`remove_draft_item` 向 Query Agent 返回当前 `draft_item_count`。
+- 已做：Chat 只保存和发送用户显式覆盖的选项，默认值由服务端当前配置决定；页面将 `topK` 明确标为单次检索候选数。相关后端和前端回归测试已通过。
+
+依据：[tools.py](../../server/agent/tools.py) 的 `retrieve`／`update_draft_item`；[workspace.py](../../server/agent/workspace.py) 的片段与草稿去重；[runtime.py](../../server/agent/runtime.py) 和 [output.py](../../server/agent/output.py) 的草稿绑定；[query.py](../../server/agent/query.py) 的提示词。
+
 ## 联调与验收
 
 这些项目属于待验证或部署准备，不等于对应主体代码未实现。
@@ -257,6 +307,15 @@ return completed
 - 历史 Parse 消耗：过去没有保存 usage 的已完成任务无法补算。新版 Worker 处理既有排队任务也能记录；旧任务重试只记录新调用，旧执行缺失时整体仍不完整；复用缓存不补造历史费用。
 
 ## TODO（待修复解决）
+
+### C07：收集并治理 Tool／Context 链路的其他异常终止
+
+- 状态：待盘点。当前已有统一 Tool 结果封装和部分可纠正错误反馈，但仍存在 Tool 次数、输出大小、草稿／证据校验、Context 预算、模型调用与阶段超时等可能结束整轮的路径。不能将所有中断一概视为应移除的限制；证据一致性和真实服务故障需要保留明确的失败语义。
+- [ ] 逐项列出 Query、Evaluator、Chat 中从 Tool 调用或 Context 处理走到整轮 FAILED 的路径；对齐实际日志的 `message_id`、Tool 调用 ID、触发条件、错误类型和页面表现，标明哪些是 Agent 可修正输入、哪些是数据一致性保护或真实依赖故障。
+- [ ] 对可修正的 Tool 参数、未知条目、读取范围、Catalog 游标和输出过大错误，统一返回有错误码、纠正提示及必要有效范围的受限结果，使 Agent 能在当轮缩小请求或重试；对必须终止的错误保留清晰的阶段、原因和日志，不用通用 Tool 错误掩盖根因。
+- [ ] 按盘点结果逐项修复并补回归：合法的多次检索及重复片段可继续完成；超范围读取能缩小后重试；无效证据不能进入最终答案；Context 溢出、模型失败和超时各有可定位的终止原因。
+
+依据：[tools.py](../../server/agent/tools.py) 的 Tool 包装和调用预算；[tool_output.py](../../server/agent/tool_output.py) 的输出限制；[runtime.py](../../server/agent/runtime.py) 与 [context.py](../../server/agent/context.py) 的执行及 Context 预算；[agent_chat.py](../../server/service/agent_chat.py) 的失败收尾。
 
 ### B06：缺少可复用的结构化 Context Canvas 与受限 Patch 框架
 

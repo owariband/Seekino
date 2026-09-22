@@ -14,8 +14,10 @@ import { useAgentConversation } from "./useAgentConversation";
 import styles from "./search.module.css";
 
 type SelectedMessageOptions = Required<AgentMessageRunOptions>;
+type MessageOptionOverrides = AgentMessageRunOptions;
 const messageOptionsStorageKey = `anivag-agent-message-options:${WORKSPACE_ID}`;
-type StoredMessageOptions = { serverOptions: AgentMessageOptions; selection: SelectedMessageOptions };
+type StoredMessageOptions = { overrides?: MessageOptionOverrides; serverOptions?: AgentMessageOptions; selection?: SelectedMessageOptions };
+const messageOptionNames = ["topK", "maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"] as const;
 
 function defaultMessageOptions(options: AgentMessageOptions): SelectedMessageOptions {
   return {
@@ -26,30 +28,32 @@ function defaultMessageOptions(options: AgentMessageOptions): SelectedMessageOpt
   };
 }
 
-function storedMessageOptions(options: AgentMessageOptions): SelectedMessageOptions {
-  const defaults = defaultMessageOptions(options);
+function boundedMessageOptionOverrides(overrides: MessageOptionOverrides, options: AgentMessageOptions): MessageOptionOverrides {
+  const bounded: MessageOptionOverrides = {};
+  for (const name of messageOptionNames) {
+    const value = overrides[name];
+    const limits = options[name];
+    if (typeof value === "number" && Number.isInteger(value)
+      && value >= limits.minimum && value <= limits.maximum) {
+      bounded[name] = value;
+    }
+  }
+  return bounded;
+}
+
+function storedMessageOptionOverrides(options: AgentMessageOptions): MessageOptionOverrides {
   try {
     const saved = JSON.parse(localStorage.getItem(messageOptionsStorageKey) ?? "null") as StoredMessageOptions | null;
-    if (!saved || JSON.stringify(saved.serverOptions) !== JSON.stringify(options)) return defaults;
-    const stored = saved.selection;
-    const bounded = (name: keyof SelectedMessageOptions) => {
-      const value = stored[name];
-      const bounds = options[name];
-      return typeof value === "number"
-        && Number.isInteger(value)
-        && value >= bounds.minimum
-        && value <= bounds.maximum
-        ? value
-        : defaults[name];
-    };
-    return {
-      topK: bounded("topK"),
-      maxLoopTurns: bounded("maxLoopTurns"),
-      maxModelCallsPerTurn: bounded("maxModelCallsPerTurn"),
-      maxToolCallsPerTurn: bounded("maxToolCallsPerTurn"),
-    };
+    if (saved?.overrides) return boundedMessageOptionOverrides(saved.overrides, options);
+    if (!saved?.serverOptions || !saved.selection) return {};
+    const previousDefaults = defaultMessageOptions(saved.serverOptions);
+    const previousOverrides: MessageOptionOverrides = {};
+    for (const name of messageOptionNames) {
+      if (saved.selection[name] !== previousDefaults[name]) previousOverrides[name] = saved.selection[name];
+    }
+    return boundedMessageOptionOverrides(previousOverrides, options);
   } catch {
-    return defaults;
+    return {};
   }
 }
 
@@ -133,11 +137,17 @@ export function SearchPage() {
   const [query, setQuery] = useState("");
   const [reference, setReference] = useState<EvidenceReference | null>(null);
   const [messageOptionConfig, setMessageOptionConfig] = useState<AgentMessageOptions | null>(null);
-  const [messageOptions, setMessageOptions] = useState<SelectedMessageOptions | null>(null);
+  const [messageOptionOverrides, setMessageOptionOverrides] = useState<MessageOptionOverrides | null>(null);
   const [messageOptionsError, setMessageOptionsError] = useState<string | null>(null);
   const customLoopTurnsRef = useRef(100);
-  const messageOptionsFingerprintRef = useRef<string | null>(null);
   const messageOptionsRequestRef = useRef(0);
+  const messageOptions = messageOptionConfig && messageOptionOverrides
+    ? { ...defaultMessageOptions(messageOptionConfig), ...messageOptionOverrides }
+    : null;
+  const messageOptionSummary = !messageOptions || !messageOptionOverrides ? "服务端默认" : [
+    messageOptionOverrides.topK === undefined ? null : `每次检索 ${messageOptions.topK} 段`,
+    messageOptionOverrides.maxLoopTurns === undefined ? null : `最多 ${messageOptions.maxLoopTurns} 轮`,
+  ].filter(Boolean).join(" · ") || (Object.keys(messageOptionOverrides).length ? "已自定义" : "服务端默认");
   const [selection, setSelection] = useState<{ conversationId: string; messageId: string; chunkId: string; startMs: number; endMs: number } | null>(null);
   const deleteWarningId = useId();
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -182,13 +192,16 @@ export function SearchPage() {
       const requestId = ++messageOptionsRequestRef.current;
       void getAgentMessageOptions().then((options) => {
         if (!active || requestId !== messageOptionsRequestRef.current) return;
-        const fingerprint = JSON.stringify(options);
-        if (messageOptionsFingerprintRef.current !== fingerprint) {
-          const selected = storedMessageOptions(options);
-          customLoopTurnsRef.current = selected.maxLoopTurns || options.maxLoopTurns.defaultValue;
-          setMessageOptions(selected);
-          messageOptionsFingerprintRef.current = fingerprint;
-        }
+        setMessageOptionOverrides((current) => {
+          const overrides = current === null
+            ? storedMessageOptionOverrides(options)
+            : boundedMessageOptionOverrides(current, options);
+          if (overrides.maxLoopTurns) customLoopTurnsRef.current = overrides.maxLoopTurns;
+          else if (current === null || customLoopTurnsRef.current < options.maxLoopTurns.minimum || customLoopTurnsRef.current > options.maxLoopTurns.maximum) {
+            customLoopTurnsRef.current = options.maxLoopTurns.defaultValue;
+          }
+          return overrides;
+        });
         setMessageOptionConfig(options);
         setMessageOptionsError(null);
       }).catch((failure) => {
@@ -201,11 +214,11 @@ export function SearchPage() {
   }, []);
 
   useEffect(() => {
-    if (!messageOptions || !messageOptionConfig) return;
+    if (!messageOptionOverrides) return;
     try {
-      localStorage.setItem(messageOptionsStorageKey, JSON.stringify({ serverOptions: messageOptionConfig, selection: messageOptions }));
+      localStorage.setItem(messageOptionsStorageKey, JSON.stringify({ overrides: messageOptionOverrides }));
     } catch { /* Browser storage is optional; the current tab still keeps the selection. */ }
-  }, [messageOptions, messageOptionConfig]);
+  }, [messageOptionOverrides]);
 
   const replaceConversations = useCallback((items: AgentConversationView[]) => {
     conversationsRef.current = items;
@@ -279,8 +292,8 @@ export function SearchPage() {
     if (!canSend) return;
     followThread.current = true;
     setConversationStatus("问题已发送，正在检索");
-    const options = messageOptions
-      ? { ...messageOptions, maxLoopTurns: messageOptions.maxLoopTurns || undefined }
+    const options = messageOptionOverrides
+      ? { ...messageOptionOverrides, maxLoopTurns: messageOptionOverrides.maxLoopTurns || undefined }
       : {};
     void send(query, selectedSeriesIds, reference, options);
     setQuery("");
@@ -634,7 +647,7 @@ export function SearchPage() {
                   <summary aria-label="配置本次回答">
                     <SlidersHorizontal size={13} aria-hidden="true" />
                     <span>回答设置</span>
-                    <small>{messageOptions ? `${messageOptions.topK} 段 · ${messageOptions.maxLoopTurns === 0 ? "自动" : `${messageOptions.maxLoopTurns} 轮`}` : "服务端默认"}</small>
+                    <small>{messageOptionSummary}</small>
                     <ChevronDown size={13} aria-hidden="true" />
                   </summary>
                   <div className={`${styles.scopeOptions} ${styles.answerSettings}`} role="group" aria-label="本次回答设置">
@@ -646,17 +659,17 @@ export function SearchPage() {
                         onClick={() => {
                           if (!messageOptionConfig) return;
                           customLoopTurnsRef.current = messageOptionConfig.maxLoopTurns.defaultValue;
-                          setMessageOptions(defaultMessageOptions(messageOptionConfig));
+                          setMessageOptionOverrides({});
                         }}
                       >恢复默认</button>
                     </header>
                     {messageOptionConfig && messageOptions ? (
                       <>
                         <label className={styles.answerSettingRow}>
-                          <span><strong>候选片段</strong><small>最多保留多少段证据</small></span>
+                          <span><strong>单次检索候选片段</strong><small>每次检索最多返回多少段候选片段</small></span>
                           <span className={styles.answerSettingValue}>{messageOptions.topK}</span>
                           <input
-                            aria-label="候选片段数量"
+                            aria-label="单次检索候选片段数量"
                             type="range"
                             min={messageOptionConfig.topK.minimum}
                             max={messageOptionConfig.topK.maximum}
@@ -664,7 +677,13 @@ export function SearchPage() {
                             disabled={searching}
                             onChange={(event) => {
                               const topK = event.currentTarget.valueAsNumber;
-                              setMessageOptions((current) => current && ({ ...current, topK }));
+                              setMessageOptionOverrides((current) => {
+                                if (!current) return current;
+                                const next = { ...current };
+                                if (topK === messageOptionConfig.topK.defaultValue) delete next.topK;
+                                else next.topK = topK;
+                                return next;
+                              });
                             }}
                           />
                         </label>
@@ -673,10 +692,15 @@ export function SearchPage() {
                           <div className={styles.answerModeChoices} role="group" aria-label="运行轮次模式">
                             <button type="button" aria-pressed={messageOptions.maxLoopTurns === 0} onClick={() => {
                               if (messageOptions.maxLoopTurns > 0) customLoopTurnsRef.current = messageOptions.maxLoopTurns;
-                              setMessageOptions({ ...messageOptions, maxLoopTurns: 0 });
+                              setMessageOptionOverrides((current) => {
+                                if (!current) return current;
+                                const next = { ...current };
+                                delete next.maxLoopTurns;
+                                return next;
+                              });
                             }}>自动</button>
                             <button type="button" aria-pressed={messageOptions.maxLoopTurns > 0} onClick={() => {
-                              setMessageOptions({ ...messageOptions, maxLoopTurns: customLoopTurnsRef.current });
+                              setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns: customLoopTurnsRef.current }));
                             }}>自定义</button>
                           </div>
                         </div>
@@ -693,7 +717,7 @@ export function SearchPage() {
                               onChange={(event) => {
                                 const maxLoopTurns = event.currentTarget.valueAsNumber;
                                 customLoopTurnsRef.current = maxLoopTurns;
-                                setMessageOptions((current) => current && ({ ...current, maxLoopTurns }));
+                                setMessageOptionOverrides((current) => current && ({ ...current, maxLoopTurns }));
                               }}
                             />
                           </label>

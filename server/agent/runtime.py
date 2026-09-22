@@ -24,7 +24,7 @@ from .query import run_query
 from .state import (
     AgentFinalOutput, AnswerPhase, EvalDecision, ExecutionControl, LoopTurn,
     ModelContextBudget, QueryDraft, RunInputs, RunLimits, RunState,
-    SelectedVideoRange,
+    SelectedVideoRange, context_json,
 )
 from .tools import (
     DraftReadAudit, attach_agent_tool_logging, build_chat_tools,
@@ -247,7 +247,6 @@ class AgentRuntime:
             maximum_catalog_items=self._max_catalog_items,
         )
         attach_agent_tool_logging(query_tools, role="Query", inputs=inputs)
-        selection_limit = min(inputs["requested_top_k"], self._maximum_top_k)
         completion = run_query(
             self._query_model,
             inputs,
@@ -255,17 +254,12 @@ class AgentRuntime:
             tools=query_tools,
             max_model_calls=limits.max_model_calls_per_turn,
             control=query_control,
-            selection_limit=selection_limit,
             context_budget=context_budget,
             workspace=workspace,
         )
         query_control.check()
         control.check()
         draft_items = workspace.draft_items()
-        if len(draft_items) > selection_limit:
-            raise AgentModelInvocationError(
-                "Query draft exceeds the final selected-hit budget"
-            )
         draft = QueryDraft(
             plan_context=completion.plan_context,
             message=completion.message,
@@ -283,7 +277,6 @@ class AgentRuntime:
             previous,
             calls,
             draft,
-            max_selected_hits=selection_limit,
         )
 
         control.publish(inputs, {
@@ -325,6 +318,8 @@ class AgentRuntime:
             max_prompt_chars=self._max_prompt_chars,
             workspace=workspace,
         )
+        evaluator_review = review
+        review_source = "evaluator"
         evaluator_control.check()
         control.check()
         if review.action == "complete" and not audit.covers(
@@ -337,6 +332,7 @@ class AgentRuntime:
                     "item before approval. Repeat the audit using the read Tools."
                 ),
             )
+            review_source = "draft_read_guard"
         if review.action == "complete":
             try:
                 validate_approved_video_ranges(selected, draft)
@@ -348,6 +344,7 @@ class AgentRuntime:
                         f"{exc}. Revise the Draft Item ranges before resubmitting."
                     ),
                 )
+                review_source = "range_validation"
         if review.action == "complete":
             workspace.approve_draft()
 
@@ -365,13 +362,18 @@ class AgentRuntime:
         _logger.info(
             "event=agent_turn_evaluated conversation_id=%s message_id=%s "
             "turn_number=%s retrieved_hit_count=%s selected_hit_count=%s "
-            "review_action=%s",
+            "review_action=%s review_source=%s evaluator_action=%s "
+            "evaluator_advice=%s review_advice=%s",
             inputs["conversation_id"],
             inputs["assistant_message_id"],
             current.number,
             len(available.hits),
             len(selected.hits),
             review.action,
+            review_source,
+            evaluator_review.action,
+            context_json(evaluator_review.advice),
+            context_json(review.advice),
         )
         if (
             limits.max_loop_turns is not None

@@ -380,12 +380,21 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
 
 def test_agent_logs_retrieved_selected_and_submitted_hit_counts(caplog):
     caplog.set_level(logging.INFO)
-    runtime, *_ = _runtime()
+    runtime, *_ = _runtime(evaluator=Evaluator(2))
 
     runtime.kick(_inputs())
 
     assert "event=agent_turn_evaluated" in caplog.text
     assert "retrieved_hit_count=2 selected_hit_count=1" in caplog.text
+    assert (
+        'review_action=continue review_source=evaluator evaluator_action=continue '
+        'evaluator_advice="find broken cup, not picked-up cup" '
+        'review_advice="find broken cup, not picked-up cup"'
+    ) in caplog.text
+    assert (
+        'review_action=complete review_source=evaluator evaluator_action=complete '
+        'evaluator_advice="approved" review_advice="approved"'
+    ) in caplog.text
     assert "event=agent_chat_rendered" in caplog.text
     assert "approved_hit_count=1 submitted_hit_count=1" in caplog.text
     for role in ("Query", "Evaluator", "Chat"):
@@ -515,7 +524,9 @@ def test_kick_rejects_invalid_loop_turn_limit(value) -> None:
     assert query.contexts == evaluator.contexts == chat.contexts == []
 
 
-def test_evaluator_cannot_complete_without_reading_the_full_draft() -> None:
+def test_evaluator_cannot_complete_without_reading_the_full_draft(caplog) -> None:
+    caplog.set_level(logging.INFO)
+
     class BlindEvaluator:
         model_name = "blind-evaluator"
 
@@ -539,6 +550,10 @@ def test_evaluator_cannot_complete_without_reading_the_full_draft() -> None:
 
     assert evaluator.calls == 3
     assert chat.contexts == []
+    assert (
+        'review_action=continue review_source=draft_read_guard '
+        'evaluator_action=complete evaluator_advice="approved without reading"'
+    ) in caplog.text
 
 
 def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
@@ -1539,18 +1554,20 @@ class DisjointRetrieval(Retrieval):
 
 
 @pytest.mark.parametrize("requested,maximum", [(1, 8), (8, 1)])
-def test_multiple_searches_cannot_expand_final_selected_hit_budget(requested, maximum):
+def test_multiple_searches_can_select_more_unique_hits_than_one_search(requested, maximum):
     runtime, query, evaluator, chat, retrieval = _runtime(
         query=Query(searches_per_round=2, selected=("chunk-1", "chunk-2")),
         retrieval=DisjointRetrieval(), maximum_top_k=maximum,
     )
     inputs = _inputs()
     inputs["requested_top_k"] = requested
-    with pytest.raises(AgentModelInvocationError, match="final selected-hit budget"):
-        runtime.kick(inputs)
+    result = runtime.kick(inputs)
     assert len(retrieval.calls) == 2
-    assert query.contexts[0]["selection_limit"] == 1
-    assert evaluator.contexts == chat.contexts == []
+    assert [call[3] for call in retrieval.calls] == [1, 1]
+    assert "selection_limit" not in query.contexts[0]
+    assert len(evaluator.contexts) == len(chat.contexts) == 1
+    assert result.agent_reply.result_count == 2
+    assert [hit.evidence.video_chunk_id for hit in result.hits] == ["chunk-1", "chunk-2"]
 
 
 def test_multiple_searches_may_choose_one_valid_hit_within_budget():

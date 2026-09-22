@@ -105,7 +105,7 @@ class AgentWorkspace:
         start_ms: int,
         end_ms: int,
         claim: str,
-    ) -> bool:
+    ) -> tuple[str, int]:
         with self._lock:
             evidence_hit = self._retrieval_items.get(video_chunk_id)
             if evidence_hit is None:
@@ -133,18 +133,24 @@ class AgentWorkspace:
                 end_ms=end_ms,
                 claim=claim,
             )
-            inserted = video_chunk_id not in self._draft_items
-            if inserted:
+            existing = self._draft_items.get(video_chunk_id)
+            if existing == item:
+                return "already_present", len(self._draft_items)
+            if existing is None:
                 self._draft_order.append(video_chunk_id)
             self._draft_items[video_chunk_id] = item.model_copy(deep=True)
-            return inserted
+            return ("inserted" if existing is None else "updated"), len(self._draft_items)
 
-    def remove_draft_item(self, video_chunk_id: str) -> bool:
+    def remove_draft_item(self, video_chunk_id: str) -> tuple[bool, int]:
         with self._lock:
             removed = self._draft_items.pop(video_chunk_id, None) is not None
             if removed:
                 self._draft_order.remove(video_chunk_id)
-            return removed
+            return removed, len(self._draft_items)
+
+    def draft_item_count(self) -> int:
+        with self._lock:
+            return len(self._draft_items)
 
     def draft_items(self, *, approved: bool = False) -> list[DraftItem]:
         with self._lock:

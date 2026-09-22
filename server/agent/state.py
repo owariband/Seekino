@@ -54,7 +54,7 @@ class QueryDraft(BaseModel):
 
     plan_context: _Text
     message: _Text
-    selected_video_ranges: list[SelectedVideoRange] = Field(max_length=100)
+    selected_video_ranges: list[SelectedVideoRange]
 
 
 class QueryCompletion(BaseModel):
