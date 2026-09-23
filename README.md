@@ -102,6 +102,20 @@ Vite 代理会跟随 API 端口。此脚本仅用于 localhost development 环�
 `maximum_concurrent_kicks`、模型/解析配置及其他启动配置修改后，先运行
 `./start.sh stop` 再启动。脚本会检查需要重启的配置摘要，防止复用旧配置。
 
+### 可选：用 Docker 运行数据库
+
+原有 `./start.sh` 启动方式保持不变，无需 Docker。若希望省去本机安装 MySQL / Qdrant，
+可以先用根目录 [`compose.yaml`](compose.yaml) 启动数据库，再由原脚本复用它们：
+
+```bash
+docker compose up -d --wait && ./start.sh
+```
+
+前后端、ffmpeg 和视频处理仍在本机运行；数据库使用 Docker 持久卷，端口仅发布到
+`127.0.0.1`。`./start.sh stop` 不会停止 Compose 容器，需要时另执行 `docker compose stop`。
+每次选择 Docker 模式都先运行上述命令，避免数据库未运行时原脚本启动本机实例。
+自定义端口、已有数据和视频测试说明见 [Docker 开发说明](deploy/README.md)。
+
 ## 仓库结构
 
 ```text
