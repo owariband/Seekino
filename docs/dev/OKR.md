@@ -18,6 +18,10 @@ hypnos: 根据understanding agent结合video理解来调整asr的speaker归因�
 ### 4. local的时候视频上传被copy了额外的一份，需要考虑是否合理——local的时候是否软link即可？
 
 
+### 5. retrieve算法（非harness）策略优化
+eg.BM25使用优化、精排设计处理
+
+
 ## P1
 
 
