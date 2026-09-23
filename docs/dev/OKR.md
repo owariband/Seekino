@@ -15,6 +15,7 @@ hypnos: 串行select->epoll策略，多轮矫正，可接
 ### 3. 修复parse，使得speaker能够准确归类为相应角色，用于蒸馏
 hypnos: 根据understanding agent结合video理解来调整asr的speaker归因，asr先落库改成该turn chunk全量解析完后再整体落库
 
+### 4. local的时候视频上传被copy了额外的一份，需要考虑是否合理——local的时候是否软link即可？
 
 
 ## P1
@@ -34,4 +35,6 @@ hypnos: 根据understanding agent结合video理解来调整asr的speaker归因�
 
 ### 5. 支持解析台词导出功能用于skill蒸馏
 
+
+### 6. 视频综合理解维度划分，增加文本向量化维度召回
 
