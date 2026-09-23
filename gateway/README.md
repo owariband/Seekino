@@ -3,9 +3,24 @@
 Gateway 是 anivag 的模型调用边界。它只负责把统一的多模态输入转换成
 Provider 请求，并把严格 JSON Schema 输出校验成调用方指定的 Pydantic 模型。
 
+## 目录边界
+
+- `harness/`：Provider 无关的 Agent 协议、上下文治理、Tool Loop 与错误；其中
+  `factory.py` 是选择具体 Adapter 的组装入口；
+- `openai/`：OpenAI 兼容协议及其 profile，DeepSeek 通过这里接入；
+- `ark/`：Ark SDK、原生 Responses SSE、多模态、Agent 和 Embedding；
+- `codex/`：Codex app-server 会话与 Agent Adapter；
+- `claude_code/`：Claude Agent SDK Adapter；
+- `local/`：Ollama 与 llama.cpp 多模态 Adapter；
+- 根目录的 `multimodal.py`、`embedding.py`、`media.py`、`schema_normalization.py`
+  提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
+
+业务层依赖共享协议并由 `harness.factory.AgentModelFactory` 选择 Adapter。模型名、
+Provider 来源和连接协议分别配置，避免为某个具体模型复制一套运行框架。
+
 ## 多模态模型接口
 
-`gateway.models` 提供三种路径型输入：
+`gateway.multimodal` 提供三种路径型输入：
 
 - `TextInput(text)`：文本；
 - `ImageInput(path, detail="high")`：本地 JPEG、PNG 或 WebP 图片；
@@ -32,7 +47,8 @@ import os
 from pydantic import BaseModel
 
 from gateway.config import load_config
-from gateway.models import DeepSeekMultimodalModel, ImageInput, TextInput
+from gateway.multimodal import ImageInput, TextInput
+from gateway.openai.multimodal import DeepSeekMultimodalModel
 
 
 class Description(BaseModel):
@@ -61,7 +77,8 @@ result = model.generate(
 直接视频模式使用同一个接口：
 
 ```python
-from gateway.models import LlamaCppMultimodalModel, TextInput, VideoInput
+from gateway.local.llama_cpp import LlamaCppMultimodalModel
+from gateway.multimodal import TextInput, VideoInput
 
 
 model = LlamaCppMultimodalModel(
@@ -95,6 +112,100 @@ Lite ASR、compact 和背景资料整理最终 Schema。协议与启动参数见
 
 模型名、服务地址和采样参数由仓库根目录 [`config.yaml`](../config.yaml) 提供；
 本机密钥或个人 Endpoint 写入已忽略的 `.env.local`。不要在 adapter 中固化部署地址。
+
+## Chat Agent 模型来源
+
+`model_sources` 描述连接方式，`agent_model.source` 选择其中一个来源。`adapter`
+决定协议实现，`provider` 只用于 provenance、用量和价格归属，OpenAI 兼容协议的
+`profile` 处理不同 API 方言。Query、Evaluator、Chat 与 Supervisor 共用所选 source；
+`ANIVAG_AGENT_QUERY_MODEL`、`ANIVAG_AGENT_EVALUATOR_MODEL` 和
+`ANIVAG_AGENT_CHAT_MODEL` 仍可覆盖各角色的模型名。
+
+DeepSeek 使用 OpenAI Adapter 的 DeepSeek profile，并显式配置 Ark fallback：
+
+```yaml
+model_sources:
+  deepseek_api:
+    adapter: openai
+    provider: deepseek
+    profile: deepseek
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+  ark_default:
+    adapter: ark
+    provider: ark
+    api_key_env: ARK_API_KEY
+
+agent_model:
+  source: deepseek_api
+  model: deepseek-flash
+  max_output_tokens: 8192
+  request_timeout_seconds: 180
+  fallback:
+    source: ark_default
+    model: doubao-seed-2-0-lite-260428
+```
+
+Codex 复用当前系统用户已有的本机 Codex 登录，不需要配置 API Key：
+
+```yaml
+model_sources:
+  codex_local:
+    adapter: codex_app_server
+    provider: codex
+    max_concurrency: 4
+
+agent_model:
+  source: codex_local
+  model: gpt-6-sol
+  max_output_tokens: 8192
+  request_timeout_seconds: 180
+```
+
+需要指定非默认 Codex 可执行文件时，在 `codex_local` 下添加 `codex_bin`。
+
+Claude 的本机订阅模式复用当前系统用户已有的本机登录：
+
+```yaml
+model_sources:
+  claude_local:
+    adapter: claude_sdk
+    provider: claude_code
+    auth_mode: local_subscription
+    max_concurrency: 4
+
+agent_model:
+  source: claude_local
+  model: claude-sonnet-4-6
+  max_output_tokens: 8192
+  request_timeout_seconds: 180
+```
+
+Claude API Key 模式把 `auth_mode` 改为 `api_key`，并添加
+`api_key_env: ANTHROPIC_API_KEY`；程序会从该字段指定的环境变量读取密钥。
+需要指定非默认 Claude 可执行文件时，在 source 下添加 `cli_path`。
+
+`local_subscription` 会在 Claude 子进程中显式清空继承到的 API Key、Auth Token、
+自定义 Base URL 和云厂商路由开关，防止本机环境变量把订阅登录静默改成 API 计费。
+`api_key` 模式同样会清空相互冲突的认证方式，只注入 `api_key_env` 指定的值。
+Claude 调用使用 `--no-session-persistence`，不会把问题、工具结果和回答写入个人
+`~/.claude/projects` 历史。每个审核回合启动新的 CLI 进程，并在下一轮提示中显式携带
+原始任务、上一轮可见回答和审核反馈；隐藏推理不跨回合保留，Agent 可以通过 AniVAG 工具
+重新读取规范工作区。认证目录保持不变，因此本机订阅模式可继续读取既有登录凭证。
+
+Codex app-server 与 Claude Agent SDK 当前都没有暴露可由 AniVAG 设置的硬输出 token
+上限。它们配置中的 `max_output_tokens` 用于 AniVAG 的上下文输出预留；实际调用仍由
+请求超时、模型调用次数和 provider 自身的输出上限约束。DeepSeek 的同名配置会直接
+传给模型 API。
+
+CLI provider 会在启动进程前检查初始提示、工具 Schema 和结构化输出 Schema 是否能放入
+`agent_runtime` 的上下文硬预算。Codex 还会加入按当前锁定 SDK 实测并向上取整的基础输入
+预留。Codex/Claude 内部后续工具回合的 transcript 不对 AniVAG 暴露，因此这项预检不执行
+伪压缩，也不把内部续轮描述成可由 Context Canvas 精确治理。
+
+修改 `model_sources`、`agent_model`、认证方式或可执行文件等模型连接配置后，需要重启
+Server。`ANIVAG_AGENT_FALLBACK_MODEL` 只覆盖已经配置的 fallback 模型，不会创建或猜测
+fallback source。当前支持 OpenAI → Ark 与 Ark → Ark；Codex 和 Claude 不会隐式切换到 Ark。
 
 ## 多模态 Embedding
 

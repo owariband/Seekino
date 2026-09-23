@@ -8,7 +8,8 @@ from threading import Lock
 from typing import Literal
 
 from gateway.config import VideoFallbackConfig, load_config
-from gateway.models import ArkMultimodalModel, DeepSeekMultimodalModel
+from gateway.ark.multimodal import ArkMultimodalModel
+from gateway.openai.multimodal import DeepSeekMultimodalModel
 
 from .analysis_windows import materialize_analysis_windows, plan_analysis_windows
 from .background import BackgroundImage

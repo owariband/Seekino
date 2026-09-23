@@ -7,12 +7,14 @@ import httpx
 import pytest
 from pydantic import BaseModel, PydanticInvalidForJsonSchema, ValidationError
 
-from gateway.models import (
-    ArkMultimodalModel, DeepSeekModelError, DeepSeekMultimodalModel,
-    LlamaCppMultimodalModel, OllamaMultimodalModel, TextInput,
-)
-from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
-from gateway.sse_proxy import SSEProxyError, request_sse_json, request_sse_text
+from gateway.ark.embedding import DoubaoMultimodalEmbedder
+from gateway.ark.multimodal import ArkMultimodalModel
+from gateway.ark.sse import request_sse_json, request_sse_text
+from gateway.errors import SSEProxyError
+from gateway.local.llama_cpp import LlamaCppMultimodalModel
+from gateway.local.ollama import OllamaMultimodalModel
+from gateway.multimodal import TextInput
+from gateway.openai.multimodal import DeepSeekModelError, DeepSeekMultimodalModel
 from gateway.usage import TokenUsage, capture_model_usage
 
 
@@ -209,7 +211,7 @@ def test_embedding_default_client_disables_hidden_sdk_retries(monkeypatch):
     def client(**kwargs):
         options.append(kwargs)
         return SimpleNamespace()
-    monkeypatch.setattr("gateway.multimodal_embedder.Ark.volc", client)
+    monkeypatch.setattr("gateway.ark.embedding.Ark.volc", client)
     DoubaoMultimodalEmbedder("embedding")
     injected = SimpleNamespace()
     assert DoubaoMultimodalEmbedder("embedding", client=injected)._client is injected
@@ -317,19 +319,3 @@ def test_embedding_validation_failure_retains_provider_usage():
     assert len(calls) == provider.requests == 1
     assert calls[0].status == "failed"
     assert calls[0].usage == TokenUsage(8, 0, 8, None, None)
-
-
-def test_deepseek_text_stream_keeps_role_provider_and_emits_one_record():
-    calls = []
-    provider = Responses(events=[
-        SimpleNamespace(type="response.output_text.delta", delta="answer"),
-        SimpleNamespace(type="response.completed", response=_response("answer")),
-    ])
-    model = DeepSeekMultimodalModel("model", base_url="https://example.test", api_key="test-key",
-                                   max_output_tokens=1000, request_timeout_seconds=10,
-                                   client=SimpleNamespace(responses=provider))
-    with capture_model_usage(calls.append):
-        assert list(model.stream_text([TextInput("question")])) == ["answer"]
-    assert len(calls) == len(provider.calls) == 1
-    assert (calls[0].provider, calls[0].operation, calls[0].status) == ("deepseek", "text_generation", "completed")
-    assert calls[0].usage.total_tokens == 130

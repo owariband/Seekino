@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 import logging
 
-from gateway.agent_model import AgentLoopModel, ModelInputTooLargeError
+from gateway.harness.contracts import AgentLoopModel
+from gateway.harness.errors import ModelInputTooLargeError
 from langchain_core.tools import BaseTool
 
 from .context import build_workspace_checkpoint, project_inputs

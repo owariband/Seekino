@@ -2,17 +2,6 @@ from __future__ import annotations
 
 import logging
 
-from .constants import DEEPSEEK_NON_THINKING_EXTRA_BODY
-
-
-def deepseek_non_thinking_extra_body() -> dict[str, dict[str, str]]:
-    """Return an isolated request body for DeepSeek non-thinking calls."""
-
-    return {
-        key: dict(value)
-        for key, value in DEEPSEEK_NON_THINKING_EXTRA_BODY.items()
-    }
-
 
 def log_model_fallback(
     logger: logging.Logger,
@@ -34,3 +23,6 @@ def log_model_fallback(
         fallback_model,
         type(error).__name__,
     )
+
+
+__all__ = ["log_model_fallback"]

@@ -6,26 +6,35 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from arkruntime import Ark
+from arkruntime._exceptions import ArkError
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langchain_core.tools import StructuredTool, ToolException
-from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
+from openai import APIConnectionError, APIError, APITimeoutError, OpenAI, OpenAIError
 from pydantic import BaseModel, ConfigDict
 
-from gateway import agent_model as agent_model_module
-from gateway.agent_model import (
+from gateway.ark import agent as ark_agent_module
+from gateway.ark.agent import (
+    ArkFunctionCallingFallback,
+    ArkFunctionCallingModel,
+    ArkStructuredFallback,
+    ArkStructuredToolAgentModel,
+)
+from gateway.errors import ContentFilterError
+from gateway.harness import tool_loop as tool_loop_module
+from gateway.harness.errors import (
     AgentModelTimeoutError,
     ArkFunctionCallingError,
-    ArkFunctionCallingModel,
-    DeepSeekFunctionCallingError,
-    DeepSeekFunctionCallingModel,
     MissingStructuredQueryToolCallError,
     ModelFailureReason,
     ModelInputTooLargeError,
+    OpenAIFunctionCallingError,
     QueryModelIncompleteError,
-    SDKQueryAgentModel,
 )
-from gateway.sse_proxy import ContentFilterError
+from gateway.openai import structured as structured_module
+from gateway.openai import agent as openai_agent_module
+from gateway.openai.agent import OpenAIAgentModel
+from gateway.openai.structured import OpenAIStructuredToolAgentModel
 from gateway.usage import capture_model_usage
 
 
@@ -125,8 +134,10 @@ def _video_item(chunk_id: str = "chunk-1", claim: str = "杯子落地") -> dict:
 def _function_model(*responses, reasoning_effort: str | None = None):
     completions = _FunctionCompletions(*responses)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
-    model = DeepSeekFunctionCallingModel(
+    model = OpenAIAgentModel(
         "deepseek-flash",
+        provider_name="deepseek",
+        profile="deepseek",
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=2048,
@@ -502,15 +513,21 @@ def test_deepseek_agent_loop_guides_missing_tool_without_switching_provider() ->
         _agent_response("回答完成。"),
     )
     fallback = _FunctionCompletions(_agent_response("不应调用备用模型。"))
-    model = DeepSeekFunctionCallingModel(
+    model = OpenAIAgentModel(
         "deepseek-flash",
+        provider_name="deepseek",
+        profile="deepseek",
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=2048,
         request_timeout_seconds=30,
-        fallback_model="doubao-lite",
+        fallback_adapter=ArkFunctionCallingFallback(
+            "doubao-lite",
+            max_output_tokens=2048,
+            request_timeout_seconds=30,
+            client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
+        ),
         client=SimpleNamespace(chat=SimpleNamespace(completions=primary)),
-        fallback_client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
     )
     texts = []
 
@@ -563,19 +580,25 @@ def test_agent_loop_rejects_second_missing_required_tool_without_fallback() -> N
         _agent_response("第二次漏调。"),
     )
     fallback = _FunctionCompletions(_agent_response("不应调用备用模型。"))
-    model = DeepSeekFunctionCallingModel(
+    model = OpenAIAgentModel(
         "deepseek-flash",
+        provider_name="deepseek",
+        profile="deepseek",
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=2048,
         request_timeout_seconds=30,
-        fallback_model="doubao-lite",
+        fallback_adapter=ArkFunctionCallingFallback(
+            "doubao-lite",
+            max_output_tokens=2048,
+            request_timeout_seconds=30,
+            client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
+        ),
         client=SimpleNamespace(chat=SimpleNamespace(completions=primary)),
-        fallback_client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
     )
 
     with pytest.raises(
-        DeepSeekFunctionCallingError, match="stopped twice"
+        OpenAIFunctionCallingError, match="stopped twice"
     ) as error:
         _run_agent(model, require_tool_call=True)
 
@@ -590,7 +613,7 @@ def test_agent_loop_missing_required_tool_respects_model_call_budget() -> None:
         _agent_response("不应发起第二次请求。"),
     )
 
-    with pytest.raises(DeepSeekFunctionCallingError, match="exhausted max_model_calls"):
+    with pytest.raises(OpenAIFunctionCallingError, match="exhausted max_model_calls"):
         _run_agent(model, require_tool_call=True, max_model_calls=1)
 
     assert len(completions.calls) == 1
@@ -675,15 +698,21 @@ def test_deepseek_agent_loop_falls_back_to_ark_in_place_after_tool_result() -> N
         _agent_response(None),
     )
     ark = _FunctionCompletions(_agent_response("Lite completed the answer."))
-    model = DeepSeekFunctionCallingModel(
+    model = OpenAIAgentModel(
         "deepseek-flash",
+        provider_name="deepseek",
+        profile="deepseek",
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=2048,
         request_timeout_seconds=30,
-        fallback_model="doubao-lite",
+        fallback_adapter=ArkFunctionCallingFallback(
+            "doubao-lite",
+            max_output_tokens=2048,
+            request_timeout_seconds=30,
+            client=SimpleNamespace(chat=SimpleNamespace(completions=ark)),
+        ),
         client=SimpleNamespace(chat=SimpleNamespace(completions=deepseek)),
-        fallback_client=SimpleNamespace(chat=SimpleNamespace(completions=ark)),
     )
     events = []
 
@@ -746,7 +775,7 @@ def test_deepseek_agent_loop_requires_visible_text_before_completion() -> None:
     )
     tools = []
 
-    with pytest.raises(DeepSeekFunctionCallingError, match="without visible text"):
+    with pytest.raises(OpenAIFunctionCallingError, match="without visible text"):
         _run_agent(
             model,
             handle_text=lambda _text: pytest.fail("empty text must not be emitted"),
@@ -770,7 +799,7 @@ def test_deepseek_validates_full_tool_batch_before_any_callback() -> None:
     )
     events = []
 
-    with pytest.raises(DeepSeekFunctionCallingError, match="unique nonempty IDs"):
+    with pytest.raises(OpenAIFunctionCallingError, match="unique nonempty IDs"):
         _run_agent(
             model,
             handle_text=lambda text: events.append(("text", text)),
@@ -808,7 +837,7 @@ def test_deepseek_validates_full_tool_batch_before_any_callback() -> None:
 def test_deepseek_agent_loop_rejects_invalid_turn(response, message) -> None:
     model, _ = _function_model(response)
 
-    with pytest.raises(DeepSeekFunctionCallingError, match=message):
+    with pytest.raises(OpenAIFunctionCallingError, match=message):
         _run_agent(model)
 
 
@@ -819,7 +848,7 @@ def test_deepseek_agent_loop_logs_output_token_interruption(caplog) -> None:
 
     with caplog.at_level(logging.WARNING):
         with pytest.raises(
-            DeepSeekFunctionCallingError, match="'length'"
+            OpenAIFunctionCallingError, match="'length'"
         ) as error:
             _run_agent(model)
 
@@ -867,7 +896,7 @@ def test_deepseek_agent_loop_rejects_invalid_tool_calls(calls, message) -> None:
     )
     events = []
 
-    with pytest.raises(DeepSeekFunctionCallingError, match=message):
+    with pytest.raises(OpenAIFunctionCallingError, match=message):
         _run_agent(
             model,
             handle_text=events.append,
@@ -933,7 +962,7 @@ def test_invalid_local_tool_call_builds_error_tool_message(bad_call) -> None:
         args_schema=VideoItem,
     )
 
-    _, _, _, calls = agent_model_module._validated_agent_turn(
+    _, _, _, calls = tool_loop_module._validated_agent_turn(
         _agent_response(calls=[bad_call], finish_reason="tool_calls"),
         tools=[tool],
         seen_tool_call_ids=set(),
@@ -1002,7 +1031,7 @@ def test_tool_exception_keeps_call_id_and_error_status() -> None:
         handle_tool_error=True,
     )
 
-    output = agent_model_module._invoke_function_tool(
+    output = tool_loop_module._invoke_function_tool(
         tool,
         tool_call_id="failed-call",
         arguments=_video_item(),
@@ -1056,7 +1085,7 @@ def test_deepseek_agent_loop_rejects_reused_tool_id_across_turns() -> None:
     )
     events = []
 
-    with pytest.raises(DeepSeekFunctionCallingError, match="unique nonempty IDs"):
+    with pytest.raises(OpenAIFunctionCallingError, match="unique nonempty IDs"):
         _run_agent(
             model,
             handle_text=lambda text: events.append(("text", text)),
@@ -1080,7 +1109,7 @@ def test_deepseek_agent_loop_stops_at_model_call_budget() -> None:
     )
     events = []
 
-    with pytest.raises(DeepSeekFunctionCallingError, match="exhausted max_model_calls"):
+    with pytest.raises(OpenAIFunctionCallingError, match="exhausted max_model_calls"):
         _run_agent(
             model,
             max_model_calls=1,
@@ -1111,7 +1140,7 @@ def test_deepseek_agent_loop_without_budget_continues_past_old_limit() -> None:
 
 def test_deepseek_agent_loop_uses_one_total_deadline(monkeypatch) -> None:
     ticks = iter([100.0, 100.25, 101.0])
-    monkeypatch.setattr(agent_model_module, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(tool_loop_module, "monotonic", lambda: next(ticks))
     model, completions = _function_model(
         _agent_response(
             None,
@@ -1132,7 +1161,7 @@ def test_agent_loop_keeps_caller_deadline_after_long_tool_call(
     monkeypatch, provider: str,
 ) -> None:
     now = [0.0]
-    monkeypatch.setattr(agent_model_module, "monotonic", lambda: now[0])
+    monkeypatch.setattr(tool_loop_module, "monotonic", lambda: now[0])
     completions = _FunctionCompletions(
         _agent_response(
             calls=[_tool_call(_video_item())],
@@ -1142,8 +1171,10 @@ def test_agent_loop_keeps_caller_deadline_after_long_tool_call(
     )
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     if provider == "deepseek":
-        model = DeepSeekFunctionCallingModel(
+        model = OpenAIAgentModel(
             "deepseek-flash",
+            provider_name="deepseek",
+            profile="deepseek",
             base_url="https://api.deepseek.com",
             api_key="test-key",
             max_output_tokens=2048,
@@ -1174,7 +1205,7 @@ def test_agent_loop_keeps_caller_deadline_after_long_tool_call(
 
 def test_deepseek_agent_loop_does_not_request_after_deadline(monkeypatch) -> None:
     ticks = iter([100.0, 100.5, 102.1])
-    monkeypatch.setattr(agent_model_module, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(tool_loop_module, "monotonic", lambda: next(ticks))
     model, completions = _function_model(
         _agent_response(
             None,
@@ -1185,7 +1216,7 @@ def test_deepseek_agent_loop_does_not_request_after_deadline(monkeypatch) -> Non
     )
 
     with pytest.raises(
-        DeepSeekFunctionCallingError, match="deadline expired"
+        OpenAIFunctionCallingError, match="deadline expired"
     ) as error:
         _run_agent(model, request_timeout_seconds=2)
 
@@ -1355,7 +1386,7 @@ def test_deepseek_agent_loop_marks_invalid_request_usage_failed() -> None:
     usages = []
 
     with capture_model_usage(usages.append):
-        with pytest.raises(DeepSeekFunctionCallingError):
+        with pytest.raises(OpenAIFunctionCallingError):
             _run_agent(model)
 
     assert len(usages) == 1
@@ -1383,15 +1414,21 @@ def test_deepseek_agent_loop_does_not_fallback_after_content_filter() -> None:
         None, finish_reason="content_filter", response_id="filtered-response",
     ))
     fallback = _FunctionCompletions(_agent_response("must not be used"))
-    model = DeepSeekFunctionCallingModel(
+    model = OpenAIAgentModel(
         "deepseek-flash",
+        provider_name="deepseek",
+        profile="deepseek",
         base_url="https://api.deepseek.com",
         api_key="test-key",
         max_output_tokens=2048,
         request_timeout_seconds=30,
-        fallback_model="doubao-lite",
+        fallback_adapter=ArkFunctionCallingFallback(
+            "doubao-lite",
+            max_output_tokens=2048,
+            request_timeout_seconds=30,
+            client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
+        ),
         client=SimpleNamespace(chat=SimpleNamespace(completions=primary)),
-        fallback_client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
     )
 
     with pytest.raises(ContentFilterError):
@@ -1407,7 +1444,7 @@ def test_deepseek_agent_loop_wraps_api_error_without_provider_text() -> None:
     )
     model, _ = _function_model(provider_error)
 
-    with pytest.raises(DeepSeekFunctionCallingError, match="request failed") as error:
+    with pytest.raises(OpenAIFunctionCallingError, match="request failed") as error:
         _run_agent(model)
 
     assert error.value.__cause__ is provider_error
@@ -1444,9 +1481,11 @@ def test_deepseek_agent_loop_owns_one_client_per_invocation(monkeypatch) -> None
         def close(self):
             self.closed = True
 
-    monkeypatch.setattr(agent_model_module, "OpenAI", Client)
-    model = DeepSeekFunctionCallingModel(
+    monkeypatch.setattr(openai_agent_module, "OpenAI", Client)
+    model = OpenAIAgentModel(
         "deepseek-flash",
+        provider_name="deepseek",
+        profile="deepseek",
         base_url="https://api.deepseek.com/",
         api_key="test-key",
         max_output_tokens=2048,
@@ -1482,19 +1521,25 @@ def test_deepseek_agent_loop_closes_primary_when_fallback_construction_fails(
     def fail_fallback_construction(**_options):
         raise RuntimeError("fallback client construction failed")
 
-    monkeypatch.setattr(agent_model_module, "OpenAI", Client)
+    monkeypatch.setattr(openai_agent_module, "OpenAI", Client)
     monkeypatch.setattr(
-        agent_model_module.Ark,
+        ark_agent_module.Ark,
         "volc",
         fail_fallback_construction,
     )
-    model = DeepSeekFunctionCallingModel(
+    model = OpenAIAgentModel(
         "deepseek-flash",
+        provider_name="deepseek",
+        profile="deepseek",
         base_url="https://api.deepseek.com/",
         api_key="test-key",
         max_output_tokens=2048,
         request_timeout_seconds=30,
-        fallback_model="doubao-lite",
+        fallback_adapter=ArkFunctionCallingFallback(
+            "doubao-lite",
+            max_output_tokens=2048,
+            request_timeout_seconds=30,
+        ),
     )
 
     with pytest.raises(RuntimeError, match="fallback client construction failed"):
@@ -1523,19 +1568,25 @@ def test_deepseek_agent_loop_closes_both_clients_when_one_close_fails(
             close_events.append("fallback")
             raise RuntimeError("fallback close failed")
 
-    monkeypatch.setattr(agent_model_module, "OpenAI", PrimaryClient)
+    monkeypatch.setattr(openai_agent_module, "OpenAI", PrimaryClient)
     monkeypatch.setattr(
-        agent_model_module.Ark,
+        ark_agent_module.Ark,
         "volc",
         lambda **_options: FallbackClient(),
     )
-    model = DeepSeekFunctionCallingModel(
+    model = OpenAIAgentModel(
         "deepseek-flash",
+        provider_name="deepseek",
+        profile="deepseek",
         base_url="https://api.deepseek.com/",
         api_key="test-key",
         max_output_tokens=2048,
         request_timeout_seconds=30,
-        fallback_model="doubao-lite",
+        fallback_adapter=ArkFunctionCallingFallback(
+            "doubao-lite",
+            max_output_tokens=2048,
+            request_timeout_seconds=30,
+        ),
     )
 
     with pytest.raises(RuntimeError, match="fallback close failed"):
@@ -1562,7 +1613,7 @@ def test_deepseek_agent_loop_rejects_invalid_completion_envelope() -> None:
     model, _ = _function_model(response)
 
     with pytest.raises(
-        DeepSeekFunctionCallingError, match="invalid chat completion"
+        OpenAIFunctionCallingError, match="invalid chat completion"
     ) as error:
         _run_agent(model)
 
@@ -1650,24 +1701,31 @@ def _query_chat_model(
     client = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace()),
     )
-    return agent_model_module._build_query_chat_model(
-        provider=provider,
+    return structured_module.build_openai_chat_model(
+        provider_name=provider,
+        api_profile="deepseek" if provider == "deepseek" else "standard",
         model_name=model_name,
         client=client,
         base_url=(
             "https://api.deepseek.test/v1"
             if provider == "deepseek"
-            else None
+            else "https://ark.cn-beijing.volces.com/api/v3"
         ),
         max_output_tokens=400,
         request_timeout_seconds=3,
         fallback_model_name=fallback_model_name,
+        provider_error_types=(
+            (ArkError, OpenAIError)
+            if provider == "ark"
+            else (OpenAIError,)
+        ),
+        use_legacy_token_parameter=provider != "ark",
     )
 
 
 def test_query_fallback_uses_remaining_single_request_timeout(monkeypatch) -> None:
     ticks = iter([100.0, 100.75])
-    monkeypatch.setattr(agent_model_module, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(structured_module, "monotonic", lambda: next(ticks))
     calls = []
     fallback_result = object()
     provider_error = APIConnectionError(
@@ -1683,7 +1741,7 @@ def test_query_fallback_uses_remaining_single_request_timeout(monkeypatch) -> No
             raise provider_error
         return fallback_result
 
-    monkeypatch.setattr(agent_model_module.ChatOpenAI, "_generate", generate)
+    monkeypatch.setattr(structured_module.ChatOpenAI, "_generate", generate)
     primary = _query_chat_model(
         "deepseek",
         "deepseek-flash",
@@ -1705,14 +1763,14 @@ def test_query_does_not_fallback_after_request_timeout_is_exhausted(
     monkeypatch,
 ) -> None:
     ticks = iter([100.0, 103.1])
-    monkeypatch.setattr(agent_model_module, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(structured_module, "monotonic", lambda: next(ticks))
     calls = []
 
     def generate(chat_model, *_args, **kwargs):
         calls.append((chat_model.model_name, kwargs["timeout"]))
         raise MissingStructuredQueryToolCallError("missing required tool")
 
-    monkeypatch.setattr(agent_model_module.ChatOpenAI, "_generate", generate)
+    monkeypatch.setattr(structured_module.ChatOpenAI, "_generate", generate)
     primary = _query_chat_model(
         "deepseek",
         "deepseek-flash",
@@ -1745,7 +1803,7 @@ def test_query_provider_timeout_has_machine_readable_reason(monkeypatch) -> None
     def generate(_chat_model, *_args, **_kwargs):
         raise provider_error
 
-    monkeypatch.setattr(agent_model_module.ChatOpenAI, "_generate", generate)
+    monkeypatch.setattr(structured_module.ChatOpenAI, "_generate", generate)
     model = _query_chat_model("deepseek", "deepseek-flash")
 
     with pytest.raises(QueryModelIncompleteError, match="timed out") as error:
@@ -1766,7 +1824,7 @@ def test_query_does_not_fallback_for_programming_errors(
         calls.append((chat_model.model_name, kwargs["timeout"]))
         raise error_type("programming error")
 
-    monkeypatch.setattr(agent_model_module.ChatOpenAI, "_generate", generate)
+    monkeypatch.setattr(structured_module.ChatOpenAI, "_generate", generate)
     primary = _query_chat_model(
         "deepseek",
         "deepseek-flash",
@@ -1799,7 +1857,7 @@ def test_sdk_query_model_requests_use_remaining_stage_timeout() -> None:
         model_settings={"timeout": 3},
         override=override,
     )
-    middleware = agent_model_module._ExecutionControlMiddleware(
+    middleware = structured_module._ExecutionControlMiddleware(
         check,
         lambda: next(remaining),
     )
@@ -1818,7 +1876,7 @@ def test_sdk_query_model_requests_use_remaining_stage_timeout() -> None:
 
 def test_sdk_query_stops_when_stage_deadline_expires(monkeypatch) -> None:
     ticks = iter([100.0, 100.0, 102.1])
-    monkeypatch.setattr(agent_model_module, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(structured_module, "monotonic", lambda: next(ticks))
     requests = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -1829,14 +1887,14 @@ def test_sdk_query_stops_when_stage_deadline_expires(monkeypatch) -> None:
         api_key="test-ark-key",
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
     )
 
     with pytest.raises(
         AgentModelTimeoutError, match="execution deadline expired"
     ) as error:
-        model.run_query(
+        model.run_structured(
             "检索", tools=[], result_type=QueryDraft,
             max_model_calls=None,
             request_timeout_seconds=2,
@@ -1885,10 +1943,10 @@ def test_sdk_query_runs_actual_tool_round_trip_over_ark_transport() -> None:
         api_key="test-ark-key",
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
     )
-    result = model.run_query(
+    result = model.run_structured(
         "找到摔杯子的片段",
         tools=[_tool(retrieve)],
         result_type=QueryDraft,
@@ -1941,14 +1999,16 @@ def test_deepseek_structured_agent_replays_reasoning_after_tool_call() -> None:
         base_url="https://api.deepseek.test/v1",
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = OpenAIStructuredToolAgentModel(
         "deepseek-flash",
-        provider="deepseek",
+        provider_name="deepseek",
+        api_profile="deepseek",
         base_url="https://api.deepseek.test/v1",
         request_timeout_seconds=3,
         max_output_tokens=400,
         reasoning_effort="low",
         client=client,
+        use_legacy_token_parameter=True,
     )
 
     result = model.run_structured(
@@ -1988,7 +2048,7 @@ def test_context_middleware_keeps_recent_tool_reasoning_when_compacting() -> Non
             additional_kwargs={"reasoning_content": reasoning},
         )
 
-    middleware = agent_model_module._ContextWindowMiddleware(
+    middleware = structured_module._ContextWindowMiddleware(
         policy=None,
         maximum_input_characters=2_000,
         contract={},
@@ -2046,7 +2106,7 @@ def test_sdk_query_falls_back_to_lite_only_after_provider_failure() -> None:
         max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "doubao-pro",
         fallback_model="doubao-lite",
         request_timeout_seconds=3,
@@ -2054,7 +2114,7 @@ def test_sdk_query_falls_back_to_lite_only_after_provider_failure() -> None:
         client=client,
     )
 
-    result = model.run_query(
+    result = model.run_structured(
         "检索", tools=[], result_type=QueryDraft, max_model_calls=1,
     )
 
@@ -2094,7 +2154,7 @@ def test_structured_agent_guides_missing_tool_call_in_same_session(
         max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
 
@@ -2136,11 +2196,11 @@ def test_structured_agent_guides_malformed_tool_arguments() -> None:
         api_key="test-ark-key", max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
 
-    result = model.run_query(
+    result = model.run_structured(
         "检索", tools=[], result_type=QueryDraft, max_model_calls=2,
     )
 
@@ -2162,12 +2222,12 @@ def test_structured_missing_tool_retry_respects_model_call_limit() -> None:
         max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
 
     with pytest.raises(ModelCallLimitExceededError):
-        model.run_query(
+        model.run_structured(
             "检索", tools=[], result_type=QueryDraft, max_model_calls=1,
         )
 
@@ -2177,7 +2237,7 @@ def test_structured_missing_tool_retry_respects_model_call_limit() -> None:
 
 def test_structured_missing_tool_retry_respects_stage_deadline(monkeypatch) -> None:
     now = [100.0]
-    monkeypatch.setattr(agent_model_module, "monotonic", lambda: now[0])
+    monkeypatch.setattr(structured_module, "monotonic", lambda: now[0])
     requests = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -2190,14 +2250,14 @@ def test_structured_missing_tool_retry_respects_stage_deadline(monkeypatch) -> N
         max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
 
     with pytest.raises(
         AgentModelTimeoutError, match="execution deadline expired"
     ) as error:
-        model.run_query(
+        model.run_structured(
             "检索", tools=[], result_type=QueryDraft, max_model_calls=3,
             request_timeout_seconds=2,
         )
@@ -2246,20 +2306,25 @@ def test_sdk_query_falls_back_from_deepseek_to_ark_with_same_request_state() -> 
         max_retries=0,
         http_client=ark_http,
     )
-    model = SDKQueryAgentModel(
+    model = OpenAIStructuredToolAgentModel(
         "deepseek-flash",
-        provider="deepseek",
+        provider_name="deepseek",
+        api_profile="deepseek",
         base_url="https://api.deepseek.test/v1",
         api_key="test-deepseek-key",
-        fallback_model="doubao-lite",
-        fallback_provider="ark",
+        fallback_adapter=ArkStructuredFallback(
+            "doubao-lite",
+            max_output_tokens=400,
+            request_timeout_seconds=3,
+            client=ark_client,
+        ),
         request_timeout_seconds=3,
         max_output_tokens=400,
         client=deepseek_client,
-        fallback_client=ark_client,
+        use_legacy_token_parameter=True,
     )
 
-    result = model.run_query(
+    result = model.run_structured(
         "检索", tools=[], result_type=QueryDraft, max_model_calls=3,
     )
 
@@ -2335,20 +2400,25 @@ def test_sdk_query_cross_provider_fallback_keeps_completed_tool_result() -> None
         max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(ark_respond)),
     )
-    model = SDKQueryAgentModel(
+    model = OpenAIStructuredToolAgentModel(
         "deepseek-flash",
-        provider="deepseek",
+        provider_name="deepseek",
+        api_profile="deepseek",
         base_url="https://api.deepseek.test/v1",
         api_key="test-deepseek-key",
-        fallback_model="doubao-lite",
-        fallback_provider="ark",
+        fallback_adapter=ArkStructuredFallback(
+            "doubao-lite",
+            max_output_tokens=400,
+            request_timeout_seconds=3,
+            client=ark_client,
+        ),
         request_timeout_seconds=3,
         max_output_tokens=400,
         client=deepseek_client,
-        fallback_client=ark_client,
+        use_legacy_token_parameter=True,
     )
 
-    result = model.run_query(
+    result = model.run_structured(
         "检索 KTV",
         tools=[_tool(retrieve)],
         result_type=QueryDraft, max_model_calls=4,
@@ -2418,23 +2488,26 @@ def test_query_logs_incomplete_deepseek_then_guides_ark_without_tool(
         api_key="test-ark-key", max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(ark_respond)),
     )
-    model = SDKQueryAgentModel(
-        "deepseek-flash", provider="deepseek",
+    model = OpenAIStructuredToolAgentModel(
+        "deepseek-flash", provider_name="deepseek", api_profile="deepseek",
         base_url="https://api.deepseek.test/v1", api_key="test-deepseek-key",
-        fallback_model="doubao-lite", fallback_provider="ark",
+        fallback_adapter=ArkStructuredFallback(
+            "doubao-lite", max_output_tokens=400,
+            request_timeout_seconds=3, client=ark_client,
+        ),
         request_timeout_seconds=3, max_output_tokens=400,
-        client=deepseek_client, fallback_client=ark_client,
+        client=deepseek_client, use_legacy_token_parameter=True,
     )
 
     with caplog.at_level(logging.WARNING):
         if ark_recovers:
-            result = model.run_query(
+            result = model.run_structured(
                 "检索 KTV", tools=[_tool(retrieve)], result_type=QueryDraft,
                 max_model_calls=4,
             )
         else:
             with pytest.raises(MissingStructuredQueryToolCallError):
-                model.run_query(
+                model.run_structured(
                     "检索 KTV", tools=[_tool(retrieve)], result_type=QueryDraft,
                     max_model_calls=4,
                 )
@@ -2534,7 +2607,7 @@ def test_sdk_query_retries_invalid_structured_draft_with_tool_feedback() -> None
         max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "doubao-pro",
         fallback_model="doubao-lite",
         request_timeout_seconds=3,
@@ -2542,7 +2615,7 @@ def test_sdk_query_retries_invalid_structured_draft_with_tool_feedback() -> None
         client=client,
     )
 
-    result = model.run_query(
+    result = model.run_structured(
         "检索 KTV", tools=[_tool(retrieve)], result_type=QueryDraft,
         max_model_calls=3,
     )
@@ -2574,7 +2647,7 @@ def test_sdk_query_stops_after_lite_also_omits_required_tool() -> None:
         max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "doubao-pro",
         fallback_model="doubao-lite",
         request_timeout_seconds=3,
@@ -2583,7 +2656,7 @@ def test_sdk_query_stops_after_lite_also_omits_required_tool() -> None:
     )
 
     with pytest.raises(MissingStructuredQueryToolCallError) as error:
-        model.run_query(
+        model.run_structured(
             "检索", tools=[], result_type=QueryDraft, max_model_calls=4,
         )
 
@@ -2634,21 +2707,26 @@ def test_sdk_query_does_not_fallback_after_content_filter() -> None:
         max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(ark_respond)),
     )
-    model = SDKQueryAgentModel(
+    model = OpenAIStructuredToolAgentModel(
         "deepseek-flash",
-        provider="deepseek",
+        provider_name="deepseek",
+        api_profile="deepseek",
         base_url="https://api.deepseek.test/v1",
         api_key="test-deepseek-key",
-        fallback_model="doubao-lite",
-        fallback_provider="ark",
+        fallback_adapter=ArkStructuredFallback(
+            "doubao-lite",
+            max_output_tokens=400,
+            request_timeout_seconds=3,
+            client=ark_client,
+        ),
         request_timeout_seconds=3,
         max_output_tokens=400,
         client=deepseek_client,
-        fallback_client=ark_client,
+        use_legacy_token_parameter=True,
     )
 
     with pytest.raises(ContentFilterError):
-        model.run_query(
+        model.run_structured(
             "检索", tools=[], result_type=QueryDraft, max_model_calls=3,
         )
 
@@ -2696,12 +2774,12 @@ def test_sdk_query_compacts_complete_messages_before_second_model_request() -> N
         api_key="test-ark-key",
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400,
         max_input_chars=5_000, client=client,
     )
 
-    result = model.run_query(
+    result = model.run_structured(
         "检索", tools=[_tool(retrieve)], result_type=QueryDraft, max_model_calls=3,
     )
 
@@ -2728,11 +2806,11 @@ def test_sdk_query_budget_stops_before_extra_model_request() -> None:
         api_key="test-ark-key",
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
     )
     with pytest.raises(ModelCallLimitExceededError):
-        model.run_query(
+        model.run_structured(
             "检索", tools=[_tool(retrieve)], result_type=QueryDraft, max_model_calls=1
         )
     assert len(requests) == 1
@@ -2773,10 +2851,10 @@ def test_sdk_query_continues_past_previous_model_call_limit() -> None:
         api_key="test-ark-key",
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
     )
-    result = model.run_query(
+    result = model.run_structured(
         "检索", tools=[_tool(retrieve)], result_type=QueryDraft,
         max_model_calls=None,
         request_timeout_seconds=30,
@@ -2808,12 +2886,12 @@ def test_sdk_query_propagates_tool_stop_without_retry() -> None:
         api_key="test-ark-key",
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", fallback_model="ark-lite",
         request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
     with pytest.raises(ExecutionStopped, match="cancelled"):
-        model.run_query(
+        model.run_structured(
             "检索", tools=[_tool(retrieve)], result_type=QueryDraft, max_model_calls=3
         )
     assert len(requests) == 1
@@ -2840,11 +2918,11 @@ def test_sdk_query_does_not_accept_truncated_structured_tool_call() -> None:
             )
         ),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
     )
     with pytest.raises(RuntimeError, match="length"):
-        model.run_query("检索", tools=[], result_type=QueryDraft, max_model_calls=2)
+        model.run_structured("检索", tools=[], result_type=QueryDraft, max_model_calls=2)
     client.close()
 
 
@@ -2873,11 +2951,11 @@ def test_sdk_query_checks_control_after_model_before_running_tools() -> None:
             )
         ),
     )
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
     )
     with pytest.raises(RuntimeError, match="deadline exceeded"):
-        model.run_query(
+        model.run_structured(
             "检索",
             tools=[_tool(retrieve)],
             result_type=QueryDraft,
@@ -2913,10 +2991,10 @@ def test_sdk_query_preserves_ark_ak_sk_authentication(monkeypatch) -> None:
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
     monkeypatch.setattr(client, "_get_endpoint_sts_token", lambda *args: "test-sts")
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
     )
-    result = model.run_query("检索", tools=[], result_type=QueryDraft, max_model_calls=1)
+    result = model.run_structured("检索", tools=[], result_type=QueryDraft, max_model_calls=1)
     assert result.selected_video_chunk_ids == []
     assert authorizations == ["Bearer test-sts"]
     client.close()
@@ -2947,11 +3025,11 @@ def test_sdk_query_default_client_is_owned_per_invocation(monkeypatch) -> None:
         return Ark(api_key="test-key", http_client=transport)
 
     monkeypatch.setattr(Ark, "volc", new_client)
-    model = SDKQueryAgentModel(
+    model = ArkStructuredToolAgentModel(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400
     )
     for prompt in ("会话一", "会话二"):
-        model.run_query(prompt, tools=[], result_type=QueryDraft, max_model_calls=1)
+        model.run_structured(prompt, tools=[], result_type=QueryDraft, max_model_calls=1)
     assert len(clients) == 2
     assert all(client.is_closed for client in clients)
     assert inputs == [
@@ -2986,14 +3064,17 @@ def test_sdk_query_openai_compatible_providers_use_their_token_parameter(provide
         base_url="http://localhost:9000/v1",
         http_client=httpx.Client(transport=httpx.MockTransport(respond)),
     )
-    model = SDKQueryAgentModel(
+    model = OpenAIStructuredToolAgentModel(
         "test-local",
-        provider=provider,
+        provider_name=provider,
+        api_profile="deepseek" if provider == "deepseek" else "standard",
+        base_url="http://localhost:9000/v1",
         client=client,
         request_timeout_seconds=3,
         max_output_tokens=400,
+        use_legacy_token_parameter=True,
     )
-    result = model.run_query("检索", tools=[], result_type=QueryDraft, max_model_calls=1)
+    result = model.run_structured("检索", tools=[], result_type=QueryDraft, max_model_calls=1)
     assert result.selected_video_chunk_ids == []
     assert len(requests) == 1
     if provider == "deepseek":

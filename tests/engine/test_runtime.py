@@ -6,7 +6,7 @@ from threading import Event
 
 import pytest
 
-from gateway.models import ImageInput, TextInput, VideoInput
+from gateway.multimodal import ImageInput, TextInput, VideoInput
 
 from engine.parse.analysis_windows import plan_analysis_windows
 from engine.parse.background import BackgroundImage

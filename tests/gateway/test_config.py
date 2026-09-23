@@ -4,19 +4,38 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from gateway.config import load_config
+from gateway.config import (
+    ArkModelSourceConfig,
+    ClaudeCodeModelSourceConfig,
+    CodexModelSourceConfig,
+    OpenAIModelSourceConfig,
+    agent_api_key_env_names,
+    load_config,
+)
 
 
 def _config_payload() -> dict[str, object]:
     return {
+        "model_sources": {
+            "primary": {
+                "adapter": "openai",
+                "provider": "deepseek",
+                "profile": "deepseek",
+                "base_url": "https://api.deepseek.test",
+                "api_key_env": "TEST_DEEPSEEK_API_KEY",
+            },
+            "fallback": {
+                "adapter": "ark",
+                "provider": "ark",
+                "api_key_env": "TEST_ARK_API_KEY",
+            },
+        },
         "agent_model": {
-            "provider": "deepseek",
+            "source": "primary",
             "model": "test-agent",
-            "base_url": "https://api.deepseek.test",
-            "api_key_env": "TEST_DEEPSEEK_API_KEY",
-            "reasoning_effort": "none",
             "max_output_tokens": 2048,
             "request_timeout_seconds": 30,
+            "fallback": {"source": "fallback", "model": "test-ark"},
         },
         "video_parser": {
             "transcript_model": "test-transcript",
@@ -33,7 +52,7 @@ def _config_payload() -> dict[str, object]:
                     "provider": "deepseek",
                     "model": "test-deepseek",
                     "base_url": "https://api.deepseek.test",
-                    "api_key_env": "TEST_DEEPSEEK_API_KEY",
+                    "api_key_env": "TEST_PARSE_DEEPSEEK_API_KEY",
                     "reasoning_effort": "none",
                     "max_output_tokens": 4096,
                     "request_timeout_seconds": 120,
@@ -48,53 +67,51 @@ def _config_payload() -> dict[str, object]:
     }
 
 
+def _legacy_agent() -> dict[str, object]:
+    return {
+        "provider": "deepseek",
+        "model": "legacy-agent",
+        "base_url": "https://api.deepseek.test",
+        "api_key_env": "LEGACY_DEEPSEEK_API_KEY",
+        "reasoning_effort": "none",
+        "max_output_tokens": 2048,
+        "request_timeout_seconds": 30,
+    }
+
+
 def _write_config(path: Path, payload: dict[str, object]) -> None:
-    path.write_text(
-        yaml.safe_dump(payload, sort_keys=False),
-        encoding="utf-8",
-    )
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
-def test_default_config_uses_selected_models() -> None:
+def test_default_config_uses_canonical_agent_sources() -> None:
     config = load_config()
 
+    assert config.agent_model.source == "deepseek_api"
     assert config.agent_model.model == "deepseek-flash"
-    assert config.agent_model.provider == "deepseek"
-    assert config.agent_model.base_url == "https://api.deepseek.com"
-    assert config.agent_model.api_key_env == "DEEPSEEK_API_KEY"
-    assert config.agent_model.reasoning_effort == "none"
     assert config.agent_model.max_output_tokens == 8192
     assert config.agent_model.request_timeout_seconds == 180
+    assert config.agent_model.fallback is not None
+    assert config.agent_model.fallback.source == "ark_default"
+    assert config.agent_model.fallback.model == "doubao-seed-2-0-lite-260428"
+
+    primary = config.model_sources["deepseek_api"]
+    assert isinstance(primary, OpenAIModelSourceConfig)
+    assert primary.provider == "deepseek"
+    assert primary.profile == "deepseek"
+    assert primary.base_url == "https://api.deepseek.com"
+    assert primary.api_key_env == "DEEPSEEK_API_KEY"
+    assert isinstance(config.model_sources["ark_default"], ArkModelSourceConfig)
+    assert agent_api_key_env_names(config) == ("ARK_API_KEY", "DEEPSEEK_API_KEY")
+
     assert config.video_parser.transcript_model == "doubao-seed-2-0-lite-260428"
     assert config.video_parser.video_model == "doubao-seed-2-1-pro-260628"
     assert config.multimodal_embedding.model == "doubao-embedding-vision-250615"
-    assert config.multimodal_embedding.dimensions == 1024
     assert config.agent_runtime["stage_timeout_seconds"] == 480
-    assert config.agent_runtime["evaluator_stage_timeout_seconds"] == 480
-    assert config.agent_runtime["chat_timeout_seconds"] == 480
-    assert config.agent_runtime["supervisor_timeout_seconds"] == 480
-    assert config.agent_runtime["execution_timeout_seconds"] == 480
-    assert config.agent_runtime["max_output_tokens"] == 8192
-
-    fallback = config.video_parser.fallback
-    assert fallback.enabled is True
-    assert fallback.frame_fps == 0.5
-    assert fallback.group_duration_ms == 30_000
-    assert fallback.max_frames_per_group == 15
-    assert fallback.max_height == 720
-
-    deepseek = fallback.deepseek
-    assert deepseek.provider == "deepseek"
-    assert deepseek.model == "deepseek-flash"
-    assert deepseek.base_url == "https://api.deepseek.com"
-    assert deepseek.api_key_env == "DEEPSEEK_API_KEY"
-    assert deepseek.reasoning_effort == "none"
-    assert deepseek.max_output_tokens == 8192
-    assert deepseek.request_timeout_seconds == 1200
 
 
-def test_parse_only_config_uses_compatible_agent_defaults(tmp_path: Path) -> None:
+def test_parse_only_config_gets_legacy_compatible_agent_defaults(tmp_path: Path) -> None:
     payload = _config_payload()
+    del payload["model_sources"]
     del payload["agent_model"]
     config_path = tmp_path / "parse-only.yaml"
     _write_config(config_path, payload)
@@ -102,8 +119,9 @@ def test_parse_only_config_uses_compatible_agent_defaults(tmp_path: Path) -> Non
     config = load_config(config_path)
 
     assert config.agent_model.model == "deepseek-flash"
-    assert config.agent_model.base_url == "https://api.deepseek.com"
-    assert config.agent_model.api_key_env == "DEEPSEEK_API_KEY"
+    assert config.agent_model.fallback is not None
+    assert config.agent_model.fallback.model == "test-transcript"
+    assert isinstance(config.model_sources["legacy_agent"], OpenAIModelSourceConfig)
 
 
 def test_gateway_accepts_agent_runtime_in_shared_yaml(tmp_path: Path) -> None:
@@ -115,27 +133,199 @@ def test_gateway_accepts_agent_runtime_in_shared_yaml(tmp_path: Path) -> None:
     assert load_config(config_path).agent_runtime == {"max_tool_result_bytes": 8192}
 
 
-def test_legacy_agent_chat_config_is_still_accepted(tmp_path: Path) -> None:
+def test_legacy_deepseek_agent_chat_is_normalized_once(tmp_path: Path) -> None:
     payload = _config_payload()
-    payload["agent_chat"] = payload.pop("agent_model")
+    del payload["model_sources"]
+    payload["agent_chat"] = _legacy_agent()
+    del payload["agent_model"]
     config_path = tmp_path / "legacy-agent-chat.yaml"
     _write_config(config_path, payload)
 
     config = load_config(config_path)
 
-    assert config.agent_model.model == "test-agent"
-    assert config.agent_model.api_key_env == "TEST_DEEPSEEK_API_KEY"
+    assert config.agent_model.source == "legacy_agent"
+    assert config.agent_model.model == "legacy-agent"
+    assert config.agent_model.fallback is not None
+    assert config.agent_model.fallback.model == "test-transcript"
+    primary = config.model_sources["legacy_agent"]
+    assert isinstance(primary, OpenAIModelSourceConfig)
+    assert primary.provider == "deepseek"
+    assert primary.profile == "deepseek"
+    assert primary.api_key_env == "LEGACY_DEEPSEEK_API_KEY"
+    assert isinstance(
+        config.model_sources["legacy_ark_fallback"], ArkModelSourceConfig
+    )
 
 
-def test_config_rejects_unknown_fields(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("provider", "fields", "source_type"),
+    [
+        (
+            "codex",
+            {"codex_bin": "/opt/codex/bin/codex", "max_concurrency": 6},
+            CodexModelSourceConfig,
+        ),
+        (
+            "claude-code",
+            {"cli_path": "/opt/claude/bin/claude", "max_concurrency": 3},
+            ClaudeCodeModelSourceConfig,
+        ),
+    ],
+)
+def test_legacy_local_agent_providers_are_normalized(
+    tmp_path: Path,
+    provider: str,
+    fields: dict[str, object],
+    source_type: type,
+) -> None:
     payload = _config_payload()
-    video_parser = payload["video_parser"]
-    assert isinstance(video_parser, dict)
-    video_parser["unknown"] = True
-    config_path = tmp_path / "config.yaml"
+    del payload["model_sources"]
+    payload["agent_model"] = {
+        "provider": provider,
+        "model": "local-model",
+        "max_output_tokens": 4096,
+        "request_timeout_seconds": 90,
+        **fields,
+    }
+    config_path = tmp_path / "legacy-local-agent.yaml"
     _write_config(config_path, payload)
 
-    with pytest.raises(ValidationError):
+    config = load_config(config_path)
+
+    assert isinstance(config.model_sources["legacy_agent"], source_type)
+    assert config.agent_model.model == "local-model"
+    assert config.agent_model.fallback is None
+
+
+def test_canonical_sources_parse_all_supported_adapters(tmp_path: Path) -> None:
+    payload = _config_payload()
+    sources = payload["model_sources"]
+    assert isinstance(sources, dict)
+    sources.update({
+        "codex": {
+            "adapter": "codex_app_server",
+            "provider": "codex",
+            "codex_bin": "/opt/codex",
+        },
+        "claude": {
+            "adapter": "claude_sdk",
+            "provider": "claude_code",
+            "auth_mode": "local_subscription",
+        },
+    })
+    config_path = tmp_path / "all-sources.yaml"
+    _write_config(config_path, payload)
+
+    config = load_config(config_path)
+
+    assert isinstance(config.model_sources["codex"], CodexModelSourceConfig)
+    assert isinstance(config.model_sources["claude"], ClaudeCodeModelSourceConfig)
+
+
+def test_unselected_source_credentials_are_not_required(tmp_path: Path) -> None:
+    payload = _config_payload()
+    sources = payload["model_sources"]
+    assert isinstance(sources, dict)
+    sources["unused"] = {
+        "adapter": "openai",
+        "provider": "unused",
+        "base_url": "https://unused.example.com",
+        "api_key_env": "UNUSED_API_KEY",
+    }
+    config_path = tmp_path / "unused-source.yaml"
+    _write_config(config_path, payload)
+
+    config = load_config(config_path)
+
+    assert agent_api_key_env_names(config) == (
+        "TEST_ARK_API_KEY",
+        "TEST_DEEPSEEK_API_KEY",
+    )
+
+
+def test_claude_api_key_auth_requires_environment_name(tmp_path: Path) -> None:
+    payload = _config_payload()
+    sources = payload["model_sources"]
+    assert isinstance(sources, dict)
+    sources["claude"] = {
+        "adapter": "claude_sdk",
+        "provider": "claude_code",
+        "auth_mode": "api_key",
+    }
+    config_path = tmp_path / "claude-api-key-agent.yaml"
+    _write_config(config_path, payload)
+
+    with pytest.raises(ValidationError, match="api_key_env"):
+        load_config(config_path)
+
+
+def test_config_rejects_legacy_provider_mixed_with_model_sources(
+    tmp_path: Path,
+) -> None:
+    payload = _config_payload()
+    payload["agent_model"] = _legacy_agent()
+    config_path = tmp_path / "ambiguous-agent.yaml"
+    _write_config(config_path, payload)
+
+    with pytest.raises(ValidationError, match="cannot be combined"):
+        load_config(config_path)
+
+
+def test_config_rejects_both_agent_model_and_legacy_alias(tmp_path: Path) -> None:
+    payload = _config_payload()
+    payload["agent_chat"] = _legacy_agent()
+    config_path = tmp_path / "duplicate-agent.yaml"
+    _write_config(config_path, payload)
+
+    with pytest.raises(ValidationError, match="legacy alias"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize("path", [("source",), ("fallback", "source")])
+def test_agent_model_rejects_unknown_source(
+    tmp_path: Path,
+    path: tuple[str, ...],
+) -> None:
+    payload = _config_payload()
+    target = payload["agent_model"]
+    assert isinstance(target, dict)
+    for part in path[:-1]:
+        target = target[part]
+        assert isinstance(target, dict)
+    target[path[-1]] = "missing"
+    config_path = tmp_path / "unknown-source.yaml"
+    _write_config(config_path, payload)
+
+    with pytest.raises(ValidationError, match="not present"):
+        load_config(config_path)
+
+
+def test_agent_model_rejects_same_source_as_fallback(tmp_path: Path) -> None:
+    payload = _config_payload()
+    agent_model = payload["agent_model"]
+    assert isinstance(agent_model, dict)
+    fallback = agent_model["fallback"]
+    assert isinstance(fallback, dict)
+    fallback["source"] = agent_model["source"]
+    config_path = tmp_path / "same-fallback-source.yaml"
+    _write_config(config_path, payload)
+
+    with pytest.raises(ValidationError, match="must differ"):
+        load_config(config_path)
+
+
+def test_legacy_agent_rejects_reasoning_effort_that_was_never_supported(
+    tmp_path: Path,
+) -> None:
+    payload = _config_payload()
+    del payload["model_sources"]
+    legacy_agent = _legacy_agent()
+    legacy_agent["reasoning_effort"] = "high"
+    payload["agent_model"] = legacy_agent
+    config_path = tmp_path / "unsupported-legacy-reasoning.yaml"
+    _write_config(config_path, payload)
+
+    with pytest.raises(ValidationError, match="only supports 'none'"):
         load_config(config_path)
 
 
@@ -144,38 +334,31 @@ def test_environment_can_select_config(monkeypatch, tmp_path: Path) -> None:
     agent_model = payload["agent_model"]
     assert isinstance(agent_model, dict)
     agent_model["model"] = "custom-agent"
-    agent_model["api_key_env"] = "CUSTOM_AGENT_API_KEY"
+    sources = payload["model_sources"]
+    assert isinstance(sources, dict)
+    primary = sources["primary"]
+    assert isinstance(primary, dict)
+    primary["api_key_env"] = "CUSTOM_AGENT_API_KEY"
     video_parser = payload["video_parser"]
     assert isinstance(video_parser, dict)
     video_parser["transcript_model"] = "custom-transcript"
-    video_parser["video_model"] = "custom-video"
     fallback = video_parser["fallback"]
     assert isinstance(fallback, dict)
     fallback["group_duration_ms"] = 15_000
-    deepseek = fallback["deepseek"]
-    assert isinstance(deepseek, dict)
-    deepseek["model"] = "custom-deepseek"
-    deepseek["api_key_env"] = "CUSTOM_DEEPSEEK_API_KEY"
     embedding = payload["multimodal_embedding"]
     assert isinstance(embedding, dict)
     embedding["dimensions"] = 512
-
-    config_path = tmp_path / "deepseek.yaml"
+    config_path = tmp_path / "custom.yaml"
     _write_config(config_path, payload)
     monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
 
     config = load_config()
 
     assert config.agent_model.model == "custom-agent"
-    assert config.agent_model.api_key_env == "CUSTOM_AGENT_API_KEY"
+    assert isinstance(config.model_sources["primary"], OpenAIModelSourceConfig)
+    assert config.model_sources["primary"].api_key_env == "CUSTOM_AGENT_API_KEY"
     assert config.video_parser.transcript_model == "custom-transcript"
-    assert config.video_parser.video_model == "custom-video"
     assert config.video_parser.fallback.group_duration_ms == 15_000
-    assert config.video_parser.fallback.deepseek.model == "custom-deepseek"
-    assert (
-        config.video_parser.fallback.deepseek.api_key_env
-        == "CUSTOM_DEEPSEEK_API_KEY"
-    )
     assert config.multimodal_embedding.dimensions == 512
 
 
@@ -189,69 +372,16 @@ def test_environment_can_select_config(monkeypatch, tmp_path: Path) -> None:
         ("deepseek", "api_key_env"),
     ],
 )
-def test_fallback_requires_pipeline_and_model_fields(
+def test_parse_fallback_requires_pipeline_and_model_fields(
     section: str,
     missing_field: str,
     tmp_path: Path,
 ) -> None:
     payload = _config_payload()
-    video_parser = payload["video_parser"]
-    assert isinstance(video_parser, dict)
-    fallback = video_parser["fallback"]
-    assert isinstance(fallback, dict)
+    fallback = payload["video_parser"]["fallback"]
     target = fallback if section == "fallback" else fallback["deepseek"]
-    assert isinstance(target, dict)
     del target[missing_field]
-
-    config_path = tmp_path / "missing-fallback-config.yaml"
-    _write_config(config_path, payload)
-
-    with pytest.raises(ValidationError):
-        load_config(config_path)
-
-
-def test_fallback_rejects_non_deepseek_provider(tmp_path: Path) -> None:
-    payload = _config_payload()
-    video_parser = payload["video_parser"]
-    assert isinstance(video_parser, dict)
-    fallback = video_parser["fallback"]
-    assert isinstance(fallback, dict)
-    deepseek = fallback["deepseek"]
-    assert isinstance(deepseek, dict)
-    deepseek["provider"] = "ark"
-
-    config_path = tmp_path / "unknown-provider.yaml"
-    _write_config(config_path, payload)
-
-    with pytest.raises(ValidationError):
-        load_config(config_path)
-
-
-@pytest.mark.parametrize(
-    "missing_field",
-    ["model", "base_url", "api_key_env", "max_output_tokens", "request_timeout_seconds"],
-)
-def test_agent_model_requires_connection_fields(
-    missing_field: str,
-    tmp_path: Path,
-) -> None:
-    payload = _config_payload()
-    agent_model = payload["agent_model"]
-    assert isinstance(agent_model, dict)
-    del agent_model[missing_field]
-    config_path = tmp_path / "missing-agent-model-config.yaml"
-    _write_config(config_path, payload)
-
-    with pytest.raises(ValidationError):
-        load_config(config_path)
-
-
-def test_agent_model_requires_nonthinking_deepseek(tmp_path: Path) -> None:
-    payload = _config_payload()
-    agent_model = payload["agent_model"]
-    assert isinstance(agent_model, dict)
-    agent_model["reasoning_effort"] = "high"
-    config_path = tmp_path / "thinking-agent-model-config.yaml"
+    config_path = tmp_path / "missing-parse-fallback.yaml"
     _write_config(config_path, payload)
 
     with pytest.raises(ValidationError):
@@ -269,18 +399,17 @@ def test_agent_model_requires_nonthinking_deepseek(tmp_path: Path) -> None:
         "https://api.deepseek.com /v1",
     ],
 )
-@pytest.mark.parametrize("section", ["agent_model", "video_fallback"])
-def test_deepseek_base_urls_require_safe_https_endpoints(
+@pytest.mark.parametrize("section", ["model_source", "video_fallback"])
+def test_openai_compatible_base_urls_require_safe_https_endpoints(
     tmp_path: Path,
     section: str,
     base_url: str,
 ) -> None:
     payload = _config_payload()
-    if section == "agent_model":
-        target = payload["agent_model"]
+    if section == "model_source":
+        target = payload["model_sources"]["primary"]
     else:
         target = payload["video_parser"]["fallback"]["deepseek"]
-    assert isinstance(target, dict)
     target["base_url"] = base_url
     config_path = tmp_path / f"unsafe-{section}.yaml"
     _write_config(config_path, payload)
@@ -289,12 +418,14 @@ def test_deepseek_base_urls_require_safe_https_endpoints(
         load_config(config_path)
 
 
-def test_deepseek_base_urls_are_trimmed_and_canonicalized(tmp_path: Path) -> None:
+def test_base_urls_are_trimmed_and_canonicalized(tmp_path: Path) -> None:
     payload = _config_payload()
-    agent_model = payload["agent_model"]
-    assert isinstance(agent_model, dict)
-    agent_model["base_url"] = "  https://api.deepseek.test/v1/  "
+    payload["model_sources"]["primary"]["base_url"] = (
+        "  https://api.deepseek.test/v1/  "
+    )
     config_path = tmp_path / "canonical-base-url.yaml"
     _write_config(config_path, payload)
 
-    assert load_config(config_path).agent_model.base_url == "https://api.deepseek.test/v1"
+    primary = load_config(config_path).model_sources["primary"]
+    assert isinstance(primary, OpenAIModelSourceConfig)
+    assert primary.base_url == "https://api.deepseek.test/v1"

@@ -2,20 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-import os
 from typing import Any
 
 from arkruntime import Ark
 from engine.parse.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from gateway.ark.embedding import DoubaoMultimodalEmbedder
 from gateway.config import load_config
-from gateway.agent_model import (
-    DeepSeekFunctionCallingModel, SDKStructuredToolAgentModel,
-)
-from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
-from gateway.context_window import ContextWindowPolicy
-from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
+from gateway.embedding import EmbeddingResult
+from gateway.harness.context import ContextWindowPolicy
+from gateway.harness.factory import AgentModelFactory
 from gateway.web_search import WebSearcher
-from gateway.schemas import EmbeddingResult
 from qdrant_client import QdrantClient
 from sqlalchemy import Engine
 
@@ -66,6 +62,7 @@ class ApplicationServices:
     engine: Engine | None = None
     qdrant_client: Any | None = None
     parse_usage: ParseUsageService | None = None
+    agent_model_factory: AgentModelFactory | None = None
 
     def start(self) -> None:
         if self.parse_consumer is not None:
@@ -80,22 +77,30 @@ class ApplicationServices:
             self.agent.close()
         finally:
             try:
-                if self.qdrant_client is not None:
-                    self.qdrant_client.close()
+                if self.agent_model_factory is not None:
+                    self.agent_model_factory.close()
             finally:
-                if self.engine is not None:
-                    self.engine.dispose()
+                try:
+                    if self.qdrant_client is not None:
+                        self.qdrant_client.close()
+                finally:
+                    if self.engine is not None:
+                        self.engine.dispose()
 
 
 def build_application_services(settings: ServerSettings) -> ApplicationServices:
     gateway_config = load_config(settings.model_config_path)
     agent_model_config = gateway_config.agent_model
-    agent_api_key = os.getenv(agent_model_config.api_key_env, "").strip()
-    if not agent_api_key:
-        raise RuntimeError(
-            "Agent model API key environment variable "
-            f"{agent_model_config.api_key_env!r} is not configured"
-        )
+    configured_fallback = agent_model_config.fallback
+    fallback_agent_model = (
+        settings.agent_fallback_model
+        or (configured_fallback.model if configured_fallback is not None else None)
+    )
+    agent_model_factory = AgentModelFactory(
+        agent_model_config,
+        gateway_config.model_sources,
+        fallback_model=fallback_agent_model,
+    )
     engine = create_database_engine(
         settings.database_url,
         environment=settings.environment,
@@ -173,10 +178,6 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         text_weight=settings.retrieval.text_weight,
         vision_weight=settings.retrieval.vision_weight,
     )
-    fallback_agent_model = (
-        settings.agent_fallback_model
-        or gateway_config.video_parser.transcript_model
-    )
     query_model_name = settings.agent_query_model or agent_model_config.model
     evaluator_model_name = settings.agent_evaluator_model or agent_model_config.model
     chat_model_name = settings.agent_chat_model or agent_model_config.model
@@ -198,39 +199,27 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             compact_target_tokens=agent_config.compact_target_tokens,
         )
         return AgentRuntime(
-            SDKStructuredToolAgentModel(
+            agent_model_factory.build_structured(
                 model=query_model_name,
-                provider=DEEPSEEK_PROVIDER,
-                base_url=agent_model_config.base_url,
-                api_key=agent_api_key,
                 request_timeout_seconds=request_timeout,
                 max_output_tokens=max_output_tokens,
                 max_input_chars=agent_config.max_prompt_chars,
                 context_window_policy=context_window_policy,
                 reasoning_effort=agent_config.query_reasoning_effort,
-                fallback_model=fallback_agent_model,
-                fallback_provider=ARK_PROVIDER,
             ),
-            SDKStructuredToolAgentModel(
+            agent_model_factory.build_structured(
                 model=evaluator_model_name,
-                provider=DEEPSEEK_PROVIDER,
-                base_url=agent_model_config.base_url,
-                api_key=agent_api_key,
                 request_timeout_seconds=request_timeout,
                 max_output_tokens=max_output_tokens,
                 max_input_chars=agent_config.max_prompt_chars,
                 context_window_policy=context_window_policy,
                 reasoning_effort=agent_config.evaluator_reasoning_effort,
-                fallback_model=fallback_agent_model,
-                fallback_provider=ARK_PROVIDER,
             ),
-            DeepSeekFunctionCallingModel(
+            agent_model_factory.build_loop(
                 model=chat_model_name,
-                base_url=agent_model_config.base_url,
-                api_key=agent_api_key,
-                fallback_model=fallback_agent_model,
                 request_timeout_seconds=request_timeout,
                 max_output_tokens=max_output_tokens,
+                max_input_chars=agent_config.max_prompt_chars,
                 context_window_policy=context_window_policy,
                 reasoning_effort=agent_config.chat_reasoning_effort,
             ),
@@ -270,13 +259,11 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         )
         return SupervisorRuntime(
             video_runtime,
-            DeepSeekFunctionCallingModel(
+            agent_model_factory.build_loop(
                 model=chat_model_name,
-                base_url=agent_model_config.base_url,
-                api_key=agent_api_key,
-                fallback_model=fallback_agent_model,
                 request_timeout_seconds=request_timeout,
                 max_output_tokens=max_output_tokens,
+                max_input_chars=agent_config.max_prompt_chars,
                 context_window_policy=context_window_policy,
                 reasoning_effort=agent_config.supervisor_reasoning_effort,
             ),
@@ -440,6 +427,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         engine=engine,
         qdrant_client=qdrant_client,
         parse_usage=parse_usage,
+        agent_model_factory=agent_model_factory,
     )
 
 

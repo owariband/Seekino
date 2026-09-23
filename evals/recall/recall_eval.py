@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Literal, Protocol
 
-from gateway.schemas import EmbeddingResult
+from gateway.embedding import EmbeddingResult
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from engine.parse.analysis_windows import (

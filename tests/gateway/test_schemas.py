@@ -1,4 +1,4 @@
-from gateway.schemas import EmbeddingResult
+from gateway.embedding import EmbeddingResult
 
 
 def test_embedding_result_reports_vector_dimension() -> None:

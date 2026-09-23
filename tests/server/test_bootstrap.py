@@ -7,6 +7,7 @@ from dataclasses import replace
 import pytest
 from engine.parse.runtime import EngineASRAgent, EngineVideoUnderstandingAgent, VideoParseRuntimeConfig
 from gateway.config import load_config
+from gateway.openai.structured import OpenAIStructuredToolAgentModel
 
 from server import bootstrap
 from server.api.app import create_app
@@ -81,6 +82,7 @@ def test_process_assembly_receives_runtime_configuration(
     monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
     monkeypatch.setenv("ANIVAG_QDRANT_URL", "http://127.0.0.1:6333")
     monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "bootstrap_test")
+    monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     settings = replace(
         ServerSettings.from_environment(),
@@ -222,7 +224,7 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._chat_model._request_timeout_seconds == 90
         assert isinstance(
             runtime._evaluator_model,
-            bootstrap.SDKStructuredToolAgentModel,
+            OpenAIStructuredToolAgentModel,
         )
         assert runtime._query_model.provider_name == "deepseek"
         assert runtime._evaluator_model.provider_name == "deepseek"
@@ -338,11 +340,12 @@ def test_application_stops_consumer_before_agent_database_and_vector_store():
         library=None, uploads=None, jobs=None, media=None, retrieval=None,
         agent=SimpleNamespace(close=lambda: order.append("agent")), index_sync=None,
         parse_consumer=SimpleNamespace(close=lambda: order.append("consumer")),
+        agent_model_factory=SimpleNamespace(close=lambda: order.append("model_factory")),
         qdrant_client=SimpleNamespace(close=lambda: order.append("vectors")),
         engine=SimpleNamespace(dispose=lambda: order.append("database")),
     )
     services.close()
-    assert order == ["consumer", "agent", "vectors", "database"]
+    assert order == ["consumer", "agent", "model_factory", "vectors", "database"]
 
 
 def test_query_embedder_uses_a_client_per_call_and_always_closes(monkeypatch):

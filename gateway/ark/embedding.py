@@ -5,9 +5,10 @@ from pathlib import Path
 
 from arkruntime import Ark
 
-from ._video_file import read_video_file
-from .schemas import EmbeddingResult
-from .usage import track_model_call
+from gateway.embedding import EmbeddingResult
+from gateway.media import read_video_file
+from gateway.usage import track_model_call
+
 
 _MAX_INLINE_VIDEO_BYTES = 45 * 1024 * 1024
 _SUPPORTED_VIDEO_MIME_TYPES = {
@@ -52,7 +53,11 @@ class DoubaoMultimodalEmbedder:
             f"data:{mime_type};base64,"
             f"{base64.b64encode(video_bytes).decode('ascii')}"
         )
-        with track_model_call(provider="ark", model=self.model_name, operation="video_embedding") as call:
+        with track_model_call(
+            provider="ark",
+            model=self.model_name,
+            operation="video_embedding",
+        ) as call:
             response = self._client.multimodal_embeddings.create(
                 model=self.model_name,
                 input=[
@@ -72,7 +77,11 @@ class DoubaoMultimodalEmbedder:
         if not normalized_text:
             raise ValueError("text must not be empty")
 
-        with track_model_call(provider="ark", model=self.model_name, operation="text_embedding") as call:
+        with track_model_call(
+            provider="ark",
+            model=self.model_name,
+            operation="text_embedding",
+        ) as call:
             response = self._client.multimodal_embeddings.create(
                 model=self.model_name,
                 input=[{"type": "text", "text": normalized_text}],

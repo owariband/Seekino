@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from gateway.models import ImageInput, TextInput
+from gateway.multimodal import ImageInput, TextInput
 
 _BACKGROUND_IMAGE_REFERENCE = re.compile(r"asset://([^\s\\\"'`()<>\[\]{},;，。；：！？、]*)")
 _BACKGROUND_IMAGE_ID = re.compile(r"[A-Za-z0-9_-]+")

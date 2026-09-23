@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from engine.parse.schemas import TranscriptCue
-from gateway.schemas import EmbeddingResult
+from gateway.embedding import EmbeddingResult
 from qdrant_client import QdrantClient
 
 from server.database import DatabaseEnvironment, create_session_factory

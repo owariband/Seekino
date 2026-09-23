@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from gateway.sse_proxy import SSEProxyError, request_sse_json, request_sse_text
+from gateway.ark.sse import request_sse_json, request_sse_text
+from gateway.errors import SSEProxyError
 
 
 class FakeStream:

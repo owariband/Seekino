@@ -22,7 +22,7 @@ OpenAIMessage = dict[str, Any]
 
 
 class ContextWindowOverflow(RuntimeError):
-    """A request cannot fit after every safe compaction step was applied."""
+    """A request cannot fit within its configured context budget."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,6 +388,65 @@ def measure_context(
         characters=len(rendered),
         estimated_tokens=max(1, ceil(byte_count / _BYTES_PER_ESTIMATED_TOKEN)),
     )
+
+
+def preflight_context(
+    messages: list[OpenAIMessage],
+    contract: object,
+    *,
+    policy: ContextWindowPolicy | None,
+    maximum_input_characters: int | None,
+    fixed_input_tokens: int = 0,
+    label: str,
+) -> ContextWindowMeasurement:
+    """Measure one initial request and reject it without attempting compaction."""
+
+    if maximum_input_characters is not None and (
+        isinstance(maximum_input_characters, bool)
+        or not isinstance(maximum_input_characters, int)
+        or maximum_input_characters <= 0
+    ):
+        raise ValueError(
+            "maximum_input_characters must be positive when provided"
+        )
+    if (
+        isinstance(fixed_input_tokens, bool)
+        or not isinstance(fixed_input_tokens, int)
+        or fixed_input_tokens < 0
+    ):
+        raise ValueError("fixed_input_tokens must be a non-negative integer")
+    if not label.strip():
+        raise ValueError("context-window label must not be empty")
+
+    payload = measure_context(messages, contract)
+    measurement = replace(
+        payload,
+        estimated_tokens=payload.estimated_tokens + fixed_input_tokens,
+    )
+    exceeded = []
+    if (
+        maximum_input_characters is not None
+        and measurement.characters > maximum_input_characters
+    ):
+        exceeded.append(
+            f"serialized character budget {measurement.characters}>"
+            f"{maximum_input_characters}"
+        )
+    if (
+        policy is not None
+        and measurement.estimated_tokens >= policy.maximum_input_tokens
+    ):
+        exceeded.append(
+            f"estimated token budget {measurement.estimated_tokens}>="
+            f"{policy.maximum_input_tokens} "
+            f"(payload={payload.estimated_tokens}, "
+            f"fixed_input_tokens={fixed_input_tokens})"
+        )
+    if exceeded:
+        raise ContextWindowOverflow(
+            f"{label} initial context budget exceeded: " + ", ".join(exceeded)
+        )
+    return measurement
 
 
 def _stable_prefix_end(messages: list[OpenAIMessage]) -> int:

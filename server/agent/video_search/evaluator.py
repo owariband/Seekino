@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from gateway.agent_model import ModelInputTooLargeError, StructuredToolAgentModel
+from gateway.harness.contracts import StructuredToolAgentModel
+from gateway.harness.errors import ModelInputTooLargeError
 from langchain_core.tools import BaseTool
 
 from .context import build_workspace_checkpoint, project_inputs

@@ -40,7 +40,7 @@ from engine.retrieval.video_retrieval import (
     VideoChunkRetrievalDocument,
     build_video_chunk_retrieval_documents,
 )
-from gateway.schemas import EmbeddingResult
+from gateway.embedding import EmbeddingResult
 from langgraph.graph import END, START, StateGraph
 
 from ..config.video_processing import VideoProcessingConfig

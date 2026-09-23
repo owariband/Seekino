@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from .config import load_config
-from .multimodal_embedder import DoubaoMultimodalEmbedder
+from .ark.embedding import DoubaoMultimodalEmbedder
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -6,8 +6,32 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from gateway.config import (
+    ClaudeCodeModelSourceConfig,
+    CodexModelSourceConfig,
+    OpenAIModelSourceConfig,
+)
 from scripts import local_services
 from scripts.local_services import api_ready, config_digest, dotenv_variable_names
+
+
+def _model_config(
+    *selected_sources,
+    fallback_enabled: bool = False,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        selected_agent_sources=lambda: selected_sources,
+        video_parser=SimpleNamespace(
+            fallback=SimpleNamespace(
+                enabled=fallback_enabled,
+                deepseek=SimpleNamespace(api_key_env="PARSE_DEEPSEEK_API_KEY"),
+            ),
+        ),
+        model_dump=lambda mode: {
+            "model_sources": [source.model_dump() for source in selected_sources],
+            "agent_runtime": {},
+        },
+    )
 
 
 def test_dotenv_variable_names_only_returns_safe_assignment_names(
@@ -78,20 +102,57 @@ def test_config_digest_tracks_model_api_key_changes(monkeypatch) -> None:
 
 
 def test_config_digest_tracks_configured_parse_fallback_api_key(monkeypatch) -> None:
-    config = SimpleNamespace(
-        agent_model=SimpleNamespace(api_key_env="DEEPSEEK_API_KEY"),
-        video_parser=SimpleNamespace(
-            fallback=SimpleNamespace(
-                enabled=True,
-                deepseek=SimpleNamespace(api_key_env="CUSTOM_DEEPSEEK_API_KEY"),
-            ),
-        ),
-        model_dump=lambda mode: {"agent_runtime": {}},
+    config = _model_config(
+        CodexModelSourceConfig(),
+        fallback_enabled=True,
     )
+    config.video_parser.fallback.deepseek.api_key_env = "CUSTOM_DEEPSEEK_API_KEY"
     monkeypatch.setattr(local_services, "load_config", lambda: config)
     monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "first")
     initial = config_digest()
     monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "second")
+
+    assert config_digest() != initial
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        CodexModelSourceConfig(),
+        ClaudeCodeModelSourceConfig(),
+    ],
+)
+def test_config_digest_local_cli_providers_do_not_require_agent_api_key(
+    monkeypatch,
+    source,
+) -> None:
+    monkeypatch.setattr(
+        local_services,
+        "load_config",
+        lambda: _model_config(source),
+    )
+    monkeypatch.setenv("ARK_API_KEY", "ark-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "first")
+    initial = config_digest()
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "second")
+
+    assert config_digest() == initial
+
+
+def test_config_digest_tracks_claude_api_key_mode(monkeypatch) -> None:
+    source = ClaudeCodeModelSourceConfig(
+        auth_mode="api_key",
+        api_key_env="CUSTOM_ANTHROPIC_API_KEY",
+    )
+    monkeypatch.setattr(
+        local_services,
+        "load_config",
+        lambda: _model_config(source),
+    )
+    monkeypatch.setenv("ARK_API_KEY", "ark-test")
+    monkeypatch.setenv("CUSTOM_ANTHROPIC_API_KEY", "first")
+    initial = config_digest()
+    monkeypatch.setenv("CUSTOM_ANTHROPIC_API_KEY", "second")
 
     assert config_digest() != initial
 
@@ -205,15 +266,16 @@ def test_start_requires_deepseek_key_before_launching_server(monkeypatch) -> Non
 
 
 def test_start_requires_configured_parse_fallback_key_name(monkeypatch) -> None:
-    config = SimpleNamespace(
-        agent_model=SimpleNamespace(api_key_env="CUSTOM_DEEPSEEK_API_KEY"),
-        video_parser=SimpleNamespace(
-            fallback=SimpleNamespace(
-                enabled=True,
-                deepseek=SimpleNamespace(api_key_env="CUSTOM_DEEPSEEK_API_KEY"),
-            ),
+    config = _model_config(
+        OpenAIModelSourceConfig(
+            provider="deepseek",
+            profile="deepseek",
+            base_url="https://api.deepseek.com",
+            api_key_env="CUSTOM_DEEPSEEK_API_KEY",
         ),
+        fallback_enabled=True,
     )
+    config.video_parser.fallback.deepseek.api_key_env = "CUSTOM_DEEPSEEK_API_KEY"
     monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
     monkeypatch.setenv("ARK_API_KEY", "ark-test")
     monkeypatch.delenv("CUSTOM_DEEPSEEK_API_KEY", raising=False)
@@ -222,4 +284,56 @@ def test_start_requires_configured_parse_fallback_key_name(monkeypatch) -> None:
     monkeypatch.setattr(local_services, "owned_pid", lambda _name: None)
 
     with pytest.raises(RuntimeError, match="CUSTOM_DEEPSEEK_API_KEY"):
+        local_services.start_applications()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        CodexModelSourceConfig(),
+        ClaudeCodeModelSourceConfig(),
+    ],
+)
+def test_start_local_cli_providers_reach_launch_without_agent_api_key(
+    monkeypatch,
+    source,
+) -> None:
+    class LaunchReached(RuntimeError):
+        pass
+
+    def stop_at_launch(*_args, **_kwargs) -> None:
+        raise LaunchReached
+
+    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("ARK_API_KEY", "ark-test")
+    monkeypatch.setattr(
+        local_services,
+        "load_config",
+        lambda: _model_config(source),
+    )
+    monkeypatch.setattr(local_services, "listening", lambda _port: False)
+    monkeypatch.setattr(local_services, "owned_pid", lambda _name: None)
+    monkeypatch.setattr(local_services, "launch", stop_at_launch)
+
+    with pytest.raises(LaunchReached):
+        local_services.start_applications()
+
+
+def test_start_claude_api_key_mode_requires_configured_key(monkeypatch) -> None:
+    source = ClaudeCodeModelSourceConfig(
+        auth_mode="api_key",
+        api_key_env="CUSTOM_ANTHROPIC_API_KEY",
+    )
+    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("ARK_API_KEY", "ark-test")
+    monkeypatch.delenv("CUSTOM_ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        local_services,
+        "load_config",
+        lambda: _model_config(source),
+    )
+    monkeypatch.setattr(local_services, "listening", lambda _port: False)
+    monkeypatch.setattr(local_services, "owned_pid", lambda _name: None)
+
+    with pytest.raises(RuntimeError, match="CUSTOM_ANTHROPIC_API_KEY"):
         local_services.start_applications()

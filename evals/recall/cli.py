@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from gateway.config import load_config
-from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
+from gateway.ark.embedding import DoubaoMultimodalEmbedder
 from qdrant_client import QdrantClient
 
 from engine.parse.analysis_windows import probe_video_duration_ms

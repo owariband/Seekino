@@ -10,7 +10,7 @@ import pytest
 from engine.parse.usage import ParseModelCall, parse_chunk_scope
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from gateway.schemas import EmbeddingResult
+from gateway.embedding import EmbeddingResult
 from gateway.usage import ModelCallUsage, TokenUsage, track_model_call
 from pydantic import ValidationError
 

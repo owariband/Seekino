@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from gateway.schemas import EmbeddingResult
+from gateway.embedding import EmbeddingResult
 from qdrant_client import QdrantClient
 
 from evals.recall.qdrant_index import (

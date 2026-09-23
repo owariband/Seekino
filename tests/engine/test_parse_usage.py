@@ -20,7 +20,8 @@ from engine.parse.schemas import (
 )
 from engine.parse.usage import capture_parse_usage, parse_chunk_scope
 from engine.parse.video_parse import ParsePipeline
-from gateway.models import ArkMultimodalModel, TextInput
+from gateway.ark.multimodal import ArkMultimodalModel
+from gateway.multimodal import TextInput
 from gateway.usage import capture_model_usage, track_model_call
 
 

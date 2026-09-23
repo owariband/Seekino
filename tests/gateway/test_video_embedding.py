@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gateway.multimodal_embedder import DoubaoMultimodalEmbedder
+from gateway.ark.embedding import DoubaoMultimodalEmbedder
 
 
 class FakeMultimodalEmbeddings:

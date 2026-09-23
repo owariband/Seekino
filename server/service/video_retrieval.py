@@ -10,7 +10,7 @@ from engine.retrieval.video_retrieval import (
     normalize_hybrid_retrieval_weights,
     rank_transcript_chunks,
 )
-from gateway.schemas import EmbeddingResult
+from gateway.embedding import EmbeddingResult
 
 from ..config.retrieval import RetrievalConfig
 from ..model.index_sync import IndexSyncOperation, IndexSyncStatus

@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from gateway.models import ImageInput, TextInput, VideoInput
-from gateway.sse_proxy import ContentFilterError
+from gateway.errors import ContentFilterError
+from gateway.multimodal import ImageInput, TextInput, VideoInput
 
 import engine.parse.video_chunk_parse as video_chunk_parse_module
 from engine.parse.background import BackgroundImage

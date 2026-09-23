@@ -46,11 +46,18 @@ State 只覆盖当前一次执行。
 
 仓库根目录是运行配置的唯一入口：`config.yaml` 保存可提交的模型默认值和全局 Chat Agent 运行参数，`config/model-pricing.yaml` 保存 Parse 模型人民币单价，`.env.local` 保存 API Key 和个人 Endpoint，不进入 Git。Chat Agent 参数位于 `config.yaml` 的 `agent_runtime` 节，也可从前端「设置」页编辑。YAML 中显式填写的值优先于同名 `ANIVAG_AGENT_*` 环境变量；缺失字段沿用环境变量或程序默认值。
 
+Chat Agent 的连接配置拆成两层：`model_sources` 描述协议 Adapter、用量 Provider 和
+认证方式，`agent_model` 只引用一个 source 并设置模型、请求上限及可选 fallback。
+DeepSeek 是 `adapter: openai` 下的 `profile: deepseek`；Codex 使用 app-server，Claude
+使用 Agent SDK。可复制的 source 示例及认证说明见
+[`gateway/README.md`](gateway/README.md#chat-agent-模型来源)。角色模型环境变量覆盖仍然有效，
+fallback 的来源与模型都在 YAML 中显式配置。
+
 设置页保存和手工编辑 `agent_runtime` 后，超时、上下文预算、检索及工具输出上限等参数由下一条新消息使用；进行中的回答继续使用开始时的参数。`maximum_concurrent_kicks` 保存后需要重启 Server，设置页会区分保存值和当前生效值。模型连接、数据库等启动配置仍需重启；配置错误会在读取或保存时报告。设置页通过 Server API 修改本机的 `config.yaml`，浏览器不会直接访问服务器文件。
 
 ```bash
 cp .env.example .env.local
-# 编辑 .env.local，填写 ARK_API_KEY、DEEPSEEK_API_KEY 和个人 ep-* Endpoint。
+# 编辑 .env.local，按所选 provider 填写需要的 API Key 和个人 ep-* Endpoint。
 
 uv sync
 uv run --env-file .env.local python -m gateway.cli --help

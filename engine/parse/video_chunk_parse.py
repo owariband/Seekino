@@ -5,13 +5,13 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from gateway.models import (
+from gateway.multimodal import (
     ImageInput,
     MultimodalModel,
     TextInput,
     VideoInput,
 )
-from gateway.sse_proxy import ContentFilterError
+from gateway.errors import ContentFilterError
 
 from .analysis_windows import probe_video_duration_ms
 from .background import BackgroundImage, build_background_image_inputs

@@ -2,10 +2,12 @@ import json
 
 import pytest
 
-from gateway.context_window import (
+from gateway.harness.context import (
     ContextWindowController,
     ContextWindowOverflow,
     ContextWindowPolicy,
+    measure_context,
+    preflight_context,
 )
 
 
@@ -47,6 +49,107 @@ def test_policy_reserves_output_and_safety_tokens() -> None:
             safety_margin_tokens=1_000,
             auto_compact_tokens=2_001,
             compact_target_tokens=500,
+        )
+
+
+def test_preflight_adds_fixed_tokens_without_using_the_compaction_threshold() -> None:
+    messages = [{"role": "user", "content": "short request"}]
+    contract = {
+        "tools": [{
+            "name": "lookup",
+            "input_schema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+            },
+        }],
+    }
+    payload = measure_context(messages, contract)
+
+    measurement = preflight_context(
+        messages,
+        contract,
+        policy=_policy(),
+        maximum_input_characters=None,
+        fixed_input_tokens=1_600,
+        label="codex:test",
+    )
+
+    assert measurement.characters == payload.characters
+    assert measurement.estimated_tokens == payload.estimated_tokens + 1_600
+    assert measurement.estimated_tokens >= _policy().auto_compact_tokens
+    assert measurement.estimated_tokens < _policy().maximum_input_tokens
+
+
+def test_preflight_rejects_estimated_tokens_at_the_hard_boundary() -> None:
+    messages = [{"role": "user", "content": "request"}]
+    contract = {"output_schema": {"type": "object"}}
+    payload_tokens = measure_context(messages, contract).estimated_tokens
+    fixed_input_tokens = 1_000
+    maximum_input_tokens = payload_tokens + fixed_input_tokens
+    policy = ContextWindowPolicy(
+        context_window_tokens=maximum_input_tokens + 200,
+        output_reserve_tokens=100,
+        safety_margin_tokens=100,
+        auto_compact_tokens=maximum_input_tokens,
+        compact_target_tokens=maximum_input_tokens - 1,
+    )
+
+    with pytest.raises(ContextWindowOverflow) as captured:
+        preflight_context(
+            messages,
+            contract,
+            policy=policy,
+            maximum_input_characters=None,
+            fixed_input_tokens=fixed_input_tokens,
+            label="codex:test",
+        )
+
+    message = str(captured.value)
+    assert "initial context budget exceeded" in message
+    assert (
+        f"estimated token budget {maximum_input_tokens}>="
+        f"{maximum_input_tokens}"
+    ) in message
+    assert f"payload={payload_tokens}" in message
+    assert f"fixed_input_tokens={fixed_input_tokens}" in message
+
+
+def test_preflight_character_limit_is_exclusive() -> None:
+    messages = [{"role": "user", "content": "request"}]
+    contract = {"tools": ["lookup"]}
+    characters = measure_context(messages, contract).characters
+
+    measurement = preflight_context(
+        messages,
+        contract,
+        policy=None,
+        maximum_input_characters=characters,
+        label="claude:test",
+    )
+
+    assert measurement.characters == characters
+    with pytest.raises(ContextWindowOverflow, match="serialized character budget"):
+        preflight_context(
+            messages,
+            contract,
+            policy=None,
+            maximum_input_characters=characters - 1,
+            label="claude:test",
+        )
+
+
+@pytest.mark.parametrize("fixed_input_tokens", [-1, True, 1.5])
+def test_preflight_rejects_invalid_fixed_input_tokens(
+    fixed_input_tokens: object,
+) -> None:
+    with pytest.raises(ValueError, match="fixed_input_tokens"):
+        preflight_context(
+            [{"role": "user", "content": "request"}],
+            contract={},
+            policy=None,
+            maximum_input_characters=None,
+            fixed_input_tokens=fixed_input_tokens,  # type: ignore[arg-type]
+            label="test",
         )
 
 

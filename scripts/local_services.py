@@ -27,7 +27,7 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway.config import load_config
+from gateway.config import agent_api_key_env_names, load_config
 from server.config import ServerSettings
 from server.database import create_database_engine, create_schema
 from server.storage.qdrant import QdrantVideoChunkStore
@@ -54,7 +54,8 @@ def dotenv_variable_names(path: str | Path) -> tuple[str, ...]:
 def config_digest() -> str:
     values = {key: value for key, value in os.environ.items() if key.startswith(("ANIVAG_", "VITE_"))}
     model_config = load_config()
-    api_key_names = {"ARK_API_KEY", model_config.agent_model.api_key_env}
+    api_key_names = {"ARK_API_KEY"}
+    api_key_names.update(agent_api_key_env_names(model_config))
     if model_config.video_parser.fallback.enabled:
         api_key_names.add(model_config.video_parser.fallback.deepseek.api_key_env)
     for key in sorted(api_key_names):
@@ -351,18 +352,18 @@ def start_applications() -> None:
                 "请在 .env.local 填写 ARK_API_KEY，anivag Server 的 Parse Consumer 需要它完成启动。"
             )
         model_config = load_config()
-        deepseek_key_names = {model_config.agent_model.api_key_env}
+        api_key_names = set(agent_api_key_env_names(model_config))
         if model_config.video_parser.fallback.enabled:
-            deepseek_key_names.add(
+            api_key_names.add(
                 model_config.video_parser.fallback.deepseek.api_key_env
             )
-        missing_deepseek_keys = [
-            key for key in sorted(deepseek_key_names) if not os.environ.get(key)
+        missing_api_keys = [
+            key for key in sorted(api_key_names) if not os.environ.get(key)
         ]
-        if missing_deepseek_keys:
+        if missing_api_keys:
             raise RuntimeError(
                 "请在 .env.local 填写 "
-                + "、".join(missing_deepseek_keys)
+                + "、".join(missing_api_keys)
                 + "；anivag Agent 或已启用的 DeepSeek 解析需要它完成启动。"
             )
         launch("api", [sys.executable, "-u", "-m", "server.api"])

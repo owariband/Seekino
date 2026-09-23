@@ -1,11 +1,23 @@
+model_sources:
+  deepseek_api:
+    adapter: openai
+    provider: deepseek
+    profile: deepseek
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+  ark_default:
+    adapter: ark
+    provider: ark
+    api_key_env: ARK_API_KEY
+
 agent_model:
-  provider: deepseek
+  source: deepseek_api
   model: deepseek-flash
-  base_url: https://api.deepseek.com
-  api_key_env: DEEPSEEK_API_KEY
-  reasoning_effort: none
   max_output_tokens: 8192
   request_timeout_seconds: 180
+  fallback:
+    source: ark_default
+    model: doubao-seed-2-0-lite-260428
 
 # Global Chat Agent settings. Changes to these values apply to new messages,
 # except maximum_concurrent_kicks, which takes effect after restarting Server.

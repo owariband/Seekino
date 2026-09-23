@@ -21,7 +21,7 @@ from engine.parse.schemas import (
     VideoParseResult,
 )
 from engine.retrieval.video_retrieval import build_video_chunk_retrieval_documents
-from gateway.schemas import EmbeddingResult
+from gateway.embedding import EmbeddingResult
 from sqlalchemy import select
 
 from server.database import DatabaseEnvironment, create_session_factory

@@ -8,7 +8,7 @@ from time import monotonic
 
 import pytest
 
-from gateway.agent_model import (
+from gateway.harness.errors import (
     ModelFailureReason, ModelInputTooLargeError, QueryModelIncompleteError,
 )
 from server.agent import AgentModelInvocationError, AgentRuntime
@@ -1235,6 +1235,10 @@ def test_complete_query_message_budget_error_is_classified_for_supervisor():
     (
         ModelFailureReason.REQUIRED_TOOL_MISSING,
         VideoSearchFailureCode.REQUIRED_TOOL_MISSING,
+    ),
+    (
+        ModelFailureReason.LOOP_LIMIT,
+        VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED,
     ),
     (
         ModelFailureReason.INVALID_MODEL_RESPONSE,

@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 
 from gateway.config import load_config
-from gateway.models import ArkMultimodalModel, DeepSeekMultimodalModel
+from gateway.ark.multimodal import ArkMultimodalModel
+from gateway.openai.multimodal import DeepSeekMultimodalModel
 
 from .analysis_windows import (
     materialize_analysis_windows,

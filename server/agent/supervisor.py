@@ -10,7 +10,8 @@ from threading import Event
 from time import monotonic
 from typing import Annotated
 
-from gateway.agent_model import AgentLoopModel, ModelInputTooLargeError
+from gateway.harness.contracts import AgentLoopModel
+from gateway.harness.errors import ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
 from pydantic import BaseModel, ConfigDict, StringConstraints
 

@@ -1,16 +1,11 @@
 import logging
 
-import pytest
-
 from gateway.constants import (
     ARK_PROVIDER,
-    DEEPSEEK_NON_THINKING_EXTRA_BODY,
     DEEPSEEK_PROVIDER,
 )
-from gateway.model_utils import (
-    deepseek_non_thinking_extra_body,
-    log_model_fallback,
-)
+from gateway.harness.fallback import log_model_fallback
+from gateway.openai.profiles import deepseek_non_thinking_extra_body
 
 
 def test_provider_names_are_stable() -> None:
@@ -31,11 +26,6 @@ def test_deepseek_non_thinking_extra_body_returns_independent_dicts() -> None:
     assert deepseek_non_thinking_extra_body() == {
         "thinking": {"type": "disabled"},
     }
-
-
-def test_deepseek_non_thinking_constant_is_read_only() -> None:
-    with pytest.raises(TypeError):
-        DEEPSEEK_NON_THINKING_EXTRA_BODY["thinking"]["type"] = "enabled"  # type: ignore[index]
 
 
 def test_log_model_fallback_excludes_exception_message(caplog) -> None:

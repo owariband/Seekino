@@ -9,10 +9,8 @@ from math import isfinite
 from threading import Event
 from time import monotonic
 
-from gateway.agent_model import (
-    AgentLoopModel, ModelFailureError, ModelFailureReason,
-    StructuredToolAgentModel,
-)
+from gateway.harness.contracts import AgentLoopModel, StructuredToolAgentModel
+from gateway.harness.errors import ModelFailureError, ModelFailureReason
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langgraph.graph import END, START, StateGraph
 
@@ -538,6 +536,8 @@ def _raise_classified_failure(
                 VideoSearchFailureCode.MODEL_TIMEOUT,
             ModelFailureReason.REQUIRED_TOOL_MISSING:
                 VideoSearchFailureCode.REQUIRED_TOOL_MISSING,
+            ModelFailureReason.LOOP_LIMIT:
+                VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED,
             ModelFailureReason.INVALID_MODEL_RESPONSE:
                 VideoSearchFailureCode.INVALID_MODEL_RESPONSE,
         }[reason]

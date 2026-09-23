@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
-from gateway.models import ImageInput, TextInput
+from gateway.multimodal import ImageInput, TextInput
 
 from engine.parse.background import (
     BackgroundImage,

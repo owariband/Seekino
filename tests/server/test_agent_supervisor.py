@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from gateway.web_search import WebSearchError, WebSearchHit
-from gateway.sse_proxy import ContentFilterError
+from gateway.errors import ContentFilterError
 from server.agent.common.errors import AgentModelInvocationError, AgentToolInvocationError
 from server.agent.supervisor import SupervisorRuntime
 from server.agent.video_search.errors import (
