@@ -262,15 +262,15 @@ class _ConcurrentMemoryJobs:
 def _merge_checkpoint(current, checkpoint):
     return replace(
         checkpoint,
-        chunk_start_ms=(
-            checkpoint.chunk_start_ms
-            if checkpoint.chunk_start_ms is not None
-            else current.chunk_start_ms
+        chunk_start_seconds=(
+            checkpoint.chunk_start_seconds
+            if checkpoint.chunk_start_seconds is not None
+            else current.chunk_start_seconds
         ),
-        chunk_end_ms=(
-            checkpoint.chunk_end_ms
-            if checkpoint.chunk_end_ms is not None
-            else current.chunk_end_ms
+        chunk_end_seconds=(
+            checkpoint.chunk_end_seconds
+            if checkpoint.chunk_end_seconds is not None
+            else current.chunk_end_seconds
         ),
         chunk_media_uri=checkpoint.chunk_media_uri or current.chunk_media_uri,
         analysis_window_media_uri=(
@@ -363,7 +363,7 @@ def _lease() -> ParseJobLease:
         original_source_uri="artifact://test/original.mp4",
         content_hash="0" * 64,
         total_bytes=1,
-        duration_ms=20_000,
+        duration_seconds=20,
         workspace_id="local-default",
         series_name="Fixture",
         series_description=None,
@@ -414,8 +414,8 @@ def _unit_processor(
         pipeline=pipeline,
         config=VideoProcessingConfig(
             embedding_dimensions=3,
-            chunk_duration_ms=10_000,
-            context_overlap_ms=0,
+            chunk_duration_seconds=10,
+            context_overlap_seconds=0,
             asr_mode="none",
         ),
     )
@@ -463,9 +463,9 @@ def test_processing_service_materializes_pipeline_input_and_indexes_each_chunk(
     assert processor.process(lease) == video_chunk_ids
 
     [request] = pipeline.requests
-    assert request.duration_ms == lease.duration_ms
-    assert request.chunk_duration_ms == 10_000
-    assert request.context_overlap_ms == 0
+    assert request.duration_seconds == lease.duration_seconds
+    assert request.chunk_duration_seconds == 10
+    assert request.context_overlap_seconds == 0
     assert [item.window.sequence_no for item in request.chunks] == [0, 1]
     assert [item.canonical_media_path.read_bytes() for item in request.chunks] == [
         b"canonical-0",

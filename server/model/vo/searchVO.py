@@ -12,14 +12,14 @@ from .commonVO import ImageAsset, UnixTimeMs
 
 
 class Keyframe(ImageAsset):
-    at_ms: int = Field(ge=0)
+    at_seconds: int = Field(ge=0)
     alt: str | None
 
 
 class VisualEventView(ContractModel):
     description: str
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(gt=0)
 
 
 class VideoChunkEvidenceView(ContractModel):
@@ -30,13 +30,13 @@ class VideoChunkEvidenceView(ContractModel):
     video_id: str
     episode_order: int
     original_filename: str
-    duration_ms: int
+    duration_seconds: int
     video_chunk_id: str
     sequence_no: int
-    start_ms: int
-    end_ms: int
-    analysis_window_start_ms: int
-    analysis_window_end_ms: int
+    start_seconds: int
+    end_seconds: int
+    analysis_window_start_seconds: int
+    analysis_window_end_seconds: int
     playback_status: Literal["PREPARING", "READY", "FAILED", "MISSING"]
     playback_url: str | None
     playback_url_expires_at: UnixTimeMs | None

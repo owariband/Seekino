@@ -22,8 +22,8 @@ def _rename_legacy_fields(data: Any, fields: dict[str, str]) -> Any:
 class TranscriptCue(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(ge=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(ge=0)
     text: str = Field(min_length=1)
 
 
@@ -36,8 +36,8 @@ class TranscriptAnalysis(BaseModel):
 class TimelineEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(ge=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(ge=0)
     event_type: Literal[
         "SCENE",
         "ACTION",
@@ -51,8 +51,8 @@ class TimelineEvent(BaseModel):
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "TimelineEvent":
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
         return self
 
 
@@ -89,9 +89,9 @@ class VideoParseProvenance(BaseModel):
     model: str = Field(min_length=1)
     input_mode: Literal["video", "ordered_frames"]
     frame_fps: float | None = Field(default=None, gt=0)
-    frame_timestamps_ms: list[int] = Field(default_factory=list)
+    frame_timestamps_seconds: list[float] = Field(default_factory=list)
     group_frame_counts: list[int] = Field(default_factory=list)
-    group_duration_ms: int | None = Field(default=None, gt=0)
+    group_duration_seconds: int | None = Field(default=None, gt=0)
     max_frames_per_group: int | None = Field(default=None, gt=0)
     fallback_transcript_model: str | None = None
     visual_model: str | None = None
@@ -108,7 +108,7 @@ class VideoParseProvenance(BaseModel):
 class VideoEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    duration_ms: int = Field(gt=0)
+    duration_seconds: int = Field(gt=0)
     candidate_transcript: list[TranscriptCue]
     summary: str = Field(min_length=1)
     events: list[TimelineEvent]
@@ -121,13 +121,13 @@ class AnalysisWindow(BaseModel):
     sequence_no: int = Field(ge=0)
     source_video: Path
     media_path: Path
-    chunk_start_ms: int = Field(ge=0)
-    chunk_end_ms: int = Field(gt=0)
-    analysis_start_ms: int = Field(ge=0)
-    analysis_end_ms: int = Field(gt=0)
-    analysis_duration_ms: int = Field(gt=0)
-    relative_chunk_start_ms: int = Field(ge=0)
-    relative_chunk_end_ms: int = Field(gt=0)
+    chunk_start_seconds: int = Field(ge=0)
+    chunk_end_seconds: int = Field(gt=0)
+    analysis_start_seconds: int = Field(ge=0)
+    analysis_end_seconds: int = Field(gt=0)
+    analysis_duration_seconds: int = Field(gt=0)
+    relative_chunk_start_seconds: int = Field(ge=0)
+    relative_chunk_end_seconds: int = Field(gt=0)
 
     @model_validator(mode="before")
     @classmethod
@@ -135,62 +135,62 @@ class AnalysisWindow(BaseModel):
         populated = _rename_legacy_fields(
             data,
             {
-                "segment_start_ms": "chunk_start_ms",
-                "segment_end_ms": "chunk_end_ms",
-                "relative_segment_start_ms": "relative_chunk_start_ms",
-                "relative_segment_end_ms": "relative_chunk_end_ms",
+                "segment_start_seconds": "chunk_start_seconds",
+                "segment_end_seconds": "chunk_end_seconds",
+                "relative_segment_start_seconds": "relative_chunk_start_seconds",
+                "relative_segment_end_seconds": "relative_chunk_end_seconds",
             },
         )
         if not isinstance(populated, dict):
             return populated
         required = {
-            "chunk_start_ms",
-            "chunk_end_ms",
-            "analysis_start_ms",
-            "analysis_end_ms",
+            "chunk_start_seconds",
+            "chunk_end_seconds",
+            "analysis_start_seconds",
+            "analysis_end_seconds",
         }
         if not required.issubset(populated):
             return populated
 
         populated.setdefault(
-            "analysis_duration_ms",
-            populated["analysis_end_ms"] - populated["analysis_start_ms"],
+            "analysis_duration_seconds",
+            populated["analysis_end_seconds"] - populated["analysis_start_seconds"],
         )
         populated.setdefault(
-            "relative_chunk_start_ms",
-            populated["chunk_start_ms"] - populated["analysis_start_ms"],
+            "relative_chunk_start_seconds",
+            populated["chunk_start_seconds"] - populated["analysis_start_seconds"],
         )
         populated.setdefault(
-            "relative_chunk_end_ms",
-            populated["chunk_end_ms"] - populated["analysis_start_ms"],
+            "relative_chunk_end_seconds",
+            populated["chunk_end_seconds"] - populated["analysis_start_seconds"],
         )
         return populated
 
     @model_validator(mode="after")
     def validate_ranges(self) -> "AnalysisWindow":
-        if self.chunk_end_ms <= self.chunk_start_ms:
-            raise ValueError("chunk_end_ms must be greater than chunk_start_ms")
-        if self.analysis_end_ms <= self.analysis_start_ms:
-            raise ValueError("analysis_end_ms must be greater than analysis_start_ms")
-        if self.analysis_start_ms > self.chunk_start_ms:
+        if self.chunk_end_seconds <= self.chunk_start_seconds:
+            raise ValueError("chunk_end_seconds must be greater than chunk_start_seconds")
+        if self.analysis_end_seconds <= self.analysis_start_seconds:
+            raise ValueError("analysis_end_seconds must be greater than analysis_start_seconds")
+        if self.analysis_start_seconds > self.chunk_start_seconds:
             raise ValueError("analysis window must include the canonical chunk start")
-        if self.analysis_end_ms < self.chunk_end_ms:
+        if self.analysis_end_seconds < self.chunk_end_seconds:
             raise ValueError("analysis window must include the canonical chunk end")
-        if self.analysis_duration_ms != self.analysis_end_ms - self.analysis_start_ms:
-            raise ValueError("analysis_duration_ms is inconsistent with the window")
+        if self.analysis_duration_seconds != self.analysis_end_seconds - self.analysis_start_seconds:
+            raise ValueError("analysis_duration_seconds is inconsistent with the window")
         if (
-            self.relative_chunk_start_ms
-            != self.chunk_start_ms - self.analysis_start_ms
+            self.relative_chunk_start_seconds
+            != self.chunk_start_seconds - self.analysis_start_seconds
         ):
             raise ValueError(
-                "relative_chunk_start_ms is inconsistent with the window"
+                "relative_chunk_start_seconds is inconsistent with the window"
             )
         if (
-            self.relative_chunk_end_ms
-            != self.chunk_end_ms - self.analysis_start_ms
+            self.relative_chunk_end_seconds
+            != self.chunk_end_seconds - self.analysis_start_seconds
         ):
             raise ValueError(
-                "relative_chunk_end_ms is inconsistent with the window"
+                "relative_chunk_end_seconds is inconsistent with the window"
             )
         return self
 
@@ -211,8 +211,8 @@ class ContextEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     chunk_sequence_no: int = Field(ge=0)
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(gt=0)
     event_type: str = Field(min_length=1, max_length=32)
     description: str = Field(min_length=1, max_length=400)
     text: str | None = Field(default=None, max_length=240)
@@ -227,8 +227,8 @@ class ContextEvent(BaseModel):
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "ContextEvent":
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
         return self
 
 
@@ -253,8 +253,8 @@ class ObservedTimelineEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     relative_event: TimelineEvent
-    absolute_start_ms: int = Field(ge=0)
-    absolute_end_ms: int = Field(gt=0)
+    video_start_seconds: int = Field(ge=0)
+    video_end_seconds: int = Field(gt=0)
     owned_by_current_chunk: bool
     kept_after_deduplication: bool
 
@@ -268,8 +268,10 @@ class ObservedTimelineEvent(BaseModel):
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "ObservedTimelineEvent":
-        if self.absolute_end_ms <= self.absolute_start_ms:
-            raise ValueError("absolute_end_ms must be greater than absolute_start_ms")
+        if self.video_end_seconds <= self.video_start_seconds:
+            raise ValueError(
+                "video_end_seconds must be greater than video_start_seconds"
+            )
         if self.kept_after_deduplication and not self.owned_by_current_chunk:
             raise ValueError("an unowned event cannot be kept")
         return self
@@ -337,7 +339,7 @@ class VideoFallbackModels(BaseModel):
     refiner_model: str = Field(min_length=1)
     input_mode: Literal["ordered_frames"]
     frame_fps: float = Field(gt=0)
-    group_duration_ms: int = Field(gt=0)
+    group_duration_seconds: int = Field(gt=0)
     max_frames_per_group: int = Field(gt=0)
     max_height: int = Field(gt=0)
 
@@ -356,9 +358,9 @@ class VideoParseResult(BaseModel):
 
     models: VideoParseModels | None = None
     source_video: Path
-    duration_ms: int = Field(gt=0)
-    chunk_duration_ms: int = Field(gt=0)
-    context_overlap_ms: int = Field(ge=0)
+    duration_seconds: int = Field(gt=0)
+    chunk_duration_seconds: int = Field(gt=0)
+    context_overlap_seconds: int = Field(ge=0)
     chunks: list[VideoChunkParseResult]
     events: list[OwnedTimelineEvent]
 
@@ -368,7 +370,7 @@ class VideoParseResult(BaseModel):
         return _rename_legacy_fields(
             data,
             {
-                "segment_duration_ms": "chunk_duration_ms",
+                "segment_duration_seconds": "chunk_duration_seconds",
                 "segments": "chunks",
             },
         )

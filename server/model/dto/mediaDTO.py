@@ -30,5 +30,5 @@ class ImageReference:
 class KeyframeImageReference:
     image_id: str
     url: str
-    at_ms: int
+    at_seconds: int
     expires_at: int | None = None

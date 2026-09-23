@@ -151,9 +151,9 @@ class MediaService:
             projected: list[KeyframeImageReference] = []
             for index, keyframe in enumerate(evidence.keyframe_uris):
                 if (
-                    keyframe.at_ms is None
-                    or not evidence.start_ms <= keyframe.at_ms < evidence.end_ms
-                    or keyframe.at_ms >= evidence.duration_ms
+                    keyframe.at_seconds is None
+                    or not evidence.start_seconds <= keyframe.at_seconds < evidence.end_seconds
+                    or keyframe.at_seconds >= evidence.duration_seconds
                 ):
                     continue
                 try:
@@ -173,7 +173,7 @@ class MediaService:
                             "workspaceId": workspace_id,
                             "imageId": image_id,
                         }),
-                        at_ms=keyframe.at_ms,
+                        at_seconds=keyframe.at_seconds,
                     )
                 )
             if (
@@ -197,8 +197,8 @@ class MediaService:
                 return ()
             if (
                 current.video_id != evidence.video_id
-                or current.start_ms != evidence.start_ms
-                or current.end_ms != evidence.end_ms
+                or current.start_seconds != evidence.start_seconds
+                or current.end_seconds != evidence.end_seconds
             ):
                 return ()
             evidence = current

@@ -8,7 +8,7 @@ export type IndexStatus = "NOT_READY" | "SYNCING" | "READY" | "FAILED";
 export interface Failure { code: string; message: string }
 export interface Page<T> { items: T[]; total: number; hasMore: boolean; nextCursor: string | null }
 export interface ImageAsset { imageId: string; url: string; expiresAt: UnixTimeMs | null }
-export interface Keyframe extends ImageAsset { atMs: number; alt: string | null }
+export interface Keyframe extends ImageAsset { atSeconds: number; alt: string | null }
 export type UploadStatus =
   | "UPLOADING"
   | "COMPLETING"
@@ -38,7 +38,7 @@ export interface VideoSummary {
   uploadSequence: number;
   originalFilename: string;
   totalBytes: number;
-  durationMs: number;
+  durationSeconds: number;
   uploadStatus: string;
   parseStatus: string;
   uploadProgress: number;
@@ -116,10 +116,10 @@ export interface UploadSessionCreateRequest {
 }
 
 export interface ParseConfig {
-  version: 1;
+  version: 2;
   window: {
-    chunkDurationMs: number;
-    contextOverlapMs: number;
+    chunkDurationSeconds: number;
+    contextOverlapSeconds: number;
     analysisMaxHeight: number;
     canonicalMaxHeight: number;
   };
@@ -150,7 +150,7 @@ export interface ParseConfig {
     enabled: boolean;
     model: string;
     frameFps: number;
-    groupDurationMs: number;
+    groupDurationSeconds: number;
     maxFramesPerGroup: number;
     maxHeight: number;
     reasoningEffort: "none" | "low" | "high" | "max";
@@ -206,16 +206,16 @@ export interface UploadCompleteView {
 export interface VideoChunkCheckpointView {
   sequenceNo: number;
   videoChunkId: string;
-  chunkStartMs: number | null;
-  chunkEndMs: number | null;
+  chunkStartSeconds: number | null;
+  chunkEndSeconds: number | null;
   stage: string;
   lastError: Failure | null;
 }
 
 export interface ParseJobCurrentChunkView {
   sequenceNo: number;
-  startMs: number;
-  endMs: number;
+  startSeconds: number;
+  endSeconds: number;
 }
 
 export interface ParseJobView {
@@ -234,11 +234,11 @@ export interface ParseJobView {
   progress: number;
   overallProgress: number | null;
   stageProgress: number | null;
-  completedDurationMs: number | null;
-  completedThroughMs: number | null;
-  /** Duration of the source video; totalDurationMs is retained for compatibility. */
-  videoDurationMs: number;
-  totalDurationMs: number;
+  completedDurationSeconds: number | null;
+  completedThroughSeconds: number | null;
+  /** Duration of the source video; totalDurationSeconds is retained for compatibility. */
+  videoDurationSeconds: number;
+  totalDurationSeconds: number;
   /** Cumulative known worker processing time, never the video duration. */
   processingDurationMs: number;
   /** True only for a terminal job whose every attempt duration was measured. */
@@ -314,8 +314,8 @@ export interface VideoChunkCandidate {
 export interface TranscriptCue {
   speaker: string | null;
   text: string;
-  startMs: number;
-  endMs: number;
+  startSeconds: number;
+  endSeconds: number;
 }
 
 export interface VideoChunkEvidence {
@@ -326,13 +326,13 @@ export interface VideoChunkEvidence {
   videoId: string;
   episodeOrder: number;
   originalFilename: string;
-  durationMs: number;
+  durationSeconds: number;
   videoChunkId: string;
   sequenceNo: number;
-  startMs: number;
-  endMs: number;
-  analysisWindowStartMs: number;
-  analysisWindowEndMs: number;
+  startSeconds: number;
+  endSeconds: number;
+  analysisWindowStartSeconds: number;
+  analysisWindowEndSeconds: number;
   playbackStatus: PlaybackStatus;
   playbackUrl: string | null;
   playbackUrlExpiresAt: UnixTimeMs | null;
@@ -340,7 +340,7 @@ export interface VideoChunkEvidence {
   keyframes: Keyframe[];
   transcript: TranscriptCue[];
   baselineVisualCaption: string | null;
-  allTimeEvents: Array<{ description: string; startMs: number; endMs: number }>;
+  allTimeEvents: Array<{ description: string; startSeconds: number; endSeconds: number }>;
   allTimeEventText: string;
   videoCompact: string;
   contextBeforeCompact: string | null;
@@ -358,8 +358,8 @@ export type MatchedEvidenceKind = "TRANSCRIPT" | "VISUAL_EVENT" | "CONTEXT";
 export interface MatchedEvidence {
   kind: MatchedEvidenceKind;
   text: string;
-  startMs: number | null;
-  endMs: number | null;
+  startSeconds: number | null;
+  endSeconds: number | null;
 }
 
 export interface SelectionReason {
@@ -440,7 +440,7 @@ export interface AgentMessageTiming {
 }
 export type AgentRenderBlock =
   | { type: "markdown"; markdown: string }
-  | { type: "video"; videoChunkId: string; startMs: number; endMs: number };
+  | { type: "video"; videoChunkId: string; startSeconds: number; endSeconds: number };
 
 export interface AgentMessageView {
   messageId: string;

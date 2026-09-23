@@ -45,7 +45,7 @@ def _config_payload() -> dict[str, object]:
             "fallback": {
                 "enabled": True,
                 "frame_fps": 0.5,
-                "group_duration_ms": 30_000,
+                "group_duration_seconds": 30,
                 "max_frames_per_group": 15,
                 "max_height": 720,
                 "deepseek": {
@@ -344,7 +344,7 @@ def test_environment_can_select_config(monkeypatch, tmp_path: Path) -> None:
     video_parser["transcript_model"] = "custom-transcript"
     fallback = video_parser["fallback"]
     assert isinstance(fallback, dict)
-    fallback["group_duration_ms"] = 15_000
+    fallback["group_duration_seconds"] = 15
     embedding = payload["multimodal_embedding"]
     assert isinstance(embedding, dict)
     embedding["dimensions"] = 512
@@ -358,14 +358,14 @@ def test_environment_can_select_config(monkeypatch, tmp_path: Path) -> None:
     assert isinstance(config.model_sources["primary"], OpenAIModelSourceConfig)
     assert config.model_sources["primary"].api_key_env == "CUSTOM_AGENT_API_KEY"
     assert config.video_parser.transcript_model == "custom-transcript"
-    assert config.video_parser.fallback.group_duration_ms == 15_000
+    assert config.video_parser.fallback.group_duration_seconds == 15
     assert config.multimodal_embedding.dimensions == 512
 
 
 @pytest.mark.parametrize(
     ("section", "missing_field"),
     [
-        ("fallback", "group_duration_ms"),
+        ("fallback", "group_duration_seconds"),
         ("fallback", "max_frames_per_group"),
         ("deepseek", "model"),
         ("deepseek", "base_url"),

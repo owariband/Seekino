@@ -9,7 +9,7 @@ TRANSCRIPT_PROMPT = """
 你只负责从这段视频的音轨中转写可听见的人声，不负责理解画面。
 
 要求：
-1. 所有 start_ms 和 end_ms 都是相对于当前视频片段起点的毫秒数。
+1. 所有 start_seconds 和 end_seconds 都是相对于当前视频片段起点的整数秒。
 2. transcript 只保留能听清的原语言台词，不翻译，不补全听不清的内容。
 3. 不要根据画面、字幕、角色外观或背景知识猜测或修正台词。
 4. 不要识别说话者身份，不要输出画面描述、动作、情绪或剧情推断。
@@ -20,7 +20,7 @@ VIDEO_PARSE_PROMPT = """
 你负责把候选 ASR 与自己从视频画面、音频和硬字幕中确认的信息，整理成一条统一、合理的事件时间线。
 
 要求：
-1. 所有 start_ms 和 end_ms 都是相对于当前视频片段起点的毫秒数。
+1. 所有 start_seconds 和 end_seconds 都是相对于当前视频片段起点的整数秒。
 2. 候选 ASR 可能有错漏和时间偏差，必须结合视频重新判断，不能机械复制。
 3. 逐条核对候选 ASR；只要音频或硬字幕能够确认，就必须生成对应的 DIALOGUE，只有确认是误识别时才省略。
 4. 将场景变化、人物动作、可见情绪、关系变化和对白统一放入 events，并按时间排序。
@@ -39,7 +39,7 @@ VIDEO_ONLY_PARSE_PROMPT = """
 当前视频由本地视觉运行时解码和按时间顺序采样；模型能够使用帧顺序与时间信息，但不能读取原视频音轨。
 
 要求：
-1. 所有 start_ms 和 end_ms 都是相对于当前视频片段起点的毫秒数。
+1. 所有 start_seconds 和 end_seconds 都是相对于当前视频片段起点的整数秒。
 2. 候选 ASR 可能有错漏和时间偏差，必须结合视频画面与硬字幕重新判断，不能机械复制。
 3. 逐条核对候选 ASR；只要清晰可见的硬字幕能够确认，就必须生成对应的 DIALOGUE，无法由视觉证据确认时不要猜测。
 4. 将场景变化、人物动作、可见情绪、关系变化和可确认的对白统一放入 events，并按时间排序。
@@ -60,16 +60,16 @@ FRAME_PARSE_EVIDENCE_PROMPT = """
 2. 使用帧标签建立先后顺序和近似时间范围，不得把稀疏采样伪装成逐帧观察，也不得虚构采样间隔中没有视觉证据的动作。
 3. 单帧只能证明该时刻可见的状态；只有多张相邻帧共同支持时，才把事件扩展为持续时间范围。
 4. 即使采样导致信息不足，也必须保持事实克制；宁可省略不确定事件，不要用背景资料补齐画面证据。
-5. 每个事件都必须满足 end_ms > start_ms；单帧点状证据统一写成 [t, t+1ms)，这只表示在该采样时刻可见，不表示事件仅持续 1 ms。
+5. 每个事件都必须使用整数秒并满足 end_seconds > start_seconds；单帧点状证据使用覆盖该时刻的最小整数秒区间，通常为 [floor(t), floor(t)+1)，这只表示在该采样时刻可见，不表示事件仅持续 1 秒。
 """.strip()
 
 FRAME_SEQUENCE_INTRO = (
     "以下视频采样帧来自同一个 AnalysisWindow。每张图片紧跟在自己的"
-    "时间标签后，所有标签按相对毫秒严格递增。"
+    "时间标签后，所有标签按相对秒严格递增；抽帧标签可包含小数。"
 )
 
 ARK_FRAME_SEQUENCE_INTRO = (
-    "以下视频采样帧来自同一个 AnalysisWindow，按标签中的相对毫秒严格递增排列。"
+    "以下视频采样帧来自同一个 AnalysisWindow，按标签中的相对秒严格递增排列；抽帧标签可包含小数。"
 )
 
 NEUTRAL_VISUAL_PROMPT = """
@@ -96,7 +96,7 @@ FALLBACK_REFINER_PROMPT = """
 3. 人物归一不能只凭发色；只有外观、乐器、服装和位置等多项证据与解析上下文共同匹配时才使用标准名。灯光会改变发色观感。证据不足时保留匿名外观描述，明确区分台上人物与台下观众。孤立一帧且相邻观察不支持的高细节描述应省略，不要扩写。
 
 时间与事件：
-4. 所有时间均为当前 AnalysisWindow 内相对毫秒，必须位于给定 duration_ms 范围内；events 按 start_ms 非递减排序，end_ms 必须大于 start_ms。support_intervals_ms 只表示抽帧邻近支持范围，不代表动作持续整个区间。台词时间优先参考上游 ASR 转写。
+4. events 的 start_seconds 和 end_seconds 是当前 AnalysisWindow 内的相对整数秒，必须位于给定 duration_seconds 范围内；events 按 start_seconds 非递减排序，end_seconds 必须大于 start_seconds。抽帧证据中的时间可包含小数秒，support_intervals_seconds 只表示抽帧邻近支持范围，不代表动作持续整个区间。台词时间优先参考上游 ASR 转写。
 5. 输出有语义价值的事件，不要为每条 visual observation 机械创建 ACTION。同一时刻的 DIALOGUE 与视觉状态属于同一镜头时，把视觉状态写进 DIALOGUE.description；只有独立动作或镜头变化才另建 ACTION/SCENE。不同硬字幕或真正变化的镜头不能丢，也不要补齐抽帧间未观察到的动作。
 6. 逐项覆盖 asr_transcript：每条可听清的 ASR cue 都应对应一条 DIALOGUE，除非硬字幕明确证明它是误识别；不要因为附近另有硬字幕就静默删除 ASR。同一时刻存在两路台词时允许事件重叠。
 7. DIALOGUE.text 必须逐字等于 allowed_dialogue_texts 中的一个完整字符串。若 ASR 与附近中文硬字幕语义对应，优先逐字选择中文行；若没有对应中文行，逐字使用 ASR 原文。不得自行翻译、补写、续写或改标点。同一帧有两组独立字幕时应保留为两条可重叠 DIALOGUE。
@@ -106,7 +106,7 @@ FALLBACK_REFINER_PROMPT = """
 
 
 def build_video_parse_prompt(
-    duration_ms: int,
+    duration_seconds: int,
     transcript: TranscriptAnalysis,
     *,
     context: str | None,
@@ -119,8 +119,8 @@ def build_video_parse_prompt(
     if ordered_frames:
         sections.append(FRAME_PARSE_EVIDENCE_PROMPT)
     sections.append(
-        f"当前视频片段实际时长为 {duration_ms} ms；"
-        f"所有事件必须完全位于 0 到 {duration_ms} ms 之间。\n\n"
+        f"当前视频片段实际时长为 {duration_seconds} 秒；"
+        f"所有事件必须完全位于 0 到 {duration_seconds} 秒之间。\n\n"
         "上游 ASR 转写（可能有错，仅作为辅助证据）：\n"
         f"{transcript.model_dump_json(indent=2)}"
     )
@@ -143,13 +143,13 @@ def build_video_parse_context(
         "ParsePipeline 窗口约束：",
         (
             "- 当前 AnalysisWindow 对应整集绝对时间 "
-            f"[{window.analysis_start_ms}, {window.analysis_end_ms}) ms；"
+            f"[{window.analysis_start_seconds}, {window.analysis_end_seconds}) 秒；"
             "模型输出时间仍须相对当前 AnalysisWindow 起点。"
         ),
         (
             "- 当前规范 VideoChunk 对应窗口内相对时间 "
-            f"[{window.relative_chunk_start_ms}, "
-            f"{window.relative_chunk_end_ms}) ms。"
+            f"[{window.relative_chunk_start_seconds}, "
+            f"{window.relative_chunk_end_seconds}) 秒。"
         ),
         (
             "- AnalysisWindow 两侧内容仅用于看清跨边界事件；"
@@ -188,18 +188,18 @@ def build_neutral_visual_prompt(frame_count: int) -> str:
 
 
 def build_fallback_refiner_prompt(
-    duration_ms: int,
+    duration_seconds: int,
     transcript: TranscriptAnalysis,
     observations: Sequence[Mapping[str, object]],
     *,
     context: str | None,
 ) -> str:
-    if duration_ms <= 0:
-        raise ValueError("duration_ms must be greater than zero")
+    if duration_seconds <= 0:
+        raise ValueError("duration_seconds must be greater than zero")
     allowed_dialogue_texts = _fallback_evidence_lines(transcript, observations)
     evidence = {
-        "time_basis": "analysis-window-relative milliseconds",
-        "duration_ms": duration_ms,
+        "time_basis": "analysis-window-relative seconds",
+        "duration_seconds": duration_seconds,
         "asr_transcript": [
             {"cue_id": f"a{index:03d}", **cue.model_dump(mode="json")}
             for index, cue in enumerate(transcript.transcript)
@@ -210,7 +210,7 @@ def build_fallback_refiner_prompt(
     return "\n\n".join(
         [
             FALLBACK_REFINER_PROMPT,
-            f"当前 AnalysisWindow 的 duration_ms：{duration_ms}",
+            f"当前 AnalysisWindow 的 duration_seconds：{duration_seconds}",
             "解析上下文（SeriesBible 与 contextBeforeCompact；只用于连续性和消歧）：\n"
             + (context.strip() if context and context.strip() else "（无）"),
             "当前片段证据：\n"

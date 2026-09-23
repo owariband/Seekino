@@ -42,7 +42,7 @@ export function WatchHomePage() {
       {recent && recentSeries ? (
         <Link className={styles.continueCard} to={`/watch/${encodeURIComponent(recent.seriesId)}/${encodeURIComponent(recent.videoId)}`}>
           <span className={styles.continueIcon}><Play size={19} fill="currentColor" aria-hidden="true" /></span>
-          <span><small>继续观看</small><strong>{recentSeries.name}{recentVideo ? ` · ${episodeLabel(recentVideo.episodeOrder)}` : ""}</strong><em>上次看到 {formatTimecode(recent.positionMs)}</em></span>
+          <span><small>继续观看</small><strong>{recentSeries.name}{recentVideo ? ` · ${episodeLabel(recentVideo.episodeOrder)}` : ""}</strong><em>上次看到 {formatTimecode(recent.positionSeconds)}</em></span>
           <ChevronRight size={20} aria-hidden="true" />
         </Link>
       ) : null}
@@ -84,9 +84,9 @@ export function WatchHomePage() {
                   <li key={episode.videoId}>
                     <Link className={styles.homeEpisode} to={`/watch/${encodeURIComponent(episode.seriesId)}/${encodeURIComponent(episode.videoId)}`}>
                       <span className={styles.homeEpisodeNumber}>{episodeLabel(episode.episodeOrder)}</span>
-                      <span className={styles.homeEpisodeTitle}><strong>{episode.originalFilename}</strong><small>{formatTimecode(episode.durationMs)}{progress && progress.positionMs > 0 ? ` · 已看至 ${formatTimecode(progress.positionMs)}` : ""}</small></span>
+                      <span className={styles.homeEpisodeTitle}><strong>{episode.originalFilename}</strong><small>{formatTimecode(episode.durationSeconds)}{progress && progress.positionSeconds > 0 ? ` · 已看至 ${formatTimecode(progress.positionSeconds)}` : ""}</small></span>
                       <span className={styles.homeEpisodeAction}>{episode.playbackStatus === "READY" ? "观看" : "查看状态"}<ChevronRight size={16} aria-hidden="true" /></span>
-                      {progress && episode.durationMs > 0 ? <span className={styles.homeEpisodeProgress} style={{ width: `${Math.min(100, progress.positionMs / episode.durationMs * 100)}%` }} /> : null}
+                      {progress && episode.durationSeconds > 0 ? <span className={styles.homeEpisodeProgress} style={{ width: `${Math.min(100, progress.positionSeconds / episode.durationSeconds * 100)}%` }} /> : null}
                     </Link>
                   </li>
                 );

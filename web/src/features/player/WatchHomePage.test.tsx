@@ -36,7 +36,7 @@ const secondSeries: SeriesSummary = {
 function video(seriesId: string, videoId: string, episodeOrder: number): VideoSummary {
   return {
     videoId, workspaceId: "local-default", seriesId, episodeOrder, uploadSequence: episodeOrder,
-    originalFilename: `${videoId}.mp4`, totalBytes: 100, durationMs: 120_000,
+    originalFilename: `${videoId}.mp4`, totalBytes: 100, durationSeconds: 120,
     uploadStatus: "COMPLETED", parseStatus: "SUCCEEDED", uploadProgress: 100,
     parseProgress: 100, indexStatus: "READY", playbackStatus: "READY",
     playbackUrl: `/api/videos/content?videoId=${videoId}`, playbackUrlExpiresAt: null,
@@ -82,8 +82,8 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe("WatchHomePage", () => {
   it("offers the most recently watched video as the continue entry", async () => {
     mocks.readWatchHistory.mockReturnValue([{
-      seriesId: "series-b", videoId: "b-2", positionMs: 45_000,
-      durationMs: 120_000, updatedAt: 10,
+      seriesId: "series-b", videoId: "b-2", positionSeconds: 45,
+      durationSeconds: 120, updatedAt: 10,
     }]);
     renderPage();
 

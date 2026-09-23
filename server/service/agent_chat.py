@@ -618,8 +618,8 @@ class AgentChatService:
             selected_range = _validated_stored_video_range(
                 source.search_result,
                 reference["videoChunkId"],
-                evidence_start_ms=evidence.start_ms,
-                evidence_end_ms=evidence.end_ms,
+                evidence_start_seconds=evidence.start_seconds,
+                evidence_end_seconds=evidence.end_seconds,
                 conversation_id=source.conversation_id,
                 message_id=source.message_id,
             )
@@ -918,13 +918,13 @@ def _validated_stored_video_range(
     search_result: dict,
     video_chunk_id: str,
     *,
-    evidence_start_ms: int,
-    evidence_end_ms: int,
+    evidence_start_seconds: int,
+    evidence_end_seconds: int,
     conversation_id: str | None = None,
     message_id: str | None = None,
 ) -> dict[str, int]:
-    proposed_start_ms = None
-    proposed_end_ms = None
+    proposed_start_seconds = None
+    proposed_end_seconds = None
     blocks = search_result.get("renderBlocks")
     if isinstance(blocks, list):
         for block in blocks:
@@ -934,30 +934,30 @@ def _validated_stored_video_range(
                 or block.get("videoChunkId") != video_chunk_id
             ):
                 continue
-            proposed_start_ms = block.get("startMs")
-            proposed_end_ms = block.get("endMs")
+            proposed_start_seconds = block.get("startSeconds")
+            proposed_end_seconds = block.get("endSeconds")
             if (
-                isinstance(proposed_start_ms, int)
-                and not isinstance(proposed_start_ms, bool)
-                and isinstance(proposed_end_ms, int)
-                and not isinstance(proposed_end_ms, bool)
-                and evidence_start_ms <= proposed_start_ms
-                and proposed_start_ms < proposed_end_ms
-                and proposed_end_ms <= evidence_end_ms
+                isinstance(proposed_start_seconds, int)
+                and not isinstance(proposed_start_seconds, bool)
+                and isinstance(proposed_end_seconds, int)
+                and not isinstance(proposed_end_seconds, bool)
+                and evidence_start_seconds <= proposed_start_seconds
+                and proposed_start_seconds < proposed_end_seconds
+                and proposed_end_seconds <= evidence_end_seconds
             ):
                 return {
-                    "startMs": proposed_start_ms,
-                    "endMs": proposed_end_ms,
+                    "startSeconds": proposed_start_seconds,
+                    "endSeconds": proposed_end_seconds,
                 }
             break
     _logger.warning(
         "event=agent_invalid_stored_video_range conversation_id=%s message_id=%s "
-        "video_chunk_id=%s proposed_start_ms=%r proposed_end_ms=%r "
-        "evidence_start_ms=%s evidence_end_ms=%s "
+        "video_chunk_id=%s proposed_start_seconds=%r proposed_end_seconds=%r "
+        "evidence_start_seconds=%s evidence_end_seconds=%s "
         "action=reject_reference",
         conversation_id, message_id, video_chunk_id,
-        proposed_start_ms, proposed_end_ms,
-        evidence_start_ms, evidence_end_ms,
+        proposed_start_seconds, proposed_end_seconds,
+        evidence_start_seconds, evidence_end_seconds,
     )
     raise AgentReferenceInvalidError("引用片段缺少有效的已保存播放范围。")
 

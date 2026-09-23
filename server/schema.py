@@ -24,13 +24,13 @@ class ContractModel(BaseModel):
 class TranscriptCueView(ContractModel):
     speaker: str | None
     text: str = Field(min_length=1)
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(ge=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "TranscriptCueView":
-        if self.end_ms < self.start_ms:
-            raise ValueError("end_ms must not be less than start_ms")
+        if self.end_seconds < self.start_seconds:
+            raise ValueError("end_seconds must not be less than start_seconds")
         return self
 
 
@@ -38,14 +38,14 @@ class VideoChunkKeyframeReference(ContractModel):
     """A managed keyframe plus its absolute position in the original Video."""
 
     uri: str = Field(min_length=1)
-    at_ms: int | None = Field(default=None, ge=0)
+    at_seconds: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="before")
     @classmethod
     def accept_legacy_uri(cls, value: Any) -> Any:
         # Historical rows stored URI strings without timeline positions. They
         # remain readable as media, but cannot be projected as timed evidence.
-        return {"uri": value, "at_ms": None} if isinstance(value, str) else value
+        return {"uri": value, "at_seconds": None} if isinstance(value, str) else value
 
 
 class VideoChunkEvidence(ContractModel):
@@ -63,16 +63,16 @@ class VideoChunkEvidence(ContractModel):
     original_source_uri: str
     inference_proxy_uri: str | None
     content_hash: str
-    duration_ms: int
+    duration_seconds: int
     upload_status: str
     parse_status: str
 
     video_chunk_id: str
     sequence_no: int
-    start_ms: int
-    end_ms: int
-    analysis_window_start_ms: int
-    analysis_window_end_ms: int
+    start_seconds: int
+    end_seconds: int
+    analysis_window_start_seconds: int
+    analysis_window_end_seconds: int
     chunk_media_ref: str
     analysis_window_media_ref: str
     transcript: list[TranscriptCueView]
@@ -109,19 +109,19 @@ class VideoChunkCandidate(ContractModel):
 class MatchedEvidence(ContractModel):
     kind: Literal["TRANSCRIPT", "VISUAL_EVENT", "CONTEXT"]
     text: str = Field(min_length=1)
-    start_ms: int | None
-    end_ms: int | None
+    start_seconds: int | None
+    end_seconds: int | None
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "MatchedEvidence":
-        if (self.start_ms is None) != (self.end_ms is None):
-            raise ValueError("start_ms and end_ms must both be null or both be set")
+        if (self.start_seconds is None) != (self.end_seconds is None):
+            raise ValueError("start_seconds and end_seconds must both be null or both be set")
         if (
-            self.start_ms is not None
-            and self.end_ms is not None
-            and self.end_ms < self.start_ms
+            self.start_seconds is not None
+            and self.end_seconds is not None
+            and self.end_seconds < self.start_seconds
         ):
-            raise ValueError("end_ms must not be less than start_ms")
+            raise ValueError("end_seconds must not be less than start_seconds")
         return self
 
 

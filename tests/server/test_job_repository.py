@@ -36,7 +36,7 @@ def _seed_job(
     *,
     max_attempts: int = 3,
     workspace_id: str = "local-default",
-    duration_ms: int = 60_000,
+    duration_seconds: int = 60,
 ):
     engine, _video_repository = repository
     session_factory = create_session_factory(engine)
@@ -67,7 +67,7 @@ def _seed_job(
                 inference_proxy_uri=None,
                 content_hash="a" * 64,
                 total_bytes=100,
-                duration_ms=duration_ms,
+                duration_seconds=duration_seconds,
                 upload_status="COMPLETED",
                 parse_status="QUEUED",
                 upload_progress=100,
@@ -198,8 +198,8 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
         "sequenceNo": 0,
         "videoChunkId": checkpoint.video_chunk_id,
         "stage": "PARSED",
-        "chunkStartMs": None,
-        "chunkEndMs": None,
+        "chunkStartSeconds": None,
+        "chunkEndSeconds": None,
         "lastError": None,
     }
     with pytest.raises(ValueError, match="cursor"):
@@ -390,7 +390,7 @@ def test_checkpoint_ranges_are_paired_bounded_and_immutable(repository) -> None:
                 sequence_no=0,
                 video_chunk_id=video_chunk_id,
                 stage=VideoChunkCheckpointStage.PREPARED.value,
-                chunk_start_ms=0,
+                chunk_start_seconds=0,
             ),
             now=now,
         )
@@ -402,8 +402,8 @@ def test_checkpoint_ranges_are_paired_bounded_and_immutable(repository) -> None:
                 sequence_no=0,
                 video_chunk_id=video_chunk_id,
                 stage=VideoChunkCheckpointStage.PREPARED.value,
-                chunk_start_ms=0,
-                chunk_end_ms=60_001,
+                chunk_start_seconds=0,
+                chunk_end_seconds=61,
             ),
             now=now,
         )
@@ -415,16 +415,16 @@ def test_checkpoint_ranges_are_paired_bounded_and_immutable(repository) -> None:
             sequence_no=0,
             video_chunk_id=video_chunk_id,
             stage=VideoChunkCheckpointStage.PREPARED.value,
-            chunk_start_ms=0,
-            chunk_end_ms=60_000,
+            chunk_start_seconds=0,
+            chunk_end_seconds=60,
         ),
         now=now,
     )
-    assert (saved.chunk_start_ms, saved.chunk_end_ms) == (0, 60_000)
+    assert (saved.chunk_start_seconds, saved.chunk_end_seconds) == (0, 60)
     with pytest.raises(ParseJobCheckpointConflictError, match="cannot change"):
         jobs.save_checkpoint(
             lease,
-            replace(saved, chunk_end_ms=59_000),
+            replace(saved, chunk_end_seconds=59),
             now=now,
         )
 
@@ -452,12 +452,12 @@ def test_retry_can_fill_legacy_checkpoint_range_without_regressing_stage(
 
     filled = jobs.save_checkpoint(
         lease,
-        replace(legacy, chunk_start_ms=0, chunk_end_ms=60_000),
+        replace(legacy, chunk_start_seconds=0, chunk_end_seconds=60),
         now=now,
     )
 
     assert filled.stage == VideoChunkCheckpointStage.PARSED.value
-    assert (filled.chunk_start_ms, filled.chunk_end_ms) == (0, 60_000)
+    assert (filled.chunk_start_seconds, filled.chunk_end_seconds) == (0, 60)
     assert jobs.get(job_id).progress == 99
 
 
@@ -476,8 +476,8 @@ def test_checkpoint_ranges_must_be_contiguous(repository) -> None:
             sequence_no=0,
             video_chunk_id=str(uuid4()),
             stage=VideoChunkCheckpointStage.PREPARED.value,
-            chunk_start_ms=0,
-            chunk_end_ms=40_000,
+            chunk_start_seconds=0,
+            chunk_end_seconds=40,
         ),
         now=now,
     )
@@ -489,8 +489,8 @@ def test_checkpoint_ranges_must_be_contiguous(repository) -> None:
                 sequence_no=1,
                 video_chunk_id=str(uuid4()),
                 stage=VideoChunkCheckpointStage.PREPARED.value,
-                chunk_start_ms=41_000,
-                chunk_end_ms=60_000,
+                chunk_start_seconds=41,
+                chunk_end_seconds=60,
             ),
             now=now,
         )
@@ -514,16 +514,16 @@ def test_progress_uses_split_gate_and_duration_weighted_parse_coverage(
             sequence_no=0,
             video_chunk_id=str(uuid4()),
             stage=VideoChunkCheckpointStage.PREPARED.value,
-            chunk_start_ms=0,
-            chunk_end_ms=40_000,
+            chunk_start_seconds=0,
+            chunk_end_seconds=40,
         ),
         VideoChunkCheckpointState(
             job_id=job_id,
             sequence_no=1,
             video_chunk_id=str(uuid4()),
             stage=VideoChunkCheckpointStage.PREPARED.value,
-            chunk_start_ms=40_000,
-            chunk_end_ms=60_000,
+            chunk_start_seconds=40,
+            chunk_end_seconds=60,
         ),
     ]
 
@@ -583,8 +583,8 @@ def test_retry_can_replay_earlier_stages_without_regressing_progress(repository)
         sequence_no=0,
         video_chunk_id=str(uuid4()),
         stage=VideoChunkCheckpointStage.VISION_EMBEDDED.value,
-        chunk_start_ms=0,
-        chunk_end_ms=60_000,
+        chunk_start_seconds=0,
+        chunk_end_seconds=60,
     )
     jobs.save_checkpoint(first, checkpoint, now=now)
     assert jobs.update_progress(first, stage=ParseJobStage.INDEXING, now=now)

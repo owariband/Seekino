@@ -225,12 +225,12 @@ def prepare_video_parse_import(
             canonical_directory
             / (
                 f"chunk-{sequence_no:04d}.analysis-"
-                f"{window.chunk_start_ms:010d}-{window.chunk_end_ms:010d}.mp4"
+                f"{window.chunk_start_seconds:010d}-{window.chunk_end_seconds:010d}.mp4"
             ),
             canonical_directory
             / (
                 f"segment-{sequence_no:04d}.analysis-"
-                f"{window.chunk_start_ms:010d}-{window.chunk_end_ms:010d}.mp4"
+                f"{window.chunk_start_seconds:010d}-{window.chunk_end_seconds:010d}.mp4"
             ),
             canonical_directory / f"segment-{sequence_no:04d}.mp4",
         )
@@ -362,8 +362,8 @@ def _load_embedding(
         payload.pop("segment", None)
     expected_chunk = {
         "sequence_no": expected_document.sequence_no,
-        "start_ms": expected_document.start_ms,
-        "end_ms": expected_document.end_ms,
+        "start_seconds": expected_document.start_seconds,
+        "end_seconds": expected_document.end_seconds,
     }
     if not isinstance(chunk, dict) or any(
         chunk.get(key) != value for key, value in expected_chunk.items()
@@ -410,7 +410,7 @@ def _load_embedding(
             hashlib.sha256(
                 (
                     f"{source_video}\0{source_stat.st_size}\0{source_stat.st_mtime_ns}"
-                    f"\0{expected_document.start_ms}\0{expected_document.end_ms}"
+                    f"\0{expected_document.start_seconds}\0{expected_document.end_seconds}"
                     f"\0{max_height}\0{media_path}\0{media_stat.st_size}"
                     f"\0{media_stat.st_mtime_ns}"
                 ).encode("utf-8")

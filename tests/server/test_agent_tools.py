@@ -61,15 +61,15 @@ def _hit(chunk_id: str, *, episode: int = 1, large_text: str = "") -> VideoChunk
         original_source_uri=f"episode-{episode}.mp4",
         inference_proxy_uri=None,
         content_hash=f"hash-{chunk_id}",
-        duration_ms=10_000,
+        duration_seconds=100,
         upload_status="COMPLETED",
         parse_status="COMPLETED",
         video_chunk_id=chunk_id,
         sequence_no=episode - 1,
-        start_ms=1_000,
-        end_ms=2_000,
-        analysis_window_start_ms=0,
-        analysis_window_end_ms=3_000,
+        start_seconds=10,
+        end_seconds=20,
+        analysis_window_start_seconds=0,
+        analysis_window_end_seconds=30,
         chunk_media_ref=f"{chunk_id}.mp4",
         analysis_window_media_ref=f"{chunk_id}-window.mp4",
         transcript=[],
@@ -335,14 +335,14 @@ def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> N
     })
     tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
-        "start_ms": 1_100,
-        "end_ms": 1_900,
+        "start_seconds": 11,
+        "end_seconds": 19,
         "claim": "private claim text",
     })
     feedback = json.loads(tools["update_draft_item"].invoke({
         "video_chunk_id": "unknown-chunk",
-        "start_ms": 1_100,
-        "end_ms": 1_900,
+        "start_seconds": 11,
+        "end_seconds": 19,
         "claim": "private claim text",
     }))
     assert feedback["error"]["code"] == "UNKNOWN_ITEM"
@@ -388,8 +388,8 @@ def test_retrieve_returns_catalog_and_read_trieve_item_ranges_full_evidence() ->
 
     inserted = json.loads(tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
-        "start_ms": 1_100,
-        "end_ms": 1_900,
+        "start_seconds": 11,
+        "end_seconds": 19,
         "claim": "first claim",
     }))
     assert inserted["draft_item_count"] == 1
@@ -464,8 +464,8 @@ def test_read_tools_enforce_character_limit_with_retryable_end() -> None:
     )
     _retrieve(tools, top_k=1)
     tools["update_draft_item"].invoke({
-        "video_chunk_id": "chunk-1", "start_ms": 1_100,
-        "end_ms": 1_900, "claim": "draft claim",
+        "video_chunk_id": "chunk-1", "start_seconds": 11,
+        "end_seconds": 19, "claim": "draft claim",
     })
 
     for name in ("read_trieve_item", "read_draft_item"):
@@ -594,8 +594,8 @@ def test_draft_audit_requires_full_coverage_of_every_section() -> None:
     query_tools, _calls = _query_tools(retrieval, workspace)
     _retrieve(query_tools, top_k=1)
     query_tools["update_draft_item"].invoke({
-        "video_chunk_id": "chunk-1", "start_ms": 1_100,
-        "end_ms": 1_900, "claim": "draft claim",
+        "video_chunk_id": "chunk-1", "start_seconds": 11,
+        "end_seconds": 19, "claim": "draft claim",
     })
     audit = DraftReadAudit()
     evaluator_tools = {tool.name: tool for tool in build_evaluator_tools(
@@ -642,16 +642,16 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
 
     first_item = {
         "video_chunk_id": "chunk-1",
-        "start_ms": 1_100,
-        "end_ms": 1_900,
+        "start_seconds": 11,
+        "end_seconds": 19,
         "claim": "first claim",
     }
     inserted = json.loads(tools["update_draft_item"].invoke(first_item))
     repeated = json.loads(tools["update_draft_item"].invoke(first_item))
     updated = json.loads(tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
-        "start_ms": 1_200,
-        "end_ms": 1_800,
+        "start_seconds": 12,
+        "end_seconds": 18,
         "claim": "revised claim",
     }))
 
@@ -666,8 +666,8 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
     assert catalog["items"][0] == {
         "video_chunk_id": "chunk-1",
         "episode_order": 1,
-        "start_ms": 1_200,
-        "end_ms": 1_800,
+        "start_seconds": 12,
+        "end_seconds": 18,
         "description": "revised claim",
     }
     detail = _read_all(tools["read_draft_item"], "chunk-1", maximum_result_bytes)
@@ -676,26 +676,26 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
 
     out_of_range = tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
-        "start_ms": 900,
-        "end_ms": 1_800,
+        "start_seconds": 9,
+        "end_seconds": 18,
         "claim": "out of range",
     })
     empty_range = tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
-        "start_ms": 1_500,
-        "end_ms": 1_500,
+        "start_seconds": 15,
+        "end_seconds": 15,
         "claim": "empty range",
     })
     reversed_range = tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
-        "start_ms": 1_600,
-        "end_ms": 1_500,
+        "start_seconds": 16,
+        "end_seconds": 15,
         "claim": "reversed range",
     })
     negative_range = tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
-        "start_ms": -1,
-        "end_ms": 1_500,
+        "start_seconds": -1,
+        "end_seconds": 15,
         "claim": "negative range",
     })
 
@@ -705,16 +705,16 @@ def test_draft_tools_upsert_by_chunk_id_read_detail_and_remove() -> None:
         failure = json.loads(rejected)
         assert failure["draft_item_count"] == 1
         assert failure["error"]["code"] == "INVALID_DRAFT_RANGE"
-        assert "1000 <= start_ms < end_ms <= 2000" in failure["error"]["message"]
+        assert "10 <= start_seconds < end_seconds <= 20" in failure["error"]["message"]
         assert "重新调用 update_draft_item" in failure["error"]["retry_hint"]
-    assert "start_ms=900, end_ms=1800" in out_of_range
-    assert "start_ms=1500, end_ms=1500" in empty_range
-    assert "start_ms=1600, end_ms=1500" in reversed_range
-    assert "start_ms=-1, end_ms=1500" in negative_range
+    assert "start_seconds=9, end_seconds=18" in out_of_range
+    assert "start_seconds=15, end_seconds=15" in empty_range
+    assert "start_seconds=16, end_seconds=15" in reversed_range
+    assert "start_seconds=-1, end_seconds=15" in negative_range
     assert workspace.draft_item("chunk-1") == DraftItem(
         video_chunk_id="chunk-1",
-        start_ms=1_200,
-        end_ms=1_800,
+        start_seconds=12,
+        end_seconds=18,
         claim="revised claim",
     )
 
@@ -742,8 +742,8 @@ def test_update_draft_tool_does_not_mask_unexpected_errors(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="unexpected storage failure"):
         tools["update_draft_item"].invoke({
             "video_chunk_id": "chunk-1",
-            "start_ms": 1_100,
-            "end_ms": 1_800,
+            "start_seconds": 11,
+            "end_seconds": 18,
             "claim": "valid range",
         })
 
@@ -758,8 +758,8 @@ def test_draft_catalog_cursor_is_rejected_after_draft_changes() -> None:
     for chunk_id in ("chunk-1", "chunk-2"):
         tools["update_draft_item"].invoke({
             "video_chunk_id": chunk_id,
-            "start_ms": 1_100,
-            "end_ms": 1_900,
+            "start_seconds": 11,
+            "end_seconds": 19,
             "claim": chunk_id,
         })
     first = json.loads(tools["get_draft_catelog"].invoke({}))
@@ -767,8 +767,8 @@ def test_draft_catalog_cursor_is_rejected_after_draft_changes() -> None:
 
     tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
-        "start_ms": 1_200,
-        "end_ms": 1_800,
+        "start_seconds": 12,
+        "end_seconds": 18,
         "claim": "changed",
     })
 
@@ -787,8 +787,8 @@ def test_chat_tools_use_approved_snapshot_and_update_video_in_place() -> None:
     for chunk_id in ("chunk-1", "chunk-2"):
         query_tools["update_draft_item"].invoke({
             "video_chunk_id": chunk_id,
-            "start_ms": 1_100,
-            "end_ms": 1_900,
+            "start_seconds": 11,
+            "end_seconds": 19,
             "claim": f"draft {chunk_id}",
         })
     workspace.approve_draft()
@@ -837,8 +837,8 @@ def test_workspace_checkpoint_contains_handles_without_full_evidence() -> None:
     _retrieve(query_tools, top_k=1)
     query_tools["update_draft_item"].invoke({
         "video_chunk_id": "chunk-1",
-        "start_ms": 1_100,
-        "end_ms": 1_900,
+        "start_seconds": 11,
+        "end_seconds": 19,
         "claim": "bounded claim",
     })
 
@@ -852,8 +852,8 @@ def test_workspace_checkpoint_contains_handles_without_full_evidence() -> None:
     }
     assert query_checkpoint["draft_catalog"] == [{
         "video_chunk_id": "chunk-1",
-        "start_ms": 1_100,
-        "end_ms": 1_900,
+        "start_seconds": 11,
+        "end_seconds": 19,
     }]
     assert large_text not in rendered_query
     assert "bounded claim" not in rendered_query

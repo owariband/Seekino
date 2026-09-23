@@ -15,7 +15,7 @@ from server.model.agent import (
     AgentMessageRecord,
     AgentMessageTimingRecord,
 )
-from server.model.video import VideoChunkInfoRecord, VideoChunkRecord
+from server.model.video import VideoChunkInfoRecord, VideoChunkRecord, VideoRecord
 from server.model.job import VideoChunkCheckpointRecord
 
 
@@ -55,7 +55,10 @@ def test_database_environment_requires_physically_separate_databases() -> None:
         )
 
 
-def test_mysql_schema_uses_innodb_json_and_integer_milliseconds() -> None:
+def test_mysql_schema_uses_innodb_json_and_integer_media_seconds() -> None:
+    video_ddl = str(
+        CreateTable(VideoRecord.__table__).compile(dialect=mysql.dialect())
+    )
     chunk_ddl = str(
         CreateTable(VideoChunkRecord.__table__).compile(dialect=mysql.dialect())
     )
@@ -72,11 +75,13 @@ def test_mysql_schema_uses_innodb_json_and_integer_milliseconds() -> None:
 
     assert "ENGINE=InnoDB" in chunk_ddl
     assert "CHARSET=utf8mb4" in chunk_ddl
-    assert "start_ms BIGINT" in chunk_ddl
+    assert "duration_seconds BIGINT" in video_ddl
+    assert "duration_ms" not in video_ddl
+    assert "start_seconds BIGINT" in chunk_ddl
     assert "all_time_events JSON" in info_ddl
     assert "video_compact LONGTEXT" in info_ddl
-    assert "chunk_start_ms BIGINT" in checkpoint_ddl
-    assert "chunk_end_ms BIGINT" in checkpoint_ddl
+    assert "chunk_start_seconds BIGINT" in checkpoint_ddl
+    assert "chunk_end_seconds BIGINT" in checkpoint_ddl
     assert "ck_video_chunk_checkpoint_range" in checkpoint_ddl
 
 
@@ -299,11 +304,40 @@ def test_create_schema_requires_checkpoint_range_migration() -> None:
 
     with pytest.raises(
         SchemaUpgradeRequiredError,
-        match="video_chunk_checkpoint.chunk_end_ms",
+        match="video_chunk_checkpoint.chunk_end_seconds",
     ):
         create_schema(engine)
 
     assert set(inspect(engine).get_table_names()) == {"video_chunk_checkpoint"}
+
+
+@pytest.mark.parametrize(
+    ("table_name", "legacy_columns", "required_column"),
+    [
+        ("video", "video_id TEXT, duration_ms BIGINT", "video.duration_seconds"),
+        (
+            "video_chunk",
+            "video_chunk_id TEXT, start_ms BIGINT, end_ms BIGINT, "
+            "analysis_window_start_ms BIGINT, analysis_window_end_ms BIGINT",
+            "video_chunk.start_seconds",
+        ),
+    ],
+)
+def test_create_schema_requires_media_seconds_migration(
+    table_name: str,
+    legacy_columns: str,
+    required_column: str,
+) -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
+    )
+    with engine.begin() as connection:
+        connection.execute(text(f"CREATE TABLE {table_name} ({legacy_columns})"))
+
+    with pytest.raises(SchemaUpgradeRequiredError, match=required_column):
+        create_schema(engine)
+
+    assert set(inspect(engine).get_table_names()) == {table_name}
 
 
 def test_create_schema_requires_series_language_hint_migration() -> None:

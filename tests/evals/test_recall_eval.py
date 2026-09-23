@@ -73,36 +73,36 @@ def _parse_result(source_video: Path) -> VideoParseResult:
         _chunk(
             source_video,
             sequence_no=0,
-            start_ms=0,
-            end_ms=60_000,
-            analysis_start_ms=0,
-            analysis_end_ms=63_000,
+            start_seconds=0,
+            end_seconds=60,
+            analysis_start_seconds=0,
+            analysis_end_seconds=63,
             compact="alpha compact",
         ),
         _chunk(
             source_video,
             sequence_no=1,
-            start_ms=60_000,
-            end_ms=120_000,
-            analysis_start_ms=57_000,
-            analysis_end_ms=123_000,
+            start_seconds=60,
+            end_seconds=120,
+            analysis_start_seconds=57,
+            analysis_end_seconds=123,
             compact="beta compact",
         ),
         _chunk(
             source_video,
             sequence_no=2,
-            start_ms=120_000,
-            end_ms=180_000,
-            analysis_start_ms=117_000,
-            analysis_end_ms=180_000,
+            start_seconds=120,
+            end_seconds=180,
+            analysis_start_seconds=117,
+            analysis_end_seconds=180,
             compact="gamma compact",
         ),
     ]
     return VideoParseResult(
         source_video=source_video,
-        duration_ms=180_000,
-        chunk_duration_ms=60_000,
-        context_overlap_ms=3_000,
+        duration_seconds=180,
+        chunk_duration_seconds=60,
+        context_overlap_seconds=3,
         chunks=chunks,
         events=[event for chunk in chunks for event in chunk.events],
     )
@@ -112,15 +112,15 @@ def _chunk(
     source_video: Path,
     *,
     sequence_no: int,
-    start_ms: int,
-    end_ms: int,
-    analysis_start_ms: int,
-    analysis_end_ms: int,
+    start_seconds: int,
+    end_seconds: int,
+    analysis_start_seconds: int,
+    analysis_end_seconds: int,
     compact: str,
 ) -> VideoChunkParseResult:
     event = OwnedTimelineEvent(
-        start_ms=start_ms + 1000,
-        end_ms=start_ms + 2000,
+        start_seconds=start_seconds + 1,
+        end_seconds=start_seconds + 2,
         event_type="DIALOGUE",
         description=f"{compact} owned event",
         text=f"{compact} owned dialogue",
@@ -143,10 +143,10 @@ def _chunk(
             sequence_no=sequence_no,
             source_video=source_video,
             media_path=source_video.parent / f"analysis-{sequence_no}.mp4",
-            chunk_start_ms=start_ms,
-            chunk_end_ms=end_ms,
-            analysis_start_ms=analysis_start_ms,
-            analysis_end_ms=analysis_end_ms,
+            chunk_start_seconds=start_seconds,
+            chunk_end_seconds=end_seconds,
+            analysis_start_seconds=analysis_start_seconds,
+            analysis_end_seconds=analysis_end_seconds,
         ),
         context_before=before,
         candidate_transcript=[],
@@ -195,8 +195,8 @@ def test_evaluator_caches_both_channels_and_scores_time_range_fixture(
             RecallQueryFixture(
                 query_id="q-beta",
                 query="find beta",
-                relevant_time_ranges_ms=[
-                    RelevantTimeRange(start_ms=60_000, end_ms=120_000)
+                relevant_time_ranges_seconds=[
+                    RelevantTimeRange(start_seconds=60, end_seconds=120)
                 ],
             )
         ]
@@ -233,8 +233,8 @@ def test_evaluator_caches_both_channels_and_scores_time_range_fixture(
     assert cache_payload["source"]["size_bytes"] == len(b"source-video")
     assert cache_payload["chunk"] == {
         "sequence_no": 1,
-        "start_ms": 60_000,
-        "end_ms": 120_000,
+        "start_seconds": 60,
+        "end_seconds": 120,
         "max_height": 720,
     }
     assert not list((tmp_path / "cache").rglob("*.tmp"))
@@ -425,8 +425,8 @@ def test_eval_media_uses_canonical_zero_overlap_windows(tmp_path, monkeypatch) -
     assert set(media) == {0, 1, 2}
     assert all("eval-only-canonical-media" in str(path) for path in media.values())
     assert all(
-        window.analysis_start_ms == window.chunk_start_ms
-        and window.analysis_end_ms == window.chunk_end_ms
+        window.analysis_start_seconds == window.chunk_start_seconds
+        and window.analysis_end_seconds == window.chunk_end_seconds
         for window in captured_windows
     )
 

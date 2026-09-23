@@ -79,7 +79,7 @@ def test_repository_pages_snapshots_and_does_not_overwrite_concurrent_parse(
             .where(VideoChunkRecord.video_chunk_id == second_id)
             .values(keyframe_uris=[{
                 "uri": "artifact://test/current.jpg",
-                "at_ms": 10_000,
+                "at_seconds": 10,
             }])
         )
 
@@ -111,7 +111,7 @@ def test_repository_pages_snapshots_and_does_not_overwrite_concurrent_parse(
             .where(VideoChunkRecord.video_chunk_id == candidate.video_chunk_id)
             .values(keyframe_uris=[{
                 "uri": "artifact://test/concurrent.jpg",
-                "at_ms": 0,
+                "at_seconds": 0,
             }])
         )
 
@@ -119,7 +119,7 @@ def test_repository_pages_snapshots_and_does_not_overwrite_concurrent_parse(
         candidate,
         VideoChunkKeyframeReference(
             uri="artifact://test/backfill.jpg",
-            at_ms=0,
+            at_seconds=0,
         ),
     )
 
@@ -132,7 +132,7 @@ def test_repository_pages_snapshots_and_does_not_overwrite_concurrent_parse(
         ).scalar_one()
     assert stored == [{
         "uri": "artifact://test/concurrent.jpg",
-        "at_ms": 0,
+        "at_seconds": 0,
     }]
     assert videos.list_keyframe_backfill_candidates(
         limit=10,
@@ -152,7 +152,7 @@ def test_repository_backfill_prepends_frame_and_preserves_historical_uris(
     legacy = "artifact://test/keyframes/legacy.jpg"
     historical = {
         "uri": "artifact://test/keyframes/historical.jpg",
-        "at_ms": None,
+        "at_seconds": None,
     }
     with engine.begin() as connection:
         connection.execute(
@@ -164,7 +164,7 @@ def test_repository_backfill_prepends_frame_and_preserves_historical_uris(
     [candidate] = videos.list_keyframe_backfill_candidates(limit=1)
     current = {
         "uri": "artifact://test/keyframes/current.jpg",
-        "at_ms": candidate.start_ms,
+        "at_seconds": candidate.start_seconds,
     }
 
     assert videos.set_keyframe_if_missing(
@@ -262,12 +262,12 @@ def test_backfill_is_dry_run_bounded_resumable_and_uses_absolute_time(
     with engine.connect() as connection:
         stored = connection.execute(
             select(
-                VideoChunkRecord.start_ms,
+                VideoChunkRecord.start_seconds,
                 VideoChunkRecord.keyframe_uris,
             ).order_by(VideoChunkRecord.sequence_no)
         ).all()
-    assert [values[0]["at_ms"] for _, values in stored] == [0, 10_000]
-    for _start_ms, values in stored:
+    assert [values[0]["at_seconds"] for _, values in stored] == [0, 10]
+    for _start_seconds, values in stored:
         assert "/keyframes/" in values[0]["uri"]
         assert artifacts.resolve(values[0]["uri"]).read_bytes().startswith(
             b"\xff\xd8\xff"
@@ -352,7 +352,7 @@ def test_backfill_replaces_broken_timed_frame_and_skips_serviceable_frame(
             )
             .values(keyframe_uris=[{
                 "uri": artifacts.uri_for_path(existing_frame),
-                "at_ms": 0,
+                "at_seconds": 0,
             }])
         )
         connection.execute(
@@ -362,7 +362,7 @@ def test_backfill_replaces_broken_timed_frame_and_skips_serviceable_frame(
             )
             .values(
                 chunk_media_ref=artifacts.uri_for_path(canonical),
-                keyframe_uris=[{"uri": broken_uri, "at_ms": 10_000}],
+                keyframe_uris=[{"uri": broken_uri, "at_seconds": 10}],
             )
         )
 
@@ -390,7 +390,7 @@ def test_backfill_replaces_broken_timed_frame_and_skips_serviceable_frame(
             )
         ).scalar_one()
     assert len(stored) == 1
-    assert stored[0]["at_ms"] == 10_000
+    assert stored[0]["at_seconds"] == 10
     assert stored[0]["uri"] != broken_uri
 
 
@@ -404,11 +404,11 @@ def test_backfill_failure_log_does_not_expose_media_path(
         series_id="11111111-1111-4111-8111-111111111111",
         video_id="22222222-2222-4222-8222-222222222222",
         episode_order=1,
-        duration_ms=10_000,
+        duration_seconds=10,
         video_chunk_id="33333333-3333-4333-8333-333333333333",
         sequence_no=0,
-        start_ms=0,
-        end_ms=10_000,
+        start_seconds=0,
+        end_seconds=10,
         chunk_media_ref="artifact://test/private/chunk.mp4",
         keyframe_snapshot=(),
     )

@@ -138,14 +138,14 @@ describe("Conversation state", () => {
     const selected = ["A", "B"];
     const reference = { messageId: "previous", videoChunkId: "selected-chunk" };
     const extraContext = {
-      playback: { seriesId: "A", videoId: "video-1", episodeOrder: 1, positionMs: 12_345 },
+      playback: { seriesId: "A", videoId: "video-1", episodeOrder: 1, positionSeconds: 12 },
     };
     act(() => { void result.current.send("query", selected, reference, {}, extraContext); });
     await waitFor(() => expect(streams.has("conv-A")).toBe(true));
     const stream = streams.get("conv-A")!;
     selected.splice(0, selected.length, "C");
     reference.videoChunkId = "another-chunk";
-    extraContext.playback.positionMs = 99_999;
+    extraContext.playback.positionSeconds = 99;
     rerender({ id: null });
     act(() => {
       const event = started("conv-A");
@@ -160,7 +160,7 @@ describe("Conversation state", () => {
     expect(vi.mocked(streamAgentMessage).mock.calls[0]![5]).toEqual(["A", "B"]);
     expect(vi.mocked(streamAgentMessage).mock.calls[0]![6]).toEqual({ messageId: "previous", videoChunkId: "selected-chunk" });
     expect(vi.mocked(streamAgentMessage).mock.calls[0]![8]).toEqual({
-      playback: { seriesId: "A", videoId: "video-1", episodeOrder: 1, positionMs: 12_345 },
+      playback: { seriesId: "A", videoId: "video-1", episodeOrder: 1, positionSeconds: 12 },
     });
     expect(stream.signal.aborted).toBe(false);
     expect(close).not.toHaveBeenCalled();
@@ -187,17 +187,17 @@ describe("Conversation state", () => {
   it("keeps ordered blocks that arrive before evidence and across processing snapshots", async () => {
     const { result } = await ready();
     const stream = await send(result);
-    const hit = { candidate: { videoChunkId: "chunk" }, evidence: { videoId: "video", videoChunkId: "chunk", startMs: 12_000, endMs: 15_000 } } as VideoChunkSearchHit;
+    const hit = { candidate: { videoChunkId: "chunk" }, evidence: { videoId: "video", videoChunkId: "chunk", startSeconds: 12, endSeconds: 15 } } as VideoChunkSearchHit;
 
     act(() => {
-      stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, block: { type: "video", videoChunkId: "chunk", startMs: 12_500, endMs: 14_500 } });
+      stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, block: { type: "video", videoChunkId: "chunk", startSeconds: 12, endSeconds: 14 } });
       stream.emit({ type: "answer.evidence", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, searchResult: searchResult(["A"], [hit]) });
       stream.emit({ type: "answer.block", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 4, block: { type: "markdown", markdown: "片段后的说明" } });
       snapshots.get("conv-A")!({ type: "messages", occurredAt: now, conversationId: "conv-A", messages: [message("conv-A")] });
     });
 
     expect(result.current.messages[1]?.renderBlocks).toEqual([
-      { type: "video", videoChunkId: "chunk", startMs: 12_500, endMs: 14_500 },
+      { type: "video", videoChunkId: "chunk", startSeconds: 12, endSeconds: 14 },
       { type: "markdown", markdown: "片段后的说明" },
     ]);
     expect(result.current.messages[1]?.searchResult?.hits).toEqual([hit]);
@@ -225,7 +225,7 @@ describe("Conversation state", () => {
   it("retains genuine deltas through PROCESSING snapshots and rejects duplicate or unrelated events", async () => {
     const { result } = await ready();
     const stream = await send(result);
-    const hit = { candidate: { videoChunkId: "chunk" }, evidence: { videoId: "video", videoChunkId: "chunk", startMs: 12000, endMs: 15000 } } as VideoChunkSearchHit;
+    const hit = { candidate: { videoChunkId: "chunk" }, evidence: { videoId: "video", videoChunkId: "chunk", startSeconds: 12, endSeconds: 15 } } as VideoChunkSearchHit;
     act(() => {
       stream.emit({ type: "answer.evidence", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 2, searchResult: searchResult(["A"], [hit]) });
       stream.emit({ type: "answer.delta", occurredAt: now, conversationId: "conv-A", messageId: "assistant", sequence: 3, delta: "第一段" });

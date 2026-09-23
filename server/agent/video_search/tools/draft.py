@@ -34,8 +34,8 @@ class UpdateDraftTemArguments(BaseModel):
         str,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=36),
     ]
-    start_ms: int = Field(strict=True)
-    end_ms: int = Field(strict=True)
+    start_seconds: int = Field(strict=True)
+    end_seconds: int = Field(strict=True)
     claim: Annotated[
         str,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000),
@@ -50,26 +50,26 @@ def build_update_draft_item_tool(
 ) -> AgentTool:
     def update_draft_item(
         video_chunk_id: str,
-        start_ms: int,
-        end_ms: int,
+        start_seconds: int,
+        end_seconds: int,
         claim: str,
     ) -> ToolResult:
         _start_tool_call(control, budget, "update_draft_item")
         try:
             operation, draft_item_count = workspace.upsert_draft_item(
                 video_chunk_id=video_chunk_id,
-                start_ms=start_ms,
-                end_ms=end_ms,
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
                 claim=claim,
             )
         except InvalidDraftRangeError as exc:
             raise AgentToolFeedbackError(
                 "INVALID_DRAFT_RANGE",
                 "时间区间不合法："
-                f"当前提交 start_ms={exc.start_ms}, end_ms={exc.end_ms}；"
+                f"当前提交 start_seconds={exc.start_seconds}, end_seconds={exc.end_seconds}；"
                 "必须满足 "
-                f"{exc.evidence_start_ms} <= start_ms < end_ms "
-                f"<= {exc.evidence_end_ms}。",
+                f"{exc.evidence_start_seconds} <= start_seconds < end_seconds "
+                f"<= {exc.evidence_end_seconds}。",
                 "请按 canonical Evidence 的时间范围修正后重新调用 update_draft_item。",
             ) from exc
         return JsonToolResult(
@@ -91,8 +91,8 @@ def build_update_draft_item_tool(
         name="update_draft_item",
         description=(
             "Insert or update one Draft Item by video_chunk_id. The Evidence must have "
-            "been retrieved, and the range must satisfy canonical_start_ms <= "
-            "start_ms < end_ms <= canonical_end_ms."
+            "been retrieved, and the range must satisfy canonical_start_seconds <= "
+            "start_seconds < end_seconds <= canonical_end_seconds."
         ),
         args_schema=UpdateDraftTemArguments,
         maximum_result_bytes=maximum_result_bytes,

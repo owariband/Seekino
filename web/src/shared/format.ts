@@ -20,8 +20,8 @@ export function formatCostCny(value: string | null): string {
   return `¥${integer!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction.padEnd(2, "0")}`;
 }
 
-export function formatTimecode(milliseconds: number): string {
-  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+export function formatTimecode(seconds: number): string {
+  seconds = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainder = seconds % 60;
@@ -31,8 +31,8 @@ export function formatTimecode(milliseconds: number): string {
     .join(":");
 }
 
-export function formatTimeRange(startMs: number, endMs: number): string {
-  return `${formatTimecode(startMs)}–${formatTimecode(endMs)}`;
+export function formatTimeRange(startSeconds: number, endSeconds: number): string {
+  return `${formatTimecode(startSeconds)}–${formatTimecode(endSeconds)}`;
 }
 
 export function clampPercentage(value: number): number {

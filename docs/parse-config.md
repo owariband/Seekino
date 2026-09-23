@@ -6,10 +6,10 @@
 
 - `window.analysisMaxHeight` 控制送往 ASR 与主视觉模型的分析视频高度。可以试用 480p，不会同时改变回放素材。
 - `window.canonicalMaxHeight` 控制回放片段、关键帧及视频向量化使用的视频高度。
-- `vision.fps` 控制主模型的取帧频率；`window.chunkDurationMs` 和 `window.contextOverlapMs` 决定每次调用的视频时间范围。界面显示的帧数是估计值，实际 Token 和费用以服务商返回值为准。
+- `vision.fps` 控制主模型的取帧频率；`window.chunkDurationSeconds` 和 `window.contextOverlapSeconds` 决定每次调用的视频时间范围。界面显示的帧数是估计值，实际 Token 和费用以服务商返回值为准。
 - `vision.inputMode=video` 保留视频输入；这个模式没有独立的硬帧数上限。
 - `vision.inputMode=ordered_frames` 使用已有的均匀抽帧路径，此时 `maxFramesPerWindow` 是每段帧数硬上限。主视觉模型接收图片序列和上游 ASR 文本，不接收该段视频的原始音轨；应单独评测其效果。
-- 内容过滤兜底另有 `fallback.frameFps`、`groupDurationMs`、`maxFramesPerGroup` 和 `maxHeight`。兜底参数只在触发时生效。
+- 内容过滤兜底另有 `fallback.frameFps`、`groupDurationSeconds`、`maxFramesPerGroup` 和 `maxHeight`。兜底参数只在触发时生效。
 
 ## 其他参数
 

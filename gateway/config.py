@@ -183,7 +183,7 @@ class VideoFallbackConfig(BaseModel):
 
     enabled: bool
     frame_fps: float = Field(ge=0.2, le=5.0)
-    group_duration_ms: int = Field(ge=1_000, le=120_000)
+    group_duration_seconds: int = Field(ge=1, le=120)
     max_frames_per_group: int = Field(ge=1, le=128)
     max_height: int = Field(ge=64, le=2160)
     deepseek: DeepSeekModelConfig

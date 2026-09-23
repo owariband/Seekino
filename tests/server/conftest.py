@@ -43,23 +43,23 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
     all_events: list[OwnedTimelineEvent] = []
     context_before = initial
     for sequence_no in range(2):
-        start_ms = sequence_no * 10_000
-        end_ms = (sequence_no + 1) * 10_000
+        start_seconds = sequence_no * 10
+        end_seconds = (sequence_no + 1) * 10
         analysis_path = analysis_directory / f"window-{sequence_no}.mp4"
         analysis_path.write_bytes(f"analysis-{sequence_no}".encode())
         canonical_path = canonical_directory / f"chunk-{sequence_no:04d}.mp4"
         canonical_path.write_bytes(f"canonical-{sequence_no}".encode())
 
         event = OwnedTimelineEvent(
-            start_ms=start_ms + 1000,
-            end_ms=start_ms + 3000,
+            start_seconds=start_seconds + 1,
+            end_seconds=start_seconds + 3,
             event_type="ACTION",
             description=f"第 {sequence_no + 1} 段动作",
             text=None,
             source_chunk_sequence_no=sequence_no,
         )
         compact = (
-            f"[{start_ms + 1000}-{start_ms + 3000}] "
+            f"[{start_seconds + 1}-{start_seconds + 3}] "
             f"第 {sequence_no + 1} 段动作"
         )
         context_after = ContextSnapshot(
@@ -69,8 +69,8 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
             recent_events=[
                 ContextEvent(
                     chunk_sequence_no=sequence_no,
-                    start_ms=event.start_ms,
-                    end_ms=event.end_ms,
+                    start_seconds=event.start_seconds,
+                    end_seconds=event.end_seconds,
                     event_type=event.event_type,
                     description=event.description,
                     text=None,
@@ -82,10 +82,10 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
                 sequence_no=sequence_no,
                 source_video=source_video,
                 media_path=analysis_path,
-                chunk_start_ms=start_ms,
-                chunk_end_ms=end_ms,
-                analysis_start_ms=start_ms,
-                analysis_end_ms=end_ms,
+                chunk_start_seconds=start_seconds,
+                chunk_end_seconds=end_seconds,
+                analysis_start_seconds=start_seconds,
+                analysis_end_seconds=end_seconds,
             ),
             context_before=context_before,
             candidate_transcript=[],
@@ -113,15 +113,15 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
                 "refiner_model": "test-refiner-model",
                 "input_mode": "ordered_frames",
                 "frame_fps": 0.5,
-                "group_duration_ms": 30_000,
+                "group_duration_seconds": 30,
                 "max_frames_per_group": 15,
                 "max_height": 720,
             },
         ),
         source_video=source_video,
-        duration_ms=20_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=0,
+        duration_seconds=20,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=0,
         chunks=chunks,
         events=all_events,
     )

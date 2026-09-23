@@ -20,13 +20,13 @@ from engine.parse.understand import UnderstandStage
 
 
 def _event(
-    start_ms: int,
-    end_ms: int,
+    start_seconds: int,
+    end_seconds: int,
     description: str,
 ) -> TimelineEvent:
     return TimelineEvent(
-        start_ms=start_ms,
-        end_ms=end_ms,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
         event_type="ACTION",
         description=description,
         text=None,
@@ -39,16 +39,16 @@ class FakeParser:
         self.background_images: list[tuple[BackgroundImage, ...]] = []
         self._events = [
             [
-                _event(1000, 3000, "第一段已确认动作"),
-                _event(9000, 11_000, "跨越第一条边界的动作"),
+                _event(1, 3, "第一段已确认动作"),
+                _event(9, 11, "跨越第一条边界的动作"),
             ],
             [
-                _event(1000, 3000, "跨越第一条边界的动作"),
-                _event(11_500, 13_500, "跨越第二条边界的动作"),
+                _event(1, 3, "跨越第一条边界的动作"),
+                _event(11, 14, "跨越第二条边界的动作"),
             ],
             [
-                _event(1500, 3500, "跨越第二条边界的动作"),
-                _event(5000, 6000, "第三段已确认动作"),
+                _event(1, 4, "跨越第二条边界的动作"),
+                _event(5, 6, "第三段已确认动作"),
             ],
         ]
 
@@ -58,16 +58,16 @@ class FakeParser:
         *,
         transcript: TranscriptAnalysis,
         context: str | None = None,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         index = int(Path(video_path).stem.rsplit("-", 1)[-1])
-        assert duration_ms is not None
+        assert duration_seconds is not None
         assert Path(video_path).name == f"window-{index}.mp4"
         self.contexts.append(context or "")
         self.background_images.append(tuple(background_images))
         return VideoEvidence(
-            duration_ms=duration_ms,
+            duration_seconds=duration_seconds,
             candidate_transcript=[],
             summary=f"window {index}",
             events=self._events[index],
@@ -81,14 +81,14 @@ class FakeFallbackParser(FakeParser):
         *,
         transcript: TranscriptAnalysis,
         context: str | None = None,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         evidence = super().understand(
             video_path,
             transcript=transcript,
             context=context,
-            duration_ms=duration_ms,
+            duration_seconds=duration_seconds,
             background_images=background_images,
         )
         return evidence.model_copy(
@@ -116,28 +116,28 @@ def _windows() -> list[AnalysisWindow]:
             sequence_no=0,
             source_video=source,
             media_path=Path("window-0.mp4"),
-            chunk_start_ms=0,
-            chunk_end_ms=10_000,
-            analysis_start_ms=0,
-            analysis_end_ms=12_000,
+            chunk_start_seconds=0,
+            chunk_end_seconds=10,
+            analysis_start_seconds=0,
+            analysis_end_seconds=12,
         ),
         AnalysisWindow(
             sequence_no=1,
             source_video=source,
             media_path=Path("window-1.mp4"),
-            chunk_start_ms=10_000,
-            chunk_end_ms=20_000,
-            analysis_start_ms=8_000,
-            analysis_end_ms=22_000,
+            chunk_start_seconds=10,
+            chunk_end_seconds=20,
+            analysis_start_seconds=8,
+            analysis_end_seconds=22,
         ),
         AnalysisWindow(
             sequence_no=2,
             source_video=source,
             media_path=Path("window-2.mp4"),
-            chunk_start_ms=20_000,
-            chunk_end_ms=30_000,
-            analysis_start_ms=18_000,
-            analysis_end_ms=30_000,
+            chunk_start_seconds=20,
+            chunk_end_seconds=30,
+            analysis_start_seconds=18,
+            analysis_end_seconds=30,
         ),
     ]
 
@@ -175,12 +175,12 @@ def test_parse_chunk_deduplicates_against_recent_compact_events() -> None:
     compact = ContextSnapshot(
         snapshot_id="context-0000",
         after_chunk_sequence_no=0,
-        compact_text="[00:09.000-00:11.000] ACTION 跨越第一条边界的动作",
+        compact_text="[00:09-00:11] ACTION 跨越第一条边界的动作",
         recent_events=[
             ContextEvent(
                 chunk_sequence_no=0,
-                start_ms=9000,
-                end_ms=11_000,
+                start_seconds=9,
+                end_seconds=11,
                 event_type="ACTION",
                 description="跨越第一条边界的动作",
             )
@@ -250,9 +250,9 @@ def test_pipeline_passes_only_owned_past_events_to_the_next_chunk() -> None:
     checkpoints = []
     result = UnderstandStage(parser).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=_windows(),
         series_bible="角色术语表",
         on_chunk_complete=checkpoints.append,
@@ -272,11 +272,11 @@ def test_pipeline_passes_only_owned_past_events_to_the_next_chunk() -> None:
         "跨越第二条边界的动作",
         "第三段已确认动作",
     ]
-    assert [(event.start_ms, event.end_ms) for event in result.events] == [
-        (1000, 3000),
-        (9000, 11_000),
-        (19_500, 21_500),
-        (23_000, 24_000),
+    assert [(event.start_seconds, event.end_seconds) for event in result.events] == [
+        (1, 3),
+        (9, 11),
+        (19, 22),
+        (23, 24),
     ]
     assert (
         result.chunks[1].context_before.snapshot_id
@@ -296,9 +296,9 @@ def test_context_snapshot_is_bounded_to_recent_events() -> None:
         max_context_chars=256,
     ).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=_windows(),
     )
 
@@ -311,17 +311,17 @@ def test_context_snapshot_is_bounded_to_recent_events() -> None:
 def test_pipeline_resumes_after_the_last_completed_chunk() -> None:
     initial = UnderstandStage(FakeParser()).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=_windows(),
     )
     resumed_parser = FakeParser()
     resumed = UnderstandStage(resumed_parser).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=_windows(),
         completed_chunks=initial.chunks[:1],
     )
@@ -340,9 +340,9 @@ def test_pipeline_keeps_candidate_transcript_mapping_compatibility() -> None:
 
     result = UnderstandStage(FakeParser()).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=windows,
         candidate_transcripts=transcripts,
     )
@@ -364,9 +364,9 @@ def test_pipeline_passes_complete_background_and_images_to_every_window(tmp_path
 
     result = UnderstandStage(parser).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=_windows(),
         series_bible=background,
         background_images=images,
@@ -382,9 +382,9 @@ def test_resumed_pipeline_passes_images_only_to_unfinished_windows(tmp_path) -> 
     background = "![灯](asset://tomori_01)"
     initial = UnderstandStage(FakeParser()).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=_windows(),
         series_bible=background,
         background_images=images,
@@ -393,9 +393,9 @@ def test_resumed_pipeline_passes_images_only_to_unfinished_windows(tmp_path) -> 
 
     resumed = UnderstandStage(parser).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=_windows(),
         series_bible=background,
         background_images=images,
@@ -411,9 +411,9 @@ def test_pipeline_marks_content_filter_result_as_fallback() -> None:
     checkpoints: list[VideoChunkParseResult] = []
     result = UnderstandStage(FakeFallbackParser()).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=_windows(),
         on_chunk_complete=checkpoints.append,
     )
@@ -425,9 +425,9 @@ def test_pipeline_marks_content_filter_result_as_fallback() -> None:
 def test_fallback_marker_is_backward_compatible_and_round_trips() -> None:
     result = UnderstandStage(FakeFallbackParser()).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=_windows(),
     )
     chunk = result.chunks[0]
@@ -460,9 +460,9 @@ def test_fallback_marker_is_backward_compatible_and_round_trips() -> None:
 def test_video_parse_result_model_metadata_round_trips_and_remains_optional() -> None:
     legacy_result = UnderstandStage(FakeFallbackParser()).run(
         source_video="episode.mp4",
-        duration_ms=30_000,
-        chunk_duration_ms=10_000,
-        context_overlap_ms=2_000,
+        duration_seconds=30,
+        chunk_duration_seconds=10,
+        context_overlap_seconds=2,
         windows=_windows(),
     )
     payload = legacy_result.model_dump(mode="json")
@@ -478,7 +478,7 @@ def test_video_parse_result_model_metadata_round_trips_and_remains_optional() ->
             "refiner_model": "deepseek-flash",
             "input_mode": "ordered_frames",
             "frame_fps": 0.5,
-            "group_duration_ms": 30_000,
+            "group_duration_seconds": 30,
             "max_frames_per_group": 15,
             "max_height": 720,
         },
@@ -498,7 +498,7 @@ def test_video_parse_result_model_metadata_round_trips_and_remains_optional() ->
     assert round_tripped.models.fallback.refiner_model == "deepseek-flash"
     assert round_tripped.models.fallback.input_mode == "ordered_frames"
     assert round_tripped.models.fallback.frame_fps == 0.5
-    assert round_tripped.models.fallback.group_duration_ms == 30_000
+    assert round_tripped.models.fallback.group_duration_seconds == 30
     assert round_tripped.models.fallback.max_frames_per_group == 15
     assert round_tripped.models.fallback.max_height == 720
 

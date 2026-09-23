@@ -139,8 +139,8 @@ def test_formal_retrieval_closes_qdrant_rrf_and_joined_hydrate(
     assert first.evidence.series_name == "Test Series"
     assert first.evidence.episode_order == 7
     assert first.evidence.sequence_no == 0
-    assert first.evidence.start_ms == 0
-    assert first.evidence.end_ms == 10_000
+    assert first.evidence.start_seconds == 0
+    assert first.evidence.end_seconds == 10
     assert first.evidence.retrieval_text == (
         prepared.chunks[0].retrieval_document.text
     )
@@ -441,11 +441,11 @@ def test_transcript_only_retrieval_matches_real_asr_without_embedding(
     for index, chunk in enumerate(prepared_import.chunks):
         cues = (
             [
-                TranscriptCue(start_ms=1_000, end_ms=2_000, text="别把责任"),
-                TranscriptCue(start_ms=2_000, end_ms=3_000, text="推给别人。"),
+                TranscriptCue(start_seconds=1, end_seconds=2, text="别把责任"),
+                TranscriptCue(start_seconds=2, end_seconds=3, text="推给别人。"),
             ]
             if index == 0
-            else [TranscriptCue(start_ms=1_000, end_ms=2_000, text="其他对白")]
+            else [TranscriptCue(start_seconds=1, end_seconds=2, text="其他对白")]
         )
         transcript_chunks.append(
             replace(
@@ -486,8 +486,8 @@ def test_transcript_only_retrieval_matches_real_asr_without_embedding(
         assert hit.selection_reason.matched_evidence[0].model_dump() == {
             "kind": "TRANSCRIPT",
             "text": "别把责任 推给别人。",
-            "start_ms": 1_000,
-            "end_ms": 3_000,
+            "start_seconds": 1,
+            "end_seconds": 3,
         }
     finally:
         client.close()
@@ -508,13 +508,13 @@ def test_transcript_retrieval_soft_validates_persisted_time_ranges(
                     update={
                         "candidate_transcript": [
                             TranscriptCue(
-                                start_ms=1_000,
-                                end_ms=1_000,
+                                start_seconds=1,
+                                end_seconds=1,
                                 text="瞬间回应",
                             ),
                             TranscriptCue(
-                                start_ms=3_000,
-                                end_ms=2_000,
+                                start_seconds=3,
+                                end_seconds=2,
                                 text="反向坏数据",
                             ),
                         ]
@@ -547,8 +547,8 @@ def test_transcript_retrieval_soft_validates_persisted_time_ranges(
         assert result.hits[0].selection_reason.matched_evidence[0].model_dump() == {
             "kind": "TRANSCRIPT",
             "text": "瞬间回应",
-            "start_ms": 1_000,
-            "end_ms": 1_000,
+            "start_seconds": 1,
+            "end_seconds": 1,
         }
         assert "retained_point_cue_count=1" in caplog.text
         assert "skipped_invalid_cue_count=1" in caplog.text
@@ -588,13 +588,13 @@ def test_transcript_retrieval_assigns_overlap_cue_to_canonical_owner(
 ) -> None:
     first, second = prepared_import.chunks
     first_window = first.parse_result.window.model_copy(
-        update={"analysis_end_ms": 13_000, "analysis_duration_ms": 13_000}
+        update={"analysis_end_seconds": 13, "analysis_duration_seconds": 13}
     )
     second_window = second.parse_result.window.model_copy(
         update={
-            "analysis_start_ms": 7_000,
-            "analysis_duration_ms": 13_000,
-            "relative_chunk_start_ms": 3_000,
+            "analysis_start_seconds": 7,
+            "analysis_duration_seconds": 13,
+            "relative_chunk_start_seconds": 3,
         }
     )
     phrase = "边界处的同一句台词"
@@ -608,8 +608,8 @@ def test_transcript_retrieval_assigns_overlap_cue_to_canonical_owner(
                         "window": first_window,
                         "candidate_transcript": [
                             TranscriptCue(
-                                start_ms=10_500,
-                                end_ms=11_500,
+                                start_seconds=10,
+                                end_seconds=12,
                                 text=phrase,
                             )
                         ],
@@ -623,8 +623,8 @@ def test_transcript_retrieval_assigns_overlap_cue_to_canonical_owner(
                         "window": second_window,
                         "candidate_transcript": [
                             TranscriptCue(
-                                start_ms=3_500,
-                                end_ms=4_500,
+                                start_seconds=3,
+                                end_seconds=5,
                                 text=phrase,
                             )
                         ],
@@ -651,7 +651,7 @@ def test_transcript_retrieval_assigns_overlap_cue_to_canonical_owner(
         assert [hit.candidate.video_chunk_id for hit in result.hits] == [
             report.video_chunk_ids[1]
         ]
-        assert result.hits[0].selection_reason.matched_evidence[0].start_ms == 10_500
+        assert result.hits[0].selection_reason.matched_evidence[0].start_seconds == 10
     finally:
         client.close()
 

@@ -38,20 +38,20 @@ class ParseChunkInput:
 @dataclass(frozen=True, slots=True)
 class ParsePipelineInput:
     source_video: Path
-    duration_ms: int
-    chunk_duration_ms: int
-    context_overlap_ms: int
+    duration_seconds: int
+    chunk_duration_seconds: int
+    context_overlap_seconds: int
     chunks: tuple[ParseChunkInput, ...]
     series_bible: str | None = None
     background_images: tuple[BackgroundImage, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.duration_ms <= 0:
-            raise ValueError("duration_ms must be greater than zero")
-        if self.chunk_duration_ms <= 0:
-            raise ValueError("chunk_duration_ms must be greater than zero")
-        if self.context_overlap_ms < 0:
-            raise ValueError("context_overlap_ms cannot be negative")
+        if self.duration_seconds <= 0:
+            raise ValueError("duration_seconds must be greater than zero")
+        if self.chunk_duration_seconds <= 0:
+            raise ValueError("chunk_duration_seconds must be greater than zero")
+        if self.context_overlap_seconds < 0:
+            raise ValueError("context_overlap_seconds cannot be negative")
         if not self.chunks:
             raise ValueError("at least one ParseChunkInput is required")
         if [item.window.sequence_no for item in self.chunks] != list(
@@ -116,9 +116,9 @@ class ParsePipeline:
 
         parse_result = self._understand.run(
             source_video=str(request.source_video),
-            duration_ms=request.duration_ms,
-            chunk_duration_ms=request.chunk_duration_ms,
-            context_overlap_ms=request.context_overlap_ms,
+            duration_seconds=request.duration_seconds,
+            chunk_duration_seconds=request.chunk_duration_seconds,
+            context_overlap_seconds=request.context_overlap_seconds,
             windows=windows,
             series_bible=request.series_bible,
             background_images=request.background_images,

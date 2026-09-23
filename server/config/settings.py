@@ -175,13 +175,13 @@ class ServerSettings:
                 ),
             ),
             parse=VideoParseRuntimeConfig(
-                chunk_duration_ms=_environment_int(
-                    "ANIVAG_CHUNK_DURATION_MS",
-                    parse_defaults.chunk_duration_ms,
+                chunk_duration_seconds=_environment_int(
+                    "ANIVAG_CHUNK_DURATION_SECONDS",
+                    parse_defaults.chunk_duration_seconds,
                 ),
-                context_overlap_ms=_environment_nonnegative_int(
-                    "ANIVAG_CONTEXT_OVERLAP_MS",
-                    parse_defaults.context_overlap_ms,
+                context_overlap_seconds=_environment_nonnegative_int(
+                    "ANIVAG_CONTEXT_OVERLAP_SECONDS",
+                    parse_defaults.context_overlap_seconds,
                 ),
                 max_height=_environment_int(
                     "ANIVAG_PARSE_MAX_HEIGHT", parse_defaults.max_height

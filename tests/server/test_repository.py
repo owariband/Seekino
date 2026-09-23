@@ -113,9 +113,9 @@ def test_import_preserves_complete_fallback_provenance(
         model="test-visual-model",
         input_mode="ordered_frames",
         frame_fps=0.5,
-        frame_timestamps_ms=[1_000, 3_000],
+        frame_timestamps_seconds=[1.25, 3.75],
         group_frame_counts=[2],
-        group_duration_ms=30_000,
+        group_duration_seconds=30,
         max_frames_per_group=15,
         fallback_transcript_model=None,
         visual_model="test-visual-model",
@@ -187,7 +187,7 @@ def test_import_persists_keyframes_with_original_video_offsets(
                             "artifact://test/keyframes/"
                             f"chunk-{item.parse_result.window.sequence_no:04d}.jpg"
                         ),
-                        at_ms=item.parse_result.window.chunk_start_ms,
+                        at_seconds=item.parse_result.window.chunk_start_seconds,
                     ),
                 ),
             )
@@ -216,7 +216,7 @@ def test_import_persists_keyframes_with_original_video_offsets(
                             "artifact://test/keyframes/retry-"
                             f"chunk-{item.parse_result.window.sequence_no:04d}.jpg"
                         ),
-                        at_ms=item.parse_result.window.chunk_start_ms,
+                        at_seconds=item.parse_result.window.chunk_start_seconds,
                     ),
                 ),
             )
@@ -233,8 +233,8 @@ def test_import_persists_keyframes_with_original_video_offsets(
                 VideoChunkRecord.keyframe_uris,
             ).order_by(VideoChunkRecord.sequence_no)
         ).all()
-    assert [value[0]["at_ms"] for _, value in stored] == [0, 10_000]
-    assert [item.keyframe_uris[0].at_ms for item in evidence] == [0, 10_000]
+    assert [value[0]["at_seconds"] for _, value in stored] == [0, 10]
+    assert [item.keyframe_uris[0].at_seconds for item in evidence] == [0, 10]
     assert [len(value) for _, value in stored] == [2, 1]
     assert all("/retry-chunk-" in value[0]["uri"] for _, value in stored)
     assert stored[0][1][1] == legacy_uri
@@ -295,7 +295,7 @@ def test_parse_import_accepts_legacy_segment_media_names(
         window = item.parse_result.window
         legacy_path = current_path.with_name(
             f"segment-{window.sequence_no:04d}.analysis-"
-            f"{window.chunk_start_ms:010d}-{window.chunk_end_ms:010d}.mp4"
+            f"{window.chunk_start_seconds:010d}-{window.chunk_end_seconds:010d}.mp4"
         )
         current_path.rename(legacy_path)
         legacy_paths.append(legacy_path)
@@ -331,8 +331,8 @@ def test_parse_import_relocates_legacy_analysis_window_paths(
         source_path = Path(prepared_chunk.parse_result.window.media_path)
         relocated_path = relocated_directory / (
             f"segment-{window_payload['sequence_no']:04d}.analysis-"
-            f"{window_payload['analysis_start_ms']:010d}-"
-            f"{window_payload['analysis_end_ms']:010d}.mp4"
+            f"{window_payload['analysis_start_seconds']:010d}-"
+            f"{window_payload['analysis_end_seconds']:010d}.mp4"
         )
         relocated_path.write_bytes(source_path.read_bytes())
         window_payload["media_path"] = str(
@@ -378,8 +378,8 @@ def test_legacy_embedding_metadata_is_normalized_to_video_chunk(
     ).resolve()
     document = VideoChunkRetrievalDocument(
         sequence_no=0,
-        start_ms=0,
-        end_ms=10_000,
+        start_seconds=0,
+        end_seconds=10,
         video_compact="compact",
         text="retrieval text",
         is_fallback=False,
@@ -387,7 +387,7 @@ def test_legacy_embedding_metadata_is_normalized_to_video_chunk(
     max_height = 720
     media_identity = (
         f"{source_video}\0{source_stat.st_size}\0{source_stat.st_mtime_ns}"
-        f"\0{document.start_ms}\0{document.end_ms}\0{max_height}"
+        f"\0{document.start_seconds}\0{document.end_seconds}\0{max_height}"
         f"\0{legacy_media}\0{chunk_stat.st_size}\0{chunk_stat.st_mtime_ns}"
     )
     cache_path = tmp_path / "segment-0000.video.json"
@@ -399,8 +399,8 @@ def test_legacy_embedding_metadata_is_normalized_to_video_chunk(
                 "modality": "video",
                 "segment": {
                     "sequence_no": 0,
-                    "start_ms": 0,
-                    "end_ms": 10_000,
+                    "start_seconds": 0,
+                    "end_seconds": 10,
                     "max_height": max_height,
                 },
                 "source": {
@@ -542,7 +542,7 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
         [first_chunk_id]
     )[0].keyframe_uris[0]
     assert legacy_keyframe.uri == "s3://artifacts/keyframe.webp"
-    assert legacy_keyframe.at_ms is None
+    assert legacy_keyframe.at_seconds is None
     assert embedding == (
         [0.1, 0.2],
         [0.3, 0.4],
@@ -625,7 +625,7 @@ def test_hydrate_preserves_candidate_order_with_one_select(
             .where(VideoChunkRecord.video_chunk_id == report.video_chunk_ids[1])
             .values(
                 transcript=[
-                    {"text": "第二段对白", "start_ms": 1_000, "end_ms": 2_000}
+                    {"text": "第二段对白", "start_seconds": 1, "end_seconds": 2}
                 ]
             )
         )
@@ -653,8 +653,8 @@ def test_hydrate_preserves_candidate_order_with_one_select(
     assert evidence[0].episode_order == 7
     assert evidence[0].transcript[0].speaker is None
     assert evidence[0].transcript[0].text == "第二段对白"
-    assert evidence[0].transcript[0].start_ms == 11_000
-    assert evidence[0].transcript[0].end_ms == 12_000
+    assert evidence[0].transcript[0].start_seconds == 11
+    assert evidence[0].transcript[0].end_seconds == 12
     assert evidence[0].retrieval_text == (
         prepared_import.chunks[1].retrieval_document.text
     )
@@ -727,7 +727,7 @@ def test_searchable_video_requires_every_chunk_and_transcripts_follow_video_scop
         connection.execute(
             update(VideoChunkRecord)
             .where(VideoChunkRecord.video_chunk_id == report.video_chunk_ids[0])
-            .values(transcript=[{"text": "企鹅", "start_ms": 1000, "end_ms": 2000}])
+            .values(transcript=[{"text": "企鹅", "start_seconds": 1, "end_seconds": 2}])
         )
         connection.execute(
             update(IndexSyncIntentRecord)

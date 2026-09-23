@@ -172,14 +172,14 @@ def _job_view(detail: ParseJobDetail) -> ParseJobView:
 
 def project_job(detail: ParseJobDetail) -> ParseJobView:
     job = detail.job
-    total_duration_ms = job.duration_ms
+    total_duration_seconds = job.duration_seconds
     checkpoints = tuple(sorted(detail.checkpoints, key=lambda item: item.sequence_no))
     completed = (
         job.status == ParseJobStatus.SUCCEEDED.value or job.stage == "COMPLETED"
     )
     checkpoint_progress = calculate_checkpoint_progress(
         checkpoints,
-        total_duration_ms,
+        total_duration_seconds,
         completed=completed,
     )
 
@@ -189,13 +189,13 @@ def project_job(detail: ParseJobDetail) -> ParseJobView:
         else None
     )
     stage_progress: int | None = None
-    completed_duration_ms = (
-        checkpoint_progress.completed_duration_ms
+    completed_duration_seconds = (
+        checkpoint_progress.completed_duration_seconds
         if checkpoint_progress is not None
         else None
     )
-    completed_through_ms = (
-        checkpoint_progress.completed_through_ms
+    completed_through_seconds = (
+        checkpoint_progress.completed_through_seconds
         if checkpoint_progress is not None
         else None
     )
@@ -208,8 +208,8 @@ def project_job(detail: ParseJobDetail) -> ParseJobView:
     if checkpoint_progress is not None and checkpoint_progress.current is not None:
         current_chunk = CurrentVideoChunkView(
             sequence_no=checkpoint_progress.current.sequence_no,
-            start_ms=checkpoint_progress.current.start_ms,
-            end_ms=checkpoint_progress.current.end_ms,
+            start_seconds=checkpoint_progress.current.start_seconds,
+            end_seconds=checkpoint_progress.current.end_seconds,
         )
 
     if completed:
@@ -222,13 +222,13 @@ def project_job(detail: ParseJobDetail) -> ParseJobView:
                 for item in checkpoints
                 if _CHECKPOINT_STAGE_RANK[item.stage] >= required_rank
             ]
-            stage_completed_duration_ms = sum(
-                item.chunk_end_ms - item.chunk_start_ms
+            stage_completed_duration_seconds = sum(
+                item.chunk_end_seconds - item.chunk_start_seconds
                 for item in stage_completed
             )
             stage_progress = min(
                 100,
-                stage_completed_duration_ms * 100 // total_duration_ms,
+                stage_completed_duration_seconds * 100 // total_duration_seconds,
             )
 
     return ParseJobView(
@@ -239,10 +239,10 @@ def project_job(detail: ParseJobDetail) -> ParseJobView:
         parse_config=job.parse_config,
         retry_of_job_id=None, status=job.status, stage=job.stage, progress=job.progress,
         overall_progress=overall_progress, stage_progress=stage_progress,
-        completed_duration_ms=completed_duration_ms,
-        completed_through_ms=completed_through_ms,
-        video_duration_ms=total_duration_ms,
-        total_duration_ms=total_duration_ms,
+        completed_duration_seconds=completed_duration_seconds,
+        completed_through_seconds=completed_through_seconds,
+        video_duration_seconds=total_duration_seconds,
+        total_duration_seconds=total_duration_seconds,
         processing_duration_ms=detail.processing_duration_ms,
         processing_timing_complete=detail.processing_timing_complete,
         completed_chunk_count=completed_chunk_count,
@@ -253,7 +253,7 @@ def project_job(detail: ParseJobDetail) -> ParseJobView:
         last_error=Failure(code="PROCESSING_FAILED", message="视频建库失败，请检查任务后重试") if job.last_error else None,
         checkpoints=[VideoChunkCheckpointView(
             sequence_no=item.sequence_no, video_chunk_id=item.video_chunk_id, stage=item.stage,
-            chunk_start_ms=item.chunk_start_ms, chunk_end_ms=item.chunk_end_ms,
+            chunk_start_seconds=item.chunk_start_seconds, chunk_end_seconds=item.chunk_end_seconds,
             last_error=Failure(code="PROCESSING_FAILED", message="片段处理发生错误") if item.last_error else None,
         ) for item in checkpoints],
         can_retry=(

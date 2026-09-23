@@ -63,7 +63,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
                 inference_proxy_uri=None,
                 content_hash=prepared.content_hash,
                 total_bytes=prepared.total_bytes,
-                duration_ms=prepared.parse_result.duration_ms,
+                duration_seconds=prepared.parse_result.duration_seconds,
                 upload_status="COMPLETED",
                 parse_status="QUEUED",
                 upload_progress=100,

@@ -57,7 +57,7 @@ def accounting(tmp_path):
         session.add(VideoRecord(
             video_id=video_id, series_id=series.series_id, episode_order=2, upload_sequence=1,
             original_filename="actual-episode.mp4", original_source_uri="artifact://test/actual.mp4",
-            content_hash="a" * 64, total_bytes=100, duration_ms=10_000,
+            content_hash="a" * 64, total_bytes=100, duration_seconds=10,
             upload_status="COMPLETED", parse_status="QUEUED", upload_progress=100, parse_progress=0,
         ))
         session.add(SeriesParseJobRecord(

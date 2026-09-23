@@ -192,7 +192,7 @@ export function LibraryPage() {
                     </div>
                     <div className={styles.episodeName}>
                       <Clapperboard size={16} />
-                      <div><strong>{video.originalFilename}</strong><span>{formatBytes(video.totalBytes)} · <Clock3 size={11} /> {formatTimecode(video.durationMs)}</span></div>
+                      <div><strong>{video.originalFilename}</strong><span>{formatBytes(video.totalBytes)} · <Clock3 size={11} /> {formatTimecode(video.durationSeconds)}</span></div>
                     </div>
                     <div className={styles.progressCell}>
                       <span>上传</span><i><em style={{ width: `${video.uploadProgress}%` }} /></i><b>{video.uploadProgress}%</b>

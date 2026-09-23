@@ -77,7 +77,7 @@ class VideoRecord(TimestampedRecord, Base):
         UniqueConstraint("series_id", "episode_order", name="uq_video_series_order"),
         UniqueConstraint("series_id", "content_hash", name="uq_video_series_hash"),
         CheckConstraint("episode_order > 0", name="ck_video_episode_order"),
-        CheckConstraint("duration_ms > 0", name="ck_video_duration"),
+        CheckConstraint("duration_seconds > 0", name="ck_video_duration"),
         CheckConstraint("total_bytes >= 0", name="ck_video_total_bytes"),
         CheckConstraint(
             "upload_progress BETWEEN 0 AND 100",
@@ -103,7 +103,7 @@ class VideoRecord(TimestampedRecord, Base):
     inference_proxy_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    duration_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    duration_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
     upload_status: Mapped[str] = mapped_column(String(32), nullable=False)
     parse_status: Mapped[str] = mapped_column(String(32), nullable=False)
     upload_progress: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -120,12 +120,12 @@ class VideoChunkRecord(TimestampedRecord, Base):
         ),
         CheckConstraint("sequence_no >= 0", name="ck_video_chunk_sequence"),
         CheckConstraint(
-            "start_ms >= 0 AND end_ms > start_ms",
+            "start_seconds >= 0 AND end_seconds > start_seconds",
             name="ck_video_chunk_range",
         ),
         CheckConstraint(
-            "analysis_window_start_ms <= start_ms "
-            "AND analysis_window_end_ms >= end_ms",
+            "analysis_window_start_seconds <= start_seconds "
+            "AND analysis_window_end_seconds >= end_seconds",
             name="ck_video_chunk_analysis_range",
         ),
         MYSQL_TABLE_OPTIONS,
@@ -141,10 +141,10 @@ class VideoChunkRecord(TimestampedRecord, Base):
         index=True,
     )
     sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    analysis_window_start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    analysis_window_end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    start_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    end_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    analysis_window_start_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    analysis_window_end_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
     chunk_media_ref: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
     analysis_window_media_ref: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
     transcript: Mapped[list[dict[str, Any]]] = mapped_column(
@@ -154,7 +154,7 @@ class VideoChunkRecord(TimestampedRecord, Base):
     )
     baseline_visual_caption: Mapped[str | None] = mapped_column(LONG_TEXT)
     # The legacy column name is retained for schema compatibility. New values
-    # are {"uri": str, "at_ms": int} objects; historical URI strings remain
+    # are {"uri": str, "at_seconds": int} objects; historical URI strings remain
     # readable through VideoChunkKeyframeReference.
     keyframe_uris: Mapped[list[str | dict[str, Any]]] = mapped_column(
         JSON,

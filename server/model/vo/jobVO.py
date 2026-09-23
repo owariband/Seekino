@@ -12,15 +12,15 @@ class VideoChunkCheckpointView(ContractModel):
     sequence_no: int = Field(ge=0)
     video_chunk_id: str
     stage: VideoChunkCheckpointStage
-    chunk_start_ms: int | None = Field(ge=0)
-    chunk_end_ms: int | None = Field(gt=0)
+    chunk_start_seconds: int | None = Field(ge=0)
+    chunk_end_seconds: int | None = Field(gt=0)
     last_error: Failure | None
 
 
 class CurrentVideoChunkView(ContractModel):
     sequence_no: int = Field(ge=0)
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(gt=0)
 
 
 class ParseJobView(ContractModel):
@@ -39,10 +39,10 @@ class ParseJobView(ContractModel):
     progress: int = Field(ge=0, le=100)
     overall_progress: int | None = Field(ge=0, le=100)
     stage_progress: int | None = Field(ge=0, le=100)
-    completed_duration_ms: int | None = Field(ge=0)
-    completed_through_ms: int | None = Field(ge=0)
-    video_duration_ms: int = Field(gt=0)
-    total_duration_ms: int = Field(gt=0)
+    completed_duration_seconds: int | None = Field(ge=0)
+    completed_through_seconds: int | None = Field(ge=0)
+    video_duration_seconds: int = Field(gt=0)
+    total_duration_seconds: int = Field(gt=0)
     processing_duration_ms: int = Field(ge=0)
     processing_timing_complete: bool
     completed_chunk_count: int | None = Field(ge=0)

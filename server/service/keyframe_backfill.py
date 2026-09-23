@@ -17,7 +17,7 @@ from ..schema import VideoChunkKeyframeReference
 from ..storage.artifact import ArtifactStore
 from ..utils.media import (
     image_media_type,
-    stored_keyframe_at_ms,
+    stored_keyframe_at_seconds,
     stored_keyframe_uri,
 )
 
@@ -148,7 +148,7 @@ class KeyframeBackfillService:
                         candidate,
                         VideoChunkKeyframeReference(
                             uri=artifact.uri,
-                            at_ms=candidate.start_ms,
+                            at_seconds=candidate.start_seconds,
                         ),
                     )
                 except Exception as exc:
@@ -197,12 +197,12 @@ class KeyframeBackfillService:
     ) -> bool:
         for value in candidate.keyframe_snapshot:
             uri = stored_keyframe_uri(value)
-            at_ms = stored_keyframe_at_ms(value)
+            at_seconds = stored_keyframe_at_seconds(value)
             if (
                 uri is None
-                or at_ms is None
-                or not candidate.start_ms <= at_ms < candidate.end_ms
-                or at_ms >= candidate.duration_ms
+                or at_seconds is None
+                or not candidate.start_seconds <= at_seconds < candidate.end_seconds
+                or at_seconds >= candidate.duration_seconds
             ):
                 continue
             try:

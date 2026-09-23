@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from engine.parse.analysis_windows import probe_video_duration_ms
+from engine.parse.analysis_windows import probe_video_duration_seconds
 from engine.parse.schemas import VideoTimeline
 
 _MAX_PROMPT_CHARACTERS = 8000
@@ -63,13 +63,13 @@ def validate_dataset(
             if metadata is None:
                 errors.append(f"{prefix}: no matching manifest row")
             elif target is not None:
-                expected_duration_ms = metadata.get("analysis_duration_ms")
-                if isinstance(expected_duration_ms, int):
+                expected_duration_seconds = metadata.get("analysis_duration_seconds")
+                if isinstance(expected_duration_seconds, int):
                     for event_index, event in enumerate(target.events):
-                        if event.end_ms > expected_duration_ms:
+                        if event.end_seconds > expected_duration_seconds:
                             errors.append(
                                 f"{prefix}: event {event_index} exceeds "
-                                f"analysis duration {expected_duration_ms} ms"
+                                f"analysis duration {expected_duration_seconds} seconds"
                             )
             video_path = root / video_reference
             if not video_path.is_file() or video_path.stat().st_size == 0:
@@ -77,22 +77,22 @@ def validate_dataset(
                 continue
             if probe_videos:
                 try:
-                    actual_duration_ms = probe_video_duration_ms(video_path)
+                    actual_duration_seconds = probe_video_duration_seconds(video_path)
                 except (OSError, RuntimeError, ValueError) as exc:
                     errors.append(f"{prefix}: video probe failed: {exc}")
                 else:
-                    expected_duration_ms = (
-                        metadata.get("analysis_duration_ms")
+                    expected_duration_seconds = (
+                        metadata.get("analysis_duration_seconds")
                         if metadata is not None
                         else None
                     )
                     if (
-                        isinstance(expected_duration_ms, int)
-                        and abs(actual_duration_ms - expected_duration_ms) > 1000
+                        isinstance(expected_duration_seconds, int)
+                        and abs(actual_duration_seconds - expected_duration_seconds) > 1
                     ):
                         errors.append(
-                            f"{prefix}: video duration {actual_duration_ms} ms "
-                            f"differs from manifest {expected_duration_ms} ms"
+                            f"{prefix}: video duration {actual_duration_seconds} seconds "
+                            f"differs from manifest {expected_duration_seconds} seconds"
                         )
 
     if len(all_video_references) != len(set(all_video_references)):
@@ -197,13 +197,13 @@ def _validate_manifest(
             errors.append(f"{prefix}: duplicate video {video_reference!r}")
         else:
             manifest_by_video[video_reference] = record
-        duration_ms = record.get("analysis_duration_ms")
+        duration_seconds = record.get("analysis_duration_seconds")
         if (
-            isinstance(duration_ms, bool)
-            or not isinstance(duration_ms, int)
-            or duration_ms <= 0
+            isinstance(duration_seconds, bool)
+            or not isinstance(duration_seconds, int)
+            or duration_seconds <= 0
         ):
-            errors.append(f"{prefix}: analysis_duration_ms must be positive")
+            errors.append(f"{prefix}: analysis_duration_seconds must be positive")
 
     leaked_video_ids = split_video_ids["train"].intersection(
         split_video_ids["validation"]

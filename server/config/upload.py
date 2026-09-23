@@ -10,7 +10,7 @@ class UploadServiceConfig:
     maximum_upload_size_bytes: int = 10 * 1024 * 1024 * 1024
     session_ttl: timedelta = timedelta(hours=24)
     completion_stale_after: timedelta = timedelta(minutes=15)
-    pipeline_version: str = "m1"
+    pipeline_version: str = "m2-seconds"
     max_job_attempts: int = 3
 
     def __post_init__(self) -> None:

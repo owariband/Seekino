@@ -38,8 +38,8 @@ def _parse_result() -> VideoParseResult:
         recent_events=[],
     )
     event = OwnedTimelineEvent(
-        start_ms=1000,
-        end_ms=2000,
+        start_seconds=1,
+        end_seconds=2,
         event_type="DIALOGUE",
         description="当前片段发生的事件",
         text="当前片段的台词",
@@ -50,10 +50,10 @@ def _parse_result() -> VideoParseResult:
             sequence_no=0,
             source_video=source_video,
             media_path=Path("chunk-0000.mp4"),
-            chunk_start_ms=0,
-            chunk_end_ms=60_000,
-            analysis_start_ms=0,
-            analysis_end_ms=60_000,
+            chunk_start_seconds=0,
+            chunk_end_seconds=60,
+            analysis_start_seconds=0,
+            analysis_end_seconds=60,
         ),
         context_before=before,
         candidate_transcript=[],
@@ -68,9 +68,9 @@ def _parse_result() -> VideoParseResult:
     )
     return VideoParseResult(
         source_video=source_video,
-        duration_ms=60_000,
-        chunk_duration_ms=60_000,
-        context_overlap_ms=0,
+        duration_seconds=60,
+        chunk_duration_seconds=60,
+        context_overlap_seconds=0,
         chunks=[chunk],
         events=[event],
     )
@@ -271,8 +271,8 @@ def test_transcript_ranking_matches_normalized_phrase_across_adjacent_cues() -> 
         TranscriptChunkDocument(
             video_chunk_id="chunk-a",
             cues=[
-                TranscriptCueDocument(text="别把责任", start_ms=1_000, end_ms=2_000),
-                TranscriptCueDocument(text="推给别人。", start_ms=2_000, end_ms=3_000),
+                TranscriptCueDocument(text="别把责任", start_seconds=1, end_seconds=2),
+                TranscriptCueDocument(text="推给别人。", start_seconds=2, end_seconds=3),
             ],
         ),
         TranscriptChunkDocument(
@@ -280,8 +280,8 @@ def test_transcript_ranking_matches_normalized_phrase_across_adjacent_cues() -> 
             cues=[
                 TranscriptCueDocument(
                     text="她说：别把责任推给别人。",
-                    start_ms=4_000,
-                    end_ms=5_000,
+                    start_seconds=4,
+                    end_seconds=5,
                 )
             ],
         ),
@@ -292,7 +292,7 @@ def test_transcript_ranking_matches_normalized_phrase_across_adjacent_cues() -> 
     assert [item.video_chunk_id for item in ranked] == ["chunk-a", "chunk-b"]
     assert ranked[0].score == 1.0
     assert ranked[0].matched_text == "别把责任 推给别人。"
-    assert (ranked[0].start_ms, ranked[0].end_ms) == (1_000, 3_000)
+    assert (ranked[0].start_seconds, ranked[0].end_seconds) == (1, 3)
     assert ranked[1].score < ranked[0].score
 
 
@@ -303,8 +303,8 @@ def test_transcript_ranking_does_not_turn_semantic_similarity_into_a_match() -> 
             cues=[
                 TranscriptCueDocument(
                     text="别把责任推给别人。",
-                    start_ms=1_000,
-                    end_ms=2_000,
+                    start_seconds=1,
+                    end_seconds=2,
                 )
             ],
         )

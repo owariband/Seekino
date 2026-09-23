@@ -31,7 +31,7 @@ class ParseJobState:
     last_error: str | None
     created_at: int
     updated_at: int
-    duration_ms: int
+    duration_seconds: int
     upload_session_id: str | None = None
     is_primary_upload_job: bool = False
     parse_config: dict | None = None
@@ -55,7 +55,7 @@ class ParseJobLease:
     original_source_uri: str
     content_hash: str
     total_bytes: int
-    duration_ms: int
+    duration_seconds: int
     workspace_id: str
     series_name: str
     series_description: str | None
@@ -71,8 +71,8 @@ class VideoChunkCheckpointState:
     sequence_no: int
     video_chunk_id: str
     stage: str
-    chunk_start_ms: int | None = None
-    chunk_end_ms: int | None = None
+    chunk_start_seconds: int | None = None
+    chunk_end_seconds: int | None = None
     chunk_media_uri: str | None = None
     analysis_window_media_uri: str | None = None
     parse_artifact_uri: str | None = None

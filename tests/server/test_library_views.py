@@ -176,16 +176,16 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
                 sequence_no=0,
                 video_chunk_id=str(uuid4()),
                 stage="PARSED",
-                chunk_start_ms=0,
-                chunk_end_ms=15_000,
+                chunk_start_seconds=0,
+                chunk_end_seconds=15,
             ),
             VideoChunkCheckpointRecord(
                 job_id=job_id,
                 sequence_no=1,
                 video_chunk_id=str(uuid4()),
                 stage="SPLIT_READY",
-                chunk_start_ms=15_000,
-                chunk_end_ms=20_000,
+                chunk_start_seconds=15,
+                chunk_end_seconds=20,
             ),
         ])
 
@@ -196,7 +196,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
 
     with factory.begin() as session:
         checkpoint = session.get(VideoChunkCheckpointRecord, (job_id, 1))
-        checkpoint.chunk_start_ms = 16_000
+        checkpoint.chunk_start_seconds = 16
 
     assert (
         library.get_video(
@@ -438,7 +438,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
                 inference_proxy_uri=None,
                 content_hash="f" * 64,
                 total_bytes=1,
-                duration_ms=1,
+                duration_seconds=1,
                 upload_status="COMPLETED",
                 parse_status="SUCCEEDED",
                 upload_progress=100,

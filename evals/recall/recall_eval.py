@@ -32,7 +32,7 @@ from engine.retrieval.video_retrieval import (
 
 from .qdrant_index import QdrantVideoChunkIndex
 
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 _METRIC_CUTOFFS = (1, 3, 5, 10)
 
 
@@ -51,13 +51,13 @@ class TextVideoEmbedder(Protocol):
 class RelevantTimeRange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(gt=0)
 
     @model_validator(mode="after")
     def validate_range(self) -> "RelevantTimeRange":
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
         return self
 
 
@@ -67,7 +67,7 @@ class RecallQueryFixture(BaseModel):
     query_id: str = Field(min_length=1)
     query: str = Field(min_length=1)
     relevant_chunk_sequence_nos: list[int] = Field(default_factory=list)
-    relevant_time_ranges_ms: list[RelevantTimeRange] = Field(default_factory=list)
+    relevant_time_ranges_seconds: list[RelevantTimeRange] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -84,7 +84,7 @@ class RecallQueryFixture(BaseModel):
 
     @model_validator(mode="after")
     def require_relevance(self) -> "RecallQueryFixture":
-        if not self.relevant_chunk_sequence_nos and not self.relevant_time_ranges_ms:
+        if not self.relevant_chunk_sequence_nos and not self.relevant_time_ranges_seconds:
             raise ValueError(
                 "at least one relevant video chunk or relevant time range is required"
             )
@@ -172,15 +172,15 @@ class _VideoChunkFingerprint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sequence_no: int = Field(ge=0)
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(gt=0)
     max_height: int = Field(gt=0)
 
 
 class _EmbeddingCacheRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    cache_version: Literal[1] = _CACHE_VERSION
+    cache_version: Literal[2] = _CACHE_VERSION
     model: str
     dimensions: int = Field(gt=0)
     fps: float = Field(gt=0)
@@ -249,10 +249,10 @@ def materialize_eval_only_canonical_media(
     )
     windows = plan_analysis_windows(
         source_path,
-        duration_ms=parse_result.duration_ms,
+        duration_seconds=parse_result.duration_seconds,
         output_dir=media_dir,
-        chunk_duration_ms=parse_result.chunk_duration_ms,
-        context_overlap_ms=0,
+        chunk_duration_seconds=parse_result.chunk_duration_seconds,
+        context_overlap_seconds=0,
     )
     _validate_planned_media(parse_result, windows)
     media_by_sequence: dict[int, Path] = {}
@@ -370,7 +370,7 @@ class RecallEvaluator:
             relevant = _resolve_relevant_chunks(
                 query_fixture,
                 documents,
-                duration_ms=parse_result.duration_ms,
+                duration_seconds=parse_result.duration_seconds,
             )
             query_vector = self._cached_query_embedding(query_fixture.query, source)
             if self._qdrant_index is None:
@@ -463,8 +463,8 @@ class RecallEvaluator:
         ) -> tuple[Literal["text", "video"], int, list[float]]:
             chunk = _VideoChunkFingerprint(
                 sequence_no=document.sequence_no,
-                start_ms=document.start_ms,
-                end_ms=document.end_ms,
+                start_seconds=document.start_seconds,
+                end_seconds=document.end_seconds,
                 max_height=self._max_height,
             )
             if modality == "text":
@@ -490,7 +490,7 @@ class RecallEvaluator:
                 media_stat = media_path.stat()
                 media_identity = (
                     f"{source.resolved_path}\0{source.size_bytes}\0{source.mtime_ns}"
-                    f"\0{document.start_ms}\0{document.end_ms}\0{self._max_height}"
+                    f"\0{document.start_seconds}\0{document.end_seconds}\0{self._max_height}"
                     f"\0{media_path}\0{media_stat.st_size}\0{media_stat.st_mtime_ns}"
                 )
                 vector = self._cached_embedding(
@@ -640,10 +640,10 @@ def _validate_canonical_chunks(parse_result: VideoParseResult) -> None:
         if window.sequence_no in seen_sequences:
             raise ValueError("parse result contains a duplicate chunk")
         seen_sequences.add(window.sequence_no)
-        if window.chunk_start_ms != expected_start:
+        if window.chunk_start_seconds != expected_start:
             raise ValueError("parse result canonical chunks must be contiguous")
-        expected_start = window.chunk_end_ms
-    if expected_start != parse_result.duration_ms:
+        expected_start = window.chunk_end_seconds
+    if expected_start != parse_result.duration_seconds:
         raise ValueError("parse result does not cover the complete video duration")
 
 
@@ -657,10 +657,10 @@ def _validate_planned_media(
         parsed_window = parsed.window
         if (
             planned.sequence_no != parsed_window.sequence_no
-            or planned.chunk_start_ms != parsed_window.chunk_start_ms
-            or planned.chunk_end_ms != parsed_window.chunk_end_ms
-            or planned.analysis_start_ms != parsed_window.chunk_start_ms
-            or planned.analysis_end_ms != parsed_window.chunk_end_ms
+            or planned.chunk_start_seconds != parsed_window.chunk_start_seconds
+            or planned.chunk_end_seconds != parsed_window.chunk_end_seconds
+            or planned.analysis_start_seconds != parsed_window.chunk_start_seconds
+            or planned.analysis_end_seconds != parsed_window.chunk_end_seconds
         ):
             raise ValueError("planned media is not the canonical zero-overlap chunk")
 
@@ -681,7 +681,7 @@ def _resolve_relevant_chunks(
     fixture: RecallQueryFixture,
     documents: list[VideoChunkRetrievalDocument],
     *,
-    duration_ms: int,
+    duration_seconds: int,
 ) -> set[int]:
     valid_sequences = {document.sequence_no for document in documents}
     relevant = set(fixture.relevant_chunk_sequence_nos)
@@ -690,16 +690,16 @@ def _resolve_relevant_chunks(
         raise ValueError(
             f"query {fixture.query_id} references unknown chunks: {sorted(unknown)}"
         )
-    for time_range in fixture.relevant_time_ranges_ms:
-        if time_range.end_ms > duration_ms:
+    for time_range in fixture.relevant_time_ranges_seconds:
+        if time_range.end_seconds > duration_seconds:
             raise ValueError(
                 f"query {fixture.query_id} has a time range beyond video duration"
             )
         relevant.update(
             document.sequence_no
             for document in documents
-            if document.start_ms < time_range.end_ms
-            and document.end_ms > time_range.start_ms
+            if document.start_seconds < time_range.end_seconds
+            and document.end_seconds > time_range.start_seconds
         )
     if not relevant:
         raise ValueError(

@@ -327,7 +327,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         fallback = fallback.model_copy(update={
             "enabled": selected.fallback.enabled,
             "frame_fps": selected.fallback.frame_fps,
-            "group_duration_ms": selected.fallback.group_duration_ms,
+            "group_duration_seconds": selected.fallback.group_duration_seconds,
             "max_frames_per_group": selected.fallback.max_frames_per_group,
             "max_height": selected.fallback.max_height,
             "deepseek": deepseek,
@@ -335,8 +335,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         runtime = EngineVideoParseRuntime(
             model_config_path=settings.model_config_path,
             config=VideoParseRuntimeConfig(
-                chunk_duration_ms=selected.window.chunk_duration_ms,
-                context_overlap_ms=selected.window.context_overlap_ms,
+                chunk_duration_seconds=selected.window.chunk_duration_seconds,
+                context_overlap_seconds=selected.window.context_overlap_seconds,
                 max_height=selected.window.analysis_max_height,
                 asr_concurrency=selected.asr.concurrency,
                 asr_mode=selected.asr.mode,
@@ -373,8 +373,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             parse_usage=parse_usage,
             config=VideoProcessingConfig(
                 embedding_dimensions=selected.embedding.dimensions,
-                chunk_duration_ms=selected.window.chunk_duration_ms,
-                context_overlap_ms=selected.window.context_overlap_ms,
+                chunk_duration_seconds=selected.window.chunk_duration_seconds,
+                context_overlap_seconds=selected.window.context_overlap_seconds,
                 analysis_max_height=selected.window.analysis_max_height,
                 canonical_max_height=selected.window.canonical_max_height,
                 asr_concurrency=selected.asr.concurrency,
@@ -395,8 +395,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         parse_usage=parse_usage,
         config=VideoProcessingConfig(
             embedding_dimensions=settings.text_vector_dimensions,
-            chunk_duration_ms=settings.parse.chunk_duration_ms,
-            context_overlap_ms=settings.parse.context_overlap_ms,
+            chunk_duration_seconds=settings.parse.chunk_duration_seconds,
+            context_overlap_seconds=settings.parse.context_overlap_seconds,
             analysis_max_height=settings.parse.max_height,
             canonical_max_height=settings.parse.max_height,
             asr_concurrency=settings.parse.asr_concurrency,

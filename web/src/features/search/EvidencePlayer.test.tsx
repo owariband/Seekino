@@ -23,14 +23,14 @@ const hit: VideoChunkSearchHit = {
       {
         kind: "TRANSCRIPT",
         text: "我们在门口等你。",
-        startMs: 12_000,
-        endMs: 14_000,
+        startSeconds: 12,
+        endSeconds: 14,
       },
       {
         kind: "VISUAL_EVENT",
         text: "人物手持雨伞站在门口。",
-        startMs: 12_000,
-        endMs: 15_000,
+        startSeconds: 12,
+        endSeconds: 15,
       },
     ],
     limitations: [],
@@ -43,15 +43,15 @@ const hit: VideoChunkSearchHit = {
     videoId: "video-1",
     episodeOrder: 1,
     originalFilename: "episode-01.mp4",
-    durationMs: 60_000,
+    durationSeconds: 60,
     videoChunkId: "chunk-1",
     sequenceNo: 0,
-    startMs: 12_000,
-    endMs: 15_000,
-    analysisWindowStartMs: 10_000,
-    analysisWindowEndMs: 18_000,
+    startSeconds: 12,
+    endSeconds: 15,
+    analysisWindowStartSeconds: 10,
+    analysisWindowEndSeconds: 18,
     transcript: [
-      { speaker: "角色甲", text: "我们在门口等你。", startMs: 12_000, endMs: 14_000 },
+      { speaker: "角色甲", text: "我们在门口等你。", startSeconds: 12, endSeconds: 14 },
     ],
     baselineVisualCaption: "人物手持雨伞站在门口。",
     allTimeEvents: [],
@@ -85,8 +85,8 @@ function metadata(video: HTMLVideoElement) {
 function nextHit(overrides: Partial<VideoChunkSearchHit["evidence"]>): VideoChunkSearchHit {
   return { ...hit, evidence: { ...hit.evidence, ...(overrides.videoId ? { playbackUrl: `/api/videos/content?videoId=${overrides.videoId}&workspaceId=local-default&variant=playback` } : {}), ...overrides } };
 }
-const playbackRange = { startMs: 12_500, endMs: 14_501 };
-const nextPlaybackRange = { startMs: 25_250, endMs: 27_250 };
+const playbackRange = { startSeconds: 12, endSeconds: 15 };
+const nextPlaybackRange = { startSeconds: 25, endSeconds: 27 };
 
 describe("Evidence range playback", () => {
   it("uses the agent-selected range as the custom player's complete timeline", () => {
@@ -95,18 +95,18 @@ describe("Evidence range playback", () => {
     const timeline = screen.getByRole<HTMLInputElement>("slider", { name: "视频片段播放进度" });
     expect(video.currentTime).toBe(0);
     expect(video.src).toContain("/api/videos/content?videoId=video-1&workspaceId=local-default");
-    expect(screen.getByRole("link", { name: "在整集中观看" })).toHaveAttribute("href", "/watch/series-1/video-1?atMs=12500");
+    expect(screen.getByRole("link", { name: "在整集中观看" })).toHaveAttribute("href", "/watch/series-1/video-1?atSeconds=12");
     expect(video).not.toHaveAttribute("controls");
     expect(video).toHaveAttribute("playsinline");
     expect(timeline).toHaveAttribute("min", "0");
-    expect(timeline).toHaveAttribute("max", "2001");
+    expect(timeline).toHaveAttribute("max", "3");
     expect(timeline).toHaveAttribute("step", "1");
     expect(timeline).toHaveValue("0");
-    expect(screen.getByText("00:00 / 00:02")).toBeInTheDocument();
+    expect(screen.getByText("00:00 / 00:03")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "播放视频片段" }));
     expect(play).not.toHaveBeenCalled();
     metadata(video);
-    expect(video.currentTime).toBe(12.5);
+    expect(video.currentTime).toBe(12);
     expect(play).toHaveBeenCalledOnce();
   });
 
@@ -116,24 +116,24 @@ describe("Evidence range playback", () => {
     const timeline = screen.getByRole<HTMLInputElement>("slider", { name: "视频片段播放进度" });
     metadata(video);
     fireEvent.keyDown(timeline, { key: "ArrowRight" });
-    expect(video.currentTime).toBe(13.5);
-    expect(timeline).toHaveValue("1000");
+    expect(video.currentTime).toBe(13);
+    expect(timeline).toHaveValue("1");
     fireEvent.keyDown(timeline, { key: "End" });
-    expect(video.currentTime).toBe(14.501);
-    expect(timeline).toHaveValue("2001");
-    fireEvent.change(timeline, { target: { value: "750" } });
-    expect(video.currentTime).toBe(13.25);
-    expect(timeline).toHaveValue("750");
+    expect(video.currentTime).toBe(15);
+    expect(timeline).toHaveValue("3");
+    fireEvent.change(timeline, { target: { value: "1" } });
+    expect(video.currentTime).toBe(13);
+    expect(timeline).toHaveValue("1");
     pause.mockClear();
     video.currentTime = 14.4; fireEvent.timeUpdate(video);
     expect(pause).not.toHaveBeenCalled();
-    expect(timeline).toHaveValue("1900");
-    video.currentTime = 14.6; fireEvent.timeUpdate(video);
-    expect(video.currentTime).toBe(14.501);
-    expect(timeline).toHaveValue("2001");
+    expect(timeline).toHaveValue("2");
+    video.currentTime = 15.1; fireEvent.timeUpdate(video);
+    expect(video.currentTime).toBe(15);
+    expect(timeline).toHaveValue("3");
     expect(pause).toHaveBeenCalledOnce();
     video.currentTime = 0; fireEvent.play(video);
-    expect(video.currentTime).toBe(12.5);
+    expect(video.currentTime).toBe(12);
     expect(screen.getByRole("button", { name: "暂停视频片段" })).toBeInTheDocument();
   });
 
@@ -146,17 +146,17 @@ describe("Evidence range playback", () => {
     view.rerender(<EvidencePlayer hit={nextHit({})} playbackRange={playbackRange} />);
     expect(video.currentTime).toBe(13.2);
     expect(pause).not.toHaveBeenCalled();
-    view.rerender(<EvidencePlayer hit={nextHit({ videoChunkId: "chunk-2", startMs: 25000, endMs: 28000 })} playbackRange={nextPlaybackRange} />);
+    view.rerender(<EvidencePlayer hit={nextHit({ videoChunkId: "chunk-2", startSeconds: 25, endSeconds: 28 })} playbackRange={nextPlaybackRange} />);
     const nextVideo = screen.getByLabelText<HTMLVideoElement>("视频证据");
     expect(nextVideo).not.toBe(video);
     expect(nextVideo.currentTime).toBe(0);
     metadata(nextVideo);
-    expect(nextVideo.currentTime).toBe(25.25);
+    expect(nextVideo.currentTime).toBe(25);
     pause.mockClear();
     nextVideo.currentTime = 26; fireEvent.timeUpdate(nextVideo);
     expect(pause).not.toHaveBeenCalled();
     nextVideo.currentTime = 27.5; fireEvent.timeUpdate(nextVideo);
-    expect(nextVideo.currentTime).toBe(27.25);
+    expect(nextVideo.currentTime).toBe(27);
     expect(pause).toHaveBeenCalledOnce();
   });
 
@@ -164,7 +164,7 @@ describe("Evidence range playback", () => {
     const view = render(<EvidencePlayer hit={hit} playbackRange={playbackRange} />);
     const oldVideo = screen.getByLabelText<HTMLVideoElement>("视频证据");
     metadata(oldVideo);
-    view.rerender(<EvidencePlayer hit={nextHit({ videoId: "video-2", videoChunkId: "chunk-2", startMs: 25000, endMs: 28000 })} playbackRange={nextPlaybackRange} />);
+    view.rerender(<EvidencePlayer hit={nextHit({ videoId: "video-2", videoChunkId: "chunk-2", startSeconds: 25, endSeconds: 28 })} playbackRange={nextPlaybackRange} />);
     const video = screen.getByLabelText<HTMLVideoElement>("视频证据");
     expect(video).not.toBe(oldVideo);
     oldVideo.currentTime = 0;
@@ -175,7 +175,7 @@ describe("Evidence range playback", () => {
     expect(pause).not.toHaveBeenCalled();
     expect(video.currentTime).toBe(0);
     metadata(video);
-    expect(video.currentTime).toBe(25.25);
+    expect(video.currentTime).toBe(25);
   });
 
   it("renders play rejection and ignores a rejected Promise from an old range", async () => {
@@ -188,7 +188,7 @@ describe("Evidence range playback", () => {
     let reject!: (error: Error) => void;
     play.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
     fireEvent.click(screen.getByRole("button", { name: "播放视频片段" }));
-    view.rerender(<EvidencePlayer hit={nextHit({ videoChunkId: "chunk-2", startMs: 25000, endMs: 28000 })} playbackRange={nextPlaybackRange} />);
+    view.rerender(<EvidencePlayer hit={nextHit({ videoChunkId: "chunk-2", startSeconds: 25, endSeconds: 28 })} playbackRange={nextPlaybackRange} />);
     reject(new Error("旧片段的错误"));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   });

@@ -21,8 +21,8 @@ from training.qwen3_vl.validate_dataset import validate_dataset
 
 def _checkpoint() -> VideoChunkCheckpoint:
     event = TimelineEvent(
-        start_ms=1200,
-        end_ms=3400,
+        start_seconds=1,
+        end_seconds=4,
         event_type="ACTION",
         description="人物拿起吉他",
         text=None,
@@ -44,17 +44,17 @@ def _checkpoint() -> VideoChunkCheckpoint:
             sequence_no=0,
             source_video="episode.mp4",
             media_path="window.mp4",
-            chunk_start_ms=0,
-            chunk_end_ms=60_000,
-            analysis_start_ms=0,
-            analysis_end_ms=63_000,
-            analysis_duration_ms=63_000,
-            relative_chunk_start_ms=0,
-            relative_chunk_end_ms=60_000,
+            chunk_start_seconds=0,
+            chunk_end_seconds=60,
+            analysis_start_seconds=0,
+            analysis_end_seconds=63,
+            analysis_duration_seconds=63,
+            relative_chunk_start_seconds=0,
+            relative_chunk_end_seconds=60,
         ),
         context_before=context_before,
         candidate_transcript=[
-            TranscriptCue(start_ms=900, end_ms=1600, text="开始吧")
+            TranscriptCue(start_seconds=0, end_seconds=2, text="开始吧")
         ],
         video_parse=VideoParseProvenance(
             provider="doubao",
@@ -65,8 +65,8 @@ def _checkpoint() -> VideoChunkCheckpoint:
         observed_events=[
             ObservedTimelineEvent(
                 relative_event=event,
-                absolute_start_ms=1200,
-                absolute_end_ms=3400,
+                video_start_seconds=1,
+                video_end_seconds=4,
                 owned_by_current_chunk=True,
                 kept_after_deduplication=True,
             )
@@ -100,8 +100,8 @@ def test_build_swift_record_reconstructs_direct_video_input_and_raw_timeline():
         "summary": "人物准备演奏。",
         "events": [
             {
-                "start_ms": 1200,
-                "end_ms": 3400,
+                "start_seconds": 1,
+                "end_seconds": 4,
                 "event_type": "ACTION",
                 "description": "人物拿起吉他",
                 "text": None,
@@ -146,7 +146,7 @@ def test_validate_dataset_rejects_episode_leakage(tmp_path):
                 "split": split,
                 "video_id": "same-episode",
                 "video": f"videos/{split}/window.mp4",
-                "analysis_duration_ms": 63_000,
+                "analysis_duration_seconds": 63,
                 "teacher_provider": "doubao",
                 "teacher_input_mode": "video",
                 "is_fallback": False,

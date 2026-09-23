@@ -17,12 +17,12 @@ def _window() -> AnalysisWindow:
         sequence_no=0,
         source_video=Path("episode.mp4"),
         media_path=Path(
-            "windows/chunk-0000.analysis-0000000000-0000063000.mp4"
+            "windows/chunk-0000.analysis-0000000000-0000000063.mp4"
         ),
-        chunk_start_ms=0,
-        chunk_end_ms=60_000,
-        analysis_start_ms=0,
-        analysis_end_ms=63_000,
+        chunk_start_seconds=0,
+        chunk_end_seconds=60,
+        analysis_start_seconds=0,
+        analysis_end_seconds=63,
     )
 
 
@@ -36,7 +36,7 @@ def _write_fallback_checkpoint(
         update={
             "media_path": Path(
                 "packages/engine/outputs/legacy/windows/"
-                "segment-0000.analysis-0000000000-0000063000.mp4"
+                "segment-0000.analysis-0000000000-0000000063.mp4"
             )
         }
     )
@@ -45,9 +45,9 @@ def _write_fallback_checkpoint(
         "model": "deepseek-flash",
         "input_mode": "ordered_frames",
         "frame_fps": 0.5,
-        "frame_timestamps_ms": [1000, 3000],
+        "frame_timestamps_seconds": [1, 3],
         "group_frame_counts": [15, 15, 2],
-        "group_duration_ms": 30_000,
+        "group_duration_seconds": 30,
         "max_frames_per_group": 15,
         "fallback_transcript_model": "doubao-lite",
         "visual_model": "deepseek-flash",
@@ -104,7 +104,7 @@ def _resume(output_dir: Path, window: AnalysisWindow) -> list[VideoChunkParseRes
         fallback_model="deepseek-flash",
         fallback_transcript_model="doubao-lite",
         fallback_frame_fps=0.5,
-        fallback_group_duration_ms=30_000,
+        fallback_group_duration_seconds=30,
         fallback_max_frames_per_group=15,
     )
 
@@ -126,7 +126,7 @@ def test_load_completed_chunks_accepts_legacy_path_and_matching_strategy(
     ("field", "changed_value"),
     [
         ("frame_fps", 1.0),
-        ("group_duration_ms", 20_000),
+        ("group_duration_seconds", 20),
         ("max_frames_per_group", 10),
         ("fallback_transcript_model", "other-lite"),
         ("visual_model", "other-vision-model"),

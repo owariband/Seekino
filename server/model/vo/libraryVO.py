@@ -26,7 +26,7 @@ class VideoSummary(ContractModel):
     upload_sequence: int = Field(gt=0)
     original_filename: str
     total_bytes: int = Field(ge=0)
-    duration_ms: int = Field(gt=0)
+    duration_seconds: int = Field(gt=0)
     upload_status: Literal["COMPLETED"]
     upload_progress: Literal[100]
     parse_status: ParseJobStatus

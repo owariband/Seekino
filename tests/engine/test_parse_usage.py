@@ -28,9 +28,9 @@ from gateway.usage import capture_model_usage, track_model_call
 def _windows(count=2):
     return [
         AnalysisWindow(sequence_no=sequence, source_video=Path("video.mp4"),
-                       media_path=Path(f"window-{sequence}.mp4"), chunk_start_ms=sequence * 1000,
-                       chunk_end_ms=(sequence + 1) * 1000, analysis_start_ms=sequence * 1000,
-                       analysis_end_ms=(sequence + 1) * 1000)
+                       media_path=Path(f"window-{sequence}.mp4"), chunk_start_seconds=sequence,
+                       chunk_end_seconds=sequence + 1, analysis_start_seconds=sequence,
+                       analysis_end_seconds=sequence + 1)
         for sequence in range(count)
     ]
 
@@ -62,7 +62,7 @@ class Transcriber:
     def __init__(self, responses):
         self.model = ArkMultimodalModel(responses.model, client=SimpleNamespace(responses=responses))
 
-    def transcribe(self, path, *, duration_ms):
+    def transcribe(self, path, *, duration_seconds):
         sequence = int(path.stem.rsplit("-", 1)[1])
         return self.model.generate([TextInput(str(sequence))], schema_name="candidate_transcript", result_type=TranscriptAnalysis)
 
@@ -116,7 +116,7 @@ def test_candidate_asr_continues_without_waiting_for_consumption(tmp_path):
     release_second = Event()
 
     class Parser:
-        def transcribe(self, path, *, duration_ms):
+        def transcribe(self, path, *, duration_seconds):
             sequence_no = int(path.stem.rsplit("-", 1)[1])
             with started_lock:
                 started.append(sequence_no)
@@ -178,10 +178,10 @@ def test_runtime_single_chunk_calls_preserve_the_chunk_usage_scope(
         sequence_no=0,
         source_video=source,
         media_path=tmp_path / "window-0.mp4",
-        chunk_start_ms=0,
-        chunk_end_ms=1000,
-        analysis_start_ms=0,
-        analysis_end_ms=1000,
+        chunk_start_seconds=0,
+        chunk_end_seconds=1,
+        analysis_start_seconds=0,
+        analysis_end_seconds=1,
     )
     window.media_path.write_bytes(b"analysis fixture")
 
@@ -240,7 +240,7 @@ def test_pipeline_counts_each_fallback_call_and_does_not_recount_completed_chunk
             *,
             transcript,
             context,
-            duration_ms,
+            duration_seconds,
             background_images=(),
         ):
             with pytest.raises(RuntimeError), track_model_call(provider="ark", model="pro", operation="video_timeline"):
@@ -248,10 +248,10 @@ def test_pipeline_counts_each_fallback_call_and_does_not_recount_completed_chunk
             for operation in ["neutral_visual_evidence", "neutral_visual_evidence", "fallback_video_timeline"]:
                 with track_model_call(provider="deepseek", model="fallback", operation=operation) as call:
                     call.capture_response(SimpleNamespace(usage=SimpleNamespace(input_tokens=5, output_tokens=2, total_tokens=7)))
-            return VideoEvidence(duration_ms=duration_ms, candidate_transcript=[], summary="summary", events=[])
+            return VideoEvidence(duration_seconds=duration_seconds, candidate_transcript=[], summary="summary", events=[])
     pipeline = UnderstandStage(Parser())
-    request = dict(source_video="video.mp4", duration_ms=2000, chunk_duration_ms=1000,
-                   context_overlap_ms=0, windows=_windows())
+    request = dict(source_video="video.mp4", duration_seconds=2, chunk_duration_seconds=1,
+                   context_overlap_seconds=0, windows=_windows())
     with capture_parse_usage(ledger.append):
         result = pipeline.run(**request)
         assert pipeline.run(**request, completed_chunks=result.chunks) == result

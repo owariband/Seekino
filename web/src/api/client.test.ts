@@ -184,7 +184,7 @@ describe("Agent Chat routes", () => {
       ["series/id"],
       null,
       { topK: 5, maxModelCallsPerTurn: 9, maxToolCallsPerTurn: 32 },
-      { playback: { seriesId: "series/id", videoId: "video/id", episodeOrder: 1, positionMs: 12_345 } },
+      { playback: { seriesId: "series/id", videoId: "video/id", episodeOrder: 1, positionSeconds: 12 } },
     );
 
     expect(String(fetchMock.mock.calls[0]![0])).toBe("/api/agent/messages/options");
@@ -197,7 +197,7 @@ describe("Agent Chat routes", () => {
       maxModelCallsPerTurn: 9,
       maxToolCallsPerTurn: 32,
       extraContext: {
-        playback: { seriesId: "series/id", videoId: "video/id", episodeOrder: 1, positionMs: 12_345 },
+        playback: { seriesId: "series/id", videoId: "video/id", episodeOrder: 1, positionSeconds: 12 },
       },
     });
   });
@@ -282,7 +282,7 @@ describe("POST answer stream", () => {
   it("delivers ordered render blocks without resolving video references in the client", async () => {
     const payloads = [
       { sequence: 2, block: { type: "markdown", markdown: "第一段" } },
-      { sequence: 3, block: { type: "video", videoChunkId: "chunk-1", startMs: 12_500, endMs: 13_500 } },
+      { sequence: 3, block: { type: "video", videoChunkId: "chunk-1", startSeconds: 12, endSeconds: 13 } },
     ];
     const body = new ReadableStream<Uint8Array>({ start(controller) {
       for (const payload of payloads) {

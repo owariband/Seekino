@@ -55,7 +55,7 @@ class VideoSummaryState:
     inference_proxy_uri: str | None
     content_hash: str
     total_bytes: int
-    duration_ms: int
+    duration_seconds: int
     upload_status: str
     parse_status: str
     upload_progress: int

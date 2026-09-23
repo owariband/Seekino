@@ -379,39 +379,39 @@ def _agent_render_blocks(
             if not isinstance(video_chunk_id, str) or video_chunk_id not in hits_by_id:
                 _logger.warning(
                     "event=agent_invalid_video_render_block conversation_id=%s message_id=%s "
-                    "video_chunk_id=%s proposed_start_ms=%r proposed_end_ms=%r "
+                    "video_chunk_id=%s proposed_start_seconds=%r proposed_end_seconds=%r "
                     "action=drop_unknown_chunk",
                     state.conversation_id, state.message_id, video_chunk_id,
-                    raw.get("startMs"), raw.get("endMs"),
+                    raw.get("startSeconds"), raw.get("endSeconds"),
                 )
                 continue
             if (
                 video_chunk_id not in seen_video_ids
             ):
                 evidence = hits_by_id[video_chunk_id].evidence
-                start_ms = raw.get("startMs")
-                end_ms = raw.get("endMs")
+                start_seconds = raw.get("startSeconds")
+                end_seconds = raw.get("endSeconds")
                 if not (
-                    isinstance(start_ms, int)
-                    and not isinstance(start_ms, bool)
-                    and isinstance(end_ms, int)
-                    and not isinstance(end_ms, bool)
-                    and evidence.start_ms <= start_ms < end_ms <= evidence.end_ms
+                    isinstance(start_seconds, int)
+                    and not isinstance(start_seconds, bool)
+                    and isinstance(end_seconds, int)
+                    and not isinstance(end_seconds, bool)
+                    and evidence.start_seconds <= start_seconds < end_seconds <= evidence.end_seconds
                 ):
                     _logger.warning(
                         "event=agent_invalid_video_render_block conversation_id=%s message_id=%s "
-                        "video_chunk_id=%s proposed_start_ms=%r proposed_end_ms=%r "
-                        "evidence_start_ms=%s evidence_end_ms=%s "
+                        "video_chunk_id=%s proposed_start_seconds=%r proposed_end_seconds=%r "
+                        "evidence_start_seconds=%s evidence_end_seconds=%s "
                         "action=drop_invalid_range",
                         state.conversation_id, state.message_id, video_chunk_id,
-                        start_ms, end_ms, evidence.start_ms, evidence.end_ms,
+                        start_seconds, end_seconds, evidence.start_seconds, evidence.end_seconds,
                     )
                     continue
                 seen_video_ids.add(video_chunk_id)
                 blocks.append(AgentVideoRenderBlockView(
                     video_chunk_id=video_chunk_id,
-                    start_ms=start_ms,
-                    end_ms=end_ms,
+                    start_seconds=start_seconds,
+                    end_seconds=end_seconds,
                 ))
     if not any(block.type == "markdown" for block in blocks) and state.content:
         blocks.insert(0, AgentMarkdownRenderBlockView(markdown=state.content))

@@ -42,13 +42,13 @@ class AgentMarkdownRenderBlockView(ContractModel):
 class AgentVideoRenderBlockView(ContractModel):
     type: Literal["video"] = "video"
     video_chunk_id: str = Field(min_length=1, max_length=36)
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(gt=0)
 
     @model_validator(mode="after")
     def validate_time_range(self) -> AgentVideoRenderBlockView:
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
         return self
 
 

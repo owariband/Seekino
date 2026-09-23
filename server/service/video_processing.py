@@ -146,9 +146,9 @@ class VideoProcessingService:
         video_chunk_ids = self._pipeline.run(
             ParsePipelineInput(
                 source_video=source_video,
-                duration_ms=lease.duration_ms,
-                chunk_duration_ms=self._config.chunk_duration_ms,
-                context_overlap_ms=self._config.context_overlap_ms,
+                duration_seconds=lease.duration_seconds,
+                chunk_duration_seconds=self._config.chunk_duration_seconds,
+                context_overlap_seconds=self._config.context_overlap_seconds,
                 chunks=media.chunks,
                 series_bible=series_bible,
                 background_images=tuple(background_images),
@@ -167,10 +167,10 @@ class VideoProcessingService:
     ) -> list[AnalysisWindow]:
         windows = plan_analysis_windows(
             source_video,
-            duration_ms=lease.duration_ms,
+            duration_seconds=lease.duration_seconds,
             output_dir=attempt_directory / "windows",
-            chunk_duration_ms=self._config.chunk_duration_ms,
-            context_overlap_ms=self._config.context_overlap_ms,
+            chunk_duration_seconds=self._config.chunk_duration_seconds,
+            context_overlap_seconds=self._config.context_overlap_seconds,
         )
         for window in windows:
             sequence_no = window.sequence_no
@@ -179,8 +179,8 @@ class VideoProcessingService:
                 checkpoints.get(sequence_no),
                 requested_stage=VideoChunkCheckpointStage.PREPARED,
                 sequence_no=sequence_no,
-                chunk_start_ms=window.chunk_start_ms,
-                chunk_end_ms=window.chunk_end_ms,
+                chunk_start_seconds=window.chunk_start_seconds,
+                chunk_end_seconds=window.chunk_end_seconds,
             )
         if [window.sequence_no for window in windows] != list(range(len(windows))):
             raise RuntimeError("analysis windows must have contiguous sequence numbers")
@@ -215,7 +215,7 @@ class VideoProcessingService:
                 max_height=self._config.canonical_max_height,
             )
             self._jobs.assert_current_lease(lease)
-            [(relative_at_ms, keyframe_path)] = extract_video_frames(
+            [(relative_at_seconds, keyframe_path)] = extract_video_frames(
                 canonical_path,
                 [0],
                 output_dir=(
@@ -227,8 +227,8 @@ class VideoProcessingService:
             )
             if not (
                 0
-                <= relative_at_ms
-                < window.chunk_end_ms - window.chunk_start_ms
+                <= relative_at_seconds
+                < window.chunk_end_seconds - window.chunk_start_seconds
             ):
                 raise RuntimeError(
                     "canonical keyframe position is outside its VideoChunk"
@@ -262,7 +262,7 @@ class VideoProcessingService:
             keyframes_by_sequence[sequence_no] = (
                 VideoChunkKeyframeReference(
                     uri=keyframe_artifact.uri,
-                    at_ms=window.chunk_start_ms + relative_at_ms,
+                    at_seconds=window.chunk_start_seconds + relative_at_seconds,
                 ),
             )
             checkpoints[sequence_no] = self._save_checkpoint(
@@ -465,8 +465,8 @@ class VideoProcessingService:
         *,
         requested_stage: VideoChunkCheckpointStage,
         sequence_no: int,
-        chunk_start_ms: int | None = None,
-        chunk_end_ms: int | None = None,
+        chunk_start_seconds: int | None = None,
+        chunk_end_seconds: int | None = None,
         chunk_media_uri: str | None = None,
         analysis_window_media_uri: str | None = None,
         parse_artifact_uri: str | None = None,
@@ -486,15 +486,15 @@ class VideoProcessingService:
                 sequence_no=sequence_no,
                 video_chunk_id=derive_video_chunk_id(lease.video_id, sequence_no),
                 stage=stage.value,
-                chunk_start_ms=(
-                    current.chunk_start_ms
-                    if chunk_start_ms is None and current is not None
-                    else chunk_start_ms
+                chunk_start_seconds=(
+                    current.chunk_start_seconds
+                    if chunk_start_seconds is None and current is not None
+                    else chunk_start_seconds
                 ),
-                chunk_end_ms=(
-                    current.chunk_end_ms
-                    if chunk_end_ms is None and current is not None
-                    else chunk_end_ms
+                chunk_end_seconds=(
+                    current.chunk_end_seconds
+                    if chunk_end_seconds is None and current is not None
+                    else chunk_end_seconds
                 ),
                 chunk_media_uri=chunk_media_uri,
                 analysis_window_media_uri=analysis_window_media_uri,

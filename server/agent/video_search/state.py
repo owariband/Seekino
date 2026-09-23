@@ -28,13 +28,13 @@ class SelectedVideoRange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     video_chunk_id: _VideoChunkId
-    start_ms: int = Field(strict=True, ge=0)
-    end_ms: int = Field(strict=True, gt=0)
+    start_seconds: int = Field(strict=True, ge=0)
+    end_seconds: int = Field(strict=True, gt=0)
 
     @model_validator(mode="after")
     def validate_time_range(self) -> SelectedVideoRange:
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
         return self
 
 
@@ -57,14 +57,14 @@ class DraftItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     video_chunk_id: _VideoChunkId
-    start_ms: int = Field(strict=True, ge=0)
-    end_ms: int = Field(strict=True, gt=0)
+    start_seconds: int = Field(strict=True, ge=0)
+    end_seconds: int = Field(strict=True, gt=0)
     claim: _EvidenceClaim
 
     @model_validator(mode="after")
     def validate_time_range(self) -> DraftItem:
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
         return self
 
 
@@ -124,13 +124,13 @@ class MarkdownRenderBlock(ContractModel):
 class VideoRenderBlock(ContractModel):
     type: Literal["video"] = "video"
     video_chunk_id: _VideoChunkId
-    start_ms: int = Field(strict=True, ge=0)
-    end_ms: int = Field(strict=True, gt=0)
+    start_seconds: int = Field(strict=True, ge=0)
+    end_seconds: int = Field(strict=True, gt=0)
 
     @model_validator(mode="after")
     def validate_time_range(self) -> VideoRenderBlock:
-        if self.end_ms <= self.start_ms:
-            raise ValueError("end_ms must be greater than start_ms")
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
         return self
 
 

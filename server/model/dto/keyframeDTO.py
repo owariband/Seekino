@@ -13,11 +13,11 @@ class KeyframeBackfillCandidate:
     series_id: str
     video_id: str
     episode_order: int
-    duration_ms: int
+    duration_seconds: int
     video_chunk_id: str
     sequence_no: int
-    start_ms: int
-    end_ms: int
+    start_seconds: int
+    end_seconds: int
     chunk_media_ref: str
     keyframe_snapshot: tuple[object, ...]
 

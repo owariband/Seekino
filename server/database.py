@@ -162,7 +162,14 @@ def create_schema(engine: Engine) -> None:
             "processing_duration_ms",
             "processing_timing_complete",
         },
-        "video_chunk_checkpoint": {"chunk_start_ms", "chunk_end_ms"},
+        "video": {"duration_seconds"},
+        "video_chunk": {
+            "start_seconds",
+            "end_seconds",
+            "analysis_window_start_seconds",
+            "analysis_window_end_seconds",
+        },
+        "video_chunk_checkpoint": {"chunk_start_seconds", "chunk_end_seconds"},
         "upload_session": {"content_sha256", "completion_stage", "version", "job_id", "last_error_code", "request_fingerprint"},
     }.items():
         if table_name not in existing_tables:

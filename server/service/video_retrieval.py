@@ -352,8 +352,8 @@ def _selection_reason(
             MatchedEvidence(
                 kind="TRANSCRIPT",
                 text=transcript_match.matched_text,
-                start_ms=transcript_match.start_ms,
-                end_ms=transcript_match.end_ms,
+                start_seconds=transcript_match.start_seconds,
+                end_seconds=transcript_match.end_seconds,
             )
         )
 
@@ -364,8 +364,8 @@ def _selection_reason(
                 MatchedEvidence(
                     kind="CONTEXT",
                     text=semantic_text,
-                    start_ms=evidence.start_ms,
-                    end_ms=evidence.end_ms,
+                    start_seconds=evidence.start_seconds,
+                    end_seconds=evidence.end_seconds,
                 )
             )
 
@@ -379,8 +379,8 @@ def _selection_reason(
             MatchedEvidence(
                 kind="CONTEXT",
                 text=evidence.window_summary.strip() or evidence.retrieval_text.strip(),
-                start_ms=evidence.analysis_window_start_ms,
-                end_ms=evidence.analysis_window_end_ms,
+                start_seconds=evidence.analysis_window_start_seconds,
+                end_seconds=evidence.analysis_window_end_seconds,
             )
         )
 
@@ -440,30 +440,30 @@ def _first_visual_evidence(
 ) -> MatchedEvidence | None:
     for event in evidence.all_time_events:
         text = event.get("description")
-        start_ms = event.get("start_ms")
-        end_ms = event.get("end_ms")
+        start_seconds = event.get("start_seconds")
+        end_seconds = event.get("end_seconds")
         if (
             isinstance(text, str)
             and text.strip()
-            and isinstance(start_ms, int)
-            and not isinstance(start_ms, bool)
-            and isinstance(end_ms, int)
-            and not isinstance(end_ms, bool)
-            and end_ms > start_ms
+            and isinstance(start_seconds, int)
+            and not isinstance(start_seconds, bool)
+            and isinstance(end_seconds, int)
+            and not isinstance(end_seconds, bool)
+            and end_seconds > start_seconds
         ):
             return MatchedEvidence(
                 kind="VISUAL_EVENT",
                 text=text.strip(),
-                start_ms=start_ms,
-                end_ms=end_ms,
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
             )
     text = evidence.baseline_visual_caption or evidence.all_time_event_text
     if text.strip():
         return MatchedEvidence(
             kind="VISUAL_EVENT",
             text=text.strip(),
-            start_ms=evidence.start_ms,
-            end_ms=evidence.end_ms,
+            start_seconds=evidence.start_seconds,
+            end_seconds=evidence.end_seconds,
         )
     return None
 

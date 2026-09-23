@@ -31,9 +31,9 @@ function TaskRow({ task }: { task: UploadTask }) {
     && task.session?.status === "COMPLETING"
     && ["completing", "failed"].includes(task.status);
   const parsePosition = task.job?.currentChunk
-    ? `当前解析 ${formatTimeRange(task.job.currentChunk.startMs, task.job.currentChunk.endMs)}`
-    : task.job?.completedThroughMs !== null && task.job?.completedThroughMs !== undefined
-      ? `连续解析到 ${formatTimecode(task.job.completedThroughMs)} / ${formatTimecode(task.job.totalDurationMs)}`
+    ? `当前解析 ${formatTimeRange(task.job.currentChunk.startSeconds, task.job.currentChunk.endSeconds)}`
+    : task.job?.completedThroughSeconds !== null && task.job?.completedThroughSeconds !== undefined
+      ? `连续解析到 ${formatTimecode(task.job.completedThroughSeconds)} / ${formatTimecode(task.job.totalDurationSeconds)}`
       : "等待精确检查点";
   const selectedConfig = task.job?.parseConfig ?? task.session?.parseConfig ?? task.parseConfig;
 
@@ -165,7 +165,7 @@ function ParseConfigFields({ value, defaults, onChange }: {
     onChange({ ...value, [section]: { ...value[section], ...patch } });
   };
   const estimatedFrames = Math.ceil(
-    value.vision.fps * (value.window.chunkDurationMs + 2 * value.window.contextOverlapMs) / 1000,
+    value.vision.fps * (value.window.chunkDurationSeconds + 2 * value.window.contextOverlapSeconds),
   );
 
   return <div className={styles.configSections}>
@@ -176,8 +176,8 @@ function ParseConfigFields({ value, defaults, onChange }: {
     <details className={styles.configGroup} open>
       <summary>切段与画面</summary>
       <div className={styles.configGrid}>
-        <ConfigNumber label="每段时长（毫秒）" value={value.window.chunkDurationMs} min={configuredMin(1000, defaults.window.chunkDurationMs)} max={configuredMax(120000, defaults.window.chunkDurationMs)} onChange={(v) => update("window", { chunkDurationMs: v ?? 0 })} />
-        <ConfigNumber label="上下文重叠（毫秒）" value={value.window.contextOverlapMs} min={0} max={configuredMax(30000, defaults.window.contextOverlapMs)} onChange={(v) => update("window", { contextOverlapMs: v ?? 0 })} />
+        <ConfigNumber label="每段时长（秒）" value={value.window.chunkDurationSeconds} min={configuredMin(1, defaults.window.chunkDurationSeconds)} max={configuredMax(120, defaults.window.chunkDurationSeconds)} onChange={(v) => update("window", { chunkDurationSeconds: v ?? 0 })} />
+        <ConfigNumber label="上下文重叠（秒）" value={value.window.contextOverlapSeconds} min={0} max={configuredMax(30, defaults.window.contextOverlapSeconds)} onChange={(v) => update("window", { contextOverlapSeconds: v ?? 0 })} />
         <ConfigNumber label="解析输入高度（像素）" value={value.window.analysisMaxHeight} min={configuredMin(64, defaults.window.analysisMaxHeight)} max={configuredMax(2160, defaults.window.analysisMaxHeight)} onChange={(v) => update("window", { analysisMaxHeight: v ?? 0 })} />
         <ConfigNumber label="回放与入库高度（像素）" value={value.window.canonicalMaxHeight} min={configuredMin(64, defaults.window.canonicalMaxHeight)} max={configuredMax(2160, defaults.window.canonicalMaxHeight)} onChange={(v) => update("window", { canonicalMaxHeight: v ?? 0 })} />
       </div>
@@ -223,7 +223,7 @@ function ParseConfigFields({ value, defaults, onChange }: {
         <ConfigSwitch label="启用兜底" checked={value.fallback.enabled} onChange={(v) => update("fallback", { enabled: v })} />
         <ConfigText label="DeepSeek 兜底模型 ID" value={value.fallback.model} onChange={(v) => update("fallback", { model: v })} />
         <ConfigNumber label="抽帧 FPS" value={value.fallback.frameFps} min={0.2} max={5} step="any" onChange={(v) => update("fallback", { frameFps: v ?? 0 })} />
-        <ConfigNumber label="每组时长（毫秒）" value={value.fallback.groupDurationMs} min={1000} max={120000} onChange={(v) => update("fallback", { groupDurationMs: v ?? 0 })} />
+        <ConfigNumber label="每组时长（秒）" value={value.fallback.groupDurationSeconds} min={1} max={120} onChange={(v) => update("fallback", { groupDurationSeconds: v ?? 0 })} />
         <ConfigNumber label="每组最多帧数" value={value.fallback.maxFramesPerGroup} min={1} max={128} onChange={(v) => update("fallback", { maxFramesPerGroup: v ?? 0 })} />
         <ConfigNumber label="图片最大高度" value={value.fallback.maxHeight} min={64} max={2160} onChange={(v) => update("fallback", { maxHeight: v ?? 0 })} />
         <label className={styles.configField}><span>推理强度</span><select className="field" value={value.fallback.reasoningEffort} onChange={(event) => update("fallback", { reasoningEffort: event.target.value as ParseConfig["fallback"]["reasoningEffort"] })}><option value="none">不启用</option><option value="low">低</option><option value="high">高</option><option value="max">最高</option></select></label>
@@ -387,7 +387,7 @@ export function UploadDialog() {
             <label><input type="radio" name="parse-config-mode" checked={customConfig} disabled={!parseDefaults} onChange={() => setCustomConfig(true)} /> 自定义</label>
           </div>
           {parseDefaults ? <p className={styles.configSummary}>
-            默认：{parseDefaults.window.analysisMaxHeight}p · 主解析 {parseDefaults.vision.fps} FPS · 每段 {parseDefaults.window.chunkDurationMs / 1000} 秒
+            默认：{parseDefaults.window.analysisMaxHeight}p · 主解析 {parseDefaults.vision.fps} FPS · 每段 {parseDefaults.window.chunkDurationSeconds} 秒
           </p> : null}
           {parseConfigError ? <p className={styles.error} role="alert">解析配置：{parseConfigError}</p> : null}
           {customConfig && parseConfig && parseDefaults ? <>

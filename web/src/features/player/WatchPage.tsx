@@ -21,7 +21,7 @@ type PlaybackExtraContext = {
     seriesId: string;
     videoId: string;
     episodeOrder: number;
-    positionMs: number;
+    positionSeconds: number;
   };
 };
 
@@ -63,18 +63,23 @@ export function WatchPage() {
   );
   const selectedIndex = episodes.findIndex((item) => item.videoId === videoId);
   const selected = selectedIndex >= 0 ? episodes[selectedIndex]! : null;
-  const rawAtMs = new URLSearchParams(search).get("atMs");
+  const searchParams = new URLSearchParams(search);
+  const rawAtSeconds = searchParams.get("atSeconds");
+  const parsedAtSeconds = rawAtSeconds !== null && /^\d+$/.test(rawAtSeconds) ? Number(rawAtSeconds) : undefined;
+  const explicitAtSeconds = parsedAtSeconds !== undefined && Number.isSafeInteger(parsedAtSeconds) ? parsedAtSeconds : undefined;
+  const rawAtMs = searchParams.get("atMs");
   const parsedAtMs = rawAtMs !== null && /^\d+$/.test(rawAtMs) ? Number(rawAtMs) : undefined;
-  const atMs = parsedAtMs !== undefined && Number.isSafeInteger(parsedAtMs) ? parsedAtMs : undefined;
+  const legacyAtSeconds = parsedAtMs !== undefined && Number.isSafeInteger(parsedAtMs) ? Math.floor(parsedAtMs / 1000) : undefined;
+  const atSeconds = explicitAtSeconds ?? legacyAtSeconds;
 
-  const updatePlaybackContext = useCallback((positionMs: number) => {
+  const updatePlaybackContext = useCallback((positionSeconds: number) => {
     if (!selected) return;
     playbackContextRef.current = {
       playback: {
         seriesId: selected.seriesId,
         videoId: selected.videoId,
         episodeOrder: selected.episodeOrder,
-        positionMs,
+        positionSeconds,
       },
     };
   }, [selected?.episodeOrder, selected?.seriesId, selected?.videoId]);
@@ -84,7 +89,7 @@ export function WatchPage() {
     const paused = playerRef.current?.pauseAndGetSnapshot();
     if (paused) {
       if (paused.wasPlaying) resumeAfterChatRef.current = true;
-      updatePlaybackContext(paused.positionMs);
+      updatePlaybackContext(paused.positionSeconds);
     }
     const context = playbackContextRef.current;
     if (context?.playback.seriesId !== selected.seriesId
@@ -122,7 +127,16 @@ export function WatchPage() {
 
   useEffect(() => {
     playbackContextRef.current = null;
-  }, [rawAtMs, selected?.episodeOrder, selected?.seriesId, selected?.videoId]);
+  }, [atSeconds, selected?.episodeOrder, selected?.seriesId, selected?.videoId]);
+
+  useEffect(() => {
+    if (rawAtMs === null) return;
+    const canonical = new URLSearchParams(search);
+    canonical.delete("atMs");
+    if (explicitAtSeconds === undefined && legacyAtSeconds !== undefined) canonical.set("atSeconds", String(legacyAtSeconds));
+    const canonicalSearch = canonical.toString();
+    navigate({ search: canonicalSearch ? `?${canonicalSearch}` : "" }, { replace: true });
+  }, [explicitAtSeconds, legacyAtSeconds, navigate, rawAtMs, search]);
 
   useEffect(() => {
     if (previousVideoId.current === videoId) return;
@@ -193,11 +207,11 @@ export function WatchPage() {
         <section className={styles.viewer} aria-label="视频播放器" onKeyDownCapture={(event) => switchPaneOnTab(event, "chat")}>
           {episodes.length === 0 ? <p className={styles.unavailable} role="status">这个系列还没有视频。</p> : !selected ? (
             <p className={styles.unavailable} role="alert">找不到这集视频，请在右侧选集重新选择。</p>
-          ) : <VideoPlayer ref={playerRef} key={`${selected.videoId}:${rawAtMs ?? "resume"}`} video={selected} atMs={atMs} fullscreen={pageFullscreen} onToggleFullscreen={togglePageFullscreen} onPlaybackPositionChange={updatePlaybackContext} />}
+          ) : <VideoPlayer ref={playerRef} key={`${selected.videoId}:${atSeconds ?? "resume"}`} video={selected} atSeconds={atSeconds} fullscreen={pageFullscreen} onToggleFullscreen={togglePageFullscreen} onPlaybackPositionChange={updatePlaybackContext} />}
           {selected ? <>
             <div className={styles.videoMeta}>
               <div><strong>{episodeLabel(selected.episodeOrder)}</strong><span>{selected.originalFilename}</span></div>
-              <span>{formatTimecode(selected.durationMs)}</span>
+              <span>{formatTimecode(selected.durationSeconds)}</span>
             </div>
             <nav className={styles.neighbors} aria-label="切换集数">
               {selectedIndex > 0 ? <Link to={watchPath(seriesId, episodes[selectedIndex - 1]!.videoId)}><ChevronLeft size={16} />上一集</Link> : <span />}
@@ -246,8 +260,8 @@ export function WatchPage() {
             onPointerDownCapture={(event) => { if (event.button === 0) captureExtraContext(); }}
             onKeyDownCapture={(event) => switchPaneOnTab(event, "player")}
           >
-            <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} captureExtraContext={captureExtraContext} onOpenVideo={({ seriesId: targetSeriesId, videoId: targetVideoId, startMs }) => {
-              navigate(`${watchPath(targetSeriesId, targetVideoId)}?atMs=${startMs}`);
+            <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} captureExtraContext={captureExtraContext} onOpenVideo={({ seriesId: targetSeriesId, videoId: targetVideoId, startSeconds }) => {
+              navigate(`${watchPath(targetSeriesId, targetVideoId)}?atSeconds=${startSeconds}`);
             }} />
           </div>
           <div id="watch-episodes-panel" className={styles.episodePanel} role="tabpanel" aria-labelledby="watch-episodes-tab" hidden={panelTab !== "episodes"}>
@@ -258,7 +272,7 @@ export function WatchPage() {
                   <Link to={watchPath(seriesId, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
                     <span>{episodeLabel(episode.episodeOrder)}</span>
                     <strong>{episode.originalFilename}</strong>
-                    <small>{formatTimecode(episode.durationMs)} · {episode.playbackStatus === "READY" ? "可播放" : "播放未就绪"}</small>
+                    <small>{formatTimecode(episode.durationSeconds)} · {episode.playbackStatus === "READY" ? "可播放" : "播放未就绪"}</small>
                   </Link>
                 </li>
               ))}

@@ -255,7 +255,7 @@ def _trace_tool_arguments(inputs: dict[str, Any] | None) -> dict[str, Any]:
             summary["video_chunk_id_sha256"] = sha256(
                 video_chunk_id.encode("utf-8", "replace")
             ).hexdigest()[:16]
-    for key in ("start_ms", "end_ms", "top_k", "start", "end"):
+    for key in ("start_seconds", "end_seconds", "top_k", "start", "end"):
         value = inputs.get(key)
         if type(value) is int:
             summary[key] = value

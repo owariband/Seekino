@@ -145,7 +145,7 @@ def project_video(state: VideoSummaryState, media: MediaService) -> VideoSummary
         video_id=state.video_id, workspace_id=state.workspace_id, series_id=state.series_id,
         episode_order=state.episode_order, upload_sequence=state.upload_sequence,
         original_filename=state.original_filename, total_bytes=state.total_bytes,
-        duration_ms=state.duration_ms, upload_status=state.upload_status,
+        duration_seconds=state.duration_seconds, upload_status=state.upload_status,
         upload_progress=state.upload_progress,
         parse_status=ParseJobStatus.SUCCEEDED if state.parse_status == "COMPLETED" else state.parse_status,
         parse_progress=state.parse_progress, index_status=state.index_status,

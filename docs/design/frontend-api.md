@@ -31,7 +31,8 @@ ID 统一通过 camelCase Query 参数传递，不放在 URL Path 中。检索�
 - 普通请求与响应使用 JSON，字段统一为 `camelCase`。
 - ID 为规范 UUID 字符串。
 - 绝对时间是 Unix epoch 毫秒整数，后端和数据库按 signed INT64 / `BIGINT` 存储；前端只在显示边界转换时区。
-- 媒体 `startMs` / `endMs` / `atMs` 与耗时 `durationMs` 类字段是相对毫秒，不是 Unix 时间戳。
+- 媒体 `startSeconds` / `endSeconds` / `atSeconds` / `durationSeconds` 是相对于原视频起点的整数秒，不是 Unix 时间戳。
+- `processingDurationMs`、Agent 阶段耗时、HTTP/Tool 耗时等运行 duration 继续使用毫秒，也不是 Unix 时间戳。
 - `workspaceId` 当前默认是 `local-default`。
 - 上传分片的 Body 是原始二进制，不是 `multipart/form-data`。
 - 当前 M1 没有登录认证；`workspaceId` 是数据作用域，不是安全认证凭证。
@@ -212,7 +213,7 @@ GET /api/series/get?seriesId={seriesId}&workspaceId=local-default
       "inferenceProxyUri": null,
       "contentHash": "64-character-sha256",
       "totalBytes": 2147483648,
-      "durationMs": 1435520,
+      "durationSeconds": 1436,
       "uploadStatus": "COMPLETED",
       "parseStatus": "RUNNING",
       "uploadProgress": 100,
@@ -574,22 +575,22 @@ GET /api/jobs/get?jobId={jobId}&workspaceId=local-default
   "seriesName": "BanG Dream! It's MyGO!!!!!",
   "episodeOrder": 7,
   "originalFilename": "episode-07.mp4",
-  "pipelineVersion": "m1",
+  "pipelineVersion": "m2-seconds",
   "retryOfJobId": null,
   "status": "RUNNING",
   "stage": "PARSING",
   "progress": 37,
   "overallProgress": 37,
   "stageProgress": 55,
-  "completedDurationMs": 532000,
-  "completedThroughMs": 472000,
-  "videoDurationMs": 1440000,
-  "totalDurationMs": 1440000,
+  "completedDurationSeconds": 532,
+  "completedThroughSeconds": 472,
+  "videoDurationSeconds": 1440,
+  "totalDurationSeconds": 1440,
   "processingDurationMs": 182000,
   "processingTimingComplete": false,
   "completedChunkCount": 9,
   "totalChunkCount": 24,
-  "currentChunk": {"sequenceNo": 9, "startMs": 540000, "endMs": 600000},
+  "currentChunk": {"sequenceNo": 9, "startSeconds": 540, "endSeconds": 600},
   "attemptCount": 1,
   "maxAttempts": 3,
   "availableAt": 1789381200000,
@@ -602,16 +603,16 @@ GET /api/jobs/get?jobId={jobId}&workspaceId=local-default
       "sequenceNo": 0,
       "videoChunkId": "75f5...",
       "stage": "INDEXED",
-      "chunkStartMs": 0,
-      "chunkEndMs": 60000,
+      "chunkStartSeconds": 0,
+      "chunkEndSeconds": 60,
       "lastError": null
     },
     {
       "sequenceNo": 1,
       "videoChunkId": "d9a2...",
       "stage": "PARSED",
-      "chunkStartMs": 60000,
-      "chunkEndMs": 120000,
+      "chunkStartSeconds": 60,
+      "chunkEndSeconds": 120,
       "lastError": null
     }
   ],
@@ -624,7 +625,7 @@ GET /api/jobs/get?jobId={jobId}&workspaceId=local-default
 }
 ```
 
-`videoDurationMs` 是原视频时长，`totalDurationMs` 是暂时保留的兼容别名。
+`videoDurationSeconds` 是原视频时长，`totalDurationSeconds` 是暂时保留的兼容别名。
 `processingDurationMs` 是 worker 已知执行 attempt 的累计单调计时，不是视频时长；
 `processingTimingComplete=false` 时前端必须把它显示为不完整值。后端会记录每个
 VideoChunk 的各解析阶段耗时，但该诊断明细不进入 ParseJob 公开 DTO。
@@ -743,7 +744,7 @@ Range: bytes=<start>-<end>
 从检索结果跳转到命中时间：
 
 ```ts
-videoElement.currentTime = evidence.startMs / 1000;
+videoElement.currentTime = evidence.startSeconds;
 await videoElement.play();
 ```
 
@@ -817,14 +818,14 @@ Content-Type: application/json
           {
             "kind": "TRANSCRIPT",
             "text": "为什么要弹《春日影》？",
-            "startMs": 1252000,
-            "endMs": 1259000
+            "startSeconds": 1252,
+            "endSeconds": 1259
           },
           {
             "kind": "VISUAL_EVENT",
             "text": "爽世眼含泪水冲向成员并质问。",
-            "startMs": 1252000,
-            "endMs": 1259000
+            "startSeconds": 1252,
+            "endSeconds": 1259
           }
         ],
         "limitations": []
@@ -837,13 +838,13 @@ Content-Type: application/json
         "videoId": "2a150753-57ae-58c3-a996-d552734bc640",
         "episodeOrder": 7,
         "originalFilename": "episode-07.mp4",
-        "durationMs": 1435520,
+        "durationSeconds": 1436,
         "videoChunkId": "75f5...",
         "sequenceNo": 20,
-        "startMs": 1200000,
-        "endMs": 1260000,
-        "analysisWindowStartMs": 1197000,
-        "analysisWindowEndMs": 1263000,
+        "startSeconds": 1200,
+        "endSeconds": 1260,
+        "analysisWindowStartSeconds": 1197,
+        "analysisWindowEndSeconds": 1263,
         "playbackStatus": "READY",
         "playbackUrl": "/api/videos/content?videoId=2a150753-57ae-58c3-a996-d552734bc640&workspaceId=local-default",
         "playbackUrlExpiresAt": null,
@@ -851,7 +852,7 @@ Content-Type: application/json
           "imageId": "WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
           "url": "/api/media/images/content?workspaceId=local-default&imageId=WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
           "expiresAt": null,
-          "atMs": 1200000,
+          "atSeconds": 1200,
           "alt": "爽世眼含泪水冲向成员并质问。"
         },
         "keyframes": [
@@ -859,7 +860,7 @@ Content-Type: application/json
             "imageId": "WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
             "url": "/api/media/images/content?workspaceId=local-default&imageId=WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
             "expiresAt": null,
-            "atMs": 1200000,
+            "atSeconds": 1200,
             "alt": "爽世眼含泪水冲向成员并质问。"
           }
         ],
@@ -867,16 +868,16 @@ Content-Type: application/json
           {
             "speaker": null,
             "text": "为什么要弹《春日影》？",
-            "startMs": 1252000,
-            "endMs": 1259000
+            "startSeconds": 1252,
+            "endSeconds": 1259
           }
         ],
         "baselineVisualCaption": null,
         "allTimeEvents": [
           {
             "description": "爽世眼含泪水冲向成员并质问。",
-            "startMs": 1252000,
-            "endMs": 1259000
+            "startSeconds": 1252,
+            "endSeconds": 1259
           }
         ],
         "allTimeEventText": "该 VideoChunk 自有事件文本",
@@ -886,7 +887,7 @@ Content-Type: application/json
         "windowSummary": "当前解析窗口摘要",
         "modelProvider": "doubao",
         "modelName": "ep-model",
-        "pipelineVersion": "m1",
+        "pipelineVersion": "m2-seconds",
         "isFallback": false,
         "parsedAt": 1789343700000
       }
@@ -903,8 +904,8 @@ Content-Type: application/json
 - `evidence` 是按照 `videoChunkId` 从 MySQL 联表 Hydrate 后生成的公开投影；内部存储 URI、媒体引用、Hash 和原始检索正文不会交给浏览器。
 - Vision vector 绑定的是无重叠 canonical VideoChunk MP4，不是 caption。
 - 响应不返回原始 Text/Vision 浮点向量。
-- 新解析的 canonical VideoChunk 会生成首帧 keyframe；`thumbnail` 是第一张有效关键帧，`keyframes[].atMs` 是相对于原视频起点的媒体偏移。`imageId` 是服务端生成的 opaque URL-safe base64 标识，前端只能透传，不能按 `videoChunkId:index` 拼接。旧数据缺失有效关键帧时可返回 `thumbnail: null` 并在 `warnings` 中说明。
-- 候选列表只加载 `thumbnail.url` 的懒加载图片；用户点击候选后再挂载 `playbackUrl` 对应的 `<video preload="metadata">`。播放定位仍使用 `startMs/endMs`，不要从模型正文反解析时间。
+- 新解析的 canonical VideoChunk 会生成首帧 keyframe；`thumbnail` 是第一张有效关键帧，`keyframes[].atSeconds` 是相对于原视频起点的媒体偏移。`imageId` 是服务端生成的 opaque URL-safe base64 标识，前端只能透传，不能按 `videoChunkId:index` 拼接。旧数据缺失有效关键帧时可返回 `thumbnail: null` 并在 `warnings` 中说明。
+- 候选列表只加载 `thumbnail.url` 的懒加载图片；用户点击候选后再挂载 `playbackUrl` 对应的 `<video preload="metadata">`。播放定位仍使用 `startSeconds/endSeconds`，不要从模型正文反解析时间。
 
 ## 8. 建议前端类型
 
@@ -912,6 +913,7 @@ Content-Type: application/json
 
 ```ts
 type UnixTimeMs = number;
+type MediaTimeSeconds = number;
 
 type SeriesStatus = "EMPTY" | "INDEXING" | "READY";
 type UploadStatus = "UPLOADING" | "COMPLETING" | "COMPLETED" | "EXPIRED";
@@ -954,8 +956,8 @@ interface VideoChunkCheckpointView {
     | "TEXT_EMBEDDED"
     | "VISION_EMBEDDED"
     | "INDEXED";
-  chunkStartMs: number | null;
-  chunkEndMs: number | null;
+  chunkStartSeconds: number | null;
+  chunkEndSeconds: number | null;
   lastError: Failure | null;
 }
 
@@ -975,17 +977,17 @@ interface ParseJobView {
   progress: number;
   overallProgress: number | null;
   stageProgress: number | null;
-  completedDurationMs: number | null;
-  completedThroughMs: number | null;
-  videoDurationMs: number;
-  /** 兼容字段，值与 videoDurationMs 相同。 */
-  totalDurationMs: number;
+  completedDurationSeconds: number | null;
+  completedThroughSeconds: number | null;
+  videoDurationSeconds: number;
+  /** 兼容字段，值与 videoDurationSeconds 相同。 */
+  totalDurationSeconds: number;
   /** 已知 worker attempt 的累计处理耗时，不是媒体时长。 */
   processingDurationMs: number;
   processingTimingComplete: boolean;
   completedChunkCount: number | null;
   totalChunkCount: number;
-  currentChunk: { sequenceNo: number; startMs: number; endMs: number } | null;
+  currentChunk: { sequenceNo: number; startSeconds: number; endSeconds: number } | null;
   attemptCount: number;
   maxAttempts: number;
   availableAt: UnixTimeMs | null;
@@ -1015,8 +1017,8 @@ interface VideoChunkCandidate {
 interface TranscriptCue {
   speaker: string | null;
   text: string;
-  startMs: number;
-  endMs: number;
+  startSeconds: number;
+  endSeconds: number;
 }
 
 type PlaybackStatus = "PREPARING" | "READY" | "FAILED" | "MISSING";
@@ -1027,7 +1029,7 @@ interface ImageAsset {
 }
 
 interface Keyframe extends ImageAsset {
-  atMs: number;
+  atSeconds: number;
   alt: string | null;
 }
 
@@ -1039,13 +1041,13 @@ interface VideoChunkEvidence {
   videoId: string;
   episodeOrder: number;
   originalFilename: string;
-  durationMs: number;
+  durationSeconds: number;
   videoChunkId: string;
   sequenceNo: number;
-  startMs: number;
-  endMs: number;
-  analysisWindowStartMs: number;
-  analysisWindowEndMs: number;
+  startSeconds: number;
+  endSeconds: number;
+  analysisWindowStartSeconds: number;
+  analysisWindowEndSeconds: number;
   playbackStatus: PlaybackStatus;
   playbackUrl: string | null;
   playbackUrlExpiresAt: UnixTimeMs | null;
@@ -1053,7 +1055,7 @@ interface VideoChunkEvidence {
   keyframes: Keyframe[];
   transcript: TranscriptCue[];
   baselineVisualCaption: string | null;
-  allTimeEvents: Array<{ description: string; startMs: number; endMs: number }>;
+  allTimeEvents: Array<{ description: string; startSeconds: number; endSeconds: number }>;
   allTimeEventText: string;
   videoCompact: string;
   contextBeforeCompact: string | null;
@@ -1069,8 +1071,8 @@ interface VideoChunkEvidence {
 interface MatchedEvidence {
   kind: "TRANSCRIPT" | "VISUAL_EVENT" | "CONTEXT";
   text: string;
-  startMs: number | null;
-  endMs: number | null;
+  startSeconds: number | null;
+  endSeconds: number | null;
 }
 
 interface SelectionReason {
@@ -1307,7 +1309,7 @@ interface Failure { code: string; message: string }
 interface EvidenceReference { messageId: string; videoChunkId: string }
 type AgentRenderBlock =
   | { type: "markdown"; markdown: string }
-  | { type: "video"; videoChunkId: string; startMs: number; endMs: number };
+  | { type: "video"; videoChunkId: string; startSeconds: number; endSeconds: number };
 
 interface AgentMessageView {
   messageId: string;
@@ -1404,7 +1406,7 @@ Chat 默认对 DeepSeek 发起 text-only、非 token 流式的有边界自主工
 URI 和标题仍只从可信 Evidence 填充。
 Chat 不提交时间。Evaluator 放行后，Server 要求 `selected_video_ranges` 与获批
 Evidence 完全一致且均被 canonical Evidence 包含；Output 按 `video_chunk_id` 从该获批
-范围原样生成 `renderBlocks.startMs/endMs`，不存在 Chat proposed range 或 canonical fallback。
+范围原样生成 `renderBlocks.startSeconds/endSeconds`，不存在 Chat proposed range 或 canonical fallback。
 完成后按发生顺序得到 `renderBlocks`，且至少有一个非空 Markdown 块。全部块与数据库提交
 都成功后，SSE 才原子释放 evidence、有序 block、兼容 delta 与 completed；各轮 HTTP 请求共享
 当前 Kick 剩余 deadline 和模型调用次数上限。
@@ -1435,7 +1437,7 @@ ASSISTANT：PROCESSING → COMPLETED / FAILED
   Agent Reaper，不能用新 Key 循环发送绕过此状态。
 
 新客户端按 `assistantMessage.renderBlocks` 渲染最终顺序。Markdown 块通过禁用原始 HTML、
-限制 URL 协议的 Markdown 渲染器展示；视频块的 `videoChunkId` 及已审批 `startMs/endMs` 只能与同一消息的
+限制 URL 协议的 Markdown 渲染器展示；视频块的 `videoChunkId` 及已审批 `startSeconds/endSeconds` 只能与同一消息的
 `searchResult.hits` 关联，找不到可信 hit 时不渲染。`content` 和 `answer.delta` 是所有 Markdown 块
 的兼容汇总，`answer.evidence` 是完整可信证据的兼容交付；它们不能用来重建新的交错顺序。
 旧历史消息没有 `renderBlocks` 时，前端只回退渲染 `content` Markdown，不得从
@@ -1443,11 +1445,11 @@ ASSISTANT：PROCESSING → COMPLETED / FAILED
 历史视频块缺少时间字段或范围越出对应 Chunk 时不渲染，不扩大为 canonical Chunk；
 视频块的 Chunk ID 在同一消息 hits 中不存在时不渲染。
 只有 completed 或持久化 COMPLETED 快照代表完整交付成功。播放使用
-`evidence.videoId + renderBlock.startMs/endMs`；不要从模型正文反解析视频时间。
+`evidence.videoId + renderBlock.startSeconds/endSeconds`；不要从模型正文反解析视频时间。
 
 候选卡优先显示 `evidence.thumbnail`，图片可使用原生 lazy loading；不要在卡片列表中预先挂载
 所有视频。用户点击某个候选后，再创建使用 `evidence.playbackUrl` 的 video 元素，并以
-`preload="metadata"` 加载。自定义进度条的总长为 `endMs - startMs`，用户的相对 seek 映射回原视频媒体坐标，到达 `endMs` 时停止。
+`preload="metadata"` 加载。自定义进度条的总长为 `endSeconds - startSeconds`，用户的相对 seek 映射回原视频媒体坐标，到达 `endSeconds` 时停止。
 
 ### 12.5 POST 正文 SSE、GET 快照与页面恢复
 
@@ -1462,7 +1464,7 @@ answer.started → answer.progress（可多次）→ answer.evidence → answer.
 | `answer.started` | 已落库的 USER/PROCESSING ASSISTANT 消息对；按 ID 创建或合并消息 |
 | `answer.progress` | 当前 `phase`（RETRIEVING / EVALUATING / RESPONDING）；用于文字状态，不代表百分比 |
 | `answer.evidence` | 由 Server 可信 Evidence 补齐的 `searchResult`；不含 `agentReply`，为视频 block 提供唯一可信媒体来源，同时兼容旧客户端 |
-| `answer.block` | Evidence 之后按模型决定的顺序发送一个逻辑块；可为 Markdown，或含 `videoChunkId` 及已审批 `startMs/endMs` 的视频引用 |
+| `answer.block` | Evidence 之后按模型决定的顺序发送一个逻辑块；可为 Markdown，或含 `videoChunkId` 及已审批 `startSeconds/endSeconds` 的视频引用 |
 | `answer.delta` | 所有 Markdown block 的完整兼容汇总；一次性设置该 ASSISTANT `content` |
 | `answer.completed` | 数据库提交成功后的完整消息对；确认完成 |
 | `answer.failed` | `error` 与持久化消息对；执行失败后不会发送 completed |

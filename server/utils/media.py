@@ -63,14 +63,14 @@ def stored_keyframe_uri(value: object) -> str | None:
     return uri if isinstance(uri, str) and uri and uri == uri.strip() else None
 
 
-def stored_keyframe_at_ms(value: object) -> int | None:
+def stored_keyframe_at_seconds(value: object) -> int | None:
     if isinstance(value, dict):
-        at_ms = value.get("at_ms", value.get("atMs"))
+        at_seconds = value.get("at_seconds", value.get("atSeconds"))
     else:
-        at_ms = getattr(value, "at_ms", None)
+        at_seconds = getattr(value, "at_seconds", None)
     return (
-        at_ms
-        if isinstance(at_ms, int) and not isinstance(at_ms, bool)
+        at_seconds
+        if isinstance(at_seconds, int) and not isinstance(at_seconds, bool)
         else None
     )
 
@@ -79,8 +79,8 @@ def merge_keyframe_uri_values(
     preferred: Iterable[str | dict[str, object]],
     existing: object,
     *,
-    start_ms: int,
-    end_ms: int,
+    start_seconds: int,
+    end_seconds: int,
 ) -> list[str | dict[str, object]]:
     """Prefer current keyframes and keep one URI per valid timeline position."""
 
@@ -92,11 +92,11 @@ def merge_keyframe_uri_values(
         uri = stored_keyframe_uri(value)
         if uri is None or uri in seen_uris:
             continue
-        at_ms = stored_keyframe_at_ms(value)
-        if at_ms is not None and start_ms <= at_ms < end_ms:
-            if at_ms in seen_positions:
+        at_seconds = stored_keyframe_at_seconds(value)
+        if at_seconds is not None and start_seconds <= at_seconds < end_seconds:
+            if at_seconds in seen_positions:
                 continue
-            seen_positions.add(at_ms)
+            seen_positions.add(at_seconds)
         seen_uris.add(uri)
         merged.append(dict(value) if isinstance(value, dict) else value)
     return merged

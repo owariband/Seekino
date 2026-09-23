@@ -65,8 +65,8 @@ export function configuredMax(recommended: number, current: number): number {
 
 export function validateParseConfig(config: ParseConfig, defaults: ParseConfig): string | null {
   const fields: [string, number | null, number, number, boolean?][] = [
-    ["每段时长", config.window.chunkDurationMs, configuredMin(1000, defaults.window.chunkDurationMs), configuredMax(120000, defaults.window.chunkDurationMs), true],
-    ["上下文重叠", config.window.contextOverlapMs, 0, configuredMax(30000, defaults.window.contextOverlapMs), true],
+    ["每段时长", config.window.chunkDurationSeconds, configuredMin(1, defaults.window.chunkDurationSeconds), configuredMax(120, defaults.window.chunkDurationSeconds), true],
+    ["上下文重叠", config.window.contextOverlapSeconds, 0, configuredMax(30, defaults.window.contextOverlapSeconds), true],
     ["解析输入高度", config.window.analysisMaxHeight, configuredMin(64, defaults.window.analysisMaxHeight), configuredMax(2160, defaults.window.analysisMaxHeight), true],
     ["回放与入库高度", config.window.canonicalMaxHeight, configuredMin(64, defaults.window.canonicalMaxHeight), configuredMax(2160, defaults.window.canonicalMaxHeight), true],
     ["ASR FPS", config.asr.fps, 0.2, 5],
@@ -81,7 +81,7 @@ export function validateParseConfig(config: ParseConfig, defaults: ParseConfig):
     ["最多背景参考图", config.context.maxBackgroundImages, 1, 64, true],
     ["背景参考图最大边长", config.context.backgroundImageMaxEdge, configuredMin(64, defaults.context.backgroundImageMaxEdge), defaults.context.backgroundImageMaxEdge, true],
     ["兜底抽帧 FPS", config.fallback.frameFps, 0.2, 5],
-    ["兜底分组时长", config.fallback.groupDurationMs, 1000, 120000, true],
+    ["兜底分组时长", config.fallback.groupDurationSeconds, 1, 120, true],
     ["兜底每组最多帧数", config.fallback.maxFramesPerGroup, 1, 128, true],
     ["兜底图片高度", config.fallback.maxHeight, 64, 2160, true],
     ["兜底最大输出 Token", config.fallback.maxOutputTokens, 256, 32768, true],

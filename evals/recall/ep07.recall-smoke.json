@@ -6,10 +6,10 @@
       "relevant_chunk_sequence_nos": [
         0
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 36000,
-          "end_ms": 48000
+          "start_seconds": 36,
+          "end_seconds": 48
         }
       ]
     },
@@ -19,10 +19,10 @@
       "relevant_chunk_sequence_nos": [
         5
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 303000,
-          "end_ms": 309000
+          "start_seconds": 303,
+          "end_seconds": 309
         }
       ]
     },
@@ -33,10 +33,10 @@
         5,
         6
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 353000,
-          "end_ms": 361000
+          "start_seconds": 353,
+          "end_seconds": 361
         }
       ]
     },
@@ -46,10 +46,10 @@
       "relevant_chunk_sequence_nos": [
         8
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 492000,
-          "end_ms": 501000
+          "start_seconds": 492,
+          "end_seconds": 501
         }
       ]
     },
@@ -60,10 +60,10 @@
         9,
         10
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 558000,
-          "end_ms": 606000
+          "start_seconds": 558,
+          "end_seconds": 606
         }
       ]
     },
@@ -73,10 +73,10 @@
       "relevant_chunk_sequence_nos": [
         10
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 612000,
-          "end_ms": 621000
+          "start_seconds": 612,
+          "end_seconds": 621
         }
       ]
     },
@@ -86,10 +86,10 @@
       "relevant_chunk_sequence_nos": [
         14
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 858000,
-          "end_ms": 872000
+          "start_seconds": 858,
+          "end_seconds": 872
         }
       ]
     },
@@ -100,10 +100,10 @@
         14,
         15
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 886000,
-          "end_ms": 939000
+          "start_seconds": 886,
+          "end_seconds": 939
         }
       ]
     },
@@ -113,10 +113,10 @@
       "relevant_chunk_sequence_nos": [
         19
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 1180000,
-          "end_ms": 1189000
+          "start_seconds": 1180,
+          "end_seconds": 1189
         }
       ]
     },
@@ -126,10 +126,10 @@
       "relevant_chunk_sequence_nos": [
         20
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 1252000,
-          "end_ms": 1259000
+          "start_seconds": 1252,
+          "end_seconds": 1259
         }
       ]
     },
@@ -139,10 +139,10 @@
       "relevant_chunk_sequence_nos": [
         23
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 1380000,
-          "end_ms": 1394000
+          "start_seconds": 1380,
+          "end_seconds": 1394
         }
       ]
     },
@@ -152,10 +152,10 @@
       "relevant_chunk_sequence_nos": [
         23
       ],
-      "relevant_time_ranges_ms": [
+      "relevant_time_ranges_seconds": [
         {
-          "start_ms": 1410000,
-          "end_ms": 1416500
+          "start_seconds": 1410,
+          "end_seconds": 1417
         }
       ]
     }

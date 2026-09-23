@@ -434,7 +434,7 @@ class LibraryRepository:
             parse_status = job_status or video.parse_status
             checkpoint_progress = calculate_checkpoint_progress(
                 checkpoints_by_job.get(job_id, ()),
-                video.duration_ms,
+                video.duration_seconds,
                 completed=parse_status in {"SUCCEEDED", "COMPLETED"},
             )
             states.append(self._video_state(
@@ -510,7 +510,7 @@ class LibraryRepository:
             inference_proxy_uri=record.inference_proxy_uri,
             content_hash=record.content_hash,
             total_bytes=record.total_bytes,
-            duration_ms=record.duration_ms,
+            duration_seconds=record.duration_seconds,
             upload_status=record.upload_status,
             parse_status=parse_status,
             upload_progress=record.upload_progress,

@@ -7,13 +7,13 @@ from pathlib import Path
 
 
 def plan_frame_timestamps(
-    duration_ms: int,
+    duration_seconds: int,
     *,
     frame_fps: float,
     max_frames: int,
-) -> list[int]:
-    if duration_ms <= 0:
-        raise ValueError("duration_ms must be greater than zero")
+) -> list[float]:
+    if duration_seconds <= 0:
+        raise ValueError("duration_seconds must be greater than zero")
     if frame_fps <= 0:
         raise ValueError("frame_fps must be greater than zero")
     if max_frames <= 0:
@@ -21,27 +21,27 @@ def plan_frame_timestamps(
 
     frame_count = min(
         max_frames,
-        max(1, math.ceil(duration_ms * frame_fps / 1000)),
+        max(1, math.ceil(duration_seconds * frame_fps)),
     )
     return [
-        min(duration_ms - 1, ((2 * index + 1) * duration_ms) // (2 * frame_count))
+        (2 * index + 1) * duration_seconds / (2 * frame_count)
         for index in range(frame_count)
     ]
 
 
 def extract_video_frames(
     video_path: str | Path,
-    timestamps_ms: Sequence[int],
+    timestamps_seconds: Sequence[float],
     *,
     output_dir: str | Path,
     max_height: int,
-) -> list[tuple[int, Path]]:
+) -> list[tuple[float, Path]]:
     path = Path(video_path).expanduser().resolve()
     directory = Path(output_dir).expanduser().resolve()
     directory.mkdir(parents=True, exist_ok=True)
-    frames: list[tuple[int, Path]] = []
-    for index, timestamp_ms in enumerate(timestamps_ms):
-        output = directory / f"frame-{index:03d}-{timestamp_ms:08d}ms.jpg"
+    frames: list[tuple[float, Path]] = []
+    for index, timestamp_seconds in enumerate(timestamps_seconds):
+        output = directory / f"frame-{index:03d}.jpg"
         try:
             subprocess.run(
                 [
@@ -49,7 +49,7 @@ def extract_video_frames(
                     "-v",
                     "error",
                     "-ss",
-                    f"{timestamp_ms / 1000:.3f}",
+                    f"{timestamp_seconds:.6f}",
                     "-i",
                     str(path),
                     "-frames:v",
@@ -69,11 +69,11 @@ def extract_video_frames(
         except subprocess.CalledProcessError as error:
             message = error.stderr.decode("utf-8", errors="replace").strip()
             raise RuntimeError(
-                f"ffmpeg could not extract frame at {timestamp_ms} ms: {message}"
+                f"ffmpeg could not extract frame at {timestamp_seconds} seconds: {message}"
             ) from error
         if not output.is_file() or output.stat().st_size == 0:
             raise RuntimeError(
-                f"ffmpeg produced no frame at {timestamp_ms} ms from {path}"
+                f"ffmpeg produced no frame at {timestamp_seconds} seconds from {path}"
             )
-        frames.append((timestamp_ms, output))
+        frames.append((timestamp_seconds, output))
     return frames

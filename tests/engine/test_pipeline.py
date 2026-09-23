@@ -85,8 +85,8 @@ class _ASRAgent:
         return TranscriptAnalysis(
             transcript=[
                 TranscriptCue(
-                    start_ms=sequence_no * 100,
-                    end_ms=sequence_no * 100 + 50,
+                    start_seconds=0,
+                    end_seconds=1,
                     text=f"asr-{sequence_no}",
                 )
             ]
@@ -107,25 +107,25 @@ class _UnderstandingAgent:
         *,
         transcript: TranscriptAnalysis,
         context: str | None = None,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
         background_images=(),
     ) -> VideoEvidence:
         del background_images
         assert self._asr.all_completed(), "understand started before the ASR stage ended"
         sequence_no = int(Path(video_path).stem.rsplit("-", 1)[-1])
-        assert duration_ms == 1_000
+        assert duration_seconds == 1
         self._trace.add(f"understand:{sequence_no}")
         self.sequences.append(sequence_no)
         self.transcripts.append(transcript.transcript[0].text)
         self.contexts.append(context or "")
         return VideoEvidence(
-            duration_ms=duration_ms,
+            duration_seconds=duration_seconds,
             candidate_transcript=transcript.transcript,
             summary=f"summary-{sequence_no}",
             events=[
                 TimelineEvent(
-                    start_ms=100,
-                    end_ms=300,
+                    start_seconds=0,
+                    end_seconds=1,
                     event_type="ACTION",
                     description=f"event-{sequence_no}",
                     text=None,
@@ -240,7 +240,7 @@ def _models() -> VideoParseModels:
             refiner_model="fallback-refiner-test",
             input_mode="ordered_frames",
             frame_fps=0.5,
-            group_duration_ms=30_000,
+            group_duration_seconds=30,
             max_frames_per_group=15,
             max_height=720,
         ),
@@ -260,10 +260,10 @@ def _request(tmp_path: Path) -> ParsePipelineInput:
             sequence_no=sequence_no,
             source_video=source,
             media_path=analysis_media,
-            chunk_start_ms=sequence_no * 1_000,
-            chunk_end_ms=(sequence_no + 1) * 1_000,
-            analysis_start_ms=sequence_no * 1_000,
-            analysis_end_ms=(sequence_no + 1) * 1_000,
+            chunk_start_seconds=sequence_no * 1,
+            chunk_end_seconds=(sequence_no + 1) * 1,
+            analysis_start_seconds=sequence_no * 1,
+            analysis_end_seconds=(sequence_no + 1) * 1,
         )
         chunks.append(
             ParseChunkInput(
@@ -274,9 +274,9 @@ def _request(tmp_path: Path) -> ParsePipelineInput:
         )
     return ParsePipelineInput(
         source_video=source,
-        duration_ms=2_000,
-        chunk_duration_ms=1_000,
-        context_overlap_ms=0,
+        duration_seconds=2,
+        chunk_duration_seconds=1,
+        context_overlap_seconds=0,
         chunks=tuple(chunks),
         series_bible="series context",
     )

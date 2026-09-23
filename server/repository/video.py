@@ -55,30 +55,30 @@ def _soft_validated_transcript(
             skipped_invalid_cue_count += 1
             continue
         text = raw_cue.get("text")
-        start_ms = raw_cue.get("start_ms")
-        end_ms = raw_cue.get("end_ms")
+        start_seconds = raw_cue.get("start_seconds")
+        end_seconds = raw_cue.get("end_seconds")
         if not isinstance(text, str) or not text.strip():
             skipped_invalid_cue_count += 1
             continue
         if (
-            isinstance(start_ms, bool)
-            or not isinstance(start_ms, int)
-            or isinstance(end_ms, bool)
-            or not isinstance(end_ms, int)
-            or start_ms < 0
-            or end_ms < start_ms
+            isinstance(start_seconds, bool)
+            or not isinstance(start_seconds, int)
+            or isinstance(end_seconds, bool)
+            or not isinstance(end_seconds, int)
+            or start_seconds < 0
+            or end_seconds < start_seconds
         ):
             skipped_invalid_cue_count += 1
             continue
-        if end_ms == start_ms:
+        if end_seconds == start_seconds:
             retained_point_cue_count += 1
         speaker = raw_cue.get("speaker")
         cues.append(
             TranscriptCueView(
                 speaker=speaker if isinstance(speaker, str) else None,
                 text=text,
-                start_ms=offset_ms + start_ms,
-                end_ms=offset_ms + end_ms,
+                start_seconds=offset_ms + start_seconds,
+                end_seconds=offset_ms + end_seconds,
             )
         )
     return cues, retained_point_cue_count, skipped_invalid_cue_count
@@ -138,11 +138,11 @@ class VideoRepository:
                 SeriesRecord.series_id,
                 VideoRecord.video_id,
                 VideoRecord.episode_order,
-                VideoRecord.duration_ms,
+                VideoRecord.duration_seconds,
                 VideoChunkRecord.video_chunk_id,
                 VideoChunkRecord.sequence_no,
-                VideoChunkRecord.start_ms,
-                VideoChunkRecord.end_ms,
+                VideoChunkRecord.start_seconds,
+                VideoChunkRecord.end_seconds,
                 VideoChunkRecord.chunk_media_ref,
                 VideoChunkRecord.keyframe_uris,
             )
@@ -198,11 +198,11 @@ class VideoRepository:
                 series_id=row.series_id,
                 video_id=row.video_id,
                 episode_order=row.episode_order,
-                duration_ms=row.duration_ms,
+                duration_seconds=row.duration_seconds,
                 video_chunk_id=row.video_chunk_id,
                 sequence_no=row.sequence_no,
-                start_ms=row.start_ms,
-                end_ms=row.end_ms,
+                start_seconds=row.start_seconds,
+                end_seconds=row.end_seconds,
                 chunk_media_ref=row.chunk_media_ref,
                 keyframe_snapshot=tuple(deepcopy(row.keyframe_uris)),
             )
@@ -217,8 +217,8 @@ class VideoRepository:
         """Write a generated frame only while the scanned chunk snapshot is current."""
 
         if (
-            keyframe.at_ms is None
-            or not candidate.start_ms <= keyframe.at_ms < candidate.end_ms
+            keyframe.at_seconds is None
+            or not candidate.start_seconds <= keyframe.at_seconds < candidate.end_seconds
         ):
             raise ValueError("keyframe must use an absolute time inside the VideoChunk")
         with self._session_factory.begin() as session:
@@ -231,8 +231,8 @@ class VideoRepository:
             )
             if chunk is None or (
                 chunk.video_id != candidate.video_id
-                or chunk.start_ms != candidate.start_ms
-                or chunk.end_ms != candidate.end_ms
+                or chunk.start_seconds != candidate.start_seconds
+                or chunk.end_seconds != candidate.end_seconds
                 or chunk.chunk_media_ref != candidate.chunk_media_ref
             ):
                 return False
@@ -241,8 +241,8 @@ class VideoRepository:
             chunk.keyframe_uris = merge_keyframe_uri_values(
                 [keyframe.model_dump(mode="json")],
                 chunk.keyframe_uris,
-                start_ms=chunk.start_ms,
-                end_ms=chunk.end_ms,
+                start_seconds=chunk.start_seconds,
+                end_seconds=chunk.end_seconds,
             )
             return True
 
@@ -386,7 +386,7 @@ class VideoRepository:
                     and existing_video.episode_order != prepared.episode_order
                 )
                 or existing_video.content_hash != prepared.content_hash
-                or existing_video.duration_ms != prepared.parse_result.duration_ms
+                or existing_video.duration_seconds != prepared.parse_result.duration_seconds
             ):
                 raise ParseImportConflictError(
                     f"video_id {prepared.video_id!r} already identifies another Video"
@@ -415,7 +415,7 @@ class VideoRepository:
                     inference_proxy_uri=None,
                     content_hash=prepared.content_hash,
                     total_bytes=prepared.total_bytes,
-                    duration_ms=prepared.parse_result.duration_ms,
+                    duration_seconds=prepared.parse_result.duration_seconds,
                     upload_status="COMPLETED",
                     parse_status=(
                         ParseJobStatus.RUNNING.value
@@ -444,8 +444,8 @@ class VideoRepository:
                     (
                         item.video_chunk_id,
                         item.sequence_no,
-                        item.start_ms,
-                        item.end_ms,
+                        item.start_seconds,
+                        item.end_seconds,
                     )
                     for item in existing_chunks
                 }
@@ -453,8 +453,8 @@ class VideoRepository:
                     (
                         item.video_chunk_id,
                         item.parse_result.window.sequence_no,
-                        item.parse_result.window.chunk_start_ms,
-                        item.parse_result.window.chunk_end_ms,
+                        item.parse_result.window.chunk_start_seconds,
+                        item.parse_result.window.chunk_end_seconds,
                     )
                     for item in prepared.chunks
                 }
@@ -478,10 +478,10 @@ class VideoRepository:
                 if existing_chunk is not None:
                     # Canonical media may already have been promoted from the
                     # transitional file URI into the Artifact Store.
-                    existing_chunk.analysis_window_start_ms = (
-                        window.analysis_start_ms
+                    existing_chunk.analysis_window_start_seconds = (
+                        window.analysis_start_seconds
                     )
-                    existing_chunk.analysis_window_end_ms = window.analysis_end_ms
+                    existing_chunk.analysis_window_end_seconds = window.analysis_end_seconds
                     existing_chunk.analysis_window_media_ref = (
                         item.analysis_window_media_ref
                     )
@@ -496,8 +496,8 @@ class VideoRepository:
                                 for keyframe in item.keyframes
                             ],
                             existing_chunk.keyframe_uris,
-                            start_ms=window.chunk_start_ms,
-                            end_ms=window.chunk_end_ms,
+                            start_seconds=window.chunk_start_seconds,
+                            end_seconds=window.chunk_end_seconds,
                         )
                     continue
                 session.add(
@@ -505,10 +505,10 @@ class VideoRepository:
                         video_chunk_id=item.video_chunk_id,
                         video_id=prepared.video_id,
                         sequence_no=window.sequence_no,
-                        start_ms=window.chunk_start_ms,
-                        end_ms=window.chunk_end_ms,
-                        analysis_window_start_ms=window.analysis_start_ms,
-                        analysis_window_end_ms=window.analysis_end_ms,
+                        start_seconds=window.chunk_start_seconds,
+                        end_seconds=window.chunk_end_seconds,
+                        analysis_window_start_seconds=window.analysis_start_seconds,
+                        analysis_window_end_seconds=window.analysis_end_seconds,
                         chunk_media_ref=item.chunk_media_ref,
                         analysis_window_media_ref=item.analysis_window_media_ref,
                         transcript=[
@@ -744,9 +744,9 @@ class VideoRepository:
         statement = (
             select(
                 VideoChunkRecord.video_chunk_id,
-                VideoChunkRecord.start_ms,
-                VideoChunkRecord.end_ms,
-                VideoChunkRecord.analysis_window_start_ms,
+                VideoChunkRecord.start_seconds,
+                VideoChunkRecord.end_seconds,
+                VideoChunkRecord.analysis_window_start_seconds,
                 VideoChunkRecord.transcript,
             )
             .join(VideoRecord, VideoRecord.video_id == VideoChunkRecord.video_id)
@@ -781,7 +781,7 @@ class VideoRepository:
             validated_cues, retained_count, skipped_count = (
                 _soft_validated_transcript(
                     row.transcript,
-                    offset_ms=row.analysis_window_start_ms,
+                    offset_ms=row.analysis_window_start_seconds,
                 )
             )
             retained_point_cue_count += retained_count
@@ -791,13 +791,13 @@ class VideoRepository:
             for cue in validated_cues:
                 document_cue = TranscriptCueDocument(
                     text=cue.text,
-                    start_ms=cue.start_ms,
-                    end_ms=cue.end_ms,
+                    start_seconds=cue.start_seconds,
+                    end_seconds=cue.end_seconds,
                 )
                 # Analysis windows overlap. Assign each repeated cue to the
                 # canonical chunk containing its midpoint before ranking it.
-                midpoint_ms = cue.start_ms + (cue.end_ms - cue.start_ms) // 2
-                if not row.start_ms <= midpoint_ms < row.end_ms:
+                midpoint_ms = cue.start_seconds + (cue.end_seconds - cue.start_seconds) // 2
+                if not row.start_seconds <= midpoint_ms < row.end_seconds:
                     continue
                 cues.append(document_cue)
             if cues:
@@ -882,7 +882,7 @@ class VideoRepository:
             transcript, _retained_count, _skipped_count = (
                 _soft_validated_transcript(
                     chunk.transcript,
-                    offset_ms=chunk.analysis_window_start_ms,
+                    offset_ms=chunk.analysis_window_start_seconds,
                 )
             )
             evidence = VideoChunkEvidence(
@@ -899,15 +899,15 @@ class VideoRepository:
                 original_source_uri=video.original_source_uri,
                 inference_proxy_uri=video.inference_proxy_uri,
                 content_hash=video.content_hash,
-                duration_ms=video.duration_ms,
+                duration_seconds=video.duration_seconds,
                 upload_status=video.upload_status,
                 parse_status=video.parse_status,
                 video_chunk_id=chunk.video_chunk_id,
                 sequence_no=chunk.sequence_no,
-                start_ms=chunk.start_ms,
-                end_ms=chunk.end_ms,
-                analysis_window_start_ms=chunk.analysis_window_start_ms,
-                analysis_window_end_ms=chunk.analysis_window_end_ms,
+                start_seconds=chunk.start_seconds,
+                end_seconds=chunk.end_seconds,
+                analysis_window_start_seconds=chunk.analysis_window_start_seconds,
+                analysis_window_end_seconds=chunk.analysis_window_end_seconds,
                 chunk_media_ref=chunk.chunk_media_ref,
                 analysis_window_media_ref=chunk.analysis_window_media_ref,
                 transcript=transcript,

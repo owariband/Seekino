@@ -95,8 +95,8 @@ def _transcript() -> TranscriptAnalysis:
     return TranscriptAnalysis(
         transcript=[
             TranscriptCue(
-                start_ms=400,
-                end_ms=1100,
+                start_seconds=0,
+                end_seconds=2,
                 text="真是高高在上呢",
             )
         ]
@@ -108,15 +108,15 @@ def _timeline() -> VideoTimeline:
         summary="一名人物在房间内说话，随后面对另一人跪下。",
         events=[
             TimelineEvent(
-                start_ms=1200,
-                end_ms=8400,
+                start_seconds=1,
+                end_seconds=9,
                 event_type="ACTION",
                 description="一名人物面对另一人双膝跪地",
                 text=None,
             ),
             TimelineEvent(
-                start_ms=400,
-                end_ms=1100,
+                start_seconds=0,
+                end_seconds=2,
                 event_type="DIALOGUE",
                 description="一名人物说出一句带有讽刺意味的话",
                 text="真是高高在上呢",
@@ -146,8 +146,8 @@ def _run_deepseek_fallback(
         transcript = TranscriptAnalysis(
             transcript=[
                 TranscriptCue(
-                    start_ms=30_400,
-                    end_ms=31_100,
+                    start_seconds=30,
+                    end_seconds=32,
                     text="ASR_SECRET_LITE_TRANSCRIPT",
                 )
             ]
@@ -158,8 +158,8 @@ def _run_deepseek_fallback(
             summary="一名人物在室内说话。",
             events=[
                 TimelineEvent(
-                    start_ms=30_400,
-                    end_ms=31_100,
+                    start_seconds=30,
+                    end_seconds=32,
                     event_type="DIALOGUE",
                     description="一名人物说话",
                     text="ASR_SECRET_LITE_TRANSCRIPT",
@@ -174,21 +174,21 @@ def _run_deepseek_fallback(
 
     def fake_extract_video_frames(
         video_path,
-        timestamps_ms,
+        timestamps_seconds,
         *,
         output_dir,
         max_height,
     ):
         del video_path
         assert max_height == 720
-        timestamps = list(timestamps_ms)
+        timestamps = list(timestamps_seconds)
         directory = Path(output_dir)
         directory.mkdir(parents=True, exist_ok=True)
         frames = []
-        for index, timestamp_ms in enumerate(timestamps):
+        for index, timestamp_seconds in enumerate(timestamps):
             frame_path = directory / f"frame-{index:03d}.jpg"
             frame_path.write_bytes(b"fake-frame")
-            frames.append((timestamp_ms, frame_path))
+            frames.append((timestamp_seconds, frame_path))
         return frames
 
     monkeypatch.setattr(
@@ -205,12 +205,12 @@ def _run_deepseek_fallback(
         refiner_model,
         asr_model_name=asr_model_name,
         frame_fps=0.5,
-        group_duration_ms=30_000,
+        group_duration_seconds=30,
         max_frames_per_group=15,
         max_height=720,
     ).understand(
         video_path,
-        duration_ms=66_000,
+        duration_seconds=66,
         transcript=transcript,
         context=context,
         background_images=background_images,
@@ -234,7 +234,7 @@ def test_asr_and_understanding_agents_exchange_an_explicit_transcript(tmp_path) 
     transcript = VideoASRAgent(
         transcript_model,
         fps=0.5,
-    ).transcribe(video_path, duration_ms=8000)
+    ).transcribe(video_path, duration_seconds=8)
     result = VideoUnderstandingAgent(
         video_model,
         fps=2.0,
@@ -242,13 +242,13 @@ def test_asr_and_understanding_agents_exchange_an_explicit_transcript(tmp_path) 
         video_path,
         transcript=transcript,
         context="角色穿红色外套",
-        duration_ms=8000,
+        duration_seconds=8,
     )
 
-    assert result.duration_ms == 8000
+    assert result.duration_seconds == 8
     assert result.candidate_transcript[0].text == "真是高高在上呢"
     assert [event.event_type for event in result.events] == ["DIALOGUE", "ACTION"]
-    assert result.events[1].end_ms == 8000
+    assert result.events[1].end_seconds == 8
     assert result.provenance == VideoParseProvenance(
         provider="doubao",
         model="test-pro",
@@ -269,7 +269,7 @@ def test_asr_and_understanding_agents_exchange_an_explicit_transcript(tmp_path) 
     instruction = video_inputs[1].text
     assert "候选 ASR 与自己从视频画面" in instruction
     assert "真是高高在上呢" in instruction
-    assert "实际时长为 8000 ms" in instruction
+    assert "实际时长为 8 秒" in instruction
     assert "角色穿红色外套" in instruction
     assert "不能替代当前视频证据" in instruction
     assert "脱离前后文单独正确理解" in instruction
@@ -293,7 +293,7 @@ def test_understanding_agent_sends_labeled_background_images_with_video(tmp_path
         fps=1.0,
     ).understand(
         video_path,
-        duration_ms=8000,
+        duration_seconds=8,
         transcript=_transcript(),
         context="人物背景正文与自定义字段",
         background_images=images,
@@ -322,7 +322,7 @@ def test_understanding_agent_uses_the_explicit_transcript(tmp_path) -> None:
         fps=1.0,
     ).understand(
         video_path,
-        duration_ms=8000,
+        duration_seconds=8,
         transcript=_transcript(),
     )
 
@@ -345,7 +345,7 @@ def test_understanding_agent_supports_silent_local_direct_video(tmp_path) -> Non
         video_audio_available=False,
     ).understand(
         video_path,
-        duration_ms=8000,
+        duration_seconds=8,
         transcript=_transcript(),
     )
 
@@ -374,8 +374,8 @@ def test_understanding_agent_preserves_ordered_frame_evidence(tmp_path) -> None:
     second_frame.write_bytes(b"second-frame")
 
     result = parser.analyze_frames(
-        [(1000, first_frame), (5000, second_frame)],
-        duration_ms=8000,
+        [(1, first_frame), (5, second_frame)],
+        duration_seconds=8,
         transcript=TranscriptAnalysis(transcript=[]),
         context="此前成员正在准备演出",
     )
@@ -389,17 +389,17 @@ def test_understanding_agent_preserves_ordered_frame_evidence(tmp_path) -> None:
         ImageInput,
         TextInput,
     ]
-    assert "t=1000 ms" in inputs[1].text
+    assert "t=1 seconds" in inputs[1].text
     assert inputs[2].path == first_frame
-    assert "t=5000 ms" in inputs[3].text
+    assert "t=5 seconds" in inputs[3].text
     assert inputs[4].path == second_frame
     assert "这些图片不包含音轨" in inputs[5].text
     assert "候选 ASR 为空时" in inputs[5].text
-    assert "[t, t+1ms)" in inputs[5].text
+    assert "[floor(t), floor(t)+1)" in inputs[5].text
     assert "不能替代当前图片证据" in inputs[5].text
     assert result.candidate_transcript == []
     assert result.provenance is not None
-    assert result.provenance.frame_timestamps_ms == [1000, 5000]
+    assert result.provenance.frame_timestamps_seconds == [1, 5]
 
 
 def test_understanding_agent_rejects_non_increasing_frame_timestamps(tmp_path) -> None:
@@ -412,8 +412,8 @@ def test_understanding_agent_rejects_non_increasing_frame_timestamps(tmp_path) -
 
     with pytest.raises(ValueError, match="strictly increasing"):
         parser.analyze_frames(
-            [(1000, frame), (1000, frame)],
-            duration_ms=8000,
+            [(1, frame), (1, frame)],
+            duration_seconds=8,
             transcript=TranscriptAnalysis(transcript=[]),
         )
 
@@ -434,8 +434,8 @@ def test_ordered_frame_understanding_agent_records_local_sampling(tmp_path) -> N
     )
 
     result = parser.analyze_frames(
-        [(1000, frame)],
-        duration_ms=8000,
+        [(1, frame)],
+        duration_seconds=8,
         transcript=TranscriptAnalysis(transcript=[]),
     )
 
@@ -446,7 +446,36 @@ def test_ordered_frame_understanding_agent_records_local_sampling(tmp_path) -> N
     assert result.provenance.model == "qwen-local"
     assert result.provenance.input_mode == "ordered_frames"
     assert result.provenance.frame_fps == 0.5
-    assert result.provenance.frame_timestamps_ms == [1000]
+    assert result.provenance.frame_timestamps_seconds == [1]
+
+
+def test_ordered_frames_preserve_fractional_seconds_above_one_fps(tmp_path) -> None:
+    first_frame = tmp_path / "frame-1.jpg"
+    second_frame = tmp_path / "frame-2.jpg"
+    first_frame.write_bytes(b"first")
+    second_frame.write_bytes(b"second")
+    model = FakeModel(
+        "qwen-local",
+        {"video_timeline": VideoTimeline(summary="片段完成", events=[])},
+        provider_name="ollama",
+    )
+    parser = OrderedFrameVideoUnderstandingAgent(
+        model,
+        frame_fps=2.0,
+        max_frames=2,
+        max_height=720,
+    )
+
+    result = parser.analyze_frames(
+        [(0.25, first_frame), (0.75, second_frame)],
+        duration_seconds=1,
+        transcript=TranscriptAnalysis(transcript=[]),
+    )
+
+    assert "t=0.25 seconds" in model.calls[0]["inputs"][1].text
+    assert "t=0.75 seconds" in model.calls[0]["inputs"][3].text
+    assert result.provenance is not None
+    assert result.provenance.frame_timestamps_seconds == [0.25, 0.75]
 
 
 @pytest.mark.parametrize("mode", ["ark_frames", "ordered_frames", "ordered_video"])
@@ -459,7 +488,7 @@ def test_frame_paths_keep_background_images_separate_from_timed_frames(
     background.path.write_bytes(b"background image")
     frame = tmp_path / "frame.jpg"
     frame.write_bytes(b"video frame")
-    frames = [(1000, frame)]
+    frames = [(1, frame)]
     model = FakeModel("frame-model", {"video_timeline": _timeline()})
     if mode == "ark_frames":
         parser = VideoUnderstandingAgent(model, fps=1.0)
@@ -475,13 +504,13 @@ def test_frame_paths_keep_background_images_separate_from_timed_frames(
             lambda *_args, **_kwargs: frames,
         )
         result = parser.understand(
-            video, duration_ms=8000,
+            video, duration_seconds=8,
             transcript=TranscriptAnalysis(transcript=[]),
             background_images=[background],
         )
     else:
         result = parser.analyze_frames(
-            frames, duration_ms=8000,
+            frames, duration_seconds=8,
             transcript=TranscriptAnalysis(transcript=[]),
             background_images=[background],
         )
@@ -490,10 +519,10 @@ def test_frame_paths_keep_background_images_separate_from_timed_frames(
     assert "asset://portrait_01" in inputs[0].text
     assert inputs[1].path == background.path
     assert "视频采样帧" in inputs[2].text
-    assert inputs[3].text == "Frame 1/1: t=1000 ms"
+    assert inputs[3].text == "Frame 1/1: t=1 seconds"
     assert inputs[4].path == frame
     assert "不属于视频采样帧" in inputs[5].text
-    assert result.provenance.frame_timestamps_ms == [1000]
+    assert result.provenance.frame_timestamps_seconds == [1]
 
 
 def test_deepseek_fallback_uses_background_images_only_in_refinement(
@@ -529,7 +558,7 @@ def test_background_images_cannot_supply_fallback_dialogue_text(
     timeline = VideoTimeline(
         summary="背景图中的台词",
         events=[TimelineEvent(
-            start_ms=1000, end_ms=2000, event_type="DIALOGUE",
+            start_seconds=1, end_seconds=2, event_type="DIALOGUE",
             description="人物说话", text="来自背景图而不是视频的台词",
         )],
     )
@@ -580,9 +609,9 @@ def test_deepseek_fallback_refines_explicit_asr_and_mapped_evidence(
     assert "GROUP_1_VISUAL_FACT" in refiner_prompt
     assert "GROUP_2_VISUAL_FACT" in refiner_prompt
     assert "GROUP_3_VISUAL_FACT" in refiner_prompt
-    assert "evidence_timestamps_ms" in refiner_prompt
-    assert "support_intervals_ms" in refiner_prompt
-    assert "31000" in refiner_prompt
+    assert "evidence_timestamps_seconds" in refiner_prompt
+    assert "support_intervals_seconds" in refiner_prompt
+    assert "31.0" in refiner_prompt
 
     assert [cue.text for cue in result.candidate_transcript] == [
         "ASR_SECRET_LITE_TRANSCRIPT"
@@ -592,7 +621,7 @@ def test_deepseek_fallback_refines_explicit_asr_and_mapped_evidence(
     assert result.provenance.model == "deepseek-flash"
     assert result.provenance.input_mode == "ordered_frames"
     assert result.provenance.frame_fps == 0.5
-    assert result.provenance.frame_timestamps_ms == list(range(1000, 66_000, 2000))
+    assert result.provenance.frame_timestamps_seconds == list(range(1, 66, 2))
     assert result.provenance.fallback_transcript_model == "test-lite"
     assert result.provenance.visual_model == "deepseek-flash"
     assert result.provenance.refiner_model == "deepseek-flash"
@@ -625,8 +654,8 @@ def test_deepseek_fallback_rejects_unsupported_dialogue_text(
         summary="一名人物说出证据中不存在的话。",
         events=[
             TimelineEvent(
-                start_ms=30_400,
-                end_ms=31_100,
+                start_seconds=30,
+                end_seconds=32,
                 event_type="DIALOGUE",
                 description="一名人物说话",
                 text="MODEL_HALLUCINATED_DIALOGUE",
@@ -650,8 +679,8 @@ def test_deepseek_fallback_rejects_event_outside_chunk_duration(
         summary="片段末尾的动作越过了真实时长。",
         events=[
             TimelineEvent(
-                start_ms=65_000,
-                end_ms=70_000,
+                start_seconds=65,
+                end_seconds=70,
                 event_type="ACTION",
                 description="一名人物移动",
                 text=None,
@@ -703,7 +732,7 @@ def test_content_filter_falls_back_once_and_preserves_diagnostics(tmp_path) -> N
     primary = RaisingParser(primary_error)
     fallback = ReturningParser(
         VideoEvidence(
-            duration_ms=8000,
+            duration_seconds=8,
             candidate_transcript=[],
             summary="本地结果",
             events=[],
@@ -712,7 +741,7 @@ def test_content_filter_falls_back_once_and_preserves_diagnostics(tmp_path) -> N
                 model="qwen-local",
                 input_mode="ordered_frames",
                 frame_fps=0.5,
-                frame_timestamps_ms=[1000, 3000],
+                frame_timestamps_seconds=[1, 3],
             ),
         )
     )
@@ -725,7 +754,7 @@ def test_content_filter_falls_back_once_and_preserves_diagnostics(tmp_path) -> N
     ).understand(
         "chunk.mp4",
         transcript=TranscriptAnalysis(transcript=[]),
-        duration_ms=8000,
+        duration_seconds=8,
         background_images=images,
     )
 
@@ -747,7 +776,7 @@ def test_non_content_filter_error_does_not_fall_back() -> None:
     primary = RaisingParser(RuntimeError("network failed"))
     fallback = ReturningParser(
         VideoEvidence(
-            duration_ms=8000,
+            duration_seconds=8,
             candidate_transcript=[],
             summary="unused",
             events=[],
@@ -763,7 +792,7 @@ def test_non_content_filter_error_does_not_fall_back() -> None:
         parser.understand(
             "chunk.mp4",
             transcript=TranscriptAnalysis(transcript=[]),
-            duration_ms=8000,
+            duration_seconds=8,
         )
 
     assert primary.calls == 1

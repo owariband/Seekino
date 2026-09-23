@@ -375,8 +375,8 @@ class VideoParsePersistence:
                     sequence_no,
                 ),
                 stage=stage.value,
-                chunk_start_ms=(current.chunk_start_ms if current is not None else None),
-                chunk_end_ms=(current.chunk_end_ms if current is not None else None),
+                chunk_start_seconds=(current.chunk_start_seconds if current is not None else None),
+                chunk_end_seconds=(current.chunk_end_seconds if current is not None else None),
                 parse_artifact_uri=parse_artifact_uri,
                 text_embedding_artifact_uri=text_embedding_artifact_uri,
                 vision_embedding_artifact_uri=vision_embedding_artifact_uri,
@@ -482,7 +482,7 @@ def _validate_checkpoint_models(
         "model": fallback.visual_model,
         "input_mode": fallback.input_mode,
         "frame_fps": fallback.frame_fps,
-        "group_duration_ms": fallback.group_duration_ms,
+        "group_duration_seconds": fallback.group_duration_seconds,
         "max_frames_per_group": fallback.max_frames_per_group,
         "fallback_transcript_model": (
             fallback.transcript_model if transcript_mode == "lite" else None

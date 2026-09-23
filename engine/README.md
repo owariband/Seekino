@@ -103,8 +103,8 @@ uv sync
 uv run --env-file .env.local python -m engine.parse.cli \
   --config config.yaml parse-video \
   --video '/absolute/path/to/episode.mp4' \
-  --chunk-duration-ms 60000 \
-  --context-overlap-ms 3000 \
+  --chunk-duration-seconds 60 \
+  --context-overlap-seconds 3 \
   --max-height 720 \
   --asr-mode none \
   --asr-concurrency 4 \
@@ -143,7 +143,7 @@ VideoChunk 的算法降级链路为：
 3. Engine 把窗口细分为不超过 30 秒的组，以 0.5 fps 抽帧，每组最多 15 帧；
 4. Gateway 调用配置的 fallback 视觉模型，只根据该组图片生成匿名、可定位到帧的视觉证据；
    这一阶段不接收 ASR、SeriesBible 或 `contextBeforeCompact`；
-5. Engine 将帧编号映射回窗口内毫秒时间并去重；
+5. Engine 将帧编号映射回窗口内秒时间并去重；
 6. fallback 整理模型再结合传入的 Transcript、映射后的视觉证据、SeriesBible 与
    `contextBeforeCompact`，整理为最终 `VideoTimeline`。
 
@@ -154,7 +154,7 @@ video_parser:
   fallback:
     enabled: true
     frame_fps: 0.5
-    group_duration_ms: 30000
+    group_duration_seconds: 30
     max_frames_per_group: 15
     max_height: 720
     deepseek:

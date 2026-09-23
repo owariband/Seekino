@@ -151,8 +151,8 @@ def test_agent_render_blocks_preserves_valid_blocks_and_drops_invalid_stored_blo
                 {
                     "type": "video",
                     "videoChunkId": "known-2",
-                    "startMs": 1200,
-                    "endMs": 1800,
+                    "startSeconds": 12,
+                    "endSeconds": 18,
                 },
                 {"type": "video", "videoChunkId": "unknown"},
                 {"type": "markdown", "markdown": "第二段"},
@@ -166,11 +166,11 @@ def test_agent_render_blocks_preserves_valid_blocks_and_drops_invalid_stored_blo
     projected = SimpleNamespace(hits=[
         SimpleNamespace(
             candidate=SimpleNamespace(video_chunk_id="known-1"),
-            evidence=SimpleNamespace(start_ms=1000, end_ms=2000),
+            evidence=SimpleNamespace(start_seconds=10, end_seconds=20),
         ),
         SimpleNamespace(
             candidate=SimpleNamespace(video_chunk_id="known-2"),
-            evidence=SimpleNamespace(start_ms=1000, end_ms=2000),
+            evidence=SimpleNamespace(start_seconds=10, end_seconds=20),
         ),
     ])
 
@@ -181,8 +181,8 @@ def test_agent_render_blocks_preserves_valid_blocks_and_drops_invalid_stored_blo
         {
             "type": "video",
             "videoChunkId": "known-2",
-            "startMs": 1200,
-            "endMs": 1800,
+            "startSeconds": 12,
+            "endSeconds": 18,
         },
         {"type": "markdown", "markdown": "第二段"},
     ]
@@ -195,8 +195,8 @@ def test_agent_render_blocks_preserves_valid_blocks_and_drops_invalid_stored_blo
     assert "video_chunk_id=unknown" in warnings[0]
     assert "action=drop_unknown_chunk" in warnings[0]
     assert "video_chunk_id=known-1" in warnings[1]
-    assert "proposed_start_ms=None proposed_end_ms=None" in warnings[1]
-    assert "evidence_start_ms=1000 evidence_end_ms=2000" in warnings[1]
+    assert "proposed_start_seconds=None proposed_end_seconds=None" in warnings[1]
+    assert "evidence_start_seconds=10 evidence_end_seconds=20" in warnings[1]
     assert "action=drop_invalid_range" in warnings[1]
     legacy = _agent_render_blocks(
         replace(state, search_result={}),
@@ -205,15 +205,15 @@ def test_agent_render_blocks_preserves_valid_blocks_and_drops_invalid_stored_blo
     assert [block.type for block in legacy] == ["markdown"]
 
 
-@pytest.mark.parametrize(("start_ms", "end_ms"), [
-    (1500, 1500),
-    (1500, 1400),
-    (999, 1800),
-    (1200, 2001),
-    (True, 1800),
+@pytest.mark.parametrize(("start_seconds", "end_seconds"), [
+    (15, 15),
+    (15, 14),
+    (9, 18),
+    (12, 21),
+    (True, 18),
 ])
 def test_agent_render_blocks_drops_invalid_known_chunk_range(
-    caplog, start_ms, end_ms,
+    caplog, start_seconds, end_seconds,
 ) -> None:
     caplog.set_level(logging.WARNING, logger="server.api.agent")
     state = AgentMessageState(
@@ -231,8 +231,8 @@ def test_agent_render_blocks_drops_invalid_known_chunk_range(
             "renderBlocks": [{
                 "type": "video",
                 "videoChunkId": "known",
-                "startMs": start_ms,
-                "endMs": end_ms,
+                "startSeconds": start_seconds,
+                "endSeconds": end_seconds,
             }],
         },
         last_error=None,
@@ -241,7 +241,7 @@ def test_agent_render_blocks_drops_invalid_known_chunk_range(
     )
     projected = SimpleNamespace(hits=[SimpleNamespace(
         candidate=SimpleNamespace(video_chunk_id="known"),
-        evidence=SimpleNamespace(start_ms=1000, end_ms=2000),
+        evidence=SimpleNamespace(start_seconds=10, end_seconds=20),
     )])
 
     blocks = _agent_render_blocks(state, projected)
@@ -257,7 +257,7 @@ def test_agent_render_blocks_drops_invalid_known_chunk_range(
     )
     assert "conversation_id=conversation message_id=assistant" in warning
     assert "video_chunk_id=known" in warning
-    assert "evidence_start_ms=1000 evidence_end_ms=2000" in warning
+    assert "evidence_start_seconds=10 evidence_end_seconds=20" in warning
     assert "action=drop_invalid_range" in warning
 
 
@@ -366,7 +366,7 @@ def _client(tmp_path: Path):
                 pipeline_version="pipeline-v1",
                 max_job_attempts=3,
             ),
-            probe_duration=lambda _path: 12_345,
+            probe_duration=lambda _path: 12,
         ),
         jobs=ParseJobService(job_repository, library),
         media=MediaService(library, artifact_store),
@@ -544,9 +544,9 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "originalFilename",
         "overallProgress",
         "stageProgress",
-        "completedDurationMs",
-        "completedThroughMs",
-        "totalDurationMs",
+        "completedDurationSeconds",
+        "completedThroughSeconds",
+        "totalDurationSeconds",
         "completedChunkCount",
         "totalChunkCount",
         "currentChunk",
@@ -568,8 +568,8 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
     assert {
         "speaker",
         "text",
-        "startMs",
-        "endMs",
+        "startSeconds",
+        "endSeconds",
     } <= set(schemas["TranscriptCueView"]["required"])
     assert "modelName" in schemas["AgentMessageView"]["required"]
 
@@ -591,6 +591,10 @@ def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_pat
     client.app.state.services.uploads._parse_defaults = defaults
     response = client.get("/api/uploads/parse-config")
     assert response.status_code == 200
+    assert response.json()["version"] == 2
+    assert response.json()["window"]["chunkDurationSeconds"] == 60
+    assert response.json()["window"]["contextOverlapSeconds"] == 3
+    assert "chunkDurationMs" not in response.json()["window"]
     assert response.json()["vision"]["fps"] == 1.0
 
     invalid = response.json()
@@ -857,7 +861,7 @@ def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:
                     "seriesId": series_id,
                     "videoId": "video-1",
                     "episodeOrder": 1,
-                    "positionMs": 122_000,
+                    "positionSeconds": 122,
                 },
             },
         },
@@ -893,7 +897,7 @@ def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:
             "seriesId": series_id,
             "videoId": "video-1",
             "episodeOrder": 1,
-            "positionMs": 122_000,
+            "positionSeconds": 122,
         },
     }
     assert listed.status_code == 200
@@ -1153,7 +1157,7 @@ def test_video_episode_update_contract_and_conflict(tmp_path: Path) -> None:
                 inference_proxy_uri=None,
                 content_hash=content_hash,
                 total_bytes=10,
-                duration_ms=1_000,
+                duration_seconds=1,
                 upload_status="COMPLETED",
                 parse_status="SUCCEEDED",
                 upload_progress=100,
@@ -1411,8 +1415,8 @@ def test_upload_full_reparse_is_distinct_version_fenced_and_starts_at_zero(tmp_p
             sequence_no=0,
             video_chunk_id="reparse-checkpoint",
             stage=VideoChunkCheckpointStage.INDEXED.value,
-            chunk_start_ms=0,
-            chunk_end_ms=12_345,
+            chunk_start_seconds=0,
+            chunk_end_seconds=12,
         ))
 
     before = client.get(
@@ -1544,10 +1548,10 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert job.json()["progress"] == 0
     assert job.json()["overallProgress"] is None
     assert job.json()["stageProgress"] is None
-    assert job.json()["completedDurationMs"] is None
-    assert job.json()["completedThroughMs"] is None
-    assert job.json()["videoDurationMs"] == 12_345
-    assert job.json()["totalDurationMs"] == 12_345
+    assert job.json()["completedDurationSeconds"] is None
+    assert job.json()["completedThroughSeconds"] is None
+    assert job.json()["videoDurationSeconds"] == 12
+    assert job.json()["totalDurationSeconds"] == 12
     assert job.json()["processingDurationMs"] == 0
     assert job.json()["processingTimingComplete"] is False
     assert job.json()["completedChunkCount"] is None
@@ -1931,8 +1935,8 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                 _read_all(tools_by_name["read_trieve_item"], item["video_chunk_id"])
                 tools_by_name["update_draft_item"].invoke({
                     "video_chunk_id": item["video_chunk_id"],
-                    "start_ms": item["start_ms"],
-                    "end_ms": item["end_ms"],
+                    "start_seconds": item["start_seconds"],
+                    "end_seconds": item["end_seconds"],
                     "claim": "画面中有对应动作。",
                 })
             return result_type.model_validate({
@@ -2001,8 +2005,8 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                 {
                     "type": "video",
                     "videoChunkId": hit["candidate"]["videoChunkId"],
-                    "startMs": hit["evidence"]["startMs"],
-                    "endMs": hit["evidence"]["endMs"],
+                    "startSeconds": hit["evidence"]["startSeconds"],
+                    "endSeconds": hit["evidence"]["endSeconds"],
                 }
                 for hit in hits
             ],
@@ -2016,7 +2020,7 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
             assert evidence["seriesName"] == prepared_import.series_name
             assert evidence["videoId"] == prepared_import.video_id
             assert evidence["videoChunkId"] == hit["candidate"]["videoChunkId"]
-            assert 0 <= evidence["startMs"] < evidence["endMs"] <= evidence["durationMs"]
+            assert 0 <= evidence["startSeconds"] < evidence["endSeconds"] <= evidence["durationSeconds"]
     finally:
         service.close()
 

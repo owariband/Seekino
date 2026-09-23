@@ -18,13 +18,13 @@ _EVIDENCE_FIELDS = (
     "video_id",
     "episode_order",
     "original_filename",
-    "duration_ms",
+    "duration_seconds",
     "video_chunk_id",
     "sequence_no",
-    "start_ms",
-    "end_ms",
-    "analysis_window_start_ms",
-    "analysis_window_end_ms",
+    "start_seconds",
+    "end_seconds",
+    "analysis_window_start_seconds",
+    "analysis_window_end_seconds",
     "transcript",
     "baseline_visual_caption",
     "all_time_events",
@@ -65,8 +65,8 @@ def build_workspace_checkpoint(
         "draft_catalog": [
             {
                 "video_chunk_id": item.video_chunk_id,
-                "start_ms": item.start_ms,
-                "end_ms": item.end_ms,
+                "start_seconds": item.start_seconds,
+                "end_seconds": item.end_seconds,
             }
             for item in draft_items
         ],
@@ -195,17 +195,17 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
         if not isinstance(candidate, dict) or not isinstance(evidence, dict):
             continue
         video_chunk_id = candidate.get("videoChunkId")
-        start_ms = evidence.get("startMs")
-        end_ms = evidence.get("endMs")
+        start_seconds = evidence.get("startSeconds")
+        end_seconds = evidence.get("endSeconds")
         if (
             isinstance(video_chunk_id, str)
-            and isinstance(start_ms, int)
-            and not isinstance(start_ms, bool)
-            and isinstance(end_ms, int)
-            and not isinstance(end_ms, bool)
-            and 0 <= start_ms < end_ms
+            and isinstance(start_seconds, int)
+            and not isinstance(start_seconds, bool)
+            and isinstance(end_seconds, int)
+            and not isinstance(end_seconds, bool)
+            and 0 <= start_seconds < end_seconds
         ):
-            evidence_ranges[video_chunk_id] = (start_ms, end_ms)
+            evidence_ranges[video_chunk_id] = (start_seconds, end_seconds)
         hits.append({
             "candidate": {
                 "videoChunkId": candidate.get("videoChunkId"),
@@ -220,7 +220,7 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
                 )
                 for key in (
                     "seriesId", "videoId", "videoChunkId", "episodeOrder", "sequenceNo",
-                    "startMs", "endMs", "windowSummary", "videoCompact",
+                    "startSeconds", "endSeconds", "windowSummary", "videoCompact",
                 )
                 if key in evidence
             },
@@ -256,22 +256,22 @@ def _project_stored_video_ranges(
             or video_chunk_id not in evidence_ranges
         ):
             continue
-        evidence_start_ms, evidence_end_ms = evidence_ranges[video_chunk_id]
-        start_ms = block.get("startMs")
-        end_ms = block.get("endMs")
+        evidence_start_seconds, evidence_end_seconds = evidence_ranges[video_chunk_id]
+        start_seconds = block.get("startSeconds")
+        end_seconds = block.get("endSeconds")
         if not (
-            isinstance(start_ms, int)
-            and not isinstance(start_ms, bool)
-            and isinstance(end_ms, int)
-            and not isinstance(end_ms, bool)
-            and evidence_start_ms <= start_ms < end_ms <= evidence_end_ms
+            isinstance(start_seconds, int)
+            and not isinstance(start_seconds, bool)
+            and isinstance(end_seconds, int)
+            and not isinstance(end_seconds, bool)
+            and evidence_start_seconds <= start_seconds < end_seconds <= evidence_end_seconds
         ):
             continue
         seen.add(video_chunk_id)
         ranges.append({
             "videoChunkId": video_chunk_id,
-            "startMs": start_ms,
-            "endMs": end_ms,
+            "startSeconds": start_seconds,
+            "endSeconds": end_seconds,
         })
     return ranges
 
@@ -290,18 +290,18 @@ def _project_reference(
     }
     selected_range = reference.get("selectedRange")
     if isinstance(selected_range, dict):
-        start_ms = selected_range.get("startMs")
-        end_ms = selected_range.get("endMs")
+        start_seconds = selected_range.get("startSeconds")
+        end_seconds = selected_range.get("endSeconds")
         if (
-            isinstance(start_ms, int)
-            and not isinstance(start_ms, bool)
-            and isinstance(end_ms, int)
-            and not isinstance(end_ms, bool)
-            and 0 <= start_ms < end_ms
+            isinstance(start_seconds, int)
+            and not isinstance(start_seconds, bool)
+            and isinstance(end_seconds, int)
+            and not isinstance(end_seconds, bool)
+            and 0 <= start_seconds < end_seconds
         ):
             projected["selectedRange"] = {
-                "startMs": start_ms,
-                "endMs": end_ms,
+                "startSeconds": start_seconds,
+                "endSeconds": end_seconds,
             }
     reason = reference.get("selectionReason")
     if isinstance(reason, dict):
@@ -330,7 +330,7 @@ def _project_selection_reason(
         {
             **{
                 key: item.get(key)
-                for key in ("kind", "startMs", "endMs")
+                for key in ("kind", "startSeconds", "endSeconds")
                 if key in item
             },
             "text": _truncate(item.get("text"), 1_000),

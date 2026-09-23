@@ -901,7 +901,7 @@ class UploadRepository:
         video_id: str,
         original_source_uri: str,
         content_hash: str,
-        duration_ms: int,
+        duration_seconds: int,
         pipeline_version: str,
         max_job_attempts: int,
         now: int | None = None,
@@ -943,7 +943,7 @@ class UploadRepository:
                     inference_proxy_uri=None,
                     content_hash=content_hash,
                     total_bytes=upload.total_size_bytes,
-                    duration_ms=duration_ms,
+                    duration_seconds=duration_seconds,
                     upload_status="COMPLETED",
                     parse_status=ParseJobStatus.QUEUED.value,
                     upload_progress=100,
@@ -954,7 +954,7 @@ class UploadRepository:
                 video.series_id != upload.series_id
                 or video.episode_order != upload.episode_order
                 or video.content_hash != content_hash
-                or video.duration_ms != duration_ms
+                or video.duration_seconds != duration_seconds
                 or video.original_source_uri != original_source_uri
             ):
                 raise UploadConflictError(

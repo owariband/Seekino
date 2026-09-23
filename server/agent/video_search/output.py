@@ -26,19 +26,19 @@ def validate_result(result: VideoChunkSearchResult, inputs: RunInputs) -> None:
         if (evidence.workspace_id != inputs["workspace_id"]
             or evidence.series_id not in scope or evidence.series_id not in result.series_ids):
             raise AgentModelInvocationError("Retrieved Evidence is outside the fixed scope")
-        if not 0 <= evidence.start_ms < evidence.end_ms <= evidence.duration_ms:
+        if not 0 <= evidence.start_seconds < evidence.end_seconds <= evidence.duration_seconds:
             raise AgentModelInvocationError("Retrieved Evidence has an invalid video time range")
         if not (
-            0 <= evidence.analysis_window_start_ms <= evidence.start_ms
-            < evidence.end_ms <= evidence.analysis_window_end_ms <= evidence.duration_ms
+            0 <= evidence.analysis_window_start_seconds <= evidence.start_seconds
+            < evidence.end_seconds <= evidence.analysis_window_end_seconds <= evidence.duration_seconds
         ):
             raise AgentModelInvocationError("Retrieved Evidence has an invalid analysis window range")
         for matched in hit.selection_reason.matched_evidence:
-            if (matched.start_ms is None) != (matched.end_ms is None):
+            if (matched.start_seconds is None) != (matched.end_seconds is None):
                 raise AgentModelInvocationError("Matched Evidence has an incomplete video time range")
-            if matched.start_ms is not None and not (
-                matched.end_ms is not None
-                and 0 <= matched.start_ms < matched.end_ms <= evidence.duration_ms
+            if matched.start_seconds is not None and not (
+                matched.end_seconds is not None
+                and 0 <= matched.start_seconds < matched.end_seconds <= evidence.duration_seconds
             ):
                 raise AgentModelInvocationError("Matched Evidence has an invalid video time range")
 
@@ -166,8 +166,8 @@ def build_chat_output(
             if isinstance(block, MarkdownRenderBlock)
             else VideoRenderBlock(
                 video_chunk_id=block.video_chunk_id,
-                start_ms=approved_ranges[block.video_chunk_id].start_ms,
-                end_ms=approved_ranges[block.video_chunk_id].end_ms,
+                start_seconds=approved_ranges[block.video_chunk_id].start_seconds,
+                end_seconds=approved_ranges[block.video_chunk_id].end_seconds,
             )
             for block in rendered.blocks
         ],
@@ -198,16 +198,16 @@ def validate_approved_video_ranges(
     for video_chunk_id, approved in approved_ranges.items():
         evidence = approved_hits[video_chunk_id].evidence
         if not (
-            evidence.start_ms
-            <= approved.start_ms
-            < approved.end_ms
-            <= evidence.end_ms
+            evidence.start_seconds
+            <= approved.start_seconds
+            < approved.end_seconds
+            <= evidence.end_seconds
         ):
             raise AgentModelInvocationError(
                 "Approved range for VideoChunk "
-                f"{video_chunk_id!r} [{approved.start_ms}, {approved.end_ms}) "
+                f"{video_chunk_id!r} [{approved.start_seconds}, {approved.end_seconds}) "
                 "must be contained in canonical evidence range "
-                f"[{evidence.start_ms}, {evidence.end_ms})"
+                f"[{evidence.start_seconds}, {evidence.end_seconds})"
             )
 
 

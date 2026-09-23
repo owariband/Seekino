@@ -14,8 +14,8 @@ from .upload import UploadServiceConfig
 
 
 class ParseWindowConfig(ContractModel):
-    chunk_duration_ms: int = Field(ge=1)
-    context_overlap_ms: int = Field(ge=0)
+    chunk_duration_seconds: int = Field(ge=1)
+    context_overlap_seconds: int = Field(ge=0)
     analysis_max_height: int = Field(ge=1)
     canonical_max_height: int = Field(ge=1)
 
@@ -60,7 +60,7 @@ class ParseFallbackConfig(ContractModel):
     enabled: bool
     model: str = Field(min_length=1)
     frame_fps: float = Field(ge=0.2, le=5.0)
-    group_duration_ms: int = Field(ge=1_000, le=120_000)
+    group_duration_seconds: int = Field(ge=1, le=120)
     max_frames_per_group: int = Field(ge=1, le=128)
     max_height: int = Field(ge=64, le=2160)
     reasoning_effort: Literal["none", "low", "high", "max"]
@@ -80,7 +80,7 @@ class ParseExecutionConfig(ContractModel):
 
 
 class ParseConfig(ContractModel):
-    version: Literal[1] = 1
+    version: Literal[2] = 2
     window: ParseWindowConfig
     asr: ParseASRConfig
     vision: ParseVisionConfig
@@ -118,8 +118,8 @@ class ParseConfig(ContractModel):
         deepseek = fallback.deepseek
         return cls(
             window=ParseWindowConfig(
-                chunk_duration_ms=runtime.chunk_duration_ms,
-                context_overlap_ms=runtime.context_overlap_ms,
+                chunk_duration_seconds=runtime.chunk_duration_seconds,
+                context_overlap_seconds=runtime.context_overlap_seconds,
                 analysis_max_height=runtime.max_height,
                 canonical_max_height=runtime.max_height,
             ),
@@ -146,7 +146,7 @@ class ParseConfig(ContractModel):
                 ),
                 model=deepseek.model,
                 frame_fps=fallback.frame_fps,
-                group_duration_ms=fallback.group_duration_ms,
+                group_duration_seconds=fallback.group_duration_seconds,
                 max_frames_per_group=fallback.max_frames_per_group,
                 max_height=fallback.max_height,
                 reasoning_effort=deepseek.reasoning_effort,

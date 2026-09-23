@@ -14,7 +14,7 @@ function job(id: string, seriesId = "series-A"): ParseJobView {
     jobId: id, uploadSessionId: `upload-${id}`, workspaceId: "local-default", seriesId, videoId: `video-${id}`, seriesName: seriesId,
     episodeOrder: 1, originalFilename: `episode-${id}.mp4`, pipelineVersion: "v1", retryOfJobId: null,
     status: "SUCCEEDED", stage: "COMPLETED", progress: 100, overallProgress: 100, stageProgress: 100,
-    completedDurationMs: 60_000, completedThroughMs: 60_000, videoDurationMs: 60_000, totalDurationMs: 60_000,
+    completedDurationSeconds: 60, completedThroughSeconds: 60, videoDurationSeconds: 60, totalDurationSeconds: 60,
     processingDurationMs: 0, processingTimingComplete: true,
     completedChunkCount: 1, totalChunkCount: 1, currentChunk: null, attemptCount: 2, maxAttempts: 3,
     availableAt: null, startedAt: 1, completedAt: 2, estimatedRemainingMs: null, canRetry: false, canReparse: true, canCancel: false,

@@ -96,7 +96,7 @@ def _upload_service(repository, tmp_path, *, clock=None, parse_defaults=None):
             upload_repository,
             store,
             config=_config(),
-            probe_duration=lambda _path: 12_345,
+            probe_duration=lambda _path: 12,
             clock=clock,
             parse_defaults=parse_defaults,
             qdrant_mutation_lock=QdrantMutationLock(
@@ -623,10 +623,10 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
             video_chunk_id=video_chunk_id,
             video_id=completed.video_id,
             sequence_no=0,
-            start_ms=0,
-            end_ms=12_345,
-            analysis_window_start_ms=0,
-            analysis_window_end_ms=12_345,
+            start_seconds=0,
+            end_seconds=12,
+            analysis_window_start_seconds=0,
+            analysis_window_end_seconds=12,
             chunk_media_ref="artifact://test/old-chunk.mp4",
             analysis_window_media_ref="artifact://test/old-window.mp4",
             transcript=[],
@@ -654,8 +654,8 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
             sequence_no=0,
             video_chunk_id=video_chunk_id,
             stage=VideoChunkCheckpointStage.INDEXED.value,
-            chunk_start_ms=0,
-            chunk_end_ms=12_345,
+            chunk_start_seconds=0,
+            chunk_end_seconds=12,
         ))
         session.add(ParseUsageAttemptRecord(
             job_id=completed.job_id,
@@ -820,10 +820,10 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             video_chunk_id=video_chunk_id,
             video_id=completed.video_id,
             sequence_no=0,
-            start_ms=0,
-            end_ms=1_000,
-            analysis_window_start_ms=0,
-            analysis_window_end_ms=1_000,
+            start_seconds=0,
+            end_seconds=1,
+            analysis_window_start_seconds=0,
+            analysis_window_end_seconds=1,
             chunk_media_ref="artifact://test/chunk.mp4",
             analysis_window_media_ref="artifact://test/window.mp4",
             transcript=[],
@@ -1129,7 +1129,7 @@ def test_complete_creates_video_and_durable_parse_job_once(
     assert video.original_filename == "episode-07.mp4"
     assert video.episode_order == video.upload_sequence == 1
     assert video.content_hash == hashlib.sha256(b"abcdefghij").hexdigest()
-    assert video.duration_ms == 12_345
+    assert video.duration_seconds == 12
     assert video.parse_status == ParseJobStatus.QUEUED.value
     assert store.resolve(video.original_source_uri).read_bytes() == b"abcdefghij"
     assert job.video_id == video.video_id
@@ -1149,7 +1149,7 @@ def test_expired_session_rejects_new_segments(repository, tmp_path) -> None:
         upload_repository,
         store,
         config=_config(),
-        probe_duration=lambda _path: 12_345,
+        probe_duration=lambda _path: 12,
         clock=lambda: now + timedelta_to_ms(timedelta(hours=2)),
     )
 
@@ -1322,7 +1322,7 @@ def test_append_order_uses_all_legacy_order_fields(repository, tmp_path, highest
             episode_order=9 if highest_field == "video_episode_order" else 5,
             upload_sequence=9 if highest_field == "video_upload_sequence" else 6,
             original_filename="legacy.mp4", original_source_uri="artifact://test/legacy.mp4",
-            content_hash="0" * 64, total_bytes=4, duration_ms=1000,
+            content_hash="0" * 64, total_bytes=4, duration_seconds=1,
             upload_status="COMPLETED", parse_status="SUCCEEDED", upload_progress=100, parse_progress=100,
         ))
     next_upload = service.create_session(

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 
-from engine.parse.analysis_windows import probe_video_duration_ms
+from engine.parse.analysis_windows import probe_video_duration_seconds
 
 from ..config.parse_profile import ParseConfig
 from ..config.upload import UploadServiceConfig
@@ -56,7 +56,7 @@ class UploadService:
         artifact_store: ArtifactStore,
         *,
         config: UploadServiceConfig | None = None,
-        probe_duration: Callable[[str | Path], int] = probe_video_duration_ms,
+        probe_duration: Callable[[str | Path], int] = probe_video_duration_seconds,
         clock: Callable[[], int] | None = None,
         video_chunk_store: QdrantVideoChunkStore | None = None,
         qdrant_mutation_lock: QdrantMutationLock | None = None,
@@ -459,7 +459,7 @@ class UploadService:
             published_video_id = video_id
             self._repository.set_completion_stage(session_id, claim.completion_token, UploadCompletionStage.PROBING)
             _logger.info("upload_stage upload_session_id=%s stage=PROBING", session_id)
-            duration_ms = self._probe_duration(
+            duration_seconds = self._probe_duration(
                 self._artifact_store.resolve(published.uri)
             )
             self._repository.set_completion_stage(session_id, claim.completion_token, UploadCompletionStage.CREATING_JOB)
@@ -470,7 +470,7 @@ class UploadService:
                 video_id=video_id,
                 original_source_uri=published.uri,
                 content_hash=published.sha256,
-                duration_ms=duration_ms,
+                duration_seconds=duration_seconds,
                 pipeline_version=self._config.pipeline_version,
                 max_job_attempts=(
                     ParseConfig.model_validate(claim.session.parse_config).execution.max_attempts

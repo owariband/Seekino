@@ -104,10 +104,10 @@ def _hit(chunk_id="chunk-1", *, workspace="workspace", series="series"):
         series_description=None, series_status="READY", important_extra_data=None,
         character_bible=[], video_id=f"video-{chunk_id}", episode_order=1,
         original_filename="episode.mp4", original_source_uri="episode.mp4",
-        inference_proxy_uri=None, content_hash="hash", duration_ms=10_000,
+        inference_proxy_uri=None, content_hash="hash", duration_seconds=100,
         upload_status="COMPLETED", parse_status="COMPLETED", video_chunk_id=chunk_id,
-        sequence_no=0, start_ms=1000, end_ms=2000, analysis_window_start_ms=0,
-        analysis_window_end_ms=3000, chunk_media_ref="chunk.mp4",
+        sequence_no=0, start_seconds=10, end_seconds=20, analysis_window_start_seconds=0,
+        analysis_window_end_seconds=30, chunk_media_ref="chunk.mp4",
         analysis_window_media_ref="window.mp4", transcript=[], baseline_visual_caption=None,
         keyframe_uris=[], all_time_events=[], all_time_event_text="cup action",
         retrieval_text="cup action", video_compact="cup action", context_before_compact="",
@@ -122,11 +122,11 @@ def _hit(chunk_id="chunk-1", *, workspace="workspace", series="series"):
     )
 
 
-def _selected_range(chunk_id: str, *, start_ms: int = 1100, end_ms: int = 1900) -> dict:
+def _selected_range(chunk_id: str, *, start_seconds: int = 11, end_seconds: int = 19) -> dict:
     return {
         "video_chunk_id": chunk_id,
-        "start_ms": start_ms,
-        "end_ms": end_ms,
+        "start_seconds": start_seconds,
+        "end_seconds": end_seconds,
     }
 
 
@@ -353,10 +353,10 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     assert 0 < chat.request_timeouts[0] <= 480
     assert result.agent_reply.message == "## Final answer\n\nGrounded answer."
     assert result.agent_reply.result_count == 1
-    assert result.hits[0].evidence.start_ms == 1000
-    assert result.hits[0].evidence.end_ms == 2000
-    assert result.render_blocks[1].start_ms == 1100
-    assert result.render_blocks[1].end_ms == 1900
+    assert result.hits[0].evidence.start_seconds == 10
+    assert result.hits[0].evidence.end_seconds == 20
+    assert result.render_blocks[1].start_seconds == 11
+    assert result.render_blocks[1].end_seconds == 19
     assert "update_draft_item" in query.prompts[0]
     assert "read_trieve_item" in query.prompts[0]
     assert "事实性结论" in query.prompts[0]
@@ -652,9 +652,9 @@ def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
 @pytest.mark.parametrize("mutation, expected", [
     (lambda hit: setattr(hit.evidence, "workspace_id", "other"), "outside the fixed scope"),
     (lambda hit: setattr(hit.evidence, "series_id", "other"), "outside the fixed scope"),
-    (lambda hit: setattr(hit.evidence, "end_ms", 10_001), "invalid video time range"),
-    (lambda hit: setattr(hit.evidence, "start_ms", -1), "invalid video time range"),
-    (lambda hit: setattr(hit.evidence, "end_ms", 1000), "invalid video time range"),
+    (lambda hit: setattr(hit.evidence, "end_seconds", 101), "invalid video time range"),
+    (lambda hit: setattr(hit.evidence, "start_seconds", -1), "invalid video time range"),
+    (lambda hit: setattr(hit.evidence, "end_seconds", 10), "invalid video time range"),
 ])
 def test_invalid_retrieved_scope_or_time_fails_before_evaluation(mutation, expected):
     hit = _hit()
@@ -686,7 +686,7 @@ def test_out_of_chunk_range_is_returned_to_query_for_same_turn_revision():
     class CorrectingQuery(Query):
         def run_structured(self, prompt, **kwargs):
             self.selected_ranges = [
-                _selected_range("chunk-1", start_ms=999, end_ms=1500)
+                _selected_range("chunk-1", start_seconds=9, end_seconds=15)
             ]
             completion = super().run_structured(prompt, **kwargs)
             self.draft_tool_results.append(
@@ -714,29 +714,29 @@ def test_out_of_chunk_range_is_returned_to_query_for_same_turn_revision():
     assert feedback["error"]["message"].startswith("时间区间不合法：")
     assert json.loads(query.draft_tool_results[1])["accepted"] is True
     assert len(query.contexts) == len(evaluator.contexts) == len(chat.contexts) == 1
-    assert result.render_blocks[1].start_ms == 1100
-    assert result.render_blocks[1].end_ms == 1900
+    assert result.render_blocks[1].start_seconds == 11
+    assert result.render_blocks[1].end_seconds == 19
 
 
-@pytest.mark.parametrize("start_ms,end_ms", [
-    (True, 1900),
-    ("1100", 1900),
-    (1100.5, 1900),
-    (1100, False),
-    (1100, "1900"),
-    (1100, 1900.5),
-    (1500, 1500),
-    (1600, 1500),
+@pytest.mark.parametrize("start_seconds,end_seconds", [
+    (True, 19),
+    ("11", 19),
+    (11.5, 19),
+    (11, False),
+    (11, "19"),
+    (11, 19.5),
+    (15, 15),
+    (16, 15),
 ])
 def test_selected_range_rejects_non_integer_or_non_increasing_time(
-    start_ms, end_ms,
+    start_seconds, end_seconds,
 ):
     with pytest.raises(ValueError):
         QueryDraft.model_validate({
             "plan_context": "plan",
             "message": "draft",
             "selected_video_ranges": [_selected_range(
-                "chunk-1", start_ms=start_ms, end_ms=end_ms,
+                "chunk-1", start_seconds=start_seconds, end_seconds=end_seconds,
             )],
         })
 
@@ -768,12 +768,12 @@ def test_selection_order_keeps_exact_real_evidence_and_approved_ranges():
     assert result.hits[1].evidence == retrieval.hits[0].evidence
     assert result.hits[1].selection_reason.summary == "Grounded evidence for chunk-1."
     assert [
-        (block.video_chunk_id, block.start_ms, block.end_ms)
+        (block.video_chunk_id, block.start_seconds, block.end_seconds)
         for block in result.render_blocks
         if block.type == "video"
     ] == [
-        ("chunk-2", 1100, 1900),
-        ("chunk-1", 1100, 1900),
+        ("chunk-2", 11, 19),
+        ("chunk-1", 11, 19),
     ]
 
 
@@ -838,7 +838,7 @@ def test_stored_history_keeps_order_and_ids_without_replaying_full_evidence():
     historical.hits[0].selection_reason.matched_evidence = [
         MatchedEvidence(
             kind="CONTEXT", text=f"{evidence_marker}-{index}-" + "x" * 1_100,
-            start_ms=1000, end_ms=2000,
+            start_seconds=10, end_seconds=20,
         )
         for index in range(6)
     ]
@@ -878,7 +878,7 @@ def test_reference_context_uses_compact_evidence_without_repeating_background():
     evidence = hit.evidence
     evidence.baseline_visual_caption = evidence_marker
     hit.selection_reason.matched_evidence = [MatchedEvidence(
-        kind="CONTEXT", text=matched_marker, start_ms=1000, end_ms=2000,
+        kind="CONTEXT", text=matched_marker, start_seconds=10, end_seconds=20,
     )]
     evidence.important_extra_data = {
         "format": "markdown", "content": background_marker + "x" * 30_000,
@@ -928,11 +928,11 @@ def test_multi_turn_context_keeps_one_canonical_evidence_copy():
 @pytest.mark.parametrize("mutation, expected", [
     (lambda result: setattr(result, "series_ids", []), "changed the fixed Series scope"),
     (lambda result: setattr(result, "series_ids", ["other"]), "changed the fixed Series scope"),
-    (lambda result: setattr(result.hits[0].evidence, "analysis_window_start_ms", 1001), "analysis window"),
-    (lambda result: setattr(result.hits[0].evidence, "analysis_window_end_ms", 1999), "analysis window"),
-    (lambda result: setattr(result.hits[0].evidence, "analysis_window_end_ms", 10_001), "analysis window"),
+    (lambda result: setattr(result.hits[0].evidence, "analysis_window_start_seconds", 11), "analysis window"),
+    (lambda result: setattr(result.hits[0].evidence, "analysis_window_end_seconds", 19), "analysis window"),
+    (lambda result: setattr(result.hits[0].evidence, "analysis_window_end_seconds", 101), "analysis window"),
     (lambda result: result.hits[0].selection_reason.matched_evidence.append(
-        MatchedEvidence.model_construct(kind="CONTEXT", text="cup", start_ms=None, end_ms=1000)
+        MatchedEvidence.model_construct(kind="CONTEXT", text="cup", start_seconds=None, end_seconds=10)
     ), "incomplete video time range"),
 ])
 def test_retrieval_contract_corruption_is_rejected_before_evaluation(mutation, expected):
@@ -1567,8 +1567,8 @@ def test_chat_tool_does_not_accept_a_playback_range() -> None:
         def run_agent_loop(self, prompt, *, tools, **kwargs):
             feedback = _invoke_json(_tool_map(tools)["update_video_item"], {
                 "video_chunk_id": "chunk-1",
-                "start_ms": 1000,
-                "end_ms": 2000,
+                "start_seconds": 10,
+                "end_seconds": 20,
                 "claim": "Grounded evidence.",
             })
             assert feedback["error"]["code"] == "INVALID_ARGUMENTS"
@@ -1582,7 +1582,7 @@ def test_chat_tool_does_not_accept_a_playback_range() -> None:
 def test_out_of_chunk_range_can_be_discarded_without_crashing_chat() -> None:
     runtime, query, evaluator, chat, _retrieval = _runtime(
         query=Query(selected_ranges=[
-            _selected_range("chunk-1", start_ms=999, end_ms=1500)
+            _selected_range("chunk-1", start_seconds=9, end_seconds=15)
         ]),
     )
 
@@ -1665,8 +1665,8 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
             _read_all(tools_by_name["read_trieve_item"], video_chunk_id)
             tools_by_name["update_draft_item"].invoke({
                 "video_chunk_id": video_chunk_id,
-                "start_ms": 1100,
-                "end_ms": 1900,
+                "start_seconds": 11,
+                "end_seconds": 19,
                 "claim": f"Evidence for {video_chunk_id}",
             })
             return result_type.model_validate({

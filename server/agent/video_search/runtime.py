@@ -292,8 +292,8 @@ class AgentRuntime:
             selected_video_ranges=[
                 SelectedVideoRange(
                     video_chunk_id=item.video_chunk_id,
-                    start_ms=item.start_ms,
-                    end_ms=item.end_ms,
+                    start_seconds=item.start_seconds,
+                    end_seconds=item.end_seconds,
                 )
                 for item in draft_items
             ],

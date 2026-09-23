@@ -103,8 +103,8 @@ class AgentWorkspace:
         self,
         *,
         video_chunk_id: str,
-        start_ms: int,
-        end_ms: int,
+        start_seconds: int,
+        end_seconds: int,
         claim: str,
     ) -> tuple[str, int]:
         with self._lock:
@@ -116,22 +116,22 @@ class AgentWorkspace:
                 )
             evidence = evidence_hit.evidence
             if not (
-                evidence.start_ms
-                <= start_ms
-                < end_ms
-                <= evidence.end_ms
+                evidence.start_seconds
+                <= start_seconds
+                < end_seconds
+                <= evidence.end_seconds
             ):
                 raise InvalidDraftRangeError(
                     video_chunk_id=video_chunk_id,
-                    start_ms=start_ms,
-                    end_ms=end_ms,
-                    evidence_start_ms=evidence.start_ms,
-                    evidence_end_ms=evidence.end_ms,
+                    start_seconds=start_seconds,
+                    end_seconds=end_seconds,
+                    evidence_start_seconds=evidence.start_seconds,
+                    evidence_end_seconds=evidence.end_seconds,
                 )
             item = DraftItem(
                 video_chunk_id=video_chunk_id,
-                start_ms=start_ms,
-                end_ms=end_ms,
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
                 claim=claim,
             )
             existing = self._draft_items.get(video_chunk_id)

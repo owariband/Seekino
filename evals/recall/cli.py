@@ -8,7 +8,7 @@ from gateway.config import load_config
 from gateway.ark.embedding import DoubaoMultimodalEmbedder
 from qdrant_client import QdrantClient
 
-from engine.parse.analysis_windows import probe_video_duration_ms
+from engine.parse.analysis_windows import probe_video_duration_seconds
 from .qdrant_index import QdrantVideoChunkIndex
 from .recall_eval import (
     RecallEvaluator,
@@ -101,11 +101,11 @@ def main() -> None:
         parse_result_path=parse_result_path,
         override=args.video,
     )
-    probed_duration_ms = probe_video_duration_ms(source_video)
-    if abs(probed_duration_ms - parse_result.duration_ms) > 100:
+    probed_duration_seconds = probe_video_duration_seconds(source_video)
+    if abs(probed_duration_seconds - parse_result.duration_seconds) > 1:
         raise RuntimeError(
             "source video duration does not match parse result: "
-            f"source={probed_duration_ms} ms, parsed={parse_result.duration_ms} ms"
+            f"source={probed_duration_seconds} seconds, parsed={parse_result.duration_seconds} seconds"
         )
 
     config = load_config(args.config)

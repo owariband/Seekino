@@ -75,15 +75,15 @@ class _MemoryJobs:
 def _merge_checkpoint(current, checkpoint):
     return replace(
         checkpoint,
-        chunk_start_ms=(
-            checkpoint.chunk_start_ms
-            if checkpoint.chunk_start_ms is not None
-            else current.chunk_start_ms
+        chunk_start_seconds=(
+            checkpoint.chunk_start_seconds
+            if checkpoint.chunk_start_seconds is not None
+            else current.chunk_start_seconds
         ),
-        chunk_end_ms=(
-            checkpoint.chunk_end_ms
-            if checkpoint.chunk_end_ms is not None
-            else current.chunk_end_ms
+        chunk_end_seconds=(
+            checkpoint.chunk_end_seconds
+            if checkpoint.chunk_end_seconds is not None
+            else current.chunk_end_seconds
         ),
         chunk_media_uri=checkpoint.chunk_media_uri or current.chunk_media_uri,
         analysis_window_media_uri=(
@@ -156,7 +156,7 @@ def _lease(prepared_import, *, lease_version: int = 1) -> ParseJobLease:
         original_source_uri=prepared_import.original_source_uri,
         content_hash=prepared_import.content_hash,
         total_bytes=prepared_import.total_bytes,
-        duration_ms=prepared_import.parse_result.duration_ms,
+        duration_seconds=prepared_import.parse_result.duration_seconds,
         workspace_id=prepared_import.workspace_id,
         series_name=prepared_import.series_name,
         series_description=prepared_import.series_description,
@@ -175,8 +175,8 @@ def _split_checkpoints(lease, windows):
                 window.sequence_no,
             ),
             stage=VideoChunkCheckpointStage.SPLIT_READY.value,
-            chunk_start_ms=window.chunk_start_ms,
-            chunk_end_ms=window.chunk_end_ms,
+            chunk_start_seconds=window.chunk_start_seconds,
+            chunk_end_seconds=window.chunk_end_seconds,
             chunk_media_uri=f"artifact://test/chunks/{window.sequence_no}.mp4",
             analysis_window_media_uri=(
                 f"artifact://test/windows/{window.sequence_no}.mp4"
@@ -235,15 +235,15 @@ def _persistence(
             window.sequence_no: (
                 VideoChunkKeyframeReference(
                     uri=f"artifact://test/keyframes/{window.sequence_no}.jpg",
-                    at_ms=window.chunk_start_ms,
+                    at_seconds=window.chunk_start_seconds,
                 ),
             )
             for window in windows
         },
         config=VideoProcessingConfig(
             embedding_dimensions=3,
-            chunk_duration_ms=10_000,
-            context_overlap_ms=0,
+            chunk_duration_seconds=10,
+            context_overlap_seconds=0,
             asr_mode="none",
         ),
         parse_config=None,
@@ -600,8 +600,8 @@ def test_persist_hands_complete_media_and_embeddings_to_the_video_repository(
         for sequence_no in range(2)
     ]
     assert [
-        chunk.keyframes[0].at_ms for chunk in videos.prepared.chunks
-    ] == [0, 10_000]
+        chunk.keyframes[0].at_seconds for chunk in videos.prepared.chunks
+    ] == [0, 10]
     assert all(
         chunk.text_embedding.vector == [1.0, 2.0, 3.0]
         and chunk.vision_embedding.vector == [3.0, 2.0, 1.0]

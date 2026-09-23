@@ -46,8 +46,8 @@ from .usage import parse_chunk_scope
 
 @dataclass(frozen=True, slots=True)
 class VideoParseRuntimeConfig:
-    chunk_duration_ms: int = 60_000
-    context_overlap_ms: int = 3_000
+    chunk_duration_seconds: int = 60
+    context_overlap_seconds: int = 3
     max_height: int = 720
     asr_concurrency: int = 4
     asr_mode: Literal["lite", "none"] = "lite"
@@ -66,10 +66,10 @@ class VideoParseRuntimeConfig:
     video_max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
-        if self.chunk_duration_ms <= 0:
-            raise ValueError("chunk_duration_ms must be greater than zero")
-        if self.context_overlap_ms < 0:
-            raise ValueError("context_overlap_ms cannot be negative")
+        if self.chunk_duration_seconds <= 0:
+            raise ValueError("chunk_duration_seconds must be greater than zero")
+        if self.context_overlap_seconds < 0:
+            raise ValueError("context_overlap_seconds cannot be negative")
         if self.max_height <= 0:
             raise ValueError("max_height must be greater than zero")
         if self.asr_concurrency <= 0:
@@ -147,14 +147,14 @@ class _LazyVideoUnderstandingAgent:
         *,
         transcript: TranscriptAnalysis,
         context: str | None = None,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         return self._runtime._get_understanding_agent().understand(
             video_path,
             transcript=transcript,
             context=context,
-            duration_ms=duration_ms,
+            duration_seconds=duration_seconds,
             background_images=background_images,
         )
 
@@ -212,7 +212,7 @@ class EngineVideoParseRuntime:
                 refiner_model=fallback.deepseek.model,
                 input_mode="ordered_frames",
                 frame_fps=fallback.frame_fps,
-                group_duration_ms=fallback.group_duration_ms,
+                group_duration_seconds=fallback.group_duration_seconds,
                 max_frames_per_group=fallback.max_frames_per_group,
                 max_height=fallback.max_height,
             ),
@@ -255,7 +255,7 @@ class EngineVideoParseRuntime:
         with parse_chunk_scope(video_chunk.sequence_no):
             return asr_agent.transcribe(
                 video_chunk.media_path,
-                duration_ms=video_chunk.analysis_duration_ms,
+                duration_seconds=video_chunk.analysis_duration_seconds,
             )
 
     def understand_chunk(
@@ -279,7 +279,7 @@ class EngineVideoParseRuntime:
         self,
         source_video: str | Path,
         *,
-        duration_ms: int,
+        duration_seconds: int,
         output_dir: str | Path,
         series_bible: str | None = None,
         background_images: Sequence[BackgroundImage] = (),
@@ -297,10 +297,10 @@ class EngineVideoParseRuntime:
 
         windows = plan_analysis_windows(
             video_path,
-            duration_ms=duration_ms,
+            duration_seconds=duration_seconds,
             output_dir=work_directory / "windows",
-            chunk_duration_ms=self._config.chunk_duration_ms,
-            context_overlap_ms=self._config.context_overlap_ms,
+            chunk_duration_seconds=self._config.chunk_duration_seconds,
+            context_overlap_seconds=self._config.context_overlap_seconds,
         )
         materialize_analysis_windows(
             windows,
@@ -322,7 +322,7 @@ class EngineVideoParseRuntime:
                 transcript_model if self._config.asr_mode == "lite" else None
             ),
             fallback_frame_fps=fallback_config.frame_fps,
-            fallback_group_duration_ms=fallback_config.group_duration_ms,
+            fallback_group_duration_seconds=fallback_config.group_duration_seconds,
             fallback_max_frames_per_group=fallback_config.max_frames_per_group,
         )
         models = self.describe_models(
@@ -332,9 +332,9 @@ class EngineVideoParseRuntime:
             completed = VideoParseResult(
                 models=models,
                 source_video=video_path,
-                duration_ms=duration_ms,
-                chunk_duration_ms=self._config.chunk_duration_ms,
-                context_overlap_ms=self._config.context_overlap_ms,
+                duration_seconds=duration_seconds,
+                chunk_duration_seconds=self._config.chunk_duration_seconds,
+                context_overlap_seconds=self._config.context_overlap_seconds,
                 chunks=completed_chunks,
                 events=sorted(
                     (
@@ -342,7 +342,7 @@ class EngineVideoParseRuntime:
                         for chunk in completed_chunks
                         for event in chunk.events
                     ),
-                    key=lambda event: (event.start_ms, event.end_ms),
+                    key=lambda event: (event.start_seconds, event.end_seconds),
                 ),
             )
             write_json(completed, work_directory / "pipeline.parse.json")
@@ -384,9 +384,9 @@ class EngineVideoParseRuntime:
         ) as candidate_transcripts:
             result = understand_stage.run(
                 source_video=str(video_path),
-                duration_ms=duration_ms,
-                chunk_duration_ms=self._config.chunk_duration_ms,
-                context_overlap_ms=self._config.context_overlap_ms,
+                duration_seconds=duration_seconds,
+                chunk_duration_seconds=self._config.chunk_duration_seconds,
+                context_overlap_seconds=self._config.context_overlap_seconds,
                 windows=windows,
                 series_bible=series_bible,
                 background_images=background_images,
@@ -506,7 +506,7 @@ class EngineVideoParseRuntime:
                         else None
                     ),
                     frame_fps=resolved.fallback.frame_fps,
-                    group_duration_ms=resolved.fallback.group_duration_ms,
+                    group_duration_seconds=resolved.fallback.group_duration_seconds,
                     max_frames_per_group=(
                         resolved.fallback.max_frames_per_group
                     ),

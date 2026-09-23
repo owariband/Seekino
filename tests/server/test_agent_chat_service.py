@@ -124,12 +124,12 @@ class _QueryModel:
                     "visual": 0.4,
                 },
             })
-        for video_chunk_id, start_ms, end_ms in self.selected_ranges:
+        for video_chunk_id, start_seconds, end_seconds in self.selected_ranges:
             _read_all(tools_by_name["read_trieve_item"], video_chunk_id)
             tools_by_name["update_draft_item"].invoke({
                 "video_chunk_id": video_chunk_id,
-                "start_ms": start_ms,
-                "end_ms": end_ms,
+                "start_seconds": start_seconds,
+                "end_seconds": end_seconds,
                 "claim": f"片段 {video_chunk_id} 支持回答。",
             })
         return result_type.model_validate({
@@ -380,7 +380,7 @@ def test_extra_context_is_persisted_injected_and_part_of_idempotency(build_servi
             "seriesId": "series-1",
             "videoId": "video-1",
             "episodeOrder": 1,
-            "positionMs": 122_000,
+            "positionSeconds": 122,
         },
     }
 
@@ -406,7 +406,7 @@ def test_extra_context_is_persisted_injected_and_part_of_idempotency(build_servi
             service,
             conversation,
             content="这里在讲什么？",
-            extra_context={"playback": {**extra_context["playback"], "positionMs": 123_000}},
+            extra_context={"playback": {**extra_context["playback"], "positionSeconds": 123}},
         )
 
 
@@ -434,7 +434,7 @@ def test_supervisor_preserves_approved_video_answer(
         evidence=chunk,
     ) for index, chunk in enumerate(chunks)]
     query.selected_ranges = tuple(
-        (chunk.video_chunk_id, chunk.start_ms, chunk.end_ms)
+        (chunk.video_chunk_id, chunk.start_seconds, chunk.end_seconds)
         for chunk in chunks
     )
 
@@ -474,8 +474,8 @@ def evidence_service(build_service, prepared_import):
     query.selected_ranges = tuple(
         (
             hit.evidence.video_chunk_id,
-            hit.evidence.start_ms,
-            hit.evidence.end_ms,
+            hit.evidence.start_seconds,
+            hit.evidence.end_seconds,
         )
         for hit in retrieval.hits
     )
@@ -526,8 +526,8 @@ def test_read_only_message_recovery_by_user_assistant_or_request_key(build_servi
 def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidence_service):
     service, conversation, _, _, query, *_ = evidence_service
     selected = list(query.selected_ranges)
-    chunk_id, start_ms, end_ms = selected[1]
-    selected[1] = (chunk_id, start_ms + 1, end_ms - 1)
+    chunk_id, start_seconds, end_seconds = selected[1]
+    selected[1] = (chunk_id, start_seconds + 1, end_seconds - 1)
     query.selected_ranges = tuple(selected)
     source = _send(service, conversation)
     hits = source.assistant_message.search_result["hits"]
@@ -541,8 +541,8 @@ def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidenc
     assert context["reference_context"]["evidence"]["videoChunkId"] == reference["videoChunkId"]
     assert context["reference_context"]["evidence"]["contextBeforeCompact"] == hits[1]["evidence"]["contextBeforeCompact"]
     assert context["reference_context"]["selectedRange"] == {
-        "startMs": start_ms + 1,
-        "endMs": end_ms - 1,
+        "startSeconds": start_seconds + 1,
+        "endSeconds": end_seconds - 1,
     }
     assert context["reference_context"]["sourceStatus"] == "COMPLETED"
     assert [hit["candidate"]["videoChunkId"] for hit in context["history"][1]["searchResult"]["hits"]] == [
@@ -551,8 +551,8 @@ def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidenc
     assert context["history"][1]["searchResult"]["videoRanges"] == [
         {
             "videoChunkId": block["videoChunkId"],
-            "startMs": block["startMs"],
-            "endMs": block["endMs"],
+            "startSeconds": block["startSeconds"],
+            "endSeconds": block["endSeconds"],
         }
         for block in source.assistant_message.search_result["renderBlocks"]
         if block["type"] == "video"
@@ -567,15 +567,15 @@ def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidenc
     [{"type": "video", "videoChunkId": "chunk-1"}],
     [{
         "type": "video", "videoChunkId": "chunk-1",
-        "startMs": 999, "endMs": 1900,
+        "startSeconds": 9, "endSeconds": 19,
     }],
     [{
         "type": "video", "videoChunkId": "chunk-1",
-        "startMs": 1800, "endMs": 1700,
+        "startSeconds": 18, "endSeconds": 17,
     }],
     [{
         "type": "video", "videoChunkId": "chunk-1",
-        "startMs": 1100, "endMs": 2001,
+        "startSeconds": 11, "endSeconds": 21,
     }],
 ])
 def test_reference_range_rejects_legacy_or_invalid_blocks(
@@ -588,8 +588,8 @@ def test_reference_range_rejects_legacy_or_invalid_blocks(
         _validated_stored_video_range(
             search_result,
             "chunk-1",
-            evidence_start_ms=1000,
-            evidence_end_ms=2000,
+            evidence_start_seconds=10,
+            evidence_end_seconds=20,
             conversation_id="conversation",
             message_id="assistant",
         )
@@ -600,7 +600,7 @@ def test_reference_range_rejects_legacy_or_invalid_blocks(
     )
     assert "conversation_id=conversation message_id=assistant" in warning
     assert "video_chunk_id=chunk-1" in warning
-    assert "evidence_start_ms=1000 evidence_end_ms=2000" in warning
+    assert "evidence_start_seconds=10 evidence_end_seconds=20" in warning
     assert "action=reject_reference" in warning
 
 
@@ -611,17 +611,17 @@ def test_reference_range_preserves_valid_stored_range_without_warning(caplog):
         {"renderBlocks": [{
             "type": "video",
             "videoChunkId": "chunk-1",
-            "startMs": 1100,
-            "endMs": 1900,
+            "startSeconds": 11,
+            "endSeconds": 19,
         }]},
         "chunk-1",
-        evidence_start_ms=1000,
-        evidence_end_ms=2000,
+        evidence_start_seconds=10,
+        evidence_end_seconds=20,
         conversation_id="conversation",
         message_id="assistant",
     )
 
-    assert selected_range == {"startMs": 1100, "endMs": 1900}
+    assert selected_range == {"startSeconds": 11, "endSeconds": 19}
     assert not [
         record for record in caplog.records
         if record.getMessage().startswith("event=agent_invalid_stored_video_range ")
@@ -633,28 +633,28 @@ def test_reference_range_preserves_valid_stored_range_without_warning(caplog):
     ([{
         "type": "video",
         "videoChunkId": "chunk-1",
-        "startMs": 900,
-        "endMs": 1900,
+        "startSeconds": 9,
+        "endSeconds": 19,
     }], []),
     ([{
         "type": "video",
         "videoChunkId": "unknown",
-        "startMs": 1100,
-        "endMs": 1900,
+        "startSeconds": 11,
+        "endSeconds": 19,
     }], []),
     ([{
         "type": "video",
         "videoChunkId": "chunk-1",
-        "startMs": 1100,
-        "endMs": 1900,
-    }], [{"videoChunkId": "chunk-1", "startMs": 1100, "endMs": 1900}]),
+        "startSeconds": 11,
+        "endSeconds": 19,
+    }], [{"videoChunkId": "chunk-1", "startSeconds": 11, "endSeconds": 19}]),
 ])
 def test_history_video_ranges_preserve_only_valid_stored_blocks(render_blocks, expected):
     result = {
         "hits": [{
             "candidate": {"videoChunkId": "chunk-1", "fusedRank": 1},
             "selectionReason": {},
-            "evidence": {"startMs": 1000, "endMs": 2000},
+            "evidence": {"startSeconds": 10, "endSeconds": 20},
         }],
     }
     if render_blocks is not None:

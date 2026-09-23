@@ -31,10 +31,10 @@ def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
     source.write_bytes(b"video fixture")
     window = plan_analysis_windows(
         source,
-        duration_ms=1000,
+        duration_seconds=1,
         output_dir=tmp_path / "windows",
-        chunk_duration_ms=1000,
-        context_overlap_ms=0,
+        chunk_duration_seconds=1,
+        context_overlap_seconds=0,
     )[0]
     window.media_path.parent.mkdir(parents=True)
     window.media_path.write_bytes(b"analysis fixture")
@@ -140,10 +140,10 @@ def test_runtime_resumes_a_fully_parsed_video_without_model_credentials(
     output = tmp_path / "job"
     windows = plan_analysis_windows(
         source,
-        duration_ms=10_000,
+        duration_seconds=10,
         output_dir=output / "windows",
-        chunk_duration_ms=60_000,
-        context_overlap_ms=0,
+        chunk_duration_seconds=60,
+        context_overlap_seconds=0,
     )
     window = windows[0]
     window.media_path.parent.mkdir(parents=True)
@@ -173,7 +173,7 @@ def test_runtime_resumes_a_fully_parsed_video_without_model_credentials(
                 model="deepseek-flash",
                 input_mode="ordered_frames",
                 frame_fps=0.5,
-                group_duration_ms=30_000,
+                group_duration_seconds=30,
                 max_frames_per_group=15,
                 fallback_transcript_model=None,
                 visual_model="deepseek-flash",
@@ -208,14 +208,14 @@ def test_runtime_resumes_a_fully_parsed_video_without_model_credentials(
 
     result = EngineVideoParseRuntime(
         config=VideoParseRuntimeConfig(
-            chunk_duration_ms=60_000,
-            context_overlap_ms=0,
+            chunk_duration_seconds=60,
+            context_overlap_seconds=0,
             asr_mode="none",
             fallback_enabled=True,
         )
     ).run(
         source,
-        duration_ms=10_000,
+        duration_seconds=10,
         output_dir=output,
     )
 
@@ -259,8 +259,8 @@ def test_runtime_passes_background_images_to_each_video_model_call(
     )
     result = EngineVideoParseRuntime(
         config=VideoParseRuntimeConfig(
-            chunk_duration_ms=1000,
-            context_overlap_ms=0,
+            chunk_duration_seconds=1,
+            context_overlap_seconds=0,
             asr_mode="none",
             fallback_enabled=False,
             transcript_model="test-lite",
@@ -268,7 +268,7 @@ def test_runtime_passes_background_images_to_each_video_model_call(
         )
     ).run(
         source,
-        duration_ms=2000,
+        duration_seconds=2,
         output_dir=tmp_path / "job",
         series_bible="完整背景正文 asset://tomori_01",
         background_images=images,
@@ -332,8 +332,8 @@ def test_runtime_pipelines_candidate_asr_ahead_of_serial_parse(
 
     result = EngineVideoParseRuntime(
         config=VideoParseRuntimeConfig(
-            chunk_duration_ms=1000,
-            context_overlap_ms=0,
+            chunk_duration_seconds=1,
+            context_overlap_seconds=0,
             asr_concurrency=1,
             fallback_enabled=False,
             transcript_model="test-lite",
@@ -341,7 +341,7 @@ def test_runtime_pipelines_candidate_asr_ahead_of_serial_parse(
         )
     ).run(
         source,
-        duration_ms=3000,
+        duration_seconds=3,
         output_dir=output,
     )
 
@@ -393,8 +393,8 @@ def test_runtime_resumes_each_stage_after_later_asr_failure(
     output = tmp_path / "job"
     runtime = EngineVideoParseRuntime(
         config=VideoParseRuntimeConfig(
-            chunk_duration_ms=1000,
-            context_overlap_ms=0,
+            chunk_duration_seconds=1,
+            context_overlap_seconds=0,
             asr_concurrency=1,
             fallback_enabled=False,
             transcript_model="test-lite",
@@ -403,7 +403,7 @@ def test_runtime_resumes_each_stage_after_later_asr_failure(
     )
 
     with pytest.raises(RuntimeError, match="candidate ASR failed for chunk 1"):
-        runtime.run(source, duration_ms=2000, output_dir=output)
+        runtime.run(source, duration_seconds=2, output_dir=output)
 
     assert (output / "transcripts" / "chunk-0000.json").is_file()
     assert not (output / "transcripts" / "chunk-0001.json").exists()
@@ -415,7 +415,7 @@ def test_runtime_resumes_each_stage_after_later_asr_failure(
     assert calls.count(("video_timeline", 1)) == 0
 
     fail_second_asr = False
-    result = runtime.run(source, duration_ms=2000, output_dir=output)
+    result = runtime.run(source, duration_seconds=2, output_dir=output)
 
     assert len(result.chunks) == 2
     assert calls.count(("candidate_transcript", 0)) == 1

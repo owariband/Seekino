@@ -177,7 +177,7 @@ def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(
         "keyframe_uris": [
             VideoChunkKeyframeReference(
                 uri=service._artifact_store.uri_for_path(frame),
-                at_ms=evidence.start_ms,
+                at_seconds=evidence.start_seconds,
             )
         ]
     })
@@ -194,7 +194,7 @@ def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(
     )
 
     assert view.thumbnail == view.keyframes[0]
-    assert view.keyframes[0].at_ms == 10_000
+    assert view.keyframes[0].at_seconds == 10
     assert "缺少带原视频时间位置的已登记关键帧" not in limitations
     response = client.get(view.keyframes[0].url)
     assert response.status_code == 200
@@ -204,7 +204,7 @@ def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(
         "keyframe_uris": [
             VideoChunkKeyframeReference(
                 uri=service._artifact_store.uri_for_path(frame),
-                at_ms=0,
+                at_seconds=0,
             )
         ]
     })
@@ -219,7 +219,7 @@ def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(
         workspace_id=prepared_import.workspace_id,
     )
     assert len(refreshed) == 1
-    assert refreshed[0].at_ms == evidence.start_ms
+    assert refreshed[0].at_seconds == evidence.start_seconds
 
 
 def test_nonempty_search_route_returns_public_projection(repository, prepared_import, tmp_path):

@@ -11,8 +11,8 @@ import {
 
 describe("format helpers", () => {
   it("formats evidence time ranges consistently", () => {
-    expect(formatTimecode(1_252_000)).toBe("20:52");
-    expect(formatTimeRange(1_252_000, 1_259_000)).toBe("20:52–20:59");
+    expect(formatTimecode(1_252)).toBe("20:52");
+    expect(formatTimeRange(1_252, 1_259)).toBe("20:52–20:59");
   });
 
   it("extracts episode order while retaining a safe fallback", () => {

@@ -33,7 +33,7 @@ const series: SeriesSummary = {
 };
 
 function searchHit(videoChunkId: string, rank: number, alt: string): VideoChunkSearchHit {
-  const startMs = 12_000 + (rank - 1) * 10_000;
+  const startSeconds = 12 + (rank - 1) * 10;
   return {
     candidate: {
       videoChunkId,
@@ -49,7 +49,7 @@ function searchHit(videoChunkId: string, rank: number, alt: string): VideoChunkS
     },
     selectionReason: {
       summary: `第 ${rank} 段同时命中对白和画面。`,
-      matchedEvidence: [{ kind: "TRANSCRIPT", text: "我们在门口等你。", startMs, endMs: startMs + 2_000 }],
+      matchedEvidence: [{ kind: "TRANSCRIPT", text: "我们在门口等你。", startSeconds, endSeconds: startSeconds + 2 }],
       limitations: [],
     },
     evidence: {
@@ -60,14 +60,14 @@ function searchHit(videoChunkId: string, rank: number, alt: string): VideoChunkS
       videoId: "video-1",
       episodeOrder: 1,
       originalFilename: "episode-01.mp4",
-      durationMs: 60_000,
+      durationSeconds: 60,
       videoChunkId,
       sequenceNo: rank - 1,
-      startMs,
-      endMs: startMs + 3_000,
-      analysisWindowStartMs: startMs - 2_000,
-      analysisWindowEndMs: startMs + 6_000,
-      transcript: [{ speaker: "角色甲", text: "我们在门口等你。", startMs, endMs: startMs + 2_000 }],
+      startSeconds,
+      endSeconds: startSeconds + 3,
+      analysisWindowStartSeconds: startSeconds - 2,
+      analysisWindowEndSeconds: startSeconds + 6,
+      transcript: [{ speaker: "角色甲", text: "我们在门口等你。", startSeconds, endSeconds: startSeconds + 2 }],
       baselineVisualCaption: "人物手持雨伞站在门口。",
       allTimeEvents: [],
       allTimeEventText: "人物手持雨伞站在门口。",
@@ -87,7 +87,7 @@ function searchHit(videoChunkId: string, rank: number, alt: string): VideoChunkS
         imageId: `thumbnail-${rank}`,
         url: `/api/media/images/content?workspaceId=local-default&imageId=thumbnail-${rank}`,
         expiresAt: null,
-        atMs: startMs,
+        atSeconds: startSeconds,
         alt,
       },
       keyframes: [],
@@ -123,8 +123,8 @@ function assistantMessage(content: string, hits: VideoChunkSearchHit[] = []): Ag
       ...hits.map((hit) => ({
         type: "video" as const,
         videoChunkId: hit.evidence.videoChunkId,
-        startMs: hit.evidence.startMs,
-        endMs: hit.evidence.endMs,
+        startSeconds: hit.evidence.startSeconds,
+        endSeconds: hit.evidence.endSeconds,
       })),
     ],
     timing: null,
@@ -141,7 +141,7 @@ function renderPage(
     embedded?: boolean;
     initialSeriesId?: string;
     captureExtraContext?: () => Record<string, unknown> | null;
-    onOpenVideo?: (target: { seriesId: string; videoId: string; startMs: number }) => void;
+    onOpenVideo?: (target: { seriesId: string; videoId: string; startSeconds: number }) => void;
   } = {},
 ) {
   mocks.useWorkspace.mockReturnValue({ mode: "live", series: videoSeries, isLoading: false });
@@ -188,17 +188,17 @@ describe("Search assistant presentation", () => {
     expect(mocks.send).toHaveBeenCalledWith("这段发生了什么？", [series.seriesId], null, {});
 
     await user.click(screen.getByRole("img", { name: "片段首帧" }));
-    expect(onOpenVideo).toHaveBeenCalledWith({ seriesId: series.seriesId, videoId: "video-1", startMs: hit.evidence.startMs });
+    expect(onOpenVideo).toHaveBeenCalledWith({ seriesId: series.seriesId, videoId: "video-1", startSeconds: hit.evidence.startSeconds });
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("片段详情")).not.toBeInTheDocument();
   });
 
   it("leaves interaction handling to its parent and captures the latest context on submit", async () => {
     const initialContext = {
-      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionMs: 12_345 },
+      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionSeconds: 12 },
     };
     const extraContext = {
-      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionMs: 14_321 },
+      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionSeconds: 14 },
     };
     let currentContext = initialContext;
     const captureExtraContext = vi.fn(() => currentContext);
@@ -239,7 +239,7 @@ describe("Search assistant presentation", () => {
 
   it("allows retrying the same question when playback context becomes available", async () => {
     const extraContext = {
-      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionMs: 0 },
+      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionSeconds: 0 },
     };
     const captureExtraContext = vi.fn()
       .mockReturnValueOnce(null)
@@ -383,10 +383,10 @@ describe("Search assistant presentation", () => {
       ...assistantMessage("兼容正文", hits),
       renderBlocks: [
         { type: "markdown" as const, markdown: "## 开场说明" },
-        { type: "video" as const, videoChunkId: "chunk-2", startMs: 22_000, endMs: 25_000 },
+        { type: "video" as const, videoChunkId: "chunk-2", startSeconds: 22, endSeconds: 25 },
         { type: "markdown" as const, markdown: "两段之间的解释" },
-        { type: "video" as const, videoChunkId: "unknown-chunk", startMs: 1_000, endMs: 2_000 },
-        { type: "video" as const, videoChunkId: "chunk-1", startMs: 12_000, endMs: 15_000 },
+        { type: "video" as const, videoChunkId: "unknown-chunk", startSeconds: 1, endSeconds: 2 },
+        { type: "video" as const, videoChunkId: "chunk-1", startSeconds: 12, endSeconds: 15 },
       ],
     };
 
@@ -410,7 +410,7 @@ describe("Search assistant presentation", () => {
     const message = {
       ...assistantMessage("精确片段", [hit]),
       renderBlocks: [
-        { type: "video" as const, videoChunkId: hit.evidence.videoChunkId, startMs: 12_500, endMs: 13_500 },
+        { type: "video" as const, videoChunkId: hit.evidence.videoChunkId, startSeconds: 12, endSeconds: 13 },
       ],
     };
     renderPage(message);
@@ -423,8 +423,8 @@ describe("Search assistant presentation", () => {
     Object.defineProperty(video, "readyState", { value: HTMLMediaElement.HAVE_METADATA, configurable: true });
     video.dispatchEvent(new Event("loadedmetadata"));
 
-    expect(video.currentTime).toBe(12.5);
-    expect(screen.getByRole("slider", { name: "视频片段播放进度" })).toHaveAttribute("max", "1000");
+    expect(video.currentTime).toBe(12);
+    expect(screen.getByRole("slider", { name: "视频片段播放进度" })).toHaveAttribute("max", "1");
     expect(screen.getByText("00:00 / 00:01")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "引用此片段追问" }));
     expect(screen.getByText(/已引用.*00:12–00:13/)).toBeInTheDocument();
@@ -436,7 +436,7 @@ describe("Search assistant presentation", () => {
       ...assistantMessage("越界片段", [hit]),
       renderBlocks: [
         { type: "markdown" as const, markdown: "越界片段" },
-        { type: "video" as const, videoChunkId: hit.evidence.videoChunkId, startMs: 11_999, endMs: 13_500 },
+        { type: "video" as const, videoChunkId: hit.evidence.videoChunkId, startSeconds: 11, endSeconds: 13 },
       ],
     };
     renderPage(message);

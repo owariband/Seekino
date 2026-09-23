@@ -10,7 +10,8 @@
 契约。所有资源 ID 使用 camelCase Query 参数，不放入 Path；创建、列表、详情和发送动作
 分别显式使用 `create`、`list`、`get`、`send`。
 所有绝对时间字段都是 Unix epoch 毫秒整数（signed INT64 / MySQL `BIGINT`）；
-视频 `startMs/endMs` 和 Agent `totalDurationMs/stages[].durationMs` 是相对毫秒，不是时间戳。
+视频 `startSeconds/endSeconds` 是相对于原视频起点的整数秒，不是时间戳；
+Agent `totalDurationMs/stages[].durationMs` 是运行耗时毫秒，也不是时间戳。
 
 ## 1. 领域关系
 
@@ -68,7 +69,7 @@ Harness；`gateway/agent_model.py` 使用 LangChain `create_agent` / `ToolStrate
 Markdown 与视频窗口的交错顺序；Server 拒绝重复或未获批 ID。Chat 不提交时间。
 Evaluator 放行后，Server 要求 Query 的 `selected_video_ranges` 与获批 Evidence 的 ID 集合
 完全一致，且每个范围都在对应 canonical Evidence 内；非法 complete 转为 continue。Output 仅按
-`video_chunk_id` 从该获批范围生成 `renderBlocks.startMs/endMs`，不存在 proposed / approved /
+`video_chunk_id` 从该获批范围生成 `renderBlocks.startSeconds/endSeconds`，不存在 proposed / approved /
 canonical 三层范围或 fallback。
 视频 URI、标题等仍始终从可信 Evidence 补齐。逻辑块顺序保存在 `renderBlocks`；整个循环和数据库提交
 成功后才原子交付给前端，不暴露失败运行的半成品。
@@ -241,7 +242,7 @@ ASSISTANT Message 处于 `PROCESSING`。
 不包含独立 `/api/search` 才有的 `agentReply`。`retrievalTrace` 按实际调用顺序记录 Query Agent
 每次检索的受限 `topK`、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID，
 供调权实验复现；普通 `/api/search` 不返回该 Agent 专属字段。`renderBlocks` 是最终显示顺序：Markdown 块携带
-`markdown`，视频块携带 `videoChunkId` 和 Evaluator 审核通过的原视频媒体偏移 `startMs/endMs`。
+`markdown`，视频块携带 `videoChunkId` 和 Evaluator 审核通过的原视频媒体偏移 `startSeconds/endSeconds`。
 该范围应当是对应 canonical Chunk 的子区间；Query 提出候选范围，Evaluator 通过 advice 要求修订。
 候选范围越界不改变 retrieve 已召回 Chunk 的真实性，也不在 Evaluator 之前中止 Kick；
 但 Evaluator complete 只有在获批 ID 集合与 `selected_video_ranges` 一致、每个范围合法时才接受。
@@ -330,7 +331,7 @@ Content-Type: application/json
 | `answer.started` | USER / PROCESSING ASSISTANT 已提交 | `userMessage`、`assistantMessage` |
 | `answer.progress` | Query / Evaluator / Chat 阶段切换 | `phase`：RETRIEVING / EVALUATING / RESPONDING |
 | `answer.evidence` | 最终结果校验并提交后 | `searchResult`：由可信获批 Evidence 补齐的视频窗口，不含 `agentReply`，包含 `retrievalTrace`；兼容旧客户端 |
-| `answer.block` | Evidence 之后按 Chat 逻辑顺序发送 | `block`：Markdown 块，或含 `videoChunkId` 及已审批 `startMs/endMs` 的视频块 |
+| `answer.block` | Evidence 之后按 Chat 逻辑顺序发送 | `block`：Markdown 块，或含 `videoChunkId` 及已审批 `startSeconds/endSeconds` 的视频块 |
 | `answer.delta` | 最终结果校验并提交后 | `delta`：所有 Markdown 块的一次性兼容汇总 |
 | `answer.completed` | 最终结果成功提交后 | `userMessage`、`assistantMessage`：持久化快照 |
 | `answer.failed` | 执行失败且 FAILED 状态已保存 | `error`、`userMessage`、`assistantMessage` |

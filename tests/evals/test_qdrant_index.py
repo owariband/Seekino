@@ -19,8 +19,8 @@ def _chunk(
 ) -> VideoChunkRetrievalDocument:
     return VideoChunkRetrievalDocument(
         sequence_no=sequence_no,
-        start_ms=sequence_no * 60_000,
-        end_ms=(sequence_no + 1) * 60_000,
+        start_seconds=sequence_no * 60,
+        end_seconds=(sequence_no + 1) * 60,
         video_compact=video_compact,
         text=video_compact,
         is_fallback=is_fallback,
@@ -91,8 +91,8 @@ def test_named_vectors_are_stored_and_queried_per_dataset() -> None:
         "dataset_id": "mygo-ep07",
         "video_chunk_id": "mygo-ep07:chunk-0001",
         "chunk_sequence_no": 1,
-        "start_ms": 60_000,
-        "end_ms": 120_000,
+        "start_seconds": 60,
+        "end_seconds": 120,
         "video_compact": "vision winner",
         "is_fallback": True,
     }

@@ -236,7 +236,7 @@ def _job_detail() -> ParseJobDetail:
             episode_order=1,
             original_filename="episode.mp4",
             pipeline_version="m1",
-            duration_ms=140_000,
+            duration_seconds=140,
             status="RUNNING",
             stage="PARSING",
             progress=30,
@@ -261,8 +261,8 @@ def _job_detail() -> ParseJobDetail:
 
 def _checkpoint(
     sequence_no: int,
-    start_ms: int | None,
-    end_ms: int | None,
+    start_seconds: int | None,
+    end_seconds: int | None,
     stage: str,
 ) -> VideoChunkCheckpointState:
     return VideoChunkCheckpointState(
@@ -270,8 +270,8 @@ def _checkpoint(
         sequence_no=sequence_no,
         video_chunk_id=f"chunk-{sequence_no}",
         stage=stage,
-        chunk_start_ms=start_ms,
-        chunk_end_ms=end_ms,
+        chunk_start_seconds=start_seconds,
+        chunk_end_seconds=end_seconds,
     )
 
 
@@ -280,9 +280,9 @@ def test_job_projection_keeps_semantic_parse_progress_across_later_stages() -> N
         _job_detail(),
         job=replace(_job_detail().job, stage="TEXT_EMBEDDING"),
         checkpoints=(
-            _checkpoint(0, 0, 60_000, "TEXT_EMBEDDED"),
-            _checkpoint(1, 60_000, 120_000, "PARSED"),
-            _checkpoint(2, 120_000, 140_000, "SPLIT_READY"),
+            _checkpoint(0, 0, 60, "TEXT_EMBEDDED"),
+            _checkpoint(1, 60, 120, "PARSED"),
+            _checkpoint(2, 120, 140, "SPLIT_READY"),
         ),
     )
 
@@ -291,25 +291,25 @@ def test_job_projection_keeps_semantic_parse_progress_across_later_stages() -> N
     assert payload["progress"] == 30
     assert payload["overallProgress"] == 85
     assert payload["stageProgress"] == 42
-    assert payload["completedDurationMs"] == 120_000
-    assert payload["completedThroughMs"] == 120_000
-    assert payload["totalDurationMs"] == 140_000
+    assert payload["completedDurationSeconds"] == 120
+    assert payload["completedThroughSeconds"] == 120
+    assert payload["totalDurationSeconds"] == 140
     assert payload["completedChunkCount"] == 2
     assert payload["totalChunkCount"] == 3
     assert payload["currentChunk"] == {
         "sequenceNo": 2,
-        "startMs": 120_000,
-        "endMs": 140_000,
+        "startSeconds": 120,
+        "endSeconds": 140,
     }
-    assert payload["checkpoints"][2]["chunkStartMs"] == 120_000
-    assert payload["checkpoints"][2]["chunkEndMs"] == 140_000
+    assert payload["checkpoints"][2]["chunkStartSeconds"] == 120
+    assert payload["checkpoints"][2]["chunkEndSeconds"] == 140
 
 
 def test_job_projection_does_not_guess_from_incomplete_checkpoint_ranges() -> None:
     detail = replace(
         _job_detail(),
         checkpoints=(
-            _checkpoint(0, 0, 60_000, "PARSED"),
+            _checkpoint(0, 0, 60, "PARSED"),
             _checkpoint(1, None, None, "SPLIT_READY"),
         ),
     )
@@ -318,8 +318,8 @@ def test_job_projection_does_not_guess_from_incomplete_checkpoint_ranges() -> No
 
     assert payload["overallProgress"] is None
     assert payload["stageProgress"] is None
-    assert payload["completedDurationMs"] is None
-    assert payload["completedThroughMs"] is None
+    assert payload["completedDurationSeconds"] is None
+    assert payload["completedThroughSeconds"] is None
     assert payload["completedChunkCount"] is None
     assert payload["currentChunk"] is None
 
@@ -340,8 +340,8 @@ def test_succeeded_job_reports_complete_even_for_legacy_checkpoints() -> None:
 
     assert payload["overallProgress"] == 100
     assert payload["stageProgress"] == 100
-    assert payload["completedDurationMs"] == 140_000
-    assert payload["completedThroughMs"] == 140_000
+    assert payload["completedDurationSeconds"] == 140
+    assert payload["completedThroughSeconds"] == 140
     assert payload["completedChunkCount"] == payload["totalChunkCount"] == 1
 
 

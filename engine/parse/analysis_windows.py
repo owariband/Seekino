@@ -13,10 +13,10 @@ from pathlib import Path
 
 from .schemas import AnalysisWindow
 
-_MIN_TAIL_MS = 1000
+_MIN_TAIL_SECONDS = 1
 
 
-def probe_video_duration_ms(video_path: str | Path) -> int:
+def probe_video_duration_seconds(video_path: str | Path) -> int:
     path = Path(video_path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"video file does not exist: {path}")
@@ -50,54 +50,66 @@ def probe_video_duration_ms(video_path: str | Path) -> int:
         raise RuntimeError(f"ffprobe returned an invalid duration: {path}") from exc
     if not math.isfinite(duration_seconds) or duration_seconds <= 0:
         raise RuntimeError(f"ffprobe returned an invalid duration: {path}")
-    return round(duration_seconds * 1000)
+    return math.ceil(duration_seconds)
 
 
 def plan_analysis_windows(
     video_path: str | Path,
     *,
-    duration_ms: int,
+    duration_seconds: int,
     output_dir: str | Path,
-    chunk_duration_ms: int = 60_000,
-    context_overlap_ms: int = 3_000,
+    chunk_duration_seconds: int = 60,
+    context_overlap_seconds: int = 3,
 ) -> list[AnalysisWindow]:
-    if duration_ms <= 0:
-        raise ValueError("duration_ms must be greater than zero")
-    if chunk_duration_ms <= 0:
-        raise ValueError("chunk_duration_ms must be greater than zero")
-    if context_overlap_ms < 0:
-        raise ValueError("context_overlap_ms cannot be negative")
+    if duration_seconds <= 0:
+        raise ValueError("duration_seconds must be greater than zero")
+    if chunk_duration_seconds <= 0:
+        raise ValueError("chunk_duration_seconds must be greater than zero")
+    if context_overlap_seconds < 0:
+        raise ValueError("context_overlap_seconds cannot be negative")
 
     source_video = Path(video_path).expanduser().resolve()
     target_dir = Path(output_dir).expanduser().resolve()
     windows: list[AnalysisWindow] = []
-    chunk_start_ms = 0
+    chunk_start_seconds = 0
 
-    while chunk_start_ms < duration_ms:
-        chunk_end_ms = min(chunk_start_ms + chunk_duration_ms, duration_ms)
-        min_tail_ms = min(_MIN_TAIL_MS, max(1, chunk_duration_ms // 4))
-        if 0 < duration_ms - chunk_end_ms < min_tail_ms:
-            chunk_end_ms = duration_ms
+    while chunk_start_seconds < duration_seconds:
+        chunk_end_seconds = min(
+            chunk_start_seconds + chunk_duration_seconds,
+            duration_seconds,
+        )
+        min_tail_seconds = min(
+            float(_MIN_TAIL_SECONDS),
+            chunk_duration_seconds / 4,
+        )
+        if 0 < duration_seconds - chunk_end_seconds <= min_tail_seconds:
+            chunk_end_seconds = duration_seconds
 
-        analysis_start_ms = max(0, chunk_start_ms - context_overlap_ms)
-        analysis_end_ms = min(duration_ms, chunk_end_ms + context_overlap_ms)
+        analysis_start_seconds = max(
+            0,
+            chunk_start_seconds - context_overlap_seconds,
+        )
+        analysis_end_seconds = min(
+            duration_seconds,
+            chunk_end_seconds + context_overlap_seconds,
+        )
         sequence_no = len(windows)
         filename = (
             f"chunk-{sequence_no:04d}.analysis-"
-            f"{analysis_start_ms:010d}-{analysis_end_ms:010d}.mp4"
+            f"{analysis_start_seconds:010d}-{analysis_end_seconds:010d}.mp4"
         )
         windows.append(
             AnalysisWindow(
                 sequence_no=sequence_no,
                 source_video=source_video,
                 media_path=target_dir / filename,
-                chunk_start_ms=chunk_start_ms,
-                chunk_end_ms=chunk_end_ms,
-                analysis_start_ms=analysis_start_ms,
-                analysis_end_ms=analysis_end_ms,
+                chunk_start_seconds=chunk_start_seconds,
+                chunk_end_seconds=chunk_end_seconds,
+                analysis_start_seconds=analysis_start_seconds,
+                analysis_end_seconds=analysis_end_seconds,
             )
         )
-        chunk_start_ms = chunk_end_ms
+        chunk_start_seconds = chunk_end_seconds
 
     return windows
 
@@ -138,8 +150,8 @@ def materialize_analysis_window(
             f"analysis window path exists but is not a usable file: {window.media_path}"
         )
 
-    start_seconds = f"{window.analysis_start_ms / 1000:.3f}"
-    duration_seconds = f"{window.analysis_duration_ms / 1000:.3f}"
+    start_seconds = f"{window.analysis_start_seconds:.3f}"
+    duration_seconds = f"{window.analysis_duration_seconds:.3f}"
     command = [
         ffmpeg_bin,
         "-nostdin",
@@ -253,11 +265,11 @@ def materialize_canonical_chunk(
         "-v",
         "error",
         "-ss",
-        f"{window.chunk_start_ms / 1000:.3f}",
+        f"{window.chunk_start_seconds:.3f}",
         "-i",
         str(window.source_video),
         "-t",
-        f"{(window.chunk_end_ms - window.chunk_start_ms) / 1000:.3f}",
+        f"{window.chunk_end_seconds - window.chunk_start_seconds:.3f}",
         "-map",
         "0:v:0",
         "-map",

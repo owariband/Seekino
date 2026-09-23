@@ -30,13 +30,13 @@ vi.mock("../../api/client", async (importOriginal) => ({
 
 const file = new File(["abcdefghij"], "episode.mp4", { type: "video/mp4" });
 const parseConfig: ParseConfig = {
-  version: 1,
-  window: { chunkDurationMs: 60000, contextOverlapMs: 3000, analysisMaxHeight: 720, canonicalMaxHeight: 720 },
+  version: 2,
+  window: { chunkDurationSeconds: 60, contextOverlapSeconds: 3, analysisMaxHeight: 720, canonicalMaxHeight: 720 },
   asr: { mode: "lite", model: "lite", fps: 1, maxOutputTokens: null, concurrency: 4 },
   vision: { model: "pro", inputMode: "video", fps: 1, maxFramesPerWindow: null, maxOutputTokens: null },
   context: { maxEvents: 8, maxChars: 2000, backgroundTextEnabled: true, backgroundTextMaxChars: null,
     backgroundImagesEnabled: true, maxBackgroundImages: null, backgroundImageMaxEdge: 1024 },
-  fallback: { enabled: true, model: "flash", frameFps: 0.5, groupDurationMs: 30000, maxFramesPerGroup: 15,
+  fallback: { enabled: true, model: "flash", frameFps: 0.5, groupDurationSeconds: 30, maxFramesPerGroup: 15,
     maxHeight: 720, reasoningEffort: "none", maxOutputTokens: 8192, requestTimeoutSeconds: 1200 },
   embedding: { model: "embedding", dimensions: 1024, videoFps: 1 },
   execution: { requestTimeoutSeconds: 600, maxAttempts: 3 },
@@ -57,7 +57,7 @@ const retriedJob: ParseJobView = {
   seriesName: "测试系列", episodeOrder: 1, originalFilename: file.name,
   pipelineVersion: "m1", retryOfJobId: null, status: "QUEUED", stage: "QUEUED",
   progress: 18, overallProgress: 18, stageProgress: null,
-  completedDurationMs: null, completedThroughMs: null, videoDurationMs: 10_000, totalDurationMs: 10_000,
+  completedDurationSeconds: null, completedThroughSeconds: null, videoDurationSeconds: 10, totalDurationSeconds: 10,
   processingDurationMs: 0, processingTimingComplete: false,
   completedChunkCount: null, totalChunkCount: 1, currentChunk: null,
   attemptCount: 3, maxAttempts: 4, availableAt: 1,

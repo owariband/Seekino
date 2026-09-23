@@ -199,8 +199,8 @@ def _retrieval_card(hit: VideoChunkSearchHit) -> dict[str, Any]:
     return {
         "video_chunk_id": hit.candidate.video_chunk_id,
         "episode_order": hit.evidence.episode_order,
-        "start_ms": hit.evidence.start_ms,
-        "end_ms": hit.evidence.end_ms,
+        "start_seconds": hit.evidence.start_seconds,
+        "end_seconds": hit.evidence.end_seconds,
         "description": _bounded_text(hit.selection_reason.summary, 500),
         "fused_rank": hit.candidate.fused_rank,
         "fused_score": hit.candidate.fused_score,
@@ -215,8 +215,8 @@ def _draft_card(workspace: AgentWorkspace, item: DraftItem) -> dict[str, Any]:
     return {
         "video_chunk_id": item.video_chunk_id,
         "episode_order": evidence.episode_order,
-        "start_ms": item.start_ms,
-        "end_ms": item.end_ms,
+        "start_seconds": item.start_seconds,
+        "end_seconds": item.end_seconds,
         "description": _bounded_text(item.claim, 500),
     }
 

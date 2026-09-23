@@ -11,7 +11,7 @@ from gateway.openai.multimodal import DeepSeekMultimodalModel
 from .analysis_windows import (
     materialize_analysis_windows,
     plan_analysis_windows,
-    probe_video_duration_ms,
+    probe_video_duration_seconds,
 )
 from .checkpoints import (
     load_completed_chunks as _load_completed_chunks,
@@ -55,8 +55,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parse_video.add_argument("--video", type=Path, required=True)
     parse_video.add_argument("--output-dir", type=Path, required=True)
-    parse_video.add_argument("--chunk-duration-ms", type=int, default=60_000)
-    parse_video.add_argument("--context-overlap-ms", type=int, default=3_000)
+    parse_video.add_argument("--chunk-duration-seconds", type=int, default=60)
+    parse_video.add_argument("--context-overlap-seconds", type=int, default=3)
     parse_video.add_argument("--max-height", type=int, default=720)
     parse_video.add_argument("--asr-concurrency", type=int, default=4)
     parse_video.add_argument(
@@ -153,17 +153,17 @@ def main() -> None:
 
     video_path = args.video.expanduser().resolve()
     output_dir = args.output_dir.expanduser().resolve()
-    duration_ms = probe_video_duration_ms(video_path)
+    duration_seconds = probe_video_duration_seconds(video_path)
     windows = plan_analysis_windows(
         video_path,
-        duration_ms=duration_ms,
+        duration_seconds=duration_seconds,
         output_dir=output_dir / "windows",
-        chunk_duration_ms=args.chunk_duration_ms,
-        context_overlap_ms=args.context_overlap_ms,
+        chunk_duration_seconds=args.chunk_duration_seconds,
+        context_overlap_seconds=args.context_overlap_seconds,
     )
     materialize_analysis_windows(windows, max_height=args.max_height)
     print(
-        f"prepared {len(windows)} temporary analysis windows for {duration_ms} ms; "
+        f"prepared {len(windows)} temporary analysis windows for {duration_seconds} seconds; "
         f"ASR runs with up to {args.asr_concurrency} workers while semantic "
         "parsing runs serially",
         flush=True,
@@ -206,7 +206,7 @@ def main() -> None:
                 transcript_model if args.asr_mode == "lite" else None
             ),
             frame_fps=fallback_config.frame_fps,
-            group_duration_ms=fallback_config.group_duration_ms,
+            group_duration_seconds=fallback_config.group_duration_seconds,
             max_frames_per_group=fallback_config.max_frames_per_group,
             max_height=fallback_config.max_height,
         )
@@ -231,7 +231,7 @@ def main() -> None:
             "content-filter fallback enabled; "
             f"provider={deepseek_config.provider}; model={deepseek_config.model}; "
             f"input_mode=ordered_frames; fps={fallback_config.frame_fps}; "
-            f"group_duration_ms={fallback_config.group_duration_ms}; "
+            f"group_duration_seconds={fallback_config.group_duration_seconds}; "
             f"max_frames_per_group={fallback_config.max_frames_per_group}",
             flush=True,
         )
@@ -247,7 +247,7 @@ def main() -> None:
             transcript_model if args.asr_mode == "lite" else None
         ),
         fallback_frame_fps=fallback_config.frame_fps,
-        fallback_group_duration_ms=fallback_config.group_duration_ms,
+        fallback_group_duration_seconds=fallback_config.group_duration_seconds,
         fallback_max_frames_per_group=fallback_config.max_frames_per_group,
     )
     if completed_chunks:
@@ -294,9 +294,9 @@ def main() -> None:
     ) as candidate_transcripts:
         result = pipeline.run(
             source_video=str(video_path),
-            duration_ms=duration_ms,
-            chunk_duration_ms=args.chunk_duration_ms,
-            context_overlap_ms=args.context_overlap_ms,
+            duration_seconds=duration_seconds,
+            chunk_duration_seconds=args.chunk_duration_seconds,
+            context_overlap_seconds=args.context_overlap_seconds,
             windows=windows,
             series_bible=_read_series_bible(args),
             candidate_transcripts=candidate_transcripts,
@@ -316,7 +316,7 @@ def main() -> None:
             refiner_model=deepseek_config.model,
             input_mode="ordered_frames",
             frame_fps=fallback_config.frame_fps,
-            group_duration_ms=fallback_config.group_duration_ms,
+            group_duration_seconds=fallback_config.group_duration_seconds,
             max_frames_per_group=fallback_config.max_frames_per_group,
             max_height=fallback_config.max_height,
         ),

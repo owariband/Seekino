@@ -59,7 +59,7 @@ def load_completed_chunks(
     fallback_model: str,
     fallback_transcript_model: str | None,
     fallback_frame_fps: float,
-    fallback_group_duration_ms: int,
+    fallback_group_duration_seconds: int,
     fallback_max_frames_per_group: int,
 ) -> list[VideoChunkParseResult]:
     completed: list[VideoChunkParseResult] = []
@@ -112,7 +112,7 @@ def load_completed_chunks(
             if provenance.provider != "doubao":
                 expected_fallback = {
                     "frame_fps": fallback_frame_fps,
-                    "group_duration_ms": fallback_group_duration_ms,
+                    "group_duration_seconds": fallback_group_duration_seconds,
                     "max_frames_per_group": fallback_max_frames_per_group,
                     "fallback_transcript_model": fallback_transcript_model,
                     "visual_model": fallback_model,
@@ -278,7 +278,7 @@ class _CandidateTranscriptStream:
         with parse_chunk_scope(window.sequence_no):
             analysis = self._parser.transcribe(
                 window.media_path,
-                duration_ms=window.analysis_duration_ms,
+                duration_seconds=window.analysis_duration_seconds,
             )
         write_json(
             TranscriptCheckpoint(

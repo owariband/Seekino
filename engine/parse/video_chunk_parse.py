@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -13,7 +14,7 @@ from gateway.multimodal import (
 )
 from gateway.errors import ContentFilterError
 
-from .analysis_windows import probe_video_duration_ms
+from .analysis_windows import probe_video_duration_seconds
 from .background import BackgroundImage, build_background_image_inputs
 from .frame_sampler import extract_video_frames, plan_frame_timestamps
 from .prompts import (
@@ -40,7 +41,7 @@ class VideoASRAgentProtocol(Protocol):
         self,
         video_path: str | Path,
         *,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
     ) -> TranscriptAnalysis: ...
 
 
@@ -51,7 +52,7 @@ class VideoUnderstandingAgentProtocol(Protocol):
         *,
         transcript: TranscriptAnalysis,
         context: str | None = None,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence: ...
 
@@ -74,13 +75,13 @@ class VideoASRAgent:
         self,
         video_path: str | Path,
         *,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
     ) -> TranscriptAnalysis:
-        path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
+        path, resolved_duration_seconds = _resolve_video_chunk(video_path, duration_seconds)
         return _transcribe_video_chunk(
             self._model,
             path,
-            duration_ms=resolved_duration_ms,
+            duration_seconds=resolved_duration_seconds,
             transcript_fps=self.fps,
         )
 
@@ -107,13 +108,13 @@ class VideoUnderstandingAgent:
         *,
         transcript: TranscriptAnalysis,
         context: str | None = None,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
-        path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
-        transcript = _clamp_transcript(transcript, resolved_duration_ms)
+        path, resolved_duration_seconds = _resolve_video_chunk(video_path, duration_seconds)
+        transcript = _clamp_transcript(transcript, resolved_duration_seconds)
         instruction = build_video_parse_prompt(
-            resolved_duration_ms,
+            resolved_duration_seconds,
             transcript,
             context=context,
             ordered_frames=False,
@@ -132,7 +133,7 @@ class VideoUnderstandingAgent:
         return _to_video_evidence(
             timeline,
             transcript,
-            resolved_duration_ms,
+            resolved_duration_seconds,
             provenance=VideoParseProvenance(
                 provider=provider,
                 model=self.model_name,
@@ -143,9 +144,9 @@ class VideoUnderstandingAgent:
 
     def analyze_frames(
         self,
-        frames: Sequence[tuple[int, str | Path]],
+        frames: Sequence[tuple[float, str | Path]],
         *,
-        duration_ms: int,
+        duration_seconds: int,
         transcript: TranscriptAnalysis,
         context: str | None = None,
         background_images: Sequence[BackgroundImage] = (),
@@ -153,7 +154,7 @@ class VideoUnderstandingAgent:
         return _analyze_ordered_frames(
             self._model,
             frames,
-            duration_ms=duration_ms,
+            duration_seconds=duration_seconds,
             transcript=transcript,
             context=context,
             frame_fps=None,
@@ -190,25 +191,25 @@ class OrderedFrameVideoUnderstandingAgent:
         *,
         transcript: TranscriptAnalysis,
         context: str | None = None,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
-        path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
-        timestamps_ms = plan_frame_timestamps(
-            resolved_duration_ms,
+        path, resolved_duration_seconds = _resolve_video_chunk(video_path, duration_seconds)
+        timestamps_seconds = plan_frame_timestamps(
+            resolved_duration_seconds,
             frame_fps=self.frame_fps,
             max_frames=self.max_frames,
         )
         with tempfile.TemporaryDirectory(prefix="anivag-qwen-frames-") as directory:
             frames = extract_video_frames(
                 path,
-                timestamps_ms,
+                timestamps_seconds,
                 output_dir=Path(directory),
                 max_height=self.max_height,
             )
             return self.analyze_frames(
                 frames,
-                duration_ms=resolved_duration_ms,
+                duration_seconds=resolved_duration_seconds,
                 transcript=transcript,
                 context=context,
                 background_images=background_images,
@@ -216,9 +217,9 @@ class OrderedFrameVideoUnderstandingAgent:
 
     def analyze_frames(
         self,
-        frames: Sequence[tuple[int, str | Path]],
+        frames: Sequence[tuple[float, str | Path]],
         *,
-        duration_ms: int,
+        duration_seconds: int,
         transcript: TranscriptAnalysis,
         context: str | None = None,
         background_images: Sequence[BackgroundImage] = (),
@@ -226,7 +227,7 @@ class OrderedFrameVideoUnderstandingAgent:
         return _analyze_ordered_frames(
             self._model,
             frames,
-            duration_ms=duration_ms,
+            duration_seconds=duration_seconds,
             transcript=transcript,
             context=context,
             frame_fps=self.frame_fps,
@@ -245,13 +246,13 @@ class FrameFallbackVideoUnderstandingAgent:
         *,
         asr_model_name: str | None,
         frame_fps: float,
-        group_duration_ms: int,
+        group_duration_seconds: int,
         max_frames_per_group: int,
         max_height: int,
     ) -> None:
         _validate_fps("frame_fps", frame_fps)
-        if group_duration_ms <= 0:
-            raise ValueError("group_duration_ms must be greater than zero")
+        if group_duration_seconds <= 0:
+            raise ValueError("group_duration_seconds must be greater than zero")
         if max_frames_per_group <= 0:
             raise ValueError("max_frames_per_group must be greater than zero")
         if max_height <= 0:
@@ -265,7 +266,7 @@ class FrameFallbackVideoUnderstandingAgent:
         self.vision_model_name = vision_model.model_name
         self.refiner_model_name = refiner_model.model_name
         self.frame_fps = frame_fps
-        self.group_duration_ms = group_duration_ms
+        self.group_duration_seconds = group_duration_seconds
         self.max_frames_per_group = max_frames_per_group
         self.max_height = max_height
         self._vision_model = vision_model
@@ -277,38 +278,38 @@ class FrameFallbackVideoUnderstandingAgent:
         *,
         transcript: TranscriptAnalysis,
         context: str | None = None,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
-        path, resolved_duration_ms = _resolve_video_chunk(video_path, duration_ms)
-        transcript = _clamp_transcript(transcript, resolved_duration_ms)
+        path, resolved_duration_seconds = _resolve_video_chunk(video_path, duration_seconds)
+        transcript = _clamp_transcript(transcript, resolved_duration_seconds)
 
         mapped_observations: list[dict[str, Any]] = []
-        all_timestamps_ms: list[int] = []
+        all_timestamps_seconds: list[float] = []
         group_frame_counts: list[int] = []
-        frame_interval_ms = max(1, round(1000 / self.frame_fps))
+        frame_interval_seconds = 1 / self.frame_fps
         with tempfile.TemporaryDirectory(
             prefix="anivag-deepseek-frames-"
         ) as directory:
             frame_root = Path(directory)
-            for group_index, (group_start_ms, group_end_ms) in enumerate(
+            for group_index, (group_start_seconds, group_end_seconds) in enumerate(
                 _analysis_groups(
-                    resolved_duration_ms,
-                    group_duration_ms=self.group_duration_ms,
+                    resolved_duration_seconds,
+                    group_duration_seconds=self.group_duration_seconds,
                 )
             ):
-                local_timestamps_ms = plan_frame_timestamps(
-                    group_end_ms - group_start_ms,
+                local_timestamps_seconds = plan_frame_timestamps(
+                    group_end_seconds - group_start_seconds,
                     frame_fps=self.frame_fps,
                     max_frames=self.max_frames_per_group,
                 )
-                timestamps_ms = [
-                    group_start_ms + timestamp_ms
-                    for timestamp_ms in local_timestamps_ms
+                timestamps_seconds = [
+                    group_start_seconds + timestamp_seconds
+                    for timestamp_seconds in local_timestamps_seconds
                 ]
                 frames = extract_video_frames(
                     path,
-                    timestamps_ms,
+                    timestamps_seconds,
                     output_dir=frame_root / f"group-{group_index:03d}",
                     max_height=self.max_height,
                 )
@@ -322,25 +323,25 @@ class FrameFallbackVideoUnderstandingAgent:
                     _map_visual_observations(
                         evidence,
                         group_index=group_index,
-                        group_start_ms=group_start_ms,
-                        group_end_ms=group_end_ms,
-                        timestamps_ms=timestamps_ms,
-                        frame_interval_ms=frame_interval_ms,
+                        group_start_seconds=group_start_seconds,
+                        group_end_seconds=group_end_seconds,
+                        timestamps_seconds=timestamps_seconds,
+                        frame_interval_seconds=frame_interval_seconds,
                     )
                 )
-                all_timestamps_ms.extend(timestamps_ms)
+                all_timestamps_seconds.extend(timestamps_seconds)
                 group_frame_counts.append(len(frames))
 
         observations = _deduplicate_visual_observations(
             mapped_observations,
-            max_gap_ms=frame_interval_ms + 500,
+            max_gap_seconds=frame_interval_seconds + 0.5,
         )
         timeline = self._refiner_model.generate(
             [
                 *build_background_image_inputs(background_images),
                 TextInput(
                     text=build_fallback_refiner_prompt(
-                        resolved_duration_ms,
+                        resolved_duration_seconds,
                         transcript,
                         observations,
                         context=context,
@@ -354,20 +355,20 @@ class FrameFallbackVideoUnderstandingAgent:
             timeline,
             transcript=transcript,
             observations=observations,
-            duration_ms=resolved_duration_ms,
+            duration_seconds=resolved_duration_seconds,
         )
         return _to_video_evidence(
             timeline,
             transcript,
-            resolved_duration_ms,
+            resolved_duration_seconds,
             provenance=VideoParseProvenance(
                 provider="deepseek",
                 model=self.refiner_model_name,
                 input_mode="ordered_frames",
                 frame_fps=self.frame_fps,
-                frame_timestamps_ms=all_timestamps_ms,
+                frame_timestamps_seconds=all_timestamps_seconds,
                 group_frame_counts=group_frame_counts,
-                group_duration_ms=self.group_duration_ms,
+                group_duration_seconds=self.group_duration_seconds,
                 max_frames_per_group=self.max_frames_per_group,
                 fallback_transcript_model=self.asr_model_name,
                 visual_model=self.vision_model_name,
@@ -398,7 +399,7 @@ class ContentFilterVideoUnderstandingAgent:
         *,
         transcript: TranscriptAnalysis,
         context: str | None = None,
-        duration_ms: int | None = None,
+        duration_seconds: int | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         try:
@@ -406,7 +407,7 @@ class ContentFilterVideoUnderstandingAgent:
                 video_path,
                 transcript=transcript,
                 context=context,
-                duration_ms=duration_ms,
+                duration_seconds=duration_seconds,
                 background_images=background_images,
             )
         except ContentFilterError as error:
@@ -416,7 +417,7 @@ class ContentFilterVideoUnderstandingAgent:
                 video_path,
                 transcript=transcript,
                 context=context,
-                duration_ms=duration_ms,
+                duration_seconds=duration_seconds,
                 background_images=background_images,
             )
             if evidence.provenance is None:
@@ -442,26 +443,26 @@ class ContentFilterVideoUnderstandingAgent:
 
 def _analyze_ordered_frames(
     model: MultimodalModel,
-    frames: Sequence[tuple[int, str | Path]],
+    frames: Sequence[tuple[float, str | Path]],
     *,
-    duration_ms: int,
+    duration_seconds: int,
     transcript: TranscriptAnalysis,
     context: str | None,
     frame_fps: float | None,
     sequence_intro: str,
     background_images: Sequence[BackgroundImage] = (),
 ) -> VideoEvidence:
-    inputs, timestamps_ms = _ordered_frame_inputs(
+    inputs, timestamps_seconds = _ordered_frame_inputs(
         frames,
-        duration_ms=duration_ms,
+        duration_seconds=duration_seconds,
         sequence_intro=sequence_intro,
     )
     inputs = [*build_background_image_inputs(background_images), *inputs]
-    transcript = _clamp_transcript(transcript, duration_ms)
+    transcript = _clamp_transcript(transcript, duration_seconds)
     inputs.append(
         TextInput(
             text=build_video_parse_prompt(
-                duration_ms,
+                duration_seconds,
                 transcript,
                 context=context,
                 ordered_frames=True,
@@ -476,51 +477,56 @@ def _analyze_ordered_frames(
     return _to_video_evidence(
         timeline,
         transcript,
-        duration_ms,
+        duration_seconds,
         provenance=VideoParseProvenance(
             provider=_provenance_provider(model),
             model=model.model_name,
             input_mode="ordered_frames",
             frame_fps=frame_fps,
-            frame_timestamps_ms=timestamps_ms,
+            frame_timestamps_seconds=timestamps_seconds,
         ),
     )
 
 
 def _ordered_frame_inputs(
-    frames: Sequence[tuple[int, str | Path]],
+    frames: Sequence[tuple[float, str | Path]],
     *,
-    duration_ms: int,
+    duration_seconds: int,
     sequence_intro: str,
-) -> tuple[list[TextInput | ImageInput], list[int]]:
-    if duration_ms <= 0:
-        raise ValueError("duration_ms must be greater than zero")
+) -> tuple[list[TextInput | ImageInput], list[float]]:
+    if duration_seconds <= 0:
+        raise ValueError("duration_seconds must be greater than zero")
     if not frames:
         raise ValueError("at least one sampled frame is required")
 
     inputs: list[TextInput | ImageInput] = [TextInput(text=sequence_intro)]
-    timestamps_ms: list[int] = []
-    previous_timestamp_ms = -1
-    for index, (timestamp_ms, frame_path) in enumerate(frames, start=1):
-        if timestamp_ms <= previous_timestamp_ms:
+    timestamps_seconds: list[float] = []
+    previous_timestamp_seconds = -1.0
+    for index, (timestamp_seconds, frame_path) in enumerate(frames, start=1):
+        if not math.isfinite(timestamp_seconds):
+            raise ValueError("frame timestamp must be finite")
+        if timestamp_seconds <= previous_timestamp_seconds:
             raise ValueError("frame timestamps must be strictly increasing")
-        if timestamp_ms < 0 or timestamp_ms >= duration_ms:
+        if timestamp_seconds < 0 or timestamp_seconds >= duration_seconds:
             raise ValueError("frame timestamp must be inside the video duration")
         inputs.extend(
             [
                 TextInput(
-                    text=f"Frame {index}/{len(frames)}: t={timestamp_ms} ms"
+                    text=(
+                        f"Frame {index}/{len(frames)}: "
+                        f"t={timestamp_seconds:g} seconds"
+                    )
                 ),
                 ImageInput(path=Path(frame_path), detail="high"),
             ]
         )
-        timestamps_ms.append(timestamp_ms)
-        previous_timestamp_ms = timestamp_ms
-    return inputs, timestamps_ms
+        timestamps_seconds.append(timestamp_seconds)
+        previous_timestamp_seconds = timestamp_seconds
+    return inputs, timestamps_seconds
 
 
 def _neutral_visual_inputs(
-    frames: Sequence[tuple[int, str | Path]],
+    frames: Sequence[tuple[float, str | Path]],
 ) -> list[TextInput | ImageInput]:
     if not frames:
         raise ValueError("at least one sampled frame is required")
@@ -544,17 +550,20 @@ def _neutral_visual_inputs(
 
 
 def _analysis_groups(
-    duration_ms: int,
+    duration_seconds: int,
     *,
-    group_duration_ms: int,
+    group_duration_seconds: int,
 ) -> list[tuple[int, int]]:
-    if duration_ms <= 0:
-        raise ValueError("duration_ms must be greater than zero")
-    if group_duration_ms <= 0:
-        raise ValueError("group_duration_ms must be greater than zero")
+    if duration_seconds <= 0:
+        raise ValueError("duration_seconds must be greater than zero")
+    if group_duration_seconds <= 0:
+        raise ValueError("group_duration_seconds must be greater than zero")
     return [
-        (start_ms, min(duration_ms, start_ms + group_duration_ms))
-        for start_ms in range(0, duration_ms, group_duration_ms)
+        (
+            start_seconds,
+            min(duration_seconds, start_seconds + group_duration_seconds),
+        )
+        for start_seconds in range(0, duration_seconds, group_duration_seconds)
     ]
 
 
@@ -575,17 +584,17 @@ def _map_visual_observations(
     evidence: NeutralVisualEvidence,
     *,
     group_index: int,
-    group_start_ms: int,
-    group_end_ms: int,
-    timestamps_ms: Sequence[int],
-    frame_interval_ms: int,
+    group_start_seconds: int,
+    group_end_seconds: int,
+    timestamps_seconds: Sequence[float],
+    frame_interval_seconds: float,
 ) -> list[dict[str, Any]]:
     mapped: list[dict[str, Any]] = []
-    half_interval_ms = max(1, frame_interval_ms // 2)
+    half_interval_seconds = frame_interval_seconds / 2
     for observation_index, observation in enumerate(evidence.observations):
-        evidence_timestamps_ms = sorted(
+        evidence_timestamps_seconds = sorted(
             {
-                timestamps_ms[frame_number - 1]
+                timestamps_seconds[frame_number - 1]
                 for frame_number in observation.evidence_frames
             }
         )
@@ -596,13 +605,19 @@ def _map_visual_observations(
                 ],
                 "source_group_index": group_index,
                 "evidence_frames": sorted(set(observation.evidence_frames)),
-                "evidence_timestamps_ms": evidence_timestamps_ms,
-                "support_intervals_ms": [
+                "evidence_timestamps_seconds": evidence_timestamps_seconds,
+                "support_intervals_seconds": [
                     [
-                        max(group_start_ms, timestamp_ms - half_interval_ms),
-                        min(group_end_ms, timestamp_ms + half_interval_ms),
+                        max(
+                            group_start_seconds,
+                            timestamp_seconds - half_interval_seconds,
+                        ),
+                        min(
+                            group_end_seconds,
+                            timestamp_seconds + half_interval_seconds,
+                        ),
                     ]
-                    for timestamp_ms in evidence_timestamps_ms
+                    for timestamp_seconds in evidence_timestamps_seconds
                 ],
                 "subjects": list(dict.fromkeys(observation.subjects)),
                 "visual_fact": observation.visual_fact,
@@ -616,11 +631,11 @@ def _map_visual_observations(
 def _deduplicate_visual_observations(
     observations: Sequence[dict[str, Any]],
     *,
-    max_gap_ms: int,
+    max_gap_seconds: float,
 ) -> list[dict[str, Any]]:
     ordered = sorted(
         observations,
-        key=lambda item: min(item["evidence_timestamps_ms"]),
+        key=lambda item: min(item["evidence_timestamps_seconds"]),
     )
     deduplicated: list[dict[str, Any]] = []
     for observation in ordered:
@@ -628,15 +643,18 @@ def _deduplicate_visual_observations(
         key = _visual_observation_key(item)
         if deduplicated:
             previous = deduplicated[-1]
-            gap_ms = min(item["evidence_timestamps_ms"]) - max(
-                previous["evidence_timestamps_ms"]
+            gap_seconds = min(item["evidence_timestamps_seconds"]) - max(
+                previous["evidence_timestamps_seconds"]
             )
-            if key == _visual_observation_key(previous) and gap_ms <= max_gap_ms:
+            if (
+                key == _visual_observation_key(previous)
+                and gap_seconds <= max_gap_seconds
+            ):
                 for field in (
                     "source_observation_ids",
                     "evidence_frames",
-                    "evidence_timestamps_ms",
-                    "support_intervals_ms",
+                    "evidence_timestamps_seconds",
+                    "support_intervals_seconds",
                     "subjects",
                 ):
                     previous[field] = _stable_unique(
@@ -677,7 +695,7 @@ def _validate_fallback_timeline(
     *,
     transcript: TranscriptAnalysis,
     observations: Sequence[dict[str, Any]],
-    duration_ms: int,
+    duration_seconds: int,
 ) -> None:
     allowed_dialogue_texts = {
         _normalize_text(cue.text) for cue in transcript.transcript
@@ -693,7 +711,10 @@ def _validate_fallback_timeline(
         )
 
     for index, event in enumerate(timeline.events):
-        if event.start_ms >= duration_ms or event.end_ms > duration_ms:
+        if (
+            event.start_seconds >= duration_seconds
+            or event.end_seconds > duration_seconds
+        ):
             raise ValueError(
                 f"fallback event {index} is outside the analysis window"
             )
@@ -707,23 +728,23 @@ def _validate_fallback_timeline(
 
 def _resolve_video_chunk(
     video_path: str | Path,
-    duration_ms: int | None,
+    duration_seconds: int | None,
 ) -> tuple[Path, int]:
     path = Path(video_path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"video file does not exist: {path}")
-    if duration_ms is None:
-        duration_ms = probe_video_duration_ms(path)
-    elif duration_ms <= 0:
-        raise ValueError("duration_ms must be greater than zero")
-    return path, duration_ms
+    if duration_seconds is None:
+        duration_seconds = probe_video_duration_seconds(path)
+    elif duration_seconds <= 0:
+        raise ValueError("duration_seconds must be greater than zero")
+    return path, duration_seconds
 
 
 def _transcribe_video_chunk(
     model: MultimodalModel,
     video_path: Path,
     *,
-    duration_ms: int,
+    duration_seconds: int,
     transcript_fps: float,
 ) -> TranscriptAnalysis:
     transcript = model.generate(
@@ -734,27 +755,29 @@ def _transcribe_video_chunk(
         schema_name="candidate_transcript",
         result_type=TranscriptAnalysis,
     )
-    return _clamp_transcript(transcript, duration_ms)
+    return _clamp_transcript(transcript, duration_seconds)
 
 
 def _to_video_evidence(
     timeline: VideoTimeline,
     transcript: TranscriptAnalysis,
-    duration_ms: int,
+    duration_seconds: int,
     *,
     provenance: VideoParseProvenance,
 ) -> VideoEvidence:
     return VideoEvidence(
-        duration_ms=duration_ms,
+        duration_seconds=duration_seconds,
         candidate_transcript=transcript.transcript,
         summary=timeline.summary,
         events=sorted(
             [
-                event.model_copy(update={"end_ms": min(event.end_ms, duration_ms)})
+                event.model_copy(
+                    update={"end_seconds": min(event.end_seconds, duration_seconds)}
+                )
                 for event in timeline.events
-                if event.start_ms < duration_ms
+                if event.start_seconds < duration_seconds
             ],
-            key=lambda event: (event.start_ms, event.end_ms),
+            key=lambda event: (event.start_seconds, event.end_seconds),
         ),
         provenance=provenance,
     )
@@ -780,14 +803,16 @@ def _provenance_provider(model: MultimodalModel) -> ProvenanceProvider:
 
 def _clamp_transcript(
     transcript: TranscriptAnalysis,
-    duration_ms: int,
+    duration_seconds: int,
 ) -> TranscriptAnalysis:
     return transcript.model_copy(
         update={
             "transcript": [
-                cue.model_copy(update={"end_ms": min(cue.end_ms, duration_ms)})
+                cue.model_copy(
+                    update={"end_seconds": min(cue.end_seconds, duration_seconds)}
+                )
                 for cue in transcript.transcript
-                if cue.start_ms < duration_ms
+                if cue.start_seconds < duration_seconds
             ]
         }
     )

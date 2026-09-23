@@ -63,13 +63,13 @@ class UnderstandStage:
                 str(video_chunk.media_path),
                 transcript=transcript,
                 context=model_context,
-                duration_ms=video_chunk.analysis_duration_ms,
+                duration_seconds=video_chunk.analysis_duration_seconds,
                 background_images=background_images,
             )
         observed_events, owned_events = self._merge_window_events(
             video_chunk,
             evidence.events,
-            duration_ms=video_chunk.analysis_end_ms,
+            duration_seconds=video_chunk.analysis_end_seconds,
             existing_events=compact.recent_events,
         )
         context_after = self._advance_context(
@@ -97,9 +97,9 @@ class UnderstandStage:
         self,
         *,
         source_video: str,
-        duration_ms: int,
-        chunk_duration_ms: int,
-        context_overlap_ms: int,
+        duration_seconds: int,
+        chunk_duration_seconds: int,
+        context_overlap_seconds: int,
         windows: Sequence[AnalysisWindow],
         series_bible: str | None = None,
         background_images: Sequence[BackgroundImage] = (),
@@ -112,7 +112,7 @@ class UnderstandStage:
         ensure_active: Callable[[], None] | None = None,
         on_chunk_complete: Callable[[VideoChunkParseResult], None] | None = None,
     ) -> VideoParseResult:
-        self._validate_windows(windows, duration_ms)
+        self._validate_windows(windows, duration_seconds)
         if len(completed_chunks) > len(windows):
             raise ValueError("completed chunks cannot outnumber analysis windows")
         context_before = ContextSnapshot(
@@ -149,7 +149,7 @@ class UnderstandStage:
                     )
                 chunk_results.append(completed)
                 all_events.extend(completed.events)
-                all_events.sort(key=lambda event: (event.start_ms, event.end_ms))
+                all_events.sort(key=lambda event: (event.start_seconds, event.end_seconds))
                 context_before = completed.context_after
                 continue
 
@@ -186,7 +186,7 @@ class UnderstandStage:
                 background_images=background_images,
             )
             all_events.extend(chunk_result.events)
-            all_events.sort(key=lambda event: (event.start_ms, event.end_ms))
+            all_events.sort(key=lambda event: (event.start_seconds, event.end_seconds))
             chunk_results.append(chunk_result)
             if on_chunk_complete is not None:
                 on_chunk_complete(chunk_result)
@@ -205,9 +205,9 @@ class UnderstandStage:
 
         return VideoParseResult(
             source_video=source_video,
-            duration_ms=duration_ms,
-            chunk_duration_ms=chunk_duration_ms,
-            context_overlap_ms=context_overlap_ms,
+            duration_seconds=duration_seconds,
+            chunk_duration_seconds=chunk_duration_seconds,
+            context_overlap_seconds=context_overlap_seconds,
             chunks=chunk_results,
             events=all_events,
         )
@@ -215,25 +215,25 @@ class UnderstandStage:
     @staticmethod
     def _validate_windows(
         windows: Sequence[AnalysisWindow],
-        duration_ms: int,
+        duration_seconds: int,
     ) -> None:
-        if duration_ms <= 0:
-            raise ValueError("duration_ms must be greater than zero")
+        if duration_seconds <= 0:
+            raise ValueError("duration_seconds must be greater than zero")
         if not windows:
             raise ValueError("at least one analysis window is required")
 
-        expected_start_ms = 0
+        expected_start_seconds = 0
         for expected_sequence_no, window in enumerate(windows):
             if window.sequence_no != expected_sequence_no:
                 raise ValueError(
                     "analysis windows must have contiguous sequence numbers"
                 )
-            if window.chunk_start_ms != expected_start_ms:
+            if window.chunk_start_seconds != expected_start_seconds:
                 raise ValueError(
                     "canonical chunks must be contiguous and non-overlapping"
                 )
-            expected_start_ms = window.chunk_end_ms
-        if expected_start_ms != duration_ms:
+            expected_start_seconds = window.chunk_end_seconds
+        if expected_start_seconds != duration_seconds:
             raise ValueError("canonical chunks must cover the complete video")
 
     @staticmethod
@@ -241,35 +241,35 @@ class UnderstandStage:
         window: AnalysisWindow,
         events: Sequence[TimelineEvent],
         *,
-        duration_ms: int,
+        duration_seconds: int,
         existing_events: Sequence[ContextEvent | OwnedTimelineEvent],
     ) -> tuple[list[ObservedTimelineEvent], list[OwnedTimelineEvent]]:
         observed_events: list[ObservedTimelineEvent] = []
         owned_events: list[OwnedTimelineEvent] = []
 
         for event in events:
-            absolute_start_ms = min(
-                duration_ms,
-                window.analysis_start_ms + event.start_ms,
+            video_start_seconds = min(
+                duration_seconds,
+                window.analysis_start_seconds + event.start_seconds,
             )
-            absolute_end_ms = min(
-                duration_ms,
-                window.analysis_start_ms + event.end_ms,
+            video_end_seconds = min(
+                duration_seconds,
+                window.analysis_start_seconds + event.end_seconds,
             )
-            if absolute_end_ms <= absolute_start_ms:
+            if video_end_seconds <= video_start_seconds:
                 continue
 
-            midpoint_twice = absolute_start_ms + absolute_end_ms
+            midpoint_twice = video_start_seconds + video_end_seconds
             owned = (
-                2 * window.chunk_start_ms
+                2 * window.chunk_start_seconds
                 <= midpoint_twice
-                < 2 * window.chunk_end_ms
+                < 2 * window.chunk_end_seconds
             )
             candidate_payload = event.model_dump()
             candidate_payload.update(
                 {
-                    "start_ms": absolute_start_ms,
-                    "end_ms": absolute_end_ms,
+                    "start_seconds": video_start_seconds,
+                    "end_seconds": video_end_seconds,
                     "source_chunk_sequence_no": window.sequence_no,
                 }
             )
@@ -283,16 +283,16 @@ class UnderstandStage:
             observed_events.append(
                 ObservedTimelineEvent(
                     relative_event=event,
-                    absolute_start_ms=absolute_start_ms,
-                    absolute_end_ms=absolute_end_ms,
+                    video_start_seconds=video_start_seconds,
+                    video_end_seconds=video_end_seconds,
                     owned_by_current_chunk=owned,
                     kept_after_deduplication=kept,
                 )
             )
 
-        owned_events.sort(key=lambda event: (event.start_ms, event.end_ms))
+        owned_events.sort(key=lambda event: (event.start_seconds, event.end_seconds))
         observed_events.sort(
-            key=lambda event: (event.absolute_start_ms, event.absolute_end_ms)
+            key=lambda event: (event.video_start_seconds, event.video_end_seconds)
         )
         return observed_events, owned_events
 
@@ -336,8 +336,8 @@ class UnderstandStage:
 def _to_context_event(event: OwnedTimelineEvent) -> ContextEvent:
     return ContextEvent(
         chunk_sequence_no=event.source_chunk_sequence_no,
-        start_ms=event.start_ms,
-        end_ms=event.end_ms,
+        start_seconds=event.start_seconds,
+        end_seconds=event.end_seconds,
         event_type=event.event_type,
         description=_truncate(event.description, 400),
         text=_truncate(event.text, 240) if event.text else None,
@@ -362,8 +362,8 @@ def _fit_context(
 def _render_context_events(events: Sequence[ContextEvent]) -> str:
     return "\n".join(
         _render_event_line(
-            start_ms=event.start_ms,
-            end_ms=event.end_ms,
+            start_seconds=event.start_seconds,
+            end_seconds=event.end_seconds,
             event_type=event.event_type,
             description=event.description,
             text=event.text,
@@ -381,8 +381,8 @@ def _render_events(
         return "当前规范 VideoChunk 未归属可确认事件。"
     rendered = "\n".join(
         _render_event_line(
-            start_ms=event.start_ms,
-            end_ms=event.end_ms,
+            start_seconds=event.start_seconds,
+            end_seconds=event.end_seconds,
             event_type=event.event_type,
             description=event.description,
             text=event.text,
@@ -396,8 +396,8 @@ def _render_events(
 
 def _render_event_line(
     *,
-    start_ms: int,
-    end_ms: int,
+    start_seconds: int,
+    end_seconds: int,
     event_type: str,
     description: str,
     text: str | None,
@@ -406,15 +406,14 @@ def _render_event_line(
     if text:
         content = f"{description}；台词：{text}"
     return (
-        f"[{_format_ms(start_ms)}-{_format_ms(end_ms)}] "
+        f"[{_format_seconds(start_seconds)}-{_format_seconds(end_seconds)}] "
         f"{event_type} {content}"
     )
 
 
-def _format_ms(value: int) -> str:
-    minutes, remainder = divmod(value, 60_000)
-    seconds, milliseconds = divmod(remainder, 1000)
-    return f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+def _format_seconds(value: int) -> str:
+    minutes, seconds = divmod(value, 60)
+    return f"{minutes:02d}:{seconds:02d}"
 
 
 def _is_duplicate(
@@ -422,12 +421,12 @@ def _is_duplicate(
     existing_events: Sequence[ContextEvent | OwnedTimelineEvent],
 ) -> bool:
     candidate_key = _event_key(candidate)
-    candidate_midpoint = candidate.start_ms + candidate.end_ms
+    candidate_midpoint = candidate.start_seconds + candidate.end_seconds
     for existing in existing_events:
         if _event_key(existing) != candidate_key:
             continue
-        existing_midpoint = existing.start_ms + existing.end_ms
-        if abs(candidate_midpoint - existing_midpoint) <= 2000:
+        existing_midpoint = existing.start_seconds + existing.end_seconds
+        if abs(candidate_midpoint - existing_midpoint) <= 2:
             return True
     return False
 

@@ -33,7 +33,7 @@ Catalog 中常用字段：
 
 - `video_chunk_id`：候选稳定 ID，后续精读和草稿修改都使用它。
 - `description`：仅供筛选的短描述，不足以独立支撑事实结论。
-- `episode_order`、`start_ms`、`end_ms`：候选所在集数与 canonical Chunk 范围。
+- `episode_order`、`start_seconds`、`end_seconds`：候选所在集数与 canonical Chunk 范围。
 - `fused_rank`、各通道 rank/score：排序与诊断信号，不是事实或置信度百分比。
 - `next_cursor`：Catalog 下一页；为空表示本次召回已读完。
 
@@ -69,7 +69,7 @@ Transcript 通道不会翻译 Query。`inputs.series_context[].transcriptLanguag
 `retrieve` 只发现 canonical VideoChunk，`read_trieve_item` 负责核验。需要形成播放候选时，应遵守：
 
 - `video_chunk_id` 必须来自本轮或此前真实召回；
-- `start_ms`、`end_ms` 必须位于精读证据的 canonical 范围内；
+- `start_seconds`、`end_seconds` 必须位于精读证据的 canonical 范围内；
 - 范围要完整覆盖支撑结论的事件、动作或对白，同时去掉明显无关的前后内容；
 - 对该片段的事实描述必须准确说明 Evidence 实际支持什么，不得把推测写成事实。
 

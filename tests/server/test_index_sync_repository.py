@@ -201,7 +201,7 @@ def test_unparsed_sibling_does_not_hide_ready_video(
                 inference_proxy_uri=None,
                 content_hash="f" * 64,
                 total_bytes=100,
-                duration_ms=60_000,
+                duration_seconds=60,
                 upload_status="COMPLETED",
                 parse_status="QUEUED",
                 upload_progress=100,

@@ -34,7 +34,7 @@ class _QdrantClient:
 def test_parse_defaults_accept_existing_runtime_values_beyond_ui_recommendations() -> None:
     config = ParseConfig.from_defaults(
         runtime=VideoParseRuntimeConfig(
-            chunk_duration_ms=150_000, context_overlap_ms=40_000,
+            chunk_duration_seconds=150, context_overlap_seconds=40,
             max_height=3000, asr_concurrency=20,
             max_context_events=150, max_context_chars=150_000,
             request_timeout_seconds=4000,
@@ -45,6 +45,7 @@ def test_parse_defaults_accept_existing_runtime_values_beyond_ui_recommendations
         embedding_model="test-embedding", embedding_dimensions=1024,
         embedding_fps=1,
     )
+    assert config.version == 2
     assert config.window.analysis_max_height == 3000
     assert config.context.background_image_max_edge == 5000
     assert config.execution.max_attempts == 12
@@ -197,8 +198,8 @@ def test_process_assembly_receives_runtime_configuration(
             asr_enabled=settings.parse.asr_mode == "lite"
         )
         processing_config = processor._config
-        assert processing_config.chunk_duration_ms == settings.parse.chunk_duration_ms
-        assert processing_config.context_overlap_ms == settings.parse.context_overlap_ms
+        assert processing_config.chunk_duration_seconds == settings.parse.chunk_duration_seconds
+        assert processing_config.context_overlap_seconds == settings.parse.context_overlap_seconds
         assert processing_config.analysis_max_height == settings.parse.max_height
         assert processing_config.canonical_max_height == settings.parse.max_height
         assert processing_config.asr_concurrency == settings.parse.asr_concurrency

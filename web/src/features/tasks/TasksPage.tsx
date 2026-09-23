@@ -389,9 +389,9 @@ export function TasksPage() {
                 <span>
                   连续解析到{" "}
                   <strong>
-                    {job.completedThroughMs === null
+                    {job.completedThroughSeconds === null
                       ? "等待检查点"
-                      : `${formatTimecode(job.completedThroughMs)} / ${formatTimecode(job.videoDurationMs)}`}
+                      : `${formatTimecode(job.completedThroughSeconds)} / ${formatTimecode(job.videoDurationSeconds)}`}
                   </strong>
                 </span>
                 <span>
@@ -404,7 +404,7 @@ export function TasksPage() {
                 </span>
                 {job.currentChunk ? (
                   <span>
-                    当前解析 <strong>{formatTimeRange(job.currentChunk.startMs, job.currentChunk.endMs)}</strong>
+                    当前解析 <strong>{formatTimeRange(job.currentChunk.startSeconds, job.currentChunk.endSeconds)}</strong>
                   </span>
                 ) : null}
               </div>
@@ -417,9 +417,9 @@ export function TasksPage() {
                       <i
                         key={checkpoint.videoChunkId}
                         data-stage={checkpoint.stage}
-                        title={checkpoint.chunkStartMs === null || checkpoint.chunkEndMs === null
+                        title={checkpoint.chunkStartSeconds === null || checkpoint.chunkEndSeconds === null
                           ? `片段 ${checkpoint.sequenceNo + 1} · ${checkpoint.stage}`
-                          : `片段 ${checkpoint.sequenceNo + 1} · ${formatTimeRange(checkpoint.chunkStartMs, checkpoint.chunkEndMs)} · ${checkpoint.stage}`}
+                          : `片段 ${checkpoint.sequenceNo + 1} · ${formatTimeRange(checkpoint.chunkStartSeconds, checkpoint.chunkEndSeconds)} · ${checkpoint.stage}`}
                       />
                     )) : <span>等待媒体切片完成后生成</span>}
                   </div>

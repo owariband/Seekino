@@ -79,7 +79,7 @@ const videoWithoutProgress: VideoSummary = {
   uploadSequence: 1,
   originalFilename: "calculating-progress.mp4",
   totalBytes: 1024,
-  durationMs: 20_000,
+  durationSeconds: 20,
   uploadStatus: "COMPLETED",
   uploadProgress: 100,
   parseStatus: "RUNNING",

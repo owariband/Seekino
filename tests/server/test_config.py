@@ -51,8 +51,9 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
 
     assert settings.environment is DatabaseEnvironment.DEVELOPMENT
     assert settings.upload.preferred_segment_size_bytes == 8 * 1024 * 1024
-    assert settings.parse.chunk_duration_ms == 60_000
-    assert settings.parse.context_overlap_ms == 3_000
+    assert settings.upload.pipeline_version == "m2-seconds"
+    assert settings.parse.chunk_duration_seconds == 60
+    assert settings.parse.context_overlap_seconds == 3
     assert settings.agent.history_message_limit == 12
     assert settings.agent.default_top_k == 3
     assert settings.agent.maximum_top_k == 20
@@ -155,6 +156,8 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
         "ANIVAG_MQ_POLL_SECONDS": "0.25",
         "ANIVAG_MQ_RETRY_BASE_SECONDS": "12",
         "ANIVAG_MQ_RETRY_MAX_SECONDS": "120",
+        "ANIVAG_CHUNK_DURATION_SECONDS": "75",
+        "ANIVAG_CONTEXT_OVERLAP_SECONDS": "5",
         "ANIVAG_INDEX_SYNC_RETRY_BASE_SECONDS": "7",
         "ANIVAG_INDEX_SYNC_RETRY_MAX_SECONDS": "70",
     }
@@ -185,8 +188,23 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
     assert settings.mq.poll_interval_seconds == 0.25
     assert settings.mq.retry_base == timedelta(seconds=12)
     assert settings.mq.retry_max == timedelta(seconds=120)
+    assert settings.parse.chunk_duration_seconds == 75
+    assert settings.parse.context_overlap_seconds == 5
     assert settings.index_sync.retry_base_seconds == 7
     assert settings.index_sync.retry_max_seconds == 70
+
+
+def test_server_settings_do_not_read_legacy_media_millisecond_variables(
+    monkeypatch,
+) -> None:
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_CHUNK_DURATION_MS", "75000")
+    monkeypatch.setenv("ANIVAG_CONTEXT_OVERLAP_MS", "5000")
+
+    settings = ServerSettings.from_environment()
+
+    assert settings.parse.chunk_duration_seconds == 60
+    assert settings.parse.context_overlap_seconds == 3
 
 
 def test_server_settings_accepts_legacy_worker_environment(monkeypatch) -> None:

@@ -64,7 +64,7 @@ def build_swift_record(
         series_bible=select_training_series_context(series_bible),
     )
     prompt = build_video_parse_prompt(
-        chunk.window.analysis_duration_ms,
+        chunk.window.analysis_duration_seconds,
         TranscriptAnalysis(transcript=chunk.candidate_transcript),
         context=context,
         ordered_frames=False,
@@ -75,7 +75,7 @@ def build_swift_record(
         summary=chunk.window_summary,
         events=sorted(
             (item.relative_event for item in chunk.observed_events),
-            key=lambda item: (item.start_ms, item.end_ms),
+            key=lambda item: (item.start_seconds, item.end_seconds),
         ),
     )
     response = json.dumps(
@@ -114,9 +114,9 @@ def build_manifest_record(
         "video_id": video_id,
         "episode_order": episode_order,
         "sequence_no": checkpoint.chunk.window.sequence_no,
-        "analysis_start_ms": checkpoint.chunk.window.analysis_start_ms,
-        "analysis_end_ms": checkpoint.chunk.window.analysis_end_ms,
-        "analysis_duration_ms": checkpoint.chunk.window.analysis_duration_ms,
+        "analysis_start_seconds": checkpoint.chunk.window.analysis_start_seconds,
+        "analysis_end_seconds": checkpoint.chunk.window.analysis_end_seconds,
+        "analysis_duration_seconds": checkpoint.chunk.window.analysis_duration_seconds,
         "video": video_reference,
         "video_sha256": video_sha256,
         "parse_artifact_uri": parse_artifact_uri,

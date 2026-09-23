@@ -11,7 +11,7 @@ type EvidenceTab = "reason" | "evidence" | "context";
 
 interface EvidencePlayerProps {
   hit: VideoChunkSearchHit | null;
-  playbackRange: { startMs: number; endMs: number };
+  playbackRange: { startSeconds: number; endSeconds: number };
 }
 
 export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
@@ -22,7 +22,7 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
   const [playError, setPlayError] = useState<string | null>(null);
   const [mediaReady, setMediaReady] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [relativePositionMs, setRelativePositionMs] = useState(0);
+  const [relativePositionSeconds, setRelativePositionSeconds] = useState(0);
   const [refreshed, setRefreshed] = useState<VideoChunkEvidence | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [failedImage, setFailedImage] = useState<string | null>(null);
@@ -32,20 +32,20 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
   selectionRef.current = selectionKey;
   useEffect(() => { setRefreshing(false); }, [hit?.evidence.workspaceId, hit?.evidence.videoChunkId]);
   const playbackUrl = evidence?.playbackStatus === "READY" ? mediaUrl(evidence.playbackUrl) : null;
-  const clipDurationMs = Math.max(0, playbackRange.endMs - playbackRange.startMs);
-  const playbackKey = evidence && playbackUrl ? `${evidence.workspaceId}:${evidence.videoId}:${evidence.videoChunkId}:${playbackRange.startMs}:${playbackRange.endMs}:${playbackUrl}` : null;
+  const clipDurationSeconds = Math.max(0, playbackRange.endSeconds - playbackRange.startSeconds);
+  const playbackKey = evidence && playbackUrl ? `${evidence.workspaceId}:${evidence.videoId}:${evidence.videoChunkId}:${playbackRange.startSeconds}:${playbackRange.endSeconds}:${playbackUrl}` : null;
 
   useEffect(() => {
     setTab("reason");
     setPlayError(null);
     setMediaReady(false);
     setPlaying(false);
-    setRelativePositionMs(0);
+    setRelativePositionSeconds(0);
     playingRef.current = false;
     const video = videoRef.current;
     if (!video || !evidence || !playbackUrl) return;
-    const start = playbackRange.startMs / 1000;
-    const end = playbackRange.endMs / 1000;
+    const start = playbackRange.startSeconds;
+    const end = playbackRange.endSeconds;
     let active = true;
     let requested = false;
     video.pause();
@@ -57,7 +57,7 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
     };
     const positionAtStart = () => {
       video.currentTime = start;
-      setRelativePositionMs(0);
+      setRelativePositionSeconds(0);
     };
     const prepare = () => {
       setMediaReady(true);
@@ -72,12 +72,12 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
       if (video.currentTime >= end) {
         video.pause();
         video.currentTime = end;
-        setRelativePositionMs(clipDurationMs);
+        setRelativePositionSeconds(clipDurationSeconds);
         playingRef.current = false;
         setPlaying(false);
         return;
       }
-      setRelativePositionMs(Math.min(clipDurationMs, Math.max(0, video.currentTime * 1000 - playbackRange.startMs)));
+      setRelativePositionSeconds(Math.min(clipDurationSeconds, Math.max(0, Math.floor(video.currentTime - playbackRange.startSeconds))));
     };
     const keepInRange = () => {
       if (video.currentTime < start || video.currentTime >= end) positionAtStart();
@@ -111,7 +111,7 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
       video.removeEventListener("pause", markPaused);
       video.pause();
     };
-  }, [clipDurationMs, evidence?.workspaceId, evidence?.videoId, evidence?.videoChunkId, playbackRange.endMs, playbackRange.startMs, playbackUrl]);
+  }, [clipDurationSeconds, evidence?.workspaceId, evidence?.videoId, evidence?.videoChunkId, playbackRange.endSeconds, playbackRange.startSeconds, playbackUrl]);
 
   if (!hit || !evidence) {
     return (
@@ -125,29 +125,29 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
   }
 
   const explanation = explainHit(hit);
-  const seekClip = (relativeMs: number) => {
+  const seekClip = (relativeSeconds: number) => {
     const video = videoRef.current;
     if (!video || !mediaReady) return;
-    const nextPositionMs = Math.min(clipDurationMs, Math.max(0, relativeMs));
-    video.currentTime = (playbackRange.startMs + nextPositionMs) / 1000;
-    setRelativePositionMs(nextPositionMs);
-    if (nextPositionMs >= clipDurationMs) video.pause();
+    const nextPositionSeconds = Math.min(clipDurationSeconds, Math.max(0, relativeSeconds));
+    video.currentTime = playbackRange.startSeconds + nextPositionSeconds;
+    setRelativePositionSeconds(nextPositionSeconds);
+    if (nextPositionSeconds >= clipDurationSeconds) video.pause();
   };
   const seekClipWithKeyboard = (event: KeyboardEvent<HTMLInputElement>) => {
-    let nextPositionMs: number;
+    let nextPositionSeconds: number;
     switch (event.key) {
       case "ArrowLeft":
-      case "ArrowDown": nextPositionMs = relativePositionMs - 1_000; break;
+      case "ArrowDown": nextPositionSeconds = relativePositionSeconds - 1; break;
       case "ArrowRight":
-      case "ArrowUp": nextPositionMs = relativePositionMs + 1_000; break;
-      case "PageDown": nextPositionMs = relativePositionMs - 5_000; break;
-      case "PageUp": nextPositionMs = relativePositionMs + 5_000; break;
-      case "Home": nextPositionMs = 0; break;
-      case "End": nextPositionMs = clipDurationMs; break;
+      case "ArrowUp": nextPositionSeconds = relativePositionSeconds + 1; break;
+      case "PageDown": nextPositionSeconds = relativePositionSeconds - 5; break;
+      case "PageUp": nextPositionSeconds = relativePositionSeconds + 5; break;
+      case "Home": nextPositionSeconds = 0; break;
+      case "End": nextPositionSeconds = clipDurationSeconds; break;
       default: return;
     }
     event.preventDefault();
-    seekClip(nextPositionMs);
+    seekClip(nextPositionSeconds);
   };
   const refreshMedia = async () => {
     setRefreshing(true);
@@ -183,31 +183,31 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
               className={styles.clipTimeline}
               type="range"
               min={0}
-              max={clipDurationMs}
+              max={clipDurationSeconds}
               step={1}
-              value={Math.min(relativePositionMs, clipDurationMs)}
-              disabled={!mediaReady || clipDurationMs <= 0}
+              value={Math.min(relativePositionSeconds, clipDurationSeconds)}
+              disabled={!mediaReady || clipDurationSeconds <= 0}
               onChange={(event) => seekClip(Number(event.currentTarget.value))}
               onKeyDown={seekClipWithKeyboard}
               aria-label="视频片段播放进度"
-              aria-valuetext={`${formatTimecode(relativePositionMs)} / ${formatTimecode(clipDurationMs)}`}
-              style={{ "--clip-progress": `${clipDurationMs > 0 ? (relativePositionMs / clipDurationMs) * 100 : 0}%` } as CSSProperties}
+              aria-valuetext={`${formatTimecode(relativePositionSeconds)} / ${formatTimecode(clipDurationSeconds)}`}
+              style={{ "--clip-progress": `${clipDurationSeconds > 0 ? (relativePositionSeconds / clipDurationSeconds) * 100 : 0}%` } as CSSProperties}
             />
-            <time className={styles.clipTime}>{formatTimecode(relativePositionMs)} / {formatTimecode(clipDurationMs)}</time>
+            <time className={styles.clipTime}>{formatTimecode(relativePositionSeconds)} / {formatTimecode(clipDurationSeconds)}</time>
           </div>
         ) : null}
         <div className={styles.frameMeta}>
           <span>{episodeLabel(evidence.episodeOrder)}</span>
-          <strong>{formatTimeRange(playbackRange.startMs, playbackRange.endMs)}</strong>
+          <strong>{formatTimeRange(playbackRange.startSeconds, playbackRange.endSeconds)}</strong>
         </div>
       </div>
 
       <div className={styles.playerHeading}>
         <div>
           <h2>{evidence.seriesName}</h2>
-          <p>片段范围 {formatTimeRange(playbackRange.startMs, playbackRange.endMs)}</p>
+          <p>片段范围 {formatTimeRange(playbackRange.startSeconds, playbackRange.endSeconds)}</p>
         </div>
-        {playbackUrl ? <a className="button-quiet" href={`/watch/${encodeURIComponent(evidence.seriesId)}/${encodeURIComponent(evidence.videoId)}?atMs=${playbackRange.startMs}`}>在整集中观看</a> : null}
+        {playbackUrl ? <a className="button-quiet" href={`/watch/${encodeURIComponent(evidence.seriesId)}/${encodeURIComponent(evidence.videoId)}?atSeconds=${playbackRange.startSeconds}`}>在整集中观看</a> : null}
       </div>
 
       {playError ? <p className={styles.messageError} role="alert">{playError}</p> : null}
@@ -283,7 +283,7 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
             <article className={styles.contextCurrent}><span>MATCH</span><p>{evidence.videoCompact || evidence.windowSummary}</p></article>
             <i />
             <article><span>AFTER</span><p>{evidence.contextAfterCompact || "暂无后文摘要"}</p></article>
-            <div className={styles.windowTime}><Clock3 size={14} />分析窗口 {formatTimeRange(evidence.analysisWindowStartMs, evidence.analysisWindowEndMs)}</div>
+            <div className={styles.windowTime}><Clock3 size={14} />分析窗口 {formatTimeRange(evidence.analysisWindowStartSeconds, evidence.analysisWindowEndSeconds)}</div>
           </div>
         ) : null}
       </div>

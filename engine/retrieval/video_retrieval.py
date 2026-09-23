@@ -18,8 +18,8 @@ class VideoChunkRetrievalDocument(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sequence_no: int = Field(ge=0)
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(gt=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(gt=0)
     video_compact: str = Field(min_length=1)
     text: str = Field(min_length=1)
     is_fallback: bool
@@ -49,13 +49,13 @@ class TranscriptCueDocument(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1)
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(ge=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "TranscriptCueDocument":
-        if self.end_ms < self.start_ms:
-            raise ValueError("end_ms must not be less than start_ms")
+        if self.end_seconds < self.start_seconds:
+            raise ValueError("end_seconds must not be less than start_seconds")
         return self
 
 
@@ -72,8 +72,8 @@ class RankedTranscriptMatch(RankedVideoChunkMatch):
     """One lexical ASR match with the exact cue range kept for explanation."""
 
     matched_text: str = Field(min_length=1)
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(ge=0)
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(ge=0)
 
 
 class FusedVideoChunkRanking(BaseModel):
@@ -116,8 +116,8 @@ def build_video_chunk_retrieval_documents(
         documents.append(
             VideoChunkRetrievalDocument(
                 sequence_no=chunk.window.sequence_no,
-                start_ms=chunk.window.chunk_start_ms,
-                end_ms=chunk.window.chunk_end_ms,
+                start_seconds=chunk.window.chunk_start_seconds,
+                end_seconds=chunk.window.chunk_end_seconds,
                 video_compact=video_compact,
                 text=text,
                 is_fallback=chunk.is_fallback,
@@ -273,8 +273,8 @@ def rank_transcript_chunks(
             (
                 score,
                 document.video_chunk_id,
-                matched_cues[0].start_ms,
-                matched_cues[-1].end_ms,
+                matched_cues[0].start_seconds,
+                matched_cues[-1].end_seconds,
                 " ".join(cue.text.strip() for cue in matched_cues),
             )
         )
@@ -286,10 +286,10 @@ def rank_transcript_chunks(
             video_chunk_id=video_chunk_id,
             score=score,
             matched_text=matched_text,
-            start_ms=start_ms,
-            end_ms=end_ms,
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
         )
-        for rank, (score, video_chunk_id, start_ms, end_ms, matched_text) in enumerate(
+        for rank, (score, video_chunk_id, start_seconds, end_seconds, matched_text) in enumerate(
             matches[:limit],
             start=1,
         )
@@ -442,15 +442,15 @@ def _cue_index_at_offset(cues: Sequence[str], offset: int) -> int:
 def _validate_canonical_chunks(parse_result: VideoParseResult) -> None:
     if not parse_result.chunks:
         raise ValueError("parse result contains no chunks")
-    expected_start_ms = 0
+    expected_start_seconds = 0
     for expected_sequence_no, chunk in enumerate(parse_result.chunks):
         window = chunk.window
         if window.sequence_no != expected_sequence_no:
             raise ValueError(
                 "parse result chunks must use contiguous sequence numbers"
             )
-        if window.chunk_start_ms != expected_start_ms:
+        if window.chunk_start_seconds != expected_start_seconds:
             raise ValueError("parse result canonical chunks must be contiguous")
-        expected_start_ms = window.chunk_end_ms
-    if expected_start_ms != parse_result.duration_ms:
+        expected_start_seconds = window.chunk_end_seconds
+    if expected_start_seconds != parse_result.duration_seconds:
         raise ValueError("parse result does not cover the complete video duration")
