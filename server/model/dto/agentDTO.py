@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from ...agent.common.state import AnswerPhase
 from ...schema import ContractModel
 
 _Item = TypeVar("_Item")
+_MAX_EXTRA_CONTEXT_BYTES = 16_384
 
 
 class EvidenceReference(ContractModel):
@@ -30,6 +32,30 @@ class AgentMessageSendRequest(ContractModel):
     max_tool_calls_per_turn: int | None = Field(default=None, gt=0)
     max_loop_turns: int | None = Field(default=None, ge=0, le=100)
     reference: EvidenceReference | None = None
+    extra_context: dict[str, Any] | None = None
+
+    @field_validator("extra_context")
+    @classmethod
+    def validate_extra_context_size(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        try:
+            encoded = json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("extra_context must contain valid JSON values") from exc
+        if len(encoded) > _MAX_EXTRA_CONTEXT_BYTES:
+            raise ValueError(
+                f"extra_context must not exceed {_MAX_EXTRA_CONTEXT_BYTES} bytes"
+            )
+        return value
 
 
 class AgentGlobalSettingsPatchRequest(ContractModel):
@@ -111,6 +137,7 @@ class AgentMessageState:
     version: int = 1
     reference: dict[str, str] | None = None
     timing: AgentMessageTimingState | None = None
+    extra_context: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)

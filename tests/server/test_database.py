@@ -106,6 +106,7 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
     assert "search_result JSON" in message_ddl
     assert "requested_top_k INTEGER" in message_ddl
     assert "requested_run_options JSON" in message_ddl
+    assert "extra_context JSON" in message_ddl
     assert "ON DELETE CASCADE" in message_ddl
     assert "total_duration_ms BIGINT" in timing_ddl
     assert "started_at BIGINT NOT NULL" in timing_ddl
@@ -257,6 +258,31 @@ def test_create_schema_requires_ui_view_migration_and_preserves_existing_rows() 
     assert set(inspect(engine).get_table_names()) == {"upload_session"}
     with engine.connect() as connection:
         assert connection.execute(text("SELECT status FROM upload_session")).scalar_one() == "COMPLETED"
+
+
+def test_create_schema_requires_extra_context_migration_and_preserves_messages() -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
+    )
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE agent_message ("
+            "message_id TEXT, series_ids JSON, requested_series_ids JSON, "
+            "phase TEXT, version INTEGER, reference JSON, requested_run_options JSON, "
+            "last_error_code TEXT, last_error_message TEXT)"
+        ))
+        connection.execute(text(
+            "INSERT INTO agent_message (message_id, series_ids, requested_series_ids) "
+            "VALUES ('existing-message', '[]', '[]')"
+        ))
+
+    with pytest.raises(SchemaUpgradeRequiredError, match="agent_message.extra_context"):
+        create_schema(engine)
+
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT message_id FROM agent_message")
+        ).scalar_one() == "existing-message"
 
 
 def test_create_schema_requires_checkpoint_range_migration() -> None:

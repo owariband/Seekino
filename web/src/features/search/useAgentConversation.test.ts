@@ -133,15 +133,19 @@ describe("Conversation state", () => {
     expect(result.current.messages[1]?.timing?.totalDurationMs).toBe(6);
   });
 
-  it("snapshots a multi-series scope without changing Conversation or interrupting the running stream", async () => {
+  it("snapshots message scope and extra context without changing Conversation or interrupting the running stream", async () => {
     const { result, rerender } = await ready();
     const selected = ["A", "B"];
     const reference = { messageId: "previous", videoChunkId: "selected-chunk" };
-    act(() => { void result.current.send("query", selected, reference); });
+    const extraContext = {
+      playback: { seriesId: "A", videoId: "video-1", episodeOrder: 1, positionMs: 12_345 },
+    };
+    act(() => { void result.current.send("query", selected, reference, {}, extraContext); });
     await waitFor(() => expect(streams.has("conv-A")).toBe(true));
     const stream = streams.get("conv-A")!;
     selected.splice(0, selected.length, "C");
     reference.videoChunkId = "another-chunk";
+    extraContext.playback.positionMs = 99_999;
     rerender({ id: null });
     act(() => {
       const event = started("conv-A");
@@ -155,6 +159,9 @@ describe("Conversation state", () => {
     });
     expect(vi.mocked(streamAgentMessage).mock.calls[0]![5]).toEqual(["A", "B"]);
     expect(vi.mocked(streamAgentMessage).mock.calls[0]![6]).toEqual({ messageId: "previous", videoChunkId: "selected-chunk" });
+    expect(vi.mocked(streamAgentMessage).mock.calls[0]![8]).toEqual({
+      playback: { seriesId: "A", videoId: "video-1", episodeOrder: 1, positionMs: 12_345 },
+    });
     expect(stream.signal.aborted).toBe(false);
     expect(close).not.toHaveBeenCalled();
     expect(createAgentConversation).toHaveBeenCalledOnce();

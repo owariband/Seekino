@@ -155,7 +155,7 @@ def create_schema(engine: Engine) -> None:
         "agent_conversation": {"title_is_auto"},
         "agent_message": {
             "phase", "version", "reference", "requested_run_options",
-            "last_error_code", "last_error_message",
+            "last_error_code", "last_error_message", "extra_context",
         },
         "series_parse_job": {
             "version",

@@ -359,11 +359,19 @@ export function sendAgentMessage(
   seriesIds: string[] = [],
   reference: EvidenceReference | null = null,
   options: AgentMessageRunOptions = {},
+  extraContext: Record<string, unknown> | null = null,
 ): Promise<AgentMessageSendView> {
   return requestJson(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, reference, ...options }),
+    body: JSON.stringify({
+      workspaceId: WORKSPACE_ID,
+      content,
+      seriesIds,
+      reference,
+      ...options,
+      ...(extraContext === null ? {} : { extraContext }),
+    }),
   });
 }
 
@@ -376,11 +384,19 @@ export async function streamAgentMessage(
   seriesIds: string[] = [],
   reference: EvidenceReference | null = null,
   options: AgentMessageRunOptions = {},
+  extraContext: Record<string, unknown> | null = null,
 ): Promise<void> {
   const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`), {
     method: "POST",
     headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID, content, seriesIds, reference, ...options }),
+    body: JSON.stringify({
+      workspaceId: WORKSPACE_ID,
+      content,
+      seriesIds,
+      reference,
+      ...options,
+      ...(extraContext === null ? {} : { extraContext }),
+    }),
     signal,
   });
   if (!response.ok) throw new ApiClientError(response.status, await readError(response));

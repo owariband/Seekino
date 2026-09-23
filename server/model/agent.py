@@ -120,6 +120,7 @@ class AgentMessageRecord(TimestampedRecord, Base):
     phase: Mapped[str | None] = mapped_column(String(16))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     reference: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    extra_context: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     content: Mapped[str | None] = mapped_column(LONG_TEXT)
     series_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     model_name: Mapped[str | None] = mapped_column(String(255))

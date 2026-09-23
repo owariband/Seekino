@@ -184,6 +184,7 @@ describe("Agent Chat routes", () => {
       ["series/id"],
       null,
       { topK: 5, maxModelCallsPerTurn: 9, maxToolCallsPerTurn: 32 },
+      { playback: { seriesId: "series/id", videoId: "video/id", episodeOrder: 1, positionMs: 12_345 } },
     );
 
     expect(String(fetchMock.mock.calls[0]![0])).toBe("/api/agent/messages/options");
@@ -195,6 +196,9 @@ describe("Agent Chat routes", () => {
       topK: 5,
       maxModelCallsPerTurn: 9,
       maxToolCallsPerTurn: 32,
+      extraContext: {
+        playback: { seriesId: "series/id", videoId: "video/id", episodeOrder: 1, positionMs: 12_345 },
+      },
     });
   });
 

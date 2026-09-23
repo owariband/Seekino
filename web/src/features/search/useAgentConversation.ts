@@ -210,6 +210,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     seriesIds: string[] = [],
     reference: EvidenceReference | null = null,
     options: AgentMessageRunOptions = {},
+    extraContext: Record<string, unknown> | null = null,
   ) => {
     const active = activeRef.current;
     if (!content.trim() || !active?.conversationId || state.requestedId !== requestedId || active.sending || state.messages.some((message) => message.status === "PROCESSING")) return;
@@ -217,6 +218,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     const scope = [...seriesIds];
     const frozenReference = reference ? { ...reference } : null;
     const frozenOptions = { ...options };
+    const frozenExtraContext = extraContext === null ? null : structuredClone(extraContext);
     active.sending = true;
     active.recoveryMessageId = null;
     setState((current) => ({ ...current, sending: true, error: null }));
@@ -282,6 +284,7 @@ export function useAgentConversation(requestedId: string | null = null) {
         scope,
         frozenReference,
         frozenOptions,
+        frozenExtraContext,
       );
     } catch (error) {
       if (activeRef.current === active && !active.controller.signal.aborted) {

@@ -28,6 +28,7 @@ class RunInputs(TypedDict):
     history: list[dict]
     requested_top_k: int
     reference_context: NotRequired[dict | None]
+    extra_context: NotRequired[dict | None]
 
 
 @dataclass(slots=True)

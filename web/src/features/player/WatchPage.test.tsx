@@ -6,29 +6,62 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import type { SeriesView, VideoSummary } from "../../api/contracts";
 import { WatchPage } from "./WatchPage";
 
-const mocks = vi.hoisted(() => ({ getSeries: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  getSeries: vi.fn(),
+  pauseAndGetSnapshot: vi.fn(),
+  focusPlayer: vi.fn(),
+  resumePlayer: vi.fn(),
+  focusComposer: vi.fn(),
+  receiveExtraContext: vi.fn(),
+}));
 vi.mock("../../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../api/client")>(),
   getSeries: mocks.getSeries,
 }));
-vi.mock("./VideoPlayer", () => ({
-  VideoPlayer: ({ video, atMs, fullscreen, onToggleFullscreen }: { video: VideoSummary; atMs?: number; fullscreen?: boolean; onToggleFullscreen?: () => void }) => (
-    <div data-testid="video-player">{video.videoId} @ {atMs === undefined ? "history" : atMs}
-      <button type="button" onClick={onToggleFullscreen}>{fullscreen ? "退出网页全屏" : "网页全屏"}</button>
-    </div>
-  ),
-}));
-vi.mock("../search/SearchPage", () => ({
-  SearchPage: ({ embedded, initialSeriesId, onOpenVideo }: {
-    embedded?: boolean;
-    initialSeriesId?: string;
-    onOpenVideo?: (target: { seriesId: string; videoId: string; startMs: number }) => void;
-  }) => (
-    <div data-testid="supervisor-chat" data-embedded={embedded} data-series-id={initialSeriesId}>
-      <button type="button" onClick={() => onOpenVideo?.({ seriesId: "series-1", videoId: "video-1", startMs: 4_000 })}>打开视频证据</button>
-    </div>
-  ),
-}));
+vi.mock("./VideoPlayer", async () => {
+  const { forwardRef, useImperativeHandle, useRef } = await import("react");
+  return {
+    VideoPlayer: forwardRef(function MockVideoPlayer(
+      { video, atMs, fullscreen, onToggleFullscreen }: { video: VideoSummary; atMs?: number; fullscreen?: boolean; onToggleFullscreen?: () => void },
+      ref,
+    ) {
+      const playerRef = useRef<HTMLDivElement>(null);
+      useImperativeHandle(ref, () => ({
+        pauseAndGetSnapshot: mocks.pauseAndGetSnapshot,
+        focus: () => { playerRef.current?.focus(); mocks.focusPlayer(); },
+        resume: mocks.resumePlayer,
+      }));
+      return (
+        <div ref={playerRef} data-testid="video-player" tabIndex={0}>{video.videoId} @ {atMs === undefined ? "history" : atMs}
+          <button type="button" onClick={onToggleFullscreen}>{fullscreen ? "退出网页全屏" : "网页全屏"}</button>
+        </div>
+      );
+    }),
+  };
+});
+vi.mock("../search/SearchPage", async () => {
+  const { forwardRef, useImperativeHandle, useRef } = await import("react");
+  return {
+    SearchPage: forwardRef(function MockSearchPage({ embedded, initialSeriesId, captureExtraContext, onOpenVideo }: {
+      embedded?: boolean;
+      initialSeriesId?: string;
+      captureExtraContext?: () => Record<string, unknown> | null;
+      onOpenVideo?: (target: { seriesId: string; videoId: string; startMs: number }) => void;
+    }, ref) {
+      const composerRef = useRef<HTMLTextAreaElement>(null);
+      useImperativeHandle(ref, () => ({
+        focusComposer: () => { composerRef.current?.focus(); mocks.focusComposer(); },
+      }));
+      return (
+        <div data-testid="supervisor-chat" data-embedded={embedded} data-series-id={initialSeriesId}>
+          <textarea ref={composerRef} aria-label="向 anivag 助手提问" />
+          <button type="button" onClick={() => onOpenVideo?.({ seriesId: "series-1", videoId: "video-1", startMs: 4_000 })}>打开视频证据</button>
+          <button type="button" onClick={() => mocks.receiveExtraContext(captureExtraContext?.())}>捕获播放上下文</button>
+        </div>
+      );
+    }),
+  };
+});
 
 const video = (videoId: string, episodeOrder: number): VideoSummary => ({
   videoId,
@@ -92,7 +125,11 @@ function renderPage(path = "/watch/series-1/video-2") {
   );
 }
 
-beforeEach(() => { localStorage.clear(); mocks.getSeries.mockResolvedValue(series); });
+beforeEach(() => {
+  localStorage.clear();
+  mocks.getSeries.mockResolvedValue(series);
+  mocks.pauseAndGetSnapshot.mockReturnValue({ positionMs: 12_346, wasPlaying: false });
+});
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("WatchPage", () => {
@@ -137,6 +174,64 @@ describe("WatchPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "打开视频证据" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/watch/series-1/video-1?atMs=4000"));
     expect(screen.getByTestId("video-player")).toHaveTextContent("video-1 @ 4000");
+  });
+
+  it("provides the current episode and exact paused position as generic extra context", async () => {
+    renderPage();
+    await screen.findByTestId("supervisor-chat");
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith({
+      playback: {
+        seriesId: "series-1",
+        videoId: "video-2",
+        episodeOrder: 2,
+        positionMs: 12_346,
+      },
+    });
+
+    fireEvent.click(screen.getByRole("link", { name: "下一集" }));
+    await waitFor(() => expect(screen.getByTestId("video-player")).toHaveTextContent("video-3 @ history"));
+    mocks.pauseAndGetSnapshot.mockReturnValue({ positionMs: 7_000, wasPlaying: false });
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith({
+      playback: {
+        seriesId: "series-1",
+        videoId: "video-3",
+        episodeOrder: 3,
+        positionMs: 7_000,
+      },
+    });
+  });
+
+  it("switches focus between the viewer and Chat with Tab and resumes only an interrupted video", async () => {
+    renderPage();
+    const player = await screen.findByTestId("video-player");
+    const composer = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
+    mocks.pauseAndGetSnapshot.mockReturnValue({ positionMs: 18_250, wasPlaying: true });
+
+    fireEvent.click(screen.getByRole("tab", { name: "选集" }));
+    fireEvent.click(screen.getByRole("button", { name: "收起观看侧栏" }));
+    player.focus();
+    fireEvent.keyDown(player, { key: "Tab" });
+
+    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
+    expect(screen.getByRole("complementary", { name: "观看侧栏" })).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    expect(composer).toHaveFocus();
+    expect(mocks.focusComposer).toHaveBeenCalledOnce();
+
+    mocks.pauseAndGetSnapshot.mockReturnValue({ positionMs: 18_250, wasPlaying: false });
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    fireEvent.keyDown(composer, { key: "Tab", shiftKey: true });
+    expect(player).toHaveFocus();
+    expect(mocks.focusPlayer).toHaveBeenCalledOnce();
+    expect(mocks.resumePlayer).toHaveBeenCalledOnce();
+
+    fireEvent.keyDown(player, { key: "Tab", shiftKey: true });
+    expect(composer).toHaveFocus();
+    fireEvent.keyDown(composer, { key: "Tab" });
+    expect(mocks.resumePlayer).toHaveBeenCalledOnce();
   });
 
   it("makes the whole watch page fullscreen so Chat stays beside the video", async () => {

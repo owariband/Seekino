@@ -1,5 +1,5 @@
 import { ArrowUp, ChevronDown, History, LoaderCircle, MessageCircleMore, Play, Plus, ScanSearch, SlidersHorizontal, Trash2, X } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { forwardRef, type FormEvent, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -18,8 +18,13 @@ type MessageOptionOverrides = AgentMessageRunOptions;
 type SearchPageProps = {
   embedded?: boolean;
   initialSeriesId?: string;
+  captureExtraContext?: () => Record<string, unknown> | null;
   onOpenVideo?: (target: { seriesId: string; videoId: string; startMs: number }) => void;
 };
+
+export interface SearchPageHandle {
+  focusComposer(): void;
+}
 const messageOptionsStorageKey = `anivag-agent-message-options:${WORKSPACE_ID}`;
 type StoredMessageOptions = { overrides?: MessageOptionOverrides; serverOptions?: AgentMessageOptions; selection?: SelectedMessageOptions };
 const messageOptionNames = ["topK", "maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"] as const;
@@ -127,7 +132,10 @@ function MarkdownAnswer({ markdown }: { markdown: string }) {
   );
 }
 
-export function SearchPage({ embedded = false, initialSeriesId, onOpenVideo }: SearchPageProps = {}) {
+export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function SearchPage(
+  { embedded = false, initialSeriesId, captureExtraContext, onOpenVideo },
+  ref,
+) {
   const { mode, series, isLoading: workspaceLoading } = useWorkspace();
   const [requestedConversationId, setRequestedConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<AgentConversationView[]>([]);
@@ -170,6 +178,14 @@ export function SearchPage({ embedded = false, initialSeriesId, onOpenVideo }: S
   const wasSearchingRef = useRef(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const followThread = useRef(true);
+  const capturedExtraContextRef = useRef<{
+    source: NonNullable<SearchPageProps["captureExtraContext"]>;
+    value: Record<string, unknown> | null;
+  } | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    focusComposer: () => composerRef.current?.focus(),
+  }), []);
   const { conversationId, messages, progress, loading, searching, error, clear: clearConversation, send } = useAgentConversation(requestedConversationId);
   const isSearchable = (status: string) => status === "READY";
   const initialSeries = initialSeriesId ? series.find((item) => item.seriesId === initialSeriesId) : null;
@@ -308,7 +324,15 @@ export function SearchPage({ embedded = false, initialSeriesId, onOpenVideo }: S
     const options = messageOptionOverrides
       ? { ...messageOptionOverrides, maxLoopTurns: messageOptionOverrides.maxLoopTurns || undefined }
       : {};
-    void send(query, selectedSeriesIds, reference, options);
+    const captured = capturedExtraContextRef.current;
+    const extraContext = captureExtraContext
+      ? captured?.source === captureExtraContext && captured.value !== null
+        ? captured.value
+        : captureExtraContext()
+      : null;
+    capturedExtraContextRef.current = null;
+    if (extraContext === null) void send(query, selectedSeriesIds, reference, options);
+    else void send(query, selectedSeriesIds, reference, options, extraContext);
     setQuery("");
     setReference(null);
   };
@@ -625,6 +649,13 @@ export function SearchPage({ embedded = false, initialSeriesId, onOpenVideo }: S
                 ref={composerRef}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
+                onPointerDown={(event) => {
+                  if (!captureExtraContext || event.button !== 0) return;
+                  capturedExtraContextRef.current = {
+                    source: captureExtraContext,
+                    value: captureExtraContext(),
+                  };
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                     event.preventDefault();
@@ -789,4 +820,4 @@ export function SearchPage({ embedded = false, initialSeriesId, onOpenVideo }: S
       </div>
     </Root>
   );
-}
+});

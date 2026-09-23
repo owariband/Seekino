@@ -1,9 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { VideoSummary } from "../../api/contracts";
 import { readVideoProgress, saveVideoProgress } from "./playbackProgress";
-import { VideoPlayer } from "./VideoPlayer";
+import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
 
 function video(videoId = "video-1", playbackStatus: VideoSummary["playbackStatus"] = "READY"): VideoSummary {
   return {
@@ -109,6 +110,43 @@ describe("VideoPlayer", () => {
     expect(readVideoProgress("video-1")?.positionMs).toBe(8_000);
     view.unmount();
     expect(readVideoProgress("video-1")?.positionMs).toBe(8_000);
+  });
+
+  it("pauses and reads the precise media position through its imperative handle", () => {
+    const ref = createRef<VideoPlayerHandle>();
+    render(<VideoPlayer ref={ref} video={video()} />);
+    const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
+    metadata(media);
+    media.currentTime = 12.3456;
+
+    let snapshot: ReturnType<VideoPlayerHandle["pauseAndGetSnapshot"]> = null;
+    act(() => { snapshot = ref.current?.pauseAndGetSnapshot() ?? null; });
+    expect(snapshot).toEqual({ positionMs: 12_346, wasPlaying: false });
+    expect(pause).toHaveBeenCalledOnce();
+    expect(readVideoProgress("video-1")?.positionMs).toBe(12_346);
+  });
+
+  it("reports whether Chat interrupted playback, focuses the player, and resumes on request", () => {
+    const ref = createRef<VideoPlayerHandle>();
+    render(<VideoPlayer ref={ref} video={video()} />);
+    const shell = screen.getByLabelText<HTMLElement>("视频播放器");
+    const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
+    metadata(media);
+    media.currentTime = 21.25;
+    Object.defineProperty(media, "paused", { value: false, configurable: true });
+
+    let snapshot: ReturnType<VideoPlayerHandle["pauseAndGetSnapshot"]> = null;
+    act(() => { snapshot = ref.current?.pauseAndGetSnapshot() ?? null; });
+    expect(snapshot).toEqual({ positionMs: 21_250, wasPlaying: true });
+    expect(pause).toHaveBeenCalledOnce();
+    ref.current?.focus();
+    expect(shell).toHaveFocus();
+    Object.defineProperty(media, "paused", { value: true, configurable: true });
+    act(() => { ref.current?.resume(); });
+    expect(play).toHaveBeenCalledOnce();
+
+    act(() => { snapshot = ref.current?.pauseAndGetSnapshot() ?? null; });
+    expect(snapshot).toEqual({ positionMs: 21_250, wasPlaying: false });
   });
 
   it("explains unavailable media and media errors", () => {

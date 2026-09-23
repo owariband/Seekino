@@ -453,10 +453,12 @@ class AgentChatService:
         max_tool_calls_per_turn: int | None = None,
         max_loop_turns: int | None = None,
         reference: dict[str, str] | None = None,
+        extra_context: dict | None = None,
     ) -> AgentMessageSendState:
         return self.start_message(
             conversation_id, workspace_id=workspace_id, content=content,
             idempotency_key=idempotency_key, series_ids=series_ids, top_k=top_k, reference=reference,
+            extra_context=extra_context,
             max_model_calls_per_turn=max_model_calls_per_turn,
             max_tool_calls_per_turn=max_tool_calls_per_turn,
             max_loop_turns=max_loop_turns,
@@ -470,6 +472,7 @@ class AgentChatService:
         max_tool_calls_per_turn: int | None = None,
         max_loop_turns: int | None = None,
         reference: dict[str, str] | None = None,
+        extra_context: dict | None = None,
     ) -> AgentMessageExecution:
         runtime, config, executor = self._current_config()
         normalized_workspace = require_nonempty_text(workspace_id, "workspace_id", maximum=64)
@@ -519,6 +522,7 @@ class AgentChatService:
                 requested_series_ids=requested_scope,
                 requested_run_options=requested_run_options,
                 reference=normalized_reference,
+                extra_context=extra_context,
             )
             if started is None:
                 scope = self._resolve_scope(
@@ -540,6 +544,7 @@ class AgentChatService:
                     user_message_id=str(uuid4()), assistant_message_id=str(uuid4()),
                     now=timing_started_at,
                     reference=normalized_reference,
+                    extra_context=extra_context,
                 )
             if started.reused and started.assistant_message.status == "PROCESSING":
                 raise AgentMessageInProgressError("the idempotent message is still being processed")
@@ -711,6 +716,7 @@ class AgentChatService:
                     "searchResult": item.search_result,
                 } for item in history],
                 reference_context=execution.reference_context,
+                extra_context=initial.user_message.extra_context,
                 series_context=(
                     [{
                         "seriesId": series_id,

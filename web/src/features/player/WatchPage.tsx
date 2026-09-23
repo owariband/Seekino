@@ -1,12 +1,12 @@
 import { ChevronLeft, ChevronRight, ListVideo, MessageCircle, PanelRightClose, PanelRightOpen } from "lucide-react";
-import { type CSSProperties, type PointerEvent, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import { errorMessage, getSeries, shouldRetryApiRequest } from "../../api/client";
 import { episodeLabel, formatTimecode } from "../../shared/format";
-import { SearchPage } from "../search/SearchPage";
-import { VideoPlayer } from "./VideoPlayer";
+import { SearchPage, type SearchPageHandle } from "../search/SearchPage";
+import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
 import styles from "./watch.module.css";
 
 function watchPath(seriesId: string, videoId: string): string {
@@ -31,8 +31,12 @@ export function WatchPage() {
   const navigate = useNavigate();
   const pageRef = useRef<HTMLElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<VideoPlayerHandle>(null);
+  const chatRef = useRef<SearchPageHandle>(null);
   const previousVideoId = useRef(videoId);
   const draggingRef = useRef(false);
+  const pendingChatFocusRef = useRef(false);
+  const resumeAfterChatRef = useRef(false);
   const [panelOpen, setPanelOpen] = useState(() => window.innerWidth > 800);
   const [panelTab, setPanelTab] = useState<"chat" | "episodes">("chat");
   const [panelWidth, setPanelWidth] = useState(savedPanelWidth);
@@ -53,11 +57,60 @@ export function WatchPage() {
   const parsedAtMs = rawAtMs !== null && /^\d+$/.test(rawAtMs) ? Number(rawAtMs) : undefined;
   const atMs = parsedAtMs !== undefined && Number.isSafeInteger(parsedAtMs) ? parsedAtMs : undefined;
 
+  const captureExtraContext = useCallback((): Record<string, unknown> | null => {
+    if (!selected) return null;
+    const paused = playerRef.current?.pauseAndGetSnapshot();
+    if (!paused) return null;
+    if (paused.wasPlaying) resumeAfterChatRef.current = true;
+    return {
+      playback: {
+        seriesId: selected.seriesId,
+        videoId: selected.videoId,
+        episodeOrder: selected.episodeOrder,
+        positionMs: paused.positionMs,
+      },
+    };
+  }, [selected?.episodeOrder, selected?.seriesId, selected?.videoId]);
+
+  const focusChat = () => {
+    captureExtraContext();
+    if (panelOpen && panelTab === "chat") {
+      pendingChatFocusRef.current = false;
+      chatRef.current?.focusComposer();
+      return;
+    }
+    pendingChatFocusRef.current = true;
+    setPanelOpen(true);
+    setPanelTab("chat");
+  };
+
+  const focusPlayer = () => {
+    pendingChatFocusRef.current = false;
+    playerRef.current?.focus();
+    if (!resumeAfterChatRef.current) return;
+    resumeAfterChatRef.current = false;
+    playerRef.current?.resume();
+  };
+
+  const switchPaneOnTab = (event: KeyboardEvent<HTMLElement>, destination: "chat" | "player") => {
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    if (destination === "chat") focusChat();
+    else focusPlayer();
+  };
+
   useEffect(() => {
     if (previousVideoId.current === videoId) return;
     previousVideoId.current = videoId;
+    resumeAfterChatRef.current = false;
     void seriesQuery.refetch();
   }, [videoId, seriesQuery.refetch]);
+
+  useEffect(() => {
+    if (!pendingChatFocusRef.current || !panelOpen || panelTab !== "chat") return;
+    pendingChatFocusRef.current = false;
+    chatRef.current?.focusComposer();
+  }, [panelOpen, panelTab]);
 
   useEffect(() => {
     try { window.localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth)); } catch { /* Resizing still works without storage. */ }
@@ -112,10 +165,10 @@ export function WatchPage() {
       </header>
 
       <div ref={layoutRef} className={styles.layout} data-panel-open={panelOpen} style={{ "--watch-panel-width": `${panelWidth}px` } as CSSProperties}>
-        <section className={styles.viewer} aria-label="视频播放器">
+        <section className={styles.viewer} aria-label="视频播放器" onKeyDownCapture={(event) => switchPaneOnTab(event, "chat")}>
           {episodes.length === 0 ? <p className={styles.unavailable} role="status">这个系列还没有视频。</p> : !selected ? (
             <p className={styles.unavailable} role="alert">找不到这集视频，请在右侧选集重新选择。</p>
-          ) : <VideoPlayer key={`${selected.videoId}:${rawAtMs ?? "resume"}`} video={selected} atMs={atMs} fullscreen={pageFullscreen} onToggleFullscreen={togglePageFullscreen} />}
+          ) : <VideoPlayer ref={playerRef} key={`${selected.videoId}:${rawAtMs ?? "resume"}`} video={selected} atMs={atMs} fullscreen={pageFullscreen} onToggleFullscreen={togglePageFullscreen} />}
           {selected ? <>
             <div className={styles.videoMeta}>
               <div><strong>{episodeLabel(selected.episodeOrder)}</strong><span>{selected.originalFilename}</span></div>
@@ -159,8 +212,8 @@ export function WatchPage() {
             <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={() => setPanelTab("chat")}><MessageCircle size={15} aria-hidden="true" />Chat</button>
             <button type="button" role="tab" id="watch-episodes-tab" aria-controls="watch-episodes-panel" aria-selected={panelTab === "episodes"} onClick={() => setPanelTab("episodes")}><ListVideo size={15} aria-hidden="true" />选集</button>
           </div>
-          <div id="watch-chat-panel" className={styles.chatPanel} role="tabpanel" aria-labelledby="watch-chat-tab" hidden={panelTab !== "chat"}>
-            <SearchPage embedded initialSeriesId={seriesId} onOpenVideo={({ seriesId: targetSeriesId, videoId: targetVideoId, startMs }) => {
+          <div id="watch-chat-panel" className={styles.chatPanel} role="tabpanel" aria-labelledby="watch-chat-tab" hidden={panelTab !== "chat"} onKeyDownCapture={(event) => switchPaneOnTab(event, "player")}>
+            <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} captureExtraContext={captureExtraContext} onOpenVideo={({ seriesId: targetSeriesId, videoId: targetVideoId, startMs }) => {
               navigate(`${watchPath(targetSeriesId, targetVideoId)}?atMs=${startMs}`);
             }} />
           </div>

@@ -1,9 +1,10 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentMessageView, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
-import { SearchPage } from "./SearchPage";
+import { SearchPage, type SearchPageHandle } from "./SearchPage";
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
@@ -136,7 +137,12 @@ function assistantMessage(content: string, hits: VideoChunkSearchHit[] = []): Ag
 function renderPage(
   message: AgentMessageView,
   videoSeries: SeriesSummary[] = [series],
-  props: { embedded?: boolean; initialSeriesId?: string; onOpenVideo?: (target: { seriesId: string; videoId: string; startMs: number }) => void } = {},
+  props: {
+    embedded?: boolean;
+    initialSeriesId?: string;
+    captureExtraContext?: () => Record<string, unknown> | null;
+    onOpenVideo?: (target: { seriesId: string; videoId: string; startMs: number }) => void;
+  } = {},
 ) {
   mocks.useWorkspace.mockReturnValue({ mode: "live", series: videoSeries, isLoading: false });
   mocks.useAgentConversation.mockReturnValue({
@@ -185,6 +191,80 @@ describe("Search assistant presentation", () => {
     expect(onOpenVideo).toHaveBeenCalledWith({ seriesId: series.seriesId, videoId: "video-1", startMs: hit.evidence.startMs });
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("片段详情")).not.toBeInTheDocument();
+  });
+
+  it("captures playback on a pointer interaction, ignores programmatic focus, and replaces stale context", async () => {
+    const firstContext = {
+      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionMs: 12_345 },
+    };
+    const nextContext = {
+      playback: { seriesId: series.seriesId, videoId: "video-2", episodeOrder: 2, positionMs: 4_321 },
+    };
+    const firstCapture = vi.fn(() => firstContext);
+    const nextCapture = vi.fn(() => nextContext);
+    const view = renderPage(assistantMessage("可以提问"), [series], {
+      embedded: true,
+      initialSeriesId: series.seriesId,
+      captureExtraContext: firstCapture,
+    });
+    const chatRef = createRef<SearchPageHandle>();
+    view.rerender(
+      <SearchPage
+        ref={chatRef}
+        embedded
+        initialSeriesId={series.seriesId}
+        captureExtraContext={firstCapture}
+      />,
+    );
+    const textbox = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
+
+    chatRef.current?.focusComposer();
+    expect(textbox).toHaveFocus();
+    expect(firstCapture).not.toHaveBeenCalled();
+    fireEvent.pointerDown(textbox, { button: 0, pointerType: "mouse" });
+    expect(firstCapture).toHaveBeenCalledOnce();
+
+    view.rerender(
+      <SearchPage
+        embedded
+        initialSeriesId={series.seriesId}
+        captureExtraContext={nextCapture}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "第二集这里讲了什么？");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    expect(nextCapture).toHaveBeenCalledOnce();
+    expect(mocks.send).toHaveBeenCalledWith(
+      "第二集这里讲了什么？",
+      [series.seriesId],
+      null,
+      {},
+      nextContext,
+    );
+  });
+
+  it("retries playback capture on submit when the initial pointer capture was not ready", async () => {
+    const extraContext = {
+      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionMs: 0 },
+    };
+    const captureExtraContext = vi.fn()
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(extraContext);
+    renderPage(assistantMessage("可以提问"), [series], {
+      embedded: true,
+      initialSeriesId: series.seriesId,
+      captureExtraContext,
+    });
+    const textbox = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
+    fireEvent.pointerDown(textbox, { button: 0, pointerType: "mouse" });
+    const user = userEvent.setup();
+    await user.type(textbox, "开头讲了什么？");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    expect(captureExtraContext).toHaveBeenCalledTimes(2);
+    expect(mocks.send).toHaveBeenCalledWith("开头讲了什么？", [series.seriesId], null, {}, extraContext);
   });
 
   it("states when the watched series is not searchable instead of presenting a global scope as current", async () => {

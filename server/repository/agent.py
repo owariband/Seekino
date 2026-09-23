@@ -307,6 +307,7 @@ class AgentRepository:
         idempotency_key: str,
         requested_series_ids: list[str],
         reference: dict[str, str] | None = None,
+        extra_context: dict | None = None,
     ) -> StartedAgentMessageState | None:
         with self._session_factory() as session:
             self._require_conversation(session, conversation_id, workspace_id)
@@ -319,6 +320,7 @@ class AgentRepository:
                 idempotency_key=idempotency_key,
                 requested_series_ids=requested_series_ids,
                 reference=reference,
+                extra_context=extra_context,
             )
 
     def get_message_pair(
@@ -392,6 +394,7 @@ class AgentRepository:
         assistant_message_id: str,
         now: int,
         reference: dict[str, str] | None = None,
+        extra_context: dict | None = None,
     ) -> StartedAgentMessageState:
         with self._session_factory.begin() as session:
             conversation = self._require_conversation(
@@ -409,6 +412,7 @@ class AgentRepository:
                 idempotency_key=idempotency_key,
                 requested_series_ids=requested_series_ids,
                 reference=reference,
+                extra_context=extra_context,
             )
             if existing is not None:
                 return existing
@@ -440,6 +444,7 @@ class AgentRepository:
                 requested_run_options=requested_run_options,
                 requested_series_ids=requested_series_ids,
                 reference=reference,
+                extra_context=extra_context,
                 version=1,
             )
             assistant = AgentMessageRecord(
@@ -575,6 +580,7 @@ class AgentRepository:
         idempotency_key: str,
         requested_series_ids: list[str],
         reference: dict[str, str] | None = None,
+        extra_context: dict | None = None,
     ) -> StartedAgentMessageState | None:
         existing_user = session.scalar(
             select(AgentMessageRecord).where(
@@ -591,6 +597,7 @@ class AgentRepository:
             or existing_user.requested_run_options != requested_run_options
             or existing_user.requested_series_ids != requested_series_ids
             or existing_user.reference != reference
+            or existing_user.extra_context != extra_context
         ):
             raise AgentConflictError(
                 "the message idempotency key is already used with "
@@ -675,6 +682,7 @@ class AgentRepository:
             version=record.version,
             reference=record.reference,
             timing=AgentRepository._timing_state(record.timing),
+            extra_context=record.extra_context,
         )
 
     @staticmethod

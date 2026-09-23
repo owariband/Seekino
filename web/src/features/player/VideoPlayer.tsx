@@ -1,5 +1,5 @@
 import { Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from "lucide-react";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { forwardRef, type KeyboardEvent, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import { errorMessage, mediaUrl } from "../../api/client";
 import type { VideoSummary } from "../../api/contracts";
@@ -14,10 +14,20 @@ interface VideoPlayerProps {
   onToggleFullscreen?: () => void | Promise<void>;
 }
 
+export interface VideoPlayerHandle {
+  pauseAndGetSnapshot(): { positionMs: number; wasPlaying: boolean } | null;
+  focus(): void;
+  resume(): void;
+}
+
 const PROGRESS_WRITE_INTERVAL_MS = 5_000;
 
-export function VideoPlayer({ video, atMs, fullscreen = false, onToggleFullscreen }: VideoPlayerProps) {
+export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function VideoPlayer(
+  { video, atMs, fullscreen = false, onToggleFullscreen },
+  ref,
+) {
   const mediaRef = useRef<HTMLVideoElement>(null);
+  const playerRef = useRef<HTMLDivElement>(null);
   const positionRef = useRef(0);
   const durationRef = useRef(video.durationMs);
   const progressReadyRef = useRef(false);
@@ -85,6 +95,33 @@ export function VideoPlayer({ video, atMs, fullscreen = false, onToggleFullscree
     if (Date.now() - lastWriteAtRef.current >= PROGRESS_WRITE_INTERVAL_MS) persist();
   };
 
+  const pauseAndReadPosition = () => {
+    const media = mediaRef.current;
+    if (!media) return null;
+    const wasPlaying = !media.paused && !media.ended;
+    media.pause();
+    const positionMs = Math.max(0, Math.round(media.currentTime * 1000));
+    positionRef.current = positionMs;
+    setCurrentMs(positionMs);
+    persist();
+    return { positionMs, wasPlaying };
+  };
+
+  const resume = () => {
+    const media = mediaRef.current;
+    if (!media || media.ended || !media.paused) return;
+    setPlayError(null);
+    void media.play().catch((failure: unknown) => {
+      if (mediaRef.current === media && !(failure instanceof DOMException && failure.name === "AbortError")) setPlayError(errorMessage(failure));
+    });
+  };
+
+  useImperativeHandle(ref, () => ({
+    pauseAndGetSnapshot: pauseAndReadPosition,
+    focus: () => playerRef.current?.focus(),
+    resume,
+  }));
+
   const onLoadedMetadata = () => {
     const media = mediaRef.current;
     if (!media || initializedKeyRef.current === mediaKey) return;
@@ -118,10 +155,7 @@ export function VideoPlayer({ video, atMs, fullscreen = false, onToggleFullscree
     const media = mediaRef.current;
     if (!media) return;
     if (!media.paused) { media.pause(); return; }
-    setPlayError(null);
-    void media.play().catch((failure: unknown) => {
-      if (mediaRef.current === media && !(failure instanceof DOMException && failure.name === "AbortError")) setPlayError(errorMessage(failure));
-    });
+    resume();
   };
 
   const toggleFullscreen = () => {
@@ -154,7 +188,7 @@ export function VideoPlayer({ video, atMs, fullscreen = false, onToggleFullscree
   }
 
   return (
-    <div className={styles.videoPlayer} tabIndex={0} onKeyDown={onKeyboard} aria-label="视频播放器">
+    <div ref={playerRef} className={styles.videoPlayer} tabIndex={0} onKeyDown={onKeyboard} aria-label="视频播放器">
       <div className={styles.videoPlayerStage}>
         <video
           key={mediaKey}
@@ -209,4 +243,4 @@ export function VideoPlayer({ video, atMs, fullscreen = false, onToggleFullscree
       {playError ? <p className={styles.videoPlayerError} role="alert">{playError}</p> : null}
     </div>
   );
-}
+});

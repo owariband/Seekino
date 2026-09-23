@@ -518,6 +518,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
     assert "seriesIds" not in schemas["AgentConversationCreateRequest"]["properties"]
     assert "seriesIds" in schemas["AgentMessageView"]["required"]
     assert "seriesIds" in schemas["AgentMessageSendRequest"]["properties"]
+    assert "extraContext" in schemas["AgentMessageSendRequest"]["properties"]
     assert "seriesId" in schemas["VideoChunkEvidenceView"]["required"]
     conversation_create_parameters = openapi_paths[
         "/api/agent/conversations/create"
@@ -851,6 +852,24 @@ def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:
             "content": "她为什么哭？",
             "seriesIds": [series_id],
             "topK": 5,
+            "extraContext": {
+                "playback": {
+                    "seriesId": series_id,
+                    "videoId": "video-1",
+                    "episodeOrder": 1,
+                    "positionMs": 122_000,
+                },
+            },
+        },
+    )
+    oversized = client.post(
+        "/api/agent/messages/send",
+        params={"workspaceId": "local-default", "conversationId": conversation_id},
+        headers={"Idempotency-Key": "oversized-extra-context"},
+        json={
+            "workspaceId": "local-default",
+            "content": "这里在讲什么？",
+            "extraContext": {"note": "字" * 16_385},
         },
     )
     listed = client.get(
@@ -864,6 +883,19 @@ def test_agent_conversation_send_and_list_messages(tmp_path: Path) -> None:
     )
 
     assert sent.status_code == 200, sent.text
+    assert oversized.status_code == 422
+    stored = client.app.state.services.agent.list_all_messages(
+        conversation_id,
+        workspace_id="local-default",
+    )
+    assert stored[0].extra_context == {
+        "playback": {
+            "seriesId": series_id,
+            "videoId": "video-1",
+            "episodeOrder": 1,
+            "positionMs": 122_000,
+        },
+    }
     assert listed.status_code == 200
     assert [item["role"] for item in listed.json()["items"]] == ["USER", "ASSISTANT"]
     assert listed.json()["items"][0]["modelName"] is None

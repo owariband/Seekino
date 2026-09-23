@@ -274,11 +274,20 @@ def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
         cursor.close()
 
 
-def _send(service, conversation, *, key="message", content="寻找摔杯子的片段", series_ids=None, reference=None):
+def _send(
+    service,
+    conversation,
+    *,
+    key="message",
+    content="寻找摔杯子的片段",
+    series_ids=None,
+    reference=None,
+    extra_context=None,
+):
     return service.send_message(
         conversation.conversation_id, workspace_id="local-default",
         content=content, idempotency_key=key, series_ids=series_ids,
-        reference=reference,
+        reference=reference, extra_context=extra_context,
     )
 
 
@@ -360,6 +369,44 @@ def test_supervisor_chat_without_ready_video_series(build_service):
     prompt_context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
     assert prompt_context["video_scope"] == []
     assert "没有可检索的视频系列" in prompt_context["video_scope_description"]
+
+
+def test_extra_context_is_persisted_injected_and_part_of_idempotency(build_service):
+    model = _DirectSupervisorModel()
+    service, conversation, _, _, *_ = build_service(supervisor_model=model)
+    extra_context = {
+        "playback": {
+            "seriesId": "series-1",
+            "videoId": "video-1",
+            "episodeOrder": 1,
+            "positionMs": 122_000,
+        },
+    }
+
+    completed = _send(
+        service,
+        conversation,
+        content="这里在讲什么？",
+        extra_context=extra_context,
+    )
+
+    assert completed.user_message.extra_context == extra_context
+    assert completed.assistant_message.extra_context is None
+    prompt_context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
+    assert prompt_context["extra_context"] == extra_context
+    assert _send(
+        service,
+        conversation,
+        content="这里在讲什么？",
+        extra_context=extra_context,
+    ) == completed
+    with pytest.raises(AgentConflictError, match="different request fields"):
+        _send(
+            service,
+            conversation,
+            content="这里在讲什么？",
+            extra_context={"playback": {**extra_context["playback"], "positionMs": 123_000}},
+        )
 
 
 @pytest.mark.parametrize("include_web", [False, True])
