@@ -1,5 +1,9 @@
 # anivag Gateway
 
+模型配置版本 2 的来源、各环节绑定及第三方 ASR/视觉接入说明见
+[模型配置](../docs/model-config.md)。下文旧版 `agent_model` 配置仍受支持；
+在版本 2 中对应 `models.agent`，同一环节不要同时填写两种格式。
+
 Gateway 是 anivag 的模型调用边界。它只负责把统一的多模态输入转换成
 Provider 请求，并把严格 JSON Schema 输出校验成调用方指定的 Pydantic 模型。
 

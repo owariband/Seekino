@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from gateway.config import (
+    ArkModelSourceConfig,
     ClaudeCodeModelSourceConfig,
     CodexModelSourceConfig,
     OpenAIModelSourceConfig,
@@ -20,6 +21,7 @@ def _model_config(
     fallback_enabled: bool = False,
 ) -> SimpleNamespace:
     return SimpleNamespace(
+        stage_source=lambda _stage: ArkModelSourceConfig(),
         selected_agent_sources=lambda: selected_sources,
         video_parser=SimpleNamespace(
             fallback=SimpleNamespace(

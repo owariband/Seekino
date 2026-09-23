@@ -39,6 +39,7 @@ class ArkMultimodalModel:
         max_output_tokens: int | None = None,
         fallback_model: str | None = None,
         client: Ark | None = None,
+        api_key: str | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -60,6 +61,7 @@ class ArkMultimodalModel:
         self.max_output_tokens = max_output_tokens
         self._request_timeout_seconds = request_timeout_seconds
         self._client = client
+        self._api_key = api_key
 
     def generate(
         self,
@@ -162,6 +164,8 @@ class ArkMultimodalModel:
     def _new_client(self) -> Ark:
         # Ark documents its client as thread unsafe: never share one across Kicks.
         options: dict[str, Any] = {"max_retries": 0}
+        if self._api_key is not None:
+            options["api_key"] = self._api_key
         if self._request_timeout_seconds is not None:
             options["timeout"] = self._request_timeout_seconds
         return Ark.volc(**options)

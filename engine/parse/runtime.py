@@ -7,8 +7,13 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal
 
-from gateway.config import VideoFallbackConfig, load_config
 from gateway.ark.multimodal import ArkMultimodalModel
+from gateway.config import (
+    GatewayConfig,
+    OpenAIVisionSourceConfig,
+    VideoFallbackConfig,
+    load_config,
+)
 from gateway.openai.multimodal import DeepSeekMultimodalModel
 
 from .analysis_windows import materialize_analysis_windows, plan_analysis_windows
@@ -18,30 +23,31 @@ from .checkpoints import (
     stream_candidate_transcripts,
     write_json,
 )
-from .embed import EmbedStage, EmbeddingAgent
+from .embed import EmbeddingAgent, EmbedStage
+from .model_factory import build_asr_agent, build_fallback_model, build_vision_model
 from .pipeline import ParsePipeline
 from .schemas import (
     AnalysisWindow,
     ContextSnapshot,
     TranscriptAnalysis,
-    VideoEvidence,
     VideoChunkCheckpoint,
     VideoChunkParseResult,
+    VideoEvidence,
     VideoFallbackModels,
     VideoParseModels,
     VideoParseResult,
 )
+from .transcribe import TranscribeStage
+from .understand import UnderstandStage
+from .usage import parse_chunk_scope
 from .video_chunk_parse import (
     ContentFilterVideoUnderstandingAgent,
     FrameFallbackVideoUnderstandingAgent,
     OrderedFrameVideoUnderstandingAgent,
-    VideoASRAgent,
+    VideoASRAgentProtocol,
     VideoUnderstandingAgent,
     VideoUnderstandingAgentProtocol,
 )
-from .transcribe import TranscribeStage
-from .understand import UnderstandStage
-from .usage import parse_chunk_scope
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +96,7 @@ class VideoParseRuntimeConfig:
 
 @dataclass(frozen=True, slots=True)
 class _ResolvedRuntimeConfig:
+    gateway: GatewayConfig
     transcript_model: str
     video_model: str
     transcript_fps: float
@@ -174,7 +181,7 @@ class EngineVideoParseRuntime:
         self._on_log = on_log or (lambda _message: None)
         self._assembly_lock = Lock()
         self._resolved: _ResolvedRuntimeConfig | None = None
-        self._asr_agent: VideoASRAgent | None = None
+        self._asr_agent: VideoASRAgentProtocol | None = None
         self._understanding_agent: VideoUnderstandingAgentProtocol | None = None
         self._understand_stage: UnderstandStage | None = None
         self._server_asr_agent = EngineASRAgent(self)
@@ -401,9 +408,8 @@ class EngineVideoParseRuntime:
     def _resolve_config(self) -> _ResolvedRuntimeConfig:
         with self._assembly_lock:
             if self._resolved is None:
-                parser_config = load_config(
-                    self._model_config_path
-                ).video_parser
+                gateway_config = load_config(self._model_config_path)
+                parser_config = gateway_config.video_parser
                 fallback_enabled = self._config.fallback_enabled
                 if fallback_enabled is None:
                     fallback_enabled = _environment_bool(
@@ -411,6 +417,7 @@ class EngineVideoParseRuntime:
                         parser_config.fallback.enabled,
                     )
                 self._resolved = _ResolvedRuntimeConfig(
+                    gateway=gateway_config,
                     transcript_model=(
                         self._config.transcript_model
                         or os.getenv("ANIVAG_TRANSCRIPT_MODEL")
@@ -440,20 +447,17 @@ class EngineVideoParseRuntime:
                 )
             return self._resolved
 
-    def _get_asr_agent(self) -> VideoASRAgent:
+    def _get_asr_agent(self) -> VideoASRAgentProtocol:
         resolved = self._resolve_config()
         with self._assembly_lock:
             if self._asr_agent is None:
-                client = ArkMultimodalModel(
-                    resolved.transcript_model,
-                    request_timeout_seconds=(
-                        self._config.request_timeout_seconds
-                    ),
-                    max_output_tokens=self._config.transcript_max_output_tokens,
-                )
-                self._asr_agent = VideoASRAgent(
-                    client,
+                parser = resolved.gateway.video_parser
+                self._asr_agent = build_asr_agent(
+                    resolved.gateway, model=resolved.transcript_model,
                     fps=resolved.transcript_fps,
+                    timeout=parser.transcription_timeout_seconds or self._config.request_timeout_seconds,
+                    max_output_tokens=self._config.transcript_max_output_tokens or parser.transcription_max_output_tokens,
+                    ark_model_type=ArkMultimodalModel,
                 )
             return self._asr_agent
 
@@ -463,17 +467,18 @@ class EngineVideoParseRuntime:
             if self._understanding_agent is not None:
                 return self._understanding_agent
 
-            video_client = ArkMultimodalModel(
-                resolved.video_model,
-                request_timeout_seconds=self._config.request_timeout_seconds,
-                max_output_tokens=self._config.video_max_output_tokens,
+            parser = resolved.gateway.video_parser
+            video_client = build_vision_model(
+                resolved.gateway, model=resolved.video_model,
+                timeout=parser.vision_timeout_seconds or self._config.request_timeout_seconds,
+                max_output_tokens=self._config.video_max_output_tokens or parser.vision_max_output_tokens,
+                ark_model_type=ArkMultimodalModel,
             )
-            if self._config.video_input_mode == "ordered_frames":
-                assert self._config.video_max_frames_per_window is not None
+            if self._config.video_input_mode == "ordered_frames" or isinstance(resolved.gateway.stage_source("vision"), OpenAIVisionSourceConfig):
                 understanding_agent: VideoUnderstandingAgentProtocol = OrderedFrameVideoUnderstandingAgent(
                     video_client,
                     frame_fps=resolved.video_fps,
-                    max_frames=self._config.video_max_frames_per_window,
+                    max_frames=self._config.video_max_frames_per_window or parser.max_frames_per_window,
                     max_height=self._config.max_height,
                 )
             else:
@@ -483,19 +488,8 @@ class EngineVideoParseRuntime:
                 )
             if resolved.fallback_enabled:
                 deepseek = resolved.fallback.deepseek
-                api_key = os.getenv(deepseek.api_key_env)
-                if not api_key:
-                    raise RuntimeError(
-                        "missing DeepSeek fallback credential in environment "
-                        f"variable {deepseek.api_key_env}"
-                    )
-                fallback_model = DeepSeekMultimodalModel(
-                    deepseek.model,
-                    base_url=deepseek.base_url,
-                    api_key=api_key,
-                    max_output_tokens=deepseek.max_output_tokens,
-                    request_timeout_seconds=deepseek.request_timeout_seconds,
-                    reasoning_effort=deepseek.reasoning_effort,
+                fallback_model = build_fallback_model(
+                    resolved.gateway, deepseek, deepseek_model_type=DeepSeekMultimodalModel,
                 )
                 fallback_agent = FrameFallbackVideoUnderstandingAgent(
                     fallback_model,

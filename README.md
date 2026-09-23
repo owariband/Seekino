@@ -46,8 +46,10 @@ State 只覆盖当前一次执行。
 
 仓库根目录是运行配置的唯一入口：`config.yaml` 保存可提交的模型默认值和全局 Chat Agent 运行参数，`config/model-pricing.yaml` 保存 Parse 模型人民币单价，`.env.local` 保存 API Key 和个人 Endpoint，不进入 Git。Chat Agent 参数位于 `config.yaml` 的 `agent_runtime` 节，也可从前端「设置」页编辑。YAML 中显式填写的值优先于同名 `ANIVAG_AGENT_*` 环境变量；缺失字段沿用环境变量或程序默认值。
 
-Chat Agent 的连接配置拆成两层：`model_sources` 描述协议 Adapter、用量 Provider 和
-认证方式，`agent_model` 只引用一个 source 并设置模型、请求上限及可选 fallback。
+模型连接配置拆成两层：`model_sources` 描述协议 Adapter、用量 Provider 和
+认证方式，`models` 分别选择 Agent、ASR、画面理解及视觉降级模型；向量配置保持原样。
+旧的 `agent_model`、`video_parser.*_model` 等配置仍然兼容。
+DS + 第三方 ASR、第三方视觉接口和迁移规则见 [`docs/model-config.md`](docs/model-config.md)。
 DeepSeek 是 `adapter: openai` 下的 `profile: deepseek`；Codex 使用 app-server，Claude
 使用 Agent SDK。可复制的 source 示例及认证说明见
 [`gateway/README.md`](gateway/README.md#chat-agent-模型来源)。角色模型环境变量覆盖仍然有效，

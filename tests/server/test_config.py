@@ -16,10 +16,11 @@ from server.config.global_agent_settings import (
 from server.database import DatabaseEnvironment
 
 
-@pytest.fixture(autouse=True)
-def _legacy_config_without_agent_runtime(monkeypatch, tmp_path: Path) -> None:
-    """Keep existing environment override tests on a legacy YAML document."""
-    source = Path(__file__).resolve().parents[2] / "config.yaml"
+@pytest.fixture(autouse=True, params=["legacy", "v2"])
+def _config_without_agent_runtime(monkeypatch, tmp_path: Path, request) -> None:
+    """Exercise environment overrides and settings edits with both YAML formats."""
+    root = Path(__file__).resolve().parents[2]
+    source = root / ("tests/gateway/fixtures/legacy-config.yaml" if request.param == "legacy" else "config.yaml")
     payload = yaml.safe_load(source.read_text(encoding="utf-8"))
     payload.pop("agent_runtime", None)
     config_path = tmp_path / "config.yaml"
@@ -489,7 +490,7 @@ def test_global_agent_settings_patch_preserves_other_sections_and_detects_edits(
         "supervisor_timeout_seconds": 420.0,
         "max_read_chars_per_call": 4_096,
     }
-    for section in ("agent_model", "video_parser", "multimodal_embedding"):
+    for section in before.keys() - {"agent_runtime"}:
         assert after[section] == before[section]
 
     after["agent_runtime"]["default_top_k"] = 7

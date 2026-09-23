@@ -69,7 +69,9 @@ class DeepSeekModelConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["deepseek"] = "deepseek"
+    provider: _NonEmptyString = "deepseek"
+    protocol: Literal["deepseek_responses", "openai_chat"] = "deepseek_responses"
+    vision_source: _NonEmptyString | None = None
     model: _NonEmptyString
     base_url: _HttpsBaseUrl
     api_key_env: _NonEmptyString
@@ -96,6 +98,29 @@ class ArkModelSourceConfig(BaseModel):
     adapter: Literal[ARK_ADAPTER] = ARK_ADAPTER
     provider: Literal[ARK_PROVIDER] = ARK_PROVIDER
     api_key_env: _NonEmptyString = "ARK_API_KEY"
+
+
+class OpenAIAudioSourceConfig(BaseModel):
+    """Audio Transcriptions protocol, independent of Chat Completions."""
+
+    model_config = ConfigDict(extra="forbid")
+    adapter: Literal["openai_audio"] = "openai_audio"
+    provider: _NonEmptyString
+    base_url: _HttpsBaseUrl
+    api_key_env: _NonEmptyString
+    response_format: Literal["verbose_json", "json"] = "verbose_json"
+
+
+class OpenAIVisionSourceConfig(BaseModel):
+    """Chat Completions with images and structured JSON output."""
+
+    model_config = ConfigDict(extra="forbid")
+    adapter: Literal["openai_vision"] = "openai_vision"
+    provider: _NonEmptyString
+    base_url: _HttpsBaseUrl
+    api_key_env: _NonEmptyString
+    token_parameter: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+    response_format: Literal["json_schema", "json_object"] = "json_schema"
 
 
 class CodexModelSourceConfig(BaseModel):
@@ -129,6 +154,8 @@ ModelSourceConfig = (
     | ArkModelSourceConfig
     | CodexModelSourceConfig
     | ClaudeCodeModelSourceConfig
+    | OpenAIAudioSourceConfig
+    | OpenAIVisionSourceConfig
 )
 _ModelSourceConfigField = Annotated[
     ModelSourceConfig,
@@ -197,6 +224,13 @@ class VideoParseConfig(BaseModel):
     transcript_fps: float = Field(ge=0.2, le=5.0)
     video_fps: float = Field(ge=0.2, le=5.0)
     fallback: VideoFallbackConfig
+    transcription_source: _NonEmptyString | None = None
+    vision_source: _NonEmptyString | None = None
+    transcription_timeout_seconds: float | None = Field(default=None, gt=0)
+    vision_timeout_seconds: float | None = Field(default=None, gt=0)
+    transcription_max_output_tokens: int | None = Field(default=None, ge=256, le=32768)
+    vision_max_output_tokens: int | None = Field(default=None, ge=256, le=32768)
+    max_frames_per_window: int = Field(default=32, ge=1, le=600)
 
 
 class MultimodalEmbeddingConfig(BaseModel):
@@ -209,6 +243,8 @@ class MultimodalEmbeddingConfig(BaseModel):
 
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    config_version: Literal[1, 2] = 1
 
     model_sources: dict[_NonEmptyString, _ModelSourceConfigField] = Field(
         default_factory=_default_model_sources
@@ -224,7 +260,7 @@ class GatewayConfig(BaseModel):
     def normalize_legacy_agent_config(cls, value: object) -> object:
         if not isinstance(value, Mapping):
             return value
-        return _normalize_gateway_payload(value)
+        return _normalize_gateway_payload(_normalize_model_bindings(value))
 
     @model_validator(mode="after")
     def validate_agent_sources(self) -> GatewayConfig:
@@ -243,7 +279,47 @@ class GatewayConfig(BaseModel):
             raise ValueError(
                 "agent_model.fallback.source must differ from agent_model.source"
             )
+        for name in (self.agent_model.source, fallback.source if fallback else None):
+            if name and isinstance(
+                self.model_sources[name],
+                (OpenAIAudioSourceConfig, OpenAIVisionSourceConfig),
+            ):
+                raise ValueError(f"source {name!r} does not support Agent calls")
+        for stage, allowed in (
+            ("transcription", (ArkModelSourceConfig, OpenAIAudioSourceConfig)),
+            ("vision", (ArkModelSourceConfig, OpenAIVisionSourceConfig)),
+        ):
+            source = self.stage_source(stage)
+            if not isinstance(source, allowed):
+                raise ValueError(f"{stage} does not support adapter {source.adapter!r}")
+        parse_fallback = self.video_parser.fallback.deepseek
+        if parse_fallback.protocol == "openai_chat":
+            if not isinstance(
+                self.model_sources.get(parse_fallback.vision_source),
+                OpenAIVisionSourceConfig,
+            ):
+                raise ValueError("parse fallback requires an openai_vision source")
+            if parse_fallback.reasoning_effort != "none":
+                raise ValueError("openai_vision does not support reasoning_effort")
+        if (
+            isinstance(self.stage_source("transcription"), OpenAIAudioSourceConfig)
+            and self.video_parser.transcription_max_output_tokens is not None
+        ):
+            raise ValueError("openai_audio does not support max_output_tokens")
         return self
+
+    def stage_source(self, stage: str) -> ModelSourceConfig:
+        names = {
+            "transcription": self.video_parser.transcription_source,
+            "vision": self.video_parser.vision_source,
+        }
+        name = names[stage]
+        # Old parsing/embedding never used Agent sources, even a custom ark_default.
+        if name is None:
+            return ArkModelSourceConfig()
+        if name not in self.model_sources:
+            raise ValueError(f"{stage}.source {name!r} is not present in model_sources")
+        return self.model_sources[name]
 
     def selected_agent_sources(self) -> tuple[ModelSourceConfig, ...]:
         """Return only sources referenced by the active Agent configuration."""
@@ -256,7 +332,15 @@ class GatewayConfig(BaseModel):
 
 
 def source_api_key_env_name(source: ModelSourceConfig) -> str | None:
-    if isinstance(source, (OpenAIModelSourceConfig, ArkModelSourceConfig)):
+    if isinstance(
+        source,
+        (
+            OpenAIModelSourceConfig,
+            ArkModelSourceConfig,
+            OpenAIAudioSourceConfig,
+            OpenAIVisionSourceConfig,
+        ),
+    ):
         return source.api_key_env
     if (
         isinstance(source, ClaudeCodeModelSourceConfig)
@@ -275,6 +359,123 @@ def agent_api_key_env_names(config: GatewayConfig) -> tuple[str, ...]:
         if (name := source_api_key_env_name(source)) is not None
     }
     return tuple(sorted(names))
+
+
+def required_api_key_env_names(config: GatewayConfig) -> tuple[str, ...]:
+    """Credentials for active sources, including the enabled parse fallback."""
+    names = set(agent_api_key_env_names(config))
+    # Multimodal embeddings retain their original Ark client and credential.
+    names.add("ARK_API_KEY")
+    for stage in ("transcription", "vision"):
+        name = source_api_key_env_name(config.stage_source(stage))
+        if name:
+            names.add(name)
+    if config.video_parser.fallback.enabled:
+        names.add(config.video_parser.fallback.deepseek.api_key_env)
+    return tuple(sorted(names))
+
+
+class ParseModelBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: _NonEmptyString
+    model: _NonEmptyString
+    request_timeout_seconds: float | None = Field(default=None, gt=0)
+    max_output_tokens: int | None = Field(default=None, ge=256, le=32768)
+
+
+class FallbackModelBinding(ParseModelBinding):
+    reasoning_effort: Literal["none", "low", "high", "max"] = "none"
+
+
+def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, object]:
+    """Translate new YAML at the boundary; existing consumers keep their DTOs."""
+    result = dict(value)
+    if "models" not in result:
+        return result
+    if result.get("config_version") != 2:
+        raise ValueError("models requires config_version: 2")
+    models = result.pop("models")
+    if not isinstance(models, Mapping):
+        raise ValueError("models must be a mapping")
+    unknown = set(models) - {
+        "agent",
+        "transcription",
+        "vision",
+        "vision_fallback",
+    }
+    if unknown:
+        raise ValueError(f"unknown models entries: {sorted(unknown)}")
+    if "model_sources" not in result:
+        raise ValueError("models requires model_sources")
+    if "agent" in models:
+        if "agent_model" in result or "agent_chat" in result:
+            raise ValueError(
+                "configure only models.agent or legacy agent_model/agent_chat"
+            )
+        result["agent_model"] = models["agent"]
+    if not isinstance(result.get("video_parser", {}), Mapping):
+        raise ValueError("video_parser must be a mapping")
+    parser = dict(result.get("video_parser", {}))
+    for stage, legacy in (("transcription", "transcript"), ("vision", "video")):
+        if stage not in models:
+            continue
+        binding = ParseModelBinding.model_validate(models[stage])
+        if any(
+            key in parser
+            for key in (
+                f"{legacy}_model",
+                f"{stage}_source",
+                f"{stage}_timeout_seconds",
+                f"{stage}_max_output_tokens",
+            )
+        ):
+            raise ValueError(
+                f"configure only models.{stage} or legacy video_parser.{legacy}_model"
+            )
+        parser[f"{legacy}_model"] = binding.model
+        parser[f"{stage}_source"] = binding.source
+        parser[f"{stage}_timeout_seconds"] = binding.request_timeout_seconds
+        parser[f"{stage}_max_output_tokens"] = binding.max_output_tokens
+    if "vision_fallback" in models:
+        if not isinstance(parser.get("fallback", {}), Mapping):
+            raise ValueError("video_parser.fallback must be a mapping")
+        fallback = dict(parser.get("fallback", {}))
+        if "deepseek" in fallback:
+            raise ValueError(
+                "configure only models.vision_fallback or video_parser.fallback.deepseek"
+            )
+        binding = FallbackModelBinding.model_validate(models["vision_fallback"])
+        sources = result["model_sources"]
+        source = sources.get(binding.source) if isinstance(sources, Mapping) else None
+        if not isinstance(source, Mapping):
+            raise ValueError(
+                "models.vision_fallback.source is not present in model_sources"
+            )
+        adapter = source.get("adapter")
+        if adapter != "openai_vision" and not (
+            adapter == "openai" and source.get("profile") == "deepseek"
+        ):
+            raise ValueError(
+                "vision_fallback requires openai_vision or the deepseek profile"
+            )
+        # Preserve source dialect fields for the factory via an explicit source reference.
+        fallback["deepseek"] = {
+            "provider": source.get("provider"),
+            "protocol": "openai_chat"
+            if adapter == "openai_vision"
+            else "deepseek_responses",
+            "model": binding.model,
+            "base_url": source.get("base_url"),
+            "api_key_env": source.get("api_key_env"),
+            "max_output_tokens": binding.max_output_tokens or 8192,
+            "request_timeout_seconds": binding.request_timeout_seconds or 1200,
+            "reasoning_effort": binding.reasoning_effort,
+        }
+        if adapter == "openai_vision":
+            fallback["deepseek"]["vision_source"] = binding.source
+        parser["fallback"] = fallback
+    result["video_parser"] = parser
+    return result
 
 
 def _normalize_gateway_payload(value: Mapping[object, object]) -> dict[object, object]:
