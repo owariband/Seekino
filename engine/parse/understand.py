@@ -21,7 +21,7 @@ from .usage import parse_chunk_scope
 from .video_chunk_parse import VideoUnderstandingAgentProtocol
 
 
-class ParsePipeline:
+class UnderstandStage:
     def __init__(
         self,
         understanding_agent: VideoUnderstandingAgentProtocol,
@@ -109,6 +109,7 @@ class ParsePipeline:
             | None
         ) = None,
         completed_chunks: Sequence[VideoChunkParseResult] = (),
+        ensure_active: Callable[[], None] | None = None,
         on_chunk_complete: Callable[[VideoChunkParseResult], None] | None = None,
     ) -> VideoParseResult:
         self._validate_windows(windows, duration_ms)
@@ -175,6 +176,8 @@ class ParsePipeline:
                         f"sequence; expected {window.sequence_no}, got "
                         f"{transcript_sequence_no}"
                     )
+            if ensure_active is not None:
+                ensure_active()
             chunk_result = self.understand_chunk(
                 context_before,
                 window,

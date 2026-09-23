@@ -16,7 +16,7 @@ from engine.parse.schemas import (
     VideoParseProvenance,
     VideoParseResult,
 )
-from engine.parse.video_parse import ParsePipeline
+from engine.parse.understand import UnderstandStage
 
 
 def _event(
@@ -99,6 +99,11 @@ class FakeFallbackParser(FakeParser):
                     input_mode="ordered_frames",
                     fallback_reason="content_filter",
                     primary_model="doubao-pro",
+                    primary_error_code="OutputTextSensitiveContentDetected",
+                    primary_filter_type="output",
+                    primary_filter_details="policy",
+                    primary_response_id="response-1",
+                    primary_partial_output_chars=4094,
                 )
             }
         )
@@ -146,7 +151,7 @@ def test_parse_chunk_owns_events_and_advances_the_supplied_context() -> None:
         recent_events=[],
     )
 
-    result = ParsePipeline(parser).understand_chunk(
+    result = UnderstandStage(parser).understand_chunk(
         compact,
         _windows()[0],
         transcript=TranscriptAnalysis(transcript=[]),
@@ -182,7 +187,7 @@ def test_parse_chunk_deduplicates_against_recent_compact_events() -> None:
         ],
     )
 
-    result = ParsePipeline(FakeParser()).understand_chunk(
+    result = UnderstandStage(FakeParser()).understand_chunk(
         compact,
         _windows()[1],
         transcript=TranscriptAnalysis(transcript=[]),
@@ -207,7 +212,7 @@ def test_parse_chunk_requires_the_immediately_preceding_compact() -> None:
         ValueError,
         match="context snapshot must immediately precede the video chunk",
     ):
-        ParsePipeline(FakeParser()).understand_chunk(
+        UnderstandStage(FakeParser()).understand_chunk(
             compact,
             _windows()[1],
             transcript=TranscriptAnalysis(transcript=[]),
@@ -222,7 +227,7 @@ def test_parse_chunk_preserves_fallback_provenance() -> None:
         recent_events=[],
     )
 
-    result = ParsePipeline(FakeFallbackParser()).understand_chunk(
+    result = UnderstandStage(FakeFallbackParser()).understand_chunk(
         compact,
         _windows()[0],
         transcript=TranscriptAnalysis(transcript=[]),
@@ -231,12 +236,19 @@ def test_parse_chunk_preserves_fallback_provenance() -> None:
     assert result.is_fallback is True
     assert result.video_parse is not None
     assert result.video_parse.fallback_reason == "content_filter"
+    assert result.video_parse.primary_error_code == (
+        "OutputTextSensitiveContentDetected"
+    )
+    assert result.video_parse.primary_filter_type == "output"
+    assert result.video_parse.primary_filter_details == "policy"
+    assert result.video_parse.primary_response_id == "response-1"
+    assert result.video_parse.primary_partial_output_chars == 4094
 
 
 def test_pipeline_passes_only_owned_past_events_to_the_next_chunk() -> None:
     parser = FakeParser()
     checkpoints = []
-    result = ParsePipeline(parser).run(
+    result = UnderstandStage(parser).run(
         source_video="episode.mp4",
         duration_ms=30_000,
         chunk_duration_ms=10_000,
@@ -278,7 +290,7 @@ def test_pipeline_passes_only_owned_past_events_to_the_next_chunk() -> None:
 
 def test_context_snapshot_is_bounded_to_recent_events() -> None:
     parser = FakeParser()
-    result = ParsePipeline(
+    result = UnderstandStage(
         parser,
         max_context_events=2,
         max_context_chars=256,
@@ -297,7 +309,7 @@ def test_context_snapshot_is_bounded_to_recent_events() -> None:
 
 
 def test_pipeline_resumes_after_the_last_completed_chunk() -> None:
-    initial = ParsePipeline(FakeParser()).run(
+    initial = UnderstandStage(FakeParser()).run(
         source_video="episode.mp4",
         duration_ms=30_000,
         chunk_duration_ms=10_000,
@@ -305,7 +317,7 @@ def test_pipeline_resumes_after_the_last_completed_chunk() -> None:
         windows=_windows(),
     )
     resumed_parser = FakeParser()
-    resumed = ParsePipeline(resumed_parser).run(
+    resumed = UnderstandStage(resumed_parser).run(
         source_video="episode.mp4",
         duration_ms=30_000,
         chunk_duration_ms=10_000,
@@ -326,7 +338,7 @@ def test_pipeline_keeps_candidate_transcript_mapping_compatibility() -> None:
         for window in windows
     }
 
-    result = ParsePipeline(FakeParser()).run(
+    result = UnderstandStage(FakeParser()).run(
         source_video="episode.mp4",
         duration_ms=30_000,
         chunk_duration_ms=10_000,
@@ -350,7 +362,7 @@ def test_pipeline_passes_complete_background_and_images_to_every_window(tmp_path
     )
     parser = FakeParser()
 
-    result = ParsePipeline(parser).run(
+    result = UnderstandStage(parser).run(
         source_video="episode.mp4",
         duration_ms=30_000,
         chunk_duration_ms=10_000,
@@ -368,7 +380,7 @@ def test_pipeline_passes_complete_background_and_images_to_every_window(tmp_path
 def test_resumed_pipeline_passes_images_only_to_unfinished_windows(tmp_path) -> None:
     images = (BackgroundImage(image_id="tomori_01", path=tmp_path / "tomori.png"),)
     background = "![灯](asset://tomori_01)"
-    initial = ParsePipeline(FakeParser()).run(
+    initial = UnderstandStage(FakeParser()).run(
         source_video="episode.mp4",
         duration_ms=30_000,
         chunk_duration_ms=10_000,
@@ -379,7 +391,7 @@ def test_resumed_pipeline_passes_images_only_to_unfinished_windows(tmp_path) -> 
     )
     parser = FakeParser()
 
-    resumed = ParsePipeline(parser).run(
+    resumed = UnderstandStage(parser).run(
         source_video="episode.mp4",
         duration_ms=30_000,
         chunk_duration_ms=10_000,
@@ -397,7 +409,7 @@ def test_resumed_pipeline_passes_images_only_to_unfinished_windows(tmp_path) -> 
 
 def test_pipeline_marks_content_filter_result_as_fallback() -> None:
     checkpoints: list[VideoChunkParseResult] = []
-    result = ParsePipeline(FakeFallbackParser()).run(
+    result = UnderstandStage(FakeFallbackParser()).run(
         source_video="episode.mp4",
         duration_ms=30_000,
         chunk_duration_ms=10_000,
@@ -411,7 +423,7 @@ def test_pipeline_marks_content_filter_result_as_fallback() -> None:
 
 
 def test_fallback_marker_is_backward_compatible_and_round_trips() -> None:
-    result = ParsePipeline(FakeFallbackParser()).run(
+    result = UnderstandStage(FakeFallbackParser()).run(
         source_video="episode.mp4",
         duration_ms=30_000,
         chunk_duration_ms=10_000,
@@ -441,11 +453,12 @@ def test_fallback_marker_is_backward_compatible_and_round_trips() -> None:
         checkpoint.model_dump_json()
     )
     assert restored_checkpoint.chunk.is_fallback is True
+    assert restored_checkpoint.chunk.video_parse == chunk.video_parse
     assert "needs_regeneration" not in restored_checkpoint.model_dump_json()
 
 
 def test_video_parse_result_model_metadata_round_trips_and_remains_optional() -> None:
-    legacy_result = ParsePipeline(FakeFallbackParser()).run(
+    legacy_result = UnderstandStage(FakeFallbackParser()).run(
         source_video="episode.mp4",
         duration_ms=30_000,
         chunk_duration_ms=10_000,

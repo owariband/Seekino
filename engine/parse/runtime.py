@@ -18,10 +18,13 @@ from .checkpoints import (
     stream_candidate_transcripts,
     write_json,
 )
+from .embed import EmbedStage, EmbeddingAgent
+from .pipeline import ParsePipeline
 from .schemas import (
     AnalysisWindow,
     ContextSnapshot,
     TranscriptAnalysis,
+    VideoEvidence,
     VideoChunkCheckpoint,
     VideoChunkParseResult,
     VideoFallbackModels,
@@ -36,7 +39,8 @@ from .video_chunk_parse import (
     VideoUnderstandingAgent,
     VideoUnderstandingAgentProtocol,
 )
-from .video_parse import ParsePipeline
+from .transcribe import TranscribeStage
+from .understand import UnderstandStage
 from .usage import parse_chunk_scope
 
 
@@ -131,6 +135,30 @@ class EngineVideoUnderstandingAgent:
         )
 
 
+class _LazyVideoUnderstandingAgent:
+    """Delay provider construction until an unfinished chunk needs a model."""
+
+    def __init__(self, runtime: EngineVideoParseRuntime) -> None:
+        self._runtime = runtime
+
+    def understand(
+        self,
+        video_path: str | Path,
+        *,
+        transcript: TranscriptAnalysis,
+        context: str | None = None,
+        duration_ms: int | None = None,
+        background_images: Sequence[BackgroundImage] = (),
+    ) -> VideoEvidence:
+        return self._runtime._get_understanding_agent().understand(
+            video_path,
+            transcript=transcript,
+            context=context,
+            duration_ms=duration_ms,
+            background_images=background_images,
+        )
+
+
 class EngineVideoParseRuntime:
     """Programmatic adapter over the same Engine pipeline used by the CLI."""
 
@@ -148,7 +176,7 @@ class EngineVideoParseRuntime:
         self._resolved: _ResolvedRuntimeConfig | None = None
         self._asr_agent: VideoASRAgent | None = None
         self._understanding_agent: VideoUnderstandingAgentProtocol | None = None
-        self._pipeline: ParsePipeline | None = None
+        self._understand_stage: UnderstandStage | None = None
         self._server_asr_agent = EngineASRAgent(self)
         self._server_understanding_agent = EngineVideoUnderstandingAgent(self)
 
@@ -190,6 +218,33 @@ class EngineVideoParseRuntime:
             ),
         )
 
+    def build_pipeline(
+        self,
+        embedding_agent: EmbeddingAgent,
+        embedding_dimensions: int,
+    ) -> ParsePipeline:
+        """Compose the production Parse pipeline around the configured models."""
+
+        asr_agent = self if self._config.asr_mode == "lite" else None
+        return ParsePipeline(
+            models=self.describe_models(
+                asr_enabled=self._config.asr_mode == "lite"
+            ),
+            transcribe=TranscribeStage(
+                asr_agent,
+                concurrency=self._config.asr_concurrency,
+            ),
+            understand=UnderstandStage(
+                _LazyVideoUnderstandingAgent(self),
+                max_context_events=self._config.max_context_events,
+                max_context_chars=self._config.max_context_chars,
+            ),
+            embed=EmbedStage(
+                embedding_agent,
+                dimensions=embedding_dimensions,
+            ),
+        )
+
     def transcribe_chunk(
         self,
         video_chunk: AnalysisWindow,
@@ -212,7 +267,7 @@ class EngineVideoParseRuntime:
         series_bible: str | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoChunkParseResult:
-        return self._get_pipeline().understand_chunk(
+        return self._get_understand_stage().understand_chunk(
             compact,
             video_chunk,
             transcript=transcript,
@@ -298,7 +353,7 @@ class EngineVideoParseRuntime:
             if self._config.asr_mode == "lite"
             else None
         )
-        pipeline = self._get_pipeline()
+        understand_stage = self._get_understand_stage()
 
         def checkpoint(chunk: VideoChunkParseResult) -> None:
             path = (
@@ -327,7 +382,7 @@ class EngineVideoParseRuntime:
             concurrency=self._config.asr_concurrency,
             on_log=self._on_log,
         ) as candidate_transcripts:
-            result = pipeline.run(
+            result = understand_stage.run(
                 source_video=str(video_path),
                 duration_ms=duration_ms,
                 chunk_duration_ms=self._config.chunk_duration_ms,
@@ -469,16 +524,16 @@ class EngineVideoParseRuntime:
             self._understanding_agent = understanding_agent
             return self._understanding_agent
 
-    def _get_pipeline(self) -> ParsePipeline:
+    def _get_understand_stage(self) -> UnderstandStage:
         understanding_agent = self._get_understanding_agent()
         with self._assembly_lock:
-            if self._pipeline is None:
-                self._pipeline = ParsePipeline(
+            if self._understand_stage is None:
+                self._understand_stage = UnderstandStage(
                     understanding_agent,
                     max_context_events=self._config.max_context_events,
                     max_context_chars=self._config.max_context_chars,
                 )
-            return self._pipeline
+            return self._understand_stage
 
 
 def _environment_bool(name: str, default: bool) -> bool:

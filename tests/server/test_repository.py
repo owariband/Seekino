@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
+from engine.parse.schemas import VideoParseProvenance
 from engine.retrieval.video_retrieval import VideoChunkRetrievalDocument
 from sqlalchemy import event, func, inspect, select, update
 
@@ -100,6 +101,74 @@ def test_import_is_idempotent_and_maps_video_compact(
     assert video_compact == prepared_import.chunks[0].parse_result.self_compact
     assert text_vector is None
     assert vision_vector is None
+
+
+def test_import_preserves_complete_fallback_provenance(
+    prepared_import,
+    repository,
+) -> None:
+    engine, video_repository = repository
+    provenance = VideoParseProvenance(
+        provider="deepseek",
+        model="test-visual-model",
+        input_mode="ordered_frames",
+        frame_fps=0.5,
+        frame_timestamps_ms=[1_000, 3_000],
+        group_frame_counts=[2],
+        group_duration_ms=30_000,
+        max_frames_per_group=15,
+        fallback_transcript_model=None,
+        visual_model="test-visual-model",
+        refiner_model="test-refiner-model",
+        fallback_reason="content_filter",
+        primary_model="test-video-model",
+        primary_error_code="OutputTextSensitiveContentDetected",
+        primary_filter_type="output",
+        primary_filter_details="policy",
+        primary_response_id="response-1",
+        primary_partial_output_chars=4_094,
+    )
+    original_chunk = prepared_import.chunks[0]
+    fallback_result = original_chunk.parse_result.model_copy(
+        update={"video_parse": provenance, "is_fallback": True}
+    )
+    prepared = replace(
+        prepared_import,
+        parse_result=prepared_import.parse_result.model_copy(
+            update={
+                "chunks": [
+                    fallback_result,
+                    *prepared_import.parse_result.chunks[1:],
+                ]
+            }
+        ),
+        chunks=(
+            replace(
+                original_chunk,
+                parse_result=fallback_result,
+                retrieval_document=original_chunk.retrieval_document.model_copy(
+                    update={"is_fallback": True}
+                ),
+            ),
+            *prepared_import.chunks[1:],
+        ),
+    )
+
+    report = video_repository.import_video_parse(prepared)
+    expected = provenance.model_dump(mode="json")
+    with engine.connect() as connection:
+        stored = connection.execute(
+            select(VideoChunkInfoRecord.parse_provenance).where(
+                VideoChunkInfoRecord.video_chunk_id == report.video_chunk_ids[0]
+            )
+        ).scalar_one()
+    hydrated = video_repository.hydrate_video_chunks(
+        [report.video_chunk_ids[0]]
+    )[0]
+
+    assert stored == expected
+    assert hydrated.is_fallback is True
+    assert hydrated.parse_provenance == expected
 
 
 def test_import_persists_keyframes_with_original_video_offsets(

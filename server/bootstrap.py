@@ -356,18 +356,19 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             ),
             on_log=_logger.info,
         )
+        embedding_agent = DoubaoMultimodalEmbedder(
+            selected.embedding.model,
+            output_dimensionality=selected.embedding.dimensions,
+            fps=selected.embedding.video_fps,
+        )
         return VideoProcessingService(
             job_repository,
             video_repository,
             index_sync,
             artifact_store,
-            model_manifest=runtime,
-            asr_agent=runtime.server_asr_agent,
-            understanding_agent=runtime.server_understanding_agent,
-            embedding_agent=DoubaoMultimodalEmbedder(
-                selected.embedding.model,
-                output_dimensionality=selected.embedding.dimensions,
-                fps=selected.embedding.video_fps,
+            pipeline=runtime.build_pipeline(
+                embedding_agent,
+                selected.embedding.dimensions,
             ),
             parse_usage=parse_usage,
             config=VideoProcessingConfig(
@@ -387,10 +388,10 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         video_repository,
         index_sync,
         artifact_store,
-        model_manifest=parse_runtime,
-        asr_agent=parse_runtime.server_asr_agent,
-        understanding_agent=parse_runtime.server_understanding_agent,
-        embedding_agent=processing_embedder,
+        pipeline=parse_runtime.build_pipeline(
+            processing_embedder,
+            settings.text_vector_dimensions,
+        ),
         parse_usage=parse_usage,
         config=VideoProcessingConfig(
             embedding_dimensions=settings.text_vector_dimensions,

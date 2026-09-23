@@ -1,55 +1,58 @@
 # anivag Engine
 
-Engine 是 anivag 的算法边界：它负责单个 VideoChunk 的模型调用、证据解析和
-Context 演进，不负责生产 Job 的调度与持久化生命周期。外部模型请求仍由根目录下的
-`gateway/` 负责。Engine 当前与 Server 在同一进程内装配；是否独立部署不改变这个边界。
+Engine 是 anivag 的算法边界：它拥有从转写、理解到向量化的完整 Parse Pipeline，负责
+VideoChunk 的模型调用、证据解析、Context 演进和阶段顺序。Engine 不拥有生产 Job、
+Lease、Checkpoint、Artifact、MySQL 或 Qdrant；这些执行与持久化生命周期仍由 Server
+负责。外部模型请求由根目录下的 `gateway/` 实现。Engine 当前与 Server 在同一进程内
+装配；是否独立部署不改变这个边界。
 
 ## 生产契约
 
-生产 Parse 以三个独立角色交给 Server 编排：
+生产 Parse 通过一个显式 Pipeline 进入 Engine：
 
 ```text
-ASRAgent.transcribe_chunk(VideoChunk) -> TranscriptAnalysis
-VideoUnderstandingAgent.understand_chunk(Compact, VideoChunk, transcript=...) -> VideoChunkParseResult
-EmbeddingAgent.embed_text(...) / embed_video(...) -> EmbeddingResult
-retrieve(...) -> RetrievalResult
+ParsePipeline
+  → transcribe(VideoChunk[])                  # ASR 有界并发、按序交付
+  → understand(Context, Transcript, VideoChunk) # 按序推进 Context
+  → embed(VideoParseResult)                   # 构造检索文档与 Text/Vision 向量
+  → persist(ParsePipelineResult, ParsePersistence) # 只调用持久化端口
 ```
 
-当前 Python 实现中，Engine Runtime 是 composition root，对 Server 暴露两个
-不同的端口对象：`EngineASRAgent.transcribe_chunk(...)` 与
-`EngineVideoUnderstandingAgent.understand_chunk(..., transcript=...)`。`Compact` 对应调用当下已确认的
-`ContextSnapshot`；Transcript、SeriesBible 和背景图都是单 Chunk 理解调用的显式输入。
-Agent 之间不互相调用，只通过 Server Graph State 交接 DTO；它们不接收 Job、Lease、
-Repository、DB Checkpoint、工作目录或 UploadSession。provider、model 与 tier 只属于
-配置和 provenance，不用来定义 Agent 边界。
+`transcribe`、`understand` 和 `embed` 是算法阶段，不是 Server Service。ASR 可以跨
+VideoChunk 有界并发，但必须按序把 Transcript 交给理解阶段；理解阶段串行推进
+`ContextSnapshot`，并负责 ownership、去重和 fallback；Embedding 阶段从正式 Parse
+结果构造检索文档并生成 Text/Vision 向量。provider、model 与 tier 只属于配置和
+provenance，不用来定义 Pipeline 拓扑。
 
-`EngineVideoParseRuntime.describe_models(...)` 以独立 `ParseModelManifest` 身份向 Server
-描述本次配置与 provenance，不属于 VideoUnderstandingAgent 协议，也不是新的
-Algorithm PSM、Queue 或任务生命周期接口。Retrieve 继续由
-`retrieval/video_retrieval.py` 提供纯排序/融合算法。
+`persist` 表示 Pipeline 的提交边界，不表示 Engine 直接连接数据库。Engine 只向中立的
+`ParsePersistence` 提交完整、已验证的 `ParsePipelineResult`；Server 实现该端口，并在
+实现内部执行 Lease/Fencing 校验、Parse Artifact／Checkpoint 更新和 MySQL 事务。Qdrant
+仍是 Server 在 Pipeline 返回后同步的派生索引，不属于该端口。
+Engine 的输入输出只包含算法 DTO、`Path` 和 `sequence_no`，不得引用 Server 的 Job、
+Lease、Repository、持久化 URI 或 DTO。
 
-生产整集编排属于 `server/service/video_processing.py`。Server 使用串行 LangGraph 推进：
+生产调用关系为：
 
 ```text
-加载任务／规划窗口／准备媒体
-  → ASR Agent
-  → VideoUnderstandingAgent
-  → 组装检索文档
-  → EmbeddingAgent
-  → MySQL 业务事实
-  → Qdrant 索引
+ParseJobConsumer
+  → Server Job Adapter
+      → Engine ParsePipeline
+          transcribe → understand → embed → persist(ParsePersistence)
+      ← Server ParsePersistence
+          Lease/Fencing → Parse Artifact/Checkpoint → MySQL
+      → Server Qdrant index sync
 ```
 
-Graph 阶段串行，ASR 节点内部可以有界并发，VideoUnderstandingAgent 则按
-VideoChunk 顺序演进 Context。模型调用返回后仍须通过 Lease/Fencing 检查。
-内容审核 fallback 是 VideoUnderstandingAgent 内部的一次理解策略切换：它复用 Graph
-State 中同一份 Transcript，不调用 ASR Agent，也不会因 Transcript 为空而补跑 ASR。
+Server Job Adapter 负责加载任务、恢复已提交前缀、校验原视频和提供当前执行所需的
+持久化端口；它不重新描述算法阶段。模型调用完成后的结果只有通过 Server 的当前
+Lease/Fencing 校验后才能成为 durable state。内容审核 fallback 是 understand 阶段内部的
+一次策略切换：它复用 transcribe 阶段产出的同一份 Transcript，不会因 Transcript 为空
+而补跑 ASR。
 
-LangGraph 当前没有配置 checkpointer 或节点 retry，`invoke()` 异常直接交给
-ParseJobConsumer 的 Queue retry。跨 Attempt 的恢复真相仍是 MySQL Checkpoint、已提交
-Artifact 与 Lease/Fencing，不是 Graph State。生产 ASR 结果目前只存在于当次 Graph
-State，没有独立 durable checkpoint；理解失败后，下一 Attempt 会恢复已完成的连续
-PARSED 前缀，并为其余窗口重新执行 ASR。
+Pipeline State 只属于当次算法执行，不是跨 Attempt 的恢复真相。异常交给
+ParseJobConsumer 和 MySQL Queue 发起下一 Attempt；恢复仅信任 MySQL Checkpoint、已提交
+Artifact 与 Lease/Fencing。生产 ASR 结果目前没有独立 durable checkpoint；理解失败后，
+下一 Attempt 会恢复已完成的连续 PARSED 前缀，并为其余窗口重新执行 ASR。
 
 Engine 内部仍负责单个 VideoChunk 的 Prompt、显式 Transcript 融合、审核 fallback、
 事件时间换算、ownership、去重和 `ContextSnapshot` 演进。`contextAfter`
@@ -58,14 +61,18 @@ Engine 内部仍负责单个 VideoChunk 的 Prompt、显式 Transcript 融合、
 
 ## 代码边界
 
-算法代码按职责分为 `parse/` 和 `retrieval/` 两个目录：
+算法代码按职责分为 `parse/` 和 `retrieval/` 两个目录。`parse/` 的主路径按 Pipeline
+阶段命名，入口处即可读出执行顺序：
 
-- `parse/runtime.py`：装配独立 ASR / Video Understanding 实现，提供单 Chunk 契约；
-- `parse/video_parse.py`：实现单 Chunk 的 Context、ownership、去重与结果构造；
-- `parse/video_chunk_parse.py`：实现 Prompt、显式 Transcript 融合、模型选择与审核降级；
+- `parse/pipeline.py`：唯一的生产整集 Pipeline 入口，显式连接 transcribe、understand、embed 和 persist；
+- `parse/transcribe.py`：ASR 调用、有界并发和按序交付；
+- `parse/understand.py`：Context、ownership、去重、结果构造和审核 fallback；
+- `parse/embed.py`：检索文档构造、Text/Vision Embedding 和向量校验；
+- `parse/persist.py`：中立 `ParsePersistence` 提交契约，不实现数据库或对象存储；
+- `parse/runtime.py`：装配模型实现与 Parse Pipeline；
 - `parse/frame_sampler.py`：实现审核 fallback 所需的帧时间规划与 FFmpeg 抽帧；
 - `parse/prompts.py`：实现 Transcript 与事件时间线的证据约束；
-- `parse/analysis_windows.py`：提供视频窗口规划与物化原语，由 Server 在生产整集编排中调用。
+- `parse/analysis_windows.py`：提供视频窗口规划与物化原语。
 
 Retrieve 边界保持不变：`retrieval/video_retrieval.py` 只负责
 `VideoChunkRetrievalDocument` 构造与 Text/Vision RRF 等纯算法。Query Embedding、
@@ -76,11 +83,12 @@ Qdrant 查询和 MySQL hydrate 由 `server/service/video_retrieval.py` 负责，
 
 ## 本地实验兼容层
 
-`ParsePipeline.run(...)`、`EngineVideoParseRuntime.run(...)`、`parse/checkpoints.py` 和
-`parse/cli.py` 继续支持本地整集实验。它们会从完整视频规划窗口、运行有界 ASR
-预取、写入 JSON Checkpoint 并从本地输出目录恢复。这些文件只是 CLI / local
-experiment 兼容能力，不是 Server 的生产任务事实，Server 也不通过整集 `run(...)`
-接口执行解析。
+生产任务与本地实验复用 transcribe／understand 原语和模型装配；完整的
+`transcribe → understand → embed → persist` 只由生产 `ParsePipeline` 编排。
+`parse/cli.py` 的本地适配器保留独立 JSON Checkpoint 恢复路径，不执行生产 embed／persist；
+Server 则为 `ParsePipeline` 提供生产 `ParsePersistence`，提交受 Lease 保护的 Parse
+Artifact 和 MySQL 事实，并在 Pipeline 返回后同步索引。两种执行路径不能把各自的恢复
+状态泄漏进算法 DTO；本地 JSON 不是生产任务事实，生产 DB Checkpoint 也不是算法 DTO。
 
 本地 `parse-video` CLI 物化的 AnalysisWindow 不是上传传输分片。上传断点续传使用
 `Segment`，它是字节传输分片，与 VideoChunk 无关。
@@ -130,7 +138,7 @@ fallback 只响应主理解模型明确返回的 `ContentFilterError`，每个 V
 执行一次。网络错误、Schema 错误和 DeepSeek 错误不会误触发或形成循环重试。单个
 VideoChunk 的算法降级链路为：
 
-1. 主 VideoUnderstandingAgent 使用 Graph 传入的 Transcript 解析 AnalysisWindow；
+1. understand 阶段使用 transcribe 阶段传入的 Transcript 解析 AnalysisWindow；
 2. 主模型被内容审核拒绝后，fallback 复用完全相同的 Transcript，不运行 ASR；
 3. Engine 把窗口细分为不超过 30 秒的组，以 0.5 fps 抽帧，每组最多 15 帧；
 4. Gateway 调用配置的 fallback 视觉模型，只根据该组图片生成匿名、可定位到帧的视觉证据；

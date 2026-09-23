@@ -14,9 +14,13 @@ AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存
 及 Conversation 固定 Scope 数据库结构会被 init-db / create_schema 拒绝；[迁移步骤](../docs/design/agent-api.md#8-已有数据库升级)
 保留 Conversation ID 与消息，本次未对真实开发 / 生产库执行 DDL。
 
-Qdrant 的连接、写入和恢复属于产品持久化逻辑，因此放在 `server/storage/`；Engine
-只负责生成解析结果、向量与检索算法。Qdrant payload 不保存业务正文；当前
-Embedding 的 durable source 是 MySQL，Qdrant 始终只是可重建派生索引。
+Engine 拥有 `transcribe → understand → embed → persist` 的完整算法 Pipeline；Server
+不再重新编排这些算法阶段。Pipeline 的 `persist` 只调用中立 `ParsePersistence` 端口，
+Server 提供生产实现，在当前 Lease 下完成 Parse Checkpoint、Artifact 和 MySQL 操作；
+Pipeline 返回后再由 Job Adapter 同步 Qdrant。
+Qdrant 的连接、写入和恢复属于产品持久化逻辑，因此仍放在 `server/storage/`；Qdrant
+payload 不保存业务正文，Embedding 的 durable source 是 MySQL，Qdrant 始终只是可重建
+派生索引。
 
 ## HTTP 分层
 
@@ -49,7 +53,9 @@ server/constants/workspace.py    本地默认 Workspace；不承担身份认证
 server/utils/                    时间、文本校验、异常摘要等无业务取数的纯函数
 server/bootstrap.py              唯一 Composition Root 和应用生命周期资源装配
 server/service/video_processing.py
-                                 解析、checkpoint、向量化、入库与索引同步编排
+                                 Parse Job 适配：源文件、背景、媒体物化、Pipeline 调用与索引同步
+server/service/parse_persistence.py
+                                 生产 ParsePersistence：恢复、Lease、Parse Artifact／Checkpoint 与 MySQL
 server/mq/contracts.py            Queue / Handler 的最小内部协议
 server/mq/mysql_queue.py          MySQL Claim、Lease、Retry、Ack 和 Reaper adapter
 server/mq/consumer.py             进程内消费循环与 Lease Heartbeat
@@ -233,18 +239,33 @@ Artifact URI 形如 `artifact://development/...`，test/development/production �
 Server 内的 API/Consumer 依赖同一个 `ArtifactStore` 边界，当前 M1 adapter 是
 `LocalArtifactStore`。
 
-VideoProcessingService 为 Consumer 领取的每个 Job 保存单调 checkpoint：
+ParseJobConsumer 领取任务后，由 `VideoProcessingService` 加载 Job 和已提交恢复状态，再调用
+Engine 的显式 Parse Pipeline：
+
+```text
+Server: Job / Lease / Checkpoint / Artifact
+                  ↓
+Engine: transcribe → understand → embed → persist(ParsePersistence)
+                  ↓
+Server ParsePersistence: Parse Artifact / Checkpoint → MySQL 事实
+Server Job Adapter: Qdrant 派生索引同步
+```
+
+`VideoProcessingService` 不拥有 ASR、理解或 Embedding 的算法顺序；它负责保证每次阶段输出
+只有在当前 Lease/Fencing 校验通过后才能发布和提交。Server 为每个 Job 保存单调
+checkpoint：
 
 ```text
 PREPARED → SPLIT_READY → PARSED → TEXT_EMBEDDED → VISION_EMBEDDED → INDEXED
 ```
 
 AnalysisWindow 带上下文重叠，仅供模型解析；Vision vector 始终读取无重叠的 canonical
-VideoChunk MP4。Text vector 读取同一 VideoChunk 的完整 retrieval document；两路向量以
-同一个稳定 `videoChunkId` 入库与建索引。Server 异常退出后复用本地持久化产物续跑，旧
-`leaseVersion` 不能提交 checkpoint 或最终 MySQL 事实。SSE 只发送 MySQL 中对 UI 有意义
-的状态、阶段、进度或 checkpoint 变化，不把纯 Heartbeat 当成进度事件；断线后仍以 Job
-查询结果为准。
+VideoChunk MP4。Text vector 读取同一 VideoChunk 的完整 retrieval document；这些算法
+选择属于 Engine，Server 只把结果映射到稳定 `videoChunkId` 后入库和建索引。Server 异常
+退出后复用 MySQL Checkpoint 指向的已提交 Artifact 续跑；进程内 Pipeline State 和未提交
+临时文件都不是恢复真相，旧 `leaseVersion` 不能提交 checkpoint 或最终 MySQL 事实。SSE
+只发送 MySQL 中对 UI 有意义的状态、阶段、进度或 checkpoint 变化，不把纯 Heartbeat
+当成进度事件；断线后仍以 Job 查询结果为准。
 
 ## 运行日志
 

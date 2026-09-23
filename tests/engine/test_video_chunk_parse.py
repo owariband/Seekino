@@ -737,6 +737,8 @@ def test_content_filter_falls_back_once_and_preserves_diagnostics(tmp_path) -> N
     assert result.provenance.fallback_reason == "content_filter"
     assert result.provenance.primary_model == "test-pro"
     assert result.provenance.primary_error_code == primary_error.code
+    assert result.provenance.primary_filter_type == "output"
+    assert result.provenance.primary_filter_details == "policy"
     assert result.provenance.primary_response_id == "response-1"
     assert result.provenance.primary_partial_output_chars == 4094
 

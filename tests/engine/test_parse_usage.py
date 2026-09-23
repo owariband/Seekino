@@ -19,7 +19,7 @@ from engine.parse.schemas import (
     VideoTimeline,
 )
 from engine.parse.usage import capture_parse_usage, parse_chunk_scope
-from engine.parse.video_parse import ParsePipeline
+from engine.parse.understand import UnderstandStage
 from gateway.ark.multimodal import ArkMultimodalModel
 from gateway.multimodal import TextInput
 from gateway.usage import capture_model_usage, track_model_call
@@ -249,7 +249,7 @@ def test_pipeline_counts_each_fallback_call_and_does_not_recount_completed_chunk
                 with track_model_call(provider="deepseek", model="fallback", operation=operation) as call:
                     call.capture_response(SimpleNamespace(usage=SimpleNamespace(input_tokens=5, output_tokens=2, total_tokens=7)))
             return VideoEvidence(duration_ms=duration_ms, candidate_transcript=[], summary="summary", events=[])
-    pipeline = ParsePipeline(Parser())
+    pipeline = UnderstandStage(Parser())
     request = dict(source_video="video.mp4", duration_ms=2000, chunk_duration_ms=1000,
                    context_overlap_ms=0, windows=_windows())
     with capture_parse_usage(ledger.append):

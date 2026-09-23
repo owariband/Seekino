@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from engine.parse.embed import ChunkEmbedding, EmbedStage
 from engine.parse.usage import ParseModelCall, parse_chunk_scope
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,7 +18,6 @@ from pydantic import ValidationError
 from server.api.errors import register_exception_handlers
 from server.api.parse_usage import project_parse_usage
 from server.config.usage import ModelPricingConfig, PriceTier
-from server.config.video_processing import VideoProcessingConfig
 from server.database import create_database_engine, create_schema, create_session_factory
 from server.model.job import SeriesParseJobRecord
 from server.model.video import VideoRecord
@@ -296,24 +296,61 @@ def test_processing_capture_covers_failure_and_only_real_embedding_cache_misses(
         None,
         None,
         None,
-        model_manifest=None,
-        asr_agent=None,
-        understanding_agent=None,
-        embedding_agent=None,
-        config=VideoProcessingConfig(embedding_dimensions=3),
+        object(),
         parse_usage=accounting.service,
     )
-    def embed():
-        with track_model_call(provider="fixture", model="embed", operation="video_embedding") as tracker:
-            tracker.usage = TokenUsage(100, 0, 100, None, None, image_input_tokens=100)
-            return EmbeddingResult(model="embed", modality="video", vector=[1, 2, 3])
+
+    class EmbeddingAgent:
+        def embed_text(self, _text):
+            raise AssertionError("text embedding is not expected")
+
+        def embed_video(self, _video_path):
+            with track_model_call(
+                provider="fixture",
+                model="embed",
+                operation="video_embedding",
+            ) as tracker:
+                tracker.usage = TokenUsage(
+                    100,
+                    0,
+                    100,
+                    None,
+                    None,
+                    image_input_tokens=100,
+                )
+                return EmbeddingResult(
+                    model="embed",
+                    modality="video",
+                    vector=[1, 2, 3],
+                )
+
+    class EmbeddingCache:
+        def __init__(self):
+            self.value: ChunkEmbedding | None = None
+
+        def ensure_active(self):
+            pass
+
+        def load_embedding(self, **_kwargs):
+            return self.value
+
+        def save_embedding(self, embedding):
+            self.value = embedding
+
+    embed_stage = EmbedStage(EmbeddingAgent(), dimensions=3)
+    embedding_cache = EmbeddingCache()
+
     def process(_lease):
         with parse_chunk_scope(0):
             with track_model_call(provider="fixture", model="chat", operation="video_parse") as tracker:
                 tracker.usage = TokenUsage(100, 10, 110, 0, 0)
         for _ in range(2):
-            processor._load_or_embed(tmp_path / "embedding.json", video_chunk_id=lease.video_id,
-                                     sequence_no=2, modality="video", input_hash="actual-hash", create=embed)
+            embed_stage._embed_video(
+                2,
+                tmp_path / "chunk.mp4",
+                "a" * 64,
+                persistence=embedding_cache,
+            )
         with parse_chunk_scope(3):
             with track_model_call(provider="fixture", model="chat", operation="timeline_refine"):
                 raise RuntimeError("actual model failure")

@@ -5,7 +5,8 @@ import sys
 from dataclasses import replace
 
 import pytest
-from engine.parse.runtime import EngineASRAgent, EngineVideoUnderstandingAgent, VideoParseRuntimeConfig
+from engine.parse.pipeline import ParsePipeline
+from engine.parse.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
 from gateway.config import load_config
 from gateway.openai.structured import OpenAIStructuredToolAgentModel
 
@@ -181,19 +182,20 @@ def test_process_assembly_receives_runtime_configuration(
         }
         processor = received["processor"]
         assert type(processor).__module__ == "server.service.video_processing"
-        assert processor._asr_agent is not processor._understanding_agent
-        assert isinstance(processor._model_manifest, bootstrap.EngineVideoParseRuntime)
-        assert isinstance(processor._asr_agent, EngineASRAgent)
-        assert isinstance(
-            processor._understanding_agent,
-            EngineVideoUnderstandingAgent,
+        pipeline = processor._pipeline
+        assert isinstance(pipeline, ParsePipeline)
+        parse_runtime = pipeline._understand._understanding_agent._runtime
+        assert isinstance(parse_runtime, EngineVideoParseRuntime)
+        assert parse_runtime._config == settings.parse
+        expected_asr_agent = (
+            parse_runtime if settings.parse.asr_mode == "lite" else None
         )
-        assert processor._asr_agent._runtime is processor._model_manifest
-        assert (
-            processor._understanding_agent._runtime
-            is processor._model_manifest
+        assert pipeline._transcribe._agent is expected_asr_agent
+        assert pipeline._embed._agent is received["processing_embedding_agent"]
+        assert pipeline._embed._dimensions == settings.text_vector_dimensions
+        assert pipeline.models == parse_runtime.describe_models(
+            asr_enabled=settings.parse.asr_mode == "lite"
         )
-        assert processor._embedding_agent is received["processing_embedding_agent"]
         processing_config = processor._config
         assert processing_config.chunk_duration_ms == settings.parse.chunk_duration_ms
         assert processing_config.context_overlap_ms == settings.parse.context_overlap_ms
@@ -210,7 +212,28 @@ def test_process_assembly_receives_runtime_configuration(
         })
         configured = processor._processor_factory(selected)
         assert configured._config.analysis_max_height == 480
-        assert configured._model_manifest._config.video_fps == 0.5
+        configured_pipeline = configured._pipeline
+        assert isinstance(configured_pipeline, ParsePipeline)
+        configured_runtime = (
+            configured_pipeline._understand._understanding_agent._runtime
+        )
+        assert isinstance(configured_runtime, EngineVideoParseRuntime)
+        expected_configured_asr_agent = (
+            configured_runtime if selected.asr.mode == "lite" else None
+        )
+        assert (
+            configured_pipeline._transcribe._agent
+            is expected_configured_asr_agent
+        )
+        assert configured_runtime._config.video_fps == 0.5
+        assert (
+            configured_pipeline._embed._agent
+            is received["processing_embedding_agent"]
+        )
+        assert configured_pipeline._embed._dimensions == selected.embedding.dimensions
+        assert configured_pipeline.models == configured_runtime.describe_models(
+            asr_enabled=selected.asr.mode == "lite"
+        )
         assert configured._parse_config == selected
         assert received["consumer"]["worker_id"] == settings.mq.consumer_id
         assert received["consumer"]["poll_interval_seconds"] == settings.mq.poll_interval_seconds

@@ -1,6 +1,6 @@
 # 项目问题清单
 
-更新日期：2026-09-21。依据当前源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。
+更新日期：2026-09-23。依据当前源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。
 
 ## frontend
 
@@ -216,26 +216,27 @@ return completed
 
 ### B05：Parse Agent 边界被模型档位和 fallback 隐式耦合
 
-优先级：高。类型：解析编排与恢复边界不清。状态：已修复本轮结构问题，数据契约迁移待后续处理。
+优先级：高。类型：解析编排与恢复边界不清。状态：已按算法 Pipeline 与生产持久化重新划分，数据契约迁移待后续处理。
 
 #### 问题与根因
 
-旧编排把 Lite／Pro 这样的 provider tier 当成流程角色，ASR、视频理解和内容审核 fallback 的职责彼此渗透；尤其是 fallback 曾能把空 Transcript 当成“ASR 未运行”并自行补跑 ASR。这样既无法从拓扑判断一次视频会调用哪些能力，也难以说明失败后哪些结果可以恢复。
+旧编排先把 Lite／Pro 这样的 provider tier 当成流程角色，ASR、视频理解和内容审核 fallback 的职责彼此渗透；随后又把完整阶段拓扑放进 `VideoProcessingService`，导致 Server 同时拥有 Job 生命周期和算法流程，Engine 退化成一组无法从目录看出顺序的 Agent。前者无法判断一次视频会调用哪些能力，后者则让算法演进被 Lease、Repository 和 Artifact 细节包围。
 
 #### 已实施方案
 
-- 生产链路由 `VideoProcessingService` 内的串行 LangGraph 统一编排：准备窗口与媒体 → ASR Agent → VideoUnderstandingAgent → 组装检索文档 → EmbeddingAgent → MySQL 业务事实 → Qdrant 索引。ASR 节点内部仍可有界并发，理解节点按序演进 Context。
-- Agent 不互相调用，只通过 Graph State 交接显式 DTO。provider、model 与 tier 只保留为配置和 provenance，不再决定拓扑。
-- 生产装配向 Graph 注入不同的 `EngineASRAgent` 与 `EngineVideoUnderstandingAgent` 对象；模型清单由独立 `ParseModelManifest` 提供，不再挂在理解 Agent 协议上。
-- 内容审核 fallback 只属于 VideoUnderstandingAgent：它复用 Graph 传入的同一份 Transcript，不调用 ASR Agent；显式空 Transcript 也不会触发补跑。
-- LangGraph 没有配置 checkpointer 或节点 retry。异常仍由 ParseJobConsumer 和 MySQL Queue 发起下一 Attempt；MySQL Checkpoint、已提交 Artifact 与 Lease/Fencing 是跨 Attempt 的恢复真相，Graph State 只是当次执行内存。
+- Engine 以显式 `ParsePipeline` 拥有 `transcribe → understand → embed → persist` 顺序。ASR 阶段跨 VideoChunk 有界并发并按序交付；Understanding 阶段按序演进 Context；Embedding 阶段构造检索文档并生成 Text/Vision 向量。
+- `persist` 是算法 Pipeline 的提交端口，不是 Engine 内的数据库实现。Server 实现 `ParsePersistence`，在当前 Lease 下完成 Parse Artifact、Checkpoint 和 MySQL 事务；Pipeline 返回后的 Qdrant 派生索引同步仍由 Server Job Adapter 负责。
+- Server 的 `VideoProcessingService` 只承担 Job Adapter：加载任务与已提交前缀、校验原视频、管理 Lease/Fencing、提供生产 `ParsePersistence`，并把最终业务 ID 返回给 Consumer。它不再定义 ASR、理解和 Embedding 的算法拓扑。
+- Engine 契约只使用算法 DTO、路径和 `sequence_no`，不引用 `ParseJobLease`、Server Checkpoint DTO、Repository、Artifact URI 或 Index Service；Server 将 Pipeline 输出映射到稳定业务 ID 和持久化模型。
+- provider、model 与 tier 只保留为配置和 provenance，不决定拓扑。内容审核 fallback 只属于 understand 阶段，复用 transcribe 阶段交付的同一份 Transcript；显式空 Transcript 不会触发补跑。
+- Pipeline State 只是当次算法执行内存。异常仍由 ParseJobConsumer 和 MySQL Queue 发起下一 Attempt；MySQL Checkpoint、已提交 Artifact 与 Lease/Fencing 是跨 Attempt 的唯一恢复真相。
 
 #### 尚未迁移的契约与已知恢复缺口
 
 - 本轮**没有**把 ASR raw DTO 迁移为 `start_time` / `end_time` 字符串，也没有新增“原始 ASR”与“经理解校正后的 canonical transcript”两套独立类型和存储。当前 `TranscriptAnalysis` / `TranscriptCue` 仍沿用 `start_ms` / `end_ms` 整数契约；这项数据模型重构需单独设计和迁移。
-- 生产 ASR 阶段当前没有独立 durable checkpoint，结果只保存在本次 Graph State。VideoUnderstandingAgent 失败后，下一 Attempt 会恢复已经持久化的连续 PARSED 前缀，但会为剩余窗口重新执行 ASR；即使上一次已经在内存中完成这些 Transcript，也无法跨 Attempt 复用。
+- 生产 ASR 阶段当前没有独立 durable checkpoint，结果只保存在本次 Pipeline State。Understanding 失败后，下一 Attempt 会恢复已经持久化的连续 PARSED 前缀，但会为剩余窗口重新执行 ASR；即使上一次已经在内存中完成这些 Transcript，也无法跨 Attempt 复用。
 
-依据：[video_processing.py](../../server/service/video_processing.py) 的 Graph、State 与节点顺序；[runtime.py](../../engine/parse/runtime.py) 和 [video_chunk_parse.py](../../engine/parse/video_chunk_parse.py) 的 Agent/fallback 契约；[consumer.py](../../server/mq/consumer.py) 与 [job.py](../../server/repository/job.py) 的 Queue retry、Checkpoint 和 Lease；[test_video_processing_service.py](../../tests/server/test_video_processing_service.py) 的阶段顺序与恢复回归测试。
+依据：[pipeline.py](../../engine/parse/pipeline.py) 的算法阶段顺序；[transcribe.py](../../engine/parse/transcribe.py)、[understand.py](../../engine/parse/understand.py)、[embed.py](../../engine/parse/embed.py) 和 [persist.py](../../engine/parse/persist.py) 的阶段契约；[video_processing.py](../../server/service/video_processing.py)、[consumer.py](../../server/mq/consumer.py) 与 [job.py](../../server/repository/job.py) 的 Lease、Checkpoint 和恢复边界。
 
 ## Chat 联调问题（2026-09-21）
 
@@ -327,11 +328,11 @@ Chat Agent 已经维护一份结构化 Workspace／Canvas，并通过 Tool 逐�
 
 这不是某个 Prompt 的局部问题，而是一类重复出现的 Agent 基础设施：结构化上下文、字段级写权限、Tool Patch、校验、版本、差异记录、临时草稿与持久化快照。目前 Chat 与 Parse 各自手写类似机制，会重复实现状态模型、Tool 参数、路径白名单、错误处理和恢复语义；继续复制会让两套行为逐渐分叉。
 
-当前 Parse Graph 已满足“生产 ASR 不单独写业务库，Understanding 完成后才提交 Chunk Parse Artifact／Checkpoint，全部 Embedding 完成后再统一导入业务事实”。缺口不在落库时机，而在 Context 和 Agent 输出契约：Understanding 可以重新生成 Timeline Event 时间，却不能受控地修改或产出 canonical Transcript；原始 ASR 与理解后的事件时间仍可能并存且不一致。
+当前 Parse Pipeline 已满足“生产 ASR 不单独写业务库，Understanding 完成后才通过 Server `ParsePersistence` 提交 Chunk Parse Artifact／Checkpoint，全部 Embedding 完成后再统一导入业务事实”。缺口不在落库时机，而在 Context 和 Agent 输出契约：Understanding 可以重新生成 Timeline Event 时间，却不能受控地修改或产出 canonical Transcript；原始 ASR 与理解后的事件时间仍可能并存且不一致。
 
 #### 当前取舍
 
-- 暂不为了这一点立即重构 Parse 数据契约和 LangGraph。改造会同时波及 raw／canonical Transcript、Prompt、Tool、Checkpoint 兼容、持久化、召回和历史数据语义。
+- 本轮只纠正 Parse Pipeline 的代码所有权，不为这一点同时重构 raw／canonical Transcript 数据契约。后者会波及 Prompt、Tool、Checkpoint 兼容、持久化、召回和历史数据语义，仍需单独设计。
 - 当前 Chat Query／Evaluator 可以在召回后根据 Evidence 选择更准确的最终播放区间，能够覆盖主要用户路径；它只负责本次答案的范围选择，不会修复已经持久化的 ASR 或 Event 数据。
 - 保留现有生产执行方式：ASR 跨 Chunk 有界并发，全部 ASR 完成后 Understanding 按 Context 顺序串行；不在本 TODO 中顺带改造成 Chunk 级流水线。
 - 原始 ASR 证据不应被 Agent 原地覆盖。未来应将 raw evidence 与 Agent 生成的 canonical state 分开，最终持久化哪一层必须由显式契约决定。
@@ -347,7 +348,7 @@ Chat Agent 已经维护一份结构化 Workspace／Canvas，并通过 Tool 逐�
 
 #### TODO
 
-- [ ] 盘点 Chat Workspace／Tool 的现有更新动作，以及 Parse `Graph State`、`ContextSnapshot`、Chunk Artifact 的状态修改点，整理真正共有的最小操作集。
+- [ ] 盘点 Chat Workspace／Tool 的现有更新动作，以及 Parse `Pipeline State`、`ContextSnapshot`、Chunk Artifact 的状态修改点，整理真正共有的最小操作集。
 - [ ] 定义最小 Canvas／Block／Patch／Policy／Revision 协议，先写状态转换和非法 Patch 的纯单元测试，不先接模型。
 - [ ] 明确 Parse 的 block：不可变 `raw_asr`、可修改 `canonical_transcript`、`timeline_events`、`context_before` 与 `context_after`；决定 raw ASR 是否只保留在 Artifact 中。
 - [ ] 明确 ASR raw 时间字段契约。若采用 `start_time`／`end_time`，不得继续把它们伪装成已经规范化的毫秒；无效或未知时间不能导致整条可用文本被丢弃。

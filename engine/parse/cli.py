@@ -31,7 +31,7 @@ from .schemas import (
     VideoFallbackModels,
     VideoParseModels,
 )
-from .video_parse import ParsePipeline
+from .understand import UnderstandStage
 
 _RUNTIME_CONTEXT_START = "<!-- ANIVAG_RUNTIME_CONTEXT_START -->"
 _RUNTIME_CONTEXT_END = "<!-- ANIVAG_RUNTIME_CONTEXT_END -->"
@@ -256,7 +256,7 @@ def main() -> None:
             "completed chunks",
             flush=True,
         )
-    pipeline = ParsePipeline(
+    pipeline = UnderstandStage(
         understanding_agent,
         max_context_events=args.max_context_events,
         max_context_chars=args.max_context_chars,
