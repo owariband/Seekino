@@ -5,11 +5,16 @@ Objectives and Key Results
 ## P0
 
 ### 1. parse算法重构、提供更加高效的算法
+hypnos: 串行select->epoll策略，多轮矫正，可接
 
 
 ### 2. 实时识别的sub-agent开发，接入chat supervisor
 
-### 3. 修复parse，使得speaker能够准确归类为相应角色
+
+
+### 3. 修复parse，使得speaker能够准确归类为相应角色，用于蒸馏
+hypnos: 根据understanding agent结合video理解来调整asr的speaker归因，asr先落库改成该turn chunk全量解析完后再整体落库
+
 
 
 ## P1
