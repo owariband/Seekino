@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -193,19 +193,19 @@ describe("Search assistant presentation", () => {
     expect(screen.queryByLabelText("片段详情")).not.toBeInTheDocument();
   });
 
-  it("captures playback on a pointer interaction, ignores programmatic focus, and replaces stale context", async () => {
-    const firstContext = {
+  it("leaves interaction handling to its parent and captures the latest context on submit", async () => {
+    const initialContext = {
       playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionMs: 12_345 },
     };
-    const nextContext = {
-      playback: { seriesId: series.seriesId, videoId: "video-2", episodeOrder: 2, positionMs: 4_321 },
+    const extraContext = {
+      playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionMs: 14_321 },
     };
-    const firstCapture = vi.fn(() => firstContext);
-    const nextCapture = vi.fn(() => nextContext);
+    let currentContext = initialContext;
+    const captureExtraContext = vi.fn(() => currentContext);
     const view = renderPage(assistantMessage("可以提问"), [series], {
       embedded: true,
       initialSeriesId: series.seriesId,
-      captureExtraContext: firstCapture,
+      captureExtraContext,
     });
     const chatRef = createRef<SearchPageHandle>();
     view.rerender(
@@ -213,39 +213,31 @@ describe("Search assistant presentation", () => {
         ref={chatRef}
         embedded
         initialSeriesId={series.seriesId}
-        captureExtraContext={firstCapture}
+        captureExtraContext={captureExtraContext}
       />,
     );
     const textbox = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
 
     chatRef.current?.focusComposer();
     expect(textbox).toHaveFocus();
-    expect(firstCapture).not.toHaveBeenCalled();
-    fireEvent.pointerDown(textbox, { button: 0, pointerType: "mouse" });
-    expect(firstCapture).toHaveBeenCalledOnce();
+    expect(captureExtraContext).not.toHaveBeenCalled();
 
-    view.rerender(
-      <SearchPage
-        embedded
-        initialSeriesId={series.seriesId}
-        captureExtraContext={nextCapture}
-      />,
-    );
     const user = userEvent.setup();
-    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "第二集这里讲了什么？");
+    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "这里继续讲了什么？", { skipClick: true });
+    currentContext = extraContext;
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
-    expect(nextCapture).toHaveBeenCalledOnce();
+    expect(captureExtraContext).toHaveBeenCalledOnce();
     expect(mocks.send).toHaveBeenCalledWith(
-      "第二集这里讲了什么？",
+      "这里继续讲了什么？",
       [series.seriesId],
       null,
       {},
-      nextContext,
+      extraContext,
     );
   });
 
-  it("retries playback capture on submit when the initial pointer capture was not ready", async () => {
+  it("allows retrying the same question when playback context becomes available", async () => {
     const extraContext = {
       playback: { seriesId: series.seriesId, videoId: "video-1", episodeOrder: 1, positionMs: 0 },
     };
@@ -258,13 +250,36 @@ describe("Search assistant presentation", () => {
       captureExtraContext,
     });
     const textbox = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
-    fireEvent.pointerDown(textbox, { button: 0, pointerType: "mouse" });
+    textbox.focus();
     const user = userEvent.setup();
-    await user.type(textbox, "开头讲了什么？");
+    await user.type(textbox, "开头讲了什么？", { skipClick: true });
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(textbox).toHaveValue("开头讲了什么？");
+
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(captureExtraContext).toHaveBeenCalledTimes(2);
     expect(mocks.send).toHaveBeenCalledWith("开头讲了什么？", [series.seriesId], null, {}, extraContext);
+  });
+
+  it("keeps the question and does not send when playback context is unavailable on submit", async () => {
+    const captureExtraContext = vi.fn(() => null);
+    renderPage(assistantMessage("可以提问"), [series], {
+      embedded: true,
+      initialSeriesId: series.seriesId,
+      captureExtraContext,
+    });
+    const user = userEvent.setup();
+    const textbox = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
+    textbox.focus();
+    await user.type(textbox, "这里讲了什么？", { skipClick: true });
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    expect(captureExtraContext).toHaveBeenCalledOnce();
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(textbox).toHaveValue("这里讲了什么？");
+    expect(screen.getByText("当前播放位置尚未就绪，请稍后重试")).toHaveAttribute("role", "alert");
   });
 
   it("states when the watched series is not searchable instead of presenting a global scope as current", async () => {

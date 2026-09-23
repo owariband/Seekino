@@ -59,6 +59,29 @@ describe("VideoPlayer", () => {
     expect(readVideoProgress("video-1")?.positionMs).toBe(36_000);
   });
 
+  it("publishes metadata, time update, and seek positions independently from progress persistence", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const onPlaybackPositionChange = vi.fn();
+    render(<VideoPlayer video={video()} atMs={1_500} onPlaybackPositionChange={onPlaybackPositionChange} />);
+    const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
+
+    metadata(media);
+    expect(onPlaybackPositionChange).toHaveBeenLastCalledWith(1_500);
+
+    media.currentTime = 2;
+    fireEvent.timeUpdate(media);
+    media.currentTime = 2.5;
+    fireEvent.timeUpdate(media);
+    expect(onPlaybackPositionChange).toHaveBeenLastCalledWith(2_500);
+    expect(readVideoProgress("video-1")).toBeNull();
+
+    media.currentTime = 3.456;
+    fireEvent.seeked(media);
+    expect(onPlaybackPositionChange).toHaveBeenLastCalledWith(3_456);
+    expect(readVideoProgress("video-1")).toBeNull();
+    expect(onPlaybackPositionChange).toHaveBeenCalledTimes(4);
+  });
+
   it("controls playback, seeking, volume, speed, fullscreen, and keyboard shortcuts", () => {
     const toggleFullscreen = vi.fn();
     render(<VideoPlayer video={video()} onToggleFullscreen={toggleFullscreen} />);
@@ -114,15 +137,24 @@ describe("VideoPlayer", () => {
 
   it("pauses and reads the precise media position through its imperative handle", () => {
     const ref = createRef<VideoPlayerHandle>();
-    render(<VideoPlayer ref={ref} video={video()} />);
+    const onPlaybackPositionChange = vi.fn();
+    render(<VideoPlayer ref={ref} video={video()} onPlaybackPositionChange={onPlaybackPositionChange} />);
     const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
-    metadata(media);
-    media.currentTime = 12.3456;
 
     let snapshot: ReturnType<VideoPlayerHandle["pauseAndGetSnapshot"]> = null;
     act(() => { snapshot = ref.current?.pauseAndGetSnapshot() ?? null; });
+    expect(snapshot).toBeNull();
+    expect(pause).not.toHaveBeenCalled();
+    expect(onPlaybackPositionChange).not.toHaveBeenCalled();
+    expect(readVideoProgress("video-1")).toBeNull();
+
+    metadata(media);
+    media.currentTime = 12.3456;
+
+    act(() => { snapshot = ref.current?.pauseAndGetSnapshot() ?? null; });
     expect(snapshot).toEqual({ positionMs: 12_346, wasPlaying: false });
     expect(pause).toHaveBeenCalledOnce();
+    expect(onPlaybackPositionChange).toHaveBeenLastCalledWith(12_346);
     expect(readVideoProgress("video-1")?.positionMs).toBe(12_346);
   });
 

@@ -16,6 +16,15 @@ function watchPath(seriesId: string, videoId: string): string {
 const PANEL_WIDTH_KEY = "anivag-watch-panel-width";
 const MIN_PANEL_WIDTH = 320;
 
+type PlaybackExtraContext = {
+  playback: {
+    seriesId: string;
+    videoId: string;
+    episodeOrder: number;
+    positionMs: number;
+  };
+};
+
 function savedPanelWidth(): number {
   try {
     const value = Number(window.localStorage.getItem(PANEL_WIDTH_KEY));
@@ -33,6 +42,7 @@ export function WatchPage() {
   const layoutRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<VideoPlayerHandle>(null);
   const chatRef = useRef<SearchPageHandle>(null);
+  const playbackContextRef = useRef<PlaybackExtraContext | null>(null);
   const previousVideoId = useRef(videoId);
   const draggingRef = useRef(false);
   const pendingChatFocusRef = useRef(false);
@@ -57,20 +67,31 @@ export function WatchPage() {
   const parsedAtMs = rawAtMs !== null && /^\d+$/.test(rawAtMs) ? Number(rawAtMs) : undefined;
   const atMs = parsedAtMs !== undefined && Number.isSafeInteger(parsedAtMs) ? parsedAtMs : undefined;
 
-  const captureExtraContext = useCallback((): Record<string, unknown> | null => {
-    if (!selected) return null;
-    const paused = playerRef.current?.pauseAndGetSnapshot();
-    if (!paused) return null;
-    if (paused.wasPlaying) resumeAfterChatRef.current = true;
-    return {
+  const updatePlaybackContext = useCallback((positionMs: number) => {
+    if (!selected) return;
+    playbackContextRef.current = {
       playback: {
         seriesId: selected.seriesId,
         videoId: selected.videoId,
         episodeOrder: selected.episodeOrder,
-        positionMs: paused.positionMs,
+        positionMs,
       },
     };
   }, [selected?.episodeOrder, selected?.seriesId, selected?.videoId]);
+
+  const captureExtraContext = useCallback((): Record<string, unknown> | null => {
+    if (!selected) return null;
+    const paused = playerRef.current?.pauseAndGetSnapshot();
+    if (paused) {
+      if (paused.wasPlaying) resumeAfterChatRef.current = true;
+      updatePlaybackContext(paused.positionMs);
+    }
+    const context = playbackContextRef.current;
+    if (context?.playback.seriesId !== selected.seriesId
+      || context.playback.videoId !== selected.videoId
+      || context.playback.episodeOrder !== selected.episodeOrder) return null;
+    return context;
+  }, [selected, updatePlaybackContext]);
 
   const focusChat = () => {
     captureExtraContext();
@@ -98,6 +119,10 @@ export function WatchPage() {
     if (destination === "chat") focusChat();
     else focusPlayer();
   };
+
+  useEffect(() => {
+    playbackContextRef.current = null;
+  }, [rawAtMs, selected?.episodeOrder, selected?.seriesId, selected?.videoId]);
 
   useEffect(() => {
     if (previousVideoId.current === videoId) return;
@@ -158,7 +183,7 @@ export function WatchPage() {
           <h1>{series.name}</h1>
           {selected ? <span className={styles.headerEpisode}>{episodeLabel(selected.episodeOrder)}</span> : null}
         </div>
-        <button className={styles.panelToggle} type="button" onClick={() => setPanelOpen((open) => !open)} aria-expanded={panelOpen} aria-controls="watch-side-panel" aria-label={panelOpen ? "收起观看侧栏" : "打开观看侧栏"}>
+        <button className={styles.panelToggle} type="button" onClick={() => { if (panelOpen) setPanelOpen(false); else focusChat(); }} aria-expanded={panelOpen} aria-controls="watch-side-panel" aria-label={panelOpen ? "收起观看侧栏" : "打开观看侧栏"}>
           {panelOpen ? <PanelRightClose size={18} aria-hidden="true" /> : <PanelRightOpen size={18} aria-hidden="true" />}
           <span>{panelOpen ? "收起侧栏" : "打开 Chat"}</span>
         </button>
@@ -168,7 +193,7 @@ export function WatchPage() {
         <section className={styles.viewer} aria-label="视频播放器" onKeyDownCapture={(event) => switchPaneOnTab(event, "chat")}>
           {episodes.length === 0 ? <p className={styles.unavailable} role="status">这个系列还没有视频。</p> : !selected ? (
             <p className={styles.unavailable} role="alert">找不到这集视频，请在右侧选集重新选择。</p>
-          ) : <VideoPlayer ref={playerRef} key={`${selected.videoId}:${rawAtMs ?? "resume"}`} video={selected} atMs={atMs} fullscreen={pageFullscreen} onToggleFullscreen={togglePageFullscreen} />}
+          ) : <VideoPlayer ref={playerRef} key={`${selected.videoId}:${rawAtMs ?? "resume"}`} video={selected} atMs={atMs} fullscreen={pageFullscreen} onToggleFullscreen={togglePageFullscreen} onPlaybackPositionChange={updatePlaybackContext} />}
           {selected ? <>
             <div className={styles.videoMeta}>
               <div><strong>{episodeLabel(selected.episodeOrder)}</strong><span>{selected.originalFilename}</span></div>
@@ -209,10 +234,18 @@ export function WatchPage() {
 
         <aside id="watch-side-panel" className={styles.sidePanel} aria-label="观看侧栏" hidden={!panelOpen}>
           <div className={styles.sideTabs} role="tablist" aria-label="观看侧栏内容">
-            <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={() => setPanelTab("chat")}><MessageCircle size={15} aria-hidden="true" />Chat</button>
+            <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={focusChat}><MessageCircle size={15} aria-hidden="true" />Chat</button>
             <button type="button" role="tab" id="watch-episodes-tab" aria-controls="watch-episodes-panel" aria-selected={panelTab === "episodes"} onClick={() => setPanelTab("episodes")}><ListVideo size={15} aria-hidden="true" />选集</button>
           </div>
-          <div id="watch-chat-panel" className={styles.chatPanel} role="tabpanel" aria-labelledby="watch-chat-tab" hidden={panelTab !== "chat"} onKeyDownCapture={(event) => switchPaneOnTab(event, "player")}>
+          <div
+            id="watch-chat-panel"
+            className={styles.chatPanel}
+            role="tabpanel"
+            aria-labelledby="watch-chat-tab"
+            hidden={panelTab !== "chat"}
+            onPointerDownCapture={(event) => { if (event.button === 0) captureExtraContext(); }}
+            onKeyDownCapture={(event) => switchPaneOnTab(event, "player")}
+          >
             <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} captureExtraContext={captureExtraContext} onOpenVideo={({ seriesId: targetSeriesId, videoId: targetVideoId, startMs }) => {
               navigate(`${watchPath(targetSeriesId, targetVideoId)}?atMs=${startMs}`);
             }} />

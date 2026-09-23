@@ -22,7 +22,13 @@ vi.mock("./VideoPlayer", async () => {
   const { forwardRef, useImperativeHandle, useRef } = await import("react");
   return {
     VideoPlayer: forwardRef(function MockVideoPlayer(
-      { video, atMs, fullscreen, onToggleFullscreen }: { video: VideoSummary; atMs?: number; fullscreen?: boolean; onToggleFullscreen?: () => void },
+      { video, atMs, fullscreen, onToggleFullscreen, onPlaybackPositionChange }: {
+        video: VideoSummary;
+        atMs?: number;
+        fullscreen?: boolean;
+        onToggleFullscreen?: () => void;
+        onPlaybackPositionChange?: (positionMs: number) => void;
+      },
       ref,
     ) {
       const playerRef = useRef<HTMLDivElement>(null);
@@ -34,6 +40,7 @@ vi.mock("./VideoPlayer", async () => {
       return (
         <div ref={playerRef} data-testid="video-player" tabIndex={0}>{video.videoId} @ {atMs === undefined ? "history" : atMs}
           <button type="button" onClick={onToggleFullscreen}>{fullscreen ? "退出网页全屏" : "网页全屏"}</button>
+          <button type="button" onClick={() => onPlaybackPositionChange?.(atMs ?? 45_678)}>同步播放位置</button>
         </div>
       );
     }),
@@ -155,6 +162,27 @@ describe("WatchPage", () => {
     expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("pauses the video when the user opens, selects, or interacts with Chat", async () => {
+    renderPage();
+    await screen.findByTestId("video-player");
+
+    fireEvent.click(screen.getByRole("button", { name: "收起观看侧栏" }));
+    expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("tab", { name: "选集" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(2);
+
+    fireEvent.pointerDown(screen.getByTestId("supervisor-chat"), { button: 0, pointerType: "mouse" });
+    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(3);
+
+    fireEvent.pointerDown(screen.getByTestId("supervisor-chat"), { button: 2, pointerType: "mouse" });
+    expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(3);
+  });
+
   it("sorts episodes, switches videos, and leaves the old seek time behind", async () => {
     renderPage("/watch/series-1/video-2?atMs=13250");
     expect(await screen.findByTestId("video-player")).toHaveTextContent("video-2 @ 13250");
@@ -200,6 +228,72 @@ describe("WatchPage", () => {
         videoId: "video-3",
         episodeOrder: 3,
         positionMs: 7_000,
+      },
+    });
+  });
+
+  it("keeps the latest reported playback context and does not reuse it after switching episodes", async () => {
+    renderPage();
+    await screen.findByTestId("video-player");
+    mocks.pauseAndGetSnapshot.mockReturnValue(null);
+
+    fireEvent.click(screen.getByRole("button", { name: "同步播放位置" }));
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith({
+      playback: {
+        seriesId: "series-1",
+        videoId: "video-2",
+        episodeOrder: 2,
+        positionMs: 45_678,
+      },
+    });
+
+    fireEvent.click(screen.getByRole("link", { name: "下一集" }));
+    await waitFor(() => expect(screen.getByTestId("video-player")).toHaveTextContent("video-3 @ history"));
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith(null);
+
+    fireEvent.click(screen.getByRole("button", { name: "同步播放位置" }));
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith({
+      playback: {
+        seriesId: "series-1",
+        videoId: "video-3",
+        episodeOrder: 3,
+        positionMs: 45_678,
+      },
+    });
+  });
+
+  it("discards the old position when the same video opens at a new timestamp", async () => {
+    renderPage("/watch/series-1/video-1");
+    await screen.findByTestId("video-player");
+    mocks.pauseAndGetSnapshot.mockReturnValue(null);
+
+    fireEvent.click(screen.getByRole("button", { name: "同步播放位置" }));
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith({
+      playback: {
+        seriesId: "series-1",
+        videoId: "video-1",
+        episodeOrder: 1,
+        positionMs: 45_678,
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "打开视频证据" }));
+    await waitFor(() => expect(screen.getByTestId("video-player")).toHaveTextContent("video-1 @ 4000"));
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith(null);
+
+    fireEvent.click(screen.getByRole("button", { name: "同步播放位置" }));
+    fireEvent.click(screen.getByRole("button", { name: "捕获播放上下文" }));
+    expect(mocks.receiveExtraContext).toHaveBeenLastCalledWith({
+      playback: {
+        seriesId: "series-1",
+        videoId: "video-1",
+        episodeOrder: 1,
+        positionMs: 4_000,
       },
     });
   });

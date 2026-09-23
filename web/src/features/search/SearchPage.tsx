@@ -146,6 +146,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [conversationStatus, setConversationStatus] = useState("");
+  const [playbackContextError, setPlaybackContextError] = useState<string | null>(null);
   const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
   const scopeTouchedRef = useRef(false);
   const [query, setQuery] = useState("");
@@ -178,10 +179,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const wasSearchingRef = useRef(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const followThread = useRef(true);
-  const capturedExtraContextRef = useRef<{
-    source: NonNullable<SearchPageProps["captureExtraContext"]>;
-    value: Record<string, unknown> | null;
-  } | null>(null);
 
   useImperativeHandle(ref, () => ({
     focusComposer: () => composerRef.current?.focus(),
@@ -319,18 +316,17 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!canSend) return;
+    const extraContext = captureExtraContext?.() ?? null;
+    if (captureExtraContext && extraContext === null) {
+      setPlaybackContextError("当前播放位置尚未就绪，请稍后重试");
+      return;
+    }
+    setPlaybackContextError(null);
     followThread.current = true;
     setConversationStatus("问题已发送，正在处理");
     const options = messageOptionOverrides
       ? { ...messageOptionOverrides, maxLoopTurns: messageOptionOverrides.maxLoopTurns || undefined }
       : {};
-    const captured = capturedExtraContextRef.current;
-    const extraContext = captureExtraContext
-      ? captured?.source === captureExtraContext && captured.value !== null
-        ? captured.value
-        : captureExtraContext()
-      : null;
-    capturedExtraContextRef.current = null;
     if (extraContext === null) void send(query, selectedSeriesIds, reference, options);
     else void send(query, selectedSeriesIds, reference, options, extraContext);
     setQuery("");
@@ -649,13 +645,6 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 ref={composerRef}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                onPointerDown={(event) => {
-                  if (!captureExtraContext || event.button !== 0) return;
-                  capturedExtraContextRef.current = {
-                    source: captureExtraContext,
-                    value: captureExtraContext(),
-                  };
-                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                     event.preventDefault();
@@ -670,6 +659,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 {searching ? <LoaderCircle size={18} className={styles.spinning} aria-hidden="true" /> : <ArrowUp size={19} aria-hidden="true" />}
               </button>
             </form>
+            {playbackContextError ? <p className={styles.messageError} role="alert">{playbackContextError}</p> : null}
             <div className={styles.composerToolbar}>
               <div className={styles.composerControls}>
                 <details

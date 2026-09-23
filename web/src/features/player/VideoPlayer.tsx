@@ -12,6 +12,7 @@ interface VideoPlayerProps {
   atMs?: number;
   fullscreen?: boolean;
   onToggleFullscreen?: () => void | Promise<void>;
+  onPlaybackPositionChange?: (positionMs: number) => void;
 }
 
 export interface VideoPlayerHandle {
@@ -23,7 +24,7 @@ export interface VideoPlayerHandle {
 const PROGRESS_WRITE_INTERVAL_MS = 5_000;
 
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function VideoPlayer(
-  { video, atMs, fullscreen = false, onToggleFullscreen },
+  { video, atMs, fullscreen = false, onToggleFullscreen, onPlaybackPositionChange },
   ref,
 ) {
   const mediaRef = useRef<HTMLVideoElement>(null);
@@ -86,23 +87,27 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     lastWriteAtRef.current = Date.now();
   };
 
+  const updatePosition = (positionMs: number) => {
+    positionRef.current = positionMs;
+    setCurrentMs(positionMs);
+    onPlaybackPositionChange?.(positionMs);
+  };
+
   const syncPosition = () => {
     const media = mediaRef.current;
     if (!media) return;
     const next = Math.max(0, Math.round(media.currentTime * 1000));
-    positionRef.current = next;
-    setCurrentMs(next);
+    updatePosition(next);
     if (Date.now() - lastWriteAtRef.current >= PROGRESS_WRITE_INTERVAL_MS) persist();
   };
 
   const pauseAndReadPosition = () => {
     const media = mediaRef.current;
-    if (!media) return null;
+    if (!media || !progressReadyRef.current) return null;
     const wasPlaying = !media.paused && !media.ended;
     media.pause();
     const positionMs = Math.max(0, Math.round(media.currentTime * 1000));
-    positionRef.current = positionMs;
-    setCurrentMs(positionMs);
+    updatePosition(positionMs);
     persist();
     return { positionMs, wasPlaying };
   };
@@ -134,8 +139,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     const requested = atMs !== undefined && Number.isSafeInteger(atMs) && atMs >= 0 ? atMs : nearEnd ? 0 : resume;
     const startMs = Math.min(knownDuration, Math.max(0, requested));
     media.currentTime = startMs / 1000;
-    positionRef.current = startMs;
-    setCurrentMs(startMs);
+    updatePosition(startMs);
     progressReadyRef.current = true;
     initializedKeyRef.current = mediaKey;
     setMediaReady(true);
@@ -146,8 +150,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     if (!media || !progressReadyRef.current) return;
     const bounded = Math.min(durationRef.current, Math.max(0, nextMs));
     media.currentTime = bounded / 1000;
-    positionRef.current = bounded;
-    setCurrentMs(bounded);
+    updatePosition(bounded);
     persist();
   };
 
