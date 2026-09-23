@@ -74,6 +74,7 @@ def test_default_config_uses_selected_models() -> None:
     assert config.agent_runtime["chat_timeout_seconds"] == 480
     assert config.agent_runtime["supervisor_timeout_seconds"] == 480
     assert config.agent_runtime["execution_timeout_seconds"] == 480
+    assert config.agent_runtime["max_output_tokens"] == 8192
 
     fallback = config.video_parser.fallback
     assert fallback.enabled is True

@@ -12,14 +12,17 @@ from typing import Annotated
 
 from gateway.agent_model import AgentLoopModel, ModelInputTooLargeError
 from gateway.web_search import WebSearchError, WebSearchHit, WebSearcher
-from gateway.sse_proxy import ContentFilterError
-from langchain_core.tools import ToolException
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from .common.state import AnswerPhase, ExecutionControl, RunInputs, context_json
-from .common.tooling import attach_agent_tool_logging, build_agent_tool
-from .common.errors import AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError
-from .common.tool_output import bounded_json
+from .common.tool import (
+    as_langchain_tools, attach_agent_tool_logging, build_agent_tool,
+)
+from .common.errors import (
+    AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
+)
+from .common.tool_result import JsonToolResult, ToolError, ToolResult
+from .video_search.errors import VideoSearchFailure, VideoSearchFailureCode
 from .video_search.runtime import AgentRuntime
 from .video_search.state import AgentFinalOutput
 
@@ -126,7 +129,7 @@ class SupervisorRuntime:
             ):
                 raise AgentModelInvocationError("Supervisor Tool call budget exceeded")
 
-        def search_web(query: str) -> str:
+        def search_web(query: str) -> ToolResult:
             nonlocal web_search_attempted
             consume_tool_call()
             web_search_attempted = True
@@ -142,49 +145,71 @@ class SupervisorRuntime:
                     ),
                 )
             except WebSearchError as exc:
-                raise ToolException(bounded_json({
-                    "ok": False,
-                    "error": {
-                        "code": "WEB_SEARCH_FAILED",
-                        "message": "Web search is temporarily unavailable.",
-                        "retry_hint": "Answer from other available sources or explain the limitation.",
-                    },
-                }, self._max_tool_result_bytes)) from exc
+                control.check()
+                _logger.warning(
+                    "event=agent_supervisor_web_failed conversation_id=%s "
+                    "message_id=%s error_type=%s",
+                    inputs["conversation_id"], inputs["assistant_message_id"],
+                    type(exc).__name__,
+                )
+                return JsonToolResult(
+                    success=False,
+                    payload={"error": ToolError(
+                        code="WEB_SEARCH_FAILED",
+                        message="Web search is temporarily unavailable.",
+                        retryable=True,
+                        retry_hint=(
+                            "Answer from other available sources or explain the limitation."
+                        ),
+                    ).as_dict()},
+                )
             control.check()
             items: list[dict[str, str]] = []
             accepted: list[WebSearchHit] = []
             for hit in found:
                 item = {"title": hit.title, "url": hit.url, "snippet": hit.snippet}
                 candidate = [*items, item]
-                try:
-                    bounded_json({
-                        "ok": True, "items": candidate,
+                candidate_result = JsonToolResult(
+                    success=True,
+                    payload={
+                        "items": candidate,
                         "result_count": len(candidate),
                         "omitted_count": len(found) - len(candidate),
-                    }, self._max_tool_result_bytes)
-                except AgentToolInvocationError:
+                    },
+                )
+                if (
+                    len(candidate_result.model_content().encode("utf-8"))
+                    > self._max_tool_result_bytes
+                ):
                     continue
                 items = candidate
                 accepted.append(hit)
             for hit in accepted:
                 web_sources.setdefault(hit.url, hit)
-            return bounded_json({
-                "ok": True, "items": items, "result_count": len(items),
-                "omitted_count": len(found) - len(items),
-            }, self._max_tool_result_bytes)
+            return JsonToolResult(
+                success=True,
+                payload={
+                    "items": items,
+                    "result_count": len(items),
+                    "omitted_count": len(found) - len(items),
+                },
+            )
 
-        def search_video_graph(query: str) -> str:
+        def search_video_graph(query: str) -> ToolResult:
             nonlocal video_result, video_query
             consume_tool_call()
             if not inputs["series_ids"]:
-                raise ToolException(bounded_json({
-                    "ok": False,
-                    "error": {
-                        "code": "NO_VIDEO_SCOPE",
-                        "message": "No video series is available for this conversation.",
-                        "retry_hint": "Use web search or explain that video evidence is unavailable.",
-                    },
-                }, self._max_tool_result_bytes))
+                return JsonToolResult(
+                    success=False,
+                    payload={"error": ToolError(
+                        code="NO_VIDEO_SCOPE",
+                        message="No video series is available for this conversation.",
+                        retryable=False,
+                        retry_hint=(
+                            "Use web search or explain that video evidence is unavailable."
+                        ),
+                    ).as_dict()},
+                )
             reused = video_result is not None
             if video_result is None:
                 scoped_inputs = deepcopy(inputs)
@@ -199,45 +224,27 @@ class SupervisorRuntime:
                         max_loop_turns=max_loop_turns, deadline=control.deadline,
                     )
                     video_query = query
-                except Exception as exc:
+                except VideoSearchFailure as exc:
                     control.check()
-                    if isinstance(exc, ContentFilterError) or isinstance(
-                        exc.__cause__, ContentFilterError
-                    ):
-                        raise
-                    error_code = (
-                        "VIDEO_AGENT_FAILED"
-                        if isinstance(exc, AgentModelInvocationError)
-                        else "VIDEO_SEARCH_FAILED"
-                    )
                     _logger.warning(
                         "event=agent_supervisor_video_failed conversation_id=%s "
-                        "message_id=%s error_type=%s root_error_type=%s code=%s",
+                        "message_id=%s error_type=%s root_error_type=%s code=%s "
+                        "phase=%s retryable=%s",
                         inputs["conversation_id"], inputs["assistant_message_id"],
                         type(exc).__name__,
-                        type(exc.__cause__ or exc).__name__, error_code,
+                        type(exc.__cause__ or exc).__name__, exc.code.value,
+                        exc.phase.value, exc.retryable,
                     )
-                    raise ToolException(bounded_json({
-                        "ok": False,
-                        "error": {
-                            "code": error_code,
-                            "message": (
-                                "Video agent could not complete its evidence review."
-                                if error_code == "VIDEO_AGENT_FAILED"
-                                else "Video search could not complete."
-                            ),
-                            "retry_hint": (
-                                "Explain that the video evidence is unavailable; "
-                                "web search cannot verify claims about the selected video."
-                            ),
-                        },
-                    }, self._max_tool_result_bytes)) from exc
+                    return JsonToolResult(
+                        success=False,
+                        payload={"error": _video_failure_tool_error(exc).as_dict()},
+                    )
             control.check()
             preview = video_result.agent_reply.message[:1_000]
             while True:
-                try:
-                    return bounded_json({
-                        "ok": True,
+                result = JsonToolResult(
+                    success=True,
+                    payload={
                         "result_count": video_result.agent_reply.result_count,
                         "reused": reused,
                         "answer_preview": preview,
@@ -247,11 +254,18 @@ class SupervisorRuntime:
                             if reused and video_query != query else
                             "The approved video answer is ready; do not rewrite its claims."
                         ),
-                    }, self._max_tool_result_bytes)
-                except AgentToolInvocationError:
-                    if not preview:
-                        raise
-                    preview = preview[: len(preview) // 2]
+                    },
+                )
+                if (
+                    len(result.model_content().encode("utf-8"))
+                    <= self._max_tool_result_bytes
+                ):
+                    return result
+                if not preview:
+                    raise AgentToolInvocationError(
+                        "Video Tool result exceeds its output budget"
+                    )
+                preview = preview[: len(preview) // 2]
 
         tools = [
             build_agent_tool(
@@ -327,7 +341,7 @@ class SupervisorRuntime:
         try:
             self._model.run_agent_loop(
                 prompt,
-                tools=tools,
+                tools=as_langchain_tools(tools),
                 max_model_calls=(
                     max_model_calls_per_turn if self._limits_enabled else None
                 ),
@@ -386,3 +400,46 @@ class SupervisorRuntime:
 
 def _markdown_label(value: str) -> str:
     return value.replace("[", "\\[").replace("]", "\\]").replace("\n", " ")
+
+
+def _video_failure_tool_error(failure: VideoSearchFailure) -> ToolError:
+    message, retry_hint = {
+        VideoSearchFailureCode.OUTPUT_TOKEN_LIMIT: (
+            "Video analysis was truncated before a complete result was produced.",
+            "Explain that video verification was interrupted and suggest retrying "
+            "with a narrower question.",
+        ),
+        VideoSearchFailureCode.MODEL_TIMEOUT: (
+            "Video analysis did not complete before the model request timeout.",
+            "Explain that video verification timed out and suggest retrying with a "
+            "narrower question.",
+        ),
+        VideoSearchFailureCode.REQUIRED_TOOL_MISSING: (
+            "Video analysis stopped because an agent omitted a required tool result.",
+            "Explain that video verification could not complete and suggest retrying.",
+        ),
+        VideoSearchFailureCode.INVALID_MODEL_RESPONSE: (
+            "Video analysis stopped because an agent returned an invalid response.",
+            "Explain that video verification could not complete and suggest retrying.",
+        ),
+        VideoSearchFailureCode.CONTEXT_BUDGET_EXCEEDED: (
+            "Video analysis exceeded its configured context budget.",
+            "Suggest retrying with a narrower question or a smaller video scope.",
+        ),
+        VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED: (
+            "Video analysis did not reach an approved result within its review limit.",
+            "Explain that verification did not converge and suggest a narrower question.",
+        ),
+        VideoSearchFailureCode.RETRIEVAL_FAILED: (
+            "Video retrieval could not complete.",
+            "Explain that video evidence is unavailable; web search cannot verify "
+            "claims about the selected video.",
+        ),
+    }[failure.code]
+    return ToolError(
+        code=failure.code.value,
+        phase=failure.phase.value,
+        retryable=failure.retryable,
+        message=message,
+        retry_hint=retry_hint,
+    )

@@ -6,6 +6,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from copy import deepcopy
+from enum import StrEnum
 from time import monotonic
 from typing import Any, Literal, Protocol, TypeVar
 
@@ -19,6 +20,7 @@ from langchain_core.messages import (
     AIMessage,
     HumanMessage,
     RemoveMessage,
+    ToolMessage,
     convert_to_messages,
     convert_to_openai_messages,
 )
@@ -50,20 +52,58 @@ class ModelInputTooLargeError(RuntimeError):
     """The complete model message state exceeded an application context budget."""
 
 
-class QueryModelIncompleteError(RuntimeError):
+class ModelFailureReason(StrEnum):
+    """Provider-level reasons that callers can map without parsing messages."""
+
+    OUTPUT_TOKEN_LIMIT = "output_token_limit"
+    REQUIRED_TOOL_MISSING = "required_tool_missing"
+    INVALID_MODEL_RESPONSE = "invalid_model_response"
+    MODEL_TIMEOUT = "model_timeout"
+
+
+class ModelFailureError(RuntimeError):
+    """A model failure with a stable reason for higher-level routing."""
+
+    default_reason: ModelFailureReason = ModelFailureReason.INVALID_MODEL_RESPONSE
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: ModelFailureReason | None = None,
+    ) -> None:
+        self.reason: ModelFailureReason = reason or self.default_reason
+        super().__init__(message)
+
+
+class QueryModelIncompleteError(ModelFailureError):
     """A Query completion returned an invalid or non-terminal response."""
 
 
-class MissingStructuredQueryToolCallError(RuntimeError):
+class MissingStructuredQueryToolCallError(ModelFailureError):
     """A Query completion stopped without any required tool call."""
 
+    default_reason = ModelFailureReason.REQUIRED_TOOL_MISSING
 
-class MissingStructuredQueryDraftError(RuntimeError):
+
+class MissingStructuredQueryDraftError(ModelFailureError):
     """The Query loop ended without the required structured draft."""
 
+    default_reason = ModelFailureReason.REQUIRED_TOOL_MISSING
 
-class MissingRequiredFunctionCallError(RuntimeError):
+
+class MissingRequiredFunctionCallError(ModelFailureError):
     """A model stopped before making a required function call."""
+
+    default_reason = ModelFailureReason.REQUIRED_TOOL_MISSING
+
+
+class AgentModelTimeoutError(TimeoutError):
+    """An Agent model stage exhausted its caller-provided time budget."""
+
+    def __init__(self, message: str) -> None:
+        self.reason: ModelFailureReason = ModelFailureReason.MODEL_TIMEOUT
+        super().__init__(message)
 
 
 class StructuredToolAgentModel(Protocol):
@@ -110,11 +150,11 @@ class AgentLoopModel(Protocol):
     ) -> None: ...
 
 
-class DeepSeekFunctionCallingError(RuntimeError):
+class DeepSeekFunctionCallingError(ModelFailureError):
     """DeepSeek failed or returned an invalid agent-loop response."""
 
 
-class ArkFunctionCallingError(RuntimeError):
+class ArkFunctionCallingError(ModelFailureError):
     """Ark failed or returned an invalid agent-loop response."""
 
 
@@ -254,7 +294,8 @@ class DeepSeekFunctionCallingModel:
                     fallback_timeout = timeout - (monotonic() - attempt_started_at)
                     if fallback_timeout <= 0:
                         raise DeepSeekFunctionCallingError(
-                            "DeepSeek agent loop request deadline expired before fallback"
+                            "DeepSeek agent loop request deadline expired before fallback",
+                            reason=ModelFailureReason.MODEL_TIMEOUT,
                         ) from exc
                     log_model_fallback(
                         _logger,
@@ -319,12 +360,14 @@ class DeepSeekFunctionCallingModel:
             )
             _logger.info(
                 "event=chat_model_request_contract provider=%s model=%s "
-                "tool_choice=%s tool_count=%s tool_names=%s",
+                "tool_choice=%s tool_count=%s tool_names=%s "
+                "max_output_tokens=%s token_parameter=max_tokens",
                 self.provider_name,
                 model_name,
                 effective_tool_choice,
                 len(tools),
                 ",".join(tool.name for tool in tools),
+                self.max_output_tokens,
             )
             response = self._create_completion(
                 client,
@@ -339,6 +382,8 @@ class DeepSeekFunctionCallingModel:
                 tools=tools,
                 seen_tool_call_ids=seen_tool_call_ids,
                 provider_label="DeepSeek",
+                model_name=model_name,
+                max_output_tokens=self.max_output_tokens,
                 error_type=DeepSeekFunctionCallingError,
                 require_tool_call=tool_choice == "required",
                 require_visible_text_on_stop=require_visible_text_on_stop,
@@ -382,7 +427,8 @@ class DeepSeekFunctionCallingModel:
                     response_id=getattr(error, "request_id", None),
                 ) from error
             raise DeepSeekFunctionCallingError(
-                f"DeepSeek request failed for model {self.model_name}"
+                f"DeepSeek request failed for model {self.model_name}",
+                reason=_failure_reason_for_exception(error),
             ) from error
         usage_call.capture_response(response)
         return response
@@ -410,6 +456,109 @@ def _response_input_tokens(response: Any) -> int | None:
     return value
 
 
+def _response_usage_token(response: Any, name: str) -> int | None:
+    usage = (
+        response.get("usage")
+        if isinstance(response, Mapping)
+        else getattr(response, "usage", None)
+    )
+    value = (
+        usage.get(name)
+        if isinstance(usage, Mapping)
+        else getattr(usage, name, None)
+    )
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _response_reasoning_tokens(response: Any) -> int | None:
+    usage = (
+        response.get("usage")
+        if isinstance(response, Mapping)
+        else getattr(response, "usage", None)
+    )
+    details = (
+        usage.get("completion_tokens_details")
+        if isinstance(usage, Mapping)
+        else getattr(usage, "completion_tokens_details", None)
+    )
+    value = (
+        details.get("reasoning_tokens")
+        if isinstance(details, Mapping)
+        else getattr(details, "reasoning_tokens", None)
+    )
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _failure_reason_for_exception(exc: BaseException) -> ModelFailureReason:
+    existing_reason = getattr(exc, "reason", None)
+    if isinstance(existing_reason, ModelFailureReason):
+        return existing_reason
+    if isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.lower():
+        return ModelFailureReason.MODEL_TIMEOUT
+    return ModelFailureReason.INVALID_MODEL_RESPONSE
+
+
+def _raise_query_timeout(exc: BaseException) -> None:
+    if _failure_reason_for_exception(exc) == ModelFailureReason.MODEL_TIMEOUT:
+        raise QueryModelIncompleteError(
+            "Query model request timed out",
+            reason=ModelFailureReason.MODEL_TIMEOUT,
+        ) from exc
+
+
+def _log_incomplete_model_response(
+    *,
+    event: str,
+    provider: str,
+    model: str,
+    response: Any,
+    finish_reason: Any,
+    max_output_tokens: int | None,
+    raw_tool_call_count: int | None,
+) -> None:
+    completion_tokens = _response_usage_token(response, "completion_tokens")
+    configured_limit_reached = (
+        str(completion_tokens >= max_output_tokens).lower()
+        if completion_tokens is not None and max_output_tokens is not None
+        else "unknown"
+    )
+    if finish_reason == "length":
+        interruption_reason = "output_token_limit"
+    elif finish_reason is None:
+        interruption_reason = "missing_finish_reason"
+    else:
+        interruption_reason = "unexpected_finish_reason"
+    response_id = (
+        response.get("id")
+        if isinstance(response, Mapping)
+        else getattr(response, "id", None)
+    )
+    _logger.warning(
+        "event=%s provider=%s model=%s response_id=%s finish_reason=%s "
+        "interruption_reason=%s prompt_tokens=%s completion_tokens=%s "
+        "reasoning_tokens=%s total_tokens=%s "
+        "configured_max_output_tokens=%s configured_limit_reached=%s "
+        "raw_tool_call_count=%s",
+        event,
+        provider,
+        model,
+        response_id,
+        finish_reason,
+        interruption_reason,
+        _response_usage_token(response, "prompt_tokens"),
+        completion_tokens,
+        _response_reasoning_tokens(response),
+        _response_usage_token(response, "total_tokens"),
+        max_output_tokens,
+        configured_limit_reached,
+        raw_tool_call_count,
+    )
+
+
 def _request_ark_function_turn(
     client: Any,
     *,
@@ -433,12 +582,14 @@ def _request_ark_function_turn(
         try:
             _logger.info(
                 "event=chat_model_request_contract provider=%s model=%s "
-                "tool_choice=%s tool_count=%s tool_names=%s",
+                "tool_choice=%s tool_count=%s tool_names=%s "
+                "max_output_tokens=%s token_parameter=max_completion_tokens",
                 ARK_PROVIDER,
                 model_name,
                 tool_choice,
                 len(tools),
                 ",".join(tool.name for tool in tools),
+                max_output_tokens,
             )
             response = client.chat.completions.create(
                 model=model_name,
@@ -466,8 +617,11 @@ def _request_ark_function_turn(
                     code="content_filter",
                     response_id=getattr(exc, "request_id", None),
                 ) from exc
+            if not isinstance(exc, (ArkError, OpenAIError, TimeoutError)):
+                raise
             raise ArkFunctionCallingError(
-                f"Ark request failed for model {model_name!r}"
+                f"Ark request failed for model {model_name!r}",
+                reason=_failure_reason_for_exception(exc),
             ) from exc
         call.capture_response(response)
         turn = _validated_agent_turn(
@@ -475,6 +629,8 @@ def _request_ark_function_turn(
             tools=tools,
             seen_tool_call_ids=seen_tool_call_ids,
             provider_label="Ark",
+            model_name=model_name,
+            max_output_tokens=max_output_tokens,
             error_type=ArkFunctionCallingError,
             require_tool_call=tool_choice == "required",
             require_visible_text_on_stop=require_visible_text_on_stop,
@@ -582,7 +738,8 @@ class ArkFunctionCallingModel:
                     fallback_timeout = timeout - (monotonic() - attempt_started_at)
                     if fallback_timeout <= 0:
                         raise ArkFunctionCallingError(
-                            "Ark agent loop request deadline expired before fallback"
+                            "Ark agent loop request deadline expired before fallback",
+                            reason=ModelFailureReason.MODEL_TIMEOUT,
                         ) from exc
                     log_model_fallback(
                         _logger,
@@ -643,6 +800,43 @@ def _tool_output_text(output: object) -> str:
     )
 
 
+def _failed_tool_message(
+    *,
+    tool_call_id: str,
+    tool_name: str,
+    content: str,
+) -> ToolMessage:
+    return ToolMessage(
+        content=content,
+        tool_call_id=tool_call_id,
+        name=tool_name,
+        status="error",
+    )
+
+
+def _invoke_function_tool(
+    tool: BaseTool,
+    *,
+    tool_call_id: str,
+    arguments: dict[str, Any],
+) -> ToolMessage:
+    output = tool.invoke({
+        "type": "tool_call",
+        "id": tool_call_id,
+        "name": tool.name,
+        "args": arguments,
+    })
+    if not isinstance(output, ToolMessage):
+        raise TypeError(
+            f"LangChain tool {tool.name!r} did not return a ToolMessage"
+        )
+    if output.tool_call_id != tool_call_id:
+        raise RuntimeError(
+            f"LangChain tool {tool.name!r} changed its tool call ID"
+        )
+    return output
+
+
 def _copy_assistant_reasoning(
     messages: Sequence[Any], rendered: list[dict[str, Any]],
 ) -> None:
@@ -691,7 +885,7 @@ def _run_function_calling_loop(
     context_checkpoint: ContextCheckpoint | None,
     initial_messages: Sequence[dict[str, Any]] | None,
     provider_label: str,
-    error_type: type[RuntimeError],
+    error_type: type[ModelFailureError],
     request_turn: Callable[
         ...,
         tuple[str, str | None, dict[str, Any], list, int | None],
@@ -750,7 +944,10 @@ def _run_function_calling_loop(
             check_control()
         remaining_timeout = deadline - monotonic()
         if remaining_timeout <= 0:
-            raise error_type(f"{provider_label} agent loop request deadline expired")
+            raise error_type(
+                f"{provider_label} agent loop request deadline expired",
+                reason=ModelFailureReason.MODEL_TIMEOUT,
+            )
         try:
             context_update = context_window.prepare(
                 messages,
@@ -782,7 +979,8 @@ def _run_function_calling_loop(
             model_call_index += 1
             if missing_call_corrected:
                 raise error_type(
-                    f"{provider_label} stopped twice without the required function call"
+                    f"{provider_label} stopped twice without the required function call",
+                    reason=ModelFailureReason.REQUIRED_TOOL_MISSING,
                 ) from exc
             missing_call_corrected = True
             messages.append({
@@ -825,18 +1023,28 @@ def _run_function_calling_loop(
             if check_control is not None:
                 check_control()
             if tool is None:
-                output = arguments_or_error
+                assert isinstance(arguments_or_error, ToolMessage)
+                tool_message = arguments_or_error
             else:
                 assert isinstance(arguments_or_error, dict)
-                output = tool.invoke(arguments_or_error)
+                tool_message = _invoke_function_tool(
+                    tool,
+                    tool_call_id=tool_call_id,
+                    arguments=arguments_or_error,
+                )
                 submitted_tool = True
             messages.append({
                 "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": _tool_output_text(output),
+                "tool_call_id": tool_message.tool_call_id,
+                "content": _tool_output_text(tool_message.content),
             })
     raise error_type(
-        f"{provider_label} agent loop exhausted max_model_calls before stop"
+        f"{provider_label} agent loop exhausted max_model_calls before stop",
+        reason=(
+            ModelFailureReason.REQUIRED_TOOL_MISSING
+            if missing_call_corrected
+            else ModelFailureReason.INVALID_MODEL_RESPONSE
+        ),
     )
 
 
@@ -846,14 +1054,16 @@ def _validated_agent_turn(
     tools: Sequence[BaseTool],
     seen_tool_call_ids: set[str],
     provider_label: str = "DeepSeek",
-    error_type: type[RuntimeError] = DeepSeekFunctionCallingError,
+    model_name: str = "unknown",
+    max_output_tokens: int | None = None,
+    error_type: type[ModelFailureError] = DeepSeekFunctionCallingError,
     require_tool_call: bool = False,
     require_visible_text_on_stop: bool = False,
 ) -> tuple[
     str,
     str | None,
     dict[str, Any],
-    list[tuple[str, BaseTool | None, dict[str, Any] | str]],
+    list[tuple[str, BaseTool | None, dict[str, Any] | ToolMessage]],
 ]:
     tools_by_name = {tool.name: tool for tool in tools}
     choice = _single_completion_choice(
@@ -867,9 +1077,26 @@ def _validated_agent_turn(
             response_id=getattr(response, "id", None),
         )
     if finish_reason not in {"stop", "tool_calls"}:
+        raw_calls = getattr(getattr(choice, "message", None), "tool_calls", None)
+        _log_incomplete_model_response(
+            event="chat_model_incomplete",
+            provider=provider_label.lower(),
+            model=model_name,
+            response=response,
+            finish_reason=finish_reason,
+            max_output_tokens=max_output_tokens,
+            raw_tool_call_count=(
+                len(raw_calls) if isinstance(raw_calls, list) else None
+            ),
+        )
         raise error_type(
             f"{provider_label} agent-loop turn did not complete: "
-            f"{finish_reason!r}"
+            f"{finish_reason!r}",
+            reason=(
+                ModelFailureReason.OUTPUT_TOKEN_LIMIT
+                if finish_reason == "length"
+                else ModelFailureReason.INVALID_MODEL_RESPONSE
+            ),
         )
 
     message = getattr(choice, "message", None)
@@ -918,7 +1145,9 @@ def _validated_agent_turn(
     reasoning_content = getattr(message, "reasoning_content", None)
     new_tool_call_ids: set[str] = set()
     rendered_calls: list[dict[str, Any]] = []
-    validated_calls: list[tuple[str, BaseTool | None, dict[str, Any] | str]] = []
+    validated_calls: list[
+        tuple[str, BaseTool | None, dict[str, Any] | ToolMessage]
+    ] = []
     for tool_call in tool_calls:
         tool_call_id = getattr(tool_call, "id", None)
         if (
@@ -960,15 +1189,28 @@ def _validated_agent_turn(
             validated_calls.append((
                 tool_call_id,
                 None,
-                f"Unknown tool {function_name[:80]!r}. Use one of: {available}.",
+                _failed_tool_message(
+                    tool_call_id=tool_call_id,
+                    tool_name=function_name[:80],
+                    content=(
+                        f"Unknown tool {function_name[:80]!r}. "
+                        f"Use one of: {available}."
+                    ),
+                ),
             ))
             continue
         if not arguments.strip():
             validated_calls.append((
                 tool_call_id,
                 None,
-                f"Invalid arguments for {function_name}: provide a JSON object "
-                "matching the tool schema.",
+                _failed_tool_message(
+                    tool_call_id=tool_call_id,
+                    tool_name=function_name,
+                    content=(
+                        f"Invalid arguments for {function_name}: provide a JSON "
+                        "object matching the tool schema."
+                    ),
+                ),
             ))
             continue
         try:
@@ -981,8 +1223,14 @@ def _validated_agent_turn(
             validated_calls.append((
                 tool_call_id,
                 None,
-                f"Invalid arguments for {function_name}: {details}. "
-                "Fix them and call the tool again.",
+                _failed_tool_message(
+                    tool_call_id=tool_call_id,
+                    tool_name=function_name,
+                    content=(
+                        f"Invalid arguments for {function_name}: {details}. "
+                        "Fix them and call the tool again."
+                    ),
+                ),
             ))
             continue
         validated_calls.append((
@@ -1004,7 +1252,7 @@ def _single_completion_choice(
     response: Any,
     *,
     provider_label: str = "DeepSeek",
-    error_type: type[RuntimeError] = DeepSeekFunctionCallingError,
+    error_type: type[ModelFailureError] = DeepSeekFunctionCallingError,
 ) -> Any:
     choices = getattr(response, "choices", None)
     if not isinstance(choices, list) or len(choices) != 1:
@@ -1062,7 +1310,11 @@ class _AgentChatOpenAI(ChatOpenAI):
         request_kwargs["timeout"] = request_timeout
 
         if self._fallback_active and self._fallback_chat_model is not None:
-            return self._fallback_chat_model._generate(*args, **request_kwargs)
+            try:
+                return self._fallback_chat_model._generate(*args, **request_kwargs)
+            except (OpenAIError, ArkError) as exc:
+                _raise_query_timeout(exc)
+                raise
         attempt_started_at = (
             monotonic() if self.fallback_model_name is not None else None
         )
@@ -1077,21 +1329,32 @@ class _AgentChatOpenAI(ChatOpenAI):
             if getattr(exc, "code", None) == "content_filter":
                 raise
             if self._fallback_active or self.fallback_model_name is None:
+                _raise_query_timeout(exc)
                 raise
             assert attempt_started_at is not None
             fallback_timeout = request_timeout - (
                 monotonic() - attempt_started_at
             )
             if fallback_timeout <= 0:
-                raise
+                raise AgentModelTimeoutError(
+                    "Query model request deadline expired before fallback"
+                ) from exc
             self.activate_fallback(exc)
             fallback_kwargs = dict(kwargs)
             fallback_kwargs["timeout"] = fallback_timeout
             if self._fallback_chat_model is not None:
-                return self._fallback_chat_model._generate(
-                    *args, **fallback_kwargs
-                )
-            return super()._generate(*args, **fallback_kwargs)
+                try:
+                    return self._fallback_chat_model._generate(
+                        *args, **fallback_kwargs
+                    )
+                except (OpenAIError, ArkError) as fallback_exc:
+                    _raise_query_timeout(fallback_exc)
+                    raise
+            try:
+                return super()._generate(*args, **fallback_kwargs)
+            except (OpenAIError, ArkError) as fallback_exc:
+                _raise_query_timeout(fallback_exc)
+                raise
 
     def _get_request_payload(self, input_: Any, *, stop: Any = None, **kwargs: Any):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
@@ -1114,22 +1377,25 @@ class _AgentChatOpenAI(ChatOpenAI):
         ] if isinstance(tools, list) else []
         _logger.info(
             "event=query_model_request_contract provider=%s model=%s "
-            "tool_choice=%s tool_count=%s tool_names=%s",
+            "tool_choice=%s tool_count=%s tool_names=%s "
+            "max_output_tokens=%s token_parameter=%s",
             self.provider_name,
             self.model_name,
             payload.get("tool_choice"),
             len(tool_names),
             ",".join(tool_names),
+            payload.get("max_tokens", payload.get("max_completion_tokens")),
+            (
+                "max_tokens"
+                if "max_tokens" in payload
+                else "max_completion_tokens"
+            ),
         )
         return payload
 
     def _create_chat_result(self, response: Any, generation_info: Any = None):
         if isinstance(response, BaseModel):
             response = response.model_dump()
-        usage = response.get("usage")
-        completion_tokens = (
-            usage.get("completion_tokens") if isinstance(usage, Mapping) else None
-        )
         for choice in response.get("choices", []):
             reason = choice.get("finish_reason")
             if reason == "content_filter":
@@ -1140,20 +1406,24 @@ class _AgentChatOpenAI(ChatOpenAI):
                 )
             if reason not in {"stop", "tool_calls"}:
                 raw_calls = (choice.get("message") or {}).get("tool_calls")
-                _logger.warning(
-                    "event=query_model_incomplete provider=%s model=%s "
-                    "response_id=%s finish_reason=%s completion_tokens=%s "
-                    "max_completion_tokens=%s raw_tool_call_count=%s",
-                    self.provider_name,
-                    self.model_name,
-                    response.get("id"),
-                    reason,
-                    completion_tokens,
-                    self.max_tokens,
-                    len(raw_calls) if isinstance(raw_calls, list) else None,
+                _log_incomplete_model_response(
+                    event="query_model_incomplete",
+                    provider=self.provider_name,
+                    model=self.model_name,
+                    response=response,
+                    finish_reason=reason,
+                    max_output_tokens=self.max_tokens,
+                    raw_tool_call_count=(
+                        len(raw_calls) if isinstance(raw_calls, list) else None
+                    ),
                 )
                 raise QueryModelIncompleteError(
-                    f"Query model did not complete: {reason}"
+                    f"Query model did not complete: {reason}",
+                    reason=(
+                        ModelFailureReason.OUTPUT_TOKEN_LIMIT
+                        if reason == "length"
+                        else ModelFailureReason.INVALID_MODEL_RESPONSE
+                    ),
                 )
         result = super()._create_chat_result(response, generation_info)
         if (
@@ -1515,7 +1785,9 @@ class SDKStructuredToolAgentModel:
             if check_control is not None:
                 check_control()
             if monotonic() >= deadline:
-                raise TimeoutError("Structured Agent execution deadline expired")
+                raise AgentModelTimeoutError(
+                    "Structured Agent execution deadline expired"
+                )
 
         def remaining_seconds() -> float:
             check_run()

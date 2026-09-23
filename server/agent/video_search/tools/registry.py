@@ -2,19 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from langchain_core.tools import StructuredTool
-
 from ....schema import VideoChunkSearchResult
 from ...common.state import ExecutionControl, RunInputs
+from ...common.tool import AgentTool
 from ..state import RetrievalCall
 from ..workspace import AgentWorkspace
 from .draft import (
     build_get_draft_catelog_tool, build_read_draft_item_tool,
     build_remove_draft_item_tool, build_update_draft_item_tool,
 )
-from .render import build_remove_video_item_tool, build_update_video_item_tool
 from .retrieval import build_read_trieve_item_tool, build_retrieve_tool
 from .shared import _ToolCallBudget, DraftReadAudit
+from .video_item import build_remove_video_item_tool, build_update_video_item_tool
 
 def build_query_tools(
     search: Callable[..., VideoChunkSearchResult],
@@ -28,7 +27,7 @@ def build_query_tools(
     maximum_result_bytes: int,
     maximum_catalog_items: int,
     maximum_read_chars: int = 16_384,
-) -> list[StructuredTool]:
+) -> list[AgentTool]:
     budget = (
         _ToolCallBudget(maximum_tool_calls, "Query")
         if maximum_tool_calls is not None else None
@@ -94,7 +93,7 @@ def build_evaluator_tools(
     maximum_catalog_items: int,
     maximum_read_chars: int = 16_384,
     audit: DraftReadAudit | None = None,
-) -> list[StructuredTool]:
+) -> list[AgentTool]:
     budget = (
         _ToolCallBudget(maximum_tool_calls, "Evaluator")
         if maximum_tool_calls is not None else None
@@ -145,7 +144,7 @@ def build_chat_tools(
     maximum_result_bytes: int,
     maximum_catalog_items: int,
     maximum_read_chars: int = 16_384,
-) -> list[StructuredTool]:
+) -> list[AgentTool]:
     budget = (
         _ToolCallBudget(maximum_tool_calls, "Chat")
         if maximum_tool_calls is not None else None

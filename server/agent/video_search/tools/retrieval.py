@@ -4,7 +4,6 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Annotated, Any
 
-from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from engine.retrieval.video_retrieval import normalize_hybrid_retrieval_weights
@@ -16,8 +15,10 @@ from ...common.errors import (
     AgentToolOutputError,
 )
 from ...common.state import ExecutionControl, RunInputs
+from ...common.tool import AgentTool, build_agent_tool
 from ...common.tool_output import cursor_position, page_items
-from ...common.tooling import build_agent_tool
+from ...common.tool_result import TextToolResult, ToolResult
+from ..errors import VideoRetrievalError
 from ..output import validate_result
 from ..state import RetrievalCall, RetrievalChannelWeights
 from ..workspace import AgentWorkspace
@@ -74,7 +75,7 @@ def build_retrieve_tool(
     maximum_result_bytes: int,
     maximum_catalog_items: int,
     budget: _ToolCallBudget | None = None,
-) -> StructuredTool:
+) -> AgentTool:
     """Return bounded discovery cards while retaining canonical hits in Workspace."""
 
     catalogs: dict[str, tuple[list[dict[str, Any]], dict[str, Any]]] = {}
@@ -85,7 +86,7 @@ def build_retrieve_tool(
         top_k: int | None = None,
         channel_weights: RetrievalChannelWeights | None = None,
         cursor: str | None = None,
-    ) -> str:
+    ) -> ToolResult:
         with invocation_lock:
             _start_tool_call(control, budget, "retrieve")
             if cursor is not None:
@@ -95,17 +96,20 @@ def build_retrieve_tool(
                     if catalog is None:
                         raise AgentToolInvocationError("Unknown or expired retrieve cursor")
                     items, metadata = catalog
-                    return page_items(
-                        items,
-                        namespace="retrieve",
-                        resource_id=position.resource_id,
-                        cursor=cursor,
-                        maximum_items=maximum_catalog_items,
-                        maximum_bytes=maximum_result_bytes,
-                        metadata={
-                            **metadata,
-                            "draft_item_count": workspace.draft_item_count(),
-                        },
+                    return TextToolResult(
+                        success=True,
+                        content=page_items(
+                            items,
+                            namespace="retrieve",
+                            resource_id=position.resource_id,
+                            cursor=cursor,
+                            maximum_items=maximum_catalog_items,
+                            maximum_bytes=maximum_result_bytes,
+                            metadata={
+                                **metadata,
+                                "draft_item_count": workspace.draft_item_count(),
+                            },
+                        ),
                     )
                 except AgentToolOutputError:
                     raise
@@ -145,7 +149,7 @@ def build_retrieve_tool(
             except AgentModelInvocationError:
                 raise
             except Exception as exc:
-                raise AgentToolInvocationError("Video retrieval tool failed") from exc
+                raise VideoRetrievalError("Video retrieval tool failed") from exc
             control.check()
             result = VideoChunkSearchResult.model_validate(result).model_copy(deep=True)
             validate_result(result, inputs)
@@ -179,14 +183,17 @@ def build_retrieve_tool(
                 },
             }
             catalogs[resource_id] = (items, metadata)
-            return page_items(
-                items,
-                namespace="retrieve",
-                resource_id=resource_id,
-                cursor=None,
-                maximum_items=maximum_catalog_items,
-                maximum_bytes=maximum_result_bytes,
-                metadata=metadata,
+            return TextToolResult(
+                success=True,
+                content=page_items(
+                    items,
+                    namespace="retrieve",
+                    resource_id=resource_id,
+                    cursor=None,
+                    maximum_items=maximum_catalog_items,
+                    maximum_bytes=maximum_result_bytes,
+                    metadata=metadata,
+                ),
             )
 
     return build_agent_tool(
@@ -211,22 +218,25 @@ def build_read_trieve_item_tool(
     maximum_result_bytes: int,
     maximum_read_chars: int = 16_384,
     budget: _ToolCallBudget | None = None,
-) -> StructuredTool:
+) -> AgentTool:
     def read_trieve_item(
         video_chunk_id: str,
         section: str = "overview",
         start: int = 0,
         end: int | None = None,
-    ) -> str:
+    ) -> ToolResult:
         _start_tool_call(control, budget, "read_trieve_item")
         sections = _detail_sections(workspace.retrieval_snapshot(video_chunk_id))
-        return _read_detail_section(
-            video_chunk_id, sections,
-            section=section,
-            start=start,
-            end=end,
-            maximum_result_bytes=maximum_result_bytes,
-            maximum_read_chars=maximum_read_chars,
+        return TextToolResult(
+            success=True,
+            content=_read_detail_section(
+                video_chunk_id, sections,
+                section=section,
+                start=start,
+                end=end,
+                maximum_result_bytes=maximum_result_bytes,
+                maximum_read_chars=maximum_read_chars,
+            ),
         )
 
     return build_agent_tool(

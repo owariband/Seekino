@@ -8,9 +8,14 @@ from time import monotonic
 
 import pytest
 
-from gateway.agent_model import ModelInputTooLargeError
-from server.agent import AgentContextBudgetError, AgentModelInvocationError, AgentRuntime
+from gateway.agent_model import (
+    ModelFailureReason, ModelInputTooLargeError, QueryModelIncompleteError,
+)
+from server.agent import AgentModelInvocationError, AgentRuntime
 from server.agent.common.state import RunInputs
+from server.agent.video_search.errors import (
+    VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase,
+)
 from server.agent.video_search.state import (
     QueryDraft, RetrievalChannelWeights,
 )
@@ -80,7 +85,7 @@ def _read_all(tool, video_chunk_id):
                     "start": start,
                     "end": end,
                 })
-                if page.get("ok") is not False:
+                if "error" not in page:
                     break
                 assert page["error"]["code"] == "RANGE_TOO_LARGE"
                 end = page["error"]["suggested_end"]
@@ -434,8 +439,10 @@ def test_enabled_turn_budget_rejects_third_continue() -> None:
     runtime, query, evaluator, chat, _retrieval = _runtime(
         evaluator=Evaluator(99), limits_enabled=True,
     )
-    with pytest.raises(AgentModelInvocationError, match="after 3 turns"):
+    with pytest.raises(VideoSearchFailure) as captured:
         runtime.kick(_inputs())
+    assert captured.value.code is VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED
+    assert captured.value.phase is VideoSearchFailurePhase.EVALUATOR
     assert len(query.contexts) == len(evaluator.contexts) == 3
     assert chat.contexts == []
 
@@ -474,8 +481,10 @@ def test_custom_mode_rejects_at_its_own_turn_limit() -> None:
         evaluator=Evaluator(4), limits_enabled=False,
     )
 
-    with pytest.raises(AgentModelInvocationError, match="after 2 turns"):
+    with pytest.raises(VideoSearchFailure) as captured:
         runtime.kick(_inputs(), max_loop_turns=2)
+    assert captured.value.code is VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED
+    assert captured.value.phase is VideoSearchFailurePhase.EVALUATOR
 
     assert len(query.contexts) == len(evaluator.contexts) == 2
     assert chat.contexts == []
@@ -519,8 +528,10 @@ def test_concurrent_kicks_keep_auto_and_custom_limits_isolated() -> None:
         auto = executor.submit(runtime.kick, _inputs("auto"), max_loop_turns=0)
         custom = executor.submit(runtime.kick, _inputs("custom"), max_loop_turns=2)
         assert auto.result(timeout=5).agent_reply.result_count == 1
-        with pytest.raises(AgentModelInvocationError, match="after 2 turns"):
+        with pytest.raises(VideoSearchFailure) as captured:
             custom.result(timeout=5)
+        assert captured.value.code is VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED
+        assert captured.value.phase is VideoSearchFailurePhase.EVALUATOR
 
     assert len([c for c in query.contexts if c["inputs"]["conversation_id"] == "auto"]) == 4
     assert len([c for c in query.contexts if c["inputs"]["conversation_id"] == "custom"]) == 2
@@ -560,8 +571,10 @@ def test_evaluator_cannot_complete_without_reading_the_full_draft(caplog) -> Non
         evaluator=evaluator, limits_enabled=True,
     )
 
-    with pytest.raises(AgentModelInvocationError, match="after 3 turns"):
+    with pytest.raises(VideoSearchFailure) as captured:
         runtime.kick(_inputs())
+    assert captured.value.code is VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED
+    assert captured.value.phase is VideoSearchFailurePhase.EVALUATOR
 
     assert evaluator.calls == 3
     assert chat.contexts == []
@@ -1163,8 +1176,10 @@ def test_enabled_tool_budget_stops_before_an_extra_search_or_evaluation():
         query=Query(searches_per_round=2), max_tool_calls_per_turn=1,
         limits_enabled=True,
     )
-    with pytest.raises(AgentModelInvocationError, match="Tool-call budget"):
+    with pytest.raises(VideoSearchFailure) as captured:
         runtime.kick(_inputs())
+    assert captured.value.code is VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED
+    assert captured.value.phase is VideoSearchFailurePhase.QUERY
     assert len(retrieval.calls) == 1
     assert evaluator.contexts == chat.contexts == []
 
@@ -1173,8 +1188,10 @@ def test_kick_can_lower_tool_budget_without_mutating_runtime_default():
     runtime, _query, evaluator, chat, retrieval = _runtime(
         query=Query(searches_per_round=2), limits_enabled=True,
     )
-    with pytest.raises(AgentModelInvocationError, match="Tool-call budget"):
+    with pytest.raises(VideoSearchFailure) as captured:
         runtime.kick(_inputs(), max_tool_calls_per_turn=1)
+    assert captured.value.code is VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED
+    assert captured.value.phase is VideoSearchFailurePhase.QUERY
     assert len(retrieval.calls) == 1
     assert evaluator.contexts == chat.contexts == []
     assert runtime._max_tool_calls == 24
@@ -1183,23 +1200,136 @@ def test_kick_can_lower_tool_budget_without_mutating_runtime_default():
 def test_prompt_character_budget_stops_before_the_query_provider():
     runtime, query, evaluator, chat, retrieval = _runtime(max_prompt_chars=100)
 
-    with pytest.raises(AgentModelInvocationError, match="context character budget"):
+    with pytest.raises(VideoSearchFailure) as captured:
         runtime.kick(_inputs())
+    assert captured.value.code is VideoSearchFailureCode.CONTEXT_BUDGET_EXCEEDED
+    assert captured.value.phase is VideoSearchFailurePhase.QUERY
 
     assert query.contexts == evaluator.contexts == chat.contexts == retrieval.calls == []
 
 
-def test_complete_query_message_budget_error_keeps_its_specific_semantics():
+def test_complete_query_message_budget_error_is_classified_for_supervisor():
     class OversizedQuery(Query):
         def run_structured(self, *args, **kwargs):
             raise ModelInputTooLargeError("complete Query messages exceeded the limit")
 
     runtime, _query, evaluator, chat, retrieval = _runtime(query=OversizedQuery())
 
-    with pytest.raises(AgentContextBudgetError, match="complete Query messages"):
+    with pytest.raises(VideoSearchFailure) as captured:
         runtime.kick(_inputs())
+    assert captured.value.code is VideoSearchFailureCode.CONTEXT_BUDGET_EXCEEDED
+    assert captured.value.phase is VideoSearchFailurePhase.QUERY
 
     assert evaluator.contexts == chat.contexts == retrieval.calls == []
+
+
+@pytest.mark.parametrize(("reason", "expected_code"), [
+    (
+        ModelFailureReason.OUTPUT_TOKEN_LIMIT,
+        VideoSearchFailureCode.OUTPUT_TOKEN_LIMIT,
+    ),
+    (
+        ModelFailureReason.MODEL_TIMEOUT,
+        VideoSearchFailureCode.MODEL_TIMEOUT,
+    ),
+    (
+        ModelFailureReason.REQUIRED_TOOL_MISSING,
+        VideoSearchFailureCode.REQUIRED_TOOL_MISSING,
+    ),
+    (
+        ModelFailureReason.INVALID_MODEL_RESPONSE,
+        VideoSearchFailureCode.INVALID_MODEL_RESPONSE,
+    ),
+])
+def test_query_model_failure_reason_is_preserved_for_supervisor(
+    reason,
+    expected_code,
+):
+    class FailingQuery(Query):
+        def run_structured(self, *args, **kwargs):
+            raise QueryModelIncompleteError("provider detail", reason=reason)
+
+    runtime, _query, evaluator, chat, retrieval = _runtime(query=FailingQuery())
+
+    with pytest.raises(VideoSearchFailure) as captured:
+        runtime.kick(_inputs())
+
+    assert captured.value.code is expected_code
+    assert captured.value.phase is VideoSearchFailurePhase.QUERY
+    assert isinstance(captured.value.__cause__, AgentModelInvocationError)
+    assert evaluator.contexts == chat.contexts == retrieval.calls == []
+
+
+def test_evaluator_model_failure_is_attributed_to_evaluator_phase():
+    class FailingEvaluator(Evaluator):
+        def run_structured(self, *args, **kwargs):
+            raise QueryModelIncompleteError(
+                "provider detail",
+                reason=ModelFailureReason.REQUIRED_TOOL_MISSING,
+            )
+
+    runtime, _query, _evaluator, chat, _retrieval = _runtime(
+        evaluator=FailingEvaluator(),
+    )
+
+    with pytest.raises(VideoSearchFailure) as captured:
+        runtime.kick(_inputs())
+
+    assert captured.value.code is VideoSearchFailureCode.REQUIRED_TOOL_MISSING
+    assert captured.value.phase is VideoSearchFailurePhase.EVALUATOR
+    assert chat.contexts == []
+
+
+def test_chat_model_failure_is_attributed_to_chat_phase():
+    class FailingChat(Chat):
+        def run_agent_loop(self, *args, **kwargs):
+            raise QueryModelIncompleteError(
+                "provider detail",
+                reason=ModelFailureReason.INVALID_MODEL_RESPONSE,
+            )
+
+    runtime, *_ = _runtime(chat=FailingChat())
+
+    with pytest.raises(VideoSearchFailure) as captured:
+        runtime.kick(_inputs())
+
+    assert captured.value.code is VideoSearchFailureCode.INVALID_MODEL_RESPONSE
+    assert captured.value.phase is VideoSearchFailurePhase.CHAT
+
+
+def test_retrieval_dependency_failure_is_attributed_to_retrieval_phase():
+    class FailingRetrieval(Retrieval):
+        def search(self, query, **options):
+            raise RuntimeError("private dependency detail")
+
+    runtime, _query, evaluator, chat, _retrieval = _runtime(
+        retrieval=FailingRetrieval(),
+    )
+
+    with pytest.raises(VideoSearchFailure) as captured:
+        runtime.kick(_inputs())
+
+    assert captured.value.code is VideoSearchFailureCode.RETRIEVAL_FAILED
+    assert captured.value.phase is VideoSearchFailurePhase.RETRIEVAL
+    assert "private dependency detail" not in str(captured.value)
+    assert evaluator.contexts == chat.contexts == []
+
+
+@pytest.mark.parametrize("message", [
+    "programming failure",
+    "agent loop exhausted max_model_calls before stop",
+])
+def test_unknown_query_failure_remains_fatal(message):
+    class FailingQuery(Query):
+        def run_structured(self, *args, **kwargs):
+            raise RuntimeError(message)
+
+    runtime, *_ = _runtime(query=FailingQuery())
+
+    with pytest.raises(AgentModelInvocationError) as captured:
+        runtime.kick(_inputs())
+
+    assert not isinstance(captured.value, VideoSearchFailure)
 
 
 def test_parallel_tool_calls_share_one_turn_budget_and_keep_actual_records():
@@ -1224,8 +1354,10 @@ def test_parallel_tool_calls_share_one_turn_budget_and_keep_actual_records():
         query=ParallelQuery(), max_tool_calls_per_turn=1,
         limits_enabled=True,
     )
-    with pytest.raises(AgentModelInvocationError, match="Tool-call budget"):
+    with pytest.raises(VideoSearchFailure) as captured:
         runtime.kick(_inputs())
+    assert captured.value.code is VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED
+    assert captured.value.phase is VideoSearchFailurePhase.QUERY
     assert len(retrieval.calls) == 1
     assert evaluator.contexts == chat.contexts == []
 

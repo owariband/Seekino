@@ -9,6 +9,9 @@ from gateway.web_search import WebSearchError, WebSearchHit
 from gateway.sse_proxy import ContentFilterError
 from server.agent.common.errors import AgentModelInvocationError, AgentToolInvocationError
 from server.agent.supervisor import SupervisorRuntime
+from server.agent.video_search.errors import (
+    VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase,
+)
 
 
 def _inputs(*, series_ids=None):
@@ -135,7 +138,7 @@ def test_video_tool_loads_context_once_and_preserves_approved_answer():
     assert len(loads) == len(video.calls) == 1
     assert video.calls[0][0]["user_message"] == "question"
     assert video.calls[0][1]["deadline"] > 0
-    assert model.tool_results[0]["ok"] is True
+    assert model.tool_results[0]["result_count"] == 1
     assert model.tool_results[1]["reused"] is True
     prompt_context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
     assert prompt_context["video_scope"] == [{"seriesId": "series", "name": "Course"}]
@@ -206,27 +209,36 @@ def test_web_failure_is_tool_feedback_and_does_not_fail_direct_chat():
     assert result.content == "Search is unavailable."
 
 
-@pytest.mark.parametrize("failure", [
-    RuntimeError("runtime failed"), AgentToolInvocationError("retrieval failed"),
+@pytest.mark.parametrize(("failure", "expected_type"), [
+    (RuntimeError("runtime failed"), AgentModelInvocationError),
+    (AgentToolInvocationError("tool failed"), AgentToolInvocationError),
+    (AgentModelInvocationError("model failed"), AgentModelInvocationError),
 ])
-def test_video_failure_is_tool_feedback_and_web_cannot_verify_video_claims(failure):
+def test_unclassified_video_failure_remains_fatal(failure, expected_type):
     class FailingVideo(FakeVideoRuntime):
         def kick(self, inputs, **kwargs):
             raise failure
 
     model = FakeSupervisorModel(calls=("search_video_graph",), answer="Video unavailable.")
-    result = _runtime(model, video=FailingVideo()).kick(
-        _inputs(series_ids=["series"]), load_video_context=lambda: [],
-    )
-    assert model.tool_results[0]["error"]["code"] == "VIDEO_SEARCH_FAILED"
-    assert result.video_result is None
-    assert result.content == "Video unavailable."
+    with pytest.raises(expected_type):
+        _runtime(model, video=FailingVideo()).kick(
+            _inputs(series_ids=["series"]), load_video_context=lambda: [],
+        )
+    assert model.tool_results == []
 
 
-def test_video_agent_failure_is_distinct_feedback_and_allows_web_fallback():
+@pytest.mark.parametrize("code", list(VideoSearchFailureCode))
+def test_classified_video_failure_is_precise_safe_tool_feedback(code):
     class FailingVideo(FakeVideoRuntime):
         def kick(self, inputs, **kwargs):
-            raise AgentModelInvocationError("model response did not contain a tool call")
+            try:
+                raise RuntimeError("private provider detail")
+            except RuntimeError as cause:
+                raise VideoSearchFailure(
+                    code,
+                    VideoSearchFailurePhase.QUERY,
+                    retryable=True,
+                ) from cause
 
     model = FakeSupervisorModel(
         calls=("search_video_graph", "search_web"),
@@ -235,8 +247,14 @@ def test_video_agent_failure_is_distinct_feedback_and_allows_web_fallback():
     result = _runtime(model, video=FailingVideo()).kick(
         _inputs(series_ids=["series"]), load_video_context=lambda: [],
     )
-    assert model.tool_results[0]["error"]["code"] == "VIDEO_AGENT_FAILED"
-    assert model.tool_results[1]["ok"] is True
+    error = model.tool_results[0]["error"]
+    assert error["code"] == code.value
+    assert error["phase"] == "query"
+    assert error["retryable"] is True
+    assert error["message"]
+    assert error["retry_hint"]
+    assert "private provider detail" not in json.dumps(error)
+    assert model.tool_results[1]["result_count"] == 1
     assert result.video_result is None
     assert len(result.web_sources) == 1
 

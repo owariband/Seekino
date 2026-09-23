@@ -9,16 +9,20 @@ from arkruntime import Ark
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langchain_core.tools import StructuredTool, ToolException
-from openai import APIConnectionError, APIError, OpenAI
+from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
 from pydantic import BaseModel, ConfigDict
 
 from gateway import agent_model as agent_model_module
 from gateway.agent_model import (
+    AgentModelTimeoutError,
+    ArkFunctionCallingError,
     ArkFunctionCallingModel,
     DeepSeekFunctionCallingError,
     DeepSeekFunctionCallingModel,
     MissingStructuredQueryToolCallError,
+    ModelFailureReason,
     ModelInputTooLargeError,
+    QueryModelIncompleteError,
     SDKQueryAgentModel,
 )
 from gateway.sse_proxy import ContentFilterError
@@ -398,6 +402,95 @@ def test_ark_agent_loop_does_not_fallback_after_content_filter() -> None:
     assert len(completions.calls) == 1
 
 
+def test_ark_agent_loop_logs_output_token_interruption(caplog) -> None:
+    response = _agent_response("partial", finish_reason="length", total_tokens=2058)
+    model = ArkFunctionCallingModel(
+        "doubao-pro",
+        fallback_model=None,
+        max_output_tokens=2048,
+        request_timeout_seconds=30,
+        client=SimpleNamespace(
+            chat=SimpleNamespace(completions=_FunctionCompletions(response))
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(ArkFunctionCallingError, match="'length'") as error:
+            _run_agent(model)
+
+    assert error.value.reason == ModelFailureReason.OUTPUT_TOKEN_LIMIT
+    event = next(
+        record.message for record in caplog.records
+        if "event=chat_model_incomplete" in record.message
+    )
+    assert "provider=ark model=doubao-pro" in event
+    assert "finish_reason=length interruption_reason=output_token_limit" in event
+    assert "completion_tokens=2048" in event
+    assert "configured_max_output_tokens=2048" in event
+    assert "configured_limit_reached=true" in event
+    assert "partial" not in event
+
+
+def test_ark_agent_loop_classifies_provider_timeout() -> None:
+    completions = _FunctionCompletions(TimeoutError("provider timed out"))
+    model = ArkFunctionCallingModel(
+        "doubao-pro",
+        fallback_model=None,
+        max_output_tokens=2048,
+        request_timeout_seconds=30,
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+
+    with pytest.raises(ArkFunctionCallingError, match="request failed") as error:
+        _run_agent(model)
+
+    assert error.value.reason == ModelFailureReason.MODEL_TIMEOUT
+
+
+def test_ark_agent_loop_does_not_wrap_programming_error() -> None:
+    completions = _FunctionCompletions(
+        TypeError("programming error"),
+        _agent_response("fallback must not run"),
+    )
+    model = ArkFunctionCallingModel(
+        "doubao-pro",
+        fallback_model="doubao-lite",
+        max_output_tokens=2048,
+        request_timeout_seconds=30,
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+
+    with pytest.raises(TypeError, match="programming error"):
+        _run_agent(model)
+
+    assert len(completions.calls) == 1
+
+
+def test_ark_agent_loop_preserves_final_fallback_failure_reason() -> None:
+    completions = _FunctionCompletions(
+        _agent_response("partial", finish_reason="length"),
+        _agent_response("invalid", role="user"),
+    )
+    model = ArkFunctionCallingModel(
+        "doubao-pro",
+        fallback_model="doubao-lite",
+        max_output_tokens=2048,
+        request_timeout_seconds=30,
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+
+    with pytest.raises(
+        ArkFunctionCallingError, match="invalid assistant message"
+    ) as error:
+        _run_agent(model)
+
+    assert error.value.reason == ModelFailureReason.INVALID_MODEL_RESPONSE
+    assert [call["model"] for call in completions.calls] == [
+        "doubao-pro",
+        "doubao-lite",
+    ]
+
+
 def test_deepseek_agent_loop_guides_missing_tool_without_switching_provider() -> None:
     primary = _FunctionCompletions(
         _agent_response("缺少必需工具。"),
@@ -481,9 +574,12 @@ def test_agent_loop_rejects_second_missing_required_tool_without_fallback() -> N
         fallback_client=SimpleNamespace(chat=SimpleNamespace(completions=fallback)),
     )
 
-    with pytest.raises(DeepSeekFunctionCallingError, match="stopped twice"):
+    with pytest.raises(
+        DeepSeekFunctionCallingError, match="stopped twice"
+    ) as error:
         _run_agent(model, require_tool_call=True)
 
+    assert error.value.reason == ModelFailureReason.REQUIRED_TOOL_MISSING
     assert len(primary.calls) == 2
     assert fallback.calls == []
 
@@ -716,6 +812,31 @@ def test_deepseek_agent_loop_rejects_invalid_turn(response, message) -> None:
         _run_agent(model)
 
 
+def test_deepseek_agent_loop_logs_output_token_interruption(caplog) -> None:
+    response = _agent_response("partial", finish_reason="length", total_tokens=2058)
+    response.usage.completion_tokens_details = SimpleNamespace(reasoning_tokens=1200)
+    model, _ = _function_model(response)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(
+            DeepSeekFunctionCallingError, match="'length'"
+        ) as error:
+            _run_agent(model)
+
+    assert error.value.reason == ModelFailureReason.OUTPUT_TOKEN_LIMIT
+    event = next(
+        record.message for record in caplog.records
+        if "event=chat_model_incomplete" in record.message
+    )
+    assert "provider=deepseek model=deepseek-flash" in event
+    assert "finish_reason=length interruption_reason=output_token_limit" in event
+    assert "prompt_tokens=10 completion_tokens=2048" in event
+    assert "reasoning_tokens=1200 total_tokens=2058" in event
+    assert "configured_max_output_tokens=2048" in event
+    assert "configured_limit_reached=true" in event
+    assert "raw_tool_call_count=None" in event
+
+
 @pytest.mark.parametrize(
     ("calls", "message"),
     [
@@ -795,6 +916,101 @@ def test_deepseek_agent_loop_returns_invalid_call_to_model_for_retry(
     assert [call["tool_choice"] for call in completions.calls] == [
         "required", "required", "auto",
     ]
+
+
+@pytest.mark.parametrize(
+    "bad_call",
+    [
+        _tool_call(_video_item(), tool_name="unexpected"),
+        _tool_call("not-json"),
+    ],
+)
+def test_invalid_local_tool_call_builds_error_tool_message(bad_call) -> None:
+    tool = StructuredTool.from_function(
+        lambda video_chunk_id, claim: f"{video_chunk_id}:{claim}",
+        name="submit_video_item",
+        description="Submit one approved video item.",
+        args_schema=VideoItem,
+    )
+
+    _, _, _, calls = agent_model_module._validated_agent_turn(
+        _agent_response(calls=[bad_call], finish_reason="tool_calls"),
+        tools=[tool],
+        seen_tool_call_ids=set(),
+    )
+
+    message = calls[0][2]
+    assert isinstance(message, ToolMessage)
+    assert message.tool_call_id == "call-1"
+    assert message.status == "error"
+
+
+def test_agent_loop_invokes_tool_with_complete_tool_call() -> None:
+    model, _ = _function_model(
+        _agent_response(
+            calls=[_tool_call(_video_item(), call_id="original-call")],
+            finish_reason="tool_calls",
+        ),
+        _agent_response("answer"),
+    )
+    tool = StructuredTool.from_function(
+        lambda video_chunk_id, claim: {"accepted": video_chunk_id, "claim": claim},
+        name="submit_video_item",
+        description="Submit one approved video item.",
+        args_schema=VideoItem,
+    )
+    original_invoke = tool.invoke
+    invocations = []
+    outputs = []
+
+    def record_invoke(tool_call, *args, **kwargs):
+        invocations.append(tool_call)
+        output = original_invoke(tool_call, *args, **kwargs)
+        outputs.append(output)
+        return output
+
+    object.__setattr__(tool, "invoke", record_invoke)
+
+    model.run_agent_loop(
+        "根据审核后的证据回答",
+        tools=[tool],
+        max_model_calls=2,
+        handle_text=lambda _text: None,
+    )
+
+    assert invocations == [{
+        "type": "tool_call",
+        "id": "original-call",
+        "name": "submit_video_item",
+        "args": _video_item(),
+    }]
+    assert len(outputs) == 1
+    assert isinstance(outputs[0], ToolMessage)
+    assert outputs[0].tool_call_id == "original-call"
+    assert outputs[0].status == "success"
+
+
+def test_tool_exception_keeps_call_id_and_error_status() -> None:
+    def reject_item(video_chunk_id: str, claim: str) -> str:
+        raise ToolException(f"rejected {video_chunk_id}: {claim}")
+
+    tool = StructuredTool.from_function(
+        reject_item,
+        name="submit_video_item",
+        description="Submit one approved video item.",
+        args_schema=VideoItem,
+        handle_tool_error=True,
+    )
+
+    output = agent_model_module._invoke_function_tool(
+        tool,
+        tool_call_id="failed-call",
+        arguments=_video_item(),
+    )
+
+    assert output.tool_call_id == "failed-call"
+    assert output.status == "error"
+    assert "rejected chunk-1" in output.content
 
 
 def test_deepseek_agent_loop_reports_each_call_in_mixed_batch() -> None:
@@ -968,9 +1184,12 @@ def test_deepseek_agent_loop_does_not_request_after_deadline(monkeypatch) -> Non
         _agent_response("must not be requested"),
     )
 
-    with pytest.raises(DeepSeekFunctionCallingError, match="deadline expired"):
+    with pytest.raises(
+        DeepSeekFunctionCallingError, match="deadline expired"
+    ) as error:
         _run_agent(model, request_timeout_seconds=2)
 
+    assert error.value.reason == ModelFailureReason.MODEL_TIMEOUT
     assert len(completions.calls) == 1
 
 
@@ -1102,7 +1321,7 @@ def test_deepseek_agent_loop_serializes_structured_tool_result() -> None:
     assert completions.calls[1]["messages"][-1] == {
         "role": "tool",
         "tool_call_id": "call-1",
-        "content": '{"accepted":true}',
+        "content": '{"accepted": true}',
     }
 
 
@@ -1342,8 +1561,23 @@ def test_deepseek_agent_loop_rejects_invalid_completion_envelope() -> None:
     response.choices = []
     model, _ = _function_model(response)
 
-    with pytest.raises(DeepSeekFunctionCallingError, match="invalid chat completion"):
+    with pytest.raises(
+        DeepSeekFunctionCallingError, match="invalid chat completion"
+    ) as error:
         _run_agent(model)
+
+    assert error.value.reason == ModelFailureReason.INVALID_MODEL_RESPONSE
+
+
+def test_query_incomplete_response_has_machine_readable_reason() -> None:
+    chat_model = _query_chat_model("ark", "ark-test")
+    response = _completion_without_tool("ark-test")
+    response["choices"][0]["finish_reason"] = "length"
+
+    with pytest.raises(QueryModelIncompleteError) as error:
+        chat_model._create_chat_result(response)
+
+    assert error.value.reason == ModelFailureReason.OUTPUT_TOKEN_LIMIT
 
 
 def _completion(
@@ -1489,13 +1723,36 @@ def test_query_does_not_fallback_after_request_timeout_is_exhausted(
     )
 
     with pytest.raises(
-        MissingStructuredQueryToolCallError,
-        match="missing required tool",
-    ):
+        AgentModelTimeoutError,
+        match="deadline expired before fallback",
+    ) as error:
         primary._generate([])
 
+    assert error.value.reason is ModelFailureReason.MODEL_TIMEOUT
+    assert isinstance(error.value.__cause__, MissingStructuredQueryToolCallError)
     assert calls == [("deepseek-flash", 3.0)]
     assert primary._fallback_active is False
+
+
+def test_query_provider_timeout_has_machine_readable_reason(monkeypatch) -> None:
+    provider_error = APITimeoutError(
+        request=httpx.Request(
+            "POST",
+            "https://api.deepseek.test/v1/chat/completions",
+        )
+    )
+
+    def generate(_chat_model, *_args, **_kwargs):
+        raise provider_error
+
+    monkeypatch.setattr(agent_model_module.ChatOpenAI, "_generate", generate)
+    model = _query_chat_model("deepseek", "deepseek-flash")
+
+    with pytest.raises(QueryModelIncompleteError, match="timed out") as error:
+        model._generate([])
+
+    assert error.value.reason == ModelFailureReason.MODEL_TIMEOUT
+    assert error.value.__cause__ is provider_error
 
 
 @pytest.mark.parametrize("error_type", [TypeError, AttributeError])
@@ -1576,13 +1833,16 @@ def test_sdk_query_stops_when_stage_deadline_expires(monkeypatch) -> None:
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client
     )
 
-    with pytest.raises(TimeoutError, match="execution deadline expired"):
+    with pytest.raises(
+        AgentModelTimeoutError, match="execution deadline expired"
+    ) as error:
         model.run_query(
             "检索", tools=[], result_type=QueryDraft,
             max_model_calls=None,
             request_timeout_seconds=2,
         )
 
+    assert error.value.reason == ModelFailureReason.MODEL_TIMEOUT
     assert requests == []
     client.close()
 
@@ -1934,12 +2194,15 @@ def test_structured_missing_tool_retry_respects_stage_deadline(monkeypatch) -> N
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
 
-    with pytest.raises(TimeoutError, match="execution deadline expired"):
+    with pytest.raises(
+        AgentModelTimeoutError, match="execution deadline expired"
+    ) as error:
         model.run_query(
             "检索", tools=[], result_type=QueryDraft, max_model_calls=3,
             request_timeout_seconds=2,
         )
 
+    assert error.value.reason == ModelFailureReason.MODEL_TIMEOUT
     assert len(requests) == 1
     client.close()
 
@@ -2129,7 +2392,12 @@ def test_query_logs_incomplete_deepseek_then_guides_ark_without_tool(
             "selected_video_chunk_ids": ["chunk-real"],
         }, reason="length", call_id="partial-call")
         incomplete["id"] = "deepseek-incomplete"
-        incomplete["usage"] = {"completion_tokens": 400}
+        incomplete["usage"] = {
+            "prompt_tokens": 100,
+            "completion_tokens": 400,
+            "completion_tokens_details": {"reasoning_tokens": 250},
+            "total_tokens": 500,
+        }
         return httpx.Response(200, json=incomplete)
 
     def ark_respond(request: httpx.Request) -> httpx.Response:
@@ -2175,6 +2443,8 @@ def test_query_logs_incomplete_deepseek_then_guides_ark_without_tool(
         assert result.selected_video_chunk_ids == ["chunk-real"]
     assert searches == ["KTV"]
     assert len(deepseek_requests) == 2
+    assert deepseek_requests[1]["max_tokens"] == 400
+    assert "max_completion_tokens" not in deepseek_requests[1]
     assert len(ark_requests) == 2
     assert "chunk-real" in next(
         message["content"] for message in ark_requests[0]["messages"]
@@ -2196,7 +2466,15 @@ def test_query_logs_incomplete_deepseek_then_guides_ark_without_tool(
     assert "provider=deepseek" in events[incomplete_index]
     assert "response_id=deepseek-incomplete" in events[incomplete_index]
     assert "finish_reason=length" in events[incomplete_index]
+    assert "interruption_reason=output_token_limit" in events[incomplete_index]
+    assert "prompt_tokens=100" in events[incomplete_index]
     assert "completion_tokens=400" in events[incomplete_index]
+    assert "reasoning_tokens=250" in events[incomplete_index]
+    assert "total_tokens=500" in events[incomplete_index]
+    assert "configured_max_output_tokens=400" in events[incomplete_index]
+    assert "configured_limit_reached=true" in events[incomplete_index]
+    assert "raw_tool_call_count=1" in events[incomplete_index]
+    assert "error_type=QueryModelIncompleteError" in events[fallback_index]
     assert "provider=ark" in events[no_tool_index]
     assert "valid_tool_call_count=0 invalid_tool_call_count=0" in events[no_tool_index]
     if not ark_recovers:
@@ -2304,11 +2582,12 @@ def test_sdk_query_stops_after_lite_also_omits_required_tool() -> None:
         client=client,
     )
 
-    with pytest.raises(MissingStructuredQueryToolCallError):
+    with pytest.raises(MissingStructuredQueryToolCallError) as error:
         model.run_query(
             "检索", tools=[], result_type=QueryDraft, max_model_calls=4,
         )
 
+    assert error.value.reason == ModelFailureReason.REQUIRED_TOOL_MISSING
     assert [request["model"] for request in requests] == [
         "doubao-pro", "doubao-pro", "doubao-lite", "doubao-lite",
     ]

@@ -22,7 +22,7 @@ class AgentServiceConfig:
     supervisor_reasoning_effort: Literal["none", "low", "high", "max"] = "none"
     web_search_max_results: int = 5
     web_search_timeout_seconds: float = 12.0
-    max_output_tokens: int = 4096
+    max_output_tokens: int = 8192
     max_prompt_chars: int = 200_000
     context_window_tokens: int = 64_000
     context_safety_margin_tokens: int = 4_096

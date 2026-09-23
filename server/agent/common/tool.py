@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from functools import wraps
+from collections.abc import Callable, Iterable
 from hashlib import sha256
 import json
 import logging
@@ -13,15 +12,15 @@ from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import ToolMessage
-from langchain_core.tools import StructuredTool, ToolException
+from langchain_core.tools import BaseTool, StructuredTool, ToolException
 from pydantic import BaseModel
 
 from .errors import (
     AgentModelInvocationError, AgentToolFeedbackError, AgentToolInvocationError,
-    UnknownToolItemError,
+    AgentToolOutputError, UnknownToolItemError,
 )
 from .state import RunInputs
-from .tool_output import bounded_json
+from .tool_result import JsonToolResult, ToolError, ToolResult
 
 _logger = logging.getLogger(__name__)
 
@@ -90,78 +89,156 @@ class AgentToolTraceHandler(BaseCallbackHandler):
         return name, round((monotonic() - started) * 1_000)
 
 
+class AgentTool:
+    """Application Tool contract with LangChain kept behind an adapter."""
+
+    def __init__(
+        self,
+        *,
+        func: Callable[..., ToolResult],
+        name: str,
+        description: str,
+        args_schema: type[BaseModel],
+        maximum_result_bytes: int,
+        draft_item_count: Callable[[], int] | None = None,
+    ) -> None:
+        self._func = func
+        self._name = name
+        self._description = description
+        self._args_schema = args_schema
+        self._maximum_result_bytes = maximum_result_bytes
+        self._draft_item_count = draft_item_count
+        self._langchain_tool = StructuredTool.from_function(
+            func=self._invoke_for_langchain,
+            name=name,
+            description=description,
+            args_schema=args_schema,
+            handle_tool_error=True,
+            handle_validation_error=self._validation_feedback,
+        )
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def args_schema(self) -> type[BaseModel]:
+        return self._args_schema
+
+    def execute(self, *args: Any, **kwargs: Any) -> ToolResult:
+        try:
+            result = self._func(*args, **kwargs)
+        except AgentToolFeedbackError as exc:
+            error_payload = ToolError(
+                code=exc.code,
+                message=str(exc),
+                retryable=True,
+                retry_hint=exc.retry_hint,
+            ).as_dict()
+            if exc.suggested_end is not None:
+                error_payload["suggested_end"] = exc.suggested_end
+            return self._failure_result(error_payload)
+        except UnknownToolItemError as exc:
+            return self._failure_result(ToolError(
+                code="UNKNOWN_ITEM",
+                message=str(exc),
+                retryable=True,
+                retry_hint=exc.retry_hint,
+            ).as_dict())
+        if not isinstance(result, ToolResult):
+            raise TypeError(
+                f"Agent Tool {self.name!r} must return ToolResult, "
+                f"got {type(result).__name__}"
+            )
+        return result
+
+    def as_langchain_tool(self) -> StructuredTool:
+        return self._langchain_tool
+
+    def invoke(
+        self,
+        input: str | dict[str, Any],
+        config: Any | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        return self._langchain_tool.invoke(input, config=config, **kwargs)
+
+    def _invoke_for_langchain(self, *args: Any, **kwargs: Any) -> str:
+        result = self.execute(*args, **kwargs)
+        content = self._model_content(result)
+        if not result.success:
+            raise ToolException(content)
+        return content
+
+    def _model_content(self, result: ToolResult) -> str:
+        content = result.model_content()
+        if len(content.encode("utf-8")) > self._maximum_result_bytes:
+            raise AgentToolOutputError(
+                f"Tool result exceeds {self._maximum_result_bytes} UTF-8 bytes"
+            )
+        return content
+
+    def _failure_result(self, error: dict[str, Any]) -> JsonToolResult:
+        payload = {
+            "error": error,
+            **(
+                {"draft_item_count": self._draft_item_count()}
+                if self._draft_item_count is not None else {}
+            ),
+        }
+        return JsonToolResult(
+            success=False,
+            payload=payload,
+        )
+
+    def _validation_feedback(self, error: Any) -> str:
+        fields = [
+            ".".join(map(str, item.get("loc", ()))) or "arguments"
+            for item in error.errors(include_input=False, include_url=False)[:4]
+        ]
+        return self._model_content(self._failure_result(ToolError(
+            code="INVALID_ARGUMENTS",
+            message=f"Invalid arguments for {self.name}: {', '.join(fields)}.",
+            retryable=True,
+            retry_hint="Check the Tool schema and call it again with valid arguments.",
+        ).as_dict()))
+
+
+def as_langchain_tools(tools: Iterable[AgentTool]) -> list[StructuredTool]:
+    return [tool.as_langchain_tool() for tool in tools]
+
+
 def attach_agent_tool_logging(
-    tools: list[StructuredTool], *, role: str, inputs: RunInputs,
+    tools: Iterable[AgentTool | BaseTool], *, role: str, inputs: RunInputs,
 ) -> None:
     handler = AgentToolTraceHandler(role, inputs)
     for tool in tools:
-        tool.callbacks = [*(tool.callbacks or []), handler]
+        langchain_tool = (
+            tool.as_langchain_tool() if isinstance(tool, AgentTool) else tool
+        )
+        langchain_tool.callbacks = [*(langchain_tool.callbacks or []), handler]
 
 
 def build_agent_tool(
     *,
-    func: Callable[..., str],
+    func: Callable[..., ToolResult],
     name: str,
     description: str,
     args_schema: type[BaseModel],
     maximum_result_bytes: int,
     draft_item_count: Callable[[], int] | None = None,
-) -> StructuredTool:
-    """Keep correctable Tool failures model-visible across both Agent runners."""
-
-    def with_draft_count(payload: dict[str, Any]) -> dict[str, Any]:
-        if draft_item_count is not None:
-            payload["draft_item_count"] = draft_item_count()
-        return payload
-
-    @wraps(func)
-    def invoke(*args: Any, **kwargs: Any) -> str:
-        try:
-            return func(*args, **kwargs)
-        except AgentToolFeedbackError as exc:
-            raise ToolException(bounded_json(with_draft_count({
-                "ok": False,
-                "error": {
-                    "code": exc.code,
-                    "message": str(exc),
-                    "retry_hint": exc.retry_hint,
-                    **(
-                        {"suggested_end": exc.suggested_end}
-                        if exc.suggested_end is not None else {}
-                    ),
-                },
-            }), maximum_result_bytes)) from exc
-        except UnknownToolItemError as exc:
-            raise ToolException(bounded_json(with_draft_count({
-                "ok": False,
-                "error": {
-                    "code": "UNKNOWN_ITEM",
-                    "message": str(exc),
-                    "retry_hint": exc.retry_hint,
-                },
-            }), maximum_result_bytes)) from exc
-
-    def validation_feedback(error: Any) -> str:
-        fields = [
-            ".".join(map(str, item.get("loc", ()))) or "arguments"
-            for item in error.errors(include_input=False, include_url=False)[:4]
-        ]
-        return bounded_json(with_draft_count({
-            "ok": False,
-            "error": {
-                "code": "INVALID_ARGUMENTS",
-                "message": f"Invalid arguments for {name}: {', '.join(fields)}.",
-                "retry_hint": "Check the Tool schema and call it again with valid arguments.",
-            },
-        }), maximum_result_bytes)
-
-    return StructuredTool.from_function(
-        func=invoke,
+) -> AgentTool:
+    return AgentTool(
+        func=func,
         name=name,
         description=description,
         args_schema=args_schema,
-        handle_tool_error=True,
-        handle_validation_error=validation_feedback,
+        maximum_result_bytes=maximum_result_bytes,
+        draft_item_count=draft_item_count,
     )
 
 
@@ -221,7 +298,7 @@ def _trace_tool_result(output: Any) -> tuple[str, dict[str, Any]]:
         return ("feedback" if status == "success" else status), summary
     if not isinstance(payload, dict):
         return status, summary
-    if payload.get("ok") is False:
+    if isinstance(payload.get("error"), dict):
         status = "error"
         error = payload.get("error")
         if isinstance(error, dict) and isinstance(error.get("code"), str):

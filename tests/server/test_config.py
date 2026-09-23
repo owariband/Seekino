@@ -65,7 +65,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent.query_reasoning_effort == "none"
     assert settings.agent.evaluator_reasoning_effort == "none"
     assert settings.agent.chat_reasoning_effort == "none"
-    assert settings.agent.max_output_tokens == 4096
+    assert settings.agent.max_output_tokens == 8192
     assert settings.agent.max_prompt_chars == 200_000
     assert settings.agent.context_window_tokens == 64_000
     assert settings.agent.context_safety_margin_tokens == 4_096

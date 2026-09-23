@@ -9,12 +9,21 @@ from math import isfinite
 from threading import Event
 from time import monotonic
 
-from gateway.agent_model import AgentLoopModel, StructuredToolAgentModel
+from gateway.agent_model import (
+    AgentLoopModel, ModelFailureError, ModelFailureReason,
+    StructuredToolAgentModel,
+)
+from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langgraph.graph import END, START, StateGraph
 
 from ...schema import VideoChunkSearchResult
 from .chat import render_chat
-from ..common.errors import AgentModelInvocationError
+from ..common.errors import AgentContextBudgetError, AgentModelInvocationError
+from ..common.tool import as_langchain_tools, attach_agent_tool_logging
+from .errors import (
+    VideoRetrievalError, VideoSearchFailure, VideoSearchFailureCode,
+    VideoSearchFailurePhase,
+)
 from .evaluator import evaluate
 from .output import (
     bind_draft, build_retrieval_trace, finalize_output,
@@ -27,8 +36,7 @@ from .state import (
     SelectedVideoRange, context_json,
 )
 from .tools import (
-    DraftReadAudit, attach_agent_tool_logging, build_chat_tools,
-    build_evaluator_tools, build_query_tools,
+    DraftReadAudit, build_chat_tools, build_evaluator_tools, build_query_tools,
 )
 from .workspace import AgentWorkspace
 
@@ -226,7 +234,11 @@ class AgentRuntime:
         limits = state["limits"]
         control.check()
         if limits.max_loop_turns is not None and len(previous) >= limits.max_loop_turns:
-            raise AgentModelInvocationError(
+            raise VideoSearchFailure(
+                VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED,
+                VideoSearchFailurePhase.QUERY,
+                retryable=True,
+            ) from AgentModelInvocationError(
                 "Query / Evaluator loop-turn budget exceeded"
             )
         control.publish(inputs, {
@@ -255,18 +267,26 @@ class AgentRuntime:
             maximum_catalog_items=self._max_catalog_items,
         )
         attach_agent_tool_logging(query_tools, role="Query", inputs=inputs)
-        completion = run_query(
-            self._query_model,
-            inputs,
-            previous,
-            tools=query_tools,
-            max_model_calls=limits.max_model_calls_per_turn,
-            control=query_control,
-            context_budget=context_budget,
-            workspace=workspace,
-        )
-        query_control.check()
-        control.check()
+        try:
+            completion = run_query(
+                self._query_model,
+                inputs,
+                previous,
+                tools=as_langchain_tools(query_tools),
+                max_model_calls=limits.max_model_calls_per_turn,
+                control=query_control,
+                context_budget=context_budget,
+                workspace=workspace,
+            )
+            query_control.check()
+            control.check()
+        except Exception as exc:
+            _raise_classified_failure(
+                exc,
+                phase=VideoSearchFailurePhase.QUERY,
+                stage_control=query_control,
+                run_control=control,
+            )
         draft_items = workspace.draft_items()
         draft = QueryDraft(
             plan_context=completion.plan_context,
@@ -313,23 +333,31 @@ class AgentRuntime:
             audit=audit,
         )
         attach_agent_tool_logging(evaluator_tools, role="Evaluator", inputs=inputs)
-        review = evaluate(
-            self._evaluator_model,
-            inputs,
-            previous,
-            draft,
-            calls,
-            sources,
-            tools=evaluator_tools,
-            max_model_calls=limits.max_model_calls_per_turn,
-            control=evaluator_control,
-            max_prompt_chars=self._max_prompt_chars,
-            workspace=workspace,
-        )
+        try:
+            review = evaluate(
+                self._evaluator_model,
+                inputs,
+                previous,
+                draft,
+                calls,
+                sources,
+                tools=as_langchain_tools(evaluator_tools),
+                max_model_calls=limits.max_model_calls_per_turn,
+                control=evaluator_control,
+                max_prompt_chars=self._max_prompt_chars,
+                workspace=workspace,
+            )
+            evaluator_control.check()
+            control.check()
+        except Exception as exc:
+            _raise_classified_failure(
+                exc,
+                phase=VideoSearchFailurePhase.EVALUATOR,
+                stage_control=evaluator_control,
+                run_control=control,
+            )
         evaluator_review = review
         review_source = "evaluator"
-        evaluator_control.check()
-        control.check()
         if review.action == "complete" and not audit.covers(
             item.video_chunk_id for item in draft_items
         ):
@@ -388,7 +416,11 @@ class AgentRuntime:
             and review.action == "continue"
             and current.number >= limits.max_loop_turns
         ):
-            raise AgentModelInvocationError(
+            raise VideoSearchFailure(
+                VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED,
+                VideoSearchFailurePhase.EVALUATOR,
+                retryable=True,
+            ) from AgentModelInvocationError(
                 f"Evaluator rejected the Query draft after {current.number} turns"
             )
         return {"turns": [*previous, current]}
@@ -421,18 +453,27 @@ class AgentRuntime:
             maximum_catalog_items=self._max_catalog_items,
         )
         attach_agent_tool_logging(chat_tools, role="Chat", inputs=state["inputs"])
-        rendered = render_chat(
-            self._chat_model,
-            state["inputs"],
-            current,
-            state["workspace"],
-            tools=chat_tools,
-            control=chat_control,
-            max_prompt_chars=self._max_prompt_chars,
-            max_model_calls=limits.max_model_calls_per_turn,
-            retrieval_trace=build_retrieval_trace(state["turns"]),
-        )
-        chat_control.check()
+        try:
+            rendered = render_chat(
+                self._chat_model,
+                state["inputs"],
+                current,
+                state["workspace"],
+                tools=as_langchain_tools(chat_tools),
+                control=chat_control,
+                max_prompt_chars=self._max_prompt_chars,
+                max_model_calls=limits.max_model_calls_per_turn,
+                retrieval_trace=build_retrieval_trace(state["turns"]),
+            )
+            chat_control.check()
+            control.check()
+        except Exception as exc:
+            _raise_classified_failure(
+                exc,
+                phase=VideoSearchFailurePhase.CHAT,
+                stage_control=chat_control,
+                run_control=control,
+            )
         return {
             "turns": [
                 *state["turns"][:-1],
@@ -450,3 +491,90 @@ def _positive_run_limit(name: str, value: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return value
+
+
+def _raise_classified_failure(
+    error: Exception,
+    *,
+    phase: VideoSearchFailurePhase,
+    stage_control: ExecutionControl,
+    run_control: ExecutionControl,
+) -> None:
+    """Preserve execution aborts and classify only known recoverable failures."""
+
+    stage_control.check()
+    run_control.check()
+    if isinstance(error, VideoSearchFailure):
+        raise error
+
+    chain = tuple(_error_chain(error))
+    if any(isinstance(item, AgentContextBudgetError) for item in chain):
+        raise VideoSearchFailure(
+            VideoSearchFailureCode.CONTEXT_BUDGET_EXCEEDED,
+            phase,
+            retryable=True,
+        ) from error
+
+    if any(_is_loop_limit_error(item) for item in chain):
+        raise VideoSearchFailure(
+            VideoSearchFailureCode.LOOP_LIMIT_EXCEEDED,
+            phase,
+            retryable=True,
+        ) from error
+
+    reason = next(
+        (
+            item.reason
+            for item in chain
+            if isinstance(getattr(item, "reason", None), ModelFailureReason)
+        ),
+        None,
+    )
+    if reason is not None:
+        code = {
+            ModelFailureReason.OUTPUT_TOKEN_LIMIT:
+                VideoSearchFailureCode.OUTPUT_TOKEN_LIMIT,
+            ModelFailureReason.MODEL_TIMEOUT:
+                VideoSearchFailureCode.MODEL_TIMEOUT,
+            ModelFailureReason.REQUIRED_TOOL_MISSING:
+                VideoSearchFailureCode.REQUIRED_TOOL_MISSING,
+            ModelFailureReason.INVALID_MODEL_RESPONSE:
+                VideoSearchFailureCode.INVALID_MODEL_RESPONSE,
+        }[reason]
+        raise VideoSearchFailure(code, phase, retryable=True) from error
+
+    retrieval_error = next(
+        (item for item in chain if isinstance(item, VideoRetrievalError)),
+        None,
+    )
+    if retrieval_error is not None:
+        raise VideoSearchFailure(
+            VideoSearchFailureCode.RETRIEVAL_FAILED,
+            VideoSearchFailurePhase.RETRIEVAL,
+            retryable=True,
+        ) from (retrieval_error.__cause__ or retrieval_error)
+
+    raise error
+
+
+def _error_chain(error: BaseException):
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _is_loop_limit_error(error: BaseException) -> bool:
+    message = str(error).lower()
+    if isinstance(error, ModelCallLimitExceededError):
+        return True
+    if isinstance(error, ModelFailureError):
+        return "agent loop exhausted max_model_calls" in message
+    if isinstance(error, AgentModelInvocationError):
+        return (
+            "tool-call budget exceeded" in message
+            or "loop-turn budget exceeded" in message
+        )
+    return False

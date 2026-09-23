@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from ...common.state import ExecutionControl
-from ...common.tool_output import bounded_json
-from ...common.tooling import build_agent_tool
+from ...common.tool import AgentTool, build_agent_tool
+from ...common.tool_result import JsonToolResult, ToolResult
 from ..state import ChatVideoBlock
 from ..workspace import AgentWorkspace
 from .shared import _ToolCallBudget, RemoveItemArguments, _start_tool_call
@@ -30,19 +29,22 @@ def build_update_video_item_tool(
     control: ExecutionControl,
     maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
-) -> StructuredTool:
-    def update_video_item(video_chunk_id: str, claim: str) -> str:
+) -> AgentTool:
+    def update_video_item(video_chunk_id: str, claim: str) -> ToolResult:
         _start_tool_call(control, budget, "update_video_item")
         inserted = workspace.upsert_video_item(ChatVideoBlock(
             video_chunk_id=video_chunk_id,
             claim=claim,
         ))
-        return bounded_json({
-            "accepted": True,
-            "operation": "inserted" if inserted else "updated",
-            "video_chunk_id": video_chunk_id,
-            "video_item_count": workspace.video_item_count(),
-        }, maximum_result_bytes)
+        return JsonToolResult(
+            success=True,
+            payload={
+                "accepted": True,
+                "operation": "inserted" if inserted else "updated",
+                "video_chunk_id": video_chunk_id,
+                "video_item_count": workspace.video_item_count(),
+            },
+        )
 
     return build_agent_tool(
         func=update_video_item,
@@ -62,15 +64,18 @@ def build_remove_video_item_tool(
     control: ExecutionControl,
     maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
-) -> StructuredTool:
-    def remove_video_item(video_chunk_id: str) -> str:
+) -> AgentTool:
+    def remove_video_item(video_chunk_id: str) -> ToolResult:
         _start_tool_call(control, budget, "remove_video_item")
         removed = workspace.remove_video_item(video_chunk_id)
-        return bounded_json({
-            "removed": removed,
-            "video_chunk_id": video_chunk_id,
-            "video_item_count": workspace.video_item_count(),
-        }, maximum_result_bytes)
+        return JsonToolResult(
+            success=True,
+            payload={
+                "removed": removed,
+                "video_chunk_id": video_chunk_id,
+                "video_item_count": workspace.video_item_count(),
+            },
+        )
 
     return build_agent_tool(
         func=remove_video_item,

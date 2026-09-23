@@ -6,11 +6,17 @@ from time import monotonic
 
 import pytest
 from langchain_core.messages import ToolMessage
+from pydantic import BaseModel
 
-from server.agent.common.tooling import attach_agent_tool_logging
-from server.agent.video_search.context import build_workspace_checkpoint
-from server.agent.common.errors import AgentModelInvocationError
+from server.agent.common.errors import AgentModelInvocationError, AgentToolOutputError
 from server.agent.common.state import ExecutionControl, RunInputs
+from server.agent.common.tool import (
+    AgentTool, as_langchain_tools, attach_agent_tool_logging, build_agent_tool,
+)
+from server.agent.common.tool_result import (
+    JsonToolResult, TextToolResult, ToolError,
+)
+from server.agent.video_search.context import build_workspace_checkpoint
 from server.agent.video_search.state import DraftItem
 from server.agent.video_search.skills import (
     CHAT_SKILL_PROMPT, EVALUATOR_SKILL_PROMPT, QUERY_SKILL_PROMPT,
@@ -183,7 +189,7 @@ def _read_all(tool, video_chunk_id: str, maximum_result_bytes: int) -> dict:
             })
             assert len(raw.encode("utf-8")) <= maximum_result_bytes
             page = json.loads(raw)
-            if page.get("ok") is False:
+            if "error" in page:
                 assert page["error"]["code"] == "RANGE_TOO_LARGE"
                 end = page["error"]["suggested_end"]
                 page = json.loads(tool.invoke({
@@ -257,6 +263,49 @@ def test_role_registries_expose_only_the_exact_tools() -> None:
         "get_draft_catelog",
         "read_draft_item",
     }
+    assert all(isinstance(tool, AgentTool) for tool in query_tools)
+    assert {tool.name for tool in as_langchain_tools(query_tools)} == {
+        tool.name for tool in query_tools
+    }
+
+
+def test_tool_results_keep_runtime_status_out_of_model_content() -> None:
+    success = JsonToolResult(success=True, payload={"items": []})
+    text = TextToolResult(success=True, content="bounded text")
+    error = ToolError(
+        code="RETRYABLE_FAILURE",
+        message="Call could not be completed.",
+        retryable=True,
+        phase="query",
+        retry_hint="Try again.",
+    )
+
+    assert json.loads(success.model_content()) == {"items": []}
+    assert text.model_content() == "bounded text"
+    assert error.as_dict() == {
+        "code": "RETRYABLE_FAILURE",
+        "message": "Call could not be completed.",
+        "retryable": True,
+        "phase": "query",
+        "retry_hint": "Try again.",
+    }
+    assert "success" not in success.model_content()
+
+
+def test_agent_tool_adapter_enforces_the_result_byte_budget() -> None:
+    class NoArguments(BaseModel):
+        pass
+
+    tool = build_agent_tool(
+        func=lambda: TextToolResult(success=True, content="too large"),
+        name="bounded",
+        description="Return a bounded result.",
+        args_schema=NoArguments,
+        maximum_result_bytes=4,
+    )
+
+    with pytest.raises(AgentToolOutputError, match="exceeds 4 UTF-8 bytes"):
+        tool.invoke({})
 
 
 def test_agent_skills_are_explicitly_work_agnostic() -> None:
@@ -273,7 +322,7 @@ def test_agent_skills_are_explicitly_work_agnostic() -> None:
 
 
 def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> None:
-    caplog.set_level(logging.INFO, logger="server.agent.common.tooling")
+    caplog.set_level(logging.INFO, logger="server.agent.common.tool")
     tools, _calls = _query_tools(
         Retrieval([_hit("chunk-1", large_text="private evidence " * 100)]),
         AgentWorkspace("workspace", ("series",)),
@@ -383,7 +432,7 @@ def test_read_range_reports_oversize_and_retries_with_smaller_range() -> None:
         "video_chunk_id": "chunk-1", "section": "evidence.text",
         "start": 0, "end": total,
     }))
-    assert oversized["ok"] is False
+    assert "ok" not in oversized
     assert oversized["error"]["code"] == "RANGE_TOO_LARGE"
     suggested_end = oversized["error"]["suggested_end"]
     assert 0 < suggested_end < total
@@ -483,6 +532,9 @@ def test_correctable_tool_error_is_returned_to_agent_with_error_status() -> None
     tools, _calls = _query_tools(
         Retrieval([]), AgentWorkspace("workspace", ("series",)),
     )
+    internal_result = tools["read_trieve_item"].execute(
+        video_chunk_id="missing",
+    )
     result = tools["read_trieve_item"].invoke({
         "type": "tool_call",
         "name": "read_trieve_item",
@@ -490,10 +542,50 @@ def test_correctable_tool_error_is_returned_to_agent_with_error_status() -> None
         "args": {"video_chunk_id": "missing"},
     })
 
+    assert internal_result.success is False
+    assert json.loads(internal_result.model_content())["error"]["code"] == "UNKNOWN_ITEM"
     assert isinstance(result, ToolMessage)
     assert result.status == "error"
     assert result.tool_call_id == "call-1"
     assert json.loads(result.content)["error"]["code"] == "UNKNOWN_ITEM"
+
+
+def test_success_and_validation_results_preserve_tool_call_id_and_status() -> None:
+    tools, _calls = _query_tools(
+        Retrieval([_hit("chunk-1")]),
+        AgentWorkspace("workspace", ("series",)),
+    )
+    success = tools["retrieve"].invoke({
+        "type": "tool_call",
+        "name": "retrieve",
+        "id": "call-success",
+        "args": {
+            "query": "broken cup",
+            "top_k": 1,
+            "channel_weights": {
+                "transcript": 0,
+                "semantic": 0.7,
+                "visual": 0.3,
+            },
+        },
+    })
+    invalid = tools["retrieve"].invoke({
+        "type": "tool_call",
+        "name": "retrieve",
+        "id": "call-invalid",
+        "args": {"query": "missing required arguments"},
+    })
+
+    assert isinstance(success, ToolMessage)
+    assert success.status == "success"
+    assert success.tool_call_id == "call-success"
+    assert json.loads(success.content)["result_count"] == 1
+    assert isinstance(invalid, ToolMessage)
+    assert invalid.status == "error"
+    assert invalid.tool_call_id == "call-invalid"
+    invalid_payload = json.loads(invalid.content)
+    assert invalid_payload["error"]["code"] == "INVALID_ARGUMENTS"
+    assert invalid_payload["error"]["retryable"] is True
 
 
 def test_draft_audit_requires_full_coverage_of_every_section() -> None:

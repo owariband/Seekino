@@ -89,7 +89,7 @@ def _read_all(tool, video_chunk_id: str) -> dict:
                     "start": start,
                     "end": end,
                 }))
-                if page.get("ok") is not False:
+                if "error" not in page:
                     break
                 assert page["error"]["code"] == "RANGE_TOO_LARGE"
                 end = page["error"]["suggested_end"]
@@ -334,7 +334,8 @@ class _VideoSupervisorModel:
         result = json.loads(next(
             tool for tool in tools if tool.name == "search_video_graph"
         ).invoke({"query": "视频里发生了什么？"}))
-        assert result["ok"] is True
+        assert result["result_count"] > 0
+        assert result["answer_preview"]
         handle_text(
             "网页补充 [来源](https://example.org/source)"
             if self.include_web else "未经视频审核的另一种说法。"

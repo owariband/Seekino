@@ -82,7 +82,7 @@ def _read_all(tool, video_chunk_id: str) -> dict:
                     "start": start,
                     "end": end,
                 }))
-                if page.get("ok") is not False:
+                if "error" not in page:
                     break
                 assert page["error"]["code"] == "RANGE_TOO_LARGE"
                 end = page["error"]["suggested_end"]

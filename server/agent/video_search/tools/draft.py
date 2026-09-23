@@ -3,15 +3,15 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from ...common.errors import (
     AgentToolFeedbackError, AgentToolInvocationError, AgentToolOutputError,
 )
 from ...common.state import ExecutionControl
-from ...common.tool_output import bounded_json, page_items
-from ...common.tooling import build_agent_tool
+from ...common.tool import AgentTool, build_agent_tool
+from ...common.tool_output import page_items
+from ...common.tool_result import JsonToolResult, TextToolResult, ToolResult
 from ..errors import InvalidDraftRangeError
 from ..workspace import AgentWorkspace
 from .retrieval import ReadItemArguments
@@ -47,13 +47,13 @@ def build_update_draft_item_tool(
     control: ExecutionControl,
     maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
-) -> StructuredTool:
+) -> AgentTool:
     def update_draft_item(
         video_chunk_id: str,
         start_ms: int,
         end_ms: int,
         claim: str,
-    ) -> str:
+    ) -> ToolResult:
         _start_tool_call(control, budget, "update_draft_item")
         try:
             operation, draft_item_count = workspace.upsert_draft_item(
@@ -72,16 +72,19 @@ def build_update_draft_item_tool(
                 f"<= {exc.evidence_end_ms}。",
                 "请按 canonical Evidence 的时间范围修正后重新调用 update_draft_item。",
             ) from exc
-        return bounded_json({
-            "accepted": True,
-            "operation": operation,
-            "video_chunk_id": video_chunk_id,
-            "draft_item_count": draft_item_count,
-            **(
-                {"message": "该片段已在草稿中，提交内容未变。"}
-                if operation == "already_present" else {}
-            ),
-        }, maximum_result_bytes)
+        return JsonToolResult(
+            success=True,
+            payload={
+                "accepted": True,
+                "operation": operation,
+                "video_chunk_id": video_chunk_id,
+                "draft_item_count": draft_item_count,
+                **(
+                    {"message": "该片段已在草稿中，提交内容未变。"}
+                    if operation == "already_present" else {}
+                ),
+            },
+        )
 
     return build_agent_tool(
         func=update_draft_item,
@@ -103,15 +106,18 @@ def build_remove_draft_item_tool(
     control: ExecutionControl,
     maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
-) -> StructuredTool:
-    def remove_draft_item(video_chunk_id: str) -> str:
+) -> AgentTool:
+    def remove_draft_item(video_chunk_id: str) -> ToolResult:
         _start_tool_call(control, budget, "remove_draft_item")
         removed, draft_item_count = workspace.remove_draft_item(video_chunk_id)
-        return bounded_json({
-            "removed": removed,
-            "video_chunk_id": video_chunk_id,
-            "draft_item_count": draft_item_count,
-        }, maximum_result_bytes)
+        return JsonToolResult(
+            success=True,
+            payload={
+                "removed": removed,
+                "video_chunk_id": video_chunk_id,
+                "draft_item_count": draft_item_count,
+            },
+        )
 
     return build_agent_tool(
         func=remove_draft_item,
@@ -132,10 +138,10 @@ def build_get_draft_catelog_tool(
     approved: bool = False,
     budget: _ToolCallBudget | None = None,
     audit: DraftReadAudit | None = None,
-) -> StructuredTool:
+) -> AgentTool:
     resource_id = "approved-draft" if approved else "draft"
 
-    def get_draft_catelog(cursor: str | None = None) -> str:
+    def get_draft_catelog(cursor: str | None = None) -> ToolResult:
         _start_tool_call(control, budget, "get_draft_catelog")
         items = [_draft_card(workspace, item) for item in workspace.draft_items(
             approved=approved,
@@ -158,7 +164,10 @@ def build_get_draft_catelog_tool(
             ) from exc
         if audit is not None and json.loads(result)["next_cursor"] is None:
             audit.mark_catalog_complete()
-        return result
+        return TextToolResult(
+            success=True,
+            content=result,
+        )
 
     return build_agent_tool(
         func=get_draft_catelog,
@@ -181,13 +190,13 @@ def build_read_draft_item_tool(
     approved: bool = False,
     budget: _ToolCallBudget | None = None,
     audit: DraftReadAudit | None = None,
-) -> StructuredTool:
+) -> AgentTool:
     def read_draft_item(
         video_chunk_id: str,
         section: str = "overview",
         start: int = 0,
         end: int | None = None,
-    ) -> str:
+    ) -> ToolResult:
         _start_tool_call(control, budget, "read_draft_item")
         item = workspace.draft_item(video_chunk_id, approved=approved)
         sections = _detail_sections(
@@ -209,7 +218,10 @@ def build_read_draft_item_tool(
                 audit.mark_range(
                     video_chunk_id, section, response["start"], response["end"],
                 )
-        return result
+        return TextToolResult(
+            success=True,
+            content=result,
+        )
 
     return build_agent_tool(
         func=read_draft_item,
