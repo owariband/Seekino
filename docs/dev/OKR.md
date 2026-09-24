@@ -6,7 +6,9 @@ Objectives and Key Results
 
 ### 1. parse算法重构、提供更加高效的算法
 hypnos: 串行select->epoll策略，多轮矫正，可接
-
+ps：
+1. chunk length应该可以设置，1min～15s不等，于是第二阶段的多元组epoll再纠偏，应该调整成按照时间总长组合而非特定的count
+2. chunk length可以设置也是为了A、B实验 + user自定义高级设定
 
 ### 2. 实时识别的sub-agent开发，接入chat supervisor
 
