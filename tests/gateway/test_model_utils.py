@@ -4,7 +4,7 @@ from gateway.constants import (
     ARK_PROVIDER,
     DEEPSEEK_PROVIDER,
 )
-from gateway.harness.fallback import log_model_fallback
+from gateway.agent_model.fallback import log_model_fallback
 from gateway.openai.profiles import deepseek_non_thinking_extra_body
 
 

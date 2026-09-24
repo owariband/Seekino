@@ -1,5 +1,9 @@
 # user排查到的问题
 
+> 历史快照：本文中的 `engine/parse/` 与 `tests/engine/` 路径记录当时的目录结构。
+> 当前 V1 实现已整体迁至 `engine/parsev1/`，相关单测位于
+> `tests/engine/parsev1/`；以下历史命令和变更清单不作机械改写。
+
 算法层的核心契约其实非常简单：
 
 ```text

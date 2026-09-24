@@ -11,7 +11,7 @@ from typing import Any, Literal, Protocol, TypeVar
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ValidationError
 
-from gateway.harness.errors import (
+from gateway.agent_model.errors import (
     AgentModelTimeoutError,
     MissingRequiredFunctionCallError,
     MissingStructuredQueryDraftError,
@@ -20,7 +20,7 @@ from gateway.harness.errors import (
     ModelInputTooLargeError,
 )
 from gateway.constants import CODEX_PROVIDER
-from gateway.harness.context import (
+from gateway.agent_model.context import (
     ContextCheckpoint,
     ContextWindowOverflow,
     ContextWindowPolicy,

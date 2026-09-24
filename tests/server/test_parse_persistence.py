@@ -8,9 +8,9 @@ from threading import Event, Lock, Thread
 from types import SimpleNamespace
 
 import pytest
-from engine.parse.embed import ChunkEmbedding
-from engine.parse.pipeline import ParsePipelineResult
-from engine.parse.schemas import VideoChunkCheckpoint
+from engine.parsev1.embed import ChunkEmbedding
+from engine.parsev1.pipeline import ParsePipelineResult
+from engine.parsev1.schemas import VideoChunkCheckpoint
 from engine.retrieval.video_retrieval import (
     build_video_chunk_retrieval_documents,
 )

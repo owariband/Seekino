@@ -4,12 +4,14 @@
 [模型配置](../docs/model-config.md)。下文旧版 `agent_model` 配置仍受支持；
 在版本 2 中对应 `models.agent`，同一环节不要同时填写两种格式。
 
-Gateway 是 anivag 的模型调用边界。它只负责把统一的多模态输入转换成
-Provider 请求，并把严格 JSON Schema 输出校验成调用方指定的 Pydantic 模型。
+Gateway 是 anivag 的模型调用边界。除把统一输入转换成 Provider 请求并校验结构化
+输出外，`agent_model/` 还提供 Provider 无关的 Agent Model 协议、上下文预算／换窗、
+Tool Loop、Adapter 选择和 Provider fallback。它不拥有 Video、Query、Speaker、
+Conversation 或 Parse Job 等领域语义。
 
 ## 目录边界
 
-- `harness/`：Provider 无关的 Agent 协议、上下文治理、Tool Loop 与错误；其中
+- `agent_model/`：Provider 无关的 Agent Model 协议、上下文治理、Tool Loop 与错误；其中
   `factory.py` 是选择具体 Adapter 的组装入口；
 - `openai/`：OpenAI 兼容协议及其 profile，DeepSeek 通过这里接入；
 - `ark/`：Ark SDK、原生 Responses SSE、多模态、Agent 和 Embedding；
@@ -19,7 +21,7 @@ Provider 请求，并把严格 JSON Schema 输出校验成调用方指定的 Pyd
 - 根目录的 `multimodal.py`、`embedding.py`、`media.py`、`schema_normalization.py`
   提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
 
-业务层依赖共享协议并由 `harness.factory.AgentModelFactory` 选择 Adapter。模型名、
+业务层依赖共享协议并由 `agent_model.factory.AgentModelFactory` 选择 Adapter。模型名、
 Provider 来源和连接协议分别配置，避免为某个具体模型复制一套运行框架。
 
 ## 多模态模型接口
@@ -43,7 +45,8 @@ Provider 来源和连接协议分别配置，避免为某个具体模型复制�
 
 Gateway adapter 内部负责文件检查、MIME 判断、Base64/Data URL 编码、Provider
 payload、网络请求和结果 Schema 校验。Prompt、视频时长探测、抽帧、事件归属、
-降级策略和 checkpoint 都由上层负责。
+业务降级和 checkpoint 由上层程序负责；模型来源之间的 Provider fallback 属于
+`agent_model/` 的执行协议。
 
 ```python
 import os
@@ -242,4 +245,4 @@ uv run --env-file .env.local python -m gateway.cli \
 Ark Base64 内联媒体的保守上限为 45 MiB。更大的输入应由上层改走文件上传与复用流程。
 
 旧的 Gateway `parse-video` 子命令与 parser 类已移除；视频解析统一从
-`python -m engine.parse.cli parse-video` 进入，避免 Gateway 重新承担 Prompt、抽帧和领域结果归一。
+`python -m engine.parsev1.cli parse-video` 进入，避免 Gateway 重新承担 Prompt、抽帧和领域结果归一。

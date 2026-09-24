@@ -1,12 +1,14 @@
 # anivag Engine
 
-Engine 是 anivag 的算法边界：它拥有从转写、理解到向量化的完整 Parse Pipeline，负责
-VideoChunk 的模型调用、证据解析、Context 演进和阶段顺序。Engine 不拥有生产 Job、
-Lease、Checkpoint、Artifact、MySQL 或 Qdrant；这些执行与持久化生命周期仍由 Server
-负责。外部模型请求由根目录下的 `gateway/` 实现。Engine 当前与 Server 在同一进程内
-装配；是否独立部署不改变这个边界。
+Engine 是 anivag 的领域算法边界。现有解析实现完整冻结在 `parsev1/`；新的
+Video Parse V2 算法策略只进入 `parsev2/`，其 Agent／LangGraph 运行程序位于
+`agent/video_parse_v2/`。`retrieval/` 独立拥有检索表示、排序、融合和共享检索契约。
 
-## 生产契约
+Engine 不拥有生产 Job、Lease、Checkpoint、Artifact、MySQL 或 Qdrant；这些执行与
+持久化生命周期仍由 Server 负责。外部模型请求由根目录下的 `gateway/` 实现。
+`parsev1` 与 `parsev2` 不互相导入，也不通过兼容模块转发实现。
+
+## V1 生产契约
 
 生产 Parse 通过一个显式 Pipeline 进入 Engine：
 
@@ -61,36 +63,42 @@ Engine 内部仍负责单个 VideoChunk 的 Prompt、显式 Transcript 融合、
 
 ## 代码边界
 
-算法代码按职责分为 `parse/` 和 `retrieval/` 两个目录。`parse/` 的主路径按 Pipeline
-阶段命名，入口处即可读出执行顺序：
+算法代码按版本和职责分为三个互相独立的目录：
 
-- `parse/pipeline.py`：唯一的生产整集 Pipeline 入口，显式连接 transcribe、understand、embed 和 persist；
-- `parse/transcribe.py`：ASR 调用、有界并发和按序交付；
-- `parse/understand.py`：Context、ownership、去重、结果构造和审核 fallback；
-- `parse/embed.py`：检索文档构造、Text/Vision Embedding 和向量校验；
-- `parse/persist.py`：中立 `ParsePersistence` 提交契约，不实现数据库或对象存储；
-- `parse/runtime.py`：装配模型实现与 Parse Pipeline；
-- `parse/frame_sampler.py`：实现审核 fallback 所需的帧时间规划与 FFmpeg 抽帧；
-- `parse/prompts.py`：实现 Transcript 与事件时间线的证据约束；
-- `parse/analysis_windows.py`：提供视频窗口规划与物化原语。
+- `parsev1/`：当前生产解析实现，只接受兼容性修复和明确的 V1 维护；
+- `parsev2/`：Video Parse V2 的领域策略、状态不变量和 Patch／投影算法；不放
+  LangGraph 调度、Server 恢复逻辑，也不导入 `parsev1`；
+- `retrieval/`：检索表示、共享契约、排序与融合算法，不隶属于任一 Parse 版本。
 
-Retrieve 边界保持不变：`retrieval/video_retrieval.py` 只负责
-`VideoChunkRetrievalDocument` 构造与 Text/Vision RRF 等纯算法。Query Embedding、
-Qdrant 查询和 MySQL hydrate 由 `server/service/video_retrieval.py` 负责，正式 Qdrant
-持久化由 `server/storage/` 承担；不为了形式另增 `RetrieveClient` 或空 facade。
-会组合 Engine、Gateway 与实验 Qdrant 数据集的召回评测工具位于
-`evals/recall/`。
+`parsev1/` 的主路径按现有 Pipeline 阶段命名：
+
+- `parsev1/pipeline.py`：V1 生产整集 Pipeline 入口，显式连接 transcribe、understand、embed 和 persist；
+- `parsev1/transcribe.py`：ASR 调用、有界并发和按序交付；
+- `parsev1/understand.py`：Context、ownership、去重、结果构造和审核 fallback；
+- `parsev1/embed.py`：检索文档构造、Text/Vision Embedding 和向量校验；
+- `parsev1/persist.py`：中立 `ParsePersistence` 提交契约，不实现数据库或对象存储；
+- `parsev1/runtime.py`：装配模型实现与 V1 Parse Pipeline；
+- `parsev1/frame_sampler.py`：实现审核 fallback 所需的帧时间规划与 FFmpeg 抽帧；
+- `parsev1/prompts.py`：实现 Transcript 与事件时间线的证据约束；
+- `parsev1/analysis_windows.py`：提供视频窗口规划与物化原语。
+
+Retrieve 边界保持独立：`retrieval/contracts.py` 是 Engine／Agent／Server 共享的检索
+领域契约，`retrieval/video_retrieval.py` 负责 `VideoChunkRetrievalDocument` 构造与
+Text/Vision RRF 等纯算法。Query Embedding、Qdrant 查询和 MySQL hydrate 由
+`server/service/video_retrieval.py` 负责，正式 Qdrant 持久化由 `server/storage/`
+承担；不为了形式另增 `RetrieveClient` 或空 facade。会组合 Engine、Gateway 与实验
+Qdrant 数据集的召回评测工具位于 `evals/recall/`。
 
 ## 本地实验兼容层
 
 生产任务与本地实验复用 transcribe／understand 原语和模型装配；完整的
 `transcribe → understand → embed → persist` 只由生产 `ParsePipeline` 编排。
-`parse/cli.py` 的本地适配器保留独立 JSON Checkpoint 恢复路径，不执行生产 embed／persist；
+`parsev1/cli.py` 的本地适配器保留独立 JSON Checkpoint 恢复路径，不执行生产 embed／persist；
 Server 则为 `ParsePipeline` 提供生产 `ParsePersistence`，提交受 Lease 保护的 Parse
 Artifact 和 MySQL 事实，并在 Pipeline 返回后同步索引。两种执行路径不能把各自的恢复
 状态泄漏进算法 DTO；本地 JSON 不是生产任务事实，生产 DB Checkpoint 也不是算法 DTO。
 
-本地 `parse-video` CLI 物化的 AnalysisWindow 不是上传传输分片。上传断点续传使用
+本地 V1 `parse-video` CLI 物化的 AnalysisWindow 不是上传传输分片。上传断点续传使用
 `Segment`，它是字节传输分片，与 VideoChunk 无关。
 
 ## 本地实验运行
@@ -100,7 +108,7 @@ Artifact 和 MySQL 事实，并在 Pipeline 返回后同步索引。两种执行
 ```bash
 uv sync
 
-uv run --env-file .env.local python -m engine.parse.cli \
+uv run --env-file .env.local python -m engine.parsev1.cli \
   --config config.yaml parse-video \
   --video '/absolute/path/to/episode.mp4' \
   --chunk-duration-seconds 60 \

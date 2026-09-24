@@ -11,7 +11,7 @@ from langchain_core.tools import BaseTool
 from qdrant_client import QdrantClient
 from sqlalchemy import delete
 
-from server.agent.video_search.runtime import AgentRuntime
+from agent.chat.video_search.runtime import AgentRuntime
 from server.database import (
     DatabaseEnvironment,
     create_database_engine,

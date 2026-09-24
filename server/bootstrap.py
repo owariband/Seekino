@@ -4,25 +4,25 @@ from dataclasses import dataclass
 import logging
 from typing import Any
 
+from agent.chat.supervisor import SupervisorRuntime
+from agent.chat.video_search.runtime import AgentRuntime
 from arkruntime import Ark
-from engine.parse.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from engine.parsev1.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from gateway.agent_model.context import ContextWindowPolicy
+from gateway.agent_model.factory import AgentModelFactory
 from gateway.ark.embedding import DoubaoMultimodalEmbedder
 from gateway.config import load_config
 from gateway.embedding import EmbeddingResult
-from gateway.harness.context import ContextWindowPolicy
-from gateway.harness.factory import AgentModelFactory
 from gateway.web_search import WebSearcher
 from qdrant_client import QdrantClient
 from sqlalchemy import Engine
 
 from .config import ServerSettings
-from .config.parse_profile import ParseConfig
 from .config.agent import AgentServiceConfig
 from .config.global_agent_settings import read_global_agent_settings
+from .config.parse_profile import ParseConfig
 from .config.usage import load_model_pricing
 from .config.video_processing import VideoProcessingConfig
-from .agent.video_search.runtime import AgentRuntime
-from .agent.supervisor import SupervisorRuntime
 from .database import create_database_engine, create_session_factory
 from .mq.consumer import ParseJobConsumer
 from .mq.mysql_queue import MySqlParseJobQueue

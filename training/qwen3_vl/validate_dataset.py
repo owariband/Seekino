@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from engine.parse.analysis_windows import probe_video_duration_seconds
-from engine.parse.schemas import VideoTimeline
+from engine.parsev1.analysis_windows import probe_video_duration_seconds
+from engine.parsev1.schemas import VideoTimeline
 
 _MAX_PROMPT_CHARACTERS = 8000
 _MAX_TARGET_CHARACTERS = 8000

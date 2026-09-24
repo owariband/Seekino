@@ -55,12 +55,12 @@ Workspace
                      answer.completed
 ```
 
-Agent Tool 的参数 Schema 与构造器统一由 `server/agent/tools.py` 提供。Retrieve Tool 是进程内工具，直接调用注入的 `VideoRetrievalService.search`。模型参数只有
+Agent Tool 的参数 Schema 与构造器统一由 `agent/chat/video_search/tools/` 提供。Retrieve Tool 是进程内工具，直接调用注入的 `VideoRetrievalService.search`。模型参数只有
 `query` / `top_k` / `channel_weights`；Workspace / Series Scope 由当前 Kick 固定。完整实际召回、公开计划、
 草稿、审核意见和复用来源保存在各 `LoopTurn`，下一轮显式获得这些信息。
 
-代码职责：`server/service/agent_chat.py` 管会话与消息事务；`server/agent/` 是独立于 HTTP 的
-Harness；`gateway/agent_model.py` 使用 LangChain `create_agent` / `ToolStrategy` 管 Query
+代码职责：`server/service/agent_chat.py` 管会话与消息事务；`agent/chat/` 是独立于 HTTP 的
+Agent Runtime；`gateway/agent_model/` 提供 Provider 无关的模型执行协议、上下文治理和 Tool Loop，具体 Adapter 使用 LangChain `create_agent` / `ToolStrategy` 管 Query
 内层工具循环，`langgraph` 管外层审核循环。Evaluator 使用 text-only DeepSeek Chat Completions
 和单个 required function call 返回结构化审核；最终 Chat 同样通过 DeepSeek 的文本 Chat Completions
 运行有边界的自主工具循环；每轮可输出 Markdown、调用一个或多个

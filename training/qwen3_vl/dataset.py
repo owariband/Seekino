@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from engine.parse.prompts import (
+from engine.parsev1.prompts import (
     build_video_parse_context,
     build_video_parse_prompt,
 )
-from engine.parse.schemas import (
+from engine.parsev1.schemas import (
     TranscriptAnalysis,
     VideoChunkCheckpoint,
     VideoTimeline,

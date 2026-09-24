@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from engine.parse.runtime import VideoParseRuntimeConfig
+from engine.parsev1.runtime import VideoParseRuntimeConfig
 from gateway.config import GatewayConfig, OpenAIVisionSourceConfig
 
 from ..schema import ContractModel

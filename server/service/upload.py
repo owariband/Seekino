@@ -8,7 +8,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 
-from engine.parse.analysis_windows import probe_video_duration_seconds
+from engine.parsev1.analysis_windows import probe_video_duration_seconds
 
 from ..config.parse_profile import ParseConfig
 from ..config.upload import UploadServiceConfig

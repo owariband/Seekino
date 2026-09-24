@@ -17,7 +17,7 @@ from langchain_core.tools import StructuredTool
 from langchain_core.tools.base import ToolException
 from pydantic import BaseModel
 
-from gateway.harness.errors import (
+from gateway.agent_model.errors import (
     AgentModelTimeoutError,
     MissingRequiredFunctionCallError,
     MissingStructuredQueryDraftError,
@@ -26,7 +26,7 @@ from gateway.harness.errors import (
 )
 from gateway.claude_code import ClaudeAgentModel, ClaudeAgentModelError
 from gateway.claude_code.tools import ToolInvocationState, _build_sdk_tool
-from gateway.harness.context import ContextWindowPolicy
+from gateway.agent_model.context import ContextWindowPolicy
 from gateway.usage import capture_model_usage
 
 

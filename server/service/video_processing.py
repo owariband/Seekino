@@ -8,23 +8,23 @@ from pathlib import Path
 from time import monotonic_ns
 
 from PIL import Image
-from engine.parse.analysis_windows import (
+from engine.parsev1.analysis_windows import (
     materialize_analysis_window,
     materialize_canonical_chunk,
     plan_analysis_windows,
 )
-from engine.parse.background import (
+from engine.parsev1.background import (
     BackgroundImage,
     extract_background_image_ids,
     prepare_background_text,
 )
-from engine.parse.frame_sampler import extract_video_frames
-from engine.parse.pipeline import (
+from engine.parsev1.frame_sampler import extract_video_frames
+from engine.parsev1.pipeline import (
     ParseChunkInput,
     ParsePipeline,
     ParsePipelineInput,
 )
-from engine.parse.schemas import AnalysisWindow
+from engine.parsev1.schemas import AnalysisWindow
 
 from ..config.video_processing import VideoProcessingConfig
 from ..config.parse_profile import ParseConfig

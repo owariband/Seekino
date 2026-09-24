@@ -5,7 +5,7 @@ import logging
 import tempfile
 from pathlib import Path
 
-from engine.parse.frame_sampler import extract_video_frames
+from engine.parsev1.frame_sampler import extract_video_frames
 
 from ..model.dto.keyframeDTO import (
     KeyframeBackfillCandidate,

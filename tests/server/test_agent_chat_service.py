@@ -12,10 +12,10 @@ import pytest
 from langchain_core.tools import BaseTool
 from sqlalchemy import event, func, select, text
 
-from server.agent.common.errors import AgentContextBudgetError, AgentModelInvocationError
-from server.agent.supervisor import SupervisorRuntime
-from server.agent.video_search.context import _project_stored_search_result
-from server.agent.video_search.runtime import AgentRuntime
+from agent.chat.common.errors import AgentContextBudgetError, AgentModelInvocationError
+from agent.chat.supervisor import SupervisorRuntime
+from agent.chat.video_search.context import _project_stored_search_result
+from agent.chat.video_search.runtime import AgentRuntime
 from gateway.web_search import WebSearchHit, WebSearcher
 from server.api.agent import _agent_message_view
 from server.config.agent import AgentServiceConfig

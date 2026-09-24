@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from engine.parse.schemas import VideoParseResult
+from engine.parsev1.schemas import VideoParseResult
 from engine.retrieval.video_retrieval import (
     VideoChunkRetrievalDocument,
     build_video_chunk_retrieval_documents,

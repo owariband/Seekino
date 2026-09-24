@@ -5,7 +5,7 @@ from dataclasses import replace
 from uuid import uuid4
 
 import pytest
-from engine.parse.schemas import TranscriptCue
+from engine.parsev1.schemas import TranscriptCue
 from gateway.embedding import EmbeddingResult
 from qdrant_client import QdrantClient
 

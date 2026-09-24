@@ -296,7 +296,7 @@ Evaluator 输出 EvalDecision(action, advice)
 → AgentChatService 持久化并发布 SSE
 ```
 
-代码证据：`server/agent/state.py::EvalDecision`、`server/agent/runtime.py:149-187`、`server/service/agent_chat.py:583-600`。
+代码证据：`agent/chat/video_search/state.py::EvalDecision`、`agent/chat/video_search/runtime.py`、`server/service/agent_chat.py`。
 
 ### 尚未发生但必须提前防止的同源隐患
 
@@ -327,15 +327,15 @@ Evaluator 输出 EvalDecision(action, advice)
 
 | 文件 | 唯一职责 |
 |---|---|
-| `gateway/context_window.py` | Provider 无关的 token ledger、阈值判断、replacement history、window identity 与硬上限恢复 |
-| `gateway/agent_model.py` | 把相同 Controller 接入自定义 function loop 和 LangChain/LangGraph middleware，并采集真实 Provider usage |
-| `server/agent/context.py` | 将 anivag canonical Workspace 投影成有界 navigation checkpoint |
-| `server/agent/workspace.py` | 保存模型消息之外的 Retrieval/Draft/approved Draft/render canonical state |
-| `server/agent/query.py` / `evaluator.py` / `chat.py` | 定义角色固定锚点、一次性初始快照和 checkpoint callback |
+| `gateway/agent_model/context.py` | Provider 无关的 token ledger、阈值判断、replacement history、window identity 与硬上限恢复 |
+| `gateway/agent_model/tool_loop.py` / `gateway/openai/structured.py` | 把相同 Controller 接入自定义 function loop 和 LangChain/LangGraph middleware，并采集真实 Provider usage |
+| `agent/chat/video_search/context.py` | 将 anivag canonical Workspace 投影成有界 navigation checkpoint |
+| `agent/chat/video_search/workspace.py` | 保存模型消息之外的 Retrieval/Draft/approved Draft/render canonical state |
+| `agent/chat/video_search/query.py` / `evaluator.py` / `chat.py` | 定义角色固定锚点、一次性初始快照和 checkpoint callback |
 | `server/config/agent.py` / `settings.py` | 保存窗口、预留、软阈值和目标阈值配置 |
 | `server/bootstrap.py` | 构造不可变 ContextWindowPolicy 并注入三个生产模型 |
 
-不新增 `utils.py` 或 `common.py`。只服务于 compaction wire format 的常量保留为 `gateway/context_window.py` 私有常量；现有 `gateway/constants.py` 只继续保存跨模块 Provider 常量。
+不新增 `utils.py` 或泛化杂项模块。只服务于 compaction wire format 的常量保留为 `gateway/agent_model/context.py` 私有常量；现有 `gateway/constants.py` 只继续保存跨模块 Provider 常量。
 
 ### 已实现行为
 

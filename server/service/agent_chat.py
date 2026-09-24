@@ -9,12 +9,13 @@ from threading import Event, Lock
 from time import monotonic_ns
 from uuid import uuid4
 
-from ..agent.common.errors import (
+from agent.chat.common.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
 )
-from ..agent.video_search.runtime import AgentRuntime
-from ..agent.supervisor import SupervisorRuntime
-from ..agent.common.state import AnswerPhase, RunInputs
+from agent.chat.common.state import AnswerPhase, RunInputs
+from agent.chat.supervisor import SupervisorRuntime
+from agent.chat.video_search.runtime import AgentRuntime
+
 from ..config.agent import AgentServiceConfig
 from ..identity import canonical_uuid
 from ..model.dto.agentDTO import (

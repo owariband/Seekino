@@ -18,11 +18,11 @@ from typing import Callable, Literal, Protocol
 from gateway.embedding import EmbeddingResult
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from engine.parse.analysis_windows import (
+from engine.parsev1.analysis_windows import (
     materialize_analysis_windows,
     plan_analysis_windows,
 )
-from engine.parse.schemas import AnalysisWindow, VideoParseResult
+from engine.parsev1.schemas import AnalysisWindow, VideoParseResult
 from engine.retrieval.video_retrieval import (
     RankedVideoChunk,
     VideoChunkRetrievalDocument,

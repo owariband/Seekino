@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from engine.parse.schemas import (
+from engine.parsev1.schemas import (
     AnalysisWindow,
     ContextEvent,
     ContextSnapshot,

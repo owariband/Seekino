@@ -115,7 +115,7 @@ Ark 主路径获得背景文字、参考图片和当前窗口视频。DeepSeek f
 
 参考图片没有视频时间戳，不进入当前窗口的视频帧序列、允许的对白或事件证据。后续 Timeline、向量构建、MySQL/Qdrant 写入沿用现有流程。
 
-代码分层：共同的图片类型标识在 `server/constants`，限制在 `server/config`，图片 ID 编码/解码及解码缩放在 `server/utils`，文件归属与持久化在 `server/storage`，JSON 和背景引用的业务检查在 LibraryService，跨 Parse 分支复用的背景输入组装在 `engine/parse/background.py`。
+代码分层：共同的图片类型标识在 `server/constants`，限制在 `server/config`，图片 ID 编码/解码及解码缩放在 `server/utils`，文件归属与持久化在 `server/storage`，JSON 和背景引用的业务检查在 LibraryService，V1 Parse 的背景输入组装在 `engine/parsev1/background.py`。
 
 ## 验证范围
 

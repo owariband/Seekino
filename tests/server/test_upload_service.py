@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import event, select
 
-from engine.parse.runtime import VideoParseRuntimeConfig
+from engine.parsev1.runtime import VideoParseRuntimeConfig
 from gateway.config import load_config
 from server.config.media import ImageUploadConfig
 from server.config.parse_profile import ParseConfig

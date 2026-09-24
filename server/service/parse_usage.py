@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from decimal import Decimal
 from threading import Event
 
-from engine.parse.usage import ParseModelCall, capture_parse_usage
+from engine.parsev1.usage import ParseModelCall, capture_parse_usage
 from gateway.usage import TokenUsage
 
 from ..config.usage import ModelPricingConfig, PriceTier

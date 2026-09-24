@@ -9,10 +9,10 @@ from pathlib import Path
 from time import monotonic_ns
 from typing import Callable, Literal
 
-from engine.parse.embed import ChunkEmbedding
-from engine.parse.persist import ParsePipelineStage
-from engine.parse.pipeline import ParsePipelineResult
-from engine.parse.schemas import (
+from engine.parsev1.embed import ChunkEmbedding
+from engine.parsev1.persist import ParsePipelineStage
+from engine.parsev1.pipeline import ParsePipelineResult
+from engine.parsev1.schemas import (
     AnalysisWindow,
     ContextSnapshot,
     VideoChunkCheckpoint,

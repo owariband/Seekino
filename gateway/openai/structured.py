@@ -26,14 +26,14 @@ from openai import OpenAI, OpenAIError
 from pydantic import BaseModel, PrivateAttr
 
 from gateway.errors import ContentFilterError
-from gateway.harness.context import (
+from gateway.agent_model.context import (
     ContextCheckpoint,
     ContextWindowController,
     ContextWindowOverflow,
     ContextWindowPolicy,
     measure_context,
 )
-from gateway.harness.errors import (
+from gateway.agent_model.errors import (
     AgentModelTimeoutError,
     MissingStructuredQueryDraftError,
     MissingStructuredQueryToolCallError,
@@ -41,8 +41,8 @@ from gateway.harness.errors import (
     ModelInputTooLargeError,
     QueryModelIncompleteError,
 )
-from gateway.harness.fallback import log_model_fallback
-from gateway.harness.tool_loop import (
+from gateway.agent_model.fallback import log_model_fallback
+from gateway.agent_model.tool_loop import (
     _copy_assistant_reasoning,
     _log_context_window_update,
     _log_incomplete_model_response,

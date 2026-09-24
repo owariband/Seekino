@@ -7,8 +7,8 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict
 
 from gateway.config import AgentModelConfig, OpenAIModelSourceConfig
-from gateway.harness.context import ContextWindowPolicy
-from gateway.harness.factory import AgentModelFactory
+from gateway.agent_model.context import ContextWindowPolicy
+from gateway.agent_model.factory import AgentModelFactory
 
 
 class _MarkerArguments(BaseModel):

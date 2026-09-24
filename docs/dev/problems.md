@@ -91,7 +91,7 @@
 | server/model/agent.py | 内部截止时间字段和迁移要求 |
 | server/repository/agent.py | 过期终结方法，沿用终态写保护并补截止判定 |
 | server/service/agent_chat.py | 发送前收尾、定期扫描、取消与输出停止、已有终态处理 |
-| server/agent/video_search/runtime.py、server/agent/common/state.py | 接收剩余预算，保持 Harness 独立于数据库／HTTP |
+| agent/chat/video_search/runtime.py、agent/chat/common/state.py | 接收剩余预算，保持 Harness 独立于数据库／HTTP |
 | server/api/app.py、bootstrap.py、config/agent.py | 扫描任务的启动／关闭与配置装配 |
 
 #### 验收条件
@@ -102,7 +102,7 @@
 - 排队耗尽预算的任务不再开始新的模型调用；旧幂等 Key 不会偷偷重跑模型。
 - 终态写库暂时失败后，数据库恢复时扫描能够完成失败收尾。
 
-依据：[agent_chat.py](../../server/service/agent_chat.py) 的 start_message / _execute / close；[agent.py](../../server/repository/agent.py) 的 start_message / checkpoint_assistant_message / complete_assistant_message / fail_assistant_message；[runtime.py](../../server/agent/video_search/runtime.py)、[state.py](../../server/agent/video_search/state.py)。
+依据：[agent_chat.py](../../server/service/agent_chat.py) 的 start_message / _execute / close；[agent.py](../../server/repository/agent.py) 的 start_message / checkpoint_assistant_message / complete_assistant_message / fail_assistant_message；[runtime.py](../../agent/chat/video_search/runtime.py)、[state.py](../../agent/chat/video_search/state.py)。
 
 ### B02：上传提交成功后，临时目录清理失败导致接口误报失败
 
@@ -179,7 +179,7 @@ return completed
 - 没有为了通过 ASR 输入校验而改写原始 Cue，也没有把 Chat Submit 的绝对毫秒时间戳规则错误套到 Lite ASR；`[t, t+1ms)` 仅是检索 Evidence 的非持久化兼容表示。
 - 当前全量测试验证为 `844 passed, 8 skipped`；跳过项均为未配置隔离测试库的 MySQL 集成测试。
 
-依据：[schemas.py](../../engine/parse/schemas.py) 的 `TranscriptCue` / `TimelineEvent`；[video.py](../../server/repository/video.py) 的检索边界软投影；[test_schemas.py](../../tests/engine/test_schemas.py) 与 [test_video_retrieval_service.py](../../tests/server/test_video_retrieval_service.py) 的回归测试。
+依据：[schemas.py](../../engine/parsev1/schemas.py) 的 `TranscriptCue` / `TimelineEvent`；[video.py](../../server/repository/video.py) 的检索边界软投影；[test_schemas.py](../../tests/engine/parsev1/test_schemas.py) 与 [test_video_retrieval_service.py](../../tests/server/test_video_retrieval_service.py) 的回归测试。
 
 ### B04：ParseJob 逐 Attempt／逐 Stage 计时造成高频写库
 
@@ -236,7 +236,7 @@ return completed
 - 本轮**没有**把 ASR raw DTO 迁移为 `start_time` / `end_time` 字符串，也没有新增“原始 ASR”与“经理解校正后的 canonical transcript”两套独立类型和存储。当前 `TranscriptAnalysis` / `TranscriptCue` 仍沿用 `start_ms` / `end_ms` 整数契约；这项数据模型重构需单独设计和迁移。
 - 生产 ASR 阶段当前没有独立 durable checkpoint，结果只保存在本次 Pipeline State。Understanding 失败后，下一 Attempt 会恢复已经持久化的连续 PARSED 前缀，但会为剩余窗口重新执行 ASR；即使上一次已经在内存中完成这些 Transcript，也无法跨 Attempt 复用。
 
-依据：[pipeline.py](../../engine/parse/pipeline.py) 的算法阶段顺序；[transcribe.py](../../engine/parse/transcribe.py)、[understand.py](../../engine/parse/understand.py)、[embed.py](../../engine/parse/embed.py) 和 [persist.py](../../engine/parse/persist.py) 的阶段契约；[video_processing.py](../../server/service/video_processing.py)、[consumer.py](../../server/mq/consumer.py) 与 [job.py](../../server/repository/job.py) 的 Lease、Checkpoint 和恢复边界。
+依据：[pipeline.py](../../engine/parsev1/pipeline.py) 的算法阶段顺序；[transcribe.py](../../engine/parsev1/transcribe.py)、[understand.py](../../engine/parsev1/understand.py)、[embed.py](../../engine/parsev1/embed.py) 和 [persist.py](../../engine/parsev1/persist.py) 的阶段契约；[video_processing.py](../../server/service/video_processing.py)、[consumer.py](../../server/mq/consumer.py) 与 [job.py](../../server/repository/job.py) 的 Lease、Checkpoint 和恢复边界。
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
 
@@ -288,7 +288,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 - 优化后的同批样本在 Worker 时间、墙钟时间和每源视频分钟费用上均有可重复的下降，同时 Timeline、Transcript 和检索 Evidence 的质量回归通过。
 - 所有调用都有价格快照，或在 API／UI 中明确标记未知费用；失败 Job 达到预算后可解释地终止，不再让重试无限线性放大资源消耗。
 
-依据：[pipeline.py](../../engine/parse/pipeline.py)、[transcribe.py](../../engine/parse/transcribe.py)、[understand.py](../../engine/parse/understand.py) 与 [embed.py](../../engine/parse/embed.py) 的阶段顺序和并发边界；[video_chunk_parse.py](../../engine/parse/video_chunk_parse.py) 的主理解与 fallback；[analysis_windows.py](../../engine/parse/analysis_windows.py)、[video_processing.py](../../server/service/video_processing.py) 与 [artifact.py](../../server/storage/artifact.py) 的媒体准备、Lease 目录和复制发布；[consumer.py](../../server/mq/consumer.py) 的 Job 消费；[parse_usage.py](../../server/service/parse_usage.py) 与 [parse-model-usage.md](../parse-model-usage.md) 的价格快照和费用口径；[config.yaml](../../config.yaml) 的当前模型与 fallback 配置；本地开发库和 `outputs/server/logs/development/api.log` 的 2026-09-20 至 2026-09-23 运行记录。
+依据：[pipeline.py](../../engine/parsev1/pipeline.py)、[transcribe.py](../../engine/parsev1/transcribe.py)、[understand.py](../../engine/parsev1/understand.py) 与 [embed.py](../../engine/parsev1/embed.py) 的阶段顺序和并发边界；[video_chunk_parse.py](../../engine/parsev1/video_chunk_parse.py) 的主理解与 fallback；[analysis_windows.py](../../engine/parsev1/analysis_windows.py)、[video_processing.py](../../server/service/video_processing.py) 与 [artifact.py](../../server/storage/artifact.py) 的媒体准备、Lease 目录和复制发布；[consumer.py](../../server/mq/consumer.py) 的 Job 消费；[parse_usage.py](../../server/service/parse_usage.py) 与 [parse-model-usage.md](../parse-model-usage.md) 的价格快照和费用口径；[config.yaml](../../config.yaml) 的当前模型与 fallback 配置；本地开发库和 `outputs/server/logs/development/api.log` 的 2026-09-20 至 2026-09-23 运行记录。
 
 ## Chat 联调问题（2026-09-21）
 
@@ -299,7 +299,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 - 已做：`update_draft_tem` 已统一更名为 `update_draft_item`（代码、Query Skill 与测试，提交 `b41b1f5`）。工具调用现在记录 `Query`／`Evaluator`／`Chat` 角色、对话与消息 ID、工具名、调用 ID、参数摘要、结果摘要或错误、耗时；自由文本用长度与哈希代替原文。业务日志持续写入 `outputs/server/logs/development/api.log`，并按大小轮转。
 - 待办：明确未知 Evidence ID 的可恢复 Tool 错误语义，给 Agent 返回可操作的纠正信息；验证失败后能继续检索或改用已召回 ID，同时不能放行未检索证据。`read_trieve_item`、`get_draft_catelog` 也存在拼写异常，目前仍是实际 Tool 名，尚未更名，改名时须同步 Tool、Skill 和回归测试。
 
-依据：[workspace.py](../../server/agent/video_search/workspace.py) 的 `upsert_draft_item`；[tools/](../../server/agent/video_search/tools/) 的 Tool 定义与 [tooling.py](../../server/agent/common/tooling.py) 的调用追踪；[agent_chat.py](../../server/service/agent_chat.py) 的失败收尾；[query/SKILL.md](../../server/agent/video_search/skills/query/SKILL.md) 的工具清单。
+依据：[workspace.py](../../agent/chat/video_search/workspace.py) 的 `upsert_draft_item`；[tools/](../../agent/chat/video_search/tools/) 的 Tool 定义与 [tool.py](../../agent/chat/common/tool.py) 的调用追踪；[agent_chat.py](../../server/service/agent_chat.py) 的失败收尾；[query/SKILL.md](../../agent/chat/video_search/skills/query/SKILL.md) 的工具清单。
 
 ### C02：多次“回答未完成”仍需逐条归因
 
@@ -307,7 +307,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 - 同期日志线索：同一会话在 10:41 检索阶段约 8 秒、10:45 与 10:52 审核阶段各约 29 秒失败，错误类型均为 `GraphRecursionError`；16:22 另有检索阶段约 8 秒的 `AGENT_MODEL_ERROR`。17:09 还出现 `read_trieve_item` 游标不匹配，最终以 `PROCESSING_FAILED` 结束。页面摘录没有 `message_id`，这些日志尚未与摘录中的每次失败逐一关联。工具名拼写异常本身也不能据此判定为游标错误的根因。
 - 待办：用 `conversation_id`／`message_id` 对齐页面失败与 `agent_execution_failed`、`agent_tool_failed`；分别排查模型错误、游标误用和 Evidence ID 校验。对游标错误检查 Agent 是否把某个证据的 `next_cursor` 用于另一证据，及 Tool 返回的纠错信息是否足够；复测失败后的继续发送。
 
-依据：`outputs/server/logs/development/api.log` 中 2026-09-21 10:41、10:45、10:52、16:22 和 17:09 的失败记录；[tooling.py](../../server/agent/common/tooling.py) 的 Tool 追踪；[agent_chat.py](../../server/service/agent_chat.py) 的公开错误映射。
+依据：`outputs/server/logs/development/api.log` 中 2026-09-21 10:41、10:45、10:52、16:22 和 17:09 的失败记录；[tool.py](../../agent/chat/common/tool.py) 的 Tool 追踪；[agent_chat.py](../../server/service/agent_chat.py) 的公开错误映射。
 
 ### C03：“怎么认识的”被回答成后续组队过程
 
@@ -315,7 +315,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 - 同一问题还包含“谁是咕咕嘎嘎？”。首答只称在“第 1–3 集范围”未找到，并推测可能是别的译名或粉丝梗；用户选择的是 MyGO，不能凭这次未命中断言全系列没有，也需要核查为何回答自行收窄到第 1–3 集。该称呼所指目前仍未核实。
 - 待办：复盘首轮 Query 检索词、候选排序、精读与 Evaluator 放行记录，确认 04:00 片段是未召回、被忽略还是在审核时被遗漏。对“初次／最早／怎么认识”类问题检查时间线完整性，对包含多个子问题的提问逐项核验；未找到时准确说明实际检索范围和限制。回归用此对话验证首答能区分“首次碰面、正式自我介绍、后来组队”。
 
-依据：用户提供的本次对话页面记录；[query/SKILL.md](../../server/agent/video_search/skills/query/SKILL.md) 与 [evaluator/SKILL.md](../../server/agent/video_search/skills/evaluator/SKILL.md) 的检索及审核流程。04:00 等情节来自后续答案所展示的视频片段，仍需在回归时独立核验。
+依据：用户提供的本次对话页面记录；[query/SKILL.md](../../agent/chat/video_search/skills/query/SKILL.md) 与 [evaluator/SKILL.md](../../agent/chat/video_search/skills/evaluator/SKILL.md) 的检索及审核流程。04:00 等情节来自后续答案所展示的视频片段，仍需在回归时独立核验。
 
 ### C04：失败信息与下一轮 Context 的边界
 
@@ -329,7 +329,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 - 状态：页面摘录中的成功回答末尾出现“已按获批草稿整理完成”“三个视频块分别对应”等内部整理说明，首答还说“正好用满本次上限”。这些句子没有回答用户的剧情问题，也把草稿审批和视频块上限暴露到正文中；当前仅凭页面文本不能断定是哪个 Agent 阶段生成的。
 - 待办：按消息 ID 对照 Chat Agent 输出、服务端正文组装和前端渲染，确认该内容的来源；让最终回答只保留用户需要的结论、依据和必要的不确定性说明，并用这段对话做回归。
 
-依据：用户提供的本次对话页面记录；[chat/SKILL.md](../../server/agent/video_search/skills/chat/SKILL.md) 的最终回答流程；[SearchPage.tsx](../../web/src/features/search/SearchPage.tsx) 的消息展示。
+依据：用户提供的本次对话页面记录；[chat/SKILL.md](../../agent/chat/video_search/skills/chat/SKILL.md) 的最终回答流程；[SearchPage.tsx](../../web/src/features/search/SearchPage.tsx) 的消息展示。
 
 ### C06：Query Tool 将 topK 误用为整轮草稿数量上限
 
@@ -338,7 +338,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 - 已做：草稿按稳定 `video_chunk_id` 去重；原样重复返回 `already_present`，内容变化返回 `updated`。`retrieve`、`update_draft_item`、`remove_draft_item` 向 Query Agent 返回当前 `draft_item_count`。
 - 已做：Chat 只保存和发送用户显式覆盖的选项，默认值由服务端当前配置决定；页面将 `topK` 明确标为单次检索候选数。相关后端和前端回归测试已通过。
 
-依据：[tools/](../../server/agent/video_search/tools/) 的 `retrieve`／`update_draft_item`；[workspace.py](../../server/agent/video_search/workspace.py) 的片段与草稿去重；[runtime.py](../../server/agent/video_search/runtime.py) 和 [output.py](../../server/agent/video_search/output.py) 的草稿绑定；[query.py](../../server/agent/video_search/query.py) 的提示词。
+依据：[tools/](../../agent/chat/video_search/tools/) 的 `retrieve`／`update_draft_item`；[workspace.py](../../agent/chat/video_search/workspace.py) 的片段与草稿去重；[runtime.py](../../agent/chat/video_search/runtime.py) 和 [output.py](../../agent/chat/video_search/output.py) 的草稿绑定；[query.py](../../agent/chat/video_search/query.py) 的提示词。
 
 ## 联调与验收
 
@@ -368,7 +368,7 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 - [ ] 对可修正的 Tool 参数、未知条目、读取范围、Catalog 游标和输出过大错误，统一返回有错误码、纠正提示及必要有效范围的受限结果，使 Agent 能在当轮缩小请求或重试；对必须终止的错误保留清晰的阶段、原因和日志，不用通用 Tool 错误掩盖根因。
 - [ ] 按盘点结果逐项修复并补回归：合法的多次检索及重复片段可继续完成；超范围读取能缩小后重试；无效证据不能进入最终答案；Context 溢出、模型失败和超时各有可定位的终止原因。
 
-依据：[tooling.py](../../server/agent/common/tooling.py) 的 Tool 包装和 [shared.py](../../server/agent/video_search/tools/shared.py) 的调用预算；[tool_output.py](../../server/agent/common/tool_output.py) 的输出限制；[runtime.py](../../server/agent/video_search/runtime.py) 与 [context.py](../../server/agent/video_search/context.py) 的执行及 Context 预算；[agent_chat.py](../../server/service/agent_chat.py) 的失败收尾。
+依据：[tool.py](../../agent/chat/common/tool.py) 的 Tool 包装和 [shared.py](../../agent/chat/video_search/tools/shared.py) 的调用预算；[tool_output.py](../../agent/chat/common/tool_output.py) 的输出限制；[runtime.py](../../agent/chat/video_search/runtime.py) 与 [context.py](../../agent/chat/video_search/context.py) 的执行及 Context 预算；[agent_chat.py](../../server/service/agent_chat.py) 的失败收尾。
 
 ### B06：缺少可复用的结构化 Context Canvas 与受限 Patch 框架
 

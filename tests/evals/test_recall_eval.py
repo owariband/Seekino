@@ -20,7 +20,7 @@ from evals.recall.recall_eval import (
     materialize_eval_only_canonical_media,
     reciprocal_rank_fusion,
 )
-from engine.parse.schemas import (
+from engine.parsev1.schemas import (
     AnalysisWindow,
     ContextSnapshot,
     OwnedTimelineEvent,

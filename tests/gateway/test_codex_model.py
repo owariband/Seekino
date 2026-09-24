@@ -11,7 +11,7 @@ import pytest
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ConfigDict
 
-from gateway.harness.errors import (
+from gateway.agent_model.errors import (
     AgentModelTimeoutError,
     MissingRequiredFunctionCallError,
     MissingStructuredQueryDraftError,
@@ -21,7 +21,7 @@ from gateway.harness.errors import (
 from gateway.codex import CodexAgentModel
 from gateway.codex.client import CodexModelCallLimitError
 from gateway.codex.agent import CodexAgentModelError
-from gateway.harness.context import ContextWindowPolicy
+from gateway.agent_model.context import ContextWindowPolicy
 from gateway.usage import capture_model_usage
 
 

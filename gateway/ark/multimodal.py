@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from gateway.ark.sse import request_sse_json, request_sse_text
 from gateway.constants import ARK_PROVIDER
-from gateway.harness.fallback import log_model_fallback
+from gateway.agent_model.fallback import log_model_fallback
 from gateway.media import encode_media_file
 from gateway.multimodal import (
     ImageInput,

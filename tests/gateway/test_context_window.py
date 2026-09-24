@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from gateway.harness.context import (
+from gateway.agent_model.context import (
     ContextWindowController,
     ContextWindowOverflow,
     ContextWindowPolicy,

@@ -8,7 +8,7 @@ from gateway.config import load_config
 from gateway.ark.embedding import DoubaoMultimodalEmbedder
 from qdrant_client import QdrantClient
 
-from engine.parse.analysis_windows import probe_video_duration_seconds
+from engine.parsev1.analysis_windows import probe_video_duration_seconds
 from .qdrant_index import QdrantVideoChunkIndex
 from .recall_eval import (
     RecallEvaluator,

@@ -9,7 +9,7 @@ from openai import APIError, OpenAI
 from pydantic import BaseModel
 
 from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
-from gateway.harness.fallback import log_model_fallback
+from gateway.agent_model.fallback import log_model_fallback
 from gateway.schema_normalization import inline_schema_refs
 from gateway.media import encode_media_file
 from gateway.multimodal import (

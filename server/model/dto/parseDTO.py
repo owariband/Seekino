@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import Field
 
-from engine.parse.schemas import VideoChunkParseResult, VideoParseResult
+from engine.parsev1.schemas import VideoChunkParseResult, VideoParseResult
 from engine.retrieval.video_retrieval import VideoChunkRetrievalDocument
 
 from ...schema import ContractModel, VideoChunkKeyframeReference

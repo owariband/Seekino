@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException
 import logging
 from uuid import uuid4
 
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
+
+from agent.chat.common.errors import AgentContextBudgetError, AgentModelInvocationError
+
+from ..config.global_agent_settings import GlobalAgentSettingsConflictError
+from ..model.vo.commonVO import ApiError, FieldError
 from ..repository.agent import (
     AgentConflictError,
     AgentConversationNotFoundError,
@@ -32,14 +37,11 @@ from ..repository.video import (
     SeriesScopeNotFoundError,
     VideoChunkNotFoundError,
 )
-from ..agent.common.errors import AgentContextBudgetError, AgentModelInvocationError
-from ..config.global_agent_settings import GlobalAgentSettingsConflictError
-from ..service.upload import UploadChecksumMismatchError
-from ..service.qdrant_mutation_lock import QdrantMutationLockBusyError
-from ..service.video_retrieval import RetrievalIndexConsistencyError
 from ..service.media import MediaMissingError, MediaNotReadyError
+from ..service.qdrant_mutation_lock import QdrantMutationLockBusyError
+from ..service.upload import UploadChecksumMismatchError
+from ..service.video_retrieval import RetrievalIndexConsistencyError
 from ..storage.artifact import ArtifactIntegrityError
-from ..model.vo.commonVO import ApiError, FieldError
 
 _logger = logging.getLogger(__name__)
 

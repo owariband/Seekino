@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
-from engine.parse.schemas import VideoParseProvenance
+from engine.parsev1.schemas import VideoParseProvenance
 from engine.retrieval.video_retrieval import VideoChunkRetrievalDocument
 from sqlalchemy import event, func, inspect, select, update
 

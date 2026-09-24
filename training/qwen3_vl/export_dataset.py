@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from engine.parse.schemas import VideoChunkCheckpoint
+from engine.parsev1.schemas import VideoChunkCheckpoint
 from server.database import (
     DatabaseEnvironment,
     create_database_engine,

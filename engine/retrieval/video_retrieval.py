@@ -8,7 +8,9 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ..parse.schemas import VideoParseResult
+from ..parsev1.schemas import VideoParseResult
+
+AGENT_RETRIEVAL_STRATEGY_VERSION = "query-adaptive-three-channel-rrf-v2"
 
 _TRANSCRIPT_PHRASE_BASE_SCORE = 0.9
 _TRANSCRIPT_PHRASE_COVERAGE_BONUS = 0.09

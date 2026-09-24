@@ -15,32 +15,39 @@ anivag 是一个面向事件级视频检索与时间证据定位的多模态视�
 - **答案能回到原片**：结果附带集数、时间段与关键帧，方便核对并跳转到对应视频位置。
 
 仓库根目录就是 anivag 的工程边界，不再额外套 `packages/`、`src/` 或
-`anivag_*` 分发包。`server/`、`engine/`、`gateway/` 是产品内部模块命名空间，
-不是三个需要独立发布的 Python 包，也不通过 `__init__.py` 批量暴露实现。
+`anivag_*` 分发包。`server/`、`agent/`、`engine/`、`gateway/` 是产品内部模块
+命名空间，不是需要独立发布的 Python 包，也不通过 `__init__.py` 批量暴露实现。
+
+四层职责固定为：Gateway 统一模型调用，Engine 定义领域算法与检索策略，Agent
+运行 Agent／LangGraph 程序，Server 负责可靠执行、持久化和对外协议。当前生产解析
+仍显式使用冻结在 `engine/parsev1/` 的 V1；V2 的算法与运行边界分别位于
+`engine/parsev2/` 和 `agent/video_parse_v2/`，不从 V1 转发实现。
 
 ## M1 边界
 
 - Anime-first：课程视频只作为未来迁移验证，不改变产品定位。
 - Video-only：用户不需要上传外挂字幕文件。
-- 语音、镜头与关键帧进入查询前的异步建库链路；生产 Parse 由 Server LangGraph 编排独立的 ASR、视频理解与 Embedding Agent。烧录字幕 OCR 暂不阻塞第一版。
+- 语音、镜头与关键帧进入查询前的异步建库链路；当前生产任务由 Server 驱动
+  `engine.parsev1.ParsePipeline`，新的 V2 LangGraph 尚未接管生产。烧录字幕 OCR 暂不阻塞第一版。
 - 在线查询融合语音文本、视觉与角色事件候选，返回时间证据。
 - V1 使用 MySQL 持久化 Queue + anivag Server 进程内 Consumer；RocketMQ 不是单用户 MVP 的前置依赖。
 
-## 生产 Parse Graph
+## 当前生产 Parse V1
 
-生产业务数据按以下阶段串行推进；ASR 节点内部可以按配置并发处理多个待解析窗口：
+生产业务数据按 V1 Pipeline 推进；ASR 阶段内部可以按配置并发处理多个待解析窗口：
 
 ```text
 准备窗口与媒体 → ASR Agent → VideoUnderstandingAgent → EmbeddingAgent → MySQL 业务事实 → Qdrant 索引
 ```
 
-Agent 之间不直接调用，只通过 Graph State 交接显式 DTO。provider、model 与
-tier 只决定运行配置和 provenance，不代表 Agent 拓扑；内容审核 fallback 复用 Graph
-传入的同一份 Transcript，不会补跑 ASR。
+各阶段通过显式 DTO 和 `ParsePersistence` 端口交接。provider、model 与 tier 只决定
+运行配置和 provenance，不改变 V1 Pipeline 拓扑；内容审核 fallback 复用同一份
+Transcript，不会补跑 ASR。
 
-当前 LangGraph 不配置 checkpointer 或节点 retry。失败重试仍由 ParseJobConsumer 与
-MySQL Queue 管理，MySQL Checkpoint、Artifact 和 Lease/Fencing 才是恢复真相；Graph
-State 只覆盖当前一次执行。
+V1 不是 LangGraph。失败重试由 ParseJobConsumer 与 MySQL Queue 管理，MySQL
+Checkpoint、Artifact 和 Lease/Fencing 才是恢复真相；Pipeline 内存状态只覆盖当前
+一次执行。计划中的 Video Parse V2 将由 `agent/video_parse_v2/` 定义 LangGraph 程序，
+调用 `engine/parsev2/` 的领域算法，并继续把持久任务、恢复和版本选择留给 Server。
 
 ## 快速开始
 
@@ -124,10 +131,11 @@ anivag/
 ├── uv.lock                           # 全仓唯一依赖锁
 ├── config.yaml                       # 可提交的模型默认配置
 ├── config/model-pricing.yaml          # Parse 模型计价属性与价格版本，人民币
-├── server/                           # 工程编排、事实源、持久化与外部接口
-├── engine/                           # VideoChunk 解析与检索算法
-├── gateway/                          # 模型供应商调用与数据归一化
-├── tests/                            # 按 server/engine/gateway/evals 分区的测试
+├── gateway/                          # 模型供应商调用；agent_model/ 提供模型执行协议
+├── engine/                           # parsev1、parsev2 与 retrieval 领域算法
+├── agent/                            # Chat 与 Video Parse V2 的 Agent／LangGraph 程序
+├── server/                           # 可靠执行、事实源、持久化与外部接口
+├── tests/                            # 按 agent/server/engine/gateway/evals 分区的测试
 ├── evals/                            # 算法评测工具、数据集与报告
 ├── outputs/                          # 本地运行产物，不进入 Git
 ├── deploy/                           # 本地基础设施与部署配置
@@ -148,7 +156,7 @@ Artifact Store 自动外置。完整目标结构与阶段记录维护在
 当前运行和调试使用以下显式模块入口：
 
 ```bash
-uv run python -m engine.parse.cli --help
+uv run python -m engine.parsev1.cli --help
 uv run python -m evals.recall.cli --help
 uv run python -m gateway.cli --help
 uv run python -m server.cli --help

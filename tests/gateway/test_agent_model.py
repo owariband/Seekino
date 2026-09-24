@@ -21,8 +21,8 @@ from gateway.ark.agent import (
     ArkStructuredToolAgentModel,
 )
 from gateway.errors import ContentFilterError
-from gateway.harness import tool_loop as tool_loop_module
-from gateway.harness.errors import (
+from gateway.agent_model import tool_loop as tool_loop_module
+from gateway.agent_model.errors import (
     AgentModelTimeoutError,
     ArkFunctionCallingError,
     MissingStructuredQueryToolCallError,

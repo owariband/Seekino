@@ -5,8 +5,8 @@ import sys
 from dataclasses import replace
 
 import pytest
-from engine.parse.pipeline import ParsePipeline
-from engine.parse.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from engine.parsev1.pipeline import ParsePipeline
+from engine.parsev1.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
 from gateway.config import load_config
 from gateway.openai.structured import OpenAIStructuredToolAgentModel
 

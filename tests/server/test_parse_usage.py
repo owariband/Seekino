@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from engine.parse.embed import ChunkEmbedding, EmbedStage
-from engine.parse.usage import ParseModelCall, parse_chunk_scope
+from engine.parsev1.embed import ChunkEmbedding, EmbedStage
+from engine.parsev1.usage import ParseModelCall, parse_chunk_scope
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from gateway.embedding import EmbeddingResult

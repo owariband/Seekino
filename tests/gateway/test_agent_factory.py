@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import gateway.harness.factory as agent_factory
+import gateway.agent_model.factory as agent_factory
 from gateway.config import (
     AgentFallbackConfig,
     AgentModelConfig,
@@ -13,7 +13,7 @@ from gateway.config import (
     CodexModelSourceConfig,
     OpenAIModelSourceConfig,
 )
-from gateway.harness.context import ContextWindowPolicy
+from gateway.agent_model.context import ContextWindowPolicy
 
 
 def _context_window_policy() -> ContextWindowPolicy:

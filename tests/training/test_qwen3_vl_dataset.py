@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from engine.parse.schemas import (
+from engine.parsev1.schemas import (
     AnalysisWindow,
     ContextSnapshot,
     ObservedTimelineEvent,

@@ -6,7 +6,8 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import Field, field_validator
 
-from ...agent.common.state import AnswerPhase
+from agent.chat.common.state import AnswerPhase
+
 from ...schema import ContractModel
 
 _Item = TypeVar("_Item")

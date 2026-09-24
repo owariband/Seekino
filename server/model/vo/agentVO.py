@@ -4,9 +4,10 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field, model_validator
 
+from agent.chat.common.state import AnswerPhase
+from agent.chat.video_search.state import RetrievalTraceEntry
+
 from ...schema import ContractModel
-from ...agent.common.state import AnswerPhase
-from ...agent.video_search.state import RetrievalTraceEntry
 from ..dto.agentDTO import EvidenceReference
 from .commonVO import Failure, UnixTimeMs
 from .searchVO import SearchEvidenceView

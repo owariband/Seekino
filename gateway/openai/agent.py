@@ -10,13 +10,13 @@ from langchain_core.tools import BaseTool
 from openai import APIError, OpenAI
 
 from gateway.errors import ContentFilterError
-from gateway.harness.context import ContextCheckpoint, ContextWindowPolicy
-from gateway.harness.errors import (
+from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
+from gateway.agent_model.errors import (
     ModelFailureReason,
     OpenAIFunctionCallingError,
 )
-from gateway.harness.fallback import log_model_fallback
-from gateway.harness.tool_loop import (
+from gateway.agent_model.fallback import log_model_fallback
+from gateway.agent_model.tool_loop import (
     _failure_reason_for_exception,
     _response_input_tokens,
     _run_function_calling_loop,

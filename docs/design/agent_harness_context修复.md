@@ -648,16 +648,18 @@ Agent 可以通过 Tool 主动请求 checkpoint/new context window，但真正�
 
 ## 5. anivag 当前代码与目标的具体差距
 
-目前 [`search_video_chunk_evidence`](../../server/agent/tools.py) 仍然把 `project_search_result` 生成的整包 Evidence 返回，再调用 `context_budget.consume(...)`。这只是“超限后报错”，不是“该 Tool 始终产出有界结果”。
-
-当前 [`ModelContextBudget`](../../server/agent/state.py) 也是累计字符后抛异常；Gateway 的 agent loop 则会把 Tool 输出原样 append 到 messages。也就是说，一旦 Tool 返回大对象，Harness 没有把它自动变成可继续读取的 page。
+本节记录 2026-09-19 改造前的历史快照：当时 `search_video_chunk_evidence` 会把
+`project_search_result` 生成的整包 Evidence 返回，再调用 `context_budget.consume(...)`。
+这只是“超限后报错”，不是“该 Tool 始终产出有界结果”。当时的
+`ModelContextBudget` 同样只会累计字符后抛异常，Gateway agent loop 会把 Tool 输出原样
+append 到 messages。以下旧行为用于解释改造动机，不代表当前目录或实现。
 
 另外：
 
-- Query 会重放 `previous_turns` 和上一轮 `available_evidence`；见 [`query.py`](../../server/agent/query.py)。
-- Evaluator 会一次性接收全部 previous turns、draft 和 available evidence，而且没有只读 Tool；见 [`evaluator.py`](../../server/agent/evaluator.py)。
-- Chat 又把 approved selected evidence 投影进 Prompt，目前只有 `submit_video_item`；见 [`chat.py`](../../server/agent/chat.py)。
-- 目前只有 Query 直接拼接一份 Retrieval Skill；见 [`skills/__init__.py`](../../server/agent/skills/__init__.py)。这还不是给三个 Agent 配置 Skill catalog 和各自 Tool workflow。
+- Query 会重放 `previous_turns` 和上一轮 `available_evidence`。
+- Evaluator 会一次性接收全部 previous turns、draft 和 available evidence，而且没有只读 Tool。
+- Chat 会把 approved selected evidence 投影进 Prompt，当时只有 `submit_video_item`。
+- 当时只有 Query 直接拼接一份 Retrieval Skill，还没有给三个 Agent 配置 Skill catalog 和各自 Tool workflow。
 
 所以 anivag 的正确改造顺序应该是：
 
@@ -818,11 +820,11 @@ Evaluator 的 `complete` 不是无条件可信：Server 记录其是否完整读
 
 代码没有塞进泛化的 `utils.py` / `common.py`：
 
-- `gateway/context_window.py` 独占通用 Harness 机制：窗口预算、Provider token ledger、换窗状态、replacement history、硬上限恢复。只属于该协议的 marker、估算系数和摘要上限作为模块私有常量保留在这里；`gateway/constants.py` 没有被污染。
-- `gateway/agent_model.py` 是接入层：自定义 function-calling loop 和 LangChain/LangGraph loop 在每次模型调用前都经过同一个 Context Window Controller，并回填 Provider 的真实 `input_tokens`。
-- `server/agent/context.py` 只负责 anivag 领域投影：从外部 canonical Workspace 生成有界 navigation checkpoint，不把完整 Evidence 或 claim 重新塞回 Prompt。
-- `server/agent/workspace.py` 只负责每次 Kick 的 canonical 状态与线程安全快照。
-- `server/agent/query.py`、`evaluator.py`、`chat.py` 只负责各角色的稳定任务锚点、可压缩初始快照和 checkpoint 回调。
+- `gateway/agent_model/context.py` 独占通用模型执行机制：窗口预算、Provider token ledger、换窗状态、replacement history、硬上限恢复。只属于该协议的 marker、估算系数和摘要上限作为模块私有常量保留在这里；`gateway/constants.py` 没有被污染。
+- `gateway/agent_model/tool_loop.py` 与具体 Provider Adapter 是接入层：自定义 function-calling loop 和 LangChain/LangGraph loop 在每次模型调用前都经过同一个 Context Window Controller，并回填 Provider 的真实 `input_tokens`。
+- `agent/chat/video_search/context.py` 只负责 anivag 领域投影：从外部 canonical Workspace 生成有界 navigation checkpoint，不把完整 Evidence 或 claim 重新塞回 Prompt。
+- `agent/chat/video_search/workspace.py` 只负责每次 Kick 的 canonical 状态与线程安全快照。
+- `agent/chat/video_search/query.py`、`evaluator.py`、`chat.py` 只负责各角色的稳定任务锚点、可压缩初始快照和 checkpoint 回调。
 - `server/config/agent.py` / `settings.py` 保存可配置预算；`server/bootstrap.py` 负责组装，未新增全局杂项常量。
 
 运行语义按 Codex 的控制面实现：每次 Provider 请求前计算完整 messages + Tool schema；优先采用上一请求真实 input token 修正本地保守估算；达到软阈值后建立新的 window ID，以 replacement history 真正替换旧消息，并重新注入有界 canonical workspace checkpoint；最近一批尚未被模型消费的 Tool Result 保持原样。只有碰到硬上限且没有其他安全空间时，Harness 才把最大的 Tool Result 释放成可恢复 receipt，并明确禁止因为 receipt 被释放而重复 mutation；精确内容仍通过既有 Catalog/Read Tool 恢复。
