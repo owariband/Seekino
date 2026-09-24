@@ -85,7 +85,7 @@ class VideoParseProvenance(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Keep persisted values compatible with the existing episode checkpoints.
-    provider: Literal["doubao", "deepseek", "ollama", "llama_cpp"]
+    provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     input_mode: Literal["video", "ordered_frames"]
     frame_fps: float | None = Field(default=None, gt=0)
@@ -334,7 +334,7 @@ class VideoFallbackModels(BaseModel):
 
     enabled: bool
     transcript_model: str = Field(min_length=1)
-    provider: Literal["deepseek"]
+    provider: str = Field(min_length=1)
     visual_model: str = Field(min_length=1)
     refiner_model: str = Field(min_length=1)
     input_mode: Literal["ordered_frames"]

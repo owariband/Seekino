@@ -4,8 +4,8 @@ import argparse
 import os
 from pathlib import Path
 
-from gateway.config import load_config
 from gateway.ark.multimodal import ArkMultimodalModel
+from gateway.config import OpenAIVisionSourceConfig, load_config
 from gateway.openai.multimodal import DeepSeekMultimodalModel
 
 from .analysis_windows import (
@@ -15,16 +15,14 @@ from .analysis_windows import (
 )
 from .checkpoints import (
     load_completed_chunks as _load_completed_chunks,
+)
+from .checkpoints import (
     stream_candidate_transcripts as _stream_candidate_transcripts,
+)
+from .checkpoints import (
     write_json as _write_json,
 )
-from .video_chunk_parse import (
-    ContentFilterVideoUnderstandingAgent,
-    FrameFallbackVideoUnderstandingAgent,
-    VideoASRAgent,
-    VideoUnderstandingAgent,
-    VideoUnderstandingAgentProtocol,
-)
+from .model_factory import build_asr_agent, build_fallback_model, build_vision_model
 from .schemas import (
     VideoChunkCheckpoint,
     VideoChunkParseResult,
@@ -32,6 +30,13 @@ from .schemas import (
     VideoParseModels,
 )
 from .understand import UnderstandStage
+from .video_chunk_parse import (
+    ContentFilterVideoUnderstandingAgent,
+    FrameFallbackVideoUnderstandingAgent,
+    OrderedFrameVideoUnderstandingAgent,
+    VideoUnderstandingAgent,
+    VideoUnderstandingAgentProtocol,
+)
 
 _RUNTIME_CONTEXT_START = "<!-- ANIVAG_RUNTIME_CONTEXT_START -->"
 _RUNTIME_CONTEXT_END = "<!-- ANIVAG_RUNTIME_CONTEXT_END -->"
@@ -171,17 +176,18 @@ def main() -> None:
 
     asr_agent = None
     if args.asr_mode == "lite":
-        transcript_model_client = ArkMultimodalModel(
-            transcript_model,
-            request_timeout_seconds=args.request_timeout_seconds,
-        )
-        asr_agent = VideoASRAgent(
-            transcript_model_client,
+        asr_agent = build_asr_agent(
+            config, model=transcript_model,
             fps=transcript_fps,
+            timeout=parser_config.transcription_timeout_seconds or args.request_timeout_seconds,
+            max_output_tokens=parser_config.transcription_max_output_tokens,
+            ark_model_type=ArkMultimodalModel,
         )
-    video_model_client = ArkMultimodalModel(
-        video_model,
-        request_timeout_seconds=args.request_timeout_seconds,
+    video_model_client = build_vision_model(
+        config, model=video_model,
+        timeout=parser_config.vision_timeout_seconds or args.request_timeout_seconds,
+        max_output_tokens=parser_config.vision_max_output_tokens,
+        ark_model_type=ArkMultimodalModel,
     )
     understanding_agent: VideoUnderstandingAgentProtocol = (
         VideoUnderstandingAgent(
@@ -189,15 +195,15 @@ def main() -> None:
             fps=video_fps,
         )
     )
+    if isinstance(config.stage_source("vision"), OpenAIVisionSourceConfig):
+        understanding_agent = OrderedFrameVideoUnderstandingAgent(
+            video_model_client, frame_fps=video_fps,
+            max_frames=parser_config.max_frames_per_window, max_height=args.max_height,
+        )
     if fallback_enabled:
         assert deepseek_api_key is not None
-        deepseek_model = DeepSeekMultimodalModel(
-            deepseek_config.model,
-            base_url=deepseek_config.base_url,
-            api_key=deepseek_api_key,
-            max_output_tokens=deepseek_config.max_output_tokens,
-            request_timeout_seconds=deepseek_config.request_timeout_seconds,
-            reasoning_effort=deepseek_config.reasoning_effort,
+        deepseek_model = build_fallback_model(
+            config, deepseek_config, deepseek_model_type=DeepSeekMultimodalModel,
         )
         fallback_agent = FrameFallbackVideoUnderstandingAgent(
             deepseek_model,

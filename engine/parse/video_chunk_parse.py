@@ -33,7 +33,7 @@ from .schemas import (
     VideoTimeline,
 )
 
-ProvenanceProvider = Literal["doubao", "deepseek", "ollama", "llama_cpp"]
+ProvenanceProvider = str
 
 
 class VideoASRAgentProtocol(Protocol):
@@ -257,10 +257,8 @@ class FrameFallbackVideoUnderstandingAgent:
             raise ValueError("max_frames_per_group must be greater than zero")
         if max_height <= 0:
             raise ValueError("max_height must be greater than zero")
-        if vision_model.provider_name != "deepseek":
-            raise ValueError("vision_model must use the deepseek provider")
-        if refiner_model.provider_name != "deepseek":
-            raise ValueError("refiner_model must use the deepseek provider")
+        if not vision_model.provider_name.strip() or not refiner_model.provider_name.strip():
+            raise ValueError("fallback models must identify their providers")
 
         self.asr_model_name = asr_model_name
         self.vision_model_name = vision_model.model_name
@@ -362,7 +360,7 @@ class FrameFallbackVideoUnderstandingAgent:
             transcript,
             resolved_duration_seconds,
             provenance=VideoParseProvenance(
-                provider="deepseek",
+                provider=_provenance_provider(self._refiner_model),
                 model=self.refiner_model_name,
                 input_mode="ordered_frames",
                 frame_fps=self.frame_fps,
@@ -798,7 +796,9 @@ def _provenance_provider(model: MultimodalModel) -> ProvenanceProvider:
         return "ollama"
     if model.provider_name == "llama_cpp":
         return "llama_cpp"
-    raise ValueError(f"unsupported provenance provider: {model.provider_name}")
+    if not model.provider_name.strip():
+        raise ValueError("provenance provider must not be empty")
+    return model.provider_name
 
 
 def _clamp_transcript(

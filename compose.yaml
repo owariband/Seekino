@@ -1,0 +1,50 @@
+name: anivag-local
+
+# Development dependencies only. API, Consumer, Vite and ffmpeg run on the host.
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      # Matches .env.example. Loopback-only ports; not a production credential policy.
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_DATABASE: anivag_development
+    ports:
+      - "127.0.0.1:${ANIVAG_MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysql", "--protocol=TCP", "-h", "127.0.0.1", "-uroot", "-e", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    stop_grace_period: 60s
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+    ports:
+      - "127.0.0.1:${ANIVAG_QDRANT_HTTP_PORT:-6333}:6333"
+      - "127.0.0.1:${ANIVAG_QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+      - qdrant_snapshots:/qdrant/snapshots
+    healthcheck:
+      # The upstream Debian image has bash but does not include curl/wget.
+      test:
+        - CMD
+        - bash
+        - -ec
+        - 'exec 3<>/dev/tcp/127.0.0.1/6333; printf "GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3; read -r status <&3; [[ "$$status" == *" 200 "* ]]'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    stop_grace_period: 30s
+
+volumes:
+  mysql_data:
+  qdrant_data:
+  qdrant_snapshots:

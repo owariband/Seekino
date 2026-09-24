@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from engine.parse.runtime import VideoParseRuntimeConfig
-from gateway.config import GatewayConfig
+from gateway.config import GatewayConfig, OpenAIVisionSourceConfig
 
 from ..schema import ContractModel
 from .media import ImageUploadConfig
@@ -116,6 +116,11 @@ class ParseConfig(ContractModel):
         parser = gateway.video_parser
         fallback = parser.fallback
         deepseek = fallback.deepseek
+        vision_input_mode = runtime.video_input_mode
+        vision_max_frames = runtime.video_max_frames_per_window
+        if isinstance(gateway.stage_source("vision"), OpenAIVisionSourceConfig):
+            vision_input_mode = "ordered_frames"
+            vision_max_frames = vision_max_frames or parser.max_frames_per_window
         return cls(
             window=ParseWindowConfig(
                 chunk_duration_seconds=runtime.chunk_duration_seconds,
@@ -128,10 +133,14 @@ class ParseConfig(ContractModel):
                 model=runtime.transcript_model or os.getenv("ANIVAG_TRANSCRIPT_MODEL") or parser.transcript_model,
                 fps=runtime.transcript_fps or float(os.getenv("ANIVAG_TRANSCRIPT_FPS") or parser.transcript_fps),
                 concurrency=runtime.asr_concurrency,
+                max_output_tokens=runtime.transcript_max_output_tokens or parser.transcription_max_output_tokens,
             ),
             vision=ParseVisionConfig(
                 model=runtime.video_model or os.getenv("ANIVAG_VIDEO_MODEL") or parser.video_model,
                 fps=runtime.video_fps or float(os.getenv("ANIVAG_VIDEO_FPS") or parser.video_fps),
+                input_mode=vision_input_mode,
+                max_frames_per_window=vision_max_frames,
+                max_output_tokens=runtime.video_max_output_tokens or parser.vision_max_output_tokens,
             ),
             context=ParseContextConfig(
                 max_events=runtime.max_context_events,

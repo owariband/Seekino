@@ -46,8 +46,10 @@ State 只覆盖当前一次执行。
 
 仓库根目录是运行配置的唯一入口：`config.yaml` 保存可提交的模型默认值和全局 Chat Agent 运行参数，`config/model-pricing.yaml` 保存 Parse 模型人民币单价，`.env.local` 保存 API Key 和个人 Endpoint，不进入 Git。Chat Agent 参数位于 `config.yaml` 的 `agent_runtime` 节，也可从前端「设置」页编辑。YAML 中显式填写的值优先于同名 `ANIVAG_AGENT_*` 环境变量；缺失字段沿用环境变量或程序默认值。
 
-Chat Agent 的连接配置拆成两层：`model_sources` 描述协议 Adapter、用量 Provider 和
-认证方式，`agent_model` 只引用一个 source 并设置模型、请求上限及可选 fallback。
+模型连接配置拆成两层：`model_sources` 描述协议 Adapter、用量 Provider 和
+认证方式，`models` 分别选择 Agent、ASR、画面理解及视觉降级模型；向量配置保持原样。
+旧的 `agent_model`、`video_parser.*_model` 等配置仍然兼容。
+DS + 第三方 ASR、第三方视觉接口和迁移规则见 [`docs/model-config.md`](docs/model-config.md)。
 DeepSeek 是 `adapter: openai` 下的 `profile: deepseek`；Codex 使用 app-server，Claude
 使用 Agent SDK。可复制的 source 示例及认证说明见
 [`gateway/README.md`](gateway/README.md#chat-agent-模型来源)。角色模型环境变量覆盖仍然有效，
@@ -99,6 +101,20 @@ Vite 代理会跟随 API 端口。此脚本仅用于 localhost development 环�
 修改 `config.yaml` 中可即时生效的 `agent_runtime` 参数后，新消息直接使用新值；
 `maximum_concurrent_kicks`、模型/解析配置及其他启动配置修改后，先运行
 `./start.sh stop` 再启动。脚本会检查需要重启的配置摘要，防止复用旧配置。
+
+### 可选：用 Docker 运行数据库
+
+原有 `./start.sh` 启动方式保持不变，无需 Docker。若希望省去本机安装 MySQL / Qdrant，
+可以先用根目录 [`compose.yaml`](compose.yaml) 启动数据库，再由原脚本复用它们：
+
+```bash
+docker compose up -d --wait && ./start.sh
+```
+
+前后端、ffmpeg 和视频处理仍在本机运行；数据库使用 Docker 持久卷，端口仅发布到
+`127.0.0.1`。`./start.sh stop` 不会停止 Compose 容器，需要时另执行 `docker compose stop`。
+每次选择 Docker 模式都先运行上述命令，避免数据库未运行时原脚本启动本机实例。
+自定义端口、已有数据和视频测试说明见 [Docker 开发说明](deploy/README.md)。
 
 ## 仓库结构
 
