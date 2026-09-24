@@ -37,3 +37,6 @@ package = false
 addopts = ["--import-mode=importlib"]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "live_agent: calls a real external Agent model provider",
+]
