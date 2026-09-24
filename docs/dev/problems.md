@@ -238,6 +238,58 @@ return completed
 
 依据：[pipeline.py](../../engine/parse/pipeline.py) 的算法阶段顺序；[transcribe.py](../../engine/parse/transcribe.py)、[understand.py](../../engine/parse/understand.py)、[embed.py](../../engine/parse/embed.py) 和 [persist.py](../../engine/parse/persist.py) 的阶段契约；[video_processing.py](../../server/service/video_processing.py)、[consumer.py](../../server/mq/consumer.py) 与 [job.py](../../server/repository/job.py) 的 Lease、Checkpoint 和恢复边界。
 
+### B07：视频解析成本高昂且耗时超过片长数倍
+
+优先级：高。类型：解析性能、单位经济性与失败止损问题。状态：已由本地开发库和运行日志实测确认，待优化。
+
+#### 实测数据与统计口径
+
+以下数据取自 2026-09-23 的本地开发库 `series_parse_job`、`parse_usage_attempt`、`parse_model_call`，共 7 个 Job、17 个 Attempt 和 675 次已记录模型调用；EP07 仍为 QUEUED 且没有消耗，未列入下表。表中“Worker 耗时”是 Consumer 使用单调时钟累计的活跃处理时间，不是视频时长；“已知预估费用”按每次调用保存的本地人民币价格快照计算。它只是当前配置单价估算中已经能够计价的部分，不等同于 Provider 最终账单，也不包含赠金、资源包或折扣；未计价调用和不完整 Attempt 会让配置单价估算缺少一部分，不能据此反推实际账单下界。
+
+| 样本 | 结果 | 源片长 | Worker 耗时 | 相对片长 | Attempt | 已记录调用 | Total tokens | 已知预估费用 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| EP01／`4770ed42` | 成功 | 23.84 min | 81.54 min | 3.42× | 6 | 117 | 3,585,909 | ¥15.40 |
+| EP02／`d57d8145` | 成功 | 23.67 min | 74.52 min | 3.15× | 1 | 96 | 3,051,231 | ¥14.76 |
+| EP03／`e8ab3ef3` | 成功 | 23.67 min | 77.74 min | 3.28× | 2 | 119 | 3,465,478 | ¥15.47 |
+| EP04／`0a45ce3d` | 成功 | 23.67 min | 至少 99.55 min | 至少 4.21× | 3 | 139 | 4,219,958 | 已知 ¥14.39；48 次调用未计价 |
+| EP05／`2d24ee44` | 成功 | 23.67 min | 97.20 min | 4.11× | 1 | 104 | 3,054,408 | 已知 ¥12.89；48 次调用未计价 |
+| EP06／`757b6064` | 失败，进度 17% | 23.67 min | 至少 29.48 min | 至少 1.25× | 4 | 100 | 2,921,862 | 已记录 ¥4.62，账本覆盖不完整 |
+
+- 4 个计时完整的成功样本均约 23.7 分钟，但活跃处理耗时为 74.52–97.20 分钟，即片长的 3.15–4.11 倍。EP04 的计时不完整，但已累计至少 99.55 分钟和 4.21 倍片长。
+- 5 个成功样本合计 118.508 分钟源视频，已知 Worker 耗时至少 430.542 分钟，聚合后至少为实时播放时长的 3.633 倍；已记录 575 次模型调用和 17,376,984 tokens。
+- EP01–EP03 的调用与价格覆盖完整，单集预估费用为 ¥14.76–¥15.47，均值 ¥15.21，约为每源视频分钟 ¥0.64。5 个成功样本的已计价调用合计 ¥72.91，但 EP04、EP05 各有 48 次 Embedding 调用未计价，因此不能把 ¥72.91 当作完整总费用。
+- EP06 最终只到 17% 且没有产出可用结果，却已记录 100 次调用、约 292 万 tokens 和 ¥4.62 已知费用。其已记录调用数已超过一次无重试成功的 EP02，说明页面进度不能作为资源消耗的近似值。
+- 合并成功样本与 EP06 后，当前已执行 Job 共记录 675 次调用、20,298,846 tokens 和 ¥77.5359478 已计价调用预估费用；完整的配置单价估算还缺少 96 次 Embedding 调用，且该小计仍不是实际账单。
+- 2026-09-23 的本地 Artifact 快照还显示：`outputs/server/artifacts/development/jobs` 中 6 个已运行 Job 的工作目录约 4.5 GiB；`outputs/server/artifacts/development/media` 中排除原视频后的派生 Chunk、Analysis Window 和关键帧约 4.4 GiB。发布实现使用文件复制，工作目录与稳定媒体目录中的派生文件是两份独立副本。这属于本机转码、I/O 和磁盘放大，不能与上表的模型费用混算。
+
+EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at - started_at` 约 23.8 小时，不能描述成连续计算耗时。排除该样本后，另外 4 个成功 Job 的端到端墙钟时间为 74.5–107.6 分钟，仍明显超过源片长。
+
+#### 已确认的结构性原因
+
+1. **单集天然产生大量远程调用。** 默认按 60 秒切片并在相邻切片两侧各保留 3 秒重叠。约 23.7 分钟视频形成 24 个 Chunk；没有 fallback 和重试时，每个 Chunk 仍至少执行 1 次 Lite 候选转写、1 次 Pro 视频理解、1 次文本向量和 1 次视频向量，即理论最低 96 次模型调用。
+2. **主要阶段串行。** ASR 只有 4 路有界并发，Pipeline 等全部待处理 ASR 完成后才进入 Understanding；Understanding 为演进 Context 按 Chunk 串行。文本向量全部完成后才串行执行视频向量。同一服务实例只装配一个 Parse Consumer，Job 之间也逐个处理。按 EP02 的 Job 日志和调用顺序近似拆分，ASR 约 29.9 分钟、主视觉理解约 39.3 分钟、Embedding 约 2.9 分钟、本地处理与阶段交接约 2.5 分钟；这只是日志反推值，当前没有持久化的逐阶段正式指标。
+3. **Pro 视频理解是当前首要金额来源。** 在无重试且全部调用可计价的 EP02 中，24 次 `video_timeline` 占 45.30% tokens，却贡献 ¥12.44，即该集预估费用的 84.27%；24 次视频向量调用贡献 11.32%，Lite 候选转写贡献 4.22%，文本向量贡献 0.19%。该比例只代表此实测样本，但足以定位本轮优化的第一对象。
+4. **媒体准备和上传重复。** 每个 Chunk 依次生成 Analysis Window、Canonical Chunk 和关键帧；ASR、Pro 理解和视频向量还会分别读取并内联编码视频。一次 24-Chunk Attempt 至少涉及 48 次片段转码和 24 次独立关键帧提取，当前没有按源内容与解析配置复用整套准备结果。
+5. **重试会重做已经成功但未持久化的工作。** ASR 没有独立 durable checkpoint。Understanding 在中途失败后，下一 Attempt 只恢复已提交的连续 PARSED 前缀，其余已经在内存中完成的 ASR 会重新调用；媒体准备也会写入新的 `lease-*` 目录并重新生成全部窗口。实测候选转写调用从干净样本的 24 次放大到 EP01 的 41 次、EP04 的 63 次和失败 EP06 的 91 次。
+6. **fallback 继续放大长尾。** 一个典型 66 秒窗口触发内容审核 fallback 后，会在已发生的主 Pro 请求之外，再增加 3 次 `neutral_visual_evidence` 和 1 次 `fallback_video_timeline`；本地日志已出现这一 1+4 调用路径。主请求单次超时上限为 600 秒，fallback 单次为 1200 秒，当前没有整个 Job 的总耗时、总调用或总费用预算。
+
+#### 处理方向
+
+1. 先补低频结构化指标或 Metrics，分别统计 media prepare、ASR、understand、text embed、video embed 和 index 的耗时、调用数与费用；不要恢复 B04 已删除的逐 Chunk／逐 Stage 高频写库表。
+2. 优先完成重试止损：为 ASR 增加可恢复的 Chunk 级持久化结果，以内容哈希、解析配置和模型 provenance 作为复用条件；恢复时复用已发布媒体，避免重新转码、上传和计费。为 Job 设置明确的总耗时、总调用和总费用预算。
+3. 以同一批视频做质量对照，评估减少 Pro 重复输入和调用数量的方案，包括降低视觉采样、合并相邻窗口、先筛选再调用 Pro；任何降本方案都必须同时检查时间线和 Evidence 质量，不能只看费用。
+4. 在不破坏 Context 顺序的前提下，将独立的 Embedding 和 fallback 分组改为有界并发或流水处理；Job 级并发需要同时验证 Provider 限流、内存占用和 Qdrant 写入边界。
+5. 对最终成功或失败的 Job 做引用审计后，清理无 Checkpoint 引用的旧 Lease 和重复派生媒体；价格快照缺失时必须明确显示“未计价／下界”，不能显示成完整总费用。
+
+#### 验收条件
+
+- 用固定视频集同时报告源片长、端到端墙钟时间、活跃 Worker 时间、Attempt、模型调用、tokens、已知费用、未计价调用和用量覆盖状态，并形成可重复的优化前基线。
+- 普通成功、Understanding 中途失败重试和 Worker 中断恢复都不再重复调用已经持久化的 ASR，也不重新生成内容与配置一致的媒体文件。
+- 优化后的同批样本在 Worker 时间、墙钟时间和每源视频分钟费用上均有可重复的下降，同时 Timeline、Transcript 和检索 Evidence 的质量回归通过。
+- 所有调用都有价格快照，或在 API／UI 中明确标记未知费用；失败 Job 达到预算后可解释地终止，不再让重试无限线性放大资源消耗。
+
+依据：[pipeline.py](../../engine/parse/pipeline.py)、[transcribe.py](../../engine/parse/transcribe.py)、[understand.py](../../engine/parse/understand.py) 与 [embed.py](../../engine/parse/embed.py) 的阶段顺序和并发边界；[video_chunk_parse.py](../../engine/parse/video_chunk_parse.py) 的主理解与 fallback；[analysis_windows.py](../../engine/parse/analysis_windows.py)、[video_processing.py](../../server/service/video_processing.py) 与 [artifact.py](../../server/storage/artifact.py) 的媒体准备、Lease 目录和复制发布；[consumer.py](../../server/mq/consumer.py) 的 Job 消费；[parse_usage.py](../../server/service/parse_usage.py) 与 [parse-model-usage.md](../parse-model-usage.md) 的价格快照和费用口径；[config.yaml](../../config.yaml) 的当前模型与 fallback 配置；本地开发库和 `outputs/server/logs/development/api.log` 的 2026-09-20 至 2026-09-23 运行记录。
+
 ## Chat 联调问题（2026-09-21）
 
 ### C01：草稿引用未召回的 Evidence 导致回答失败
@@ -297,7 +349,7 @@ return completed
 | 真实整链联调 | 2026-09-20 本地 MySQL、Qdrant、API、Web 已启动，`/healthz` 为 ok 且 Parse Consumer running；尚未用新视频跑完整业务链 | 使用小视频验收上传→解析→两路向量→索引→聊天→定位播放，不能用存活检查替代整链验收 |
 | MySQL 集成测试 | 最近全量 `841 passed, 8 skipped`；8 项均因未配置 `ANIVAG_TEST_DATABASE_URL` 跳过，本地开发库启动时 Schema 校验通过 | 使用独立测试库执行集成项，验证事务、锁和历史 Schema 迁移；禁止直接拿开发库跑破坏性测试 |
 | 浏览器端到端 | 前端最近全量 53 passed；Playwright 有配置但没有用例，本轮截图未成功 | 补真实浏览器验收，不将 mock / DOM 通过描述成整链通过 |
-| Parse 消耗 | 采集、价格快照、Decimal 人民币计算及 UI 已实现；相关最新前端测试 18 passed、typecheck 通过 | 新版 Worker 执行后核对真实 Provider usage、MySQL 记录、费用与页面；缺细分保持未知 |
+| Parse 消耗 | 已完成本地开发库实测审计；约 23.7 分钟的成功样本需 74.52–97.20 分钟完整 Worker 时间，EP04 已知下界 99.55 分钟；完整计价样本约 ¥14.76–¥15.47／集，详见 B07 | 按 B07 建立分阶段低频指标，优先做重试止损、媒体复用和 Pro 调用降本；缺失价格继续明确显示未知或下界 |
 | 已有数据库升级 | init-db 有旧 Schema guard，不自动 ALTER 历史表；本地当前 Schema 已通过启动校验，但未演练带旧 timing 明细表的历史库升级 | 停止 Worker 后执行受控迁移，并在历史数据副本上核对汇总结果、Incomplete 标记与旧表清理 |
 
 ## 当前能力边界与未纳入范围
