@@ -22,6 +22,18 @@ hypnos: 根据understanding agent结合video理解来调整asr的speaker归因�
 
 ### 5. retrieve算法（非harness）策略优化
 eg.BM25使用优化、精排设计处理
+旧的三路召回：
+一个 text vector，它的输入是：
+self_compact
++ 每个 owned event 的 description
++ 每个 owned event 的 text
+
+完整 Chunk 的vision vector，粒度太粗用了1min（全量video）的，不知道效果如何
+
+存在的问题总结：
+没有设置合理的粒度逐级展开式向量
+
+
 
 
 ## P1

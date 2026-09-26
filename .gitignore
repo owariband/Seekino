@@ -1,6 +1,5 @@
 # Local design notes and generated visual / architecture artifacts
-docs/design/*
-!docs/design/parse-v2.md
+**/design/
 docs/notes/
 docs/ui-design/
 /transfer.md
