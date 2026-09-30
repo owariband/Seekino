@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..parsev1.schemas import VideoParseResult
+from .contracts import VideoChunkRetrievalIdentity
 
 AGENT_RETRIEVAL_STRATEGY_VERSION = "query-adaptive-three-channel-rrf-v2"
 
@@ -43,6 +44,12 @@ class RankedVideoChunkMatch(BaseModel):
     rank: int = Field(gt=0)
     video_chunk_id: str = Field(min_length=1)
     score: float = Field(allow_inf_nan=False)
+
+
+class VersionedRankedVideoChunkMatch(RankedVideoChunkMatch):
+    """One channel result pinned to one formal result and index projection."""
+
+    retrieval_identity: VideoChunkRetrievalIdentity
 
 
 class TranscriptCueDocument(BaseModel):
@@ -86,12 +93,20 @@ class FusedVideoChunkRanking(BaseModel):
     video_chunk_id: str = Field(min_length=1)
     fused_rank: int = Field(gt=0)
     fused_score: float = Field(gt=0, allow_inf_nan=False)
+    lexical_rank: int | None = Field(default=None, gt=0)
+    lexical_score: float | None = Field(default=None, allow_inf_nan=False)
     transcript_rank: int | None = Field(default=None, gt=0)
     transcript_score: float | None = Field(default=None, allow_inf_nan=False)
     text_rank: int | None = Field(default=None, gt=0)
     text_score: float | None = Field(default=None, allow_inf_nan=False)
     vision_rank: int | None = Field(default=None, gt=0)
     vision_score: float | None = Field(default=None, allow_inf_nan=False)
+
+
+class VersionedFusedVideoChunkRanking(FusedVideoChunkRanking):
+    """RRF output that remains pinned to its formal result and projection."""
+
+    retrieval_identity: VideoChunkRetrievalIdentity
 
 
 def build_video_chunk_retrieval_documents(
@@ -173,6 +188,8 @@ def fuse_video_chunk_rankings(
     text_rankings: Sequence[RankedVideoChunkMatch],
     vision_rankings: Sequence[RankedVideoChunkMatch],
     *,
+    lexical_rankings: Sequence[RankedVideoChunkMatch] = (),
+    lexical_weight: float = 0.0,
     transcript_rankings: Sequence[RankedVideoChunkMatch] = (),
     transcript_weight: float = 0.0,
     text_weight: float,
@@ -183,11 +200,20 @@ def fuse_video_chunk_rankings(
     """Fuse formal VideoChunk IDs while retaining every channel's rank and score."""
 
     _validate_rrf_parameters(
+        lexical_weight=lexical_weight,
         transcript_weight=transcript_weight,
         text_weight=text_weight,
         vision_weight=vision_weight,
         channel_top_k=channel_top_k,
         rrf_k=rrf_k,
+    )
+    if lexical_weight > 0 and transcript_weight > 0:
+        raise ValueError(
+            "lexical_weight and transcript_weight cannot both be greater than zero"
+        )
+    lexical_by_id = _rankings_by_video_chunk_id(
+        lexical_rankings[:channel_top_k],
+        channel_name="lexical",
     )
     transcript_by_id = _rankings_by_video_chunk_id(
         transcript_rankings[:channel_top_k],
@@ -204,6 +230,7 @@ def fuse_video_chunk_rankings(
 
     scores: dict[str, float] = {}
     for rankings, weight in (
+        (lexical_by_id, lexical_weight),
         (transcript_by_id, transcript_weight),
         (text_by_id, text_weight),
         (vision_by_id, vision_weight),
@@ -218,6 +245,7 @@ def fuse_video_chunk_rankings(
     ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
     candidates: list[FusedVideoChunkRanking] = []
     for fused_rank, (video_chunk_id, fused_score) in enumerate(ordered, start=1):
+        lexical = lexical_by_id.get(video_chunk_id)
         transcript = transcript_by_id.get(video_chunk_id)
         text = text_by_id.get(video_chunk_id)
         vision = vision_by_id.get(video_chunk_id)
@@ -226,6 +254,8 @@ def fuse_video_chunk_rankings(
                 video_chunk_id=video_chunk_id,
                 fused_rank=fused_rank,
                 fused_score=fused_score,
+                lexical_rank=lexical.rank if lexical is not None else None,
+                lexical_score=lexical.score if lexical is not None else None,
                 transcript_rank=(
                     transcript.rank if transcript is not None else None
                 ),
@@ -239,6 +269,50 @@ def fuse_video_chunk_rankings(
             )
         )
     return candidates
+
+
+def fuse_versioned_video_chunk_rankings(
+    text_rankings: Sequence[VersionedRankedVideoChunkMatch],
+    vision_rankings: Sequence[VersionedRankedVideoChunkMatch],
+    *,
+    lexical_rankings: Sequence[VersionedRankedVideoChunkMatch] = (),
+    lexical_weight: float = 0.0,
+    transcript_rankings: Sequence[VersionedRankedVideoChunkMatch] = (),
+    transcript_weight: float = 0.0,
+    text_weight: float,
+    vision_weight: float,
+    channel_top_k: int,
+    rrf_k: int,
+) -> list[VersionedFusedVideoChunkRanking]:
+    """Fuse only candidates whose cross-channel result identity agrees."""
+
+    fused = fuse_video_chunk_rankings(
+        text_rankings,
+        vision_rankings,
+        lexical_rankings=lexical_rankings,
+        lexical_weight=lexical_weight,
+        transcript_rankings=transcript_rankings,
+        transcript_weight=transcript_weight,
+        text_weight=text_weight,
+        vision_weight=vision_weight,
+        channel_top_k=channel_top_k,
+        rrf_k=rrf_k,
+    )
+    identities = _validated_versioned_identities(
+        (
+            ("lexical", lexical_rankings[:channel_top_k]),
+            ("transcript", transcript_rankings[:channel_top_k]),
+            ("text", text_rankings[:channel_top_k]),
+            ("vision", vision_rankings[:channel_top_k]),
+        )
+    )
+    return [
+        VersionedFusedVideoChunkRanking(
+            **ranking.model_dump(),
+            retrieval_identity=identities[ranking.video_chunk_id],
+        )
+        for ranking in fused
+    ]
 
 
 def rank_transcript_chunks(
@@ -365,8 +439,41 @@ def _rankings_by_video_chunk_id(
     return by_id
 
 
+def _validated_versioned_identities(
+    channels: Sequence[
+        tuple[str, Sequence[VersionedRankedVideoChunkMatch]]
+    ],
+) -> dict[str, VideoChunkRetrievalIdentity]:
+    by_id: dict[str, VideoChunkRetrievalIdentity] = {}
+    trusted_scope: tuple[str, str] | None = None
+    for channel_name, rankings in channels:
+        for ranked in rankings:
+            if not isinstance(ranked, VersionedRankedVideoChunkMatch):
+                raise TypeError(
+                    f"{channel_name} rankings require "
+                    "VersionedRankedVideoChunkMatch"
+                )
+            identity = ranked.retrieval_identity
+            scope = (identity.workspace_id, identity.retrieval_contract_id)
+            if trusted_scope is None:
+                trusted_scope = scope
+            elif trusted_scope != scope:
+                raise ValueError(
+                    "versioned rankings span multiple workspace/retrieval scopes"
+                )
+            current = by_id.get(ranked.video_chunk_id)
+            if current is not None and current != identity:
+                raise ValueError(
+                    "retrieval identity changed between channels for "
+                    f"video_chunk_id {ranked.video_chunk_id!r} in {channel_name}"
+                )
+            by_id[ranked.video_chunk_id] = identity
+    return by_id
+
+
 def _validate_rrf_parameters(
     *,
+    lexical_weight: float = 0.0,
     transcript_weight: float = 0.0,
     text_weight: float,
     vision_weight: float,
@@ -378,6 +485,7 @@ def _validate_rrf_parameters(
     if rrf_k <= 0:
         raise ValueError("rrf_k must be greater than zero")
     weights = (
+        ("lexical_weight", lexical_weight),
         ("transcript_weight", transcript_weight),
         ("text_weight", text_weight),
         ("vision_weight", vision_weight),
@@ -390,7 +498,7 @@ def _validate_rrf_parameters(
             or weight < 0
         ):
             raise ValueError(f"{name} must be a finite nonnegative number")
-    if transcript_weight == 0 and text_weight == 0 and vision_weight == 0:
+    if all(weight == 0 for _, weight in weights):
         raise ValueError("at least one channel weight must be greater than zero")
 
 

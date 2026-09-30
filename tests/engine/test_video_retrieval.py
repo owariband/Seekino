@@ -9,13 +9,24 @@ from engine.parsev1.schemas import (
     VideoChunkParseResult,
     VideoParseResult,
 )
+from engine.retrieval.contracts import (
+    LexicalMatch,
+    SelectionReason,
+    VideoChunkCandidate,
+    VideoChunkEvidence,
+    VideoChunkRetrievalIdentity,
+    VideoChunkSearchHit,
+)
+from engine.retrieval.index_projection import LexicalField
 from engine.retrieval.video_retrieval import (
     RankedVideoChunk,
     RankedVideoChunkMatch,
     TranscriptChunkDocument,
     TranscriptCueDocument,
+    VersionedRankedVideoChunkMatch,
     build_video_chunk_retrieval_documents,
     fuse_video_chunk_rankings,
+    fuse_versioned_video_chunk_rankings,
     normalize_hybrid_retrieval_weights,
     normalize_video_retrieval_weights,
     rank_transcript_chunks,
@@ -85,6 +96,21 @@ def _ranked(*sequence_nos: int) -> list[RankedVideoChunk]:
         )
         for rank, sequence_no in enumerate(sequence_nos, start=1)
     ]
+
+
+def _retrieval_identity(**updates: object) -> VideoChunkRetrievalIdentity:
+    values: dict[str, object] = {
+        "workspace_id": "workspace-1",
+        "series_id": "series-1",
+        "video_id": "video-1",
+        "parse_task_id": "task-1",
+        "content_version": 3,
+        "source_revision": "source-1",
+        "projection_revision": "projection-1",
+        "retrieval_contract_id": "retrieval-1",
+    }
+    values.update(updates)
+    return VideoChunkRetrievalIdentity.model_validate(values)
 
 
 def test_retrieval_documents_expose_video_compact_without_context() -> None:
@@ -226,6 +252,8 @@ def test_formal_rrf_preserves_each_channel_rank_and_score() -> None:
         "video_chunk_id": "chunk-a",
         "fused_rank": 1,
         "fused_score": (2 / 61) + (1 / 62),
+        "lexical_rank": None,
+        "lexical_score": None,
         "transcript_rank": None,
         "transcript_score": None,
         "text_rank": 1,
@@ -233,6 +261,302 @@ def test_formal_rrf_preserves_each_channel_rank_and_score() -> None:
         "vision_rank": 2,
         "vision_score": 0.7,
     }
+
+
+def test_versioned_rrf_preserves_identity_across_three_channels() -> None:
+    identity = _retrieval_identity()
+
+    fused = fuse_versioned_video_chunk_rankings(
+        [VersionedRankedVideoChunkMatch(
+            rank=1, video_chunk_id="chunk-a", score=0.9,
+            retrieval_identity=identity,
+        )],
+        [VersionedRankedVideoChunkMatch(
+            rank=1, video_chunk_id="chunk-a", score=0.8,
+            retrieval_identity=identity,
+        )],
+        lexical_rankings=[VersionedRankedVideoChunkMatch(
+            rank=1, video_chunk_id="chunk-a", score=12.0,
+            retrieval_identity=identity,
+        )],
+        lexical_weight=1.0,
+        text_weight=1.0,
+        vision_weight=1.0,
+        channel_top_k=10,
+        rrf_k=60,
+    )
+
+    assert len(fused) == 1
+    assert fused[0].retrieval_identity == identity
+    assert fused[0].model_dump(mode="json")["retrieval_identity"] == {
+        "workspace_id": "workspace-1",
+        "series_id": "series-1",
+        "video_id": "video-1",
+        "parse_task_id": "task-1",
+        "content_version": 3,
+        "source_revision": "source-1",
+        "projection_revision": "projection-1",
+        "retrieval_contract_id": "retrieval-1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "changed"),
+    [
+        ("workspace_id", "workspace-2"),
+        ("series_id", "series-2"),
+        ("video_id", "video-2"),
+        ("parse_task_id", "task-2"),
+        ("content_version", 4),
+        ("source_revision", "source-2"),
+        ("projection_revision", "projection-2"),
+        ("retrieval_contract_id", "retrieval-2"),
+    ],
+)
+def test_versioned_rrf_rejects_cross_channel_identity_changes(
+    field: str,
+    changed: object,
+) -> None:
+    first = _retrieval_identity()
+    second = _retrieval_identity(**{field: changed})
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "multiple workspace/retrieval scopes"
+            if field in {"workspace_id", "retrieval_contract_id"}
+            else "retrieval identity changed between channels"
+        ),
+    ):
+        fuse_versioned_video_chunk_rankings(
+            [VersionedRankedVideoChunkMatch(
+                rank=1, video_chunk_id="chunk-a", score=0.9,
+                retrieval_identity=first,
+            )],
+            [VersionedRankedVideoChunkMatch(
+                rank=1, video_chunk_id="chunk-a", score=0.8,
+                retrieval_identity=second,
+            )],
+            text_weight=1.0,
+            vision_weight=1.0,
+            channel_top_k=10,
+            rrf_k=60,
+        )
+
+
+def test_versioned_rrf_allows_different_tasks_for_different_videos() -> None:
+    fused = fuse_versioned_video_chunk_rankings(
+        [VersionedRankedVideoChunkMatch(
+            rank=1, video_chunk_id="chunk-a", score=0.9,
+            retrieval_identity=_retrieval_identity(),
+        )],
+        [VersionedRankedVideoChunkMatch(
+            rank=1, video_chunk_id="chunk-b", score=0.8,
+            retrieval_identity=_retrieval_identity(
+                series_id="series-2",
+                video_id="video-2",
+                parse_task_id="task-2",
+                content_version=7,
+                source_revision="source-2",
+                projection_revision="projection-2",
+            ),
+        )],
+        text_weight=1.0,
+        vision_weight=1.0,
+        channel_top_k=10,
+        rrf_k=60,
+    )
+
+    assert [item.video_chunk_id for item in fused] == ["chunk-a", "chunk-b"]
+    assert [
+        item.retrieval_identity.parse_task_id for item in fused
+    ] == ["task-1", "task-2"]
+
+
+def test_versioned_rrf_rejects_unversioned_channel_input() -> None:
+    with pytest.raises(
+        TypeError,
+        match="text rankings require VersionedRankedVideoChunkMatch",
+    ):
+        fuse_versioned_video_chunk_rankings(  # type: ignore[arg-type]
+            [RankedVideoChunkMatch(
+                rank=1, video_chunk_id="chunk-a", score=0.9,
+            )],
+            [],
+            text_weight=1.0,
+            vision_weight=0.0,
+            channel_top_k=10,
+            rrf_k=60,
+        )
+
+
+def test_candidate_keeps_lexical_and_legacy_transcript_ranks_separate() -> None:
+    candidate = VideoChunkCandidate.model_validate({
+        "videoChunkId": "chunk-a",
+        "fusedRank": 1,
+        "fusedScore": 0.032,
+        "lexicalRank": 2,
+        "lexicalScore": 1.5,
+        "transcriptRank": 1,
+        "transcriptScore": 0.9,
+    })
+
+    assert candidate.lexical_rank == 2
+    assert candidate.transcript_rank == 1
+    assert candidate.model_dump(by_alias=True)["lexicalRank"] == 2
+    legacy = VideoChunkCandidate.model_validate({
+        "videoChunkId": "chunk-a", "fusedRank": 1, "fusedScore": 0.032,
+        "transcriptRank": 1, "transcriptScore": 0.9,
+    })
+    assert legacy.lexical_rank is None
+    assert legacy.transcript_rank == 1
+
+
+def test_lexical_match_preserves_dialogue_and_question_sources_on_wire() -> None:
+    dialogue = LexicalMatch.model_validate({
+        "field": "dialogue", "rawText": "门口等你。", "language": "zh",
+        "role": "ORIGINAL", "speaker": "小明", "startSeconds": 12,
+        "endSeconds": 14, "timelineIndex": 3,
+    })
+    question = LexicalMatch.model_validate({
+        "field": "questions", "rawText": "谁在门口等待？", "language": "zh",
+        "startSeconds": 10, "endSeconds": 20, "enrichmentIndex": 0,
+    })
+    reason = SelectionReason(
+        summary="检索线索", matched_evidence=[], limitations=[],
+        lexical_matches=[dialogue, question],
+    )
+
+    wire = reason.model_dump(mode="json", by_alias=True)
+    assert wire["lexicalMatches"][0]["timelineIndex"] == 3
+    assert wire["lexicalMatches"][1]["enrichmentIndex"] == 0
+    assert wire["lexicalMatches"][1]["field"] == "questions"
+    assert wire["matchedEvidence"] == []
+    assert SelectionReason.model_validate({
+        "summary": "旧 ASR 结果", "matchedEvidence": [], "limitations": [],
+    }).lexical_matches == []
+    assert LexicalMatch.model_validate(LexicalField(
+        field="questions", raw_text="谁在门口等待？", language="zh",
+        start_seconds=10, end_seconds=20, enrichment_index=0,
+    )).model_dump(by_alias=True)["rawText"] == "谁在门口等待？"
+
+
+def test_lexical_match_rejects_fabricated_provenance() -> None:
+    with pytest.raises(ValueError, match="event fields require only timeline_index"):
+        LexicalMatch.model_validate({
+            "field": "dialogue", "rawText": "门口等你。", "language": "zh",
+            "role": "ORIGINAL", "startSeconds": 12, "endSeconds": 14,
+            "enrichmentIndex": 0,
+        })
+    with pytest.raises(ValueError, match="enrichment fields require only enrichment_index"):
+        LexicalMatch.model_validate({
+            "field": "questions", "rawText": "谁在门口等待？", "language": "zh",
+            "startSeconds": 10, "endSeconds": 20, "timelineIndex": 0,
+        })
+
+
+def test_lexical_match_requires_lexical_rank_on_hit() -> None:
+    with pytest.raises(ValueError, match="lexical_matches require lexical_rank"):
+        VideoChunkSearchHit(
+            candidate=VideoChunkCandidate(
+                video_chunk_id="chunk-a", fused_rank=1, fused_score=0.1,
+            ),
+            selection_reason=SelectionReason(
+                summary="只有问题命中", matched_evidence=[], limitations=[],
+                lexical_matches=[LexicalMatch(
+                    field="questions", raw_text="谁在门口等待？", language="zh",
+                    start_seconds=10, end_seconds=20, enrichment_index=0,
+                )],
+            ),
+            evidence=VideoChunkEvidence.model_construct(),
+        )
+
+
+def test_formal_rrf_fuses_lexical_weight_and_preserves_its_evidence() -> None:
+    fused = fuse_video_chunk_rankings(
+        [
+            RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-b", score=0.9),
+            RankedVideoChunkMatch(rank=2, video_chunk_id="chunk-a", score=0.8),
+        ],
+        [],
+        lexical_rankings=[
+            RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-a", score=12.0),
+            RankedVideoChunkMatch(rank=2, video_chunk_id="chunk-b", score=9.0),
+        ],
+        lexical_weight=2.0,
+        text_weight=1.0,
+        vision_weight=0.0,
+        channel_top_k=2,
+        rrf_k=60,
+    )
+
+    assert [item.video_chunk_id for item in fused] == ["chunk-a", "chunk-b"]
+    assert fused[0].fused_score == (2 / 61) + (1 / 62)
+    assert (fused[0].lexical_rank, fused[0].lexical_score) == (1, 12.0)
+    assert (fused[0].text_rank, fused[0].text_score) == (2, 0.8)
+    assert (fused[0].transcript_rank, fused[0].transcript_score) == (None, None)
+
+
+def test_formal_rrf_accepts_lexical_as_the_only_enabled_channel() -> None:
+    fused = fuse_video_chunk_rankings(
+        [],
+        [],
+        lexical_rankings=[
+            RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-a", score=3.0)
+        ],
+        lexical_weight=1.0,
+        text_weight=0.0,
+        vision_weight=0.0,
+        channel_top_k=1,
+        rrf_k=60,
+    )
+
+    assert len(fused) == 1
+    assert fused[0].fused_score == 1 / 61
+    assert fused[0].lexical_rank == 1
+
+
+def test_formal_rrf_rejects_lexical_and_transcript_double_counting() -> None:
+    with pytest.raises(ValueError, match="lexical_weight and transcript_weight"):
+        fuse_video_chunk_rankings(
+            [],
+            [],
+            lexical_weight=0.5,
+            transcript_weight=0.5,
+            text_weight=0.0,
+            vision_weight=0.0,
+            channel_top_k=1,
+            rrf_k=60,
+        )
+
+
+@pytest.mark.parametrize("weight", [True, -1.0, float("inf"), float("nan")])
+def test_formal_rrf_rejects_invalid_lexical_weight(weight: float) -> None:
+    with pytest.raises(ValueError, match="lexical_weight must be a finite nonnegative"):
+        fuse_video_chunk_rankings(
+            [],
+            [],
+            lexical_weight=weight,
+            text_weight=1.0,
+            vision_weight=0.0,
+            channel_top_k=1,
+            rrf_k=60,
+        )
+
+
+def test_formal_rrf_rejects_duplicate_lexical_chunk_votes() -> None:
+    duplicate = RankedVideoChunkMatch(rank=1, video_chunk_id="chunk-a", score=3.0)
+    with pytest.raises(ValueError, match="lexical rankings contain duplicate"):
+        fuse_video_chunk_rankings(
+            [],
+            [],
+            lexical_rankings=[duplicate, duplicate.model_copy(update={"rank": 2})],
+            lexical_weight=1.0,
+            text_weight=0.0,
+            vision_weight=0.0,
+            channel_top_k=2,
+            rrf_k=60,
+        )
 
 
 def test_formal_rrf_breaks_cross_channel_ties_by_video_chunk_id() -> None:

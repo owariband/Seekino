@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from engine.retrieval.index_projection import LexicalField
+
 _MAX_UNIX_TIME_MS = 9_223_372_036_854_775_807
 
 
@@ -96,10 +98,33 @@ class VideoChunkEvidence(_RetrievalContractModel):
     parsed_at: int = Field(ge=0, le=_MAX_UNIX_TIME_MS, strict=True)
 
 
+class VideoChunkRetrievalIdentity(_RetrievalContractModel):
+    """Immutable MySQL/index identity required by versioned retrieval."""
+
+    model_config = ConfigDict(
+        alias_generator=_to_camel,
+        populate_by_name=True,
+        from_attributes=True,
+        extra="forbid",
+        frozen=True,
+    )
+
+    workspace_id: str = Field(min_length=1)
+    series_id: str = Field(min_length=1)
+    video_id: str = Field(min_length=1)
+    parse_task_id: str = Field(min_length=1)
+    content_version: int = Field(gt=0, strict=True)
+    source_revision: str = Field(min_length=1)
+    projection_revision: str = Field(min_length=1)
+    retrieval_contract_id: str = Field(min_length=1)
+
+
 class VideoChunkCandidate(_RetrievalContractModel):
     video_chunk_id: str
     fused_rank: int = Field(gt=0)
     fused_score: float = Field(gt=0, allow_inf_nan=False)
+    lexical_rank: int | None = Field(default=None, gt=0)
+    lexical_score: float | None = Field(default=None, allow_inf_nan=False)
     transcript_rank: int | None = Field(default=None, gt=0)
     transcript_score: float | None = Field(default=None, allow_inf_nan=False)
     text_rank: int | None = Field(default=None, gt=0)
@@ -127,10 +152,23 @@ class MatchedEvidence(_RetrievalContractModel):
         return self
 
 
+class LexicalMatch(LexicalField):
+    """Matched index text and its source; only matched_evidence asserts facts."""
+
+    model_config = ConfigDict(
+        alias_generator=_to_camel,
+        populate_by_name=True,
+        from_attributes=True,
+        extra="forbid",
+        revalidate_instances="always",
+    )
+
+
 class SelectionReason(_RetrievalContractModel):
     summary: str = Field(min_length=1)
     matched_evidence: list[MatchedEvidence]
     limitations: list[str]
+    lexical_matches: list[LexicalMatch] = Field(default_factory=list)
 
 
 class VideoChunkSearchHit(_RetrievalContractModel):
@@ -138,14 +176,19 @@ class VideoChunkSearchHit(_RetrievalContractModel):
     selection_reason: SelectionReason
     evidence: VideoChunkEvidence
 
+    @model_validator(mode="after")
+    def validate_lexical_source(self) -> "VideoChunkSearchHit":
+        if self.selection_reason.lexical_matches and self.candidate.lexical_rank is None:
+            raise ValueError("lexical_matches require lexical_rank")
+        return self
+
 
 class AgentReply(_RetrievalContractModel):
     message: str = Field(min_length=1)
     result_count: int = Field(ge=0)
 
 
-class VideoChunkSearchResult(_RetrievalContractModel):
-    query: str = Field(min_length=1)
+class VideoChunkSearchEvidence(_RetrievalContractModel):
     series_ids: list[str] = Field(min_length=1)
     agent_reply: AgentReply
     hits: list[VideoChunkSearchHit]
@@ -154,7 +197,7 @@ class VideoChunkSearchResult(_RetrievalContractModel):
     warnings: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_result_contract(self) -> "VideoChunkSearchResult":
+    def validate_result_contract(self) -> "VideoChunkSearchEvidence":
         if self.agent_reply.result_count != len(self.hits):
             raise ValueError("agentReply.resultCount must equal hits length")
         for hit in self.hits:
@@ -165,14 +208,21 @@ class VideoChunkSearchResult(_RetrievalContractModel):
         return self
 
 
+class VideoChunkSearchResult(VideoChunkSearchEvidence):
+    query: str = Field(min_length=1)
+
+
 __all__ = [
     "AgentReply",
+    "LexicalMatch",
     "MatchedEvidence",
     "SelectionReason",
     "TranscriptCueView",
     "VideoChunkCandidate",
     "VideoChunkEvidence",
     "VideoChunkKeyframeReference",
+    "VideoChunkRetrievalIdentity",
     "VideoChunkSearchHit",
+    "VideoChunkSearchEvidence",
     "VideoChunkSearchResult",
 ]
