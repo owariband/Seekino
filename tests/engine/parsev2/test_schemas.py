@@ -15,27 +15,24 @@ from engine.parsev2.schemas import (
 
 def _valid_result_payload() -> dict[str, Any]:
     return {
-        "persons": [
-            {"person_id": "p_anon", "label": "爱音"},
-            {"person_id": "p_rana", "label": "乐奈"},
-        ],
+        "persons": ["爱音", "乐奈"],
         "timeline": [
             {
                 "event_type": "EMOTION",
                 "start_seconds": 11,
                 "end_seconds": 17,
                 "description": "爱音强忍眼泪，显得十分难过",
-                "participant_person_ids": ["p_anon"],
-                "visible_person_ids": ["p_anon"],
+                "participants": ["爱音"],
+                "visible_persons": ["爱音"],
             },
             {
                 "event_type": "DIALOGUE",
                 "start_seconds": 12,
                 "end_seconds": 16,
                 "description": "爱音否认自己在难过",
-                "participant_person_ids": ["p_anon", "p_rana"],
-                "visible_person_ids": ["p_anon", "p_rana"],
-                "speaker_person_id": "p_anon",
+                "participants": ["爱音", "乐奈"],
+                "visible_persons": ["爱音", "乐奈"],
+                "speaker": "爱音",
                 "text_variants": [
                     {
                         "language": "ja",
@@ -63,6 +60,19 @@ def test_result_dispatches_union_and_preserves_multilingual_dialogue() -> None:
         "zh-Hans",
     ]
     assert VideoParseResult.model_validate_json(result.model_dump_json()) == result
+
+
+def test_result_uses_names_without_person_id_mapping() -> None:
+    result = VideoParseResult.model_validate(_valid_result_payload())
+    assert result.persons == ["爱音", "乐奈"]
+    assert isinstance(result.timeline[1], DialogueEvent)
+    assert result.timeline[1].speaker == "爱音"
+    assert result.timeline[1].participants == ["爱音", "乐奈"]
+
+    old_payload = _valid_result_payload()
+    old_payload["timeline"][1]["speaker_person_id"] = "p_anon"
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        VideoParseResult.model_validate(old_payload)
 
 
 def test_dialogue_and_emotion_may_overlap() -> None:
@@ -146,14 +156,14 @@ def test_event_rejects_invalid_integer_second_ranges(
             start_seconds=start_seconds,
             end_seconds=end_seconds,
             description="爱音走进房间",
-            participant_person_ids=["p_anon"],
-            visible_person_ids=["p_anon"],
+            participants=["爱音"],
+            visible_persons=["爱音"],
         )
 
 
 def test_non_dialogue_event_rejects_dialogue_fields() -> None:
     payload = _valid_result_payload()
-    payload["timeline"][0]["speaker_person_id"] = "p_anon"
+    payload["timeline"][0]["speaker"] = "爱音"
 
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         VideoParseResult.model_validate(payload)
@@ -173,52 +183,52 @@ def test_result_rejects_missing_or_unknown_event_type(event_type: str | None) ->
 
 def test_dialogue_requires_explicit_speaker_or_null() -> None:
     payload = _valid_result_payload()
-    payload["timeline"][1]["speaker_person_id"] = None
+    payload["timeline"][1]["speaker"] = None
     VideoParseResult.model_validate(payload)
 
-    del payload["timeline"][1]["speaker_person_id"]
+    del payload["timeline"][1]["speaker"]
     with pytest.raises(ValidationError):
         VideoParseResult.model_validate(payload)
 
 
 def test_dialogue_speaker_must_be_a_participant() -> None:
     payload = _valid_result_payload()
-    payload["timeline"][1]["participant_person_ids"] = ["p_rana"]
+    payload["timeline"][1]["participants"] = ["乐奈"]
 
     with pytest.raises(
         ValidationError,
-        match="speaker_person_id must be a participant",
+        match="speaker must be a participant",
     ):
         VideoParseResult.model_validate(payload)
 
 
 @pytest.mark.parametrize(
     "reference_field",
-    ["participant_person_ids", "visible_person_ids"],
+    ["participants", "visible_persons"],
 )
 def test_result_rejects_unknown_person_references(reference_field: str) -> None:
     payload = _valid_result_payload()
-    payload["timeline"][0][reference_field] = ["p_unknown"]
+    payload["timeline"][0][reference_field] = ["未知人物"]
 
-    with pytest.raises(ValidationError, match="unknown person_id"):
+    with pytest.raises(ValidationError, match="unknown person names"):
         VideoParseResult.model_validate(payload)
 
 
-def test_result_rejects_duplicate_person_ids() -> None:
+def test_result_rejects_duplicate_person_names() -> None:
     payload = _valid_result_payload()
-    payload["persons"][1]["person_id"] = "p_anon"
+    payload["persons"][1] = "爱音"
 
-    with pytest.raises(ValidationError, match="unique person_id"):
+    with pytest.raises(ValidationError, match="unique names"):
         VideoParseResult.model_validate(payload)
 
 
 @pytest.mark.parametrize(
     "reference_field",
-    ["participant_person_ids", "visible_person_ids"],
+    ["participants", "visible_persons"],
 )
 def test_event_rejects_duplicate_person_references(reference_field: str) -> None:
     payload = _valid_result_payload()
-    payload["timeline"][0][reference_field] = ["p_anon", "p_anon"]
+    payload["timeline"][0][reference_field] = ["爱音", "爱音"]
 
     with pytest.raises(ValidationError, match="must not contain duplicates"):
         VideoParseResult.model_validate(payload)

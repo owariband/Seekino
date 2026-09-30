@@ -13,13 +13,6 @@ class _ParseV2Model(BaseModel):
     model_config = ConfigDict(extra="forbid", revalidate_instances="always")
 
 
-class Person(_ParseV2Model):
-    """A result-local person identity referenced by timeline events."""
-
-    person_id: _NonBlankString
-    label: _NonBlankString
-
-
 class DialogueTextVariant(_ParseV2Model):
     """One language representation of the same logical utterance."""
 
@@ -52,10 +45,10 @@ class TimelineEventBase(_ParseV2Model):
         description="Exclusive absolute end in integer source-video seconds",
     )
     description: _NonBlankString
-    participant_person_ids: list[_NonBlankString] = Field(
+    participants: list[_NonBlankString] = Field(
         description="People who participate semantically in this event"
     )
-    visible_person_ids: list[_NonBlankString] = Field(
+    visible_persons: list[_NonBlankString] = Field(
         description="Relevant people visibly present during this event"
     )
 
@@ -63,10 +56,10 @@ class TimelineEventBase(_ParseV2Model):
     def validate_common_invariants(self) -> "TimelineEventBase":
         if self.end_seconds <= self.start_seconds:
             raise ValueError("end_seconds must be greater than start_seconds")
-        if len(set(self.participant_person_ids)) != len(self.participant_person_ids):
-            raise ValueError("participant_person_ids must not contain duplicates")
-        if len(set(self.visible_person_ids)) != len(self.visible_person_ids):
-            raise ValueError("visible_person_ids must not contain duplicates")
+        if len(set(self.participants)) != len(self.participants):
+            raise ValueError("participants must not contain duplicates")
+        if len(set(self.visible_persons)) != len(self.visible_persons):
+            raise ValueError("visible_persons must not contain duplicates")
         return self
 
 
@@ -80,8 +73,8 @@ class ActionEvent(TimelineEventBase):
 
 class DialogueEvent(TimelineEventBase):
     event_type: Literal["DIALOGUE"]
-    speaker_person_id: _NonBlankString | None = Field(
-        description="Speaker person_id, or null when attribution is unreliable"
+    speaker: _NonBlankString | None = Field(
+        description="Speaker name, or null when attribution is unreliable"
     )
     text_variants: list[DialogueTextVariant] = Field(
         min_length=1,
@@ -94,10 +87,10 @@ class DialogueEvent(TimelineEventBase):
     @model_validator(mode="after")
     def validate_dialogue_invariants(self) -> "DialogueEvent":
         if (
-            self.speaker_person_id is not None
-            and self.speaker_person_id not in self.participant_person_ids
+            self.speaker is not None
+            and self.speaker not in self.participants
         ):
-            raise ValueError("speaker_person_id must be a participant when set")
+            raise ValueError("speaker must be a participant when set")
 
         variant_keys = [
             (variant.language.casefold(), variant.role)
@@ -145,33 +138,30 @@ TimelineEvent = Annotated[
 class VideoParseResult(_ParseV2Model):
     """Canonical Video Parse V2 result before projection and persistence."""
 
-    persons: list[Person]
+    persons: list[_NonBlankString]
     timeline: list[TimelineEvent]
 
     @model_validator(mode="after")
     def validate_result_invariants(self) -> "VideoParseResult":
-        person_ids = [person.person_id for person in self.persons]
-        if len(set(person_ids)) != len(person_ids):
-            raise ValueError("persons must have unique person_id values")
+        if len(set(self.persons)) != len(self.persons):
+            raise ValueError("persons must have unique names")
 
-        known_person_ids = set(person_ids)
+        known_persons = set(self.persons)
         previous_start_seconds = -1
         for event in self.timeline:
             if event.start_seconds < previous_start_seconds:
                 raise ValueError("timeline must be ordered by start_seconds")
             previous_start_seconds = event.start_seconds
 
-            referenced_person_ids = (
-                event.participant_person_ids + event.visible_person_ids
-            )
-            if isinstance(event, DialogueEvent) and event.speaker_person_id is not None:
-                referenced_person_ids.append(event.speaker_person_id)
+            referenced_persons = event.participants + event.visible_persons
+            if isinstance(event, DialogueEvent) and event.speaker is not None:
+                referenced_persons.append(event.speaker)
 
-            unknown_person_ids = set(referenced_person_ids) - known_person_ids
-            if unknown_person_ids:
-                unknown = ", ".join(sorted(unknown_person_ids))
+            unknown_persons = set(referenced_persons) - known_persons
+            if unknown_persons:
+                unknown = ", ".join(sorted(unknown_persons))
                 raise ValueError(
-                    f"timeline references unknown person_id values: {unknown}"
+                    f"timeline references unknown person names: {unknown}"
                 )
 
         return self
