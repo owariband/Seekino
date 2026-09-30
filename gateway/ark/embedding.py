@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from arkruntime import Ark
 
 from gateway.embedding import EmbeddingResult
 from gateway.media import read_video_file
-from gateway.usage import track_model_call
+from gateway.usage import ModelCallTracker, track_model_call
 
 
 _MAX_INLINE_VIDEO_BYTES = 45 * 1024 * 1024
@@ -25,17 +27,23 @@ class DoubaoMultimodalEmbedder:
         *,
         output_dimensionality: int = 1024,
         fps: float = 1.0,
+        request_timeout_seconds: float | None = None,
         client: Ark | None = None,
     ) -> None:
         if not 1 <= output_dimensionality <= 2048:
             raise ValueError("output_dimensionality must be between 1 and 2048")
         if not 0.2 <= fps <= 5.0:
             raise ValueError("fps must be between 0.2 and 5.0")
+        if request_timeout_seconds is not None and request_timeout_seconds <= 0:
+            raise ValueError("request_timeout_seconds must be greater than zero")
 
         self.model_name = model
         self.output_dimensionality = output_dimensionality
         self.fps = fps
-        self._client = client or Ark.volc(max_retries=0)
+        options: dict[str, object] = {"max_retries": 0}
+        if request_timeout_seconds is not None:
+            options["timeout"] = request_timeout_seconds
+        self._client = client or Ark.volc(**options)
 
     def embed_video(self, video_path: str | Path) -> EmbeddingResult:
         path, video_bytes, mime_type = read_video_file(video_path)
@@ -58,17 +66,23 @@ class DoubaoMultimodalEmbedder:
             model=self.model_name,
             operation="video_embedding",
         ) as call:
-            response = self._client.multimodal_embeddings.create(
-                model=self.model_name,
-                input=[
-                    {
-                        "type": "video_url",
-                        "video_url": {"url": video_url, "fps": self.fps},
-                    }
-                ],
-                dimensions=self.output_dimensionality,
-                encoding_format="float",
-            )
+            call.raise_if_cancelled()
+            unregister_cancel = _register_client_cancel(call, self._client)
+            try:
+                call.raise_if_cancelled()
+                response = self._client.multimodal_embeddings.create(
+                    model=self.model_name,
+                    input=[
+                        {
+                            "type": "video_url",
+                            "video_url": {"url": video_url, "fps": self.fps},
+                        }
+                    ],
+                    dimensions=self.output_dimensionality,
+                    encoding_format="float",
+                )
+            finally:
+                unregister_cancel()
             call.capture_response(response)
             return self._to_result(response, modality="video")
 
@@ -82,12 +96,18 @@ class DoubaoMultimodalEmbedder:
             model=self.model_name,
             operation="text_embedding",
         ) as call:
-            response = self._client.multimodal_embeddings.create(
-                model=self.model_name,
-                input=[{"type": "text", "text": normalized_text}],
-                dimensions=self.output_dimensionality,
-                encoding_format="float",
-            )
+            call.raise_if_cancelled()
+            unregister_cancel = _register_client_cancel(call, self._client)
+            try:
+                call.raise_if_cancelled()
+                response = self._client.multimodal_embeddings.create(
+                    model=self.model_name,
+                    input=[{"type": "text", "text": normalized_text}],
+                    dimensions=self.output_dimensionality,
+                    encoding_format="float",
+                )
+            finally:
+                unregister_cancel()
             call.capture_response(response)
             return self._to_result(response, modality="text")
 
@@ -109,3 +129,10 @@ class DoubaoMultimodalEmbedder:
             modality=modality,
             vector=list(values),
         )
+
+
+def _register_client_cancel(
+    call: ModelCallTracker, client: Any
+) -> Callable[[], None]:
+    close = getattr(client, "close", None)
+    return call.add_cancel_callback(close) if callable(close) else lambda: None

@@ -168,6 +168,9 @@ class AgentFallbackConfig(BaseModel):
 
     source: _NonEmptyString
     model: _NonEmptyString
+    request_timeout_seconds: float | None = Field(default=None, gt=0)
+    max_output_tokens: int | None = Field(default=None, ge=256, le=32_768)
+    reasoning_effort: Literal["none", "low", "high", "max"] | None = None
 
 
 class AgentModelConfig(BaseModel):

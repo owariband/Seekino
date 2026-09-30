@@ -96,7 +96,9 @@ class OpenAIVisionModel:
                 model=self.model_name,
                 operation=schema_name,
             ) as call:
+                unregister_cancel = call.add_cancel_callback(client.close)
                 try:
+                    call.raise_if_cancelled()
                     response = client.chat.completions.create(
                         model=self.model_name,
                         messages=[{"role": "user", "content": content}],
@@ -111,6 +113,8 @@ class OpenAIVisionModel:
                             "Vision output rejected", code="content_filter"
                         ) from error
                     raise
+                finally:
+                    unregister_cancel()
                 call.capture_response(response)
                 if not response.choices:
                     raise RuntimeError("Vision API returned no choices")

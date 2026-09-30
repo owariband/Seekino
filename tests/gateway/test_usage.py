@@ -15,7 +15,13 @@ from gateway.local.llama_cpp import LlamaCppMultimodalModel
 from gateway.local.ollama import OllamaMultimodalModel
 from gateway.multimodal import TextInput
 from gateway.openai.multimodal import DeepSeekModelError, DeepSeekMultimodalModel
-from gateway.usage import TokenUsage, capture_model_usage
+from gateway.usage import (
+    ModelCallCancelledError,
+    TokenUsage,
+    capture_model_usage,
+    control_model_calls,
+    track_model_call,
+)
 
 
 class Answer(BaseModel):
@@ -213,9 +219,13 @@ def test_embedding_default_client_disables_hidden_sdk_retries(monkeypatch):
         return SimpleNamespace()
     monkeypatch.setattr("gateway.ark.embedding.Ark.volc", client)
     DoubaoMultimodalEmbedder("embedding")
+    DoubaoMultimodalEmbedder("embedding", request_timeout_seconds=12.5)
     injected = SimpleNamespace()
     assert DoubaoMultimodalEmbedder("embedding", client=injected)._client is injected
-    assert options == [{"max_retries": 0}]
+    assert options == [
+        {"max_retries": 0},
+        {"max_retries": 0, "timeout": 12.5},
+    ]
 
 
 def test_invalid_usage_metadata_is_not_used_as_a_token_estimate(caplog):
@@ -319,3 +329,114 @@ def test_embedding_validation_failure_retains_provider_usage():
     assert len(calls) == provider.requests == 1
     assert calls[0].status == "failed"
     assert calls[0].usage == TokenUsage(8, 0, 8, None, None)
+
+
+def test_host_control_reserves_before_request_and_releases_same_call_id():
+    events = []
+
+    class Control:
+        def acquire(self, call):
+            events.append(("acquire", call.call_id))
+
+        def release(self, call):
+            events.append(("release", call.call_id))
+
+    class Embeddings:
+        def create(self, **request):
+            events.append(("request", None))
+            return SimpleNamespace(
+                data=SimpleNamespace(embedding=[1.0, 0.0]),
+                usage=SimpleNamespace(prompt_tokens=1, total_tokens=1),
+            )
+
+    calls = []
+    embedder = DoubaoMultimodalEmbedder(
+        "embedding",
+        client=SimpleNamespace(multimodal_embeddings=Embeddings()),
+    )
+    with control_model_calls(Control()), capture_model_usage(calls.append):
+        embedder.embed_text("query")
+
+    assert [event[0] for event in events] == ["acquire", "request", "release"]
+    assert events[0][1] == events[2][1] == calls[0].call_id
+
+
+def test_usage_start_excludes_admission_wait_and_observation_follows_release(
+    monkeypatch,
+):
+    timestamps = iter([1_000_000, 9_000_000])
+    monkeypatch.setattr("gateway.usage.time.time_ns", lambda: next(timestamps))
+    events = []
+    calls = []
+
+    class Control:
+        def acquire(self, call):
+            events.append("admitted")
+
+        def release(self, call):
+            events.append("released")
+
+    def observe(call):
+        events.append("observed")
+        calls.append(call)
+
+    with control_model_calls(Control()), capture_model_usage(observe):
+        with track_model_call(provider="ark", model="m", operation="embedding"):
+            events.append("request")
+
+    assert events == ["admitted", "request", "released", "observed"]
+    assert calls[0].started_at == 9
+
+
+def test_rejected_admission_is_not_recorded_as_a_provider_request():
+    calls = []
+
+    class Control:
+        def acquire(self, call):
+            raise RuntimeError("budget exhausted")
+
+        def release(self, call):
+            raise AssertionError("a rejected call has no reservation")
+
+    provider = Responses(response=_response())
+    with (
+        control_model_calls(Control()),
+        capture_model_usage(calls.append),
+        pytest.raises(RuntimeError, match="budget exhausted"),
+    ):
+        request_sse_json(provider, model="model", input=[])
+
+    assert provider.calls == []
+    assert calls == []
+
+
+def test_control_cancellation_closes_stream_and_rejects_late_result():
+    holder = {}
+
+    class Control:
+        def acquire(self, call):
+            holder["call"] = call
+
+        def release(self, call):
+            pass
+
+    class CancellingStream(Stream):
+        def __iter__(self):
+            holder["call"].cancel()
+            return super().__iter__()
+
+    provider = Responses(response=_response())
+    provider.events = [
+        SimpleNamespace(type="response.completed", response=_response())
+    ]
+    provider_stream = CancellingStream(provider.events)
+
+    def create(**request):
+        provider.calls.append(request)
+        provider.stream = provider_stream
+        return provider_stream
+
+    provider.create = create
+    with control_model_calls(Control()), pytest.raises(ModelCallCancelledError):
+        request_sse_json(provider, model="model", input=[])
+    assert provider_stream.closed

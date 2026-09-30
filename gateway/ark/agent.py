@@ -138,6 +138,8 @@ class ArkFunctionCallingModel:
         fallback_model: str | None,
         max_output_tokens: int,
         request_timeout_seconds: float,
+        fallback_max_output_tokens: int | None = None,
+        fallback_request_timeout_seconds: float | None = None,
         context_window_policy: ContextWindowPolicy | None = None,
         client: Any | None = None,
         api_key: str | None = None,
@@ -150,6 +152,15 @@ class ArkFunctionCallingModel:
             raise ValueError("max_output_tokens must be greater than zero")
         if request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be greater than zero")
+        if fallback_max_output_tokens is not None and fallback_max_output_tokens <= 0:
+            raise ValueError("fallback_max_output_tokens must be greater than zero")
+        if (
+            fallback_request_timeout_seconds is not None
+            and fallback_request_timeout_seconds <= 0
+        ):
+            raise ValueError(
+                "fallback_request_timeout_seconds must be greater than zero"
+            )
         self.model_name = model
         self.primary_model_name = model
         self.fallback_provider_name = (
@@ -163,6 +174,16 @@ class ArkFunctionCallingModel:
         self.max_output_tokens = max_output_tokens
         self.context_window_policy = context_window_policy
         self._request_timeout_seconds = request_timeout_seconds
+        self._fallback_max_output_tokens = (
+            max_output_tokens
+            if fallback_max_output_tokens is None
+            else fallback_max_output_tokens
+        )
+        self._fallback_request_timeout_seconds = (
+            request_timeout_seconds
+            if fallback_request_timeout_seconds is None
+            else fallback_request_timeout_seconds
+        )
         self._client = client
         self._api_key = api_key
 
@@ -200,13 +221,23 @@ class ArkFunctionCallingModel:
                 require_visible_text_on_stop: bool,
             ):
                 nonlocal active_model
-                timeout = min(timeout, self._request_timeout_seconds)
+                fallback_active = active_model != self.model_name
+                active_timeout = (
+                    self._fallback_request_timeout_seconds
+                    if fallback_active
+                    else self._request_timeout_seconds
+                )
+                timeout = min(timeout, active_timeout)
 
-                def invoke(model_name: str, request_timeout: float):
+                def invoke(
+                    model_name: str,
+                    request_timeout: float,
+                    max_output_tokens: int,
+                ):
                     return request_ark_function_turn(
                         client,
                         model_name=model_name,
-                        max_output_tokens=self.max_output_tokens,
+                        max_output_tokens=max_output_tokens,
                         tools=tools,
                         messages=messages,
                         tool_specs=tool_specs,
@@ -218,7 +249,15 @@ class ArkFunctionCallingModel:
 
                 try:
                     attempt_started_at = monotonic()
-                    return invoke(active_model, timeout)
+                    return invoke(
+                        active_model,
+                        timeout,
+                        (
+                            self._fallback_max_output_tokens
+                            if fallback_active
+                            else self.max_output_tokens
+                        ),
+                    )
                 except ArkFunctionCallingError as exc:
                     if active_model != self.model_name or self.fallback_model_name is None:
                         raise
@@ -237,7 +276,14 @@ class ArkFunctionCallingModel:
                         error=exc,
                     )
                     active_model = self.fallback_model_name
-                    return invoke(active_model, fallback_timeout)
+                    return invoke(
+                        active_model,
+                        min(
+                            fallback_timeout,
+                            self._fallback_request_timeout_seconds,
+                        ),
+                        self._fallback_max_output_tokens,
+                    )
 
             _run_function_calling_loop(
                 prompt=prompt,
@@ -376,6 +422,7 @@ class ArkStructuredToolAgentModel(OpenAIStructuredToolAgentModel):
         max_input_chars: int | None = None,
         context_window_policy: ContextWindowPolicy | None = None,
         fallback_model: str | None = None,
+        fallback_adapter: Any | None = None,
         client: Any | None = None,
         api_key: str | None = None,
         chat_model: Any | None = None,
@@ -387,6 +434,7 @@ class ArkStructuredToolAgentModel(OpenAIStructuredToolAgentModel):
             max_input_chars=max_input_chars,
             context_window_policy=context_window_policy,
             fallback_model=fallback_model,
+            fallback_adapter=fallback_adapter,
             provider_name=ARK_PROVIDER,
             api_profile="standard",
             base_url=ARK_OPENAI_BASE_URL,

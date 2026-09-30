@@ -487,6 +487,8 @@ def test_ark_agent_loop_preserves_final_fallback_failure_reason() -> None:
         fallback_model="doubao-lite",
         max_output_tokens=2048,
         request_timeout_seconds=30,
+        fallback_max_output_tokens=1024,
+        fallback_request_timeout_seconds=7,
         client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
     )
 
@@ -500,6 +502,11 @@ def test_ark_agent_loop_preserves_final_fallback_failure_reason() -> None:
         "doubao-pro",
         "doubao-lite",
     ]
+    assert [call["max_completion_tokens"] for call in completions.calls] == [
+        2048,
+        1024,
+    ]
+    assert completions.calls[1]["timeout"] <= 7
 
 
 def test_deepseek_agent_loop_guides_missing_tool_without_switching_provider() -> None:

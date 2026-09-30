@@ -18,7 +18,7 @@ from gateway.multimodal import (
     text_only_inputs,
     validate_generate_request,
 )
-from gateway.usage import track_model_call
+from gateway.usage import ModelCallControlError, track_model_call
 
 
 _MAX_ARK_INLINE_MEDIA_BYTES = 45 * 1024 * 1024
@@ -138,14 +138,25 @@ class ArkMultimodalModel:
                     model=model_name,
                     operation=schema_name,
                 ) as call:
-                    payload = request_sse_json(
-                        client.responses, usage_call=call, **request
+                    close = getattr(client, "close", None)
+                    unregister_cancel = (
+                        call.add_cancel_callback(close)
+                        if callable(close)
+                        else lambda: None
                     )
+                    try:
+                        payload = request_sse_json(
+                            client.responses, usage_call=call, **request
+                        )
+                    finally:
+                        unregister_cancel()
                     return result_type.model_validate(payload)
 
             try:
                 return invoke(self.model_name)
             except Exception as exc:
+                if isinstance(exc, ModelCallControlError):
+                    raise
                 if self.fallback_model_name is None:
                     raise
                 log_model_fallback(
@@ -185,9 +196,18 @@ class ArkMultimodalModel:
                 model=self.model_name,
                 operation="text_generation",
             ) as call:
-                yield from request_sse_text(
-                    client.responses, usage_call=call, **request
+                close = getattr(client, "close", None)
+                unregister_cancel = (
+                    call.add_cancel_callback(close)
+                    if callable(close)
+                    else lambda: None
                 )
+                try:
+                    yield from request_sse_text(
+                        client.responses, usage_call=call, **request
+                    )
+                finally:
+                    unregister_cancel()
         finally:
             if self._client is None:
                 client.close()

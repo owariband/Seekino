@@ -68,6 +68,7 @@ def _request_sse_text(
     metadata: dict[str, Any] | None = None,
     **request: Any,
 ) -> Iterator[str]:
+    usage_call.raise_if_cancelled()
     try:
         stream = responses.create(stream=True, **request)
     except Exception as error:
@@ -84,6 +85,10 @@ def _request_sse_text(
             ) from error
         raise
     usage_call.capture_response(getattr(stream, "response", None))
+    close = getattr(stream, "close", None)
+    unregister_cancel = (
+        usage_call.add_cancel_callback(close) if callable(close) else lambda: None
+    )
     text_parts: dict[tuple[int, str, int], list[str]] = {}
     emitted_parts: list[str] = []
     done_texts: dict[tuple[int, str, int], str] = {}
@@ -93,6 +98,7 @@ def _request_sse_text(
 
     try:
         for event in stream:
+            usage_call.raise_if_cancelled()
             response = getattr(event, "response", None)
             event_type = getattr(event, "type", None)
             usage_call.capture_response(response, include_usage=event_type in {"response.completed", "response.failed", "response.incomplete"})
@@ -195,7 +201,7 @@ def _request_sse_text(
                     partial_output_chars=_output_length(text_parts),
                 )
     finally:
-        close = getattr(stream, "close", None)
+        unregister_cancel()
         if callable(close):
             close()
 

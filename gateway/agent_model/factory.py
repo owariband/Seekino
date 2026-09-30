@@ -66,6 +66,13 @@ class AgentModelFactory:
             else fallback_config.model if fallback_config is not None else None
         )
         _validate_fallback_pair(self._primary, self._fallback)
+        if (
+            fallback_config is not None
+            and fallback_config.reasoning_effort not in (None, "none")
+        ):
+            raise ValueError(
+                "Ark Agent fallback does not support reasoning_effort"
+            )
         environment = os.environ if environ is None else environ
         self._api_keys = {
             config.source: _resolve_api_key(self._primary, environment),
@@ -144,7 +151,10 @@ class AgentModelFactory:
         if isinstance(source, ArkModelSourceConfig):
             return ArkStructuredToolAgentModel(
                 **common,
-                fallback_model=self._same_ark_fallback_model(),
+                fallback_adapter=self._structured_fallback(
+                    request_timeout_seconds=request_timeout_seconds,
+                    max_output_tokens=max_output_tokens,
+                ),
                 api_key=self._required_key(self._config.source),
             )
         if isinstance(source, CodexModelSourceConfig):
@@ -200,6 +210,12 @@ class AgentModelFactory:
                 fallback_model=self._same_ark_fallback_model(),
                 max_output_tokens=max_output_tokens,
                 request_timeout_seconds=request_timeout_seconds,
+                fallback_max_output_tokens=self._fallback_max_output_tokens(
+                    max_output_tokens
+                ),
+                fallback_request_timeout_seconds=self._fallback_request_timeout(
+                    request_timeout_seconds
+                ),
                 context_window_policy=context_window_policy,
                 api_key=self._required_key(self._config.source),
             )
@@ -243,8 +259,10 @@ class AgentModelFactory:
         assert self._config.fallback is not None
         return ArkFunctionCallingFallback(
             self._fallback_model,
-            max_output_tokens=max_output_tokens,
-            request_timeout_seconds=request_timeout_seconds,
+            max_output_tokens=self._fallback_max_output_tokens(max_output_tokens),
+            request_timeout_seconds=self._fallback_request_timeout(
+                request_timeout_seconds
+            ),
             api_key=self._required_key(self._config.fallback.source),
         )
 
@@ -260,10 +278,24 @@ class AgentModelFactory:
         assert self._config.fallback is not None
         return ArkStructuredFallback(
             self._fallback_model,
-            max_output_tokens=max_output_tokens,
-            request_timeout_seconds=request_timeout_seconds,
+            max_output_tokens=self._fallback_max_output_tokens(max_output_tokens),
+            request_timeout_seconds=self._fallback_request_timeout(
+                request_timeout_seconds
+            ),
             api_key=self._required_key(self._config.fallback.source),
         )
+
+    def _fallback_max_output_tokens(self, primary: int) -> int:
+        fallback = self._config.fallback
+        if fallback is None or fallback.max_output_tokens is None:
+            return primary
+        return fallback.max_output_tokens
+
+    def _fallback_request_timeout(self, primary: float) -> float:
+        fallback = self._config.fallback
+        if fallback is None or fallback.request_timeout_seconds is None:
+            return primary
+        return fallback.request_timeout_seconds
 
     def _same_ark_fallback_model(self) -> str | None:
         return self._fallback_model if self._fallback is not None else None

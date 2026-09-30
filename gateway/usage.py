@@ -6,7 +6,8 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Literal
+from threading import Event, Lock
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 _logger = logging.getLogger(__name__)
@@ -58,7 +59,26 @@ class ModelCallUsage:
     status: Literal["completed", "failed"]
 
 
+class ModelCallControlError(RuntimeError):
+    """A host admission, lease or cancellation rule stopped a provider call."""
+
+
+class ModelCallCancelledError(ModelCallControlError):
+    """The owner cancelled a provider call before its result became usable."""
+
+
+class ModelCallControl(Protocol):
+    """Admission and lifetime control supplied by the execution host."""
+
+    def acquire(self, call: "ModelCallTracker") -> None: ...
+
+    def release(self, call: "ModelCallTracker") -> None: ...
+
+
 _observer: ContextVar[Callable[[ModelCallUsage], None] | None] = ContextVar("model_usage_observer", default=None)
+_control: ContextVar[ModelCallControl | None] = ContextVar(
+    "model_call_control", default=None
+)
 
 
 @contextmanager
@@ -68,6 +88,22 @@ def capture_model_usage(observer: Callable[[ModelCallUsage], None]) -> Iterator[
         yield
     finally:
         _observer.reset(token)
+
+
+@contextmanager
+def control_model_calls(control: ModelCallControl) -> Iterator[None]:
+    """Apply host admission, cancellation and release to real provider calls.
+
+    Provider adapters enter :func:`track_model_call` immediately before their
+    SDK request.  Local validation performed before that point neither consumes
+    a persistent call budget nor emits a usage record.
+    """
+
+    token = _control.set(control)
+    try:
+        yield
+    finally:
+        _control.reset(token)
 
 
 def _field(value: Any, name: str, default: Any = None) -> Any:
@@ -108,6 +144,68 @@ class ModelCallTracker:
         self.started_at = time.time_ns() // 1_000_000
         self.request_id: str | None = None
         self.usage: TokenUsage | None = None
+        self._cancelled = Event()
+        self._cancel_lock = Lock()
+        self._cancel_callbacks: dict[int, Callable[[], None]] = {}
+        self._next_cancel_callback = 0
+
+    def mark_request_started(self) -> None:
+        """Timestamp the admitted provider attempt, excluding queue wait."""
+
+        self.started_at = time.time_ns() // 1_000_000
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    def raise_if_cancelled(self) -> None:
+        if self.cancelled:
+            raise ModelCallCancelledError(
+                f"model call {self.call_id} was cancelled"
+            )
+
+    def add_cancel_callback(
+        self, callback: Callable[[], None]
+    ) -> Callable[[], None]:
+        """Register a best-effort transport closer for this one request."""
+
+        if not callable(callback):
+            raise TypeError("cancel callback must be callable")
+        with self._cancel_lock:
+            if self._cancelled.is_set():
+                callback_id = None
+            else:
+                callback_id = self._next_cancel_callback
+                self._next_cancel_callback += 1
+                self._cancel_callbacks[callback_id] = callback
+        if callback_id is None:
+            self._run_cancel_callback(callback)
+            return lambda: None
+
+        def unregister() -> None:
+            with self._cancel_lock:
+                self._cancel_callbacks.pop(callback_id, None)
+
+        return unregister
+
+    def cancel(self) -> None:
+        """Reject a late result and ask registered transports to stop."""
+
+        with self._cancel_lock:
+            if self._cancelled.is_set():
+                return
+            self._cancelled.set()
+            callbacks = tuple(self._cancel_callbacks.values())
+            self._cancel_callbacks.clear()
+        for callback in callbacks:
+            self._run_cancel_callback(callback)
+
+    @staticmethod
+    def _run_cancel_callback(callback: Callable[[], None]) -> None:
+        try:
+            callback()
+        except Exception:
+            _logger.warning("Model call transport cancellation failed")
 
     def capture_response(self, response: Any, *, include_usage: bool = True) -> None:
         headers = _field(response, "headers", {}) or {}
@@ -128,18 +226,37 @@ class ModelCallTracker:
 def track_model_call(*, provider: str, model: str, operation: str) -> Iterator[ModelCallTracker]:
     tracker = ModelCallTracker(provider=provider, model=model, operation=operation)
     observer = _observer.get()
+    control = _control.get()
+    admitted = False
+    request_started = False
     status: Literal["completed", "failed"] = "failed"
     try:
+        if control is not None:
+            control.acquire(tracker)
+            admitted = True
+        tracker.raise_if_cancelled()
+        tracker.mark_request_started()
+        request_started = True
         yield tracker
+        tracker.raise_if_cancelled()
         status = "completed"
     except BaseException as error:
         if tracker.request_id is None:
             request_id = getattr(error, "request_id", None)
             if isinstance(request_id, str):
                 tracker.request_id = request_id
+        if tracker.cancelled and not isinstance(error, ModelCallCancelledError):
+            raise ModelCallCancelledError(
+                f"model call {tracker.call_id} was cancelled"
+            ) from error
         raise
     finally:
-        if observer is not None:
+        if admitted and control is not None:
+            try:
+                control.release(tracker)
+            except Exception:
+                _logger.warning("Model call control release failed")
+        if request_started and observer is not None:
             try:
                 observer(ModelCallUsage(
                     call_id=tracker.call_id, provider=tracker.provider, model=tracker.model,

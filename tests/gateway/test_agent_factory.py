@@ -125,12 +125,66 @@ def test_openai_factory_composes_ark_fallback_with_explicit_keys(
     structured_fallback = structured_kwargs["fallback_adapter"]
     assert structured_fallback.model_name == "override-fallback"
     assert structured_fallback._api_key == "ark-secret"
+    assert structured_fallback.max_output_tokens == 4_096
+    assert structured_fallback.request_timeout_seconds == 60
     loop_kwargs = loop_calls[0]
     assert loop_kwargs["provider_name"] == "deepseek"
     assert loop_kwargs["profile"] == "deepseek"
     loop_fallback = loop_kwargs["fallback_adapter"]
     assert loop_fallback.model_name == "override-fallback"
     assert loop_fallback._api_key == "ark-secret"
+    assert loop_fallback.max_output_tokens == 4_096
+    assert loop_fallback.request_timeout_seconds == 60
+
+
+def test_factory_preserves_fallback_request_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    structured_calls: list[dict[str, object]] = []
+    loop_calls: list[dict[str, object]] = []
+    config = _agent_config(fallback=True).model_copy(update={
+        "fallback": AgentFallbackConfig(
+            source="fallback",
+            model="fallback-model",
+            request_timeout_seconds=17,
+            max_output_tokens=2_048,
+            reasoning_effort="none",
+        ),
+    })
+
+    monkeypatch.setattr(
+        agent_factory,
+        "OpenAIStructuredToolAgentModel",
+        lambda **kwargs: structured_calls.append(kwargs)
+        or SimpleNamespace(provider_name="deepseek"),
+    )
+    monkeypatch.setattr(
+        agent_factory,
+        "OpenAIAgentModel",
+        lambda *_args, **kwargs: loop_calls.append(kwargs)
+        or SimpleNamespace(provider_name="deepseek"),
+    )
+    factory = agent_factory.AgentModelFactory(
+        config,
+        {
+            "primary": _openai_source(),
+            "fallback": ArkModelSourceConfig(api_key_env="CUSTOM_ARK_KEY"),
+        },
+        environ={
+            "DEEPSEEK_API_KEY": "deepseek-secret",
+            "CUSTOM_ARK_KEY": "ark-secret",
+        },
+    )
+
+    factory.build_structured(**_build_arguments())
+    factory.build_loop(**_build_arguments())
+
+    structured_fallback = structured_calls[0]["fallback_adapter"]
+    assert structured_fallback.request_timeout_seconds == 17
+    assert structured_fallback.max_output_tokens == 2_048
+    loop_fallback = loop_calls[0]["fallback_adapter"]
+    assert loop_fallback.request_timeout_seconds == 17
+    assert loop_fallback.max_output_tokens == 2_048
 
 
 def test_ark_factory_uses_same_adapter_fallback(
@@ -154,7 +208,11 @@ def test_ark_factory_uses_same_adapter_fallback(
 
     factory.build_structured(**_build_arguments())
 
-    assert received["fallback_model"] == "fallback-model"
+    assert "fallback_model" not in received
+    fallback_adapter = received["fallback_adapter"]
+    assert fallback_adapter.model_name == "fallback-model"
+    assert fallback_adapter.request_timeout_seconds == 60
+    assert fallback_adapter.max_output_tokens == 4_096
     assert received["api_key"] == "ark-secret"
 
 
@@ -167,6 +225,29 @@ def test_ark_factory_rejects_fallback_with_different_credentials() -> None:
                 "fallback": ArkModelSourceConfig(api_key_env="FALLBACK_ARK_KEY"),
             },
             environ={},
+        )
+
+
+def test_factory_rejects_unsupported_ark_fallback_reasoning() -> None:
+    config = _agent_config(fallback=True).model_copy(update={
+        "fallback": AgentFallbackConfig(
+            source="fallback",
+            model="fallback-model",
+            reasoning_effort="high",
+        ),
+    })
+
+    with pytest.raises(ValueError, match="does not support reasoning_effort"):
+        agent_factory.AgentModelFactory(
+            config,
+            {
+                "primary": _openai_source(),
+                "fallback": ArkModelSourceConfig(),
+            },
+            environ={
+                "DEEPSEEK_API_KEY": "deepseek-secret",
+                "ARK_API_KEY": "ark-secret",
+            },
         )
 
 
