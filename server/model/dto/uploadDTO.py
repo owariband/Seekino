@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from pydantic import Field
+
+from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 
 from ...config.parse_profile import ParseConfig
 from ...schema import ContractModel
@@ -34,18 +37,21 @@ class UploadSessionState:
     status: str
     uploaded_segment_count: int
     uploaded_size_bytes: int
-    expires_at: int
+    expires_at: datetime
     video_id: str | None
     last_error: str | None
-    created_at: int
-    updated_at: int
+    created_at: datetime
+    updated_at: datetime
     content_sha256: str | None = None
     completion_stage: str | None = None
     job_id: str | None = None
+    initial_video_parse_task_id: str | None = None
     version: int = 1
     missing_segment_numbers: tuple[int, ...] = ()
     last_error_code: str | None = None
     parse_config: dict | None = None
+    video_parse_config: dict | None = None
+    detail: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +60,7 @@ class UploadCompletionClaim:
     segments: tuple[UploadSegmentState, ...]
     completion_token: str | None
     existing_job_id: str | None
+    existing_video_parse_task_id: str | None
 
     @property
     def already_completed(self) -> bool:
@@ -64,7 +71,8 @@ class UploadCompletionClaim:
 class CompletedUploadState:
     session: UploadSessionState
     video_id: str
-    job_id: str
+    job_id: str | None
+    video_parse_task_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,20 +88,24 @@ class UploadSessionDeletion:
     job_id: str | None
     job_ids: tuple[str, ...]
     video_chunk_ids: tuple[str, ...]
+    video_parse_document_keys: tuple[tuple[str, str], ...]
 
 
 class UploadSessionCreateRequest(ContractModel):
     workspace_id: str = Field(min_length=1, max_length=64)
-    episode_order: int | None = Field(
-        default=None, gt=0, strict=True, deprecated=True,
-        description="Compatibility only; ignored. The server assigns append order.",
-    )
-    upload_sequence: int | None = Field(
-        default=None, gt=0, strict=True, deprecated=True,
-        description="Compatibility only; ignored. The server assigns append order.",
+    episode_order: int = Field(
+        gt=0,
+        le=2_147_483_647,
+        strict=True,
+        description="Confirmed one-based episode order within the Series.",
     )
     original_filename: str = Field(min_length=1, max_length=1024)
     media_type: str = Field(min_length=1, max_length=255)
     total_size_bytes: int = Field(gt=0, le=9_007_199_254_740_991, strict=True)
     content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     parse_config: ParseConfig | None = None
+    video_parse_config: VideoParseV2Config | None = None
+
+
+class UploadReparseRequest(ContractModel):
+    video_parse_config: VideoParseV2Config | None = None

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
@@ -11,25 +10,29 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import event, select
 
+from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 from engine.parsev1.runtime import VideoParseRuntimeConfig
 from gateway.config import load_config
 from server.config.media import ImageUploadConfig
-from server.config.parse_profile import ParseConfig
+from server.config.parse_profile import ParseConfig, default_video_parse_v2_config
 from server.database import DatabaseEnvironment, create_session_factory
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.model.index_sync import IndexSyncIntentRecord, IndexSyncOperation, IndexSyncStatus
 from server.model.job import (
+    ChunkParseContentRecord,
+    ChunkParseTaskRecord,
+    IntervalParseContentRecord,
+    IntervalParseTaskRecord,
     ParseJobStage,
     ParseJobStatus,
     SeriesParseJobRecord,
+    VideoParseTaskRecord,
     VideoChunkCheckpointRecord,
     VideoChunkCheckpointStage,
 )
 from server.model.parse_usage import ParseModelCallRecord, ParseUsageAttemptRecord
 from server.model.upload import UploadSegmentRecord, UploadSessionRecord, UploadSessionStatus
-from server.api.jobs import project_job
 from server.api.uploads import project_upload_session
-from server.model.dto.jobDTO import ParseJobDetail
 from server.model.video import (
     ContextSnapshotRecord,
     SeriesRecord,
@@ -58,7 +61,11 @@ from server.service.qdrant_mutation_lock import (
     QdrantMutationLockBusyError,
 )
 from server.storage.artifact import LocalArtifactStore
-from server.utils.time import timedelta_to_ms
+from server.utils.time import (
+    datetime_to_unix_time_ms,
+    timedelta_to_ms,
+    unix_time_ms_to_datetime,
+)
 
 
 def _config() -> UploadServiceConfig:
@@ -72,7 +79,15 @@ def _config() -> UploadServiceConfig:
     )
 
 
-def _upload_service(repository, tmp_path, *, clock=None, parse_defaults=None):
+def _upload_service(
+    repository,
+    tmp_path,
+    *,
+    clock=None,
+    parse_defaults=None,
+    execution_mode="v1",
+    video_parse_index_store=None,
+):
     engine, _video_repository = repository
     with engine.begin() as connection:
         connection.execute(
@@ -99,6 +114,8 @@ def _upload_service(repository, tmp_path, *, clock=None, parse_defaults=None):
             probe_duration=lambda _path: 12,
             clock=clock,
             parse_defaults=parse_defaults,
+            execution_mode=execution_mode,
+            video_parse_index_store=video_parse_index_store,
             qdrant_mutation_lock=QdrantMutationLock(
                 engine,
                 environment=DatabaseEnvironment.TEST,
@@ -106,6 +123,208 @@ def _upload_service(repository, tmp_path, *, clock=None, parse_defaults=None):
             ),
         ),
     )
+
+
+class _VideoParseIndexStore:
+    def __init__(self, semantic_dimensions: int, vision_dimensions: int) -> None:
+        self.semantic_dimensions = semantic_dimensions
+        self.vision_dimensions = vision_dimensions
+
+
+def _video_parse_config_with_dimensions(dimensions: int) -> VideoParseV2Config:
+    config = default_video_parse_v2_config()
+    embedding = config.models.embedding.model_copy(
+        update={"dimensions": dimensions}
+    )
+    models = config.models.model_copy(update={"embedding": embedding})
+    return config.model_copy(update={"models": models})
+
+
+def test_upload_rejects_v2_dimensions_incompatible_with_active_elasticsearch(
+    repository,
+    tmp_path,
+) -> None:
+    _engine, _store, _repository, service = _upload_service(
+        repository,
+        tmp_path,
+        video_parse_index_store=_VideoParseIndexStore(2, 2),
+    )
+
+    with pytest.raises(ValueError, match="active Elasticsearch"):
+        service.create_session(
+            workspace_id="local-default",
+            series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+            episode_order=7,
+            original_filename="episode-07.mp4",
+            media_type="video/mp4",
+            total_size_bytes=10,
+            idempotency_key="incompatible-es-dimensions",
+            video_parse_config=_video_parse_config_with_dimensions(3),
+        )
+
+    assert service.list_sessions(workspace_id="local-default") == []
+
+
+def test_upload_completion_rechecks_legacy_v2_dimensions_before_enqueue(
+    repository,
+    tmp_path,
+) -> None:
+    engine, _store, _repository, service = _upload_service(
+        repository,
+        tmp_path,
+    )
+    upload = service.create_session(
+        workspace_id="local-default",
+        series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7,
+        original_filename="episode-07.mp4",
+        media_type="video/mp4",
+        total_size_bytes=10,
+        idempotency_key="legacy-incompatible-es-dimensions",
+        video_parse_config=_video_parse_config_with_dimensions(3),
+    )
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    service._video_parse_index_store = _VideoParseIndexStore(2, 2)
+
+    with pytest.raises(ValueError, match="active Elasticsearch"):
+        service.complete(
+            upload.upload_session_id,
+            workspace_id="local-default",
+        )
+
+    with create_session_factory(engine)() as session:
+        stored = session.get(UploadSessionRecord, upload.upload_session_id)
+        assert stored.status == UploadSessionStatus.UPLOADING.value
+        assert stored.initial_video_parse_task_id is None
+
+
+def test_pending_takeover_rechecks_v2_dimensions_before_accepting(
+    repository,
+    tmp_path,
+) -> None:
+    engine, _store, _repository, service = _upload_service(
+        repository,
+        tmp_path,
+        execution_mode="v1",
+    )
+    upload = service.create_session(
+        workspace_id="local-default",
+        series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7,
+        original_filename="episode-07.mp4",
+        media_type="video/mp4",
+        total_size_bytes=10,
+        idempotency_key="pending-incompatible-es-dimensions",
+        video_parse_config=_video_parse_config_with_dimensions(3),
+    )
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(
+        upload.upload_session_id,
+        workspace_id="local-default",
+    )
+    service._video_parse_index_store = _VideoParseIndexStore(2, 2)
+    service._execution_mode = "v2"
+
+    with pytest.raises(ValueError, match="active Elasticsearch"):
+        service.reparse(
+            upload.upload_session_id,
+            workspace_id="local-default",
+            expected_job_version=1,
+        )
+
+    with create_session_factory(engine)() as session:
+        task = session.get(
+            VideoParseTaskRecord,
+            completed.video_parse_task_id,
+        )
+        assert task.version == 1
+        assert task.detail["_worker_runtime_v2"]["accepted"] is False
+
+
+def test_reparse_rejects_v2_dimensions_before_creating_a_new_task(
+    repository,
+    tmp_path,
+) -> None:
+    engine, _store, _repository, service = _upload_service(
+        repository,
+        tmp_path,
+        execution_mode="v2",
+        video_parse_index_store=_VideoParseIndexStore(2, 2),
+    )
+    upload = service.create_session(
+        workspace_id="local-default",
+        series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7,
+        original_filename="episode-07.mp4",
+        media_type="video/mp4",
+        total_size_bytes=10,
+        idempotency_key="reparse-incompatible-es-dimensions",
+        video_parse_config=_video_parse_config_with_dimensions(2),
+    )
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(
+        upload.upload_session_id,
+        workspace_id="local-default",
+    )
+    with create_session_factory(engine).begin() as session:
+        task = session.get(
+            VideoParseTaskRecord,
+            completed.video_parse_task_id,
+        )
+        task.status = "COMPLETE"
+
+    with pytest.raises(ValueError, match="active Elasticsearch"):
+        service.reparse(
+            upload.upload_session_id,
+            workspace_id="local-default",
+            expected_job_version=1,
+            video_parse_config=_video_parse_config_with_dimensions(3),
+        )
+
+    with create_session_factory(engine)() as session:
+        tasks = list(session.scalars(
+            select(VideoParseTaskRecord).where(
+                VideoParseTaskRecord.video_id == completed.video_id
+            )
+        ))
+        assert [task.id for task in tasks] == [completed.video_parse_task_id]
+
+
+def test_v2_execution_mode_creates_only_an_accepted_v2_task(
+    repository,
+    tmp_path,
+) -> None:
+    engine, _store, _repository, service = _upload_service(
+        repository,
+        tmp_path,
+        execution_mode="v2",
+    )
+    upload = _create(service)
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+
+    completed = service.complete(
+        upload.upload_session_id,
+        workspace_id="local-default",
+    )
+    repeated = service.complete(
+        upload.upload_session_id,
+        workspace_id="local-default",
+    )
+
+    assert completed.job_id is repeated.job_id is None
+    assert repeated.video_parse_task_id == completed.video_parse_task_id
+    with create_session_factory(engine)() as session:
+        assert list(session.scalars(select(SeriesParseJobRecord))) == []
+        task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        assert task is not None
+        assert task.detail["_worker_runtime_v2"] == {
+            "accepted": True,
+            "execution_mode": "v2",
+        }
 
 
 def _create(service: UploadService):
@@ -161,7 +380,7 @@ def test_upload_session_is_idempotent_and_reports_progress(
     )
 
     assert first.upload_session_id == second.upload_session_id
-    assert first.episode_order == first.upload_sequence == 1
+    assert first.episode_order == first.upload_sequence == 7
     assert first.total_segments == 3
     assert repeated.segment_number == 0
     assert current.uploaded_segment_count == 2
@@ -212,15 +431,14 @@ def test_new_upload_and_retry_keep_ready_sibling_searchable(
         assert session.get(SeriesRecord, series_id).status == "READY"
 
     with session_factory.begin() as session:
-        job = session.get(SeriesParseJobRecord, completed.job_id)
-        job.status = ParseJobStatus.FAILED.value
-        job.attempt_count = job.max_attempts
-        job.version = 7
-        session.get(VideoRecord, completed.video_id).parse_status = ParseJobStatus.FAILED.value
+        task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        task.status = "PARSING_FAILED"
+        task.attempt_count = task.max_attempts
+        task.last_error = {"code": "MODEL_ERROR"}
     service.retry_parse(
         upload.upload_session_id,
         workspace_id="local-default",
-        expected_job_version=7,
+        expected_job_version=1,
     )
     with session_factory() as session:
         assert session.get(SeriesRecord, series_id).status == "READY"
@@ -245,6 +463,7 @@ def test_selected_parse_config_survives_upload_completion_and_job_claim(
     request = dict(
         workspace_id="local-default",
         series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7,
         original_filename="episode-07.mp4",
         media_type="video/mp4",
         total_size_bytes=10,
@@ -256,7 +475,11 @@ def test_selected_parse_config_survives_upload_completion_and_job_claim(
     with pytest.raises(UploadConflictError, match="idempotency"):
         service.create_session(**request, parse_config=defaults)
 
-    default_request = {**request, "idempotency_key": "default-config-upload"}
+    default_request = {
+        **request,
+        "episode_order": 8,
+        "idempotency_key": "default-config-upload",
+    }
     default_upload = service.create_session(**default_request)
     service._parse_defaults = selected
     replay = service.create_session(**default_request)
@@ -264,23 +487,104 @@ def test_selected_parse_config_survives_upload_completion_and_job_claim(
     assert replay.parse_config == defaults.model_dump(mode="json")
 
     service._parse_defaults = None
-    legacy_request = {**request, "idempotency_key": "legacy-config-upload"}
+    legacy_request = {
+        **request,
+        "episode_order": 9,
+        "idempotency_key": "legacy-config-upload",
+    }
     legacy_upload = service.create_session(**legacy_request)
     assert legacy_upload.parse_config is None
     service._parse_defaults = defaults
     with pytest.raises(UploadConflictError, match="idempotency"):
         service.create_session(**legacy_request, parse_config=selected)
 
+    explicit_v2 = defaults.to_video_parse_v2().model_copy(
+        update={"batch_max_size": defaults.to_video_parse_v2().batch_max_size + 1}
+    )
+    explicit_request = {
+        **request,
+        "episode_order": 10,
+        "idempotency_key": "explicit-v2-config-upload",
+    }
+    incompatible_v2 = explicit_v2.model_copy(
+        update={"chunk_duration": explicit_v2.chunk_duration + 1}
+    )
+    with pytest.raises(ValueError, match="chunk_duration must match"):
+        service.create_session(
+            **explicit_request,
+            video_parse_config=incompatible_v2,
+        )
+    explicit_upload = service.create_session(
+        **explicit_request,
+        video_parse_config=explicit_v2,
+    )
+    explicit_replay = service.create_session(
+        **explicit_request,
+        video_parse_config=explicit_v2,
+    )
+    assert explicit_replay.upload_session_id == explicit_upload.upload_session_id
+    assert explicit_upload.video_parse_config == explicit_v2.model_dump(mode="json")
+    changed_explicit_v2 = explicit_v2.model_copy(
+        update={"batch_max_size": explicit_v2.batch_max_size + 1}
+    )
+    with pytest.raises(UploadConflictError, match="idempotency"):
+        service.create_session(
+            **explicit_request,
+            video_parse_config=changed_explicit_v2,
+        )
+
     _put(service, upload.upload_session_id, 0, b"abcd")
     _put(service, upload.upload_session_id, 1, b"efgh")
     _put(service, upload.upload_session_id, 2, b"ij")
     completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    assert completed.video_parse_task_id is not None
+    task = ParseJobRepository(create_session_factory(engine)).get_video_parse_input(
+        completed.video_parse_task_id
+    )
+    assert task.task.parse_config == selected.to_video_parse_v2().model_dump(
+        mode="json"
+    )
+    assert task.task.parse_config == completed.session.video_parse_config
+    assert task.task.video_id == completed.video_id
+    assert task.original_filename == upload.original_filename
+    assert task.duration_seconds == 12
     lease = MySqlParseJobQueue(create_session_factory(engine)).claim_next(
         "configured-worker", lease_duration=timedelta(minutes=5),
     )
     assert lease is not None and lease.job_id == completed.job_id
     assert ParseConfig.model_validate(lease.parse_config) == selected
     assert ParseJobRepository(create_session_factory(engine)).get(completed.job_id).parse_config == upload.parse_config
+
+
+def test_completion_rejects_a_missing_fixed_v2_config_snapshot(
+    repository,
+    tmp_path,
+) -> None:
+    engine, _store, _upload_repository, service = _upload_service(
+        repository,
+        tmp_path,
+    )
+    upload = _create(service)
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    session_factory = create_session_factory(engine)
+    with session_factory.begin() as session:
+        session.get(
+            UploadSessionRecord,
+            upload.upload_session_id,
+        ).video_parse_config = None
+
+    with pytest.raises(UploadConflictError, match="fixed V2 parse configuration"):
+        service.complete(
+            upload.upload_session_id,
+            workspace_id="local-default",
+        )
+
+    with session_factory() as session:
+        persisted = session.get(UploadSessionRecord, upload.upload_session_id)
+        assert persisted.status == UploadSessionStatus.UPLOADING.value
+        assert persisted.initial_video_parse_task_id is None
+        assert list(session.scalars(select(VideoParseTaskRecord))) == []
 
 
 def test_service_checks_workspace_and_session_range_before_writing_bytes(
@@ -355,6 +659,7 @@ def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(
 
     later = service.create_session(
         workspace_id="local-default", series_id=upload.series_id,
+        episode_order=8,
         original_filename="later.mp4", media_type="video/mp4", total_size_bytes=4,
         idempotency_key="later",
     )
@@ -386,10 +691,11 @@ def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(
     assert _create(service).status == "EXPIRED"
     next_upload = service.create_session(
         workspace_id="local-default", series_id=upload.series_id,
+        episode_order=9,
         original_filename="next.mp4", media_type="video/mp4", total_size_bytes=4,
         idempotency_key="next",
     )
-    assert next_upload.episode_order == next_upload.upload_sequence == 3
+    assert next_upload.episode_order == next_upload.upload_sequence == 9
 
 
 @pytest.mark.parametrize("delete_before_write", [True, False])
@@ -439,7 +745,259 @@ def test_delete_rejects_completing_and_running_parse(repository, tmp_path):
         assert session.get(UploadSessionRecord, upload.upload_session_id).status == "COMPLETED"
 
 
-def test_manual_parse_retry_preserves_progress_checkpoints_usage_and_attempt_history(repository, tmp_path):
+def test_delete_rejects_active_v2_prefix_lease(repository, tmp_path):
+    engine, store, _upload_repository, service = _upload_service(
+        repository,
+        tmp_path,
+        execution_mode="v2",
+    )
+    upload = _create(service)
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(
+        upload.upload_session_id,
+        workspace_id="local-default",
+    )
+    with create_session_factory(engine).begin() as session:
+        task = session.get(
+            VideoParseTaskRecord,
+            completed.video_parse_task_id,
+        )
+        task.status = "COMPLETE"
+        task.finish_time = unix_time_ms_to_datetime(1_789_560_000_000)
+        task.detail = {
+            **task.detail,
+            "_worker_runtime_v2": {
+                **task.detail["_worker_runtime_v2"],
+                "prefix": {
+                    "lease_owner": "prefix-worker",
+                    "lease_version": 1,
+                    "lease_expire_time_ms": 9_999_999_999_999,
+                    "execution_task_id": str(uuid4()),
+                },
+            },
+        }
+
+    with pytest.raises(UploadStateError, match="being parsed"):
+        service.delete_session(
+            upload.upload_session_id,
+            workspace_id="local-default",
+        )
+    with pytest.raises(UploadStateError, match="Prefix worker is active"):
+        service.reparse(
+            upload.upload_session_id,
+            workspace_id="local-default",
+            expected_job_version=1,
+        )
+
+    with create_session_factory(engine)() as session:
+        task = session.get(
+            VideoParseTaskRecord,
+            completed.video_parse_task_id,
+        )
+        assert task.is_deleted is False
+        assert store.resolve(
+            session.get(VideoRecord, completed.video_id).original_source_uri
+        ).exists()
+
+
+@pytest.mark.parametrize(
+    "take_over_pending",
+    [False, True],
+    ids=["ordinary-reparse", "pending-takeover"],
+)
+def test_reparse_atomically_invalidates_the_series_prefix_suffix(
+    repository,
+    tmp_path,
+    take_over_pending,
+):
+    now_ms = 1_789_646_400_000
+    now = unix_time_ms_to_datetime(now_ms)
+    engine, _store, upload_repository, service = _upload_service(
+        repository,
+        tmp_path,
+        clock=lambda: now_ms,
+    )
+    completed_by_order = {}
+    upload_by_order = {}
+    for order in range(1, 4):
+        upload = service.create_session(
+            workspace_id="local-default",
+            series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+            episode_order=order,
+            original_filename=f"episode-{order}.mp4",
+            media_type="video/mp4",
+            total_size_bytes=10,
+            idempotency_key=f"series-prefix-{take_over_pending}-{order}",
+        )
+        episode_parts = (
+            f"{order}aaa".encode(),
+            f"{order}bbb".encode(),
+            f"{order}c".encode(),
+        )
+        for number, data in enumerate(episode_parts):
+            _put(service, upload.upload_session_id, number, data)
+        upload_by_order[order] = upload
+        completed_by_order[order] = service.complete(
+            upload.upload_session_id,
+            workspace_id="local-default",
+        )
+
+    factory = create_session_factory(engine)
+    prefix_before = {}
+    with factory.begin() as session:
+        for order, completed in completed_by_order.items():
+            task = session.get(
+                VideoParseTaskRecord,
+                completed.video_parse_task_id,
+            )
+            config = dict(task.parse_config)
+            config["compact_enabled"] = order != 2
+            task.parse_config = config
+            if order != 1 or not take_over_pending:
+                task.status = "COMPLETE"
+                task.finish_time = now
+
+            detail = dict(task.detail)
+            runtime = dict(detail["_worker_runtime_v2"])
+            runtime["accepted"] = order != 1 or not take_over_pending
+            prefix = {
+                "next_chunk_sequence_no": 0 if order == 3 else 1,
+                "lease_owner": "later-prefix-worker" if order == 3 else None,
+                "lease_version": order + 4,
+                "lease_expire_time_ms": (
+                    datetime_to_unix_time_ms(now + timedelta(minutes=10))
+                    if order == 3
+                    else None
+                ),
+                "execution_task_id": "later-prefix-chunk" if order == 3 else None,
+                "next_execute_time_ms": 0,
+                "retry_count": 2,
+                "video_prefix_compact": f"video-{order}",
+                "series_prefix_compact": f"series-{order}",
+                "last_error": {"message": "old"},
+            }
+            runtime["prefix"] = prefix
+            detail["_worker_runtime_v2"] = runtime
+            task.detail = detail
+            prefix_before[order] = dict(prefix)
+
+    target_upload = upload_by_order[1]
+    target_task_id = completed_by_order[1].video_parse_task_id
+    with pytest.raises(UploadStateError, match="active lease"):
+        upload_repository.reparse(
+            target_upload.upload_session_id,
+            workspace_id="local-default",
+            expected_job_version=1,
+            now=now,
+            execution_mode="v2",
+        )
+
+    with factory() as session:
+        target_tasks = list(session.scalars(
+            select(VideoParseTaskRecord)
+            .where(VideoParseTaskRecord.video_id == completed_by_order[1].video_id)
+            .order_by(VideoParseTaskRecord.version)
+        ))
+        assert [task.id for task in target_tasks] == [target_task_id]
+        assert target_tasks[0].detail["_worker_runtime_v2"]["prefix"] == (
+            prefix_before[1]
+        )
+        assert target_tasks[0].detail["_worker_runtime_v2"]["accepted"] is (
+            not take_over_pending
+        )
+        third = session.get(
+            VideoParseTaskRecord,
+            completed_by_order[3].video_parse_task_id,
+        )
+        assert third.detail["_worker_runtime_v2"]["prefix"] == prefix_before[3]
+
+    with factory.begin() as session:
+        third = session.get(
+            VideoParseTaskRecord,
+            completed_by_order[3].video_parse_task_id,
+        )
+        detail = dict(third.detail)
+        runtime = dict(detail["_worker_runtime_v2"])
+        prefix = dict(runtime["prefix"])
+        prefix["lease_expire_time_ms"] = datetime_to_unix_time_ms(
+            now - timedelta(seconds=1)
+        )
+        runtime["prefix"] = prefix
+        detail["_worker_runtime_v2"] = runtime
+        third.detail = detail
+
+    reparsed = upload_repository.reparse(
+        target_upload.upload_session_id,
+        workspace_id="local-default",
+        expected_job_version=1,
+        now=now,
+        execution_mode="v2",
+    )
+    if take_over_pending:
+        assert (reparsed.video_parse_task_id, reparsed.version) == (target_task_id, 1)
+    else:
+        assert reparsed.video_parse_task_id != target_task_id
+        assert reparsed.version == 2
+
+    with factory() as session:
+        target_tasks = list(session.scalars(
+            select(VideoParseTaskRecord)
+            .where(VideoParseTaskRecord.video_id == completed_by_order[1].video_id)
+            .order_by(VideoParseTaskRecord.version)
+        ))
+        assert target_tasks[-1].detail["_worker_runtime_v2"]["accepted"] is True
+        target_prefix = target_tasks[-1].detail["_worker_runtime_v2"]["prefix"]
+        if take_over_pending:
+            assert target_prefix["lease_version"] == (
+                prefix_before[1]["lease_version"] + 1
+            )
+        else:
+            assert len(target_tasks) == 2
+            assert target_tasks[0].detail["_worker_runtime_v2"]["prefix"] == (
+                prefix_before[1]
+            )
+            assert target_prefix["lease_version"] == 1
+        assert (
+            target_prefix["next_chunk_sequence_no"],
+            target_prefix["series_prefix_compact"],
+            target_prefix["lease_owner"],
+        ) == (0, "", None)
+
+        disabled = session.get(
+            VideoParseTaskRecord,
+            completed_by_order[2].video_parse_task_id,
+        )
+        assert disabled.detail["_worker_runtime_v2"]["prefix"] == prefix_before[2]
+        third = session.get(
+            VideoParseTaskRecord,
+            completed_by_order[3].video_parse_task_id,
+        )
+        third_prefix = third.detail["_worker_runtime_v2"]["prefix"]
+        assert (
+            third_prefix["next_chunk_sequence_no"],
+            third_prefix["video_prefix_compact"],
+            third_prefix["series_prefix_compact"],
+            third_prefix["lease_owner"],
+            third_prefix["lease_expire_time_ms"],
+            third_prefix["execution_task_id"],
+            third_prefix["retry_count"],
+            third_prefix["last_error"],
+            third_prefix["lease_version"],
+        ) == (
+            0,
+            "",
+            "",
+            None,
+            None,
+            None,
+            0,
+            None,
+            prefix_before[3]["lease_version"] + 1,
+        )
+
+
+def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tmp_path):
     retry_at = 1_789_560_000_000
     engine, store, _upload_repository, service = _upload_service(
         repository,
@@ -450,92 +1008,130 @@ def test_manual_parse_retry_preserves_progress_checkpoints_usage_and_attempt_his
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
     completed = service.complete(upload.upload_session_id, workspace_id="local-default")
-    checkpoint_id = str(uuid4())
+    assert completed.video_parse_task_id is not None
+    video_chunk_id = str(uuid4())
+    chunk_task_id = str(uuid4())
+    content_id = str(uuid4())
     started_at = retry_at - timedelta_to_ms(timedelta(minutes=10))
     completed_at = retry_at - timedelta_to_ms(timedelta(minutes=1))
     with create_session_factory(engine).begin() as session:
         job = session.get(SeriesParseJobRecord, completed.job_id)
-        job.status = ParseJobStatus.FAILED.value
-        job.stage = ParseJobStage.PARSING.value
-        job.progress = 18
-        job.attempt_count = 3
-        job.max_attempts = 3
-        job.version = 7
-        job.lease_owner = "stale-worker"
-        job.lease_expires_at = retry_at - timedelta_to_ms(timedelta(seconds=1))
-        job.heartbeat_at = retry_at - timedelta_to_ms(timedelta(seconds=2))
-        job.started_at = started_at
-        job.completed_at = completed_at
-        job.last_error = "provider timed out"
-        video = session.get(VideoRecord, completed.video_id)
-        video.parse_status = ParseJobStatus.FAILED.value
-        video.parse_progress = 18
-        session.get(SeriesRecord, upload.series_id).status = "FAILED"
+        legacy_job_before = (
+            job.status,
+            job.stage,
+            job.progress,
+            job.version,
+            job.attempt_count,
+            job.max_attempts,
+        )
+        task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        original_config = task.parse_config
+        task.status = "PARSING_FAILED"
+        task.attempt_count = 3
+        task.max_attempts = 3
+        task.start_time = unix_time_ms_to_datetime(started_at)
+        task.finish_time = unix_time_ms_to_datetime(completed_at)
+        task.processing_duration_ms = 1234
+        task.last_error = {"code": "MODEL_TIMEOUT", "message": "provider timed out"}
+        session.add(VideoChunkRecord(
+            video_chunk_id=video_chunk_id,
+            video_id=completed.video_id,
+            sequence_no=0,
+            start_seconds=0,
+            end_seconds=12,
+            analysis_window_start_seconds=0,
+            analysis_window_end_seconds=12,
+            chunk_media_ref="artifact://test/old-chunk.mp4",
+            analysis_window_media_ref="artifact://test/old-window.mp4",
+            transcript=[],
+            baseline_visual_caption=None,
+            keyframe_uris=[],
+        ))
+        session.add(ChunkParseTaskRecord(
+            id=chunk_task_id,
+            video_parse_task_id=completed.video_parse_task_id,
+            video_chunk_id=video_chunk_id,
+            status="COMPLETE",
+            next_execute_time=unix_time_ms_to_datetime(started_at),
+            retry_count=0,
+            lease_version=1,
+            start_time=unix_time_ms_to_datetime(started_at),
+            finish_time=unix_time_ms_to_datetime(completed_at),
+            detail={"attempt": 3},
+        ))
+        session.add(ChunkParseContentRecord(
+            id=content_id,
+            chunk_parse_task_id=chunk_task_id,
+            content={"persons": [], "timeline": []},
+            version=1,
+            detail={"compact": "retained compact context"},
+        ))
         session.add(VideoChunkCheckpointRecord(
             job_id=completed.job_id,
             sequence_no=0,
-            video_chunk_id=checkpoint_id,
+            video_chunk_id=video_chunk_id,
             stage=VideoChunkCheckpointStage.PARSED.value,
             parse_artifact_uri="artifact://test/jobs/parse.json",
         ))
         session.add(ParseUsageAttemptRecord(
             job_id=completed.job_id,
+            video_parse_task_id=completed.video_parse_task_id,
             attempt_count=3,
             lease_version=3,
-            started_at=started_at,
+            started_at=unix_time_ms_to_datetime(started_at),
             recording_complete=True,
         ))
     work_file = store.work_directory(completed.job_id) / "resume.json"
     work_file.write_text("keep", encoding="utf-8")
 
-    job_id = service.retry_parse(
+    retried = service.retry_parse(
         upload.upload_session_id,
         workspace_id="local-default",
-        expected_job_version=7,
+        expected_job_version=1,
     )
 
-    assert job_id == completed.job_id
     session_factory = create_session_factory(engine)
     jobs = ParseJobRepository(session_factory)
-    queue = MySqlParseJobQueue(session_factory)
-    retried = jobs.get(completed.job_id)
-    assert retried.status == ParseJobStatus.QUEUED.value
-    assert (retried.attempt_count, retried.max_attempts, retried.version) == (3, 4, 8)
-    assert (retried.stage, retried.progress) == (ParseJobStage.PARSING.value, 18)
-    assert retried.available_at == retry_at
-    assert retried.started_at == started_at
-    assert retried.completed_at is None and retried.last_error is None
-    assert retried.lease_owner is None
-    assert retried.lease_expires_at is None and retried.heartbeat_at is None
-    assert retried.is_primary_upload_job
-    public = project_job(ParseJobDetail(retried, tuple(jobs.list_checkpoints(completed.job_id))))
-    assert public.can_retry is False
-    assert public.checkpoints[0].video_chunk_id == checkpoint_id
+    assert retried.video_parse_task_id == completed.video_parse_task_id
+    assert (retried.version, retried.status) == (1, "PARSING")
+    assert (retried.attempt_count, retried.max_attempts) == (3, 4)
+    assert retried.parse_config == original_config
+    assert retried.next_execute_time == unix_time_ms_to_datetime(retry_at)
+    assert retried.start_time == unix_time_ms_to_datetime(started_at)
+    assert retried.finish_time is None
+    assert retried.last_error == {"code": "MODEL_TIMEOUT", "message": "provider timed out"}
+    assert retried.processing_duration_ms == 1234
     assert work_file.read_text(encoding="utf-8") == "keep"
     with create_session_factory(engine)() as session:
         assert session.get(ParseUsageAttemptRecord, (completed.job_id, 3, 3)) is not None
-        video = session.get(VideoRecord, completed.video_id)
-        assert video.parse_status == ParseJobStatus.QUEUED.value
-        assert video.parse_progress == 18
-        assert session.get(SeriesRecord, upload.series_id).status == "INDEXING"
+        content = session.get(ChunkParseContentRecord, content_id)
+        assert content.chunk_parse_task_id == chunk_task_id
+        assert content.detail == {"compact": "retained compact context"}
+        assert session.get(ChunkParseTaskRecord, chunk_task_id) is not None
+        assert session.get(VideoChunkCheckpointRecord, (completed.job_id, 0)) is not None
+        job = session.get(SeriesParseJobRecord, completed.job_id)
+        assert (
+            job.status,
+            job.stage,
+            job.progress,
+            job.version,
+            job.attempt_count,
+            job.max_attempts,
+        ) == legacy_job_before
+        assert session.scalar(select(VideoParseTaskRecord).where(
+            VideoParseTaskRecord.video_id == completed.video_id
+        )) is not None
+    assert jobs.get_video_parse_task(completed.video_parse_task_id) == retried
 
-    with pytest.raises(UploadConflictError, match="version changed"):
+    with pytest.raises(UploadStateError, match="failed VideoParseTask"):
         service.retry_parse(
             upload.upload_session_id,
             workspace_id="local-default",
-            expected_job_version=7,
+            expected_job_version=1,
         )
-    claimed = queue.claim_next(
-        "retry-worker",
-        lease_duration=timedelta(minutes=5),
-        now=retry_at,
-    )
-    assert claimed is not None
-    assert claimed.job_id == completed.job_id
-    assert (claimed.attempt_count, claimed.max_attempts) == (4, 4)
 
 
-def test_manual_parse_retry_requires_the_uploads_failed_primary_job(repository, tmp_path):
+def test_manual_parse_retry_requires_the_latest_failed_v2_task(repository, tmp_path):
     engine, _store, _upload_repository, service = _upload_service(repository, tmp_path)
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
@@ -548,7 +1144,7 @@ def test_manual_parse_retry_requires_the_uploads_failed_primary_job(repository, 
             workspace_id="other-workspace",
             expected_job_version=1,
         )
-    with pytest.raises(UploadStateError, match="failed ParseJob"):
+    with pytest.raises(UploadStateError, match="failed VideoParseTask"):
         service.retry_parse(
             upload.upload_session_id,
             workspace_id="local-default",
@@ -560,42 +1156,270 @@ def test_manual_parse_retry_requires_the_uploads_failed_primary_job(repository, 
         primary.status = ParseJobStatus.FAILED.value
         primary.attempt_count = primary.max_attempts
         primary.last_error = "failed"
-        secondary_id = str(uuid4())
-        session.add(SeriesParseJobRecord(
-            job_id=secondary_id,
-            series_id=upload.series_id,
-            video_id=completed.video_id,
-            pipeline_version="secondary-pipeline",
-            status=ParseJobStatus.FAILED.value,
-            stage=ParseJobStage.PARSING.value,
-            progress=1,
-            attempt_count=1,
-            max_attempts=1,
-            version=1,
-            available_at=1_789_560_000_000,
-            lease_version=0,
-            last_error="secondary failed",
-        ))
+    with pytest.raises(UploadStateError, match="failed VideoParseTask"):
+        service.retry_parse(
+            upload.upload_session_id,
+            workspace_id="local-default",
+            expected_job_version=1,
+        )
 
-    jobs = ParseJobRepository(create_session_factory(engine))
-    primary = jobs.get(completed.job_id)
-    secondary = jobs.get(secondary_id)
-    assert project_job(ParseJobDetail(primary, ())).can_retry is True
-    assert primary.upload_session_id == upload.upload_session_id
-    assert project_job(ParseJobDetail(secondary, ())).can_retry is False
-    assert secondary.upload_session_id == upload.upload_session_id
+    with create_session_factory(engine).begin() as session:
+        task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        task.status = "PARSING_FAILED"
+        task.last_error = {"code": "MODEL_ERROR"}
+    retried = service.retry_parse(
+        upload.upload_session_id,
+        workspace_id="local-default",
+        expected_job_version=1,
+    )
+    assert retried.video_parse_task_id == completed.video_parse_task_id
+    assert retried.version == 1
 
 
-def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
+@pytest.fixture
+def prepared_v2_retry(repository, tmp_path):
+    retry_at = 1_789_560_000_000
+    engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, clock=lambda: retry_at,
+    )
+    upload = service.create_session(
+        workspace_id="local-default",
+        series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7, original_filename="episode.mp4", media_type="video/mp4",
+        total_size_bytes=10, idempotency_key="interval-retry",
+        video_parse_config=default_video_parse_v2_config().model_copy(
+            update={"chunk_duration": 3, "interval_duration": 6},
+        ),
+    )
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    factory = create_session_factory(engine)
+    chunk_ids = [str(uuid4()) for _ in range(4)]
+    interval_ids = [str(uuid4()) for _ in range(3)]
+    now = unix_time_ms_to_datetime(retry_at)
+    before = now - timedelta(minutes=1)
+    with factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        task.status = "PARSING_FAILED"
+        task.finish_time = before
+        task.last_error = {"code": "CHILD_FAILED", "message": "retained failure"}
+        for sequence, chunk_task_id in enumerate(chunk_ids):
+            chunk_id = str(uuid4())
+            session.add(VideoChunkRecord(
+                video_chunk_id=chunk_id, video_id=completed.video_id,
+                sequence_no=sequence, start_seconds=sequence * 3, end_seconds=(sequence + 1) * 3,
+                analysis_window_start_seconds=sequence * 3,
+                analysis_window_end_seconds=(sequence + 1) * 3,
+                chunk_media_ref="artifact://test/chunk.mp4",
+                analysis_window_media_ref="artifact://test/window.mp4",
+            ))
+            session.add(ChunkParseTaskRecord(
+                id=chunk_task_id, video_parse_task_id=task.id, video_chunk_id=chunk_id,
+                status="COMPLETE", next_execute_time=before, retry_count=2,
+                lease_version=4, finish_time=before, last_error={"code": "PRIOR_ERROR"},
+            ))
+            session.add(ChunkParseContentRecord(
+                id=str(uuid4()), chunk_parse_task_id=chunk_task_id,
+                content={"persons": [], "timeline": []}, version=3,
+            ))
+        for start, interval_id in enumerate(interval_ids):
+            session.add(IntervalParseTaskRecord(
+                id=interval_id, video_parse_task_id=task.id, chunk_parse_task_id=chunk_ids[start],
+                start_sequence_no=start, chunk_count=2, chunk_parse_task_ids=chunk_ids[start:start + 2],
+                ready_mask=3, status="COMPLETE", next_execute_time=before, retry_count=2,
+                lease_version=5, finish_time=before, last_error={"code": "PRIOR_ERROR"},
+            ))
+            session.add(IntervalParseContentRecord(
+                interval_parse_task_id=interval_id, content={"retained": start},
+            ))
+    return service, upload, completed.video_parse_task_id, factory, chunk_ids, interval_ids, now
+
+
+@pytest.mark.parametrize("chunk_states,interval_states,parent_state,expected", [
+    (["COMPLETE", "COMPLETE", "FAILED", "QUEUED"],
+     ["INDEXING_FAILED", "PARSING_FAILED", "WAITING"], "PARSING_FAILED", "PARSING"),
+    (["COMPLETE"] * 4,
+     ["INDEXING_FAILED", "INDEXING", "COMPLETE"], "INDEXING_FAILED", "INDEXING"),
+    (["COMPLETE"] * 4,
+     ["PARSING_FAILED", "COMPLETE", "COMPLETE"], "PARSING_FAILED", "PARSING"),
+    (["COMPLETE"] * 4,
+     ["WAITING", None, "WAITING"], "PARSING_FAILED", "PREPARING"),
+])
+def test_manual_retry_restores_each_child_phase_and_retains_results(
+    prepared_v2_retry, chunk_states, interval_states, parent_state, expected,
+):
+    service, upload, task_id, factory, chunk_ids, interval_ids, now = prepared_v2_retry
+    with factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, task_id)
+        task.status = parent_state
+        config = task.parse_config
+        for model, ids, states in (
+            (ChunkParseTaskRecord, chunk_ids, chunk_states),
+            (IntervalParseTaskRecord, interval_ids, interval_states),
+        ):
+            for child_id, status in zip(ids, states):
+                child = session.get(model, child_id)
+                if status is None:
+                    session.delete(child)
+                    continue
+                child.status = status
+
+    retried = service.retry_parse(
+        upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+    )
+    assert (retried.video_parse_task_id, retried.status, retried.version) == (task_id, expected, 1)
+    assert retried.parse_config == config
+    assert retried.finish_time is None
+    assert retried.last_error == {"code": "CHILD_FAILED", "message": "retained failure"}
+    transitions = {"FAILED": "QUEUED", "PARSING_FAILED": "WAITING", "INDEXING_FAILED": "INDEXING"}
+    with factory() as session:
+        for model, ids, states in (
+            (ChunkParseTaskRecord, chunk_ids, chunk_states),
+            (IntervalParseTaskRecord, interval_ids, interval_states),
+        ):
+            for child_id, before in zip(ids, states):
+                child = session.get(model, child_id)
+                if before is None:
+                    assert child is None
+                    continue
+                assert child.status == transitions.get(before, before)
+                assert child.retry_count == 2
+                assert child.last_error == {"code": "PRIOR_ERROR"}
+                if before in transitions:
+                    assert child.next_execute_time == now and child.finish_time is None
+                    assert child.lease_owner is None and child.lease_expire_time is None
+                else:
+                    assert child.finish_time == now - timedelta(minutes=1)
+        assert [row.version for row in session.scalars(select(ChunkParseContentRecord))] == [3] * 4
+        for start, interval_id in enumerate(interval_ids):
+            content = session.get(IntervalParseContentRecord, interval_id)
+            if interval_states[start] is not None:
+                assert content.content == {"retained": start}
+
+
+@pytest.mark.parametrize(
+    ("model", "status"),
+    [
+        (ChunkParseTaskRecord, "UNDERSTANDING"),
+        (IntervalParseTaskRecord, "REFINING"),
+        (IntervalParseTaskRecord, "INDEXING"),
+    ],
+)
+def test_manual_retry_rejects_active_execution_lease_without_partial_reset(
+    prepared_v2_retry,
+    model,
+    status,
+):
+    service, upload, task_id, factory, chunk_ids, interval_ids, now = (
+        prepared_v2_retry
+    )
+    target_id = (
+        chunk_ids[0]
+        if model is ChunkParseTaskRecord
+        else interval_ids[0]
+    )
+    expires = now + timedelta(minutes=5)
+    with factory.begin() as session:
+        parent = session.get(VideoParseTaskRecord, task_id)
+        parent.status = "PARSING_FAILED"
+        target = session.get(model, target_id)
+        target.status = status
+        target.lease_owner = "active-worker"
+        target.lease_expire_time = expires
+        target.finish_time = None
+        failed_child = session.get(ChunkParseTaskRecord, chunk_ids[-1])
+        failed_child.status = "FAILED"
+
+    with pytest.raises(UploadStateError, match="execution worker is active"):
+        service.retry_parse(
+            upload.upload_session_id,
+            workspace_id="local-default",
+            expected_job_version=1,
+        )
+
+    with factory() as session:
+        assert session.get(VideoParseTaskRecord, task_id).status == "PARSING_FAILED"
+        target = session.get(model, target_id)
+        assert (target.status, target.lease_owner, target.lease_expire_time) == (
+            status,
+            "active-worker",
+            expires,
+        )
+        assert session.get(
+            ChunkParseTaskRecord, chunk_ids[-1]
+        ).status == "FAILED"
+
+
+@pytest.mark.parametrize("invalid", ["missing_refine", "wrong_members", "missing_preparation"])
+def test_indexing_retry_rejects_invalid_sources_without_resetting_children(prepared_v2_retry, invalid):
+    service, upload, task_id, factory, chunk_ids, interval_ids, _now = prepared_v2_retry
+    with factory.begin() as session:
+        session.get(VideoParseTaskRecord, task_id).status = "INDEXING_FAILED"
+        session.get(ChunkParseTaskRecord, chunk_ids[-1]).status = "FAILED"
+        interval = session.get(IntervalParseTaskRecord, interval_ids[0])
+        interval.status = "INDEXING_FAILED"
+        if invalid == "missing_refine":
+            session.delete(session.get(IntervalParseContentRecord, interval.id))
+        elif invalid == "wrong_members":
+            interval.chunk_parse_task_ids = chunk_ids[1:3]
+        else:
+            session.delete(session.get(IntervalParseTaskRecord, interval_ids[-1]))
+    with pytest.raises(UploadConflictError):
+        service.retry_parse(
+            upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+        )
+    with factory() as session:
+        assert session.get(VideoParseTaskRecord, task_id).status == "INDEXING_FAILED"
+        assert session.get(ChunkParseTaskRecord, chunk_ids[-1]).status == "FAILED"
+        assert session.get(IntervalParseTaskRecord, interval_ids[0]).status == "INDEXING_FAILED"
+
+
+@pytest.mark.parametrize("conflicting_boundary", [False, True])
+def test_parse_retry_resumes_partial_fixed_topology(prepared_v2_retry, conflicting_boundary):
+    service, upload, task_id, factory, chunk_ids, interval_ids, _now = prepared_v2_retry
+    with factory.begin() as session:
+        for interval_id in interval_ids:
+            session.delete(session.get(IntervalParseTaskRecord, interval_id))
+        for child_id in chunk_ids[2:]:
+            child = session.get(ChunkParseTaskRecord, child_id)
+            chunk = session.get(VideoChunkRecord, child.video_chunk_id)
+            session.delete(child)
+            session.flush()
+            session.delete(chunk)
+        if conflicting_boundary:
+            first = session.get(ChunkParseTaskRecord, chunk_ids[0])
+            session.get(VideoChunkRecord, first.video_chunk_id).end_seconds = 2
+
+    if conflicting_boundary:
+        with pytest.raises(UploadConflictError, match="fixed chunk topology"):
+            service.retry_parse(
+                upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+            )
+    else:
+        result = service.retry_parse(
+            upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+        )
+        assert result.status == "PREPARING"
+    with factory() as session:
+        assert session.get(VideoParseTaskRecord, task_id).status == (
+            "PARSING_FAILED" if conflicting_boundary else "PREPARING"
+        )
+        for child_id in chunk_ids[:2]:
+            assert session.get(ChunkParseTaskRecord, child_id).status == "COMPLETE"
+
+
+@pytest.mark.parametrize("terminal_status", ["COMPLETE", "PARSING_FAILED", "INDEXING_FAILED"])
+def test_full_reparse_creates_new_v2_version_and_retains_history(
     repository,
     tmp_path,
+    terminal_status,
 ):
     reparsed_at = 1_789_646_400_000
-    current_time = [reparsed_at]
     engine, store, _upload_repository, service = _upload_service(
         repository,
         tmp_path,
-        clock=lambda: current_time[0],
+        clock=lambda: reparsed_at,
     )
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
@@ -604,7 +1428,10 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
         upload.upload_session_id,
         workspace_id="local-default",
     )
+    assert completed.video_parse_task_id is not None
     video_chunk_id = str(uuid4())
+    chunk_task_id = str(uuid4())
+    chunk_content_id = str(uuid4())
     with create_session_factory(engine).begin() as session:
         job = session.get(SeriesParseJobRecord, completed.job_id)
         job.status = ParseJobStatus.SUCCEEDED.value
@@ -615,6 +1442,24 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
         job.version = 7
         job.started_at = reparsed_at - timedelta_to_ms(timedelta(hours=1))
         job.completed_at = reparsed_at - timedelta_to_ms(timedelta(minutes=30))
+        legacy_job_before = (
+            job.status,
+            job.stage,
+            job.progress,
+            job.attempt_count,
+            job.max_attempts,
+            job.version,
+            job.started_at,
+            job.completed_at,
+        )
+        task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        original_config = task.parse_config
+        task.status = terminal_status
+        task.attempt_count = 1
+        task.start_time = unix_time_ms_to_datetime(job.started_at)
+        task.finish_time = unix_time_ms_to_datetime(job.completed_at)
+        task.processing_duration_ms = timedelta_to_ms(timedelta(minutes=30))
+        task.detail = {"result": "published"}
         video = session.get(VideoRecord, completed.video_id)
         video.parse_status = ParseJobStatus.SUCCEEDED.value
         video.parse_progress = 100
@@ -632,6 +1477,25 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
             transcript=[],
             baseline_visual_caption=None,
             keyframe_uris=[],
+        ))
+        session.add(ChunkParseTaskRecord(
+            id=chunk_task_id,
+            video_parse_task_id=completed.video_parse_task_id,
+            video_chunk_id=video_chunk_id,
+            status="COMPLETE",
+            next_execute_time=unix_time_ms_to_datetime(job.started_at),
+            retry_count=0,
+            lease_version=1,
+            start_time=unix_time_ms_to_datetime(job.started_at),
+            finish_time=unix_time_ms_to_datetime(job.completed_at),
+            detail={"attempt": 1},
+        ))
+        session.add(ChunkParseContentRecord(
+            id=chunk_content_id,
+            chunk_parse_task_id=chunk_task_id,
+            content={"persons": [], "timeline": []},
+            version=1,
+            detail={"compact": "old compact result"},
         ))
         session.add(VideoChunkEmbeddingRecord(
             video_chunk_id=video_chunk_id,
@@ -659,39 +1523,72 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
         ))
         session.add(ParseUsageAttemptRecord(
             job_id=completed.job_id,
+            video_parse_task_id=completed.video_parse_task_id,
             attempt_count=3,
             lease_version=3,
-            started_at=reparsed_at - timedelta_to_ms(timedelta(hours=1)),
+            started_at=unix_time_ms_to_datetime(
+                reparsed_at - timedelta_to_ms(timedelta(hours=1))
+            ),
             recording_complete=True,
         ))
     old_attempt_artifact = (
         store.work_directory(completed.job_id) / "old-attempt.json"
     )
     old_attempt_artifact.write_text("keep", encoding="utf-8")
-
-    assert service.reparse(
-        upload.upload_session_id,
-        workspace_id="local-default",
-        expected_job_version=7,
-    ) == completed.job_id
-
+    replacement_config = VideoParseV2Config.model_validate(
+        original_config
+    ).model_copy(update={"batch_max_size": 4})
     session_factory = create_session_factory(engine)
     jobs = ParseJobRepository(session_factory)
-    queue = MySqlParseJobQueue(session_factory)
-    reset = jobs.get(completed.job_id)
-    assert (reset.status, reset.stage, reset.progress, reset.version) == (
-        ParseJobStatus.QUEUED.value,
-        ParseJobStage.QUEUED.value,
-        0,
-        8,
+    incompatible_config = replacement_config.model_copy(
+        update={"chunk_duration": 5}
     )
-    assert (reset.attempt_count, reset.max_attempts) == (3, 6)
-    assert reset.started_at is None and reset.completed_at is None
-    assert jobs.list_checkpoints(completed.job_id) == []
-    public = project_job(ParseJobDetail(reset, ()))
-    assert public.can_retry is False
-    assert public.can_reparse is False
+    with pytest.raises(UploadConflictError, match="fixed chunk topology"):
+        service.reparse(
+            upload.upload_session_id,
+            workspace_id="local-default",
+            expected_job_version=1,
+            video_parse_config=incompatible_config,
+        )
+    assert len(jobs.list_video_parse_tasks(completed.video_id)) == 1
+
+    reparsed = service.reparse(
+        upload.upload_session_id,
+        workspace_id="local-default",
+        expected_job_version=1,
+        video_parse_config=replacement_config,
+    )
+
+    assert reparsed.video_parse_task_id != completed.video_parse_task_id
+    assert reparsed.video_id == completed.video_id
+    assert (reparsed.status, reparsed.version) == (
+        "PENDING",
+        2,
+    )
+    assert reparsed.parse_config == replacement_config.model_dump(mode="json")
+    assert reparsed.next_execute_time == unix_time_ms_to_datetime(reparsed_at)
+    assert reparsed.chunk_count == 1
+    assert reparsed.max_attempts == replacement_config.execution.max_retry_count + 1
+    tasks = jobs.list_video_parse_tasks(completed.video_id)
+    assert [task.video_parse_task_id for task in tasks] == [
+        completed.video_parse_task_id,
+        reparsed.video_parse_task_id,
+    ]
+    assert [task.version for task in tasks] == [1, 2]
+    assert tasks[0].parse_config == original_config
+    assert tasks[1].parse_config == replacement_config.model_dump(mode="json")
+    assert jobs.latest_video_parse_task(completed.video_id) == reparsed
     with session_factory() as session:
+        old_task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        assert (old_task.status, old_task.detail) == (
+            terminal_status,
+            {"result": "published"},
+        )
+        assert session.get(VideoParseTaskRecord, reparsed.video_parse_task_id) is not None
+        old_content = session.get(ChunkParseContentRecord, chunk_content_id)
+        assert old_content.chunk_parse_task_id == chunk_task_id
+        assert old_content.detail == {"compact": "old compact result"}
+        assert session.get(ChunkParseTaskRecord, chunk_task_id) is not None
         assert session.get(VideoChunkRecord, video_chunk_id) is not None
         assert session.get(VideoChunkEmbeddingRecord, video_chunk_id) is not None
         intent = session.get(IndexSyncIntentRecord, video_chunk_id)
@@ -700,6 +1597,21 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
             ParseUsageAttemptRecord,
             (completed.job_id, 3, 3),
         ) is not None
+        assert session.get(
+            VideoChunkCheckpointRecord,
+            (completed.job_id, 0),
+        ) is not None
+        job = session.get(SeriesParseJobRecord, completed.job_id)
+        assert (
+            job.status,
+            job.stage,
+            job.progress,
+            job.attempt_count,
+            job.max_attempts,
+            job.version,
+            job.started_at,
+            job.completed_at,
+        ) == legacy_job_before
         video = session.get(VideoRecord, completed.video_id)
         assert (video.parse_status, video.parse_progress) == (
             ParseJobStatus.SUCCEEDED.value,
@@ -708,77 +1620,13 @@ def test_full_reparse_clears_checkpoints_but_preserves_successful_snapshot(
         assert session.get(SeriesRecord, upload.series_id).status == "READY"
     assert old_attempt_artifact.read_text(encoding="utf-8") == "keep"
 
-    lease = queue.claim_next(
-        "reparse-worker",
-        lease_duration=timedelta(minutes=5),
-        now=reparsed_at,
-    )
-    assert lease is not None
-    assert lease.preserve_existing_result is True
-    assert (lease.attempt_count, lease.max_attempts) == (4, 6)
-    assert queue.retry(
-        lease,
-        error="replacement parse failed",
-        retry_at=reparsed_at + timedelta_to_ms(timedelta(minutes=1)),
-        duration_ms=0,
-        now=reparsed_at + timedelta_to_ms(timedelta(seconds=10)),
-    )
-    with session_factory() as session:
-        video = session.get(VideoRecord, completed.video_id)
-        assert video.parse_status == ParseJobStatus.SUCCEEDED.value
-        assert session.get(SeriesRecord, upload.series_id).status == "READY"
-
-    second_lease = queue.claim_next(
-        "reparse-worker",
-        lease_duration=timedelta(minutes=5),
-        now=reparsed_at + timedelta_to_ms(timedelta(minutes=1)),
-    )
-    assert second_lease is not None
-    assert second_lease.preserve_existing_result is True
-    assert queue.reap_expired(
-        retry_delay=timedelta(minutes=1),
-        now=reparsed_at + timedelta_to_ms(timedelta(minutes=7)),
-    ) == 1
-    with session_factory() as session:
-        video = session.get(VideoRecord, completed.video_id)
-        assert video.parse_status == ParseJobStatus.SUCCEEDED.value
-        assert session.get(SeriesRecord, upload.series_id).status == "READY"
-
-    final_lease = queue.claim_next(
-        "reparse-worker",
-        lease_duration=timedelta(minutes=5),
-        now=reparsed_at + timedelta_to_ms(timedelta(minutes=8)),
-    )
-    assert final_lease is not None
-    assert final_lease.attempt_count == 6
-    assert queue.retry(
-        final_lease,
-        error="replacement parse exhausted",
-        retry_at=reparsed_at + timedelta_to_ms(timedelta(minutes=9)),
-        duration_ms=0,
-        now=reparsed_at + timedelta_to_ms(timedelta(minutes=8, seconds=10)),
-    )
-    failed_reparse = jobs.get(completed.job_id)
-    assert failed_reparse.status == ParseJobStatus.FAILED.value
-    assert failed_reparse.processing_timing_complete is False
-    current_time[0] = reparsed_at + timedelta_to_ms(timedelta(minutes=9))
-    service.retry_parse(
-        upload.upload_session_id,
-        workspace_id="local-default",
-        expected_job_version=failed_reparse.version,
-    )
-    with session_factory() as session:
-        video = session.get(VideoRecord, completed.video_id)
-        assert video.parse_status == ParseJobStatus.SUCCEEDED.value
-        assert session.get(SeriesRecord, upload.series_id).status == "READY"
-
     with pytest.raises(UploadConflictError, match="version changed"):
         service.reparse(
             upload.upload_session_id,
             workspace_id="local-default",
-            expected_job_version=7,
+            expected_job_version=1,
         )
-
+    assert len(jobs.list_video_parse_tasks(completed.video_id)) == 2
 
 def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_path):
     engine, store, upload_repository, service = _upload_service(repository, tmp_path)
@@ -791,6 +1639,7 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
     call_id = str(uuid4())
     snapshot_id = str(uuid4())
     second_job_id = str(uuid4())
+    chunk_parse_task_id = str(uuid4())
     with create_session_factory(engine).begin() as session:
         job = session.get(SeriesParseJobRecord, completed.job_id)
         job.status = ParseJobStatus.FAILED.value
@@ -829,6 +1678,17 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             transcript=[],
             baseline_visual_caption=None,
             keyframe_uris=[],
+        ))
+        session.add(ChunkParseTaskRecord(
+            id=chunk_parse_task_id,
+            video_parse_task_id=completed.video_parse_task_id,
+            video_chunk_id=video_chunk_id,
+            status="QUEUED",
+            next_execute_time=unix_time_ms_to_datetime(now),
+            retry_count=0,
+            lease_version=0,
+            create_time=unix_time_ms_to_datetime(now),
+            update_time=unix_time_ms_to_datetime(now),
         ))
         session.add(VideoChunkInfoRecord(
             video_chunk_id=video_chunk_id,
@@ -873,7 +1733,7 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             job_id=completed.job_id,
             attempt_count=1,
             lease_version=1,
-            started_at=now,
+            started_at=unix_time_ms_to_datetime(now),
             recording_complete=True,
         ))
         session.add(ParseModelCallRecord(
@@ -890,7 +1750,7 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             model="test-model",
             category="parse",
             operation="parse",
-            started_at=now,
+            started_at=unix_time_ms_to_datetime(now),
             status="failed",
         ))
 
@@ -915,7 +1775,21 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             self.deleted.append(video_chunk_id)
 
     vectors = VectorStore()
+    class ParseIndexStore:
+        def __init__(self):
+            self.deleted = []
+            self.verified = []
+
+        def bulk_delete(self, keys, *, refresh=False):
+            self.deleted.append((tuple(keys), refresh))
+
+        def verify_absent(self, keys):
+            self.verified.append(tuple(keys))
+            return True
+
+    parse_index = ParseIndexStore()
     service._video_chunk_store = vectors
+    service._video_parse_index_store = parse_index
     deleted = service.delete_session(
         upload.upload_session_id,
         workspace_id="local-default",
@@ -929,6 +1803,9 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
     assert repeated.version == deleted.version
     assert deleted.video_id is None and deleted.job_id is None
     assert vectors.deleted == [video_chunk_id]
+    expected_parse_key = ((completed.video_parse_task_id, video_chunk_id),)
+    assert parse_index.deleted == [(expected_parse_key, "wait_for")]
+    assert parse_index.verified == [expected_parse_key]
     assert not job_directory.exists()
     assert not second_job_directory.exists()
     assert not video_directory.exists()
@@ -992,7 +1869,7 @@ def test_reconcile_resumes_active_upload_cleanup_after_begin_crash(repository, t
     deletion = upload_repository.begin_delete_session(
         upload.upload_session_id,
         workspace_id="local-default",
-        now=1_789_560_000_000,
+        now=unix_time_ms_to_datetime(1_789_560_000_000),
     )
     assert deletion.session.status == UploadSessionStatus.EXPIRED.value
     with create_session_factory(engine)() as session:
@@ -1120,14 +1997,22 @@ def test_complete_creates_video_and_durable_parse_job_once(
 
     assert first.video_id == second.video_id
     assert first.job_id == second.job_id
+    assert first.video_parse_task_id == second.video_parse_task_id
+    assert first.video_parse_task_id is not None
+    assert (
+        first.session.initial_video_parse_task_id
+        == first.video_parse_task_id
+        == second.session.initial_video_parse_task_id
+    )
     assert first.session.status == UploadSessionStatus.COMPLETED.value
     with create_session_factory(engine)() as session:
-        video = session.scalar(select(VideoRecord))
-        job = session.scalar(select(SeriesParseJobRecord))
+        [video] = list(session.scalars(select(VideoRecord)))
+        [job] = list(session.scalars(select(SeriesParseJobRecord)))
+        [video_parse_task] = list(session.scalars(select(VideoParseTaskRecord)))
     assert video is not None
     assert job is not None
     assert video.original_filename == "episode-07.mp4"
-    assert video.episode_order == video.upload_sequence == 1
+    assert video.episode_order == video.upload_sequence == 7
     assert video.content_hash == hashlib.sha256(b"abcdefghij").hexdigest()
     assert video.duration_seconds == 12
     assert video.parse_status == ParseJobStatus.QUEUED.value
@@ -1135,6 +2020,12 @@ def test_complete_creates_video_and_durable_parse_job_once(
     assert job.video_id == video.video_id
     assert job.status == ParseJobStatus.QUEUED.value
     assert job.attempt_count == 0
+    assert video_parse_task.id == first.video_parse_task_id
+    assert video_parse_task.video_id == video.video_id
+    assert video_parse_task.status == "PENDING"
+    assert video_parse_task.version == 1
+    assert video_parse_task.chunk_count == 1
+    assert video_parse_task.parse_config == first.session.video_parse_config
 
 
 def test_expired_session_rejects_new_segments(repository, tmp_path) -> None:
@@ -1170,7 +2061,7 @@ def test_expired_session_rejects_new_segments(repository, tmp_path) -> None:
     )
     assert renewed.upload_session_id != upload.upload_session_id
     assert renewed.status == UploadSessionStatus.UPLOADING.value
-    assert renewed.episode_order == renewed.upload_sequence == upload.episode_order + 1
+    assert renewed.episode_order == renewed.upload_sequence == upload.episode_order
 
 
 @pytest.mark.parametrize("content_sha256", ["0" * 64, hashlib.sha256(b"abcd").hexdigest()])
@@ -1181,7 +2072,7 @@ def test_source_checksum_and_visible_completion_versions(repository, tmp_path, c
         episode_order=7, original_filename="episode.mp4", media_type="video/mp4",
         total_size_bytes=4, idempotency_key="checksum", content_sha256=content_sha256,
     )
-    assert upload.upload_sequence == 1
+    assert upload.upload_sequence == 7
     _put(service, upload.upload_session_id, 0, b"abcd", total_size_bytes=4)
     received = service.get_session(upload.upload_session_id, workspace_id="local-default")
     assert received.version > upload.version
@@ -1206,9 +2097,10 @@ def test_source_checksum_and_visible_completion_versions(repository, tmp_path, c
         replay = service.complete(upload.upload_session_id, workspace_id="local-default")
         assert replay.session.version == completed.session.version
         assert replay.job_id == completed.job_id
+        assert replay.video_parse_task_id == completed.video_parse_task_id
 
 
-def test_auto_upload_sequence_is_stable_on_replay_and_increases(repository, tmp_path):
+def test_episode_order_is_stable_on_replay_and_used_as_upload_sequence(repository, tmp_path):
     _engine, _store, _repo, service = _upload_service(repository, tmp_path)
     first = _create(service)
     second = service.create_session(
@@ -1216,9 +2108,29 @@ def test_auto_upload_sequence_is_stable_on_replay_and_increases(repository, tmp_
         original_filename="episode-08.mp4", media_type="video/mp4", total_size_bytes=4,
         idempotency_key="second-upload",
     )
-    assert second.upload_sequence == first.upload_sequence + 1
-    assert second.episode_order == second.upload_sequence == 2
+    assert first.episode_order == first.upload_sequence == 7
+    assert second.episode_order == second.upload_sequence == 8
     assert _create(service).upload_sequence == first.upload_sequence
+    with pytest.raises(UploadConflictError, match="idempotency"):
+        service.create_session(
+            workspace_id="local-default",
+            series_id=first.series_id,
+            episode_order=9,
+            original_filename=first.original_filename,
+            media_type=first.media_type,
+            total_size_bytes=first.total_size_bytes,
+            idempotency_key="upload-episode-07",
+        )
+    with pytest.raises(UploadConflictError, match="episode"):
+        service.create_session(
+            workspace_id="local-default",
+            series_id=first.series_id,
+            episode_order=7,
+            original_filename="duplicate-slot.mp4",
+            media_type="video/mp4",
+            total_size_bytes=4,
+            idempotency_key="duplicate-slot",
+        )
 
 
 @pytest.mark.parametrize("first_optional,changed_optional", [
@@ -1242,25 +2154,23 @@ def test_upload_key_keeps_optional_original_request_parameters(repository, tmp_p
     assert replay.upload_session_id == first.upload_session_id
 
 
-@pytest.mark.parametrize("orders", [
-    {"episode_order": 99, "upload_sequence": 3},
-    {"episode_order": None, "upload_sequence": None},
-    {"episode_order": -1, "upload_sequence": 0},
-])
-def test_client_order_is_ignored_for_allocation_and_replay(repository, tmp_path, orders):
+@pytest.mark.parametrize("episode_order", [None, True, 0, -1, 2_147_483_648])
+def test_episode_order_must_be_a_positive_signed_32_bit_integer(
+    repository,
+    tmp_path,
+    episode_order,
+):
     _engine, _store, _repo, service = _upload_service(repository, tmp_path)
-    request = {
-        "workspace_id": "local-default", "series_id": "77285f16-3e5b-592e-ba15-8b224b619806",
-        "original_filename": "episode-99.mp4", "media_type": "video/mp4",
-        "total_size_bytes": 4, "idempotency_key": "ignored-order",
-    }
-    first = service.create_session(**request, **orders)
-    replay = service.create_session(**request, episode_order=1000, upload_sequence=1000)
-    next_upload = service.create_session(**{**request, "idempotency_key": "next"})
-    assert first.episode_order == first.upload_sequence == 1
-    assert replay.upload_session_id == first.upload_session_id
-    assert replay.episode_order == replay.upload_sequence == 1
-    assert next_upload.episode_order == next_upload.upload_sequence == 2
+    with pytest.raises(ValueError):
+        service.create_session(
+            workspace_id="local-default",
+            series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+            episode_order=episode_order,
+            original_filename="episode.mp4",
+            media_type="video/mp4",
+            total_size_bytes=4,
+            idempotency_key=f"invalid-order-{episode_order!r}",
+        )
 
 
 def test_delete_lock_contention_does_not_start_task_cleanup(repository, tmp_path):
@@ -1306,56 +2216,32 @@ def test_delete_lock_contention_does_not_start_task_cleanup(repository, tmp_path
     assert staging.exists()
 
 
-@pytest.mark.parametrize("highest_field", [
-    "upload_episode_order", "upload_sequence", "video_episode_order", "video_upload_sequence",
-])
-def test_append_order_uses_all_legacy_order_fields(repository, tmp_path, highest_field):
+def test_episode_order_conflicts_with_existing_video_in_the_same_series(
+    repository,
+    tmp_path,
+):
     engine, _store, _repo, service = _upload_service(repository, tmp_path)
-    first = _create(service)
     with create_session_factory(engine).begin() as session:
-        upload = session.get(UploadSessionRecord, first.upload_session_id)
-        upload.episode_order = 9 if highest_field == "upload_episode_order" else 3
-        upload.upload_sequence = 9 if highest_field == "upload_sequence" else 4
-        upload.active_slot_key = f"{first.series_id}:{upload.episode_order}"
         session.add(VideoRecord(
-            video_id="5772855a-8c93-440c-aae1-91c9cf9eebf5", series_id=first.series_id,
-            episode_order=9 if highest_field == "video_episode_order" else 5,
-            upload_sequence=9 if highest_field == "video_upload_sequence" else 6,
-            original_filename="legacy.mp4", original_source_uri="artifact://test/legacy.mp4",
+            video_id="5772855a-8c93-440c-aae1-91c9cf9eebf5",
+            series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+            episode_order=9,
+            upload_sequence=9,
+            original_filename="existing.mp4",
+            original_source_uri="artifact://test/existing.mp4",
             content_hash="0" * 64, total_bytes=4, duration_seconds=1,
             upload_status="COMPLETED", parse_status="SUCCEEDED", upload_progress=100, parse_progress=100,
         ))
-    next_upload = service.create_session(
-        workspace_id="local-default", series_id=first.series_id,
-        original_filename="second.mp4", media_type="video/mp4", total_size_bytes=4,
-        idempotency_key="second",
-    )
-    assert next_upload.episode_order == next_upload.upload_sequence == 10
-    with create_session_factory(engine)() as session:
-        assert session.get(UploadSessionRecord, first.upload_session_id).episode_order == upload.episode_order
-
-
-@pytest.mark.parametrize("legacy_sequence", [None, 5])
-def test_legacy_fingerprint_keeps_replay_without_accepting_file_changes(repository, tmp_path, legacy_sequence):
-    engine, _store, _repo, service = _upload_service(repository, tmp_path)
-    request = {
-        "workspace_id": "local-default", "series_id": "77285f16-3e5b-592e-ba15-8b224b619806",
-        "original_filename": "legacy.mp4", "media_type": "video/mp4",
-        "total_size_bytes": 4, "idempotency_key": "legacy", "content_sha256": None,
-    }
-    first = service.create_session(**request)
-    legacy_fields = {**request, "episode_order": 7, "upload_sequence": legacy_sequence}
-    with create_session_factory(engine).begin() as session:
-        upload = session.get(UploadSessionRecord, first.upload_session_id)
-        upload.episode_order = 7
-        upload.upload_sequence = 5
-        upload.active_slot_key = f"{first.series_id}:7"
-        upload.request_fingerprint = hashlib.sha256(json.dumps(legacy_fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    replay = service.create_session(**request, episode_order=999, upload_sequence=999)
-    assert replay.upload_session_id == first.upload_session_id
-    assert replay.episode_order == 7 and replay.upload_sequence == 5
-    with pytest.raises(UploadConflictError):
-        service.create_session(**{**request, "total_size_bytes": 8})
+    with pytest.raises(UploadConflictError, match="episode"):
+        service.create_session(
+            workspace_id="local-default",
+            series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+            episode_order=9,
+            original_filename="conflict.mp4",
+            media_type="video/mp4",
+            total_size_bytes=4,
+            idempotency_key="video-order-conflict",
+        )
 
 
 def test_legacy_session_without_fingerprint_compares_file_fields(repository, tmp_path):
@@ -1369,13 +2255,19 @@ def test_legacy_session_without_fingerprint_compares_file_fields(repository, tmp
     )
     request = {
         "workspace_id": "local-default", "series_id": first.series_id,
+        "episode_order": first.episode_order,
         "original_filename": first.original_filename, "media_type": first.media_type,
         "total_size_bytes": first.total_size_bytes, "idempotency_key": "upload-episode-07",
     }
-    replay = changed_config_service.create_session(**request, episode_order=999, upload_sequence=999)
+    replay = changed_config_service.create_session(**request)
     assert replay.upload_session_id == first.upload_session_id
     assert replay.preferred_segment_size_bytes == first.preferred_segment_size_bytes
-    for changed in ({"original_filename": "changed.mp4"}, {"total_size_bytes": 8}, {"content_sha256": "0" * 64}):
+    for changed in (
+        {"episode_order": 8},
+        {"original_filename": "changed.mp4"},
+        {"total_size_bytes": 8},
+        {"content_sha256": "0" * 64},
+    ):
         with pytest.raises(UploadConflictError):
             changed_config_service.create_session(**{**request, **changed})
 

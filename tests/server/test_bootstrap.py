@@ -21,10 +21,23 @@ from server.config.sse import SSEConfig
 from server.config.upload import UploadServiceConfig
 from server.database import create_schema
 from server.mq import __main__ as mq_main
+from server.mq.video_parse_consumer import VideoParseConsumer
+from server.service.video_parse import VideoParseRuntimeService
+from server.storage.elasticsearch import ElasticsearchVideoChunkStore
 
 
 class _QdrantClient:
     def __init__(self, **_kwargs):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class _ElasticsearchClient:
+    def __init__(self, url, *, api_key):
+        self.url = url
+        self.api_key = api_key
         self.closed = False
 
     def close(self):
@@ -68,11 +81,13 @@ def test_parse_defaults_accept_existing_runtime_values_beyond_ui_recommendations
         ),
     ],
 )
+@pytest.mark.parametrize("with_es", [False, True])
 def test_process_assembly_receives_runtime_configuration(
     monkeypatch,
     tmp_path,
     configured_models,
     expected_models,
+    with_es,
 ):
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
@@ -84,6 +99,10 @@ def test_process_assembly_receives_runtime_configuration(
     monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
     monkeypatch.setenv("ANIVAG_QDRANT_URL", "http://127.0.0.1:6333")
     monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "bootstrap_test")
+    if with_es:
+        monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+        monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "bootstrap_test")
+        monkeypatch.setenv("ANIVAG_ELASTICSEARCH_API_KEY", "test-key")
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     settings = replace(
@@ -119,6 +138,7 @@ def test_process_assembly_receives_runtime_configuration(
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "0.5")
     monkeypatch.setenv("ANIVAG_BACKGROUND_IMAGE_MAX_EDGE", "2048")
     monkeypatch.setattr(bootstrap, "QdrantClient", _QdrantClient)
+    monkeypatch.setattr(bootstrap, "Elasticsearch", _ElasticsearchClient)
     received = {}
     real_create_engine = bootstrap.create_database_engine
 
@@ -309,7 +329,101 @@ def test_process_assembly_receives_runtime_configuration(
     finally:
         services.close()
     assert services.qdrant_client.closed
+    if with_es:
+        assert isinstance(services.elasticsearch_client, _ElasticsearchClient)
+        assert services.elasticsearch_client.url == "http://127.0.0.1:9200"
+        assert services.elasticsearch_client.api_key == "test-key"
+        assert services.elasticsearch_client.closed
+    else:
+        assert services.elasticsearch_client is None
     assert received["pool_recycle_seconds"] == settings.database_pool_recycle_seconds
+
+
+def test_v2_mode_wires_durable_worker_and_elasticsearch(
+    monkeypatch,
+    tmp_path,
+):
+    for name in tuple(os.environ):
+        if name.startswith("ANIVAG_"):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
+    monkeypatch.setenv(
+        "ANIVAG_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'v2-bootstrap.sqlite'}"
+    )
+    monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("ANIVAG_QDRANT_URL", "http://127.0.0.1:6333")
+    monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "bootstrap_test")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "bootstrap_test")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "7")
+    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v2")
+    monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    settings = ServerSettings.from_environment()
+
+    monkeypatch.setattr(bootstrap, "QdrantClient", _QdrantClient)
+    monkeypatch.setattr(bootstrap, "Elasticsearch", _ElasticsearchClient)
+    real_create_engine = bootstrap.create_database_engine
+
+    def create_engine(*args, **kwargs):
+        engine = real_create_engine(*args, **kwargs)
+        create_schema(engine)
+        return engine
+
+    monkeypatch.setattr(bootstrap, "create_database_engine", create_engine)
+
+    def forbidden_v1_runtime(*_args, **_kwargs):
+        raise AssertionError("V2 mode must not construct the V1 parse runtime")
+
+    def forbidden_v1_consumer(*_args, **_kwargs):
+        raise AssertionError("V2 mode must not construct the V1 parse consumer")
+
+    monkeypatch.setattr(bootstrap, "EngineVideoParseRuntime", forbidden_v1_runtime)
+    monkeypatch.setattr(bootstrap, "ParseJobConsumer", forbidden_v1_consumer)
+
+    services = bootstrap.build_application_services(settings)
+    try:
+        consumer = services.parse_consumer
+        assert isinstance(consumer, VideoParseConsumer)
+        runtime = consumer._handlers.prepare.__self__
+        assert isinstance(runtime, VideoParseRuntimeService)
+        assert consumer._queue is runtime._queue
+        assert consumer._handlers.understand.__self__ is runtime
+        assert consumer._handlers.refine.__self__ is runtime
+        assert consumer._handlers.index.__self__ is runtime
+        assert consumer._handlers.prefix.__self__ is runtime
+        assert consumer._handlers.maintenance.__self__ is runtime
+        assert consumer._maintenance_interval == settings.mq.lease_duration
+        assert isinstance(runtime._elasticsearch_store, ElasticsearchVideoChunkStore)
+        assert runtime._elasticsearch_store._client is services.elasticsearch_client
+        assert runtime._index_generation == 7
+        assert services.uploads._video_parse_index_store is runtime._elasticsearch_store
+        assert runtime._media_service.base_directory == (
+            tmp_path / "artifacts" / "test" / "work" / "video-parse-v2"
+        )
+    finally:
+        services.close()
+
+
+def test_v2_mode_requires_elasticsearch_before_allocating_services(
+    monkeypatch,
+    tmp_path,
+):
+    for name in tuple(os.environ):
+        if name.startswith("ANIVAG_"):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
+    monkeypatch.setenv(
+        "ANIVAG_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'missing-es.sqlite'}"
+    )
+    monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("ANIVAG_QDRANT_URL", "http://127.0.0.1:6333")
+    monkeypatch.setenv("ANIVAG_QDRANT_COLLECTION", "bootstrap_test")
+    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v2")
+    settings = ServerSettings.from_environment()
+
+    with pytest.raises(ValueError, match="Video Parse V2 requires"):
+        bootstrap.build_application_services(settings)
 
 
 def test_mq_once_reuses_application_bootstrap(monkeypatch):
@@ -347,6 +461,46 @@ def test_mq_once_reuses_application_bootstrap(monkeypatch):
     assert events == [("mq", "test", settings.logging), "run_once", "close"]
 
 
+def test_mq_once_uses_v2_synchronous_diagnostic_entrypoint(monkeypatch):
+    from types import SimpleNamespace
+
+    events = []
+    settings = SimpleNamespace(environment="test", logging=object())
+    services = SimpleNamespace(
+        parse_consumer=SimpleNamespace(
+            run_once_sync=lambda: events.append("run_once_sync"),
+            run_once=lambda: events.append("unexpected_async_tick"),
+        ),
+        close=lambda: events.append("close"),
+    )
+    monkeypatch.setattr(
+        mq_main.ServerSettings,
+        "from_environment",
+        classmethod(lambda _cls: settings),
+    )
+    monkeypatch.setattr(
+        mq_main,
+        "configure_logging",
+        lambda process, **kwargs: events.append(
+            (process, kwargs["environment"], kwargs["config"])
+        ),
+    )
+    monkeypatch.setattr(
+        mq_main,
+        "build_application_services",
+        lambda received: services if received is settings else None,
+    )
+    monkeypatch.setattr(sys, "argv", ["python -m server.mq", "--once"])
+
+    mq_main.main()
+
+    assert events == [
+        ("mq", "test", settings.logging),
+        "run_once_sync",
+        "close",
+    ]
+
+
 def test_mq_entrypoint_rejects_persistent_process_mode(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["python -m server.mq"])
 
@@ -366,10 +520,11 @@ def test_application_stops_consumer_before_agent_database_and_vector_store():
         parse_consumer=SimpleNamespace(close=lambda: order.append("consumer")),
         agent_model_factory=SimpleNamespace(close=lambda: order.append("model_factory")),
         qdrant_client=SimpleNamespace(close=lambda: order.append("vectors")),
+        elasticsearch_client=SimpleNamespace(close=lambda: order.append("es")),
         engine=SimpleNamespace(dispose=lambda: order.append("database")),
     )
     services.close()
-    assert order == ["consumer", "agent", "model_factory", "vectors", "database"]
+    assert order == ["consumer", "agent", "model_factory", "es", "vectors", "database"]
 
 
 def test_query_embedder_uses_a_client_per_call_and_always_closes(monkeypatch):

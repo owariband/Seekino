@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from ..api import jobs, parse_usage
 from ..model.vo.commonVO import Page
-from ..model.vo.jobVO import ParseJobView, JobSummary
+from ..model.vo.jobVO import ParseJobView, JobSummary, VideoParseTaskView
 from ..model.vo.parseUsageVO import ParseUsageVO
 
 router = APIRouter()
@@ -19,6 +19,12 @@ router.add_api_route(
     jobs.get_job,
     methods=["GET"],
     response_model=ParseJobView,
+)
+router.add_api_route(
+    "/api/jobs/video-parse/get",
+    jobs.get_video_parse_task,
+    methods=["GET"],
+    response_model=VideoParseTaskView,
 )
 router.add_api_route(
     "/api/jobs/list",

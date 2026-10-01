@@ -31,7 +31,11 @@ def main() -> None:
     try:
         if services.parse_consumer is None:
             raise RuntimeError("parse consumer is not configured")
-        services.parse_consumer.run_once()
+        run_once_sync = getattr(services.parse_consumer, "run_once_sync", None)
+        if run_once_sync is not None:
+            run_once_sync()
+        else:
+            services.parse_consumer.run_once()
     finally:
         services.close()
 

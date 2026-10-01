@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from ..identity import canonical_uuid
-from ..model.dto.jobDTO import ParseJobDetail, ParseJobSummaryState
+from ..model.dto.jobDTO import (
+    ParseJobDetail,
+    ParseJobSummaryState,
+    VideoParseTaskState,
+)
 from ..model.job import ParseJobStatus
 from ..repository.job import ParseJobRepository
 from .library import LibraryService
@@ -33,6 +37,17 @@ class ParseJobService:
                 in {ParseJobStatus.SUCCEEDED.value, ParseJobStatus.FAILED.value}
             ),
         )
+
+    def get_video_parse_task(
+        self,
+        video_parse_task_id: str,
+        *,
+        workspace_id: str,
+    ) -> VideoParseTaskState:
+        task_id = canonical_uuid(video_parse_task_id, "video_parse_task_id")
+        task = self._repository.get_video_parse_task(task_id)
+        self._library.get_video(task.video_id, workspace_id=workspace_id)
+        return task
 
     def list(
         self,

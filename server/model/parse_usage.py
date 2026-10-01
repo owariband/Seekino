@@ -1,34 +1,135 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, JSON, String
+from datetime import datetime
+
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
-from .video import ID_LENGTH, MYSQL_TABLE_OPTIONS, TimestampedRecord
+from ..utils.time import now_utc
+from .video import (
+    ID_LENGTH,
+    MYSQL_TABLE_OPTIONS,
+    UTC_TIMESTAMP,
+    TimestampedRecord,
+)
 
 
 class ParseUsageAttemptRecord(Base):
     __tablename__ = "parse_usage_attempt"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
-    job_id: Mapped[str] = mapped_column(ForeignKey("series_parse_job.job_id"), primary_key=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("series_parse_job.job_id"),
+        primary_key=True,
+    )
+    video_parse_task_id: Mapped[str | None] = mapped_column(
+        ForeignKey("video_parse_task.id", ondelete="SET NULL"),
+        index=True,
+    )
     attempt_count: Mapped[int] = mapped_column(Integer, primary_key=True)
     lease_version: Mapped[int] = mapped_column(Integer, primary_key=True)
-    started_at: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, nullable=False)
     recording_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class VideoParseUsageAttemptRecord(Base):
+    __tablename__ = "video_parse_usage_attempt"
+    __table_args__ = (
+        UniqueConstraint(
+            "video_parse_task_id",
+            "execution_kind",
+            "execution_task_id",
+            "attempt_count",
+            "lease_version",
+            name="uq_video_parse_usage_attempt_lease",
+        ),
+        CheckConstraint(
+            "execution_kind IN ('video', 'chunk', 'interval', 'prefix')",
+            name="ck_video_parse_usage_attempt_execution_kind",
+        ),
+        MYSQL_TABLE_OPTIONS,
+    )
+
+    attempt_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    video_parse_task_id: Mapped[str] = mapped_column(
+        ForeignKey("video_parse_task.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    execution_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    execution_task_id: Mapped[str] = mapped_column(
+        String(ID_LENGTH), nullable=False
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    lease_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, nullable=False)
+    recording_complete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
 
 
 class ParseModelCallRecord(TimestampedRecord, Base):
     __tablename__ = "parse_model_call"
     __table_args__ = (
-        CheckConstraint("category IN ('parse', 'embedding')", name="ck_parse_model_call_category"),
-        CheckConstraint("status IN ('completed', 'failed')", name="ck_parse_model_call_status"),
+        CheckConstraint(
+            "category IN ('parse', 'embedding')",
+            name="ck_parse_model_call_category",
+        ),
+        CheckConstraint(
+            "status IN ('completed', 'failed')",
+            name="ck_parse_model_call_status",
+        ),
         Index("ix_parse_model_call_job_started", "job_id", "started_at"),
+        Index(
+            "ix_parse_model_call_video_parse_task_started",
+            "video_parse_task_id",
+            "started_at",
+        ),
+        Index(
+            "ix_parse_model_call_v2_execution",
+            "video_parse_task_id",
+            "execution_kind",
+            "execution_task_id",
+            "started_at",
+        ),
+        CheckConstraint(
+            "(job_id IS NOT NULL) <> (video_parse_task_id IS NOT NULL)",
+            name="ck_parse_model_call_exactly_one_task",
+        ),
+        CheckConstraint(
+            "(video_parse_task_id IS NULL "
+            "AND execution_kind IS NULL AND execution_task_id IS NULL) OR "
+            "(video_parse_task_id IS NOT NULL "
+            "AND execution_kind IS NOT NULL AND execution_task_id IS NOT NULL)",
+            name="ck_parse_model_call_execution_identity",
+        ),
+        CheckConstraint(
+            "execution_kind IS NULL OR "
+            "execution_kind IN ('video', 'chunk', 'interval', 'prefix')",
+            name="ck_parse_model_call_execution_kind",
+        ),
         MYSQL_TABLE_OPTIONS,
     )
 
     call_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    job_id: Mapped[str] = mapped_column(ForeignKey("series_parse_job.job_id"), nullable=False)
+    job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("series_parse_job.job_id"),
+    )
+    video_parse_task_id: Mapped[str | None] = mapped_column(
+        ForeignKey("video_parse_task.id", ondelete="CASCADE")
+    )
+    execution_kind: Mapped[str | None] = mapped_column(String(16))
+    execution_task_id: Mapped[str | None] = mapped_column(String(ID_LENGTH))
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
     lease_version: Mapped[int] = mapped_column(Integer, nullable=False)
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -40,10 +141,21 @@ class ParseModelCallRecord(TimestampedRecord, Base):
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[str] = mapped_column(String(16), nullable=False)
     operation: Mapped[str] = mapped_column(String(128), nullable=False)
-    started_at: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     tokens: Mapped[dict | None] = mapped_column(JSON)
     # A canonical decimal string preserves all digits on MySQL and isolated SQLite alike.
     estimated_cost_cny: Mapped[str | None] = mapped_column(String(128))
     price_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+        onupdate=now_utc,
+    )

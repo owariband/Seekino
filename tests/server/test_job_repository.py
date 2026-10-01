@@ -7,11 +7,13 @@ from uuid import uuid4
 
 import pytest
 
+from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
 from server.model.job import (
     ParseJobStage,
     ParseJobStatus,
     SeriesParseJobRecord,
+    VideoParseTaskRecord,
     VideoChunkCheckpointStage,
 )
 from server.model.video import SeriesRecord, VideoRecord
@@ -123,6 +125,76 @@ def test_public_job_version_tracks_semantic_changes_and_not_heartbeats(repositor
     assert jobs.get(job_id).version == 5
     assert queue.acknowledge(lease, duration_ms=0, now=now + timedelta_to_ms(timedelta(seconds=7)))
     assert jobs.get(job_id).version == 6
+
+
+def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(repository):
+    jobs, _queue, _job_id, video_id, _now = _seed_job(repository)
+    engine, _video_repository = repository
+    factory = create_session_factory(engine)
+    first_id, second_id = str(uuid4()), str(uuid4())
+    first_time = datetime(2026, 9, 14, 10, 0, 0, 123000, tzinfo=UTC)
+    second_time = first_time + timedelta(minutes=1)
+    frozen_config = default_video_parse_v2_config().model_dump(mode="json")
+    with factory.begin() as session:
+        session.add_all([
+            VideoParseTaskRecord(
+                id=first_id,
+                video_id=video_id,
+                pipeline_version="video-parse-v2",
+                status="PARSING_FAILED",
+                parse_config=frozen_config,
+                chunk_count=1,
+                version=1,
+                next_execute_time=first_time,
+                attempt_count=3,
+                max_attempts=3,
+                processing_duration_ms=100,
+                processing_timing_complete=True,
+                last_error={"code": "MODEL_ERROR"},
+                detail={"source": "upload"},
+                create_time=first_time,
+                update_time=first_time,
+            ),
+            VideoParseTaskRecord(
+                id=second_id,
+                video_id=video_id,
+                pipeline_version="video-parse-v2",
+                status="PENDING",
+                parse_config=frozen_config,
+                chunk_count=1,
+                version=2,
+                next_execute_time=second_time,
+                attempt_count=0,
+                max_attempts=3,
+                processing_duration_ms=0,
+                processing_timing_complete=True,
+                detail={"source": "reparse"},
+                create_time=second_time,
+                update_time=second_time,
+            ),
+        ])
+
+    first = jobs.get_video_parse_task(first_id)
+    parse_input = jobs.get_video_parse_input(first_id)
+    assert first.video_parse_task_id == first_id
+    assert (first.version, first.status) == (1, "PARSING_FAILED")
+    assert first.parse_config == frozen_config
+    assert first.next_execute_time == first_time
+    assert first.next_execute_time.utcoffset() == timedelta(0)
+    assert parse_input.task == first
+    assert parse_input.task.video_id == video_id
+    assert parse_input.original_filename == "episode.mp4"
+    assert parse_input.duration_seconds == 60
+    assert [item.video_parse_task_id for item in jobs.list_video_parse_tasks(video_id)] == [
+        first_id,
+        second_id,
+    ]
+    latest = jobs.latest_video_parse_task(video_id)
+    assert (latest.video_parse_task_id, latest.version) == (
+        second_id,
+        2,
+    )
+    assert jobs.get_video_parse_task(first_id) == first
 
 
 @pytest.mark.parametrize("expire_lease", [False, True])

@@ -16,6 +16,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from langchain_core.tools import BaseTool
 from PIL import Image
+from sqlalchemy import select
 
 from engine.parsev1.runtime import VideoParseRuntimeConfig
 from gateway.config import load_config
@@ -37,6 +38,7 @@ from server.model.job import (
     ParseJobStage,
     ParseJobStatus,
     SeriesParseJobRecord,
+    VideoParseTaskRecord,
     VideoChunkCheckpointRecord,
     VideoChunkCheckpointStage,
 )
@@ -141,10 +143,10 @@ def test_agent_render_blocks_preserves_valid_blocks_and_drops_invalid_stored_blo
         role="ASSISTANT",
         status="COMPLETED",
         content="兼容完整正文",
-        series_ids=("series",),
-        model_name="chat-model",
         reply_to_message_id="user",
         retrieval_query="query",
+        series_ids=("series",),
+        model_name="chat-model",
         search_result={
             "renderBlocks": [
                 {"type": "markdown", "markdown": "第一段"},
@@ -223,10 +225,10 @@ def test_agent_render_blocks_drops_invalid_known_chunk_range(
         role="ASSISTANT",
         status="COMPLETED",
         content="正文",
-        series_ids=("series",),
-        model_name="chat-model",
         reply_to_message_id="user",
         retrieval_query="query",
+        series_ids=("series",),
+        model_name="chat-model",
         search_result={
             "renderBlocks": [{
                 "type": "video",
@@ -425,6 +427,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/uploads/complete",
         "/api/jobs/list",
         "/api/jobs/get",
+        "/api/jobs/video-parse/get",
         "/api/jobs/usage/get",
         "/api/jobs/summary",
         "/api/jobs/events",
@@ -489,6 +492,9 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         },
         ("/api/uploads/complete", "post"): {"uploadSessionId"},
         ("/api/jobs/get", "get"): {"jobId"},
+        ("/api/jobs/video-parse/get", "get"): {
+            "videoParseTaskId", "workspaceId",
+        },
         ("/api/jobs/usage/get", "get"): {"jobId", "workspaceId"},
         ("/api/jobs/events", "get"): {"jobId"},
         ("/api/videos/content", "get"): {"videoId"},
@@ -603,7 +609,8 @@ def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_pat
         "/api/uploads/create?seriesId=invalid",
         headers={"Idempotency-Key": "invalid-parse-config"},
         json={
-            "workspaceId": "local-default", "originalFilename": "ep.mp4",
+            "workspaceId": "local-default", "episodeOrder": 1,
+            "originalFilename": "ep.mp4",
             "mediaType": "video/mp4", "totalSizeBytes": 10,
             "parseConfig": invalid,
         },
@@ -617,7 +624,8 @@ def test_parse_config_route_returns_defaults_and_rejects_false_frame_cap(tmp_pat
         f"/api/uploads/create?seriesId={series_id}",
         headers={"Idempotency-Key": "configured-parse-upload"},
         json={
-            "workspaceId": "local-default", "originalFilename": "ep.mp4",
+            "workspaceId": "local-default", "episodeOrder": 1,
+            "originalFilename": "ep.mp4",
             "mediaType": "video/mp4", "totalSizeBytes": 10,
             "parseConfig": selected,
         },
@@ -1207,7 +1215,9 @@ def test_video_episode_update_contract_and_conflict(tmp_path: Path) -> None:
 
     assert updated.status_code == 200, updated.text
     assert updated.json()["episodeOrder"] == 3
-    assert updated.json()["uploadSequence"] == 1
+    # Compatibility projection follows the effective business order until the
+    # legacy column is removed in a later migration.
+    assert updated.json()["uploadSequence"] == 3
     assert conflict.status_code == 409
     assert conflict.json()["code"] == "CONFLICT"
     assert outside_workspace.status_code == 404
@@ -1215,7 +1225,7 @@ def test_video_episode_update_contract_and_conflict(tmp_path: Path) -> None:
     assert too_large.status_code == 422
 
 
-def test_upload_order_is_assigned_and_legacy_order_fields_are_ignored(tmp_path: Path) -> None:
+def test_upload_episode_order_is_required_unique_and_idempotent(tmp_path: Path) -> None:
     client, _retrieval, _jobs_repository = _client(tmp_path)
     series_id = _create_series(client)
     payload = {
@@ -1225,31 +1235,59 @@ def test_upload_order_is_assigned_and_legacy_order_fields_are_ignored(tmp_path: 
     first = client.post(
         "/api/uploads/create", params={"seriesId": series_id},
         headers={"Idempotency-Key": "first"},
-        json={**payload, "episodeOrder": 99, "uploadSequence": 500},
-    )
-    second = client.post(
-        "/api/uploads/create", params={"seriesId": series_id},
-        headers={"Idempotency-Key": "second"}, json=payload,
+        json={**payload, "episodeOrder": 99},
     )
     replay = client.post(
         "/api/uploads/create", params={"seriesId": series_id},
         headers={"Idempotency-Key": "first"},
-        json={**payload, "episodeOrder": 10, "uploadSequence": 20},
+        json={**payload, "episodeOrder": 99},
     )
-    assert first.status_code == second.status_code == replay.status_code == 201
-    assert first.json()["episodeOrder"] == first.json()["uploadSequence"] == 1
-    assert second.json()["episodeOrder"] == second.json()["uploadSequence"] == 2
+    changed_order = client.post(
+        "/api/uploads/create", params={"seriesId": series_id},
+        headers={"Idempotency-Key": "first"},
+        json={**payload, "episodeOrder": 100},
+    )
+    duplicate_order = client.post(
+        "/api/uploads/create", params={"seriesId": series_id},
+        headers={"Idempotency-Key": "duplicate-order"},
+        json={**payload, "episodeOrder": 99},
+    )
+    second = client.post(
+        "/api/uploads/create", params={"seriesId": series_id},
+        headers={"Idempotency-Key": "second"},
+        json={**payload, "episodeOrder": 100},
+    )
+    assert first.status_code == replay.status_code == second.status_code == 201
+    assert first.json()["episodeOrder"] == first.json()["uploadSequence"] == 99
+    assert second.json()["episodeOrder"] == second.json()["uploadSequence"] == 100
     assert replay.json()["uploadSessionId"] == first.json()["uploadSessionId"]
+    assert replay.json()["episodeOrder"] == 99
+    assert changed_order.status_code == 409
+    assert duplicate_order.status_code == 409
     changed = client.post(
         "/api/uploads/create", params={"seriesId": series_id},
-        headers={"Idempotency-Key": "first"}, json={**payload, "originalFilename": "changed.mp4"},
+        headers={"Idempotency-Key": "first"},
+        json={**payload, "episodeOrder": 99, "originalFilename": "changed.mp4"},
     )
     assert changed.status_code == 409
+    missing = client.post(
+        "/api/uploads/create", params={"seriesId": series_id},
+        headers={"Idempotency-Key": "missing-order"}, json=payload,
+    )
+    assert missing.status_code == 422
+    for index, episode_order in enumerate((True, 0, -1, 2_147_483_648)):
+        invalid = client.post(
+            "/api/uploads/create",
+            params={"seriesId": series_id},
+            headers={"Idempotency-Key": f"invalid-order-{index}"},
+            json={**payload, "episodeOrder": episode_order},
+        )
+        assert invalid.status_code == 422
     schema = client.get("/openapi.json").json()["components"]["schemas"]["UploadSessionCreateRequest"]
-    for field in ("episodeOrder", "uploadSequence"):
-        assert field not in schema["required"]
-        assert schema["properties"][field]["deprecated"] is True
-        assert "ignored" in schema["properties"][field]["description"]
+    assert "episodeOrder" in schema["required"]
+    assert schema["properties"]["episodeOrder"]["exclusiveMinimum"] == 0
+    assert schema["properties"]["episodeOrder"]["maximum"] == 2_147_483_647
+    assert "uploadSequence" not in schema["properties"]
 
 
 def test_upload_delete_is_workspace_scoped_and_idempotent(tmp_path):
@@ -1257,7 +1295,8 @@ def test_upload_delete_is_workspace_scoped_and_idempotent(tmp_path):
     series_id = _create_series(client)
     upload = client.post("/api/uploads/create", params={"seriesId": series_id},
         headers={"Idempotency-Key": "delete-upload"}, json={
-            "workspaceId": "local-default", "originalFilename": "episode.mp4",
+            "workspaceId": "local-default", "episodeOrder": 1,
+            "originalFilename": "episode.mp4",
             "mediaType": "video/mp4", "totalSizeBytes": 4,
         }).json()
     params = {"workspaceId": "local-default", "uploadSessionId": upload["uploadSessionId"]}
@@ -1271,7 +1310,7 @@ def test_upload_delete_is_workspace_scoped_and_idempotent(tmp_path):
     assert client.post("/api/uploads/complete", params=params).status_code == 409
 
 
-def test_upload_parse_retry_is_version_fenced_and_returns_the_same_job(tmp_path):
+def test_upload_parse_retry_is_status_fenced_and_returns_the_same_v2_task(tmp_path):
     client, _retrieval, jobs_repository = _client(tmp_path)
     series_id = _create_series(client)
     created = client.post(
@@ -1280,6 +1319,7 @@ def test_upload_parse_retry_is_version_fenced_and_returns_the_same_job(tmp_path)
         headers={"Idempotency-Key": "manual-retry"},
         json={
             "workspaceId": "local-default",
+            "episodeOrder": 1,
             "originalFilename": "episode.mp4",
             "mediaType": "video/mp4",
             "totalSizeBytes": 4,
@@ -1310,30 +1350,20 @@ def test_upload_parse_retry_is_version_fenced_and_returns_the_same_job(tmp_path)
     )
     assert completed.status_code == 200, completed.text
     job_id = completed.json()["jobId"]
+    video_parse_task_id = completed.json()["videoParseTaskId"]
     with jobs_repository._session_factory.begin() as session:
         job = session.get(SeriesParseJobRecord, job_id)
-        job.status = ParseJobStatus.FAILED.value
-        job.stage = ParseJobStage.PARSING.value
-        job.progress = 18
-        job.attempt_count = 3
-        job.max_attempts = 3
-        job.version = 7
-        job.last_error = "provider timeout"
-        video = session.get(VideoRecord, job.video_id)
-        video.parse_status = ParseJobStatus.FAILED.value
-        video.parse_progress = 18
-        session.get(SeriesRecord, series_id).status = "FAILED"
-
-    failed = client.get(
-        "/api/jobs/get",
-        params={"workspaceId": "local-default", "jobId": job_id},
-    )
-    assert failed.status_code == 200
-    assert failed.json()["canRetry"] is True
+        legacy_job_before = (job.status, job.version, job.attempt_count)
+        task = session.get(VideoParseTaskRecord, video_parse_task_id)
+        original_config = task.parse_config
+        task.status = "PARSING_FAILED"
+        task.attempt_count = 3
+        task.max_attempts = 3
+        task.last_error = {"code": "MODEL_TIMEOUT", "message": "provider timeout"}
     retry_params = {
         "workspaceId": "local-default",
         "uploadSessionId": upload_session_id,
-        "expectedJobVersion": 7,
+        "expectedJobVersion": 1,
     }
     assert client.post(
         "/api/uploads/retry-parse",
@@ -1342,27 +1372,28 @@ def test_upload_parse_retry_is_version_fenced_and_returns_the_same_job(tmp_path)
     retried = client.post("/api/uploads/retry-parse", params=retry_params)
     assert retried.status_code == 200, retried.text
     assert {
-        "jobId": job_id,
-        "uploadSessionId": upload_session_id,
-        "status": "QUEUED",
-        "stage": "PARSING",
-        "progress": 18,
+        "videoParseTaskId": video_parse_task_id,
+        "videoId": completed.json()["videoId"],
+        "status": "PREPARING",
         "attemptCount": 3,
         "maxAttempts": 4,
-        "canRetry": False,
-        "version": 8,
+        "version": 1,
     }.items() <= retried.json().items()
+    assert retried.json()["parseConfig"] == original_config
+    for field in ("nextExecuteTime", "createTime", "updateTime"):
+        assert type(retried.json()[field]) is int
     duplicate = client.post("/api/uploads/retry-parse", params=retry_params)
     assert duplicate.status_code == 409
     assert duplicate.json()["requestId"] == duplicate.headers["X-Request-Id"]
     with jobs_repository._session_factory() as session:
+        task = session.get(VideoParseTaskRecord, video_parse_task_id)
+        assert (task.status, task.version) == ("PREPARING", 1)
+        assert task.parse_config == original_config
         job = session.get(SeriesParseJobRecord, job_id)
-        assert (job.status, job.attempt_count, job.max_attempts, job.version) == (
-            ParseJobStatus.QUEUED.value, 3, 4, 8,
-        )
+        assert (job.status, job.version, job.attempt_count) == legacy_job_before
 
 
-def test_upload_full_reparse_is_distinct_version_fenced_and_starts_at_zero(tmp_path):
+def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
     client, _retrieval, jobs_repository = _client(tmp_path)
     series_id = _create_series(client)
     created = client.post(
@@ -1371,6 +1402,7 @@ def test_upload_full_reparse_is_distinct_version_fenced_and_starts_at_zero(tmp_p
         headers={"Idempotency-Key": "full-reparse"},
         json={
             "workspaceId": "local-default",
+            "episodeOrder": 1,
             "originalFilename": "episode.mp4",
             "mediaType": "video/mp4",
             "totalSizeBytes": 4,
@@ -1398,6 +1430,7 @@ def test_upload_full_reparse_is_distinct_version_fenced_and_starts_at_zero(tmp_p
         },
     ).json()
     job_id = completed["jobId"]
+    old_task_id = completed["videoParseTaskId"]
     with jobs_repository._session_factory.begin() as session:
         job = session.get(SeriesParseJobRecord, job_id)
         job.status = ParseJobStatus.SUCCEEDED.value
@@ -1406,6 +1439,17 @@ def test_upload_full_reparse_is_distinct_version_fenced_and_starts_at_zero(tmp_p
         job.attempt_count = 1
         job.version = 6
         job.completed_at = 1_789_639_200_000
+        legacy_job_before = (
+            job.status,
+            job.stage,
+            job.progress,
+            job.attempt_count,
+            job.version,
+            job.completed_at,
+        )
+        task = session.get(VideoParseTaskRecord, old_task_id)
+        old_config = task.parse_config
+        task.status = "COMPLETE"
         video = session.get(VideoRecord, job.video_id)
         video.parse_status = ParseJobStatus.SUCCEEDED.value
         video.parse_progress = 100
@@ -1419,37 +1463,67 @@ def test_upload_full_reparse_is_distinct_version_fenced_and_starts_at_zero(tmp_p
             chunk_end_seconds=12,
         ))
 
-    before = client.get(
-        "/api/jobs/get",
-        params={"workspaceId": "local-default", "jobId": job_id},
-    ).json()
-    assert before["canRetry"] is False
-    assert before["canReparse"] is True
     params = {
         "workspaceId": "local-default",
         "uploadSessionId": upload_session_id,
-        "expectedJobVersion": 6,
+        "expectedJobVersion": 1,
     }
     assert client.post(
         "/api/uploads/reparse",
         params={**params, "workspaceId": "other-workspace"},
     ).status_code == 404
-    reparsed = client.post("/api/uploads/reparse", params=params)
+    replacement_config = dict(old_config)
+    replacement_config["batch_max_size"] = 4
+    reparsed = client.post(
+        "/api/uploads/reparse",
+        params=params,
+        json={"videoParseConfig": replacement_config},
+    )
     assert reparsed.status_code == 200, reparsed.text
     assert {
-        "jobId": job_id,
-        "uploadSessionId": upload_session_id,
-        "status": "QUEUED",
-        "stage": "QUEUED",
-        "progress": 0,
-        "attemptCount": 1,
-        "canRetry": False,
-        "canReparse": False,
-        "version": 7,
+        "videoId": completed["videoId"],
+        "status": "PENDING",
+        "attemptCount": 0,
+        "version": 2,
     }.items() <= reparsed.json().items()
-    assert reparsed.json()["checkpoints"] == []
+    assert reparsed.json()["videoParseTaskId"] != old_task_id
+    assert reparsed.json()["parseConfig"] == replacement_config
+    for field in ("nextExecuteTime", "createTime", "updateTime"):
+        assert type(reparsed.json()[field]) is int
+    with jobs_repository._session_factory() as session:
+        old_task = session.get(VideoParseTaskRecord, old_task_id)
+        new_task = session.get(
+            VideoParseTaskRecord,
+            reparsed.json()["videoParseTaskId"],
+        )
+        assert (old_task.status, old_task.version) == (
+            "COMPLETE",
+            1,
+        )
+        assert old_task.parse_config == old_config
+        assert new_task.version == 2
+        assert new_task.parse_config == replacement_config
+        assert session.get(
+            VideoChunkCheckpointRecord,
+            (job_id, 0),
+        ) is not None
+        job = session.get(SeriesParseJobRecord, job_id)
+        assert (
+            job.status,
+            job.stage,
+            job.progress,
+            job.attempt_count,
+            job.version,
+            job.completed_at,
+        ) == legacy_job_before
     duplicate = client.post("/api/uploads/reparse", params=params)
     assert duplicate.status_code == 409
+    with jobs_repository._session_factory() as session:
+        assert len(list(session.scalars(
+            select(VideoParseTaskRecord).where(
+                VideoParseTaskRecord.video_id == completed["videoId"]
+            )
+        ))) == 2
 
 
 def test_http_and_upload_logs_share_request_id_without_logging_query_or_body(tmp_path, caplog):
@@ -1462,7 +1536,8 @@ def test_http_and_upload_logs_share_request_id_without_logging_query_or_body(tmp
         caplog.clear()
         response = client.post("/api/uploads/create", params={"seriesId": series_id, "token": "private-query"},
             headers={"Idempotency-Key": "log-upload", "Authorization": "private-header"}, json={
-                "workspaceId": "local-default", "originalFilename": "private-filename.mp4",
+                "workspaceId": "local-default", "episodeOrder": 1,
+                "originalFilename": "private-filename.mp4",
                 "mediaType": "video/mp4", "totalSizeBytes": 4,
             })
         assert response.status_code == 201
@@ -1506,7 +1581,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     upload_id = first.json()["uploadSessionId"]
     assert repeated.json()["uploadSessionId"] == upload_id
     assert first.json()["missingSegmentNumbers"] == [0, 1, 2]
-    assert first.json()["episodeOrder"] == first.json()["uploadSequence"] == 1
+    assert first.json()["episodeOrder"] == first.json()["uploadSequence"] == 7
 
     parts = [(2, 8, b"ij"), (0, 0, b"abcd"), (1, 4, b"efgh")]
     for number, start, data in parts:
@@ -1540,6 +1615,24 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert completed.status_code == 200, completed.text
     video_id = completed.json()["videoId"]
     job_id = completed.json()["jobId"]
+    video_parse_task_id = completed.json()["videoParseTaskId"]
+    video_parse_task = client.get(
+        "/api/jobs/video-parse/get",
+        params={
+            "workspaceId": "local-default",
+            "videoParseTaskId": video_parse_task_id,
+        },
+    )
+    assert video_parse_task.status_code == 200, video_parse_task.text
+    assert video_parse_task.json()["status"] == "PENDING"
+    assert video_parse_task.json()["detail"] == {}
+    assert client.get(
+        "/api/jobs/video-parse/get",
+        params={
+            "workspaceId": "another-workspace",
+            "videoParseTaskId": video_parse_task_id,
+        },
+    ).status_code == 404
     job = client.get("/api/jobs/get", params={"workspaceId": "local-default", "jobId": job_id})
     jobs = client.get("/api/jobs/list", params={"workspaceId": "local-default"})
     assert job.status_code == 200
@@ -1558,7 +1651,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert job.json()["totalChunkCount"] == 0
     assert job.json()["currentChunk"] is None
     assert job.json()["seriesName"] == "Test Series"
-    assert job.json()["episodeOrder"] == 1
+    assert job.json()["episodeOrder"] == 7
     assert job.json()["originalFilename"] == "episode-07.mp4"
     assert [item["jobId"] for item in jobs.json()["items"]] == [job_id]
     for path in ("/api/jobs/get", "/api/jobs/events"):

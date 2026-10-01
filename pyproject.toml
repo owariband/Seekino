@@ -8,6 +8,7 @@ dependencies = [
     "arkruntime>=0.6,<1",
     "claude-agent-sdk==0.2.158",
     "ddgs>=9.16,<10",
+    "elasticsearch>=8.19,<9",
     "fastapi>=0.115,<1",
     "httpx[socks]>=0.28,<1",
     "langchain>=1.2,<2",

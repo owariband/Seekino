@@ -1,9 +1,22 @@
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
-from sqlalchemy import BigInteger, Engine, create_engine, inspect
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    Engine,
+    Table,
+    UniqueConstraint,
+    create_engine,
+    event,
+    inspect,
+)
+from sqlalchemy.dialects.mysql import TIMESTAMP
 from sqlalchemy.engine import make_url
+from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
@@ -27,8 +40,6 @@ _UNIX_TIME_MS_COLUMNS = {
     "agent_message_timing": {"started_at"},
     "context_snapshot": {"created_at"},
     "index_sync_intent": {"available_at", "synced_at", "created_at", "updated_at"},
-    "parse_model_call": {"started_at", "created_at", "updated_at"},
-    "parse_usage_attempt": {"started_at"},
     "series": {"created_at", "updated_at"},
     "series_parse_job": {
         "available_at",
@@ -39,7 +50,14 @@ _UNIX_TIME_MS_COLUMNS = {
         "created_at",
         "updated_at",
     },
-    "upload_segment": {"created_at"},
+    "video_chunk_checkpoint": {"updated_at"},
+    "video_chunk_embedding": {"created_at", "updated_at"},
+    "video_chunk_info": {"parsed_at"},
+}
+
+_UTC_TIMESTAMP_COLUMNS = {
+    "video": {"created_at", "updated_at"},
+    "video_chunk": {"created_at", "updated_at"},
     "upload_session": {
         "completion_started_at",
         "expires_at",
@@ -47,13 +65,130 @@ _UNIX_TIME_MS_COLUMNS = {
         "created_at",
         "updated_at",
     },
-    "video": {"created_at", "updated_at"},
-    "video_chunk": {"created_at", "updated_at"},
-    "video_chunk_checkpoint": {"updated_at"},
-    "video_chunk_embedding": {"created_at", "updated_at"},
-    "video_chunk_info": {"parsed_at"},
+    "upload_segment": {"created_at"},
+    "parse_usage_attempt": {"started_at"},
+    "video_parse_usage_attempt": {"started_at"},
+    "parse_model_call": {"started_at", "created_at", "updated_at"},
+    "video_parse_task": {
+        "next_execute_time",
+        "lease_expire_time",
+        "heartbeat_time",
+        "start_time",
+        "finish_time",
+        "create_time",
+        "update_time",
+    },
+    "chunk_parse_task": {
+        "next_execute_time",
+        "lease_expire_time",
+        "start_time",
+        "finish_time",
+        "create_time",
+        "update_time",
+    },
+    "chunk_parse_content": {"create_time", "update_time"},
+    "interval_parse_task": {
+        "next_execute_time",
+        "lease_expire_time",
+        "start_time",
+        "finish_time",
+        "create_time",
+        "update_time",
+    },
+    "interval_parse_content": {"create_time", "update_time"},
 }
 
+_V2_TASK_COLUMNS = {
+    "video_parse_task": {
+        "id",
+        "video_id",
+        "pipeline_version",
+        "status",
+        "parse_config",
+        "chunk_count",
+        "version",
+        "next_execute_time",
+        "attempt_count",
+        "max_attempts",
+        "lease_owner",
+        "lease_version",
+        "lease_expire_time",
+        "heartbeat_time",
+        "start_time",
+        "finish_time",
+        "processing_duration_ms",
+        "processing_timing_complete",
+        "last_error",
+        "is_test",
+        "is_deleted",
+        "detail",
+        "create_time",
+        "update_time",
+    },
+    "chunk_parse_task": {
+        "id",
+        "video_parse_task_id",
+        "video_chunk_id",
+        "status",
+        "next_execute_time",
+        "retry_count",
+        "lease_owner",
+        "lease_version",
+        "lease_expire_time",
+        "start_time",
+        "finish_time",
+        "last_error",
+        "detail",
+        "create_time",
+        "update_time",
+    },
+    "chunk_parse_content": {
+        "id",
+        "chunk_parse_task_id",
+        "content",
+        "version",
+        "detail",
+        "create_time",
+        "update_time",
+    },
+    "interval_parse_task": {
+        "id",
+        "chunk_parse_task_id",
+        "video_parse_task_id",
+        "chunk_parse_task_ids",
+        "start_sequence_no",
+        "chunk_count",
+        "ready_mask",
+        "status",
+        "next_execute_time",
+        "retry_count",
+        "lease_owner",
+        "lease_version",
+        "lease_expire_time",
+        "start_time",
+        "finish_time",
+        "last_error",
+        "create_time",
+        "update_time",
+    },
+    "interval_parse_content": {
+        "interval_parse_task_id",
+        "content",
+        "detail",
+        "create_time",
+        "update_time",
+    },
+}
+
+_V2_LINK_COLUMNS = {
+    "upload_session": {
+        "video_parse_config",
+        "detail",
+        "initial_video_parse_task_id",
+    },
+    "parse_usage_attempt": {"video_parse_task_id"},
+    "parse_model_call": {"video_parse_task_id"},
+}
 
 def create_database_engine(
     database_url: str,
@@ -70,11 +205,25 @@ def create_database_engine(
             url = url.update_query_dict({"charset": "utf8mb4"})
         elif not isinstance(charset, str) or charset.casefold() != "utf8mb4":
             raise ValueError("MySQL connection charset must be utf8mb4")
-    return create_engine(
+    engine = create_engine(
         url,
         pool_pre_ping=True,
         pool_recycle=pool_recycle_seconds,
     )
+    if url.get_backend_name() == "mysql":
+        event.listen(engine, "connect", _set_mysql_session_timezone_utc)
+    return engine
+
+
+def _set_mysql_session_timezone_utc(
+    dbapi_connection: object,
+    _connection_record: object,
+) -> None:
+    cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+    try:
+        cursor.execute("SET time_zone = '+00:00'")
+    finally:
+        cursor.close()
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
@@ -182,6 +331,89 @@ def create_schema(engine: Engine) -> None:
             + ", ".join(sorted(missing_view_columns))
         )
 
+    has_existing_core_schema = bool(
+        existing_tables.intersection(
+            {"series", "video", "upload_session", "series_parse_job"}
+        )
+    )
+    missing_v2_schema: set[str] = set()
+    if has_existing_core_schema:
+        for table_name, required_columns in _V2_TASK_COLUMNS.items():
+            if table_name not in existing_tables:
+                missing_v2_schema.add(table_name)
+                continue
+            actual_columns = {
+                column["name"] for column in inspector.get_columns(table_name)
+            }
+            missing_v2_schema.update(
+                f"{table_name}.{name}"
+                for name in required_columns - actual_columns
+            )
+        for table_name, required_columns in _V2_LINK_COLUMNS.items():
+            if table_name not in existing_tables:
+                continue
+            actual_columns = {
+                column["name"] for column in inspector.get_columns(table_name)
+            }
+            missing_v2_schema.update(
+                f"{table_name}.{name}"
+                for name in required_columns - actual_columns
+            )
+    if missing_v2_schema:
+        raise SchemaUpgradeRequiredError(
+            "Video Parse V2 schema requires a controlled migration before init-db; missing: "
+            + ", ".join(sorted(missing_v2_schema))
+        )
+
+    from .model.job import IntervalParseTaskRecord, VideoParseTaskRecord
+    from .model.parse_usage import (
+        ParseModelCallRecord,
+        VideoParseUsageAttemptRecord,
+    )
+
+    worker_runtime_tables = (
+        VideoParseUsageAttemptRecord.__table__,
+        ParseModelCallRecord.__table__,
+    )
+    if has_existing_core_schema or existing_tables.intersection(
+        table.name for table in worker_runtime_tables
+    ):
+        incompatible_worker_runtime = _schema_structure_differences(
+            inspector,
+            existing_tables,
+            worker_runtime_tables,
+        )
+        if incompatible_worker_runtime:
+            raise SchemaUpgradeRequiredError(
+                "Video Parse V2 worker runtime schema requires "
+                "20260928_v2_worker_runtime.sql before init-db; incompatible: "
+                + ", ".join(sorted(incompatible_worker_runtime))
+            )
+
+    incompatible_task_checks: set[str] = set()
+    for model in (VideoParseTaskRecord, IntervalParseTaskRecord):
+        table = model.__table__
+        if table.name not in existing_tables:
+            continue
+        actual_checks = {
+            constraint["name"]: constraint["sqltext"]
+            for constraint in inspector.get_check_constraints(table.name)
+        }
+        for constraint in table.constraints:
+            if not isinstance(constraint, CheckConstraint) or constraint.name not in {
+                f"ck_{table.name}_status", f"ck_{table.name}_lease_state",
+            }:
+                continue
+            actual = actual_checks.get(constraint.name, "")
+            if _normalize_task_check(actual) != _normalize_task_check(str(constraint.sqltext)):
+                incompatible_task_checks.add(f"{table.name}.{constraint.name}")
+    if incompatible_task_checks:
+        raise SchemaUpgradeRequiredError(
+            "Video Parse V2 task indexing CHECK constraints require "
+            "20260928_task_indexing_contract.sql before init-db; incompatible: "
+            + ", ".join(sorted(incompatible_task_checks))
+        )
+
     legacy_timestamp_columns: set[str] = set()
     for table_name, timestamp_columns in _UNIX_TIME_MS_COLUMNS.items():
         if table_name not in existing_tables:
@@ -204,6 +436,31 @@ def create_schema(engine: Engine) -> None:
             f"BIGINT migration before init-db; found: {found}"
         )
 
+    invalid_utc_timestamp_columns: set[str] = set()
+    for table_name, timestamp_columns in _UTC_TIMESTAMP_COLUMNS.items():
+        if table_name not in existing_tables:
+            continue
+        for column in inspector.get_columns(table_name):
+            if column["name"] not in timestamp_columns:
+                continue
+            column_type = column["type"]
+            is_timestamp = isinstance(column_type, DateTime)
+            if engine.dialect.name == "mysql":
+                is_timestamp = (
+                    isinstance(column_type, TIMESTAMP)
+                    and getattr(column_type, "fsp", None) == 3
+                )
+            if not is_timestamp:
+                invalid_utc_timestamp_columns.add(
+                    f"{table_name}.{column['name']}"
+                )
+    if invalid_utc_timestamp_columns:
+        found = ", ".join(sorted(invalid_utc_timestamp_columns))
+        raise SchemaUpgradeRequiredError(
+            "absolute timestamps in the Video/Upload/Parse V2 scope require "
+            f"TIMESTAMP(3) UTC migration before init-db; found: {found}"
+        )
+
     # Importing registers every table on Base.metadata without making the
     # connection module depend on concrete repositories.
     from .model import agent as _agent_models  # noqa: F401
@@ -214,6 +471,126 @@ def create_schema(engine: Engine) -> None:
     from .model import video as _video_models  # noqa: F401
 
     Base.metadata.create_all(engine)
+
+
+def _normalize_task_check(expression: str) -> str:
+    # MySQL reflection adds identifier quotes, character-set introducers and
+    # parentheses around operands in these status/lease expressions.
+    expression = re.sub(r"(?<![\w'])_[a-zA-Z0-9]+(?=')", "", expression)
+    return re.sub(r"[\s`()]+", "", expression).casefold()
+
+
+def _schema_structure_differences(
+    inspector: Inspector,
+    existing_tables: set[str],
+    tables: tuple[Table, ...],
+) -> set[str]:
+    differences: set[str] = set()
+    for table in tables:
+        table_name = table.name
+        if table_name not in existing_tables:
+            differences.add(table_name)
+            continue
+
+        reflected_columns = inspector.get_columns(table_name)
+        actual_columns = {
+            column["name"]: bool(column["nullable"])
+            for column in reflected_columns
+        }
+        expected_columns = {
+            column.name: bool(column.nullable)
+            for column in table.columns
+        }
+        if actual_columns.keys() != expected_columns.keys():
+            differences.add(f"{table_name}.columns")
+        elif actual_columns != expected_columns:
+            differences.add(f"{table_name}.nullable")
+
+        actual_primary_key = tuple(
+            inspector.get_pk_constraint(table_name).get(
+                "constrained_columns"
+            ) or ()
+        )
+        expected_primary_key = tuple(table.primary_key.columns.keys())
+        if actual_primary_key != expected_primary_key:
+            differences.add(f"{table_name}.primary_key")
+
+        reflected_indexes = inspector.get_indexes(table_name)
+        actual_unique = {
+            tuple(constraint.get("column_names") or ())
+            for constraint in inspector.get_unique_constraints(table_name)
+        }
+        actual_unique.update(
+            tuple(index.get("column_names") or ())
+            for index in reflected_indexes
+            if bool(index.get("unique"))
+        )
+        expected_unique = {
+            tuple(constraint.columns.keys())
+            for constraint in table.constraints
+            if isinstance(constraint, UniqueConstraint)
+        }
+        expected_unique.update(
+            tuple(index.columns.keys())
+            for index in table.indexes
+            if index.unique
+        )
+        if actual_unique != expected_unique:
+            differences.add(f"{table_name}.unique")
+
+        actual_checks = {
+            _normalize_task_check(str(constraint.get("sqltext") or ""))
+            for constraint in inspector.get_check_constraints(table_name)
+        }
+        expected_checks = {
+            _normalize_task_check(str(constraint.sqltext))
+            for constraint in table.constraints
+            if isinstance(constraint, CheckConstraint)
+        }
+        if actual_checks != expected_checks:
+            differences.add(f"{table_name}.checks")
+
+        actual_foreign_keys = {
+            (
+                tuple(constraint.get("constrained_columns") or ()),
+                constraint.get("referred_table"),
+                tuple(constraint.get("referred_columns") or ()),
+                _normalize_ondelete(
+                    (constraint.get("options") or {}).get("ondelete")
+                ),
+            )
+            for constraint in inspector.get_foreign_keys(table_name)
+        }
+        expected_foreign_keys = {
+            (
+                tuple(constraint.columns.keys()),
+                constraint.referred_table.name,
+                tuple(element.column.name for element in constraint.elements),
+                _normalize_ondelete(constraint.ondelete),
+            )
+            for constraint in table.foreign_key_constraints
+        }
+        if actual_foreign_keys != expected_foreign_keys:
+            differences.add(f"{table_name}.foreign_keys")
+
+        actual_indexes = {
+            tuple(index.get("column_names") or ())
+            for index in reflected_indexes
+            if not bool(index.get("unique"))
+        }
+        expected_indexes = {
+            tuple(index.columns.keys())
+            for index in table.indexes
+            if not index.unique
+        }
+        if actual_indexes != expected_indexes:
+            differences.add(f"{table_name}.indexes")
+    return differences
+
+
+def _normalize_ondelete(value: object) -> str:
+    normalized = str(value or "RESTRICT").replace("_", " ").upper()
+    return "RESTRICT" if normalized == "NO ACTION" else normalized
 
 
 def _validate_database_url(

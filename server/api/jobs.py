@@ -14,6 +14,7 @@ from ..model.job import ParseJobStatus
 from ..model.dto.jobDTO import (
     ParseJobDetail,
     ParseJobSummaryState,
+    VideoParseTaskState,
 )
 from ..model.job_progress import calculate_checkpoint_progress
 from ..service.job import ParseJobService
@@ -26,7 +27,9 @@ from ..model.vo.jobVO import (
     JobSummary,
     ParseJobView,
     VideoChunkCheckpointView,
+    VideoParseTaskView,
 )
+from ..utils.time import datetime_to_unix_time_ms
 
 _TERMINAL_JOB_STATUSES = {
     ParseJobStatus.SUCCEEDED.value,
@@ -63,6 +66,18 @@ def get_job(
         workspace_id=workspace_id,
     )
     return _job_view(detail)
+
+
+def get_video_parse_task(
+    request: Request,
+    video_parse_task_id: str = Query(alias="videoParseTaskId"),
+    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+) -> VideoParseTaskView:
+    state = get_services(request).jobs.get_video_parse_task(
+        video_parse_task_id,
+        workspace_id=workspace_id,
+    )
+    return project_video_parse_task(state)
 
 
 def list_jobs(
@@ -285,4 +300,55 @@ def project_job_summary(state: ParseJobSummaryState) -> JobSummary:
             cancelled=state.counts.get("CANCELLED", 0),
         ),
         checkpoint_count=state.checkpoint_count, version=state.version, updated_at=state.updated_at,
+    )
+
+
+def project_video_parse_task(state: VideoParseTaskState) -> VideoParseTaskView:
+    error = None
+    if state.last_error is not None:
+        error = Failure(
+            code=str(state.last_error.get("code") or "PROCESSING_FAILED"),
+            message=str(state.last_error.get("message") or "视频解析失败"),
+        )
+    public_detail = {
+        key: value
+        for key, value in state.detail.items()
+        if key != "_worker_runtime_v2"
+    }
+    return VideoParseTaskView(
+        video_parse_task_id=state.video_parse_task_id,
+        video_id=state.video_id,
+        pipeline_version=state.pipeline_version,
+        status=state.status,
+        parse_config=state.parse_config,
+        chunk_count=state.chunk_count,
+        version=state.version,
+        next_execute_time=datetime_to_unix_time_ms(state.next_execute_time),
+        attempt_count=state.attempt_count,
+        max_attempts=state.max_attempts,
+        lease_owner=state.lease_owner,
+        lease_version=state.lease_version,
+        lease_expire_time=(
+            datetime_to_unix_time_ms(state.lease_expire_time)
+            if state.lease_expire_time is not None else None
+        ),
+        heartbeat_time=(
+            datetime_to_unix_time_ms(state.heartbeat_time)
+            if state.heartbeat_time is not None else None
+        ),
+        start_time=(
+            datetime_to_unix_time_ms(state.start_time)
+            if state.start_time is not None else None
+        ),
+        finish_time=(
+            datetime_to_unix_time_ms(state.finish_time)
+            if state.finish_time is not None else None
+        ),
+        processing_duration_ms=state.processing_duration_ms,
+        processing_timing_complete=state.processing_timing_complete,
+        last_error=error,
+        is_test=state.is_test,
+        detail=public_detail,
+        create_time=datetime_to_unix_time_ms(state.create_time),
+        update_time=datetime_to_unix_time_ms(state.update_time),
     )

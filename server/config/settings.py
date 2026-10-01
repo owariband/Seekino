@@ -11,6 +11,7 @@ from engine.parsev1.runtime import VideoParseRuntimeConfig
 
 from ..database import DatabaseEnvironment
 from .agent import AgentServiceConfig
+from .elasticsearch import ElasticsearchConfig
 from .global_agent_settings import read_global_agent_settings
 from .index_sync import IndexSyncConfig
 from .media import ImageUploadConfig
@@ -51,6 +52,8 @@ class ServerSettings:
     model_pricing_path: Path | None = None
     images: ImageUploadConfig = field(default_factory=ImageUploadConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    elasticsearch: ElasticsearchConfig | None = None
+    parse_execution_mode: Literal["v1", "v2"] = "v1"
 
     @classmethod
     def from_environment(cls) -> "ServerSettings":
@@ -113,6 +116,11 @@ class ServerSettings:
         asr_mode = os.getenv("ANIVAG_ASR_MODE", parse_defaults.asr_mode).strip().casefold()
         if asr_mode not in {"lite", "none"}:
             raise ValueError("ANIVAG_ASR_MODE must be 'lite' or 'none'")
+        parse_execution_mode = os.getenv(
+            "ANIVAG_PARSE_EXECUTION_MODE", "v1"
+        ).strip().casefold()
+        if parse_execution_mode not in {"v1", "v2"}:
+            raise ValueError("ANIVAG_PARSE_EXECUTION_MODE must be 'v1' or 'v2'")
         origins = tuple(
             item.strip()
             for item in os.getenv(
@@ -148,6 +156,10 @@ class ServerSettings:
             qdrant_url=qdrant_url,
             qdrant_collection=qdrant_collection,
             qdrant_api_key=os.getenv("ANIVAG_QDRANT_API_KEY") or None,
+            elasticsearch=ElasticsearchConfig.from_environment(environment),
+            parse_execution_mode=cast(
+                Literal["v1", "v2"], parse_execution_mode
+            ),
             text_vector_dimensions=text_dimensions,
             vision_vector_dimensions=vision_dimensions,
             upload=UploadServiceConfig(

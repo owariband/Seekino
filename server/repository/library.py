@@ -20,9 +20,13 @@ from ..model.video import (
     VideoChunkEmbeddingRecord,
 )
 from ..utils.media import stored_keyframe_uri
-from ..utils.time import now_unix_time_ms
+from ..utils.time import now_utc
 from .index_sync import list_ready_video_ids
 from .upload import UploadRepository
+from .video_parse import (
+    VideoParseConflictError,
+    invalidate_series_prefixes_from,
+)
 
 
 class SeriesNotFoundError(LookupError):
@@ -129,6 +133,12 @@ class LibraryRepository:
         workspace_id: str,
         episode_order: int,
     ) -> None:
+        if (
+            isinstance(episode_order, bool)
+            or not isinstance(episode_order, int)
+            or not 0 < episode_order <= 2_147_483_647
+        ):
+            raise ValueError("episode_order must be a positive 32-bit integer")
         try:
             with self._session_factory.begin() as session:
                 # Upload mutations lock Upload before Video elsewhere. Keep the
@@ -159,28 +169,34 @@ class LibraryRepository:
                     )
 
                 occupied_video_id = session.scalar(
-                    select(VideoRecord.video_id).where(
+                    select(VideoRecord.video_id)
+                    .where(
                         VideoRecord.series_id == video.series_id,
                         VideoRecord.episode_order == episode_order,
                         VideoRecord.video_id != video.video_id,
                     )
+                    .with_for_update()
                 )
                 active_slot_key = f"{video.series_id}:{episode_order}"
                 occupied_upload_id = session.scalar(
-                    select(UploadSessionRecord.upload_session_id).where(
+                    select(UploadSessionRecord.upload_session_id)
+                    .where(
                         UploadSessionRecord.active_slot_key == active_slot_key,
                         or_(
                             UploadSessionRecord.video_id.is_(None),
                             UploadSessionRecord.video_id != video.video_id,
                         ),
                     )
+                    .with_for_update()
                 )
                 if occupied_video_id is not None or occupied_upload_id is not None:
                     raise VideoEpisodeOrderConflictError(
                         "episode order is already occupied in this Series"
                     )
 
+                previous_episode_order = video.episode_order
                 video.episode_order = episode_order
+                video.upload_sequence = episode_order
                 for upload in uploads:
                     next_active_slot_key = (
                         active_slot_key
@@ -193,9 +209,21 @@ class LibraryRepository:
                     ):
                         continue
                     upload.episode_order = episode_order
+                    upload.upload_sequence = episode_order
                     upload.active_slot_key = next_active_slot_key
                     upload.version += 1
                 session.flush()
+                if previous_episode_order != episode_order:
+                    try:
+                        invalidate_series_prefixes_from(
+                            session,
+                            series_id=video.series_id,
+                            episode_order=min(previous_episode_order, episode_order),
+                            video_id=video.video_id,
+                            now=now_utc(),
+                        )
+                    except VideoParseConflictError as exc:
+                        raise VideoEpisodeOrderConflictError(str(exc)) from exc
         except IntegrityError as exc:
             raise VideoEpisodeOrderConflictError(
                 "episode order is already occupied in this Series"
@@ -253,7 +281,7 @@ class LibraryRepository:
         return replace(
             state,
             pending_uploads=tuple(
-                item for item in sorted(uploads, key=lambda upload: upload.upload_sequence)
+                item for item in sorted(uploads, key=lambda upload: upload.episode_order)
                 if item.status not in {"COMPLETED", "EXPIRED", "CANCELLED"}
             ),
         )
@@ -301,7 +329,7 @@ class LibraryRepository:
                 UploadSessionRecord.workspace_id == records[0].workspace_id,
                 UploadSessionRecord.status.not_in({"COMPLETED", "EXPIRED", "CANCELLED"}),
                 (UploadSessionRecord.status != "UPLOADING")
-                | (UploadSessionRecord.expires_at > now_unix_time_ms()),
+                | (UploadSessionRecord.expires_at > now_utc()),
             )
             .group_by(UploadSessionRecord.series_id)
         ).all())
@@ -372,7 +400,7 @@ class LibraryRepository:
             .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
             .outerjoin(latest, (latest.c.video_id == VideoRecord.video_id) & (latest.c.position == 1))
             .where(SeriesRecord.workspace_id == workspace_id)
-            .order_by(VideoRecord.episode_order, VideoRecord.upload_sequence, VideoRecord.video_id)
+            .order_by(VideoRecord.episode_order, VideoRecord.video_id)
         )
         if series_ids is not None:
             statement = statement.where(VideoRecord.series_id.in_(series_ids))

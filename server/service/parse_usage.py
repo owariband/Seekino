@@ -5,15 +5,27 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from decimal import Decimal
 from threading import Event
+from typing import Literal
 
-from engine.parsev1.usage import ParseModelCall, capture_parse_usage
+from engine.parsev1.usage import (
+    ParseModelCall,
+    capture_parse_usage,
+    parse_chunk_scope,
+)
 from gateway.usage import TokenUsage
 
 from ..config.usage import ModelPricingConfig, PriceTier
-from ..model.dto.jobDTO import ParseJobLease
+from ..model.dto.jobDTO import (
+    ChunkParseLease,
+    IntervalParseLease,
+    ParseJobLease,
+    PrefixParseLease,
+    VideoParseLease,
+    VideoParseTaskInputState,
+)
 from ..model.dto.parseUsageDTO import ParseModelCallState, ParseUsageRowState, ParseUsageState
 from ..repository.parse_usage import ParseUsageRepository
-from ..utils.time import now_unix_time_ms
+from ..utils.time import now_utc
 from .job import ParseJobService
 
 _logger = logging.getLogger(__name__)
@@ -76,7 +88,7 @@ class ParseUsageService:
     def capture(self, lease: ParseJobLease) -> Iterator[None]:
         incomplete = Event()
         try:
-            if not self._repository.start_attempt(lease, now=now_unix_time_ms()):
+            if not self._repository.start_attempt(lease, now=now_utc()):
                 incomplete.set()
         except Exception:
             incomplete.set()
@@ -106,6 +118,96 @@ class ParseUsageService:
         cost = estimate_cost_cny(usage, PriceTier.model_validate(snapshot["tier"]), category=event.category,
                                  operation=event.call.operation, unit=snapshot["unit"]) if usage is not None and snapshot is not None else None
         return self._repository.record_call(lease, event, estimated_cost_cny=cost, price_snapshot=snapshot)
+
+    @contextmanager
+    def capture_video(
+        self,
+        lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease,
+        task_input: VideoParseTaskInputState,
+        *,
+        sequence_no: int | None,
+        category: Literal["parse", "embedding"],
+    ) -> Iterator[None]:
+        """Record the real Gateway calls made by one fenced V2 execution."""
+
+        if category not in {"parse", "embedding"}:
+            raise ValueError("category must be parse or embedding")
+        incomplete = Event()
+        try:
+            if not self._repository.start_video_attempt(lease, now=now_utc()):
+                incomplete.set()
+        except Exception:
+            incomplete.set()
+            _logger.warning(
+                "Could not start V2 Parse usage recording task_id=%s",
+                lease.video_parse_task_id,
+            )
+
+        def observe(event: ParseModelCall) -> None:
+            try:
+                self.record_video(lease, task_input, event)
+            except Exception:
+                incomplete.set()
+                _logger.warning(
+                    "Could not persist V2 Parse model usage task_id=%s",
+                    lease.video_parse_task_id,
+                )
+
+        try:
+            with capture_parse_usage(observe), parse_chunk_scope(
+                sequence_no,
+                category=category,
+            ):
+                yield
+        finally:
+            try:
+                self._repository.finish_video_attempt(
+                    lease, recording_complete=not incomplete.is_set()
+                )
+            except Exception:
+                _logger.warning(
+                    "Could not finalize V2 Parse usage task_id=%s",
+                    lease.video_parse_task_id,
+                )
+
+    def record_video(
+        self,
+        lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease,
+        task_input: VideoParseTaskInputState,
+        event: ParseModelCall,
+    ) -> ParseModelCallState:
+        usage = event.call.usage
+        snapshot = (
+            self._pricing.snapshot(
+                provider=event.call.provider,
+                model=event.call.model,
+                category=event.category,
+                input_tokens=usage.input_tokens,
+                started_at=event.call.started_at,
+            )
+            if usage is not None
+            else None
+        )
+        cost = (
+            estimate_cost_cny(
+                usage,
+                PriceTier.model_validate(snapshot["tier"]),
+                category=event.category,
+                operation=event.call.operation,
+                unit=snapshot["unit"],
+            )
+            if usage is not None and snapshot is not None
+            else None
+        )
+        return self._repository.record_video_call(
+            lease,
+            event,
+            workspace_id=task_input.workspace_id,
+            series_id=task_input.series_id,
+            video_id=task_input.task.video_id,
+            estimated_cost_cny=cost,
+            price_snapshot=snapshot,
+        )
 
     def get(self, job_id: str, *, workspace_id: str) -> ParseUsageState:
         job = self._jobs.get(job_id, workspace_id=workspace_id).job

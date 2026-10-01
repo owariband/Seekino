@@ -24,7 +24,7 @@ from server.service.index_sync import IndexSyncInvariantError, IndexSyncService
 from server.service.qdrant_mutation_lock import QdrantMutationLock
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
-from server.utils.time import now_unix_time_ms, timedelta_to_ms
+from server.utils.time import now_unix_time_ms, timedelta_to_ms, unix_time_ms_to_datetime
 
 
 def _with_vectors(prepared_import):
@@ -222,6 +222,7 @@ def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
         store.delete(chunk_id)
 
     now = now_unix_time_ms()
+    absolute_now = unix_time_ms_to_datetime(now)
     with create_session_factory(engine).begin() as session:
         session.add(UploadSessionRecord(
             upload_session_id=str(uuid4()),
@@ -238,8 +239,8 @@ def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
             version=1,
             status=UploadSessionStatus.EXPIRED.value,
             idempotency_key="pending-delete-crash",
-            expires_at=now,
-            completed_at=now,
+            expires_at=absolute_now,
+            completed_at=absolute_now,
             video_id=prepared.video_id,
             last_error_code=UPLOAD_DELETION_PENDING_ERROR_CODE,
         ))

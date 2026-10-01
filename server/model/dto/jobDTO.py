@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,47 @@ class ParseJobState:
     upload_session_id: str | None = None
     is_primary_upload_job: bool = False
     parse_config: dict | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VideoParseTaskState:
+    video_parse_task_id: str
+    video_id: str
+    pipeline_version: str
+    status: str
+    parse_config: dict
+    chunk_count: int
+    version: int
+    next_execute_time: datetime
+    attempt_count: int
+    max_attempts: int
+    lease_owner: str | None
+    lease_version: int
+    lease_expire_time: datetime | None
+    heartbeat_time: datetime | None
+    start_time: datetime | None
+    finish_time: datetime | None
+    processing_duration_ms: int
+    processing_timing_complete: bool
+    last_error: dict | None
+    is_test: bool
+    detail: dict
+    create_time: datetime
+    update_time: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class VideoParseTaskInputState:
+    task: VideoParseTaskState
+    series_id: str
+    episode_order: int
+    original_filename: str
+    original_source_uri: str
+    inference_proxy_uri: str | None
+    content_hash: str
+    total_bytes: int
+    duration_seconds: int
+    workspace_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,3 +140,165 @@ class ParseJobDetail:
     checkpoints: tuple[VideoChunkCheckpointState, ...]
     processing_duration_ms: int = 0
     processing_timing_complete: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class VideoParseLease:
+    video_parse_task_id: str
+    video_id: str
+    worker_id: str
+    lease_version: int
+    lease_expire_time: datetime
+    attempt_count: int
+    max_attempts: int
+    parse_config: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkParseLease:
+    chunk_parse_task_id: str
+    video_parse_task_id: str
+    video_chunk_id: str
+    worker_id: str
+    lease_version: int
+    lease_expire_time: datetime
+    retry_count: int
+    max_retry_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class IntervalParseLease:
+    interval_parse_task_id: str
+    video_parse_task_id: str
+    chunk_parse_task_ids: tuple[str, ...]
+    start_sequence_no: int
+    chunk_count: int
+    phase: str
+    worker_id: str
+    lease_version: int
+    lease_expire_time: datetime
+    retry_count: int
+    max_retry_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedVideoParseState:
+    video_parse_task_id: str
+    chunk_parse_task_ids: tuple[str, ...]
+    interval_parse_task_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class VideoChunkState:
+    video_chunk_id: str
+    sequence_no: int
+    start_seconds: int
+    end_seconds: int
+    chunk_media_ref: str
+    analysis_window_media_ref: str
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkParseContentState:
+    chunk_parse_task_id: str
+    video_chunk_id: str
+    sequence_no: int
+    content: dict[str, Any]
+    version: int
+    detail: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkExecutionState:
+    chunk_parse_task_id: str
+    video_parse_task_id: str
+    video_chunk_id: str
+    sequence_no: int
+    start_seconds: int
+    end_seconds: int
+    analysis_window_start_seconds: int
+    analysis_window_end_seconds: int
+    source_media_ref: str
+    chunk_media_ref: str
+    analysis_window_media_ref: str
+    task_input: VideoParseTaskInputState
+
+
+@dataclass(frozen=True, slots=True)
+class IntervalMemberSnapshot:
+    interval_parse_task_id: str
+    video_parse_task_id: str
+    start_sequence_no: int
+    chunk_count: int
+    members: tuple[ChunkParseContentState, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class IndexableChunkState:
+    workspace_id: str
+    series_id: str
+    video_id: str
+    chunk_parse_task_id: str
+    video_chunk_id: str
+    sequence_no: int
+    start_seconds: int
+    end_seconds: int
+    content: dict[str, Any]
+    content_version: int
+    content_detail: dict[str, Any]
+    source_media_ref: str
+    chunk_media_ref: str
+    analysis_window_media_ref: str
+
+
+@dataclass(frozen=True, slots=True)
+class IntervalIndexingSnapshot:
+    interval_parse_task_id: str
+    video_parse_task_id: str
+    chunks: tuple[IndexableChunkState, ...]
+    indexed_versions: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCallReservation:
+    video_parse_task_id: str
+    call_id: str
+    worker_id: str
+    first_reservation: bool
+    used_calls: int
+    max_calls: int
+    active_calls: int
+    max_concurrent_calls: int
+    lease_expire_time: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PrefixParseLease:
+    video_parse_task_id: str
+    chunk_parse_task_id: str
+    video_chunk_id: str
+    sequence_no: int
+    worker_id: str
+    lease_version: int
+    lease_expire_time: datetime
+    retry_count: int
+    content_version: int
+    content: dict[str, Any]
+    content_detail: dict[str, Any]
+    series_prefix_compact: str
+    video_prefix_compact: str
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkScheduleEntryState:
+    chunk_parse_task_id: str
+    sequence_no: int
+    status: str
+    dispatchable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkScheduleState:
+    tasks: tuple[ChunkScheduleEntryState, ...]
+    wait_timeout_seconds: float
+    terminal_error: str | None = None

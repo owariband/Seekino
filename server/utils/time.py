@@ -13,6 +13,39 @@ def now_unix_time_ms() -> UnixTimeMs:
     return time.time_ns() // 1_000_000
 
 
+def now_utc() -> datetime:
+    """Return an aware UTC datetime at the persistence contract's ms precision."""
+
+    instant = datetime.now(UTC)
+    return instant.replace(microsecond=(instant.microsecond // 1_000) * 1_000)
+
+
+def require_utc_datetime(
+    value: datetime,
+    name: str = "timestamp",
+) -> datetime:
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or value.utcoffset() is None
+    ):
+        raise ValueError(f"{name} must be a timezone-aware datetime")
+    return value.astimezone(UTC)
+
+
+def normalize_database_utc_datetime(
+    value: datetime,
+    name: str = "timestamp",
+) -> datetime:
+    """Normalize a DB datetime, treating a naive value as UTC by contract."""
+
+    if not isinstance(value, datetime):
+        raise ValueError(f"{name} must be a datetime")
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def require_unix_time_ms(
     value: int,
     name: str = "timestamp",

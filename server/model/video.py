@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -7,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     Integer,
     JSON,
@@ -14,11 +16,18 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.dialects.mysql import LONGTEXT, TIMESTAMP
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 from ..database import Base
-from ..utils.time import now_unix_time_ms
+from ..utils.time import (
+    normalize_database_utc_datetime,
+    now_unix_time_ms,
+    now_utc,
+    require_utc_datetime,
+)
 
 ID_LENGTH = 36
 LONG_TEXT = Text().with_variant(LONGTEXT(), "mysql")
@@ -28,12 +37,50 @@ MYSQL_TABLE_OPTIONS = {
 }
 
 
+class UtcTimestamp(TypeDecorator[datetime]):
+    """TIMESTAMP(3) on MySQL with aware UTC values at the ORM boundary."""
+
+    impl = DateTime
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect):  # type: ignore[no-untyped-def]
+        if dialect.name == "mysql":
+            return dialect.type_descriptor(TIMESTAMP(fsp=3))
+        return dialect.type_descriptor(DateTime(timezone=True))
+
+    def process_bind_param(
+        self,
+        value: datetime | None,
+        dialect: Dialect,
+    ) -> datetime | None:
+        if value is None:
+            return None
+        # MySQL TIMESTAMP uses the connection time zone. The engine pins that
+        # zone to UTC, so bind a UTC-naive wall time for DBAPI compatibility.
+        instant = require_utc_datetime(value)
+        return instant.replace(
+            microsecond=(instant.microsecond // 1_000) * 1_000,
+            tzinfo=None,
+        )
+
+    def process_result_value(
+        self,
+        value: datetime | None,
+        dialect: Dialect,
+    ) -> datetime | None:
+        if value is None:
+            return None
+        return normalize_database_utc_datetime(value)
+
+
+UTC_TIMESTAMP = UtcTimestamp()
+
+
 class VideoIndexStatus(StrEnum):
     NOT_READY = "NOT_READY"
     SYNCING = "SYNCING"
     READY = "READY"
     FAILED = "FAILED"
-
 
 
 class TimestampedRecord:
@@ -108,6 +155,17 @@ class VideoRecord(TimestampedRecord, Base):
     parse_status: Mapped[str] = mapped_column(String(32), nullable=False)
     upload_progress: Mapped[int] = mapped_column(Integer, nullable=False)
     parse_progress: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+        onupdate=now_utc,
+    )
 
 
 class VideoChunkRecord(TimestampedRecord, Base):
@@ -160,6 +218,17 @@ class VideoChunkRecord(TimestampedRecord, Base):
         JSON,
         nullable=False,
         default=list,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+        onupdate=now_utc,
     )
 
 

@@ -25,7 +25,7 @@ from server.model.video import (
     VideoChunkEmbeddingRecord,
     VideoChunkRecord,
 )
-from server.model.job import SeriesParseJobRecord
+from server.model.job import SeriesParseJobRecord, VideoParseTaskRecord
 from server.model.parse_usage import ParseModelCallRecord, ParseUsageAttemptRecord
 from server.model.upload import (
     UPLOAD_DELETION_PENDING_ERROR_CODE,
@@ -33,7 +33,11 @@ from server.model.upload import (
     UploadSessionStatus,
 )
 from server.mq.mysql_queue import MySqlParseJobQueue
-from server.utils.time import now_unix_time_ms, timedelta_to_ms
+from server.utils.time import (
+    now_unix_time_ms,
+    timedelta_to_ms,
+    unix_time_ms_to_datetime,
+)
 from server.mq.contracts import ParseJobLeaseLostError
 from server.repository.job import ParseJobRepository
 from server.repository.index_sync import IndexSyncRepository
@@ -77,6 +81,7 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
     upload = uploads.create_session(
         workspace_id="mysql-manual-retry",
         series_id=series.series_id,
+        episode_order=1,
         original_filename="episode.mp4",
         media_type="video/mp4",
         total_size_bytes=4,
@@ -96,15 +101,16 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
         upload.upload_session_id,
         workspace_id="mysql-manual-retry",
     )
+    assert completed.video_parse_task_id is not None
     with session_factory.begin() as session:
         job = session.get(SeriesParseJobRecord, completed.job_id)
-        job.status = "FAILED"
-        job.attempt_count = 3
-        job.max_attempts = 3
-        job.version = 7
-        job.last_error = "failed"
-        session.get(VideoRecord, completed.video_id).parse_status = "FAILED"
-        session.get(SeriesRecord, series.series_id).status = "FAILED"
+        legacy_job_before = (job.status, job.attempt_count, job.version)
+        task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        original_config = task.parse_config
+        task.status = "PARSING_FAILED"
+        task.attempt_count = 3
+        task.max_attempts = 3
+        task.last_error = {"code": "MODEL_ERROR"}
 
     barrier = Barrier(2)
 
@@ -114,25 +120,148 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
             return uploads.retry_parse(
                 upload.upload_session_id,
                 workspace_id="mysql-manual-retry",
-                expected_job_version=7,
+                expected_job_version=1,
             )
-        except UploadConflictError as exc:
+        except (UploadConflictError, UploadStateError) as exc:
             return exc
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [executor.submit(retry_once) for _ in range(2)]
             results = [future.result(timeout=10) for future in futures]
-        assert sum(result == completed.job_id for result in results) == 1
-        assert sum(isinstance(result, UploadConflictError) for result in results) == 1
+        retried = [
+            result
+            for result in results
+            if not isinstance(result, (UploadConflictError, UploadStateError))
+        ]
+        assert len(retried) == 1
+        assert retried[0].video_parse_task_id == completed.video_parse_task_id
+        assert retried[0].version == 1
+        assert sum(
+            isinstance(result, (UploadConflictError, UploadStateError))
+            for result in results
+        ) == 1
         with session_factory() as session:
-            job = session.get(SeriesParseJobRecord, completed.job_id)
-            assert (job.status, job.attempt_count, job.max_attempts, job.version) == (
-                "QUEUED", 3, 4, 8,
+            task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+            assert (task.status, task.attempt_count, task.max_attempts) == (
+                "PREPARING", 3, 4,
             )
+            assert task.version == 1
+            assert task.parse_config == original_config
+            job = session.get(SeriesParseJobRecord, completed.job_id)
+            assert (job.status, job.attempt_count, job.version) == legacy_job_before
     finally:
         with session_factory.begin() as session:
             session.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id))
+        engine.dispose()
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
+    tmp_path,
+):
+    engine = create_database_engine(
+        TEST_DATABASE_URL or "",
+        environment=DatabaseEnvironment.TEST,
+    )
+    create_schema(engine)
+    session_factory = create_session_factory(engine)
+    series = LibraryService(LibraryRepository(session_factory)).create_series(
+        workspace_id="mysql-reparse",
+        name=f"Concurrent Reparse {uuid4()}",
+    )
+    uploads = UploadService(
+        UploadRepository(session_factory),
+        LocalArtifactStore(tmp_path / "artifacts", environment="test"),
+        config=UploadServiceConfig(
+            preferred_segment_size_bytes=4,
+            maximum_upload_size_bytes=1024,
+            pipeline_version="mysql-reparse-v2",
+        ),
+        probe_duration=lambda _path: 120,
+    )
+    upload = uploads.create_session(
+        workspace_id="mysql-reparse",
+        series_id=series.series_id,
+        episode_order=1,
+        original_filename="episode.mp4",
+        media_type="video/mp4",
+        total_size_bytes=4,
+        idempotency_key="reparse",
+    )
+    uploads.upload_segment(
+        upload.upload_session_id,
+        0,
+        b"abcd",
+        workspace_id="mysql-reparse",
+        checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
+        start_byte=0,
+        end_byte_exclusive=4,
+        total_size_bytes=4,
+    )
+    completed = uploads.complete(
+        upload.upload_session_id,
+        workspace_id="mysql-reparse",
+    )
+    assert completed.video_parse_task_id is not None
+    with session_factory.begin() as session:
+        initial = session.get(
+            VideoParseTaskRecord,
+            completed.video_parse_task_id,
+        )
+        original_config = initial.parse_config
+        initial.status = "COMPLETE"
+        job = session.get(SeriesParseJobRecord, completed.job_id)
+        legacy_job_before = (job.status, job.version, job.attempt_count)
+
+    barrier = Barrier(2)
+
+    def reparse_once():
+        barrier.wait()
+        try:
+            return uploads.reparse(
+                upload.upload_session_id,
+                workspace_id="mysql-reparse",
+                expected_job_version=1,
+            )
+        except UploadConflictError as exc:
+            return exc
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = [
+                future.result(timeout=10)
+                for future in [executor.submit(reparse_once) for _ in range(2)]
+            ]
+        created = [
+            result
+            for result in results
+            if not isinstance(result, UploadConflictError)
+        ]
+        assert len(created) == 1
+        assert sum(isinstance(result, UploadConflictError) for result in results) == 1
+        assert created[0].video_parse_task_id != completed.video_parse_task_id
+        assert created[0].version == 2
+        assert created[0].parse_config == original_config
+        with session_factory() as session:
+            tasks = list(session.scalars(
+                select(VideoParseTaskRecord)
+                .where(VideoParseTaskRecord.video_id == completed.video_id)
+                .order_by(VideoParseTaskRecord.version)
+            ))
+            assert [task.id for task in tasks] == [
+                completed.video_parse_task_id,
+                created[0].video_parse_task_id,
+            ]
+            assert [task.version for task in tasks] == [1, 2]
+            assert tasks[0].parse_config == tasks[1].parse_config == original_config
+            job = session.get(SeriesParseJobRecord, completed.job_id)
+            assert (job.status, job.version, job.attempt_count) == legacy_job_before
+    finally:
+        with session_factory.begin() as session:
+            session.execute(
+                delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id)
+            )
         engine.dispose()
 
 
@@ -204,7 +333,7 @@ def test_mysql_index_sync_hides_video_while_upload_deletion_is_pending(
 
     try:
         VideoRepository(session_factory).import_video_parse(prepared)
-        now = now_unix_time_ms()
+        now = unix_time_ms_to_datetime(now_unix_time_ms())
         with session_factory.begin() as session:
             session.add(UploadSessionRecord(
                 upload_session_id=str(uuid4()),
@@ -261,6 +390,7 @@ def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monk
     try:
         upload = uploads.create_session(
             workspace_id="mysql-delete", series_id=series.series_id,
+            episode_order=1,
             original_filename="episode.mp4", media_type="video/mp4",
             total_size_bytes=4, idempotency_key="first",
         )
@@ -281,6 +411,7 @@ def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monk
         assert uploads.list_sessions(workspace_id="mysql-delete") == []
         next_upload = uploads.create_session(
             workspace_id="mysql-delete", series_id=series.series_id,
+            episode_order=2,
             original_filename="next.mp4", media_type="video/mp4",
             total_size_bytes=4, idempotency_key="next",
         )
@@ -315,6 +446,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
     upload = uploads.create_session(
         workspace_id="mysql-completed-delete",
         series_id=series.series_id,
+        episode_order=1,
         original_filename="episode.mp4",
         media_type="video/mp4",
         total_size_bytes=4,
@@ -341,7 +473,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
             job_id=completed.job_id,
             attempt_count=1,
             lease_version=1,
-            started_at=now,
+            started_at=unix_time_ms_to_datetime(now),
             recording_complete=True,
         ))
         session.add(ParseModelCallRecord(
@@ -356,7 +488,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
             model="test-model",
             category="parse",
             operation="parse",
-            started_at=now,
+            started_at=unix_time_ms_to_datetime(now),
             status="failed",
         ))
 
@@ -386,7 +518,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
 
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
-def test_mysql_allocates_upload_order_under_concurrent_requests(tmp_path) -> None:
+def test_mysql_enforces_episode_order_under_concurrent_requests(tmp_path) -> None:
     engine = create_database_engine(TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
     session_factory = create_session_factory(engine)
@@ -401,25 +533,37 @@ def test_mysql_allocates_upload_order_under_concurrent_requests(tmp_path) -> Non
 
     def create(number: int):
         barrier.wait()
-        return uploads.create_session(
-            workspace_id="mysql-order", series_id=series.series_id,
-            episode_order=999, upload_sequence=999,
-            original_filename=f"episode-999-{number}.mp4", media_type="video/mp4",
-            total_size_bytes=100, idempotency_key=f"upload-{number}",
-        )
+        try:
+            return uploads.create_session(
+                workspace_id="mysql-order", series_id=series.series_id,
+                episode_order=999,
+                original_filename=f"episode-999-{number}.mp4", media_type="video/mp4",
+                total_size_bytes=100, idempotency_key=f"upload-{number}",
+            )
+        except UploadConflictError as exc:
+            return exc
 
     try:
         with ThreadPoolExecutor(max_workers=4) as executor:
-            uploads_created = list(executor.map(create, range(4)))
-        assert sorted(item.episode_order for item in uploads_created) == [1, 2, 3, 4]
-        assert all(item.episode_order == item.upload_sequence for item in uploads_created)
+            results = list(executor.map(create, range(4)))
+        uploads_created = [
+            item for item in results if not isinstance(item, UploadConflictError)
+        ]
+        assert len(uploads_created) == 1
+        assert sum(isinstance(item, UploadConflictError) for item in results) == 3
+        created = uploads_created[0]
+        assert created.episode_order == created.upload_sequence == 999
+        winner = next(
+            number for number, item in enumerate(results) if item is created
+        )
         replay = uploads.create_session(
             workspace_id="mysql-order", series_id=series.series_id,
-            original_filename="episode-999-0.mp4", media_type="video/mp4",
-            total_size_bytes=100, idempotency_key="upload-0",
+            episode_order=999,
+            original_filename=f"episode-999-{winner}.mp4", media_type="video/mp4",
+            total_size_bytes=100, idempotency_key=f"upload-{winner}",
         )
-        assert replay.upload_session_id == uploads_created[0].upload_session_id
-        assert replay.episode_order == uploads_created[0].episode_order
+        assert replay.upload_session_id == created.upload_session_id
+        assert replay.episode_order == created.episode_order
     finally:
         with engine.begin() as connection:
             connection.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id))

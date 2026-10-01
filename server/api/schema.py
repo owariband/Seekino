@@ -5,8 +5,14 @@ from ..model.vo.commonVO import ApiError, Failure, FieldError, ImageAsset, Page,
 from ..model.dto.libraryDTO import Character, SeriesCreateRequest
 from ..model.vo.libraryVO import SeriesDetail, SeriesSummary, SeriesView, VideoSummary
 from ..model.vo.uploadVO import UploadCompleteView, UploadSegmentView, UploadSessionView
-from ..model.dto.uploadDTO import UploadSessionCreateRequest
-from ..model.vo.jobVO import JobCounts, JobSummary, ParseJobView, VideoChunkCheckpointView
+from ..model.dto.uploadDTO import UploadReparseRequest, UploadSessionCreateRequest
+from ..model.vo.jobVO import (
+    JobCounts,
+    JobSummary,
+    ParseJobView,
+    VideoChunkCheckpointView,
+    VideoParseTaskView,
+)
 from ..model.vo.searchVO import SearchHitView, SearchResultView, VideoChunkEvidenceView
 from ..model.dto.searchDTO import VideoSearchRequest
 from ..model.dto.agentDTO import (

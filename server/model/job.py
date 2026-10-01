@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
+from typing import Any, Sequence
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     JSON,
@@ -16,8 +19,14 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
-from ..utils.time import now_unix_time_ms
-from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampedRecord
+from ..utils.time import now_unix_time_ms, now_utc
+from .video import (
+    ID_LENGTH,
+    LONG_TEXT,
+    MYSQL_TABLE_OPTIONS,
+    UTC_TIMESTAMP,
+    TimestampedRecord,
+)
 
 
 class ParseJobStatus(StrEnum):
@@ -47,6 +56,32 @@ class VideoChunkCheckpointStage(StrEnum):
     TEXT_EMBEDDED = "TEXT_EMBEDDED"
     VISION_EMBEDDED = "VISION_EMBEDDED"
     INDEXED = "INDEXED"
+
+
+class VideoParseTaskStatus(StrEnum):
+    PENDING = "PENDING"
+    PREPARING = "PREPARING"
+    PARSING = "PARSING"
+    INDEXING = "INDEXING"
+    COMPLETE = "COMPLETE"
+    PARSING_FAILED = "PARSING_FAILED"
+    INDEXING_FAILED = "INDEXING_FAILED"
+
+
+class ChunkParseTaskStatus(StrEnum):
+    QUEUED = "QUEUED"
+    UNDERSTANDING = "UNDERSTANDING"
+    COMPLETE = "COMPLETE"
+    FAILED = "FAILED"
+
+
+class IntervalParseTaskStatus(StrEnum):
+    WAITING = "WAITING"
+    REFINING = "REFINING"
+    INDEXING = "INDEXING"
+    COMPLETE = "COMPLETE"
+    PARSING_FAILED = "PARSING_FAILED"
+    INDEXING_FAILED = "INDEXING_FAILED"
 
 
 class SeriesParseJobRecord(TimestampedRecord, Base):
@@ -179,3 +214,432 @@ class VideoChunkCheckpointRecord(Base):
         default=now_unix_time_ms,
         onupdate=now_unix_time_ms,
     )
+
+
+class VideoParseTaskRecord(Base):
+    __tablename__ = "video_parse_task"
+    __table_args__ = (
+        UniqueConstraint(
+            "video_id",
+            "version",
+            name="uq_video_parse_task_video_version",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'PREPARING', 'PARSING', 'INDEXING', "
+            "'COMPLETE', 'PARSING_FAILED', 'INDEXING_FAILED')",
+            name="ck_video_parse_task_status",
+        ),
+        CheckConstraint("chunk_count > 0", name="ck_video_parse_task_chunk_count"),
+        CheckConstraint("version > 0", name="ck_video_parse_task_version"),
+        CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_video_parse_task_attempt_count",
+        ),
+        CheckConstraint(
+            "max_attempts > 0",
+            name="ck_video_parse_task_max_attempts",
+        ),
+        CheckConstraint(
+            "lease_version >= 0",
+            name="ck_video_parse_task_lease_version",
+        ),
+        CheckConstraint(
+            "processing_duration_ms >= 0",
+            name="ck_video_parse_task_processing_duration",
+        ),
+        CheckConstraint(
+            "(status IN ('PREPARING', 'PARSING', 'INDEXING') "
+            "AND lease_owner IS NOT NULL "
+            "AND lease_expire_time IS NOT NULL "
+            "AND heartbeat_time IS NOT NULL) OR "
+            "(lease_owner IS NULL "
+            "AND lease_expire_time IS NULL "
+            "AND heartbeat_time IS NULL)",
+            name="ck_video_parse_task_lease_state",
+        ),
+        Index(
+            "ix_video_parse_task_due",
+            "status",
+            "next_execute_time",
+        ),
+        Index(
+            "ix_video_parse_task_lease",
+            "status",
+            "lease_expire_time",
+        ),
+        Index(
+            "ix_video_parse_task_video_status",
+            "video_id",
+            "status",
+            "version",
+        ),
+        MYSQL_TABLE_OPTIONS,
+    )
+
+    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    video_id: Mapped[str] = mapped_column(
+        ForeignKey("video.video_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    pipeline_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    parse_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    next_execute_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    lease_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_expire_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    heartbeat_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    start_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    finish_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    processing_duration_ms: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+    processing_timing_complete: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+    last_error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    is_test: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    create_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    update_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+        onupdate=now_utc,
+    )
+
+
+class ChunkParseTaskRecord(Base):
+    __tablename__ = "chunk_parse_task"
+    __table_args__ = (
+        UniqueConstraint(
+            "video_parse_task_id",
+            "video_chunk_id",
+            name="uq_chunk_parse_task_parent_chunk",
+        ),
+        # MySQL requires a matching referenced key for Interval's composite FK.
+        UniqueConstraint(
+            "id",
+            "video_parse_task_id",
+            name="uq_chunk_parse_task_id_parent",
+        ),
+        CheckConstraint(
+            "status IN ('QUEUED', 'UNDERSTANDING', 'COMPLETE', 'FAILED')",
+            name="ck_chunk_parse_task_status",
+        ),
+        CheckConstraint(
+            "retry_count >= 0",
+            name="ck_chunk_parse_task_retry_count",
+        ),
+        CheckConstraint(
+            "lease_version >= 0",
+            name="ck_chunk_parse_task_lease_version",
+        ),
+        CheckConstraint(
+            "(status = 'UNDERSTANDING' "
+            "AND lease_owner IS NOT NULL "
+            "AND lease_expire_time IS NOT NULL) OR "
+            "(status <> 'UNDERSTANDING' "
+            "AND lease_owner IS NULL "
+            "AND lease_expire_time IS NULL)",
+            name="ck_chunk_parse_task_lease_state",
+        ),
+        Index(
+            "ix_chunk_parse_task_due",
+            "status",
+            "next_execute_time",
+        ),
+        Index(
+            "ix_chunk_parse_task_lease",
+            "status",
+            "lease_expire_time",
+        ),
+        Index(
+            "ix_chunk_parse_task_parent_status",
+            "video_parse_task_id",
+            "status",
+            "video_chunk_id",
+        ),
+        MYSQL_TABLE_OPTIONS,
+    )
+
+    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    video_parse_task_id: Mapped[str] = mapped_column(
+        ForeignKey("video_parse_task.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    video_chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("video_chunk.video_chunk_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    next_execute_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    lease_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_expire_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    start_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    finish_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    last_error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    create_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    update_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+        onupdate=now_utc,
+    )
+
+
+class ChunkParseContentRecord(Base):
+    __tablename__ = "chunk_parse_content"
+    __table_args__ = (
+        UniqueConstraint(
+            "chunk_parse_task_id",
+            name="uq_chunk_parse_content_task",
+        ),
+        CheckConstraint("version > 0", name="ck_chunk_parse_content_version"),
+        MYSQL_TABLE_OPTIONS,
+    )
+
+    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    chunk_parse_task_id: Mapped[str] = mapped_column(
+        ForeignKey("chunk_parse_task.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    content: Mapped[Any | None] = mapped_column(JSON)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    create_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    update_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+        onupdate=now_utc,
+    )
+
+
+class IntervalParseTaskRecord(Base):
+    __tablename__ = "interval_parse_task"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["chunk_parse_task_id", "video_parse_task_id"],
+            ["chunk_parse_task.id", "chunk_parse_task.video_parse_task_id"],
+            name="fk_interval_parse_task_anchor_parent",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "video_parse_task_id",
+            "start_sequence_no",
+            name="uq_interval_parse_task_parent_start",
+        ),
+        CheckConstraint(
+            "start_sequence_no >= 0",
+            name="ck_interval_parse_task_start_sequence",
+        ),
+        CheckConstraint(
+            "chunk_count BETWEEN 1 AND 63",
+            name="ck_interval_parse_task_chunk_count",
+        ),
+        CheckConstraint(
+            "ready_mask >= 0 AND (ready_mask >> chunk_count) = 0",
+            name="ck_interval_parse_task_ready_mask",
+        ),
+        CheckConstraint(
+            "status IN ('WAITING', 'REFINING', 'INDEXING', 'COMPLETE', "
+            "'PARSING_FAILED', 'INDEXING_FAILED')",
+            name="ck_interval_parse_task_status",
+        ),
+        CheckConstraint(
+            "retry_count >= 0",
+            name="ck_interval_parse_task_retry_count",
+        ),
+        CheckConstraint(
+            "lease_version >= 0",
+            name="ck_interval_parse_task_lease_version",
+        ),
+        CheckConstraint(
+            "(status IN ('REFINING', 'INDEXING') "
+            "AND lease_owner IS NOT NULL "
+            "AND lease_expire_time IS NOT NULL) OR "
+            "(status IN ('WAITING', 'INDEXING', 'COMPLETE', "
+            "'PARSING_FAILED', 'INDEXING_FAILED') "
+            "AND lease_owner IS NULL "
+            "AND lease_expire_time IS NULL)",
+            name="ck_interval_parse_task_lease_state",
+        ),
+        Index(
+            "ix_interval_parse_task_due",
+            "status",
+            "next_execute_time",
+        ),
+        Index(
+            "ix_interval_parse_task_lease",
+            "status",
+            "lease_expire_time",
+        ),
+        Index(
+            "ix_interval_parse_task_parent_status",
+            "video_parse_task_id",
+            "status",
+            "start_sequence_no",
+        ),
+        MYSQL_TABLE_OPTIONS,
+    )
+
+    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    chunk_parse_task_id: Mapped[str] = mapped_column(
+        String(ID_LENGTH),
+        nullable=False,
+    )
+    video_parse_task_id: Mapped[str] = mapped_column(
+        ForeignKey("video_parse_task.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    chunk_parse_task_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    start_sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    ready_mask: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    next_execute_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    lease_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_expire_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    start_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    finish_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    last_error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    create_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    update_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+        onupdate=now_utc,
+    )
+
+
+class IntervalParseContentRecord(Base):
+    __tablename__ = "interval_parse_content"
+    __table_args__ = MYSQL_TABLE_OPTIONS
+
+    interval_parse_task_id: Mapped[str] = mapped_column(
+        ForeignKey("interval_parse_task.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    content: Mapped[Any] = mapped_column(JSON, nullable=False)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    create_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    update_time: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+        onupdate=now_utc,
+    )
+
+
+def interval_sequence_range(start_sequence_no: int, chunk_count: int) -> range:
+    if (
+        isinstance(start_sequence_no, bool)
+        or not isinstance(start_sequence_no, int)
+        or start_sequence_no < 0
+    ):
+        raise ValueError("start_sequence_no must be a nonnegative integer")
+    if (
+        isinstance(chunk_count, bool)
+        or not isinstance(chunk_count, int)
+        or not 1 <= chunk_count <= 63
+    ):
+        raise ValueError("chunk_count must be an integer between 1 and 63")
+    return range(start_sequence_no, start_sequence_no + chunk_count)
+
+
+def interval_ready_mask_bit(member_index: int, chunk_count: int) -> int:
+    interval_sequence_range(0, chunk_count)
+    if (
+        isinstance(member_index, bool)
+        or not isinstance(member_index, int)
+        or not 0 <= member_index < chunk_count
+    ):
+        raise ValueError("member_index must identify an Interval member")
+    return 1 << member_index
+
+
+def interval_full_ready_mask(chunk_count: int) -> int:
+    interval_sequence_range(0, chunk_count)
+    return (1 << chunk_count) - 1
+
+
+def validate_interval_parse_task_members(
+    *,
+    chunk_parse_task_id: str,
+    video_parse_task_id: str,
+    start_sequence_no: int,
+    chunk_count: int,
+    chunk_parse_task_ids: Sequence[str],
+    members: Sequence[tuple[ChunkParseTaskRecord, int]],
+) -> None:
+    """Validate the immutable ordered Interval membership before insertion."""
+
+    expected_sequences = interval_sequence_range(start_sequence_no, chunk_count)
+    member_ids = tuple(chunk_parse_task_ids)
+    if len(member_ids) != chunk_count:
+        raise ValueError("chunk_parse_task_ids length must equal chunk_count")
+    if len(set(member_ids)) != chunk_count:
+        raise ValueError("chunk_parse_task_ids must be unique")
+    if member_ids[0] != chunk_parse_task_id:
+        raise ValueError("the first member must equal chunk_parse_task_id")
+    if len(members) != chunk_count:
+        raise ValueError("members length must equal chunk_count")
+
+    for index, ((member, sequence_no), expected_sequence_no) in enumerate(
+        zip(members, expected_sequences, strict=True)
+    ):
+        if member.id != member_ids[index]:
+            raise ValueError("members must follow chunk_parse_task_ids order")
+        if member.video_parse_task_id != video_parse_task_id:
+            raise ValueError("every member must belong to video_parse_task_id")
+        if sequence_no != expected_sequence_no:
+            raise ValueError(
+                "member sequence numbers must be contiguous from start_sequence_no"
+            )

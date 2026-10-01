@@ -36,6 +36,24 @@ def test_datetime_conversion_requires_explicit_timezone():
         time_utils.datetime_to_unix_time_ms(datetime(2026, 9, 15, 12, 30))
 
 
+def test_database_datetime_helpers_normalize_to_aware_utc():
+    local = datetime(2026, 9, 15, 20, 30, tzinfo=timezone(timedelta(hours=8)))
+    expected = datetime(2026, 9, 15, 12, 30, tzinfo=UTC)
+
+    assert time_utils.require_utc_datetime(local) == expected
+    assert time_utils.normalize_database_utc_datetime(
+        datetime(2026, 9, 15, 12, 30)
+    ) == expected
+    assert time_utils.normalize_database_utc_datetime(local) == expected
+    assert time_utils.now_utc().tzinfo is UTC
+    assert time_utils.now_utc().microsecond % 1_000 == 0
+
+
+def test_utc_datetime_helper_rejects_naive_values():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        time_utils.require_utc_datetime(datetime(2026, 9, 15, 12, 30))
+
+
 @pytest.mark.parametrize(
     "value",
     [datetime(2026, 9, 15, tzinfo=UTC), "1789411200000", 1.0, True, 2**63],

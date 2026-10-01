@@ -11,12 +11,17 @@ from sqlalchemy import select
 
 from server.api import library as library_api
 from server.api.library import project_series_detail
+from server.config.parse_profile import default_video_parse_v2_config
 from server.database import DatabaseEnvironment, create_session_factory
 from server.model.agent import AgentConversationRecord, AgentMessageRecord
 from server.model.index_sync import IndexSyncIntentRecord
-from server.model.job import SeriesParseJobRecord, VideoChunkCheckpointRecord
+from server.model.job import (
+    SeriesParseJobRecord,
+    VideoChunkCheckpointRecord,
+    VideoParseTaskRecord,
+)
 from server.model.upload import UploadSessionRecord
-from server.model.video import VideoChunkEmbeddingRecord, VideoRecord
+from server.model.video import SeriesRecord, VideoChunkEmbeddingRecord, VideoRecord
 from server.repository.library import (
     LibraryRepository,
     SeriesNotFoundError,
@@ -27,13 +32,63 @@ from server.repository.upload import UploadRepository
 from server.service.library import LibraryService
 from server.service.media import MediaService
 from server.storage.artifact import LocalArtifactStore
-from server.utils.time import now_unix_time_ms, timedelta_to_ms
+from server.utils.time import now_unix_time_ms, now_utc, timedelta_to_ms
 
 
 def _library(repository):
     engine, videos = repository
     factory = create_session_factory(engine)
     return factory, videos, LibraryService(LibraryRepository(factory))
+
+
+def _add_prefix_task(
+    session,
+    *,
+    video_id: str,
+    compact_enabled: bool = True,
+    lease_owner: str | None = None,
+    lease_expire_time_ms: int | None = None,
+) -> str:
+    task_id = str(uuid4())
+    now = now_utc()
+    session.add(VideoParseTaskRecord(
+        id=task_id,
+        video_id=video_id,
+        pipeline_version="video-parse-v2",
+        status="COMPLETE",
+        parse_config={"compact_enabled": compact_enabled},
+        chunk_count=1,
+        version=1,
+        next_execute_time=now,
+        attempt_count=1,
+        max_attempts=3,
+        lease_version=0,
+        processing_duration_ms=0,
+        processing_timing_complete=True,
+        is_test=True,
+        is_deleted=False,
+        detail={
+            "_worker_runtime_v2": {
+                "accepted": True,
+                "prefix": {
+                    "next_chunk_sequence_no": 1,
+                    "lease_owner": lease_owner,
+                    "lease_version": 4,
+                    "lease_expire_time_ms": lease_expire_time_ms,
+                    "execution_task_id": "prefix-execution" if lease_owner else None,
+                    "next_execute_time_ms": 0,
+                    "retry_count": 2,
+                    "video_prefix_compact": f"video-{video_id}",
+                    "series_prefix_compact": f"series-{video_id}",
+                    "last_error": {"message": "old failure"},
+                },
+                "unrelated": {"preserved": True},
+            }
+        },
+        create_time=now,
+        update_time=now,
+    ))
+    return task_id
 
 
 def test_offline_video_views_use_actual_index_and_media_facts(repository, prepared_import, tmp_path):
@@ -211,16 +266,23 @@ def test_pending_upload_counts_expiry_and_full_detail(repository):
     factory, _videos, library = _library(repository)
     series = library.create_series(workspace_id="local-default", name="Pending Series")
     uploads = UploadRepository(factory)
-    now = now_unix_time_ms()
+    now = now_utc()
     active = []
-    for episode, expires in ((2, now + timedelta_to_ms(timedelta(days=1))), (3, now + timedelta_to_ms(timedelta(days=1))), (4, now - timedelta_to_ms(timedelta(seconds=1)))):
+    for episode, expires in (
+        (2, now + timedelta(days=1)),
+        (3, now + timedelta(days=1)),
+        (4, now - timedelta(seconds=1)),
+    ):
         state = uploads.create_session(
             workspace_id="local-default", series_id=series.series_id,
-            episode_order=episode, upload_sequence=episode,
+            episode_order=episode,
             original_filename=f"episode-{episode}.mp4", media_type="video/mp4",
             total_size_bytes=10, preferred_segment_size_bytes=4, total_segments=3,
             idempotency_key=f"upload-{episode}", expires_at=expires,
-            now=now - timedelta_to_ms(timedelta(days=1)),
+            now=now - timedelta(days=1),
+            video_parse_config=default_video_parse_v2_config().model_dump(
+                mode="json"
+            ),
         )
         if episode != 4:
             active.append(state.upload_session_id)
@@ -228,7 +290,7 @@ def test_pending_upload_counts_expiry_and_full_detail(repository):
     assert detail.video_count == 0
     assert detail.pending_upload_count == 2
     assert [item.upload_session_id for item in detail.pending_uploads] == active
-    assert [item.upload_sequence for item in detail.pending_uploads] == [1, 2]
+    assert [item.upload_sequence for item in detail.pending_uploads] == [2, 3]
     assert all(item.missing_segment_numbers == (0, 1, 2) for item in detail.pending_uploads)
     assert library.list_series(workspace_id="local-default")[0].pending_upload_count == 2
 
@@ -309,7 +371,7 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
     report = videos.import_video_parse(prepared_import)
     upload_session_id = str(uuid4())
     inactive_upload_session_id = str(uuid4())
-    now = now_unix_time_ms()
+    now = now_utc()
     with factory.begin() as session:
         session.add_all([
             UploadSessionRecord(
@@ -326,7 +388,7 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
                 status="COMPLETED",
                 idempotency_key="episode-edit-linked-upload",
                 active_slot_key=f"{report.series_id}:{prepared_import.episode_order}",
-                expires_at=now + timedelta_to_ms(timedelta(days=1)),
+                expires_at=now + timedelta(days=1),
                 completed_at=now,
                 video_id=report.video_id,
             ),
@@ -362,7 +424,7 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
     )
 
     assert edited.episode_order == replay.episode_order == 9
-    assert edited.upload_sequence == replay.upload_sequence == prepared_import.upload_sequence
+    assert edited.upload_sequence == replay.upload_sequence == 9
     with factory() as session:
         video = session.get(VideoRecord, report.video_id)
         upload = session.get(UploadSessionRecord, upload_session_id)
@@ -371,15 +433,205 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
             inactive_upload_session_id,
         )
         assert video.episode_order == 9
-        assert video.upload_sequence == prepared_import.upload_sequence
+        assert video.upload_sequence == 9
         assert upload.episode_order == 9
-        assert upload.upload_sequence == prepared_import.upload_sequence
+        assert upload.upload_sequence == 9
         assert upload.active_slot_key == f"{report.series_id}:9"
         assert upload.version == 2
         assert inactive_upload.episode_order == 9
-        assert inactive_upload.upload_sequence == prepared_import.upload_sequence
+        assert inactive_upload.upload_sequence == 9
         assert inactive_upload.active_slot_key is None
         assert inactive_upload.version == 2
+
+
+@pytest.mark.parametrize(
+    ("target_index", "episode_order", "invalidated_indexes"),
+    [
+        (0, 4, {0, 2}),
+        (2, 2, {2}),
+    ],
+)
+def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
+    repository,
+    target_index,
+    episode_order,
+    invalidated_indexes,
+) -> None:
+    engine, _videos = repository
+    factory = create_session_factory(engine)
+    series_id = str(uuid4())
+    video_ids = [str(uuid4()) for _ in range(3)]
+    task_ids: list[str] = []
+    with factory.begin() as session:
+        session.add(SeriesRecord(
+            series_id=series_id,
+            workspace_id="local-default",
+            name=f"Episode move {target_index}-{episode_order}",
+            description=None,
+            status="INDEXING",
+            important_extra_data=None,
+            character_bible=[],
+        ))
+        for index, (video_id, order) in enumerate(zip(video_ids, (1, 3, 5))):
+            session.add(VideoRecord(
+                video_id=video_id,
+                series_id=series_id,
+                episode_order=order,
+                upload_sequence=order,
+                original_filename=f"episode-{order}.mp4",
+                original_source_uri=f"artifact://test/{video_id}.mp4",
+                inference_proxy_uri=None,
+                content_hash=(str(index + 1) * 64)[:64],
+                total_bytes=1,
+                duration_seconds=1,
+                upload_status="COMPLETED",
+                parse_status="SUCCEEDED",
+                upload_progress=100,
+                parse_progress=100,
+            ))
+        session.flush()
+        for index, video_id in enumerate(video_ids):
+            task_ids.append(_add_prefix_task(
+                session,
+                video_id=video_id,
+                compact_enabled=index != 1,
+            ))
+
+    library = LibraryRepository(factory)
+    library.update_video_episode_order(
+        video_ids[target_index],
+        workspace_id="local-default",
+        episode_order=episode_order,
+    )
+    with factory() as session:
+        first_details = {
+            task_id: session.get(VideoParseTaskRecord, task_id).detail
+            for task_id in task_ids
+        }
+        assert session.get(
+            VideoRecord, video_ids[target_index]
+        ).episode_order == episode_order
+        for index, task_id in enumerate(task_ids):
+            runtime = first_details[task_id]["_worker_runtime_v2"]
+            prefix = runtime["prefix"]
+            if index in invalidated_indexes:
+                assert prefix["next_chunk_sequence_no"] == 0
+                assert prefix["video_prefix_compact"] == ""
+                assert prefix["series_prefix_compact"] == ""
+                assert prefix["retry_count"] == 0
+                assert prefix["last_error"] is None
+                assert prefix["lease_version"] == 5
+            else:
+                assert prefix["next_chunk_sequence_no"] == 1
+                assert prefix["video_prefix_compact"] == f"video-{video_ids[index]}"
+                assert prefix["series_prefix_compact"] == f"series-{video_ids[index]}"
+                assert prefix["retry_count"] == 2
+                assert prefix["lease_version"] == 4
+            assert runtime["unrelated"] == {"preserved": True}
+
+    library.update_video_episode_order(
+        video_ids[target_index],
+        workspace_id="local-default",
+        episode_order=episode_order,
+    )
+    with factory() as session:
+        assert {
+            task_id: session.get(VideoParseTaskRecord, task_id).detail
+            for task_id in task_ids
+        } == first_details
+
+
+def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
+    repository,
+) -> None:
+    engine, _videos = repository
+    factory = create_session_factory(engine)
+    series_id = str(uuid4())
+    target_video_id = str(uuid4())
+    downstream_video_id = str(uuid4())
+    upload_session_id = str(uuid4())
+    now = now_utc()
+    with factory.begin() as session:
+        session.add(SeriesRecord(
+            series_id=series_id,
+            workspace_id="local-default",
+            name="Active Prefix episode move",
+            description=None,
+            status="INDEXING",
+            important_extra_data=None,
+            character_bible=[],
+        ))
+        for video_id, order, content_hash in (
+            (target_video_id, 1, "a" * 64),
+            (downstream_video_id, 3, "b" * 64),
+        ):
+            session.add(VideoRecord(
+                video_id=video_id,
+                series_id=series_id,
+                episode_order=order,
+                upload_sequence=order,
+                original_filename=f"episode-{order}.mp4",
+                original_source_uri=f"artifact://test/{video_id}.mp4",
+                inference_proxy_uri=None,
+                content_hash=content_hash,
+                total_bytes=1,
+                duration_seconds=1,
+                upload_status="COMPLETED",
+                parse_status="SUCCEEDED",
+                upload_progress=100,
+                parse_progress=100,
+            ))
+        session.add(UploadSessionRecord(
+            upload_session_id=upload_session_id,
+            workspace_id="local-default",
+            series_id=series_id,
+            episode_order=1,
+            upload_sequence=1,
+            original_filename="episode-1.mp4",
+            media_type="video/mp4",
+            total_size_bytes=1,
+            preferred_segment_size_bytes=1,
+            total_segments=1,
+            status="COMPLETED",
+            idempotency_key="active-prefix-episode-move",
+            active_slot_key=f"{series_id}:1",
+            expires_at=now + timedelta(days=1),
+            completed_at=now,
+            video_id=target_video_id,
+        ))
+        session.flush()
+        target_task_id = _add_prefix_task(session, video_id=target_video_id)
+        downstream_task_id = _add_prefix_task(
+            session,
+            video_id=downstream_video_id,
+            lease_owner="prefix-worker",
+            lease_expire_time_ms=int((now + timedelta(minutes=5)).timestamp() * 1000),
+        )
+
+    with factory() as session:
+        original_details = {
+            task_id: session.get(VideoParseTaskRecord, task_id).detail
+            for task_id in (target_task_id, downstream_task_id)
+        }
+
+    with pytest.raises(VideoEpisodeOrderConflictError, match="active lease"):
+        LibraryRepository(factory).update_video_episode_order(
+            target_video_id,
+            workspace_id="local-default",
+            episode_order=2,
+        )
+
+    with factory() as session:
+        video = session.get(VideoRecord, target_video_id)
+        upload = session.get(UploadSessionRecord, upload_session_id)
+        assert video.episode_order == video.upload_sequence == 1
+        assert upload.episode_order == upload.upload_sequence == 1
+        assert upload.active_slot_key == f"{series_id}:1"
+        assert upload.version == 1
+        assert {
+            task_id: session.get(VideoParseTaskRecord, task_id).detail
+            for task_id in (target_task_id, downstream_task_id)
+        } == original_details
 
 
 def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
@@ -388,7 +640,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
 ) -> None:
     factory, videos, library = _library(repository)
     report = videos.import_video_parse(prepared_import)
-    now = now_unix_time_ms()
+    now = now_utc()
     linked_upload_id = str(uuid4())
     reserved_upload_id = str(uuid4())
     occupied_video_id = str(uuid4())
@@ -408,7 +660,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
                 status="COMPLETED",
                 idempotency_key="episode-edit-conflict-linked",
                 active_slot_key=f"{report.series_id}:{prepared_import.episode_order}",
-                expires_at=now + timedelta_to_ms(timedelta(days=1)),
+                expires_at=now + timedelta(days=1),
                 completed_at=now,
                 video_id=report.video_id,
             ),
@@ -426,7 +678,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
                 status="UPLOADING",
                 idempotency_key="episode-edit-reserved-slot",
                 active_slot_key=f"{report.series_id}:10",
-                expires_at=now + timedelta_to_ms(timedelta(days=1)),
+                expires_at=now + timedelta(days=1),
             ),
             VideoRecord(
                 video_id=occupied_video_id,

@@ -108,6 +108,95 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.logging.level == "info"
     assert settings.logging.maximum_file_size_bytes == 10 * 1024 * 1024
     assert settings.logging.backup_count == 5
+    assert settings.elasticsearch is None
+    assert settings.parse_execution_mode == "v1"
+
+
+def test_server_settings_select_exactly_one_parse_worker_family(monkeypatch) -> None:
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "V2")
+
+    assert ServerSettings.from_environment().parse_execution_mode == "v2"
+
+    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "both")
+    with pytest.raises(ValueError, match="must be 'v1' or 'v2'"):
+        ServerSettings.from_environment()
+
+
+def test_elasticsearch_settings_are_explicit_and_environment_isolated(monkeypatch) -> None:
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "anivag_video_chunks_development")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_API_KEY", "test-key")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "7")
+
+    config = ServerSettings.from_environment().elasticsearch
+
+    assert config is not None
+    assert config.url == "http://127.0.0.1:9200"
+    assert config.index_name == "anivag_video_chunks_development"
+    assert config.api_key == "test-key"
+    assert config.index_generation == 7
+
+
+def test_elasticsearch_index_generation_defaults_to_one(monkeypatch) -> None:
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "anivag_video_chunks_development")
+
+    config = ServerSettings.from_environment().elasticsearch
+
+    assert config is not None
+    assert config.index_generation == 1
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not-an-integer"])
+def test_elasticsearch_index_generation_must_be_a_positive_integer(
+    monkeypatch, value
+) -> None:
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "anivag_video_chunks_development")
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", value)
+
+    with pytest.raises(ValueError, match="positive integer"):
+        ServerSettings.from_environment()
+
+
+def test_elasticsearch_index_generation_must_fit_external_version_contract(
+    monkeypatch,
+) -> None:
+    _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+    monkeypatch.setenv(
+        "ANIVAG_ELASTICSEARCH_INDEX", "anivag_video_chunks_development"
+    )
+    monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", str(1 << 31))
+
+    with pytest.raises(ValueError, match="external version contract"):
+        ServerSettings.from_environment()
+
+
+@pytest.mark.parametrize(
+    ("url", "index_name", "message"),
+    [
+        ("http://127.0.0.1:9200", "", "configured together"),
+        ("", "anivag_video_chunks_development", "configured together"),
+        ("http://127.0.0.1:9200/path", "anivag_video_chunks_development", "origin"),
+        ("http://127.0.0.1:9200", "anivag_video_chunks_test", "dev component"),
+    ],
+)
+def test_elasticsearch_settings_reject_incomplete_or_unsafe_values(
+    monkeypatch, url, index_name, message,
+) -> None:
+    _clean_anivag_environment(monkeypatch)
+    if url:
+        monkeypatch.setenv("ANIVAG_ELASTICSEARCH_URL", url)
+    if index_name:
+        monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", index_name)
+
+    with pytest.raises(ValueError, match=message):
+        ServerSettings.from_environment()
 
 
 def test_config_yaml_exposes_agent_timeouts() -> None:

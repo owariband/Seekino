@@ -14,7 +14,7 @@ from server.model.video import SeriesRecord, VideoRecord
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.index_sync import IndexSyncRepository
 from server.repository.job import ParseJobRepository
-from server.utils.time import timedelta_to_ms
+from server.utils.time import timedelta_to_ms, unix_time_ms_to_datetime
 
 
 def _seed(repository, *, max_attempts: int = 3):
@@ -393,7 +393,9 @@ def test_earlier_upload_without_job_blocks_later_parse_until_expired(
                 total_segments=1,
                 status=upload_status.value,
                 idempotency_key="earlier-upload",
-                expires_at=now + timedelta_to_ms(timedelta(minutes=1)),
+                expires_at=unix_time_ms_to_datetime(
+                    now + timedelta_to_ms(timedelta(minutes=1))
+                ),
             )
         )
     assert queue.claim_next(

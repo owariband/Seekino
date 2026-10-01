@@ -11,7 +11,11 @@ from ..model.upload import UploadSessionRecord, UploadSessionStatus
 from ..model.video import SeriesRecord, VideoRecord
 from ..repository.index_sync import refresh_series_statuses
 from ..repository.job import current_lease_predicate
-from ..utils.time import now_unix_time_ms, timedelta_to_ms
+from ..utils.time import (
+    now_unix_time_ms,
+    timedelta_to_ms,
+    unix_time_ms_to_datetime,
+)
 from ..utils.validation import require_nonempty_text
 
 
@@ -70,8 +74,8 @@ class MySqlParseJobQueue:
                         select(earlier_video.video_id).where(
                             earlier_video.series_id
                             == SeriesParseJobRecord.series_id,
-                            earlier_video.upload_sequence
-                            < VideoRecord.upload_sequence,
+                            earlier_video.episode_order
+                            < VideoRecord.episode_order,
                             earlier_video.parse_status.not_in(
                                 [ParseJobStatus.SUCCEEDED.value, "COMPLETED"]
                             ),
@@ -83,20 +87,21 @@ class MySqlParseJobQueue:
                         select(earlier_upload.upload_session_id).where(
                             earlier_upload.series_id
                             == SeriesParseJobRecord.series_id,
-                            earlier_upload.upload_sequence
-                            < VideoRecord.upload_sequence,
+                            earlier_upload.episode_order
+                            < VideoRecord.episode_order,
                             earlier_upload.status.in_(
                                 [
                                     UploadSessionStatus.UPLOADING.value,
                                     UploadSessionStatus.COMPLETING.value,
                                 ]
                             ),
-                            earlier_upload.expires_at > claimed_at,
+                            earlier_upload.expires_at
+                            > unix_time_ms_to_datetime(claimed_at),
                         )
                     ),
                 )
                 .order_by(
-                    VideoRecord.upload_sequence,
+                    VideoRecord.episode_order,
                     SeriesParseJobRecord.available_at,
                     SeriesParseJobRecord.created_at,
                     SeriesParseJobRecord.job_id,

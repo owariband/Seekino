@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 import logging
 from typing import Any
 
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.runtime import AgentRuntime
 from arkruntime import Ark
+from elasticsearch import Elasticsearch
 from engine.parsev1.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.factory import AgentModelFactory
@@ -26,6 +28,11 @@ from .config.video_processing import VideoProcessingConfig
 from .database import create_database_engine, create_session_factory
 from .mq.consumer import ParseJobConsumer
 from .mq.mysql_queue import MySqlParseJobQueue
+from .mq.video_parse_consumer import (
+    VideoParseConsumer,
+    VideoParseConsumerHandlers,
+)
+from .mq.video_parse_queue import MySqlVideoParseQueue
 from .repository.agent import AgentRepository
 from .repository.index_sync import IndexSyncRepository
 from .repository.job import ParseJobRepository
@@ -33,6 +40,7 @@ from .repository.library import LibraryRepository
 from .repository.parse_usage import ParseUsageRepository
 from .repository.upload import UploadRepository
 from .repository.video import VideoRepository
+from .repository.video_parse import VideoParseRepository
 from .service.agent_chat import AgentChatService
 from .service.index_sync import IndexSyncService
 from .service.job import ParseJobService
@@ -41,9 +49,12 @@ from .service.media import MediaService
 from .service.parse_usage import ParseUsageService
 from .service.qdrant_mutation_lock import QdrantMutationLock
 from .service.upload import UploadService
+from .service.video_parse import VideoParseRuntimeService
+from .service.video_parse_media import VideoParseMediaService
 from .service.video_processing import VideoProcessingService
 from .service.video_retrieval import VideoRetrievalService
 from .storage.artifact import LocalArtifactStore
+from .storage.elasticsearch import ElasticsearchVideoChunkStore
 from .storage.qdrant import QdrantVideoChunkStore
 
 _logger = logging.getLogger(__name__)
@@ -58,9 +69,10 @@ class ApplicationServices:
     retrieval: VideoRetrievalService
     agent: AgentChatService
     index_sync: IndexSyncService
-    parse_consumer: ParseJobConsumer | None = None
+    parse_consumer: ParseJobConsumer | VideoParseConsumer | None = None
     engine: Engine | None = None
     qdrant_client: Any | None = None
+    elasticsearch_client: Any | None = None
     parse_usage: ParseUsageService | None = None
     agent_model_factory: AgentModelFactory | None = None
 
@@ -81,15 +93,24 @@ class ApplicationServices:
                     self.agent_model_factory.close()
             finally:
                 try:
-                    if self.qdrant_client is not None:
-                        self.qdrant_client.close()
+                    if self.elasticsearch_client is not None:
+                        self.elasticsearch_client.close()
                 finally:
-                    if self.engine is not None:
-                        self.engine.dispose()
+                    try:
+                        if self.qdrant_client is not None:
+                            self.qdrant_client.close()
+                    finally:
+                        if self.engine is not None:
+                            self.engine.dispose()
 
 
 def build_application_services(settings: ServerSettings) -> ApplicationServices:
     gateway_config = load_config(settings.model_config_path)
+    if settings.parse_execution_mode == "v2" and settings.elasticsearch is None:
+        raise ValueError(
+            "Video Parse V2 requires ANIVAG_ELASTICSEARCH_URL and "
+            "ANIVAG_ELASTICSEARCH_INDEX"
+        )
     agent_model_config = gateway_config.agent_model
     configured_fallback = agent_model_config.fallback
     fallback_agent_model = (
@@ -153,13 +174,29 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         embedding_dimensions=settings.text_vector_dimensions,
         embedding_fps=embedding_fps,
     )
+    elasticsearch_client = None
+    elasticsearch_store = None
+    if settings.elasticsearch is not None:
+        elasticsearch_client = Elasticsearch(
+            settings.elasticsearch.url,
+            api_key=settings.elasticsearch.api_key,
+        )
+        elasticsearch_store = ElasticsearchVideoChunkStore(
+            elasticsearch_client,
+            index_name=settings.elasticsearch.index_name,
+            environment=settings.environment,
+            semantic_dimensions=parse_defaults.embedding.dimensions,
+            vision_dimensions=parse_defaults.embedding.dimensions,
+        )
     uploads = UploadService(
         UploadRepository(session_factory),
         artifact_store,
         config=settings.upload,
         video_chunk_store=vector_store,
+        video_parse_index_store=elasticsearch_store,
         qdrant_mutation_lock=qdrant_mutation_lock,
         parse_defaults=parse_defaults,
+        execution_mode=settings.parse_execution_mode,
     )
     embedder = _LazyQueryEmbedder(
         model=embedding_model,
@@ -300,17 +337,6 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         retry_base_seconds=settings.index_sync.retry_base_seconds,
         retry_max_seconds=settings.index_sync.retry_max_seconds,
     )
-    processing_embedder = DoubaoMultimodalEmbedder(
-        embedding_model,
-        output_dimensionality=settings.text_vector_dimensions,
-        fps=embedding_fps,
-    )
-    parse_runtime = EngineVideoParseRuntime(
-        model_config_path=settings.model_config_path,
-        config=settings.parse,
-        on_log=_logger.info,
-    )
-
     def processor_for_config(selected: ParseConfig) -> VideoProcessingService:
         selected.require_active_index(
             embedding_model=embedding_model,
@@ -383,38 +409,93 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             parse_config=selected,
         )
 
-    processor = VideoProcessingService(
-        job_repository,
-        video_repository,
-        index_sync,
-        artifact_store,
-        pipeline=parse_runtime.build_pipeline(
-            processing_embedder,
-            settings.text_vector_dimensions,
-        ),
-        parse_usage=parse_usage,
-        config=VideoProcessingConfig(
-            embedding_dimensions=settings.text_vector_dimensions,
-            chunk_duration_seconds=settings.parse.chunk_duration_seconds,
-            context_overlap_seconds=settings.parse.context_overlap_seconds,
-            analysis_max_height=settings.parse.max_height,
-            canonical_max_height=settings.parse.max_height,
-            asr_concurrency=settings.parse.asr_concurrency,
-            asr_mode=settings.parse.asr_mode,
-        ),
-        processor_factory=processor_for_config,
-    )
-    queue = MySqlParseJobQueue(session_factory)
-    parse_consumer = ParseJobConsumer(
-        queue,
-        processor,
-        worker_id=settings.mq.consumer_id,
-        lease_duration=settings.mq.lease_duration,
-        heartbeat_interval=settings.mq.heartbeat_interval,
-        retry_base=settings.mq.retry_base,
-        retry_max=settings.mq.retry_max,
-        poll_interval_seconds=settings.mq.poll_interval_seconds,
-    )
+    parse_consumer: ParseJobConsumer | VideoParseConsumer
+    if settings.parse_execution_mode == "v1":
+        processing_embedder = DoubaoMultimodalEmbedder(
+            embedding_model,
+            output_dimensionality=settings.text_vector_dimensions,
+            fps=embedding_fps,
+        )
+        parse_runtime = EngineVideoParseRuntime(
+            model_config_path=settings.model_config_path,
+            config=settings.parse,
+            on_log=_logger.info,
+        )
+        processor = VideoProcessingService(
+            job_repository,
+            video_repository,
+            index_sync,
+            artifact_store,
+            pipeline=parse_runtime.build_pipeline(
+                processing_embedder,
+                settings.text_vector_dimensions,
+            ),
+            parse_usage=parse_usage,
+            config=VideoProcessingConfig(
+                embedding_dimensions=settings.text_vector_dimensions,
+                chunk_duration_seconds=settings.parse.chunk_duration_seconds,
+                context_overlap_seconds=settings.parse.context_overlap_seconds,
+                analysis_max_height=settings.parse.max_height,
+                canonical_max_height=settings.parse.max_height,
+                asr_concurrency=settings.parse.asr_concurrency,
+                asr_mode=settings.parse.asr_mode,
+            ),
+            processor_factory=processor_for_config,
+        )
+        parse_consumer = ParseJobConsumer(
+            MySqlParseJobQueue(session_factory),
+            processor,
+            worker_id=settings.mq.consumer_id,
+            lease_duration=settings.mq.lease_duration,
+            heartbeat_interval=settings.mq.heartbeat_interval,
+            retry_base=settings.mq.retry_base,
+            retry_max=settings.mq.retry_max,
+            poll_interval_seconds=settings.mq.poll_interval_seconds,
+        )
+    else:
+        # The mode guard above makes both values non-null here.  Keep the
+        # assertion next to the adapter construction so V2 can never fall back
+        # to a partially configured writer.
+        assert settings.elasticsearch is not None
+        assert elasticsearch_client is not None
+        assert elasticsearch_store is not None
+        v2_repository = VideoParseRepository(session_factory)
+        v2_queue = MySqlVideoParseQueue(session_factory)
+        v2_runtime = VideoParseRuntimeService(
+            v2_repository,
+            v2_queue,
+            artifact_store,
+            VideoParseMediaService(
+                artifact_store.base_directory / "work" / "video-parse-v2"
+            ),
+            gateway_config,
+            elasticsearch_store,
+            index_generation=settings.elasticsearch.index_generation,
+            worker_id=settings.mq.consumer_id,
+            lease_duration=settings.mq.lease_duration,
+            heartbeat_interval=settings.mq.heartbeat_interval,
+            parse_usage=parse_usage,
+        )
+        parse_consumer = VideoParseConsumer(
+            v2_queue,
+            VideoParseConsumerHandlers(
+                prepare=v2_runtime.prepare,
+                understand=v2_runtime.understand,
+                refine=v2_runtime.refine,
+                index=v2_runtime.index,
+                prefix=v2_runtime.run_next_prefix,
+                maintenance=v2_runtime.reap_stale_media,
+            ),
+            worker_id=settings.mq.consumer_id,
+            lease_duration=settings.mq.lease_duration,
+            heartbeat_interval=settings.mq.heartbeat_interval,
+            retry_initial_delay=settings.mq.retry_base,
+            retry_max_delay=settings.mq.retry_max,
+            poll_interval=timedelta(seconds=settings.mq.poll_interval_seconds),
+            maintenance_interval=settings.mq.lease_duration,
+            max_concurrent_handlers=max(2, settings.parse.asr_concurrency + 1),
+        )
+
     uploads.reconcile_deletions()
     return ApplicationServices(
         library=library,
@@ -427,6 +508,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         parse_consumer=parse_consumer,
         engine=engine,
         qdrant_client=qdrant_client,
+        elasticsearch_client=elasticsearch_client,
         parse_usage=parse_usage,
         agent_model_factory=agent_model_factory,
     )

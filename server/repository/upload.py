@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import hashlib
 import json
+import math
+from typing import Literal
 from uuid import uuid4
 
 from sqlalchemy import delete, func, or_, select, update
@@ -10,12 +12,25 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..identity import derive_parse_job_id
+from ..model.dto.jobDTO import VideoParseTaskState
 from ..model.dto.uploadDTO import (
     CompletedUploadState, UploadCompletionClaim, UploadSegmentState,
     UploadSessionDeletion, UploadSessionState,
 )
 from ..model.index_sync import IndexSyncIntentRecord
-from ..model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
+from ..model.job import (
+    ChunkParseTaskRecord,
+    ChunkParseTaskStatus,
+    IntervalParseContentRecord,
+    IntervalParseTaskRecord,
+    IntervalParseTaskStatus,
+    ParseJobStage,
+    ParseJobStatus,
+    SeriesParseJobRecord,
+    VideoParseTaskRecord,
+    VideoParseTaskStatus,
+    validate_interval_parse_task_members,
+)
 from ..model.job import VideoChunkCheckpointRecord
 from ..model.parse_usage import ParseModelCallRecord, ParseUsageAttemptRecord
 from ..model.upload import (
@@ -33,8 +48,12 @@ from ..model.video import (
     VideoChunkRecord,
     VideoRecord,
 )
-from ..utils.time import now_unix_time_ms, timedelta_to_ms
+from ..utils.time import datetime_to_unix_time_ms, now_utc
 from .index_sync import refresh_series_statuses
+from .video_parse import (
+    VideoParseConflictError,
+    invalidate_series_prefixes_from,
+)
 
 
 class UploadSessionNotFoundError(LookupError):
@@ -70,23 +89,36 @@ class UploadRepository:
         *,
         workspace_id: str,
         series_id: str,
-        episode_order: int | None = None,
-        upload_sequence: int | None = None,
+        episode_order: int,
         original_filename: str,
         media_type: str,
         total_size_bytes: int,
         preferred_segment_size_bytes: int,
         total_segments: int,
         idempotency_key: str,
-        expires_at: int,
-        now: int,
+        expires_at: datetime,
+        now: datetime,
         content_sha256: str | None = None,
         parse_config: dict | None = None,
         requested_parse_config: dict | None = None,
+        video_parse_config: dict | None = None,
+        requested_video_parse_config: dict | None = None,
     ) -> UploadSessionState:
+        if (
+            isinstance(episode_order, bool)
+            or not isinstance(episode_order, int)
+            or episode_order <= 0
+            or episode_order > 2_147_483_647
+        ):
+            raise ValueError("episode_order must be a positive 32-bit integer")
+        if not isinstance(video_parse_config, dict):
+            raise ValueError(
+                "video_parse_config is required for a new upload session"
+            )
         requested = {
             "workspace_id": workspace_id,
             "series_id": series_id,
+            "episode_order": episode_order,
             "original_filename": original_filename,
             "media_type": media_type,
             "total_size_bytes": total_size_bytes,
@@ -95,6 +127,8 @@ class UploadRepository:
         }
         if requested_parse_config is not None:
             requested["parse_config"] = requested_parse_config
+        if requested_video_parse_config is not None:
+            requested["video_parse_config"] = requested_video_parse_config
         request_fingerprint = hashlib.sha256(json.dumps(requested, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         for attempt in range(2):
             try:
@@ -131,22 +165,43 @@ class UploadRepository:
                         # Release Series before returning to the Upload-only replay.
                         continue
 
-                    upload_orders = session.execute(select(
-                        func.max(UploadSessionRecord.episode_order),
-                        func.max(UploadSessionRecord.upload_sequence),
-                    ).where(UploadSessionRecord.series_id == series_id)).one()
-                    video_orders = session.execute(select(
-                        func.max(VideoRecord.episode_order),
-                        func.max(VideoRecord.upload_sequence),
-                    ).where(VideoRecord.series_id == series_id)).one()
-                    next_order = max(value or 0 for value in (*upload_orders, *video_orders)) + 1
+                    occupying_uploads = session.scalars(
+                        select(UploadSessionRecord)
+                        .where(
+                            UploadSessionRecord.series_id == series_id,
+                            UploadSessionRecord.episode_order == episode_order,
+                        )
+                        .order_by(UploadSessionRecord.upload_session_id)
+                        .with_for_update()
+                    ).all()
+                    for occupying_upload in occupying_uploads:
+                        self._expire_if_due(occupying_upload, now)
+                    session.flush()
+                    occupied_upload_id = next(
+                        (
+                            item.upload_session_id
+                            for item in occupying_uploads
+                            if item.active_slot_key is not None
+                        ),
+                        None,
+                    )
+                    occupied_video_id = session.scalar(
+                        select(VideoRecord.video_id).where(
+                            VideoRecord.series_id == series_id,
+                            VideoRecord.episode_order == episode_order,
+                        )
+                    )
+                    if occupied_upload_id is not None or occupied_video_id is not None:
+                        raise UploadConflictError(
+                            "episode order is already occupied in this Series"
+                        )
 
                     record = UploadSessionRecord(
                         upload_session_id=str(uuid4()),
                         workspace_id=workspace_id,
                         series_id=series_id,
-                        episode_order=next_order,
-                        upload_sequence=next_order,
+                        episode_order=episode_order,
+                        upload_sequence=episode_order,
                         original_filename=original_filename,
                         media_type=media_type,
                         total_size_bytes=total_size_bytes,
@@ -154,11 +209,15 @@ class UploadRepository:
                         total_segments=total_segments,
                         content_sha256=content_sha256,
                         parse_config=parse_config,
+                        video_parse_config=video_parse_config,
+                        detail={},
                         status=UploadSessionStatus.UPLOADING.value,
                         idempotency_key=idempotency_key,
                         request_fingerprint=request_fingerprint,
-                        active_slot_key=_active_slot_key(series_id, next_order),
+                        active_slot_key=_active_slot_key(series_id, episode_order),
                         expires_at=expires_at,
+                        created_at=now,
+                        updated_at=now,
                     )
                     session.add(record)
                     session.flush()
@@ -172,9 +231,9 @@ class UploadRepository:
         self,
         upload_session_id: str,
         *,
-        now: int | None = None,
+        now: datetime | None = None,
     ) -> UploadSessionState:
-        checked_at = now if now is not None else now_unix_time_ms()
+        checked_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             record = session.scalar(
                 select(UploadSessionRecord)
@@ -200,14 +259,10 @@ class UploadRepository:
         *,
         workspace_id: str,
         expected_job_version: int,
-        now: int,
-    ) -> str:
-        """Requeue the ParseJob owned by an UploadSession.
+        now: datetime,
+    ) -> VideoParseTaskState:
+        """Retry the latest failed V2 task without changing its identity."""
 
-        The lock order is UploadSession -> ParseJob -> Video -> Series. The
-        version predicate also fences duplicate submissions if a caller loses
-        the successful HTTP response and retries with the same version.
-        """
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
             if upload.workspace_id != workspace_id:
@@ -221,83 +276,137 @@ class UploadRepository:
                 raise UploadStateError(
                     "only a completed upload session can retry parsing"
                 )
-            if upload.job_id is None or upload.video_id is None:
+            if upload.video_id is None:
                 raise UploadConflictError(
-                    "completed upload session is missing its ParseJob or Video"
+                    "completed upload session is missing its Video"
                 )
-
-            job = session.scalar(
-                select(SeriesParseJobRecord)
-                .where(SeriesParseJobRecord.job_id == upload.job_id)
-                .with_for_update()
-            )
-            if job is None:
-                raise UploadConflictError(
-                    "upload session ParseJob no longer exists"
-                )
-            if (
-                job.video_id != upload.video_id
-                or job.series_id != upload.series_id
-            ):
-                raise UploadConflictError(
-                    "upload session does not own its linked ParseJob"
-                )
-            if job.version != expected_job_version:
-                raise UploadConflictError(
-                    "ParseJob version changed; refresh before retrying"
-                )
-            if job.status != ParseJobStatus.FAILED.value:
-                raise UploadStateError("only a failed ParseJob can be retried")
-
-            update_result = session.execute(
-                update(SeriesParseJobRecord)
+            task_id = session.scalar(
+                select(VideoParseTaskRecord.id)
                 .where(
-                    SeriesParseJobRecord.job_id == job.job_id,
-                    SeriesParseJobRecord.version == expected_job_version,
-                    SeriesParseJobRecord.status == ParseJobStatus.FAILED.value,
+                    VideoParseTaskRecord.video_id == upload.video_id,
+                    VideoParseTaskRecord.is_deleted.is_(False),
                 )
-                .values(
-                    status=ParseJobStatus.QUEUED.value,
-                    max_attempts=max(job.max_attempts, job.attempt_count + 1),
-                    available_at=now,
-                    lease_owner=None,
-                    lease_expires_at=None,
-                    heartbeat_at=None,
-                    completed_at=None,
-                    last_error=None,
-                    version=SeriesParseJobRecord.version + 1,
-                    updated_at=now,
-                )
+                .order_by(VideoParseTaskRecord.version.desc())
+                .limit(1)
             )
-            if update_result.rowcount != 1:
+            if task_id is None:
                 raise UploadConflictError(
-                    "ParseJob version changed; refresh before retrying"
+                    "upload session VideoParseTask no longer exists"
                 )
 
-            video = session.scalar(
-                select(VideoRecord)
-                .where(VideoRecord.video_id == upload.video_id)
+            # Queue claims lock one execution row before its parent. Manual
+            # retry follows the same direction across every child family so
+            # it cannot hold the parent while a Worker waits to validate it.
+            chunks = list(session.scalars(
+                select(ChunkParseTaskRecord)
+                .where(ChunkParseTaskRecord.video_parse_task_id == task_id)
+                .order_by(ChunkParseTaskRecord.id)
                 .with_for_update()
-            )
-            if video is None:
-                raise UploadConflictError("upload session Video no longer exists")
-            series = session.scalar(
-                select(SeriesRecord)
-                .where(SeriesRecord.series_id == upload.series_id)
-                .with_for_update()
-            )
-            if series is None:
-                raise UploadSeriesNotFoundError(
-                    "upload session Series no longer exists"
+            ))
+            intervals = list(session.scalars(
+                select(IntervalParseTaskRecord)
+                .where(IntervalParseTaskRecord.video_parse_task_id == task_id)
+                .order_by(
+                    IntervalParseTaskRecord.start_sequence_no,
+                    IntervalParseTaskRecord.id,
                 )
-            if video.parse_status not in {
-                ParseJobStatus.SUCCEEDED.value,
-                "COMPLETED",
+                .with_for_update()
+            ))
+            task = session.scalar(
+                select(VideoParseTaskRecord)
+                .where(
+                    VideoParseTaskRecord.video_id == upload.video_id,
+                    VideoParseTaskRecord.is_deleted.is_(False),
+                )
+                .order_by(VideoParseTaskRecord.version.desc())
+                .limit(1)
+                .with_for_update()
+            )
+            if task is None or task.id != task_id:
+                raise UploadConflictError(
+                    "upload session VideoParseTask changed; refresh before retrying"
+                )
+            if task.version != expected_job_version:
+                raise UploadConflictError(
+                    "VideoParseTask version changed; refresh before retrying"
+                )
+            if _has_active_prefix_lease(task, now):
+                raise UploadStateError(
+                    "the VideoParseTask Prefix worker is active and cannot be retried"
+                )
+            if task.status not in {
+                VideoParseTaskStatus.PARSING_FAILED.value,
+                VideoParseTaskStatus.INDEXING_FAILED.value,
             }:
-                video.parse_status = ParseJobStatus.QUEUED.value
-                if series.status != "READY":
-                    refresh_series_statuses(session, {upload.series_id})
-            return job.job_id
+                raise UploadStateError(
+                    "only a failed VideoParseTask can be retried"
+                )
+            if any(
+                child.lease_owner is not None
+                and child.lease_expire_time is not None
+                and child.lease_expire_time > now
+                for child in [*chunks, *intervals]
+            ):
+                raise UploadStateError(
+                    "the VideoParseTask execution worker is active and cannot be retried"
+                )
+
+            chunk_rows = list(session.execute(
+                select(ChunkParseTaskRecord, VideoChunkRecord)
+                .join(VideoChunkRecord, VideoChunkRecord.video_chunk_id
+                      == ChunkParseTaskRecord.video_chunk_id)
+                .where(ChunkParseTaskRecord.video_parse_task_id == task.id)
+                .order_by(VideoChunkRecord.sequence_no)
+            ))
+            prepared = _parse_preparation_complete(
+                session, task, [(child, chunk) for child, chunk in chunk_rows], intervals,
+            )
+            if task.status == VideoParseTaskStatus.INDEXING_FAILED.value and not prepared:
+                raise UploadConflictError("indexing retry requires complete preparation")
+
+            # Restore each failed child at its own phase, including mixed failures.
+            for child in [*chunks, *intervals]:
+                if isinstance(child, ChunkParseTaskRecord):
+                    if child.status != ChunkParseTaskStatus.FAILED.value:
+                        continue
+                    child.status = ChunkParseTaskStatus.QUEUED.value
+                elif child.status == IntervalParseTaskStatus.PARSING_FAILED.value:
+                    child.status = IntervalParseTaskStatus.WAITING.value
+                elif child.status == IntervalParseTaskStatus.INDEXING_FAILED.value:
+                    if session.get(IntervalParseContentRecord, child.id) is None:
+                        raise UploadConflictError("indexing retry is missing its Refine result")
+                    child.status = IntervalParseTaskStatus.INDEXING.value
+                else:
+                    continue
+                child.next_execute_time = now
+                child.finish_time = None
+                child.lease_owner = None
+                child.lease_expire_time = None
+                child.update_time = now
+
+            if not prepared:
+                task.status = VideoParseTaskStatus.PREPARING.value
+            elif any(child.status != ChunkParseTaskStatus.COMPLETE.value for child in chunks) or any(
+                interval.status in {
+                    IntervalParseTaskStatus.WAITING.value,
+                    IntervalParseTaskStatus.REFINING.value,
+                } for interval in intervals
+            ):
+                task.status = VideoParseTaskStatus.PARSING.value
+            elif any(interval.status == IntervalParseTaskStatus.INDEXING.value for interval in intervals):
+                task.status = VideoParseTaskStatus.INDEXING.value
+            else:
+                # Completion (including videos without a full Interval) belongs to the host.
+                task.status = VideoParseTaskStatus.PARSING.value
+            task.max_attempts = max(task.max_attempts, task.attempt_count + 1)
+            task.next_execute_time = now
+            task.lease_owner = None
+            task.lease_expire_time = None
+            task.heartbeat_time = None
+            task.finish_time = None
+            task.update_time = now
+            session.flush()
+            return self._task_snapshot(task)
 
     def reparse(
         self,
@@ -305,23 +414,14 @@ class UploadRepository:
         *,
         workspace_id: str,
         expected_job_version: int,
-        additional_attempts: int,
-        now: int,
-    ) -> str:
-        """Restart one UploadSession's terminal ParseJob from its source Video.
+        now: datetime,
+        execution_mode: Literal["v1", "v2"] = "v1",
+        video_parse_config: dict | None = None,
+    ) -> VideoParseTaskState:
+        """Create a new V2 task while retaining every prior task and result."""
 
-        Unlike ``retry_parse``, this deliberately removes every checkpoint so
-        the worker cannot resume prior model output. A previously successful
-        Video remains searchable until the replacement parse is atomically
-        imported; usage rows and published artifacts are retained as history.
-        """
-
-        if (
-            isinstance(additional_attempts, bool)
-            or not isinstance(additional_attempts, int)
-            or additional_attempts <= 0
-        ):
-            raise ValueError("additional_attempts must be a positive integer")
+        if execution_mode not in {"v1", "v2"}:
+            raise ValueError("execution_mode must be 'v1' or 'v2'")
 
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
@@ -336,103 +436,162 @@ class UploadRepository:
                 raise UploadStateError(
                     "only a completed upload session can be fully reparsed"
                 )
-            if upload.job_id is None or upload.video_id is None:
+            if upload.video_id is None:
                 raise UploadConflictError(
-                    "completed upload session is missing its ParseJob or Video"
+                    "completed upload session is missing its Video"
                 )
-
-            job = session.scalar(
-                select(SeriesParseJobRecord)
-                .where(SeriesParseJobRecord.job_id == upload.job_id)
-                .with_for_update()
-            )
-            if job is None:
-                raise UploadConflictError(
-                    "upload session ParseJob no longer exists"
-                )
-            if (
-                job.video_id != upload.video_id
-                or job.series_id != upload.series_id
-            ):
-                raise UploadConflictError(
-                    "upload session does not own its linked ParseJob"
-                )
-            if job.version != expected_job_version:
-                raise UploadConflictError(
-                    "ParseJob version changed; refresh before reparsing"
-                )
-            terminal_statuses = {
-                ParseJobStatus.SUCCEEDED.value,
-                ParseJobStatus.FAILED.value,
-            }
-            if job.status not in terminal_statuses:
-                raise UploadStateError(
-                    "only a completed or failed ParseJob can be fully reparsed"
-                )
-
-            previous_status = job.status
-            update_result = session.execute(
-                update(SeriesParseJobRecord)
+            latest = session.scalar(
+                select(VideoParseTaskRecord)
                 .where(
-                    SeriesParseJobRecord.job_id == job.job_id,
-                    SeriesParseJobRecord.version == expected_job_version,
-                    SeriesParseJobRecord.status == previous_status,
+                    VideoParseTaskRecord.video_id == upload.video_id,
+                    VideoParseTaskRecord.is_deleted.is_(False),
                 )
-                .values(
-                    status=ParseJobStatus.QUEUED.value,
-                    stage=ParseJobStage.QUEUED.value,
-                    progress=0,
-                    max_attempts=max(
-                        job.max_attempts,
-                        job.attempt_count + additional_attempts,
-                    ),
-                    available_at=now,
-                    lease_owner=None,
-                    lease_expires_at=None,
-                    heartbeat_at=None,
-                    started_at=None,
-                    completed_at=None,
-                    last_error=None,
-                    version=SeriesParseJobRecord.version + 1,
-                    updated_at=now,
-                )
-            )
-            if update_result.rowcount != 1:
-                raise UploadConflictError(
-                    "ParseJob version changed; refresh before reparsing"
-                )
-
-            session.execute(
-                delete(VideoChunkCheckpointRecord).where(
-                    VideoChunkCheckpointRecord.job_id == job.job_id
-                )
-            )
-            video = session.scalar(
-                select(VideoRecord)
-                .where(VideoRecord.video_id == upload.video_id)
+                .order_by(VideoParseTaskRecord.version.desc())
+                .limit(1)
                 .with_for_update()
             )
+            if latest is None:
+                raise UploadConflictError(
+                    "upload session VideoParseTask no longer exists"
+                )
+            if latest.version != expected_job_version:
+                raise UploadConflictError(
+                    "VideoParseTask version changed; refresh before reparsing"
+                )
+            if _has_active_prefix_lease(latest, now):
+                raise UploadStateError(
+                    "the VideoParseTask Prefix worker is active and cannot be reparsed"
+                )
+            runtime = latest.detail.get("_worker_runtime_v2", {})
+            accepted = isinstance(runtime, dict) and runtime.get("accepted") is True
+            if (
+                execution_mode == "v2"
+                and latest.status == VideoParseTaskStatus.PENDING.value
+                and not accepted
+            ):
+                video = session.get(VideoRecord, upload.video_id)
+                if video is None:
+                    raise UploadConflictError(
+                        "upload session Video no longer exists"
+                    )
+                snapshot = (
+                    latest.parse_config
+                    if video_parse_config is None
+                    else video_parse_config
+                )
+                latest.chunk_count = _require_compatible_video_topology(
+                    session,
+                    video,
+                    snapshot,
+                )
+                execution = snapshot.get("execution")
+                max_retry_count = (
+                    execution.get("max_retry_count")
+                    if isinstance(execution, dict)
+                    else None
+                )
+                if (
+                    isinstance(max_retry_count, bool)
+                    or not isinstance(max_retry_count, int)
+                    or max_retry_count < 0
+                ):
+                    raise UploadConflictError(
+                        "VideoParseTask parse_config has invalid max_retry_count"
+                    )
+                latest.parse_config = snapshot
+                latest.max_attempts = max_retry_count + 1
+                detail = dict(latest.detail)
+                existing_runtime = detail.get("_worker_runtime_v2")
+                runtime = (
+                    dict(existing_runtime)
+                    if isinstance(existing_runtime, dict)
+                    else {}
+                )
+                runtime.update({
+                    "accepted": True,
+                    "execution_mode": "v2",
+                })
+                detail["_worker_runtime_v2"] = runtime
+                latest.detail = detail
+                latest.next_execute_time = now
+                latest.update_time = now
+                _invalidate_series_prefixes_for_reparse(
+                    session,
+                    video=video,
+                    now=now,
+                )
+                session.flush()
+                return self._task_snapshot(latest)
+            terminal_statuses = {
+                VideoParseTaskStatus.COMPLETE.value,
+                VideoParseTaskStatus.PARSING_FAILED.value,
+                VideoParseTaskStatus.INDEXING_FAILED.value,
+            }
+            if latest.status not in terminal_statuses:
+                raise UploadStateError(
+                    "only a complete or failed VideoParseTask can be reparsed"
+                )
+            video = session.get(VideoRecord, upload.video_id)
             if video is None:
                 raise UploadConflictError("upload session Video no longer exists")
-            series = session.scalar(
-                select(SeriesRecord)
-                .where(SeriesRecord.series_id == upload.series_id)
-                .with_for_update()
+            snapshot = (
+                latest.parse_config
+                if video_parse_config is None
+                else video_parse_config
             )
-            if series is None:
-                raise UploadSeriesNotFoundError(
-                    "upload session Series no longer exists"
+            chunk_count = _require_compatible_video_topology(
+                session,
+                video,
+                snapshot,
+            )
+            execution = snapshot.get("execution")
+            if not isinstance(execution, dict):
+                raise UploadConflictError(
+                    "VideoParseTask parse_config is missing execution settings"
                 )
-
-            if video.parse_status not in {
-                ParseJobStatus.SUCCEEDED.value,
-                "COMPLETED",
-            }:
-                video.parse_status = ParseJobStatus.QUEUED.value
-                video.parse_progress = 0
-                if series.status != "READY":
-                    refresh_series_statuses(session, {upload.series_id})
-            return job.job_id
+            max_retry_count = execution.get("max_retry_count")
+            if (
+                isinstance(max_retry_count, bool)
+                or not isinstance(max_retry_count, int)
+                or max_retry_count < 0
+            ):
+                raise UploadConflictError(
+                    "VideoParseTask parse_config has invalid max_retry_count"
+                )
+            task = VideoParseTaskRecord(
+                id=str(uuid4()),
+                video_id=video.video_id,
+                pipeline_version=latest.pipeline_version,
+                status=VideoParseTaskStatus.PENDING.value,
+                parse_config=snapshot,
+                chunk_count=chunk_count,
+                version=latest.version + 1,
+                next_execute_time=now,
+                attempt_count=0,
+                max_attempts=max_retry_count + 1,
+                lease_version=0,
+                processing_duration_ms=0,
+                processing_timing_complete=True,
+                is_test=latest.is_test,
+                is_deleted=False,
+                detail={
+                    "_worker_runtime_v2": {
+                        "accepted": execution_mode == "v2",
+                        "execution_mode": execution_mode,
+                    }
+                },
+                create_time=now,
+                update_time=now,
+            )
+            session.add(task)
+            session.flush()
+            _invalidate_series_prefixes_for_reparse(
+                session,
+                video=video,
+                now=now,
+            )
+            session.flush()
+            return self._task_snapshot(task)
 
     def list_pending_deletions(
         self,
@@ -476,7 +635,7 @@ class UploadRepository:
         upload_session_id: str,
         *,
         workspace_id: str,
-        now: int,
+        now: datetime,
     ) -> UploadSessionDeletion:
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
@@ -537,10 +696,59 @@ class UploadRepository:
                     job.lease_owner = None
                     job.lease_expires_at = None
                     job.heartbeat_at = None
-                    job.completed_at = now
+                    legacy_now = datetime_to_unix_time_ms(now)
+                    job.completed_at = legacy_now
                     job.last_error = "upload task deletion requested"
                     job.version += 1
-                    job.updated_at = now
+                    job.updated_at = legacy_now
+
+            v2_tasks: list[VideoParseTaskRecord] = []
+            if video_id is not None:
+                v2_tasks = list(session.scalars(
+                    select(VideoParseTaskRecord)
+                    .where(VideoParseTaskRecord.video_id == video_id)
+                    .order_by(VideoParseTaskRecord.version)
+                    .with_for_update()
+                ))
+                v2_task_ids = [task.id for task in v2_tasks]
+                active_child_lease = False
+                if v2_task_ids:
+                    active_child_lease = session.scalar(
+                        select(ChunkParseTaskRecord.id)
+                        .where(
+                            ChunkParseTaskRecord.video_parse_task_id.in_(v2_task_ids),
+                            ChunkParseTaskRecord.lease_owner.is_not(None),
+                            ChunkParseTaskRecord.lease_expire_time > now,
+                        )
+                        .limit(1)
+                    ) is not None or session.scalar(
+                        select(IntervalParseTaskRecord.id)
+                        .where(
+                            IntervalParseTaskRecord.video_parse_task_id.in_(v2_task_ids),
+                            IntervalParseTaskRecord.lease_owner.is_not(None),
+                            IntervalParseTaskRecord.lease_expire_time > now,
+                        )
+                        .limit(1)
+                    ) is not None
+                active_main_lease = any(
+                    task.lease_owner is not None
+                    and task.lease_expire_time is not None
+                    and task.lease_expire_time > now
+                    for task in v2_tasks
+                )
+                active_prefix_lease = any(
+                    _has_active_prefix_lease(task, now) for task in v2_tasks
+                )
+                if active_main_lease or active_child_lease or active_prefix_lease:
+                    raise UploadStateError(
+                        "the upload task is being parsed and cannot be deleted"
+                    )
+                # The external artifact cleanup happens after this transaction.
+                # Fence every V2 claim during that gap; the final Video delete
+                # removes these rows through their existing cascade.
+                for task in v2_tasks:
+                    task.is_deleted = True
+                    task.update_time = now
             if jobs and video_id is not None:
                 video = session.get(VideoRecord, video_id)
                 if video is not None:
@@ -552,12 +760,24 @@ class UploadRepository:
             ))
 
             video_chunk_ids: set[str] = set()
+            video_parse_document_keys: set[tuple[str, str]] = set()
             if video_id is not None:
                 video_chunk_ids.update(session.scalars(
                     select(VideoChunkRecord.video_chunk_id).where(
                         VideoChunkRecord.video_id == video_id
                     )
                 ))
+            if v2_tasks:
+                video_parse_document_keys.update(session.execute(
+                    select(
+                        ChunkParseTaskRecord.video_parse_task_id,
+                        ChunkParseTaskRecord.video_chunk_id,
+                    ).where(
+                        ChunkParseTaskRecord.video_parse_task_id.in_(
+                            [task.id for task in v2_tasks]
+                        )
+                    )
+                ).all())
             if job_ids:
                 video_chunk_ids.update(session.scalars(
                     select(VideoChunkCheckpointRecord.video_chunk_id).where(
@@ -590,13 +810,16 @@ class UploadRepository:
                 job_id=job_id,
                 job_ids=job_ids,
                 video_chunk_ids=tuple(sorted(video_chunk_ids)),
+                video_parse_document_keys=tuple(
+                    sorted(video_parse_document_keys)
+                ),
             )
 
     def finish_delete_session(
         self,
         deletion: UploadSessionDeletion,
         *,
-        now: int,
+        now: datetime,
     ) -> UploadSessionState:
         with self._session_factory.begin() as session:
             upload = self._locked_session(
@@ -605,7 +828,11 @@ class UploadRepository:
             )
             if upload.status != UploadSessionStatus.EXPIRED.value:
                 raise UploadStateError("upload session deletion is no longer current")
-            if upload.video_id is None and upload.job_id is None:
+            if (
+                upload.video_id is None
+                and upload.job_id is None
+                and upload.initial_video_parse_task_id is None
+            ):
                 upload.last_error_code = None
                 session.flush()
                 return self._snapshot(session, upload, segments=[])
@@ -632,6 +859,7 @@ class UploadRepository:
                 ))
             upload.job_id = None
             upload.video_id = None
+            upload.initial_video_parse_task_id = None
             session.flush()
             if deletion.video_id is not None:
                 session.execute(delete(ContextSnapshotRecord).where(
@@ -686,9 +914,9 @@ class UploadRepository:
         actual_size_bytes: int,
         checksum_sha256: str,
         artifact_uri: str,
-        now: int | None = None,
+        now: datetime | None = None,
     ) -> UploadSegmentState:
-        registered_at = now if now is not None else now_unix_time_ms()
+        registered_at = now if now is not None else now_utc()
         expired = False
         result: UploadSegmentState | None = None
         with self._session_factory.begin() as session:
@@ -754,10 +982,10 @@ class UploadRepository:
         self,
         upload_session_id: str,
         *,
-        now: int | None = None,
+        now: datetime | None = None,
         stale_after: timedelta = timedelta(minutes=15),
     ) -> UploadCompletionClaim:
-        claimed_at = now if now is not None else now_unix_time_ms()
+        claimed_at = now if now is not None else now_utc()
         expired = False
         result: UploadCompletionClaim | None = None
         with self._session_factory.begin() as session:
@@ -775,6 +1003,9 @@ class UploadRepository:
                     segments=tuple(self._segment_snapshots(session, upload)),
                     completion_token=None,
                     existing_job_id=job_id,
+                    existing_video_parse_task_id=(
+                        upload.initial_video_parse_task_id
+                    ),
                 )
             elif self._expire_if_due(upload, claimed_at):
                 expired = True
@@ -785,7 +1016,7 @@ class UploadRepository:
                     started_at = upload.completion_started_at
                     if (
                         started_at is not None
-                        and started_at + timedelta_to_ms(stale_after) > claimed_at
+                        and started_at + stale_after > claimed_at
                     ):
                         raise UploadCompletionInProgressError(
                             "upload completion is already in progress"
@@ -818,6 +1049,7 @@ class UploadRepository:
                     segments=tuple(segments),
                     completion_token=completion_token,
                     existing_job_id=None,
+                    existing_video_parse_task_id=None,
                 )
         if expired:
             raise UploadStateError("upload session has expired")
@@ -847,7 +1079,7 @@ class UploadRepository:
             statement = select(UploadSessionRecord).where(UploadSessionRecord.workspace_id == workspace_id)
             if series_id is not None:
                 statement = statement.where(UploadSessionRecord.series_id == series_id)
-            records = session.scalars(statement.order_by(UploadSessionRecord.upload_sequence, UploadSessionRecord.created_at, UploadSessionRecord.upload_session_id).with_for_update()).all()
+            records = session.scalars(statement.order_by(UploadSessionRecord.episode_order, UploadSessionRecord.created_at, UploadSessionRecord.upload_session_id).with_for_update()).all()
             segments_by_upload: dict[str, list[tuple[int, int]]] = {}
             if records:
                 for upload_id, number, size in session.execute(
@@ -856,7 +1088,7 @@ class UploadRepository:
                 ):
                     segments_by_upload.setdefault(upload_id, []).append((number, size))
             result = []
-            checked_at = now_unix_time_ms()
+            checked_at = now_utc()
             for record in records:
                 self._expire_if_due(record, checked_at)
                 if statuses is None or record.status in statuses:
@@ -904,10 +1136,26 @@ class UploadRepository:
         duration_seconds: int,
         pipeline_version: str,
         max_job_attempts: int,
-        now: int | None = None,
+        video_parse_config: dict,
+        max_video_parse_attempts: int,
+        execution_mode: Literal["v1", "v2"] = "v1",
+        now: datetime | None = None,
     ) -> CompletedUploadState:
-        completed_at = now if now is not None else now_unix_time_ms()
-        job_id = derive_parse_job_id(video_id, pipeline_version)
+        if (
+            isinstance(max_video_parse_attempts, bool)
+            or not isinstance(max_video_parse_attempts, int)
+            or max_video_parse_attempts <= 0
+        ):
+            raise ValueError("max_video_parse_attempts must be a positive integer")
+        if execution_mode not in {"v1", "v2"}:
+            raise ValueError("execution_mode must be 'v1' or 'v2'")
+        completed_at = now if now is not None else now_utc()
+        legacy_completed_at = datetime_to_unix_time_ms(completed_at)
+        job_id = (
+            derive_parse_job_id(video_id, pipeline_version)
+            if execution_mode == "v1"
+            else None
+        )
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
             if (
@@ -961,23 +1209,60 @@ class UploadRepository:
                     f"videoId {video_id!r} already identifies another Video"
                 )
 
-            job = session.get(SeriesParseJobRecord, job_id)
-            if job is None:
-                job = SeriesParseJobRecord(
-                    job_id=job_id,
-                    series_id=upload.series_id,
-                    video_id=video_id,
-                    pipeline_version=pipeline_version,
-                    parse_config=upload.parse_config,
-                    status=ParseJobStatus.QUEUED.value,
-                    stage=ParseJobStage.QUEUED.value,
-                    progress=0,
-                    attempt_count=0,
-                    max_attempts=max_job_attempts,
-                    available_at=completed_at,
-                    lease_version=0,
-                )
-                session.add(job)
+            session.flush()
+            chunk_count = _require_compatible_video_topology(
+                session,
+                video,
+                video_parse_config,
+            )
+
+            video_parse_task_id = str(uuid4())
+            video_parse_task = VideoParseTaskRecord(
+                id=video_parse_task_id,
+                video_id=video_id,
+                pipeline_version=pipeline_version,
+                status=VideoParseTaskStatus.PENDING.value,
+                parse_config=video_parse_config,
+                chunk_count=chunk_count,
+                version=1,
+                next_execute_time=completed_at,
+                attempt_count=0,
+                max_attempts=max_video_parse_attempts,
+                lease_version=0,
+                processing_duration_ms=0,
+                processing_timing_complete=True,
+                is_test=False,
+                is_deleted=False,
+                detail={
+                    "_worker_runtime_v2": {
+                        "accepted": execution_mode == "v2",
+                        "execution_mode": execution_mode,
+                    }
+                },
+                create_time=completed_at,
+                update_time=completed_at,
+            )
+            session.add(video_parse_task)
+            session.flush()
+
+            if job_id is not None:
+                job = session.get(SeriesParseJobRecord, job_id)
+                if job is None:
+                    job = SeriesParseJobRecord(
+                        job_id=job_id,
+                        series_id=upload.series_id,
+                        video_id=video_id,
+                        pipeline_version=pipeline_version,
+                        parse_config=upload.parse_config,
+                        status=ParseJobStatus.QUEUED.value,
+                        stage=ParseJobStage.QUEUED.value,
+                        progress=0,
+                        attempt_count=0,
+                        max_attempts=max_job_attempts,
+                        available_at=legacy_completed_at,
+                        lease_version=0,
+                    )
+                    session.add(job)
 
             series = session.get(SeriesRecord, upload.series_id)
             if series is None:
@@ -993,6 +1278,8 @@ class UploadRepository:
             upload.last_error_code = None
             upload.content_sha256 = content_hash
             upload.job_id = job_id
+            upload.initial_video_parse_task_id = video_parse_task_id
+            upload.video_parse_config = video_parse_config
             upload.completion_stage = None
             upload.version += 1
             upload.updated_at = completed_at
@@ -1003,6 +1290,7 @@ class UploadRepository:
                 session=self._snapshot(session, upload),
                 video_id=video_id,
                 job_id=job_id,
+                video_parse_task_id=video_parse_task_id,
             )
 
     @staticmethod
@@ -1029,7 +1317,7 @@ class UploadRepository:
             )
 
     @staticmethod
-    def _expire_if_due(upload: UploadSessionRecord, now: int) -> bool:
+    def _expire_if_due(upload: UploadSessionRecord, now: datetime) -> bool:
         if (
             upload.status not in (UploadSessionStatus.COMPLETED.value, UploadSessionStatus.EXPIRED.value)
             and upload.expires_at <= now
@@ -1092,10 +1380,41 @@ class UploadRepository:
             content_sha256=upload.content_sha256,
             completion_stage=upload.completion_stage,
             job_id=upload.job_id,
+            initial_video_parse_task_id=upload.initial_video_parse_task_id,
             parse_config=upload.parse_config,
+            video_parse_config=upload.video_parse_config,
+            detail=upload.detail,
             version=upload.version,
             missing_segment_numbers=tuple(n for n in range(upload.total_segments) if n not in present),
             last_error_code=upload.last_error_code,
+        )
+
+    @staticmethod
+    def _task_snapshot(task: VideoParseTaskRecord) -> VideoParseTaskState:
+        return VideoParseTaskState(
+            video_parse_task_id=task.id,
+            video_id=task.video_id,
+            pipeline_version=task.pipeline_version,
+            status=task.status,
+            parse_config=dict(task.parse_config),
+            chunk_count=task.chunk_count,
+            version=task.version,
+            next_execute_time=task.next_execute_time,
+            attempt_count=task.attempt_count,
+            max_attempts=task.max_attempts,
+            lease_owner=task.lease_owner,
+            lease_version=task.lease_version,
+            lease_expire_time=task.lease_expire_time,
+            heartbeat_time=task.heartbeat_time,
+            start_time=task.start_time,
+            finish_time=task.finish_time,
+            processing_duration_ms=task.processing_duration_ms,
+            processing_timing_complete=task.processing_timing_complete,
+            last_error=task.last_error,
+            is_test=task.is_test,
+            detail=dict(task.detail),
+            create_time=task.create_time,
+            update_time=task.update_time,
         )
 
     @classmethod
@@ -1135,13 +1454,22 @@ class UploadRepository:
         if record.request_fingerprint is not None:
             if record.request_fingerprint == request_fingerprint:
                 return
-            # Previously the fingerprint also captured client-provided order.
-            legacy_fields = {
-                **requested, "episode_order": record.episode_order,
-            }
-            for original_sequence in (None, record.upload_sequence):
-                legacy_fields["upload_sequence"] = original_sequence
-                legacy_fingerprint = hashlib.sha256(json.dumps(legacy_fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            # Historical rows predate both episode_order and the V2 snapshot in
+            # the fingerprint.  They are replayable only with their persisted
+            # order; changing that value is always a conflict.
+            if (
+                requested.get("episode_order") == record.episode_order
+                and "video_parse_config" not in requested
+            ):
+                legacy_fields = dict(requested)
+                legacy_fields.pop("episode_order", None)
+                legacy_fingerprint = hashlib.sha256(
+                    json.dumps(
+                        legacy_fields,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
                 if record.request_fingerprint == legacy_fingerprint:
                     return
             raise UploadConflictError("idempotency key was already used with different upload parameters")
@@ -1157,3 +1485,145 @@ class UploadRepository:
 
 def _active_slot_key(series_id: str, episode_order: int) -> str:
     return f"{series_id}:{episode_order}"
+
+
+def _invalidate_series_prefixes_for_reparse(
+    session: Session,
+    *,
+    video: VideoRecord,
+    now: datetime,
+) -> None:
+    try:
+        invalidate_series_prefixes_from(
+            session,
+            series_id=video.series_id,
+            episode_order=video.episode_order,
+            video_id=video.video_id,
+            now=now,
+        )
+    except VideoParseConflictError as exc:
+        raise UploadStateError(str(exc)) from exc
+
+
+def _has_active_prefix_lease(
+    task: VideoParseTaskRecord,
+    now: datetime,
+) -> bool:
+    detail = task.detail
+    if not isinstance(detail, dict):
+        return False
+    runtime = detail.get("_worker_runtime_v2")
+    if not isinstance(runtime, dict):
+        return False
+    prefix = runtime.get("prefix")
+    if not isinstance(prefix, dict) or prefix.get("lease_owner") is None:
+        return False
+    expires_at_ms = prefix.get("lease_expire_time_ms")
+    return (
+        isinstance(expires_at_ms, int)
+        and not isinstance(expires_at_ms, bool)
+        and expires_at_ms > datetime_to_unix_time_ms(now)
+    )
+
+
+def _planned_chunk_count(duration_seconds: int, parse_config: dict) -> int:
+    if (
+        isinstance(duration_seconds, bool)
+        or not isinstance(duration_seconds, int)
+        or duration_seconds <= 0
+    ):
+        raise UploadConflictError("Video duration must be a positive integer")
+    chunk_duration = parse_config.get("chunk_duration")
+    if (
+        isinstance(chunk_duration, bool)
+        or not isinstance(chunk_duration, int)
+        or chunk_duration <= 0
+    ):
+        raise UploadConflictError(
+            "VideoParseTask parse_config has invalid chunk_duration"
+        )
+    return math.ceil(duration_seconds / chunk_duration)
+
+
+def _require_compatible_video_topology(
+    session: Session,
+    video: VideoRecord,
+    parse_config: dict,
+    *,
+    allow_incomplete: bool = False,
+) -> int:
+    chunk_count = _planned_chunk_count(video.duration_seconds, parse_config)
+    chunk_duration = parse_config["chunk_duration"]
+    topology = session.execute(
+        select(
+            VideoChunkRecord.sequence_no,
+            VideoChunkRecord.start_seconds,
+            VideoChunkRecord.end_seconds,
+        )
+        .where(VideoChunkRecord.video_id == video.video_id)
+        .order_by(VideoChunkRecord.sequence_no)
+    ).all()
+    if not topology:
+        return chunk_count
+    expected = [
+        (
+            sequence_no,
+            sequence_no * chunk_duration,
+            min(video.duration_seconds, (sequence_no + 1) * chunk_duration),
+        )
+        for sequence_no in range(chunk_count)
+    ]
+    actual = [tuple(row) for row in topology]
+    matches = set(actual).issubset(expected) if allow_incomplete else actual == expected
+    if not matches:
+        raise UploadConflictError(
+            "V2 parse config is incompatible with the Video's fixed chunk topology"
+        )
+    return chunk_count
+
+
+def _parse_preparation_complete(
+    session: Session,
+    task: VideoParseTaskRecord,
+    chunk_rows: list[tuple[ChunkParseTaskRecord, VideoChunkRecord]],
+    intervals: list[IntervalParseTaskRecord],
+) -> bool:
+    """Check the persisted preparation before choosing a retry entry point."""
+
+    video = session.get(VideoRecord, task.video_id)
+    if video is None:
+        raise UploadConflictError("VideoParseTask Video no longer exists")
+    chunk_count = _require_compatible_video_topology(
+        session, video, task.parse_config, allow_incomplete=True,
+    )
+    if task.chunk_count != chunk_count or len(chunk_rows) > chunk_count:
+        raise UploadConflictError("VideoParseTask has incompatible chunk preparation")
+    for child, chunk in chunk_rows:
+        if chunk.video_id != task.video_id:
+            raise UploadConflictError("VideoParseTask has a Chunk from another Video")
+    if len(chunk_rows) < chunk_count:
+        return False
+
+    interval_size = math.ceil(
+        task.parse_config["interval_duration"] / task.parse_config["chunk_duration"]
+    )
+    interval_count = max(0, chunk_count - interval_size + 1)
+    for interval in intervals:
+        start = interval.start_sequence_no
+        if start >= interval_count or interval.chunk_count != interval_size:
+            raise UploadConflictError("VideoParseTask has incompatible Interval preparation")
+        try:
+            validate_interval_parse_task_members(
+                chunk_parse_task_id=interval.chunk_parse_task_id,
+                video_parse_task_id=task.id,
+                start_sequence_no=start,
+                chunk_count=interval_size,
+                chunk_parse_task_ids=interval.chunk_parse_task_ids,
+                members=[
+                    (child, chunk.sequence_no)
+                    for child, chunk in chunk_rows[start:start + interval_size]
+                ],
+            )
+        except ValueError as exc:
+            raise UploadConflictError("VideoParseTask has incompatible Interval members") from exc
+    return len(intervals) == interval_count

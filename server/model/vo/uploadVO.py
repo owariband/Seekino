@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
+
 from ...config.parse_profile import ParseConfig
 from ..upload import UploadSessionStatus, UploadCompletionStage
 from ...schema import ContractModel
@@ -30,11 +32,13 @@ class UploadSessionView(ContractModel):
     expires_at: UnixTimeMs
     video_id: str | None
     job_id: str | None
+    initial_video_parse_task_id: str | None
     last_error: Failure | None
     version: int = Field(ge=1)
     created_at: UnixTimeMs
     updated_at: UnixTimeMs
     parse_config: ParseConfig | None = None
+    video_parse_config: VideoParseV2Config | None = None
 
 
 class UploadSegmentView(ContractModel):
@@ -49,4 +53,5 @@ class UploadSegmentView(ContractModel):
 class UploadCompleteView(ContractModel):
     upload_session: UploadSessionView
     video_id: str
-    job_id: str
+    job_id: str | None
+    video_parse_task_id: str

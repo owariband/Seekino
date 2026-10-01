@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import (
@@ -14,7 +15,14 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
-from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampedRecord
+from ..utils.time import now_utc
+from .video import (
+    ID_LENGTH,
+    LONG_TEXT,
+    MYSQL_TABLE_OPTIONS,
+    UTC_TIMESTAMP,
+    TimestampedRecord,
+)
 
 UPLOAD_DELETION_PENDING_ERROR_CODE = "DELETION_PENDING"
 
@@ -96,6 +104,8 @@ class UploadSessionRecord(TimestampedRecord, Base):
     total_segments: Mapped[int] = mapped_column(Integer, nullable=False)
     content_sha256: Mapped[str | None] = mapped_column(String(64))
     parse_config: Mapped[dict | None] = mapped_column(JSON)
+    video_parse_config: Mapped[dict | None] = mapped_column(JSON)
+    detail: Mapped[dict | None] = mapped_column(JSON)
     completion_stage: Mapped[str | None] = mapped_column(String(32))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -103,12 +113,12 @@ class UploadSessionRecord(TimestampedRecord, Base):
     request_fingerprint: Mapped[str | None] = mapped_column(String(64))
     active_slot_key: Mapped[str | None] = mapped_column(String(96))
     completion_token: Mapped[str | None] = mapped_column(String(ID_LENGTH))
-    completion_started_at: Mapped[int | None] = mapped_column(BigInteger)
-    expires_at: Mapped[int] = mapped_column(
-        BigInteger,
+    completion_started_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    expires_at: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
         nullable=False,
     )
-    completed_at: Mapped[int | None] = mapped_column(BigInteger)
+    completed_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
     video_id: Mapped[str | None] = mapped_column(
         ForeignKey("video.video_id", ondelete="SET NULL"),
         index=True,
@@ -117,6 +127,21 @@ class UploadSessionRecord(TimestampedRecord, Base):
     last_error_code: Mapped[str | None] = mapped_column(String(64))
     job_id: Mapped[str | None] = mapped_column(
         ForeignKey("series_parse_job.job_id", ondelete="SET NULL"), index=True
+    )
+    initial_video_parse_task_id: Mapped[str | None] = mapped_column(
+        ForeignKey("video_parse_task.id", ondelete="SET NULL"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
+        nullable=False,
+        default=now_utc,
+        onupdate=now_utc,
     )
 
 
@@ -148,7 +173,8 @@ class UploadSegmentRecord(Base):
     actual_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     artifact_uri: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
-    created_at: Mapped[int] = mapped_column(
-        BigInteger,
+    created_at: Mapped[datetime] = mapped_column(
+        UTC_TIMESTAMP,
         nullable=False,
+        default=now_utc,
     )

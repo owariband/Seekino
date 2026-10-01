@@ -6,7 +6,7 @@ from ..api import uploads
 from ..model.vo.commonVO import Page
 from ..api.schema import UploadCompleteView, UploadSegmentView, UploadSessionView
 from ..config.parse_profile import ParseConfig
-from ..model.vo.jobVO import ParseJobView
+from ..model.vo.jobVO import VideoParseTaskView
 
 router = APIRouter()
 router.add_api_route(
@@ -40,13 +40,13 @@ router.add_api_route(
     "/api/uploads/retry-parse",
     uploads.retry_upload_parse,
     methods=["POST"],
-    response_model=ParseJobView,
+    response_model=VideoParseTaskView,
 )
 router.add_api_route(
     "/api/uploads/reparse",
     uploads.reparse_upload,
     methods=["POST"],
-    response_model=ParseJobView,
+    response_model=VideoParseTaskView,
 )
 router.add_api_route(
     "/api/uploads/segments/upload",

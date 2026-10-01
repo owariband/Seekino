@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
@@ -14,12 +14,24 @@ from fastapi.testclient import TestClient
 from gateway.embedding import EmbeddingResult
 from gateway.usage import ModelCallUsage, TokenUsage, track_model_call
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from server.api.errors import register_exception_handlers
 from server.api.parse_usage import project_parse_usage
 from server.config.usage import ModelPricingConfig, PriceTier
 from server.database import create_database_engine, create_schema, create_session_factory
-from server.model.job import SeriesParseJobRecord
+from server.model.job import SeriesParseJobRecord, VideoParseTaskRecord
+from server.model.dto.jobDTO import (
+    ChunkParseLease,
+    IntervalParseLease,
+    PrefixParseLease,
+    VideoParseLease,
+)
+from server.model.parse_usage import (
+    ParseModelCallRecord,
+    ParseUsageAttemptRecord,
+    VideoParseUsageAttemptRecord,
+)
 from server.model.video import VideoRecord
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.job import ParseJobRepository
@@ -30,7 +42,11 @@ from server.service.job import ParseJobService
 from server.service.library import LibraryService
 from server.service.parse_usage import ParseUsageService, estimate_cost_cny
 from server.service.video_processing import VideoProcessingService
-from server.utils.time import timedelta_to_ms
+from server.utils.time import (
+    datetime_to_unix_time_ms,
+    timedelta_to_ms,
+    unix_time_ms_to_datetime,
+)
 
 
 def _pricing() -> ModelPricingConfig:
@@ -147,6 +163,242 @@ def test_call_id_idempotence_retains_original_price_snapshot(accounting):
     assert accounting.ledger.list_calls(lease.job_id, workspace_id="foreign") == []
 
 
+def test_parse_usage_persists_aware_utc_and_keeps_unix_ms_at_the_event_boundary(
+    accounting,
+):
+    lease = _lease(accounting)
+    event = _event(usage=TokenUsage(1, 0, 1, 0, 0))
+    with accounting.service.capture(lease):
+        state = accounting.service.record(lease, event)
+
+    assert isinstance(state.started_at, datetime)
+    assert state.started_at.utcoffset() == timedelta(0)
+    assert datetime_to_unix_time_ms(state.started_at) == event.call.started_at
+    with accounting.factory() as session:
+        attempt = session.get(
+            ParseUsageAttemptRecord,
+            (lease.job_id, lease.attempt_count, lease.lease_version),
+        )
+        call = session.get(ParseModelCallRecord, event.call.call_id)
+        assert attempt is not None and call is not None
+        for value in (
+            attempt.started_at,
+            call.started_at,
+            call.created_at,
+            call.updated_at,
+        ):
+            assert isinstance(value, datetime)
+            assert value.utcoffset() == timedelta(0)
+
+
+def test_v2_usage_links_directly_to_video_task_without_fake_v1_job(accounting):
+    with accounting.factory() as session:
+        legacy = session.get(SeriesParseJobRecord, accounting.job_id)
+        video_id, series_id = legacy.video_id, legacy.series_id
+    task_id = str(uuid4())
+    now = unix_time_ms_to_datetime(accounting.now)
+    with accounting.factory.begin() as session:
+        session.add(VideoParseTaskRecord(
+            id=task_id,
+            video_id=video_id,
+            pipeline_version="video-parse-v2",
+            status="PREPARING",
+            parse_config={"execution": {
+                "max_retry_count": 2,
+                "max_model_calls": 10,
+                "max_concurrent_model_calls": 2,
+            }},
+            chunk_count=1,
+            version=1,
+            next_execute_time=now,
+            attempt_count=1,
+            max_attempts=3,
+            lease_owner="v2-worker",
+            lease_version=1,
+            lease_expire_time=now + timedelta(minutes=5),
+            heartbeat_time=now,
+            start_time=now,
+            processing_duration_ms=0,
+            processing_timing_complete=True,
+            is_test=True,
+            is_deleted=False,
+            detail={"_worker_runtime_v2": {"accepted": True}},
+            create_time=now,
+            update_time=now,
+        ))
+    lease = VideoParseLease(
+        video_parse_task_id=task_id,
+        video_id=video_id,
+        worker_id="v2-worker",
+        lease_version=1,
+        lease_expire_time=now + timedelta(minutes=5),
+        attempt_count=1,
+        max_attempts=3,
+        parse_config={},
+    )
+    assert accounting.ledger.start_video_attempt(lease, now=now)
+    state = accounting.ledger.record_video_call(
+        lease,
+        _event(usage=TokenUsage(3, 1, 4, 0, 0)),
+        workspace_id="mine",
+        series_id=series_id,
+        video_id=video_id,
+        estimated_cost_cny=Decimal("0.1"),
+        price_snapshot={"kind": "fixture"},
+    )
+    accounting.ledger.finish_video_attempt(lease, recording_complete=True)
+    assert state.job_id is None
+    assert state.video_parse_task_id == task_id
+    assert (state.execution_kind, state.execution_task_id) == (
+        "video", task_id
+    )
+    assert accounting.ledger.list_video_calls(
+        task_id, workspace_id="mine"
+    ) == [state]
+    assert accounting.ledger.list_calls(
+        accounting.job_id, workspace_id="mine"
+    ) == []
+
+    prefix_lease = PrefixParseLease(
+        video_parse_task_id=task_id,
+        chunk_parse_task_id=str(uuid4()),
+        video_chunk_id=str(uuid4()),
+        sequence_no=0,
+        worker_id="prefix-worker",
+        lease_version=7,
+        lease_expire_time=now + timedelta(minutes=5),
+        retry_count=2,
+        content_version=1,
+        content={},
+        content_detail={},
+        series_prefix_compact="",
+        video_prefix_compact="",
+    )
+    assert accounting.ledger.start_video_attempt(prefix_lease, now=now)
+    prefix_state = accounting.ledger.record_video_call(
+        prefix_lease,
+        _event(usage=TokenUsage(2, 0, 2, 0, 0)),
+        workspace_id="mine",
+        series_id=series_id,
+        video_id=video_id,
+        estimated_cost_cny=None,
+        price_snapshot=None,
+    )
+    accounting.ledger.finish_video_attempt(
+        prefix_lease, recording_complete=True
+    )
+    assert prefix_state.attempt_count == 3
+    assert prefix_state.lease_version == 7
+    assert (prefix_state.execution_kind, prefix_state.execution_task_id) == (
+        "prefix", prefix_lease.chunk_parse_task_id
+    )
+
+
+def test_v2_usage_attempt_identity_includes_execution_kind_and_task(accounting):
+    with accounting.factory() as session:
+        legacy = session.get(SeriesParseJobRecord, accounting.job_id)
+        video_id = legacy.video_id
+    task_id = str(uuid4())
+    now = unix_time_ms_to_datetime(accounting.now)
+    with accounting.factory.begin() as session:
+        session.add(VideoParseTaskRecord(
+            id=task_id,
+            video_id=video_id,
+            pipeline_version="video-parse-v2",
+            status="PREPARING",
+            parse_config={"execution": {
+                "max_retry_count": 2,
+                "max_model_calls": 10,
+                "max_concurrent_model_calls": 2,
+            }},
+            chunk_count=2,
+            version=1,
+            next_execute_time=now,
+            attempt_count=1,
+            max_attempts=3,
+            lease_owner="v2-worker",
+            lease_version=1,
+            lease_expire_time=now + timedelta(minutes=5),
+            heartbeat_time=now,
+            start_time=now,
+            processing_duration_ms=0,
+            processing_timing_complete=True,
+            is_test=True,
+            is_deleted=False,
+            detail={"_worker_runtime_v2": {"accepted": True}},
+            create_time=now,
+            update_time=now,
+        ))
+
+    chunk_a_id, chunk_b_id, interval_id = (
+        str(uuid4()), str(uuid4()), str(uuid4())
+    )
+    common = {
+        "video_parse_task_id": task_id,
+        "worker_id": "worker",
+        "lease_version": 1,
+        "lease_expire_time": now + timedelta(minutes=5),
+        "retry_count": 0,
+        "max_retry_count": 2,
+    }
+    chunk_a = ChunkParseLease(
+        chunk_parse_task_id=chunk_a_id,
+        video_chunk_id=str(uuid4()),
+        **common,
+    )
+    chunk_b = ChunkParseLease(
+        chunk_parse_task_id=chunk_b_id,
+        video_chunk_id=str(uuid4()),
+        **common,
+    )
+    interval = IntervalParseLease(
+        interval_parse_task_id=interval_id,
+        chunk_parse_task_ids=(chunk_a_id, chunk_b_id),
+        start_sequence_no=0,
+        chunk_count=2,
+        phase="REFINING",
+        **common,
+    )
+    prefix = PrefixParseLease(
+        video_parse_task_id=task_id,
+        chunk_parse_task_id=chunk_a_id,
+        video_chunk_id=str(uuid4()),
+        sequence_no=0,
+        worker_id="worker",
+        lease_version=1,
+        lease_expire_time=now + timedelta(minutes=5),
+        retry_count=0,
+        content_version=1,
+        content={},
+        content_detail={},
+        series_prefix_compact="",
+        video_prefix_compact="",
+    )
+    leases = (chunk_a, chunk_b, interval, prefix)
+    assert [
+        accounting.ledger.start_video_attempt(lease, now=now)
+        for lease in leases
+    ] == [True, True, True, True]
+    assert not accounting.ledger.start_video_attempt(chunk_a, now=now)
+
+    with accounting.factory() as session:
+        attempts = list(session.scalars(
+            select(VideoParseUsageAttemptRecord).where(
+                VideoParseUsageAttemptRecord.video_parse_task_id == task_id
+            )
+        ))
+    assert len(attempts) == 4
+    assert {
+        (item.execution_kind, item.execution_task_id)
+        for item in attempts
+    } == {
+        ("chunk", chunk_a_id),
+        ("chunk", chunk_b_id),
+        ("interval", interval_id),
+        ("prefix", chunk_a_id),
+    }
+
+
 def test_failed_and_stale_calls_are_retained_across_all_attempts(accounting):
     first = _lease(accounting)
     with accounting.service.capture(first):
@@ -218,7 +470,10 @@ def test_historical_unknown_is_distinct_from_observed_zero_calls(accounting):
 
 def test_last_call_finishing_after_snapshot_does_not_claim_a_complete_prefix(accounting, monkeypatch):
     lease = _lease(accounting)
-    accounting.ledger.start_attempt(lease, now=accounting.now)
+    accounting.ledger.start_attempt(
+        lease,
+        now=unix_time_ms_to_datetime(accounting.now),
+    )
     accounting.service.record(lease, _event(usage=TokenUsage(100, 0, 100, 0, 0)))
     snapshot = accounting.ledger.snapshot
     def finishes_after_read(*args, **kwargs):

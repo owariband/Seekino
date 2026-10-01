@@ -7,12 +7,15 @@ from ..model.dto.jobDTO import (
     ParseJobLease,
     ParseJobState,
     ParseJobSummaryState,
+    VideoParseTaskInputState,
+    VideoParseTaskState,
     VideoChunkCheckpointState,
 )
 from ..model.job import (
     ParseJobStage,
     ParseJobStatus,
     SeriesParseJobRecord,
+    VideoParseTaskRecord,
     VideoChunkCheckpointRecord,
     VideoChunkCheckpointStage,
 )
@@ -116,6 +119,105 @@ class ParseJobRepository:
                 original_filename=original_filename,
                 duration_seconds=duration_seconds,
             )
+
+    def get_video_parse_task(
+        self,
+        video_parse_task_id: str,
+    ) -> VideoParseTaskState:
+        """Read one V2 parse identity and its frozen execution snapshot."""
+
+        with self._session_factory() as session:
+            record = session.scalar(
+                select(VideoParseTaskRecord).where(
+                    VideoParseTaskRecord.id == video_parse_task_id,
+                    VideoParseTaskRecord.is_deleted.is_(False),
+                )
+            )
+            if record is None:
+                raise ParseJobNotFoundError(
+                    f"videoParseTaskId {video_parse_task_id!r} does not exist"
+                )
+            return self._video_parse_task_state(record)
+
+    def get_video_parse_input(
+        self,
+        video_parse_task_id: str,
+    ) -> VideoParseTaskInputState:
+        """Load the immutable task snapshot together with its source Video."""
+
+        with self._session_factory() as session:
+            row = session.execute(
+                select(VideoParseTaskRecord, VideoRecord)
+                .join(
+                    VideoRecord,
+                    VideoRecord.video_id == VideoParseTaskRecord.video_id,
+                )
+                .where(
+                    VideoParseTaskRecord.id == video_parse_task_id,
+                    VideoParseTaskRecord.is_deleted.is_(False),
+                )
+            ).one_or_none()
+            if row is None:
+                raise ParseJobNotFoundError(
+                    f"videoParseTaskId {video_parse_task_id!r} does not exist"
+                )
+            task, video = row
+            return VideoParseTaskInputState(
+                task=self._video_parse_task_state(task),
+                series_id=video.series_id,
+                episode_order=video.episode_order,
+                original_filename=video.original_filename,
+                original_source_uri=video.original_source_uri,
+                inference_proxy_uri=video.inference_proxy_uri,
+                content_hash=video.content_hash,
+                total_bytes=video.total_bytes,
+                duration_seconds=video.duration_seconds,
+            )
+
+    def latest_video_parse_task(
+        self,
+        video_id: str,
+    ) -> VideoParseTaskState:
+        """Return the newest non-deleted parse attempt for one Video."""
+
+        with self._session_factory() as session:
+            record = session.scalar(
+                select(VideoParseTaskRecord)
+                .where(
+                    VideoParseTaskRecord.video_id == video_id,
+                    VideoParseTaskRecord.is_deleted.is_(False),
+                )
+                .order_by(
+                    VideoParseTaskRecord.version.desc(),
+                    VideoParseTaskRecord.id.desc(),
+                )
+                .limit(1)
+            )
+            if record is None:
+                raise ParseJobNotFoundError(
+                    f"videoId {video_id!r} has no Video Parse V2 task"
+                )
+            return self._video_parse_task_state(record)
+
+    def list_video_parse_tasks(
+        self,
+        video_id: str,
+    ) -> list[VideoParseTaskState]:
+        """List retained parse attempts in stable parse-version order."""
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(VideoParseTaskRecord)
+                .where(
+                    VideoParseTaskRecord.video_id == video_id,
+                    VideoParseTaskRecord.is_deleted.is_(False),
+                )
+                .order_by(
+                    VideoParseTaskRecord.version,
+                    VideoParseTaskRecord.id,
+                )
+            ).all()
+            return [self._video_parse_task_state(record) for record in records]
 
     def list_for_workspace(
         self,
@@ -505,6 +607,36 @@ class ParseJobRepository:
         )
 
     @staticmethod
+    def _video_parse_task_state(
+        record: VideoParseTaskRecord,
+    ) -> VideoParseTaskState:
+        return VideoParseTaskState(
+            video_parse_task_id=record.id,
+            video_id=record.video_id,
+            pipeline_version=record.pipeline_version,
+            status=record.status,
+            parse_config=record.parse_config,
+            chunk_count=record.chunk_count,
+            version=record.version,
+            next_execute_time=record.next_execute_time,
+            attempt_count=record.attempt_count,
+            max_attempts=record.max_attempts,
+            lease_owner=record.lease_owner,
+            lease_version=record.lease_version,
+            lease_expire_time=record.lease_expire_time,
+            heartbeat_time=record.heartbeat_time,
+            start_time=record.start_time,
+            finish_time=record.finish_time,
+            processing_duration_ms=record.processing_duration_ms,
+            processing_timing_complete=record.processing_timing_complete,
+            last_error=record.last_error,
+            is_test=record.is_test,
+            detail=record.detail,
+            create_time=record.create_time,
+            update_time=record.update_time,
+        )
+
+    @staticmethod
     def _checkpoint_state(
         record: VideoChunkCheckpointRecord,
     ) -> VideoChunkCheckpointState:
@@ -541,7 +673,7 @@ def _validate_checkpoint_bounds(
         or not isinstance(start_seconds, int)
         or not isinstance(end_seconds, int)
     ):
-        raise ValueError("checkpoint canonical time range must use integer milliseconds")
+        raise ValueError("checkpoint canonical time range must use integer seconds")
     if start_seconds < 0 or end_seconds <= start_seconds:
         raise ValueError(
             "checkpoint chunk_end_seconds must be greater than nonnegative chunk_start_seconds"

@@ -6,6 +6,7 @@ from fastapi import Header, Query, Request
 from starlette.concurrency import run_in_threadpool
 
 from ..model.dto.uploadDTO import (
+    UploadReparseRequest,
     UploadSessionCreateRequest,
     UploadSessionDetail,
     UploadSessionState,
@@ -15,8 +16,9 @@ from ..service.pagination import decode_cursor, encode_cursor
 from ..model.vo.commonVO import Failure, Page
 from .context import get_services
 from ..model.vo.uploadVO import UploadCompleteView, UploadSegmentView, UploadSessionView
-from ..model.vo.jobVO import ParseJobView
-from .jobs import project_job
+from ..model.vo.jobVO import VideoParseTaskView
+from ..utils.time import datetime_to_unix_time_ms
+from .jobs import project_video_parse_task
 
 _CONTENT_RANGE_PATTERN = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
 
@@ -38,12 +40,14 @@ def create_upload_session(
     state = service.create_session(
         workspace_id=body.workspace_id,
         series_id=series_id,
+        episode_order=body.episode_order,
         original_filename=body.original_filename,
         media_type=body.media_type,
         total_size_bytes=body.total_size_bytes,
         idempotency_key=idempotency_key,
         content_sha256=body.content_sha256,
         parse_config=body.parse_config,
+        video_parse_config=body.video_parse_config,
     )
     detail = service.get_detail(
         state.upload_session_id,
@@ -60,7 +64,7 @@ def list_upload_sessions(
     limit: int = Query(50, ge=1, le=100),
     cursor: str | None = Query(None),
 ) -> Page[UploadSessionView]:
-    scope = {"workspaceId": workspace_id, "seriesId": series_id, "status": status, "sort": "upload-sequence-created-id-asc"}
+    scope = {"workspaceId": workspace_id, "seriesId": series_id, "status": status, "sort": "episode-order-created-id-asc"}
     offset = decode_cursor(cursor, scope=scope)
     items = get_services(request).uploads.list_sessions(workspace_id=workspace_id, series_id=series_id, status=status)
     has_more = offset + limit < len(items)
@@ -69,7 +73,6 @@ def list_upload_sessions(
         total=len(items), has_more=has_more,
         next_cursor=encode_cursor(offset + limit, scope=scope) if has_more else None,
     )
-
 
 def get_upload_session(
     request: Request,
@@ -97,30 +100,34 @@ def retry_upload_parse(
     request: Request,
     upload_session_id: str = Query(alias="uploadSessionId"),
     workspace_id: str = Query(alias="workspaceId"),
+    # Transitional wire name: callers must pass the V2 task's parse version.
     expected_job_version: int = Query(ge=1, alias="expectedJobVersion"),
-) -> ParseJobView:
+) -> VideoParseTaskView:
     services = get_services(request)
-    job_id = services.uploads.retry_parse(
+    task = services.uploads.retry_parse(
         upload_session_id,
         workspace_id=workspace_id,
         expected_job_version=expected_job_version,
     )
-    return project_job(services.jobs.get(job_id, workspace_id=workspace_id))
+    return project_video_parse_task(task)
 
 
 def reparse_upload(
     request: Request,
+    body: UploadReparseRequest | None = None,
     upload_session_id: str = Query(alias="uploadSessionId"),
     workspace_id: str = Query(alias="workspaceId"),
+    # Transitional wire name: callers must pass the V2 task's parse version.
     expected_job_version: int = Query(ge=1, alias="expectedJobVersion"),
-) -> ParseJobView:
+) -> VideoParseTaskView:
     services = get_services(request)
-    job_id = services.uploads.reparse(
+    task = services.uploads.reparse(
         upload_session_id,
         workspace_id=workspace_id,
         expected_job_version=expected_job_version,
+        video_parse_config=(body.video_parse_config if body is not None else None),
     )
-    return project_job(services.jobs.get(job_id, workspace_id=workspace_id))
+    return project_video_parse_task(task)
 
 
 async def upload_segment(
@@ -190,6 +197,7 @@ async def complete_upload(
         upload_session=_upload_view(detail),
         video_id=completed.video_id,
         job_id=completed.job_id,
+        video_parse_task_id=completed.video_parse_task_id,
     )
 
 
@@ -237,8 +245,15 @@ def project_upload_session(state: UploadSessionState) -> UploadSessionView:
         uploaded_size_bytes=state.uploaded_size_bytes,
         missing_segment_numbers=list(state.missing_segment_numbers),
         completion_stage=state.completion_stage, completion_progress=None,
-        estimated_remaining_ms=None, expires_at=state.expires_at,
-        video_id=state.video_id, job_id=state.job_id, last_error=error,
-        version=state.version, created_at=state.created_at, updated_at=state.updated_at,
+        estimated_remaining_ms=None,
+        expires_at=datetime_to_unix_time_ms(state.expires_at),
+        video_id=state.video_id,
+        job_id=state.job_id,
+        initial_video_parse_task_id=state.initial_video_parse_task_id,
+        last_error=error,
+        version=state.version,
+        created_at=datetime_to_unix_time_ms(state.created_at),
+        updated_at=datetime_to_unix_time_ms(state.updated_at),
         parse_config=state.parse_config,
+        video_parse_config=state.video_parse_config,
     )
