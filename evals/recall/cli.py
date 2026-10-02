@@ -4,12 +4,12 @@ import argparse
 import os
 from pathlib import Path
 
+from elasticsearch import Elasticsearch
 from gateway.config import load_config
 from gateway.ark.embedding import DoubaoMultimodalEmbedder
-from qdrant_client import QdrantClient
 
 from engine.parsev1.analysis_windows import probe_video_duration_seconds
-from .qdrant_index import QdrantVideoChunkIndex
+from .elasticsearch_index import ElasticsearchVideoChunkIndex
 from .recall_eval import (
     RecallEvaluator,
     load_parse_result,
@@ -53,32 +53,35 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--vision-weight", type=float, default=1.0)
     parser.add_argument(
         "--retrieval-backend",
-        choices=("local", "qdrant"),
+        choices=("local", "elasticsearch"),
         default="local",
         help="Ranking backend; defaults to the in-process exact cosine baseline.",
     )
     parser.add_argument(
-        "--qdrant-url",
+        "--elasticsearch-url",
         help=(
-            "Qdrant server URL; defaults to ANIVAG_QDRANT_URL when the Qdrant "
-            "backend is selected."
+            "Evaluation Elasticsearch URL; defaults to "
+            "ANIVAG_RECALL_EVAL_ELASTICSEARCH_URL."
         ),
     )
     parser.add_argument(
-        "--qdrant-collection",
-        help="Qdrant Collection; defaults to ANIVAG_QDRANT_COLLECTION.",
+        "--elasticsearch-index",
+        help=(
+            "Dedicated anivag_recall_eval_* index; defaults to "
+            "ANIVAG_RECALL_EVAL_INDEX."
+        ),
     )
     parser.add_argument(
         "--dataset-id",
-        help="Dataset isolation key required for Qdrant evaluation.",
+        help="Dataset isolation key required for Elasticsearch evaluation.",
     )
     parser.add_argument(
-        "--qdrant-search-mode",
+        "--elasticsearch-search-mode",
         choices=("exact", "approximate"),
         default="exact",
         help=(
-            "Exact requests a full-precision exact scan; approximate allows "
-            "the server to use its configured ANN path."
+            "Exact scans the filtered dataset with script_score; approximate "
+            "uses filtered kNN."
         ),
     )
     parser.add_argument(
@@ -92,7 +95,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _build_parser().parse_args()
-    qdrant_options = _resolve_qdrant_options(args)
+    elasticsearch_options = _resolve_elasticsearch_options(args)
     parse_result_path = args.parse_result.expanduser().resolve()
     parse_result = load_parse_result(parse_result_path)
     fixture = load_recall_fixture(args.fixture)
@@ -131,55 +134,51 @@ def main() -> None:
         output_dimensionality=dimensions,
         fps=fps,
     )
-    qdrant_index = None
-    if qdrant_options is not None:
-        qdrant_url, qdrant_collection, dataset_id = qdrant_options
-        qdrant_index = QdrantVideoChunkIndex(
-            QdrantClient(
-                url=qdrant_url,
-                api_key=os.getenv("ANIVAG_QDRANT_API_KEY"),
-                timeout=30,
-            ),
-            collection_name=qdrant_collection,
-            dataset_id=dataset_id,
+    client = None
+    elasticsearch_index = None
+    if elasticsearch_options is not None:
+        elasticsearch_url, index_name, dataset_id = elasticsearch_options
+        client = Elasticsearch(
+            elasticsearch_url,
+            api_key=os.getenv("ANIVAG_RECALL_EVAL_ELASTICSEARCH_API_KEY") or None,
+            request_timeout=30,
         )
-        qdrant_index.ensure_collection(
-            text_dimensions=dimensions,
-            vision_dimensions=dimensions,
-        )
-        qdrant_index.assert_dataset_size(
-            len(parse_result.chunks),
-            allow_empty=True,
+        elasticsearch_index = ElasticsearchVideoChunkIndex(
+            client, index_name=index_name, dataset_id=dataset_id,
         )
 
-    output_dir = args.output_dir.expanduser().resolve()
-    media_by_sequence = materialize_eval_only_canonical_media(
-        parse_result,
-        source_video=source_video,
-        output_dir=output_dir,
-        max_height=args.max_height,
-    )
-    evaluator = RecallEvaluator(
-        embedder,
-        cache_dir=output_dir / "embedding-cache",
-        max_height=args.max_height,
-        channel_top_k=args.channel_top_k,
-        rrf_k=args.rrf_k,
-        text_weight=args.text_weight,
-        vision_weight=args.vision_weight,
-        qdrant_index=qdrant_index,
-        qdrant_exact=args.qdrant_search_mode == "exact",
-        concurrency=args.concurrency,
-    )
-    result = evaluator.evaluate(
-        parse_result,
-        fixture,
-        source_video=source_video,
-        media_by_sequence=media_by_sequence,
-        parse_result_path=parse_result_path,
-    )
-    result_path = output_dir / "recall-eval.json"
-    write_recall_result(result, result_path)
+    try:
+        output_dir = args.output_dir.expanduser().resolve()
+        media_by_sequence = materialize_eval_only_canonical_media(
+            parse_result,
+            source_video=source_video,
+            output_dir=output_dir,
+            max_height=args.max_height,
+        )
+        evaluator = RecallEvaluator(
+            embedder,
+            cache_dir=output_dir / "embedding-cache",
+            max_height=args.max_height,
+            channel_top_k=args.channel_top_k,
+            rrf_k=args.rrf_k,
+            text_weight=args.text_weight,
+            vision_weight=args.vision_weight,
+            elasticsearch_index=elasticsearch_index,
+            elasticsearch_search_mode=args.elasticsearch_search_mode,
+            concurrency=args.concurrency,
+        )
+        result = evaluator.evaluate(
+            parse_result,
+            fixture,
+            source_video=source_video,
+            media_by_sequence=media_by_sequence,
+            parse_result_path=parse_result_path,
+        )
+        result_path = output_dir / "recall-eval.json"
+        write_recall_result(result, result_path)
+    finally:
+        if client is not None:
+            client.close()
     print(
         f"recall evaluation complete; queries={result.query_count}; "
         f"chunks={result.chunk_count}; "
@@ -190,29 +189,29 @@ def main() -> None:
     )
 
 
-def _resolve_qdrant_options(
+def _resolve_elasticsearch_options(
     args: argparse.Namespace,
 ) -> tuple[str, str, str] | None:
     if args.retrieval_backend == "local":
-        if args.qdrant_url or args.qdrant_collection or args.dataset_id:
+        if args.elasticsearch_url or args.elasticsearch_index or args.dataset_id:
             raise ValueError(
-                "Qdrant connection arguments require --retrieval-backend qdrant"
+                "Elasticsearch connection arguments require --retrieval-backend elasticsearch"
             )
-        if args.qdrant_search_mode != "exact":
+        if args.elasticsearch_search_mode != "exact":
             raise ValueError(
-                "Qdrant search mode requires --retrieval-backend qdrant"
+                "Elasticsearch search mode requires --retrieval-backend elasticsearch"
             )
         return None
 
-    qdrant_url = args.qdrant_url or os.getenv("ANIVAG_QDRANT_URL")
-    qdrant_collection = args.qdrant_collection or os.getenv(
-        "ANIVAG_QDRANT_COLLECTION"
+    elasticsearch_url = args.elasticsearch_url or os.getenv(
+        "ANIVAG_RECALL_EVAL_ELASTICSEARCH_URL"
     )
-    if not qdrant_url or not qdrant_collection or not args.dataset_id:
+    index_name = args.elasticsearch_index or os.getenv("ANIVAG_RECALL_EVAL_INDEX")
+    if not elasticsearch_url or not index_name or not args.dataset_id:
         raise ValueError(
-            "Qdrant evaluation requires URL, Collection, and dataset ID"
+            "Elasticsearch evaluation requires URL, dedicated index, and dataset ID"
         )
-    return qdrant_url, qdrant_collection, args.dataset_id
+    return elasticsearch_url, index_name, args.dataset_id
 
 
 def _resolve_source_video(

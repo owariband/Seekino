@@ -197,7 +197,7 @@ VideoChunk 解析。它要求完整且连续的 `VideoParseResult`，把每个 c
 - 分别计算 Text/Vision 排名与可调权重 RRF，输出 Hit@1/3/5/10 和 MRR；
 - embedding 按模型、维度、FPS、源文件指纹和输入哈希原子缓存，可安全续跑。
 
-不传 Qdrant 参数时，命令继续使用进程内精确余弦排名，适合作为对照组：
+不选择 Elasticsearch 后端时，命令使用进程内精确余弦排名，适合作为对照组：
 
 ```bash
 uv run --env-file .env.local python -m evals.recall.cli \
@@ -209,27 +209,20 @@ uv run --env-file .env.local python -m evals.recall.cli \
   --concurrency 1
 ```
 
-这里的 Qdrant 是 `evals/recall/` 私有的可选实验后端，不依赖 MySQL，也不复用
-`server/storage/` 的正式持久化 adapter。仓库提供了固定版本的本地服务：
+Elasticsearch 是 `evals/recall/` 私有的可选实验后端，不依赖 MySQL，也不复用
+`server/storage/` 的正式持久化 adapter。必须使用 `anivag_recall_eval_*` 命名的专用
+索引，避免误写正式业务索引。
 
 ```bash
-docker compose -f deploy/qdrant/compose.yaml up -d
-```
-
-使用不同的 Collection 隔离测试与正式环境；同一 Collection 内再以必填的
-`dataset-id` 隔离每一套解析结果。当前只建立测试数据，建议让 ID 同时包含环境、视频、
-VideoChunk 边界方案和版本；解析结果或边界改变时应换新 ID，不复用旧实验数据。
-
-```bash
-ANIVAG_QDRANT_URL=http://127.0.0.1:6333 \
-ANIVAG_QDRANT_COLLECTION=anivag_video_chunks_test \
+ANIVAG_RECALL_EVAL_ELASTICSEARCH_URL=http://127.0.0.1:9200 \
+ANIVAG_RECALL_EVAL_INDEX=anivag_recall_eval_test \
 uv run --env-file .env.local python -m evals.recall.cli \
   --parse-result outputs/engine/episode/pipeline.parse.json \
   --fixture evals/recall/ep07.recall-smoke.json \
-  --output-dir outputs/engine/episode-recall-qdrant \
-  --retrieval-backend qdrant \
+  --output-dir outputs/engine/episode-recall-elasticsearch \
+  --retrieval-backend elasticsearch \
   --dataset-id test:mygo:ep07:60s:v1 \
-  --qdrant-search-mode exact \
+  --elasticsearch-search-mode exact \
   --text-weight 3 \
   --vision-weight 1 \
   --channel-top-k 20 \
@@ -237,12 +230,15 @@ uv run --env-file .env.local python -m evals.recall.cli \
   --concurrency 1
 ```
 
-Collection 使用 `text`、`vision` 两个命名向量。每个点只保存定位和后续筛选需要的
-payload：`dataset_id`、`video_chunk_id`、时间范围、`video_compact` 与
-`is_fallback`；前后 Context 不会落入召回文本。`exact` 会要求使用原始向量精确扫描，
-用于小数据集基线；`approximate` 则允许 Qdrant 按 Collection 配置选择 ANN 或全扫描，
-因此不能仅凭参数名断言实际走了 HNSW。评测结果会记录后端、Collection、dataset、
-搜索模式和 Text/Vision 权重，做 A/B 时应使用不同输出目录，避免覆盖结果。
+同一索引内以必填的 `dataset-id` 隔离数据。每个 dataset 的摘要同时覆盖 VideoChunk
+文档、embedding 模型/维度/FPS，以及 embedding cache 已使用的视觉输入哈希；后者包含
+源片指纹、canonical media 指纹和 `max-height`。因此同一 ID 下即使文档不变，只要源片、
+物化媒体或高度发生变化也会在 embedding 前 fail closed，必须换用新的 dataset ID。
+
+索引保存 Text/Vision 两个 dense vector 及定位字段；前后 Context 不会落入召回文本。
+`exact` 使用 dataset 过滤后的 `script_score` 精确扫描，`approximate` 使用过滤后的 kNN。
+评测结果会记录后端、索引、dataset、搜索模式和 Text/Vision 权重，做 A/B 时应使用不同
+输出目录，避免覆盖结果。
 
 该入口只评估 raw candidate recall，尚不包含 CandidateVerifier，不能把 TopK 命中率当成
 最终回答正确率。第七集 12 条人工 smoke 的标签来源、限制和首轮结果记录在

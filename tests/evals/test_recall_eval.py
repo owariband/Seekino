@@ -5,20 +5,19 @@ from pathlib import Path
 
 import pytest
 from gateway.embedding import EmbeddingResult
-from qdrant_client import QdrantClient
 
-from evals.recall.qdrant_index import (
-    QdrantDatasetConflictError,
-    QdrantVideoChunkIndex,
-)
+from evals.recall.elasticsearch_index import ElasticsearchDatasetConflictError
 from evals.recall.recall_eval import (
     RecallEvalFixture,
+    RecallEvalResult,
     RecallEvaluator,
     RecallQueryFixture,
     RelevantTimeRange,
     build_video_chunk_retrieval_documents,
+    cosine_rankings,
     materialize_eval_only_canonical_media,
     reciprocal_rank_fusion,
+    write_recall_result,
 )
 from engine.parsev1.schemas import (
     AnalysisWindow,
@@ -66,6 +65,62 @@ class FakeEmbedder:
             modality="video",
             vector=vector,
         )
+
+
+class FakeElasticsearchIndex:
+    index_name = "anivag_recall_eval_test"
+    dataset_id = "test:mygo:ep07"
+
+    def __init__(self, *, conflict: bool = False) -> None:
+        self.conflict = conflict
+        self.text_vectors: dict[int, list[float]] = {}
+        self.vision_vectors: dict[int, list[float]] = {}
+        self.vision_input_sha256: dict[int, str] | None = None
+        self.search_modes: list[str] = []
+
+    def ensure_index(self, *, text_dimensions: int, vision_dimensions: int) -> None:
+        assert (text_dimensions, vision_dimensions) == (2, 2)
+
+    def assert_dataset_snapshot(
+        self,
+        documents,
+        *,
+        vision_input_sha256,
+        embedding_model,
+        embedding_fps,
+        allow_incomplete,
+    ):
+        if self.conflict or (
+            self.vision_input_sha256 is not None
+            and self.vision_input_sha256 != vision_input_sha256
+        ):
+            raise ElasticsearchDatasetConflictError("Use a new dataset ID")
+        assert embedding_model == "fake-shared-embedding"
+        assert embedding_fps == 1.0
+        assert len(documents) == 3
+
+    def upsert_chunks(
+        self,
+        documents,
+        *,
+        text_vectors,
+        vision_vectors,
+        vision_input_sha256,
+        embedding_model,
+        embedding_fps,
+    ) -> None:
+        assert len(documents) == 3
+        self.text_vectors = dict(text_vectors)
+        self.vision_vectors = dict(vision_vectors)
+        self.vision_input_sha256 = dict(vision_input_sha256)
+
+    def search_text(self, query_vector, *, limit, mode):
+        self.search_modes.append(mode)
+        return cosine_rankings(query_vector, self.text_vectors)[:limit]
+
+    def search_vision(self, query_vector, *, limit, mode):
+        self.search_modes.append(mode)
+        return cosine_rankings(query_vector, self.vision_vectors)[:limit]
 
 
 def _parse_result(source_video: Path) -> VideoParseResult:
@@ -267,7 +322,7 @@ def test_evaluator_caches_both_channels_and_scores_time_range_fixture(
     assert cached_embedder.video_calls == []
 
 
-def test_evaluator_can_persist_and_query_both_channels_through_qdrant(
+def test_evaluator_can_query_both_channels_through_elasticsearch(
     tmp_path,
 ) -> None:
     source_video = tmp_path / "episode.mp4"
@@ -282,12 +337,7 @@ def test_evaluator_can_persist_and_query_both_channels_through_qdrant(
             )
         ]
     )
-    client = QdrantClient(":memory:")
-    index = QdrantVideoChunkIndex(
-        client,
-        collection_name="video_chunks_test",
-        dataset_id="test:mygo:ep07",
-    )
+    index = FakeElasticsearchIndex()
     evaluator = RecallEvaluator(
         FakeEmbedder(),
         cache_dir=tmp_path / "cache",
@@ -295,8 +345,8 @@ def test_evaluator_can_persist_and_query_both_channels_through_qdrant(
         rrf_k=60,
         text_weight=3.0,
         vision_weight=1.0,
-        qdrant_index=index,
-        qdrant_exact=True,
+        elasticsearch_index=index,
+        elasticsearch_search_mode="exact",
     )
 
     result = evaluator.evaluate(
@@ -306,40 +356,39 @@ def test_evaluator_can_persist_and_query_both_channels_through_qdrant(
         media_by_sequence=_media(tmp_path / "media"),
     )
 
-    assert result.retrieval_backend == "qdrant"
-    assert result.qdrant_exact is True
-    assert result.qdrant_collection == "video_chunks_test"
+    assert result.retrieval_backend == "elasticsearch"
+    assert result.elasticsearch_search_mode == "exact"
+    assert result.elasticsearch_index == "anivag_recall_eval_test"
     assert result.dataset_id == "test:mygo:ep07"
     assert result.text_weight == 3.0
     assert result.vision_weight == 1.0
-    assert index.count_chunks() == 3
+    assert index.search_modes == ["exact", "exact"]
     assert result.queries[0].text_rankings[0].chunk_sequence_no == 1
     assert result.queries[0].vision_rankings[0].chunk_sequence_no == 1
     assert result.queries[0].fused_rankings[0].chunk_sequence_no == 1
+    assert index.vision_input_sha256 == {
+        sequence_no: json.loads(
+            (tmp_path / f"cache/chunks/chunk-{sequence_no:04d}.video.json").read_text()
+        )["input_sha256"]
+        for sequence_no in range(3)
+    }
+    report_path = tmp_path / "recall-eval.json"
+    write_recall_result(result, report_path)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["retrieval_backend"] == "elasticsearch"
+    assert "qdrant_exact" not in report and "qdrant_collection" not in report
 
 
-def test_qdrant_dataset_conflict_fails_before_embedding(tmp_path) -> None:
+def test_elasticsearch_dataset_conflict_fails_before_embedding(tmp_path) -> None:
     source_video = tmp_path / "episode.mp4"
     source_video.write_bytes(b"source-video")
     parse_result = _parse_result(source_video)
-    client = QdrantClient(":memory:")
-    index = QdrantVideoChunkIndex(
-        client,
-        collection_name="video_chunks_test",
-        dataset_id="test:mygo:ep07:wrong-snapshot",
-    )
-    index.ensure_collection(text_dimensions=2, vision_dimensions=2)
-    first_document = build_video_chunk_retrieval_documents(parse_result)[0]
-    index.upsert_chunks(
-        [first_document],
-        text_vectors={0: [1.0, 0.0]},
-        vision_vectors={0: [1.0, 0.0]},
-    )
+    index = FakeElasticsearchIndex(conflict=True)
     embedder = FakeEmbedder()
     evaluator = RecallEvaluator(
         embedder,
         cache_dir=tmp_path / "cache",
-        qdrant_index=index,
+        elasticsearch_index=index,
     )
     fixture = RecallEvalFixture(
         queries=[
@@ -351,7 +400,7 @@ def test_qdrant_dataset_conflict_fails_before_embedding(tmp_path) -> None:
         ]
     )
 
-    with pytest.raises(QdrantDatasetConflictError, match="Use a new dataset ID"):
+    with pytest.raises(ElasticsearchDatasetConflictError, match="Use a new dataset ID"):
         evaluator.evaluate(
             parse_result,
             fixture,
@@ -361,6 +410,91 @@ def test_qdrant_dataset_conflict_fails_before_embedding(tmp_path) -> None:
 
     assert embedder.text_calls == []
     assert embedder.video_calls == []
+
+
+@pytest.mark.parametrize("changed_input", ["source", "media", "max_height"])
+def test_elasticsearch_dataset_identity_covers_visual_inputs_before_embedding(
+    tmp_path,
+    changed_input: str,
+) -> None:
+    source_video = tmp_path / "episode.mp4"
+    source_video.write_bytes(b"source-video")
+    parse_result = _parse_result(source_video)
+    fixture = RecallEvalFixture(
+        queries=[
+            RecallQueryFixture(
+                query_id="q-beta",
+                query="find beta",
+                relevant_chunk_sequence_nos=[1],
+            )
+        ]
+    )
+    index = FakeElasticsearchIndex()
+    first_media = _media(tmp_path / "media-first")
+    RecallEvaluator(
+        FakeEmbedder(),
+        cache_dir=tmp_path / "cache-first",
+        elasticsearch_index=index,
+    ).evaluate(
+        parse_result,
+        fixture,
+        source_video=source_video,
+        media_by_sequence=first_media,
+    )
+
+    next_source = source_video
+    next_media = first_media
+    next_max_height = 720
+    if changed_input == "source":
+        next_source = tmp_path / "episode-copy.mp4"
+        next_source.write_bytes(b"source-video")
+    elif changed_input == "media":
+        next_media = _media(tmp_path / "media-second")
+    else:
+        next_max_height = 480
+
+    embedder = FakeEmbedder()
+    evaluator = RecallEvaluator(
+        embedder,
+        cache_dir=tmp_path / "cache-second",
+        max_height=next_max_height,
+        elasticsearch_index=index,
+    )
+    with pytest.raises(ElasticsearchDatasetConflictError, match="new dataset ID"):
+        evaluator.evaluate(
+            parse_result,
+            fixture,
+            source_video=next_source,
+            media_by_sequence=next_media,
+        )
+
+    assert embedder.text_calls == []
+    assert embedder.video_calls == []
+
+
+def test_old_qdrant_report_remains_readable(tmp_path) -> None:
+    source_video = tmp_path / "episode.mp4"
+    source_video.write_bytes(b"source-video")
+    result = RecallEvaluator(FakeEmbedder(), cache_dir=tmp_path / "cache").evaluate(
+        _parse_result(source_video),
+        RecallEvalFixture(queries=[RecallQueryFixture(
+            query_id="q-beta", query="find beta", relevant_chunk_sequence_nos=[1],
+        )]),
+        source_video=source_video,
+        media_by_sequence=_media(tmp_path / "media"),
+    )
+    old_report = result.model_dump(mode="json", exclude_none=True)
+    old_report.update(
+        retrieval_backend="qdrant",
+        qdrant_exact=True,
+        qdrant_collection="historical_collection",
+        dataset_id="historical_dataset",
+    )
+    restored = RecallEvalResult.model_validate(old_report)
+    assert restored.retrieval_backend == "qdrant"
+    assert restored.qdrant_exact is True
+    assert restored.qdrant_collection == "historical_collection"
+    assert restored.dataset_id == "historical_dataset"
 
 
 def test_changed_embedding_metadata_invalidates_cache(tmp_path) -> None:

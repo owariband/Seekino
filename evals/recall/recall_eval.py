@@ -30,7 +30,7 @@ from engine.retrieval.video_retrieval import (
     weighted_reciprocal_rank_fusion,
 )
 
-from .qdrant_index import QdrantVideoChunkIndex
+from .elasticsearch_index import ElasticsearchVideoChunkIndex
 
 _CACHE_VERSION = 2
 _METRIC_CUTOFFS = (1, 3, 5, 10)
@@ -148,9 +148,12 @@ class RecallEvalResult(BaseModel):
     rrf_k: int = Field(gt=0)
     text_weight: float = Field(ge=0)
     vision_weight: float = Field(ge=0)
-    retrieval_backend: Literal["local", "qdrant"]
+    retrieval_backend: Literal["local", "qdrant", "elasticsearch"]
+    # Read-only compatibility for reports written by the former Qdrant backend.
     qdrant_exact: bool | None = None
     qdrant_collection: str | None = None
+    elasticsearch_search_mode: Literal["exact", "approximate"] | None = None
+    elasticsearch_index: str | None = None
     dataset_id: str | None = None
     query_count: int = Field(gt=0)
     chunk_count: int = Field(gt=0)
@@ -285,8 +288,8 @@ class RecallEvaluator:
         rrf_k: int = 60,
         text_weight: float = 1.0,
         vision_weight: float = 1.0,
-        qdrant_index: QdrantVideoChunkIndex | None = None,
-        qdrant_exact: bool = True,
+        elasticsearch_index: ElasticsearchVideoChunkIndex | None = None,
+        elasticsearch_search_mode: Literal["exact", "approximate"] = "exact",
         concurrency: int = 1,
     ) -> None:
         if max_height <= 0:
@@ -305,6 +308,8 @@ class RecallEvaluator:
             raise ValueError("at least one channel weight must be greater than zero")
         if not 1 <= concurrency <= 4:
             raise ValueError("concurrency must be between 1 and 4")
+        if elasticsearch_search_mode not in ("exact", "approximate"):
+            raise ValueError("elasticsearch_search_mode must be exact or approximate")
         self._embedder = embedder
         self._cache_dir = Path(cache_dir).expanduser().resolve()
         self._max_height = max_height
@@ -312,8 +317,8 @@ class RecallEvaluator:
         self._rrf_k = rrf_k
         self._text_weight = text_weight
         self._vision_weight = vision_weight
-        self._qdrant_index = qdrant_index
-        self._qdrant_exact = qdrant_exact
+        self._elasticsearch_index = elasticsearch_index
+        self._elasticsearch_search_mode = elasticsearch_search_mode
         self._concurrency = concurrency
 
     def evaluate(
@@ -326,14 +331,10 @@ class RecallEvaluator:
         parse_result_path: str | Path | None = None,
     ) -> RecallEvalResult:
         documents = build_video_chunk_retrieval_documents(parse_result)
-        if self._qdrant_index is not None:
-            self._qdrant_index.ensure_collection(
+        if self._elasticsearch_index is not None:
+            self._elasticsearch_index.ensure_index(
                 text_dimensions=self._embedder.output_dimensionality,
                 vision_dimensions=self._embedder.output_dimensionality,
-            )
-            self._qdrant_index.assert_dataset_size(
-                len(documents),
-                allow_empty=True,
             )
 
         source = _source_fingerprint(source_video)
@@ -348,21 +349,45 @@ class RecallEvaluator:
                     f"canonical media for chunk {sequence_no} does not exist: "
                     f"{media_path}"
                 )
+        vision_input_sha256 = {
+            document.sequence_no: _video_input_sha256(
+                document,
+                source=source,
+                media_path=media_by_sequence[document.sequence_no],
+                max_height=self._max_height,
+            )
+            for document in documents
+        }
+        if self._elasticsearch_index is not None:
+            self._elasticsearch_index.assert_dataset_snapshot(
+                documents,
+                vision_input_sha256=vision_input_sha256,
+                embedding_model=self._embedder.model_name,
+                embedding_fps=self._embedder.fps,
+                allow_incomplete=True,
+            )
 
         text_vectors, video_vectors = self._embed_video_chunks(
             documents,
             media_by_sequence=media_by_sequence,
             source=source,
+            vision_input_sha256=vision_input_sha256,
         )
-        if self._qdrant_index is not None:
-            self._qdrant_index.upsert_chunks(
+        if self._elasticsearch_index is not None:
+            self._elasticsearch_index.upsert_chunks(
                 documents,
                 text_vectors=text_vectors,
                 vision_vectors=video_vectors,
+                vision_input_sha256=vision_input_sha256,
+                embedding_model=self._embedder.model_name,
+                embedding_fps=self._embedder.fps,
             )
-            self._qdrant_index.assert_dataset_size(
-                len(documents),
-                allow_empty=False,
+            self._elasticsearch_index.assert_dataset_snapshot(
+                documents,
+                vision_input_sha256=vision_input_sha256,
+                embedding_model=self._embedder.model_name,
+                embedding_fps=self._embedder.fps,
+                allow_incomplete=False,
             )
 
         query_results: list[RecallQueryResult] = []
@@ -373,19 +398,19 @@ class RecallEvaluator:
                 duration_seconds=parse_result.duration_seconds,
             )
             query_vector = self._cached_query_embedding(query_fixture.query, source)
-            if self._qdrant_index is None:
+            if self._elasticsearch_index is None:
                 text_rankings = cosine_rankings(query_vector, text_vectors)
                 vision_rankings = cosine_rankings(query_vector, video_vectors)
             else:
-                text_rankings = self._qdrant_index.search_text(
+                text_rankings = self._elasticsearch_index.search_text(
                     query_vector,
                     limit=len(documents),
-                    exact=self._qdrant_exact,
+                    mode=self._elasticsearch_search_mode,
                 )
-                vision_rankings = self._qdrant_index.search_vision(
+                vision_rankings = self._elasticsearch_index.search_vision(
                     query_vector,
                     limit=len(documents),
-                    exact=self._qdrant_exact,
+                    mode=self._elasticsearch_search_mode,
                 )
             fused_rankings = weighted_reciprocal_rank_fusion(
                 text_rankings,
@@ -424,19 +449,20 @@ class RecallEvaluator:
             text_weight=self._text_weight,
             vision_weight=self._vision_weight,
             retrieval_backend=(
-                "qdrant" if self._qdrant_index is not None else "local"
+                "elasticsearch" if self._elasticsearch_index is not None else "local"
             ),
-            qdrant_exact=(
-                self._qdrant_exact if self._qdrant_index is not None else None
+            elasticsearch_search_mode=(
+                self._elasticsearch_search_mode
+                if self._elasticsearch_index is not None else None
             ),
-            qdrant_collection=(
-                self._qdrant_index.collection_name
-                if self._qdrant_index is not None
+            elasticsearch_index=(
+                self._elasticsearch_index.index_name
+                if self._elasticsearch_index is not None
                 else None
             ),
             dataset_id=(
-                self._qdrant_index.dataset_id
-                if self._qdrant_index is not None
+                self._elasticsearch_index.dataset_id
+                if self._elasticsearch_index is not None
                 else None
             ),
             query_count=len(query_results),
@@ -453,6 +479,7 @@ class RecallEvaluator:
         *,
         media_by_sequence: dict[int, Path],
         source: _SourceFingerprint,
+        vision_input_sha256: dict[int, str],
     ) -> tuple[dict[int, list[float]], dict[int, list[float]]]:
         text_vectors: dict[int, list[float]] = {}
         video_vectors: dict[int, list[float]] = {}
@@ -487,12 +514,6 @@ class RecallEvaluator:
                 )
             else:
                 media_path = Path(media_by_sequence[document.sequence_no]).resolve()
-                media_stat = media_path.stat()
-                media_identity = (
-                    f"{source.resolved_path}\0{source.size_bytes}\0{source.mtime_ns}"
-                    f"\0{document.start_seconds}\0{document.end_seconds}\0{self._max_height}"
-                    f"\0{media_path}\0{media_stat.st_size}\0{media_stat.st_mtime_ns}"
-                )
                 vector = self._cached_embedding(
                     cache_path=(
                         self._cache_dir
@@ -505,7 +526,7 @@ class RecallEvaluator:
                         / f"segment-{document.sequence_no:04d}.video.json"
                     ),
                     modality="video",
-                    input_sha256=_sha256_text(media_identity),
+                    input_sha256=vision_input_sha256[document.sequence_no],
                     source=source,
                     chunk=chunk,
                     embed=lambda: self._embedder.embed_video(media_path),
@@ -677,6 +698,23 @@ def _source_fingerprint(source_video: str | Path) -> _SourceFingerprint:
     )
 
 
+def _video_input_sha256(
+    document: VideoChunkRetrievalDocument,
+    *,
+    source: _SourceFingerprint,
+    media_path: str | Path,
+    max_height: int,
+) -> str:
+    resolved_media = Path(media_path).expanduser().resolve()
+    media_stat = resolved_media.stat()
+    identity = (
+        f"{source.resolved_path}\0{source.size_bytes}\0{source.mtime_ns}"
+        f"\0{document.start_seconds}\0{document.end_seconds}\0{max_height}"
+        f"\0{resolved_media}\0{media_stat.st_size}\0{media_stat.st_mtime_ns}"
+    )
+    return _sha256_text(identity)
+
+
 def _resolve_relevant_chunks(
     fixture: RecallQueryFixture,
     documents: list[VideoChunkRetrievalDocument],
@@ -779,11 +817,16 @@ def _read_matching_cache(
     return record
 
 
-def _write_model_json_atomic(model: BaseModel, output: Path) -> None:
+def _write_model_json_atomic(
+    model: BaseModel,
+    output: Path,
+    *,
+    exclude: set[str] | None = None,
+) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
     rendered = json.dumps(
-        model.model_dump(mode="json"),
+        model.model_dump(mode="json", exclude=exclude),
         ensure_ascii=False,
         indent=2,
     ) + "\n"
@@ -792,7 +835,11 @@ def _write_model_json_atomic(model: BaseModel, output: Path) -> None:
 
 
 def write_recall_result(result: RecallEvalResult, output: str | Path) -> None:
-    _write_model_json_atomic(result, Path(output).expanduser().resolve())
+    _write_model_json_atomic(
+        result,
+        Path(output).expanduser().resolve(),
+        exclude={"qdrant_exact", "qdrant_collection"},
+    )
 
 
 def _sha256_text(value: str) -> str:
