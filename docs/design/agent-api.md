@@ -19,14 +19,14 @@ Agent `totalDurationMs/stages[].durationMs` 是运行耗时毫秒，也不是时
 Workspace
 └── AgentConversation（聊天历史）
     └── AgentMessage
-        ├── USER（本次实际 seriesIds）
-        └── ASSISTANT（同一 seriesIds + modelName + retrievalQuery + searchResult + renderBlocks）
-            └── AgentMessageTiming（执行阶段与总耗时）
+        ├── USER（本次实际 seriesIds；detail.request.idempotencyKey 保存发送幂等键）
+        └── ASSISTANT（相邻序号的回复；同一 seriesIds + modelName + searchResult + renderBlocks；detail.timing 保存耗时）
 ```
 
 - `AgentConversation`：直接属于 Workspace 的连续对话线程，保存标题和历史，不保存固定检索范围。
 - `AgentMessage`：MySQL 中的消息事实，USER / ASSISTANT 都保存本次发送解析后的实际 `seriesIds`。同一 Conversation 可以在后续发送选择不同动画；一次 Kick 内范围保持不变。ASSISTANT 用有序 `renderBlocks` 保存 Markdown 和视频窗口的交错关系；GET 快照和列表接口可完整恢复该顺序。
-- `AgentMessageTiming`：MySQL 中的助手回答耗时事实，保存开始时间、总耗时和各阶段耗时，与 Message 一对一。
+- 同一发送的 USER 和 ASSISTANT 在同一 Conversation 中占相邻 `sequence_no`，以消息顺序与角色找回回复，不另存 `reply_to_message_id` 自外键。USER 的幂等键存于 `detail.request.idempotencyKey`，MySQL 在 `(conversation_id, JSON 路径表达式)` 上建唯一索引，保证同一 Conversation 内的发送键唯一。
+- `AgentMessage.detail.timing`：消息自身的 JSON 扩展数据，保存助手回答的开始时间、总耗时和各阶段耗时；没有独立的 Timing 表。`extra_context` 是用户请求上下文，不能用于保存服务端耗时。
 - LangGraph checkpoint 不是产品聊天记录；本轮产品状态全部由上述 MySQL 表持久化。
 
 ## 2. Multi-Agent 协作图
@@ -136,7 +136,7 @@ POST /api/agent/conversations/delete?conversationId={conversationId}&workspaceId
 ```
 
 删除使用 Workspace 归属校验。Conversation 没有运行中的 ASSISTANT Message 时，
-事务物理删除 Conversation，MySQL 级联删除其 Message 与 Message Timing，并返回
+事务物理删除 Conversation，MySQL 级联删除其 Message，并返回
 删除前的 `AgentConversationView`。存在 `PROCESSING` 回答时返回
 `409 MESSAGE_IN_PROGRESS`；该门禁用于避免删除与 checkpoint / complete / fail 回写竞态。
 删除 Conversation 不会删除视频、VideoChunk、Artifact 或 Qdrant 索引。
@@ -188,8 +188,6 @@ ASSISTANT Message 处于 `PROCESSING`。
     "content": "第二段里的她为什么突然哭了？",
     "seriesIds": ["77285f16-..."],
     "modelName": null,
-    "replyToMessageId": null,
-    "retrievalQuery": null,
     "searchResult": null,
     "lastError": null,
     "createdAt": 1789434120000,
@@ -204,10 +202,7 @@ ASSISTANT Message 处于 `PROCESSING`。
     "content": "当前范围内没有找到足够可信、值得播放核验的候选画面。",
     "seriesIds": ["77285f16-..."],
     "modelName": "deepseek-flash",
-    "replyToMessageId": "5f744756-...",
-    "retrievalQuery": "人物突然哭泣，结合上一轮第二个候选的前后语境",
     "searchResult": {
-      "query": "人物突然哭泣，结合上一轮第二个候选的前后语境",
       "seriesIds": ["77285f16-..."],
       "searchedVideoIds": ["2a150753-..."],
       "partial": false,
@@ -239,7 +234,8 @@ ASSISTANT Message 处于 `PROCESSING`。
 ```
 
 上面是合法的“无可信候选”响应。Agent Message 的公开 `searchResult` 是 evidence-only 投影，
-不包含独立 `/api/search` 才有的 `agentReply`。`retrievalTrace` 按实际调用顺序记录 Query Agent
+不包含独立 `/api/search` 才有的顶层 `query` 和 `agentReply`。消息也不单列 `retrievalQuery`；
+`retrievalTrace[].query` 按实际调用顺序记录 Query Agent 的每次检索查询。`retrievalTrace` 还记录
 每次检索的受限 `topK`、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID，
 供调权实验复现；普通 `/api/search` 不返回该 Agent 专属字段。`renderBlocks` 是最终显示顺序：Markdown 块携带
 `markdown`，视频块携带 `videoChunkId` 和 Evaluator 审核通过的原视频媒体偏移 `startSeconds/endSeconds`。
@@ -254,8 +250,16 @@ Chat 只提交 `video_chunk_id + claim`，Output 从获批 `selected_video_range
 每个 `hits[].evidence.seriesId` 都必填，来自 MySQL 对 Series / Video / VideoChunk 的批量
 join 回源，必须属于本次消息实际 `seriesIds`，不是由模型生成或从正文推断。
 
+这是一次明确的 Agent Message 合同收敛，不是向后兼容别名：公开消息同时移除
+`replyToMessageId`、`retrievalQuery` 和 Agent `searchResult.query`。前两项分别由同会话相邻消息
+顺序和 `retrievalTrace[].query` 取代；多次检索没有唯一、诚实的顶层 query，因此 Server 不返回
+伪兼容值。旧外部客户端必须与本版 API/Web 一起升级；发布前需单独确认调用方与有数据数据库的
+回填方案，当前空表迁移不能用于非空历史库。
+
 消息幂等比较正文、有效 `topK` 和规范化原请求 `seriesIds`，省略与 `[]` 等价。USER 内部
-独立保存 `requested_series_ids`；它不进入公开 DTO。相同 Key 的重放在重新展开当前动画
+独立保存 `requested_series_ids`；它不进入公开 DTO。Key 从 USER 的
+`detail.request.idempotencyKey` 读取，而 `requested_series_ids` 仍是原请求范围，不能用已展开的
+实际 `series_ids` 替代。相同 Key 的重放在重新展开当前动画
 之前读回原消息，因此新增动画不会改变旧“全部”请求的结果。相同 Key 改为显式范围，
 即使该范围恰好等于旧展开结果也返回 `409`。
 
@@ -351,7 +355,7 @@ Content-Type: application/json
 Message 状态：
 
 - `PROCESSING`：执行任务正在进行 Query 工具循环、审核、最终 Chat 结构化调用或结果提交。
-- `COMPLETED`：`content`、`retrievalQuery`、`searchResult` 与有序 `renderBlocks` 已保存。
+- `COMPLETED`：`content`、`searchResult` 与有序 `renderBlocks` 已保存；每次检索的查询可由 `searchResult.retrievalTrace[].query` 查看。
 - `FAILED`：失败事实和 `lastError` 已保存；使用新 Idempotency-Key 重试。
 
 | HTTP | code | 含义 |
@@ -407,13 +411,13 @@ Server 从 Evaluator 已批准的 `selected_video_ranges` 绑定时间；审批�
 
 ## 8. 已有数据库升级
 
-新数据库创建 `agent_conversation`、`agent_message` 和 `agent_message_timing` 三张 Agent 表。已有数据库需要停写并
+新数据库创建 `agent_conversation` 和 `agent_message` 两张 Agent 表，后者的 `detail.timing` 保存助手耗时，USER 的 `detail.request.idempotencyKey` 保存发送幂等键。消息对由同一 Conversation 的相邻序号和角色定位，不再有 `reply_to_message_id`；每次检索查询保留在结果轨迹中，不再有 `retrieval_query` 列。旧版 `agent_message_timing` 是历史结构，已有数据必须先回填到 `agent_message.detail` 再删表；有数据的库还需在删除原幂等键列前回填 USER 的 `detail.request.idempotencyKey`，检查新表达式唯一索引与消息配对。下文旧 Session / Scope 升级步骤不负责这些回填，不能直接套用在当前表上。已有数据库需要停写并
 备份后受控升级，不能依赖 `create_all()` 自动删表或改列；MySQL DDL 也不能靠事务自动回滚。
 `create_schema()` 检测到旧 `agent_session`、Conversation 的 `session_id` 或缺失的
 `workspace_id` 时拒绝初始化；Conversation 仍有 `series_ids`，或 Message 缺少 `series_ids`
 / `requested_series_ids` 时也拒绝初始化，要求受控 message-scope migration。
 
-先用 `SHOW CREATE TABLE` 核对三张 Agent 表。下文按最早的 Session + 固定 Conversation
+先用 `SHOW CREATE TABLE` 核对实际 Agent 表。下文按最早的 Session + 固定 Conversation
 Scope 结构写迁移顺序；已完成 Session 删除的数据库跳过归属复制、Session 外键 / 列 / 表
 和旧唯一键操作，只做消息 Scope 回填及 Conversation Scope 删除。字段或约束已存在时
 不重复添加，不能将整段 SQL 未经核对直接执行。

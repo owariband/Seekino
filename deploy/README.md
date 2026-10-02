@@ -1,10 +1,11 @@
 # 可选：Docker 数据库 + 本地应用
 
-根目录 `compose.yaml` 只运行 MySQL 8.4 和 Qdrant 1.19.1。
+根目录 `compose.yaml` 默认运行 MySQL 8.4 和 Qdrant 1.19.1；
+Elasticsearch 8.19.22 在 `elasticsearch` profile 下显式启用。
 Python Server（含 Parse Consumer）、Vite、ffmpeg、模型 SDK 在宿主机运行。
 无需构建应用镜像，修改代码后按原来的方式调试。
-原有 `./start.sh` / `scripts/local_services.py` 不变，也不依赖 Docker；只有主动执行
-Compose 命令才使用这套容器。
+`./start.sh` 的默认 Qdrant 流程仍不依赖 Docker；只有主动执行 Compose 命令才使用
+这套容器。显式配置 ES 时，脚本会额外验证 ES 集群和索引映射。
 
 ## 首次运行
 
@@ -41,6 +42,17 @@ ffmpeg 和模型调用在宿主机执行，原有 CLI、断点调试和模型登
 | MySQL | Docker volume `anivag-local_mysql_data` |
 | Qdrant 索引 | Docker volume `anivag-local_qdrant_data` |
 | Qdrant 快照 | Docker volume `anivag-local_qdrant_snapshots` |
+| 可选 ES 索引 | Docker volume `anivag-local_elasticsearch_data` |
+
+准备 ES 接入测试时，先运行 `docker compose --profile elasticsearch up -d --wait elasticsearch`，
+再在 `.env.local` 配置 `ANIVAG_ELASTICSEARCH_URL` 和 `ANIVAG_ELASTICSEARCH_INDEX`。
+显式配置后，`./start.sh` 会检查 ES 集群为 yellow/green 并校验索引 Schema；脚本不会
+自建原生 ES 进程。默认 `ANIVAG_PARSE_EXECUTION_MODE=v1`，API/Chat 检索和 V1 索引维护
+走 Qdrant。显式切到 `v2` 后，新上传任务由 DB Queue 的 V2 Worker 执行，并将通过
+Interval 放行的 Chunk 写入 ES；API、Agent Chat 和 CLI search 同时选择 V2 ES 检索，
+不会回退到 Qdrant。启用前还需应用 Server README 列出的 V2 MySQL 迁移。容器就绪
+不会迁移历史数据或执行索引重建。隔离集成测试须另用
+`ANIVAG_TEST_ELASTICSEARCH_URL` 和独立测试索引。
 
 备份/迁移时需同时保留 MySQL 业务事实和宿主机媒体。不要仅复制向量索引作为完整备份。
 容器没有代码或模型密钥挂载；数据库端口仅绑定 `127.0.0.1`。

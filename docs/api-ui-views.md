@@ -117,7 +117,7 @@ Content-Type: application/json
 同一 Idempotency-Key 不能换选项重放。reference 可省略 /
 解除；后端检查同 Conversation、来源 ASSISTANT、本轮有效范围及原回答的实际候选，自己读取结构化 Evidence，不接受前端提交的整份证据。`messageId + videoChunkId` 会在服务端恢复该来源回答已审核的精确播放范围，无需让前端回传时间；旧消息缺失或非法范围不再扩大为 canonical Chunk，引用校验失败。完整聊天历史同时保留原回答有序候选，供多轮指代使用。
 
-SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits，还包含可审计的 retrievalTrace（每次 Query、受限 topK、requested/effective Transcript/Semantic/Visual 权重、策略版本和返回 Chunk ID）。候选同时暴露 transcriptRank/transcriptScore、textRank/textScore、visionRank/visionScore；Transcript 命中说明使用真正匹配的 ASR cue 与媒体时间偏移。同一 Kick 的后续检索若再次命中已经交给模型的 Chunk，只回传轻量 `reusedHits`；完整 ASR 与 canonical 时间线引用首次结果，Server 仍保存每次检索的完整事实。事实性结论必须包含非空 `selected_video_ranges`；Query Agent 根据 ASR 和事件时间线为每个真实 Chunk 提出候选范围，Evaluator 审核越界、截断或前后冗余，不合理时通过 advice 要求 Query 修订。Evaluator 放行时，`selected_video_ranges` 必须与获批 Evidence 的 ID 集合完全一致，且每个范围都被其 canonical Evidence 包含；非法 complete 转为 continue，不产生降级范围。视频检索工具的 Schema 和构造位于 `agent/chat/video_search/tools/`，共用 Tool 包装位于 `agent/chat/common/tool.py`。Chat 的 `update_video_item` 只接受 `video_chunk_id + claim`；存在 approved evidence 时首次使用 `tool_choice=required`，成功提交至少一个后恢复 `auto`。Output 按 ID 从获批 `selected_video_ranges` 原样绑定 `startSeconds/endSeconds`，不存在 Chat proposed range、approved range、canonical range 三层 fallback。Query、Evaluator、Chat 默认使用 `config.yaml` 的 `agent_model.model`；Provider 请求或模型响应异常时，只在 `agent_model.fallback` 已配置且 Adapter 组合受支持时，于原消息 / Tool 状态上切换到指定来源和模型。已经完成的业务 Tool 及 acknowledgement 会保留，不重新执行；业务 Tool 错误、取消 / deadline / 预算等控制错误以及本地输入校验错误均不触发模型降级。旧消息的视频块缺少精确范围或范围非法时不渲染，不扩大为 canonical Chunk；Chunk ID 无法与同消息可信 hit 关联时同样不渲染。消息快照有 phase 与单调 version，前端拒绝旧版本覆盖新状态。phase 仅有 QUEUED / RETRIEVING / EVALUATING / RESPONDING，终态为 null，不包含私有推理。
+SSE 正常顺序为 started → 真实阶段 progress → 审核通过的完整 evidence → Chat 真实 Provider delta → 数据库提交后的 completed。每条回答事件有 type、conversationId、messageId、sequence、occurredAt；evidence.searchResult 不再仅有 hits，还包含可审计的 retrievalTrace（每次 Query、受限 topK、按执行模式选择的 requested/effective Transcript 或 Lexical + Semantic/Visual 权重、策略版本和返回 Chunk ID）。V1 Agent 工具保持 `transcript/semantic/visual`，V2 才使用 `lexical/semantic/visual`，不会把 ES 结构化词项合同套到默认 V1 ASR 连续短语检索。候选同时暴露适用通道的 rank/score；Transcript 命中说明使用真正匹配的 ASR cue 与媒体时间偏移，Lexical 中的 generated questions 等字段只作召回线索。后续事实核验、Draft/Evaluator 门禁、Chat 输出和失败恢复规则保持不变：事实性结论必须由精读 Evidence 支撑，播放范围必须位于 canonical Evidence 内，Chat 只提交 `video_chunk_id + claim`，旧消息的非法范围不扩大，消息 version 单调且终态 phase 为 null。
 
 持久化 FAILED 时，answer.failed 返回公开 error 与真实消息对，并保留已经确认的证据 / 部分正文。队列溢出或无法确认终态提交时返回 answer.interrupted，不谎称后台 FAILED。恢复时读取 messages/get / list / events。断开流不取消后台任务。不同 Conversation 的流、上下文和候选引用隔离。
 
@@ -129,12 +129,12 @@ videos/content 新增 variant=playback|original，默认 playback；原文件可
 
 - 保留 JSON send 同步返回 200，没有改成首次受理 202；SSE 是真实增量输出。
 - Series 创建仍按 Workspace + name 的业务身份幂等，upload complete 仍按 uploadSessionId 幂等，未增加覆盖规格所有写入路由的通用幂等记录。
-- 没有新增取消、settings 写入或 system/status；jobs/events 仍是指定 jobId 的流。只有仍处于 COMPLETED 的 UploadSession 所关联的 FAILED 主 Job 返回 canRetry=true；canCancel=false，retryOfJobId=null。
+- 没有新增取消、settings 写入或 system/status。V1 保留 jobs/get、list、events；V2 增加 video-parse/get、list、events，事件流仍绑定单个 taskId。任务快照分别返回 canRetry/canReparse/canDelete，三者由最新任务身份、上传归属及当前 Chunk/Interval/Prefix/V1 执行租约独立计算，前端不再从状态自行推断。终态事件发送后关闭；TasksPage 每 5 秒重新拉取列表，以观察终态后的租约释放和能力变化。
 - contentSha256 请求暂可省略；提供时固定并在合并后真实校验全文件 SHA。历史 / 未计算值为 null，完成后保存真实值。前端没有新增全文件 Worker hash。
 - completionStage 来自真实合并步骤；无法可靠度量的 completionProgress / estimatedRemainingMs 为 null。Upload / Message / Job 的 version 由实际可见变化递增，Job 心跳不伪造新版本。
 - 当前没有新增视频转码，不将 MOV / AVI 或无法确认 codec 的原文件标为可播放。解析没有保存关键帧的原视频 atSeconds，Evidence.keyframes=[] / thumbnail=null，并给出明确限制；系列封面仅使用可读取的已登记真实图片。
-- 没有开放 PARTIAL Series 检索，仍遵守当前 READY 范围规则。离线导入没有 ParseJob 时 latestJobId=null，不填假的 Job。
-- 真实模型、开发 MySQL / Qdrant、浏览器视频回放仍需单独联调；本地 Mock / SQLite 回归不代替该验收。
+- V1 仍只检索 READY Series；V2 可在所选 Series 中检索最新 COMPLETE task 的视频子集，并以 partial、searchedVideoIds 和 warnings 明示未覆盖视频。离线导入没有 ParseJob 时 latestJobId=null，不填假的 Job。
+- 真实模型、开发 MySQL / Qdrant / Elasticsearch、浏览器视频回放仍需单独联调；本地 Mock、SQLite 或 fake ES 回归不代替该验收。
 
 旧数据库需要受控迁移，不能把 init-db 当作 ALTER TABLE。新增列：
 

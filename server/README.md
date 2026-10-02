@@ -1,10 +1,11 @@
 # anivag Server
 
-Server 当前实现 M1 的 Upload-to-Search 纵向闭环：分片上传与断点续传、环境隔离的
-Artifact Store、MySQL 事实与 DB Queue、带 Lease/Heartbeat/Retry/Reaper 的进程内
-ParseJobConsumer、VideoChunk checkpoint、持久化 Index Sync Intent、Qdrant 派生索引，
-以及按 `seriesIds` 限定的 ASR/Semantic/Vision 三路召回、RRF 和 `videoChunkId[]` 批量回源。模型协议仍由
-Gateway 实现，anivag Server 进程内直接复用 Engine 的解析链路。
+Server 当前同时保留 V1 与 V2 的 Upload-to-Search 纵向闭环：两者共用分片上传、环境隔离的
+Artifact Store 和 MySQL 业务事实；V1 使用 DB Queue、VideoChunk checkpoint、Index Sync
+Intent 与 Qdrant，V2 使用可恢复的 VideoParseTask/Chunk/Interval/Prefix 状态机并将同版本
+投影写入 Elasticsearch。正式检索由 `ANIVAG_PARSE_EXECUTION_MODE` 一次选择对应后端，
+API、Agent Chat 和 CLI 共用同一个检索 Service；V2 不会回退到 V1/Qdrant。模型协议仍由
+Gateway 实现，anivag Server 进程内复用 Engine 的解析、索引投影和确定性融合能力。
 
 Multi-Agent 对话作为独立领域建立在正式检索之上：Workspace 直接拥有
 AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存每次发送的 Series Scope，
@@ -14,13 +15,16 @@ AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存
 及 Conversation 固定 Scope 数据库结构会被 init-db / create_schema 拒绝；[迁移步骤](../docs/design/agent-api.md#8-已有数据库升级)
 保留 Conversation ID 与消息，本次未对真实开发 / 生产库执行 DDL。
 
-Engine 拥有 `transcribe → understand → embed → persist` 的完整算法 Pipeline；Server
-不再重新编排这些算法阶段。Pipeline 的 `persist` 只调用中立 `ParsePersistence` 端口，
-Server 提供生产实现，在当前 Lease 下完成 Parse Checkpoint、Artifact 和 MySQL 操作；
-Pipeline 返回后再由 Job Adapter 同步 Qdrant。
-Qdrant 的连接、写入和恢复属于产品持久化逻辑，因此仍放在 `server/storage/`；Qdrant
-payload 不保存业务正文，Embedding 的 durable source 是 MySQL，Qdrant 始终只是可重建
-派生索引。
+V1 中 Engine 拥有 `transcribe → understand → embed → persist` 的完整算法 Pipeline；
+Pipeline 的 `persist` 只调用中立 `ParsePersistence` 端口，Server 在当前 Lease 下提交
+Checkpoint、Artifact 和 MySQL，再由 Job Adapter 同步 Qdrant。V2 中 Engine 提供纯索引
+投影、embedding 复用和带版本身份的融合函数，Server 的 Index Coordinator 负责租约、
+MySQL/ES I/O 与恢复。查询渠道选择的后续 Engine 抽象尚未发布，Server 只保留显式 TODO，
+不在本层新增另一套策略。
+
+Qdrant 与 Elasticsearch 的连接、写入和恢复都属于产品持久化适配，因此位于
+`server/storage/`；业务正文与任务版本的 durable source 始终是 MySQL，外部索引均是
+可按当前合同重建的派生数据。
 
 ## HTTP 分层
 
@@ -77,7 +81,10 @@ Consumer 的 Lease、Heartbeat、Poll 和 Retry 分别使用 `ANIVAG_MQ_*` 配�
 `ANIVAG_INDEX_SYNC_RETRY_BASE_SECONDS` / `ANIVAG_INDEX_SYNC_RETRY_MAX_SECONDS`，不再
 与 Queue delivery retry 共用配置。
 
-Job SSE 忽略纯心跳变化，终态发送后关闭；Agent SSE 仍返回完整 Message 快照，包含
+V1 Job 与 V2 Task SSE 都忽略纯心跳变化，并在发送终态快照后关闭。快照中的
+`canRetry` / `canReparse` / `canDelete` 只代表该次读取时的精确租约门禁；终态后租约变化
+不会延长 SSE，客户端应重新 GET/list。Web TasksPage 每 5 秒刷新列表，UploadProvider
+则订阅当前 V1 Job 或 V2 Task 的单任务 SSE。Agent SSE 仍返回完整 Message 快照，包含
 500 条之后的消息以及同一条消息的状态变化。保活按单调时钟的经过时间计算，
 不是固定轮询次数。完整快照仍有随聊天长度增长的读取和传输成本，后续如改增量协议，
 须另行设计状态更新游标，不能只按 sequenceNo 跳过已有的 PROCESSING 消息。
@@ -394,15 +401,56 @@ uv run python -m server.cli rebuild-index
 具备 text/vision 向量、最新 UPSERT Intent 均已确认同步，Series 才进入 `READY`；其他
 情况保持 `INDEXING`。
 
+### ES 初始化与 V2 接入进度
+
+`init-es-index` 创建或校验显式配置的 ES 8.19 物理索引。
+V2 的索引阶段属于 `interval_parse_task`：Refine 成果提交后进入 `INDEXING`，
+ES 写入与就绪检查成功后才进入 `COMPLETE`；索引失败保留成果，恢复该 Interval
+的索引阶段。ES 文档按 `parse_task_id:video_chunk_id` 稳定覆盖，保留来源内容版本。
+
+```bash
+uv run python -m server.cli init-es-index --help
+```
+
+初始化要求显式配置隔离环境的 ES URL、索引名及向量维度。设置
+`ANIVAG_PARSE_EXECUTION_MODE=v2` 后，上传只建立带接纳标记的 V2 任务，DB Queue
+Consumer 会执行 Prepare、Chunk Understanding、Interval Refine、逐 Chunk 索引放行、
+ES 写入与恢复扫描。V2 模式缺少 ES 配置时 Server 会拒绝启动；默认 `v1` 行为保持不变。
+`sync-es-index`、`repair-es-published`、`cleanup-es-deleted` 和
+`search-es-published` 已随独立索引发布实现移除。
+
+已有 V2 数据库需应用
+[`20260928_task_indexing_contract.sql`](../docs/migrations/20260928_task_indexing_contract.sql)，
+更新状态/租约约束并移除三张 ES 发布表。该脚本只接受空的 V2 任务/成果及 ES 发布表，
+非空旧数据需单独制定迁移；`init-db` 会拒绝旧任务约束。旧建表 SQL 保留为迁移历史，
+从旧版本升级时需继续执行上述后续脚本。V2 Worker 用量还需随后应用
+[`20260928_v2_worker_runtime.sql`](../docs/migrations/20260928_v2_worker_runtime.sql)。
+迁移不会由应用启动自动执行；新库直接使用当前 ORM 建表。
+
+ES mapping 合同升级为 `anivag-video-chunk-es-4`，旧物理索引无法通过合同检查，
+需另行重建。当前初始化命令不执行数据迁移。`sync-index` 与 `reconcile-index` 仍是
+V1/Qdrant 专用命令；`search` 和 `rebuild-index` 接受 `--execution-mode v1|v2`。V2
+`rebuild-index` 必须指定当前 `--video-parse-task-id`，只重置该任务的索引阶段，不直接创建
+ES/Qdrant 客户端。API/Chat 在 V2 模式使用 ES 三路候选和同版本 MySQL 回源；Web 已接入
+V2 Task 列表、单任务事件及 retry/reparse/delete 门禁。
+
 ## 正式检索闭环
 
-`search` 只接受完整、已进入 `READY` 的 Series Scope。每个 named vector 都把
+Composition Root 按执行模式只装配一个正式检索 Service。V1 `search` 只接受完整、已进入
+`READY` 的 Series Scope。每个 named vector 都把
 `seriesId` 的 Qdrant filter 放在 TopK 查询内执行；Transcript-enabled 调用同时从当前
 READY + SYNCED + UPSERT Scope 读取原始 ASR，通过规范化连续短语匹配形成第三份排行榜。
 随后由 Engine 做确定性 Weighted RRF，并保留 Transcript/Text/Vision 各自的 rank 与
 score。最终 `videoChunkId[]` 通过一条联表 SQL 同时 Hydrate
 Evidence 和当前 Index Sync revision，若发现 Qdrant 孤儿 Point、旧 revision、跨 Series/
 Video 或 payload 契约不一致，会明确抛出一致性错误，不会静默丢弃。
+
+V2 只选择每个 Video 最新、未删除且 `COMPLETE` 的 VideoParseTask，并用 ES lexical /
+semantic / vision 三路候选调用 Engine 的 versioned fusion。MySQL 回源逐项核对 task、
+content version、index generation、source/projection revision、retrieval contract 与两个
+encoder identity；任一候选不一致即 fail closed。Series 中只有部分 Video 满足条件时，
+结果明确返回 `partial=true`、实际 `searchedVideoIds` 和 `warnings`，不会把尚未完成或失败
+任务的旧版本静默纳入。
 
 ```bash
 uv run python -m server.cli search \
@@ -411,8 +459,9 @@ uv run python -m server.cli search \
   --top-k 5
 ```
 
-多 Series 检索时重复传入 `--series-id`。CLI 与普通 `/api/search` 默认保持 Transcript
-关闭、Text/Vision `1:1` 权重；Query Agent 则为每次 Tool Call 自主提交三路连续权重。
+多 Series 检索时重复传入 `--series-id`。V1 CLI 与普通 `/api/search` 默认保持 Transcript
+关闭、Text/Vision `1:1` 权重；V2 使用配置的 Lexical/Text/Vision 默认权重。Query Agent
+按执行模式获得 Transcript 或 Lexical 工具合同，并为每次 Tool Call 自主提交三路连续权重。
 每路 Top 20、`rrfK=60`；`--exact` 只用于向量检索的确定性诊断。输出的每个 `hit` 包含一个
 `VideoChunkCandidate`（融合与三路 rank/score）和一个同 ID 的 `VideoChunkEvidence`（Series、
 集数、时间范围、媒体引用、解析正文，以及生成 Text 向量时使用的完整
