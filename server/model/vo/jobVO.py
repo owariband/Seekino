@@ -96,6 +96,16 @@ class VideoParseTaskView(ContractModel):
     detail: dict
     create_time: UnixTimeMs
     update_time: UnixTimeMs
+    workspace_id: str | None = None
+    series_id: str | None = None
+    series_name: str | None = None
+    episode_order: int | None = Field(default=None, gt=0)
+    original_filename: str | None = None
+    upload_session_id: str | None = None
+    duration_seconds: int | None = Field(default=None, gt=0)
+    can_retry: bool = False
+    can_reparse: bool = False
+    can_delete: bool = False
 
 
 class JobCounts(ContractModel):

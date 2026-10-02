@@ -13,8 +13,10 @@ from sqlalchemy import (
     JSON,
     String,
     UniqueConstraint,
+    cast,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql.expression import Grouping
 
 from ..database import Base
 from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampedRecord
@@ -70,15 +72,6 @@ class AgentMessageRecord(TimestampedRecord, Base):
             "sequence_no",
             name="uq_agent_message_conversation_sequence",
         ),
-        UniqueConstraint(
-            "conversation_id",
-            "idempotency_key",
-            name="uq_agent_message_conversation_idempotency",
-        ),
-        UniqueConstraint(
-            "reply_to_message_id",
-            name="uq_agent_message_reply_to_message",
-        ),
         CheckConstraint(
             "sequence_no >= 0",
             name="ck_agent_message_sequence",
@@ -121,51 +114,27 @@ class AgentMessageRecord(TimestampedRecord, Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     reference: Mapped[dict[str, str] | None] = mapped_column(JSON)
     extra_context: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     content: Mapped[str | None] = mapped_column(LONG_TEXT)
     series_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     model_name: Mapped[str | None] = mapped_column(String(255))
-    idempotency_key: Mapped[str | None] = mapped_column(String(128))
     requested_top_k: Mapped[int | None] = mapped_column(Integer)
     requested_run_options: Mapped[dict[str, int] | None] = mapped_column(JSON)
     requested_series_ids: Mapped[list[str] | None] = mapped_column(JSON)
-    reply_to_message_id: Mapped[str | None] = mapped_column(
-        ForeignKey("agent_message.message_id", ondelete="CASCADE")
-    )
-    retrieval_query: Mapped[str | None] = mapped_column(LONG_TEXT)
     search_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
     last_error_code: Mapped[str | None] = mapped_column(String(64))
     last_error_message: Mapped[str | None] = mapped_column(LONG_TEXT)
-    timing: Mapped[AgentMessageTimingRecord | None] = relationship(
-        back_populates="message",
-        cascade="all, delete-orphan",
-        lazy="selectin",
-        uselist=False,
-    )
 
 
-class AgentMessageTimingRecord(Base):
-    __tablename__ = "agent_message_timing"
-    __table_args__ = (
-        CheckConstraint(
-            "total_duration_ms IS NULL OR total_duration_ms >= 0",
-            name="ck_agent_message_timing_total_duration",
-        ),
-        MYSQL_TABLE_OPTIONS,
-    )
-
-    message_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_message.message_id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    started_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-    )
-    total_duration_ms: Mapped[int | None] = mapped_column(BigInteger)
-    stages: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON,
-        nullable=False,
-        default=list,
-    )
-    message: Mapped[AgentMessageRecord] = relationship(back_populates="timing")
+AGENT_MESSAGE_IDEMPOTENCY_KEY = cast(
+    AgentMessageRecord.detail[("request", "idempotencyKey")].as_string(),
+    String(128),
+)
+Index(
+    "uq_agent_message_conversation_idempotency",
+    AgentMessageRecord.conversation_id,
+    # MySQL requires parentheses around a functional key part.
+    Grouping(AGENT_MESSAGE_IDEMPOTENCY_KEY),
+    unique=True,
+)

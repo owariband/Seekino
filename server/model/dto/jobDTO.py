@@ -67,6 +67,24 @@ class VideoParseTaskState:
 
 
 @dataclass(frozen=True, slots=True)
+class VideoParseTaskDetail:
+    task: VideoParseTaskState
+    workspace_id: str
+    series_id: str
+    series_name: str
+    episode_order: int
+    original_filename: str
+    duration_seconds: int
+    upload_session_id: str | None
+    is_latest: bool
+    has_active_prefix_lease: bool = False
+    has_active_prefix_suffix_lease: bool = False
+    has_active_execution_lease: bool = False
+    has_active_deletion_lease: bool = False
+    pending_takeover_enabled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class VideoParseTaskInputState:
     task: VideoParseTaskState
     series_id: str

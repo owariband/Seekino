@@ -37,7 +37,6 @@ class SchemaUpgradeRequiredError(RuntimeError):
 _UNIX_TIME_MS_COLUMNS = {
     "agent_conversation": {"last_message_at", "created_at", "updated_at"},
     "agent_message": {"created_at", "updated_at"},
-    "agent_message_timing": {"started_at"},
     "context_snapshot": {"created_at"},
     "index_sync_intent": {"available_at", "synced_at", "created_at", "updated_at"},
     "series": {"created_at", "updated_at"},
@@ -297,6 +296,45 @@ def create_schema(engine: Engine) -> None:
             "legacy Agent scope schema requires a controlled Agent "
             f"message-scope migration before init-db; found: {found}"
         )
+
+    legacy_message_timing: set[str] = set()
+    if "agent_message_timing" in existing_tables:
+        legacy_message_timing.add("agent_message_timing")
+    if "agent_message" in existing_tables and "detail" not in message_columns:
+        legacy_message_timing.add("agent_message missing detail")
+    if legacy_message_timing:
+        found = ", ".join(sorted(legacy_message_timing))
+        raise SchemaUpgradeRequiredError(
+            "legacy Agent message timing schema requires a controlled "
+            f"migration before init-db; found: {found}"
+        )
+
+    if "agent_message" in existing_tables:
+        legacy_message_columns = {
+            "idempotency_key", "reply_to_message_id", "retrieval_query",
+        }.intersection(message_columns)
+        if legacy_message_columns:
+            found = ", ".join(
+                f"agent_message.{name}" for name in sorted(legacy_message_columns)
+            )
+            raise SchemaUpgradeRequiredError(
+                "legacy Agent message columns require a controlled migration "
+                f"before init-db; found: {found}"
+            )
+        if engine.dialect.name == "mysql":
+            idempotency_index = next(
+                (
+                    index
+                    for index in inspector.get_indexes("agent_message")
+                    if index["name"] == "uq_agent_message_conversation_idempotency"
+                ),
+                None,
+            )
+            if idempotency_index is None or not idempotency_index["unique"]:
+                raise SchemaUpgradeRequiredError(
+                    "agent_message requires the unique detail request "
+                    "idempotency index before init-db"
+                )
 
     missing_view_columns: set[str] = set()
     for table_name, required_columns in {

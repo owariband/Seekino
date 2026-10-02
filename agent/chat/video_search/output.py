@@ -57,7 +57,6 @@ def bind_draft(
     # Later calls supersede the same chunk; every value still comes from a real call.
     by_id: dict[str, VideoChunkSearchHit] = {}
     sources: dict[str, int] = {}
-    query_by_id: dict[str, str] = {}
     last_query = ""
     searched_video_ids: set[str] = set()
     scope_recorded = True
@@ -78,7 +77,6 @@ def bind_draft(
                 video_chunk_id = hit.candidate.video_chunk_id
                 by_id[video_chunk_id] = hit.model_copy(deep=True)
                 sources[video_chunk_id] = number
-                query_by_id[video_chunk_id] = call.query
     if not last_query:
         raise AgentModelInvocationError("First Query turn must retrieve real evidence")
     selected_ranges = []
@@ -96,12 +94,7 @@ def bind_draft(
         by_id[item.video_chunk_id].model_copy(deep=True)
         for item in selected_ranges
     ]
-    # For a union of searches, per-chunk source turns and full calls retain provenance.
-    # The public query is the actual last source query of the ordered selection.
-    selected_query = (
-        query_by_id[selected_ranges[-1].video_chunk_id]
-        if selected_ranges else last_query
-    )
+    # Per-chunk source turns and individual calls retain multi-query provenance.
     available = VideoChunkSearchResult(
         query=last_query, series_ids=list(inputs["series_ids"]),
         agent_reply=AgentReply(message="实际检索证据。", result_count=len(by_id)),
@@ -110,7 +103,7 @@ def bind_draft(
         partial=partial, warnings=list(dict.fromkeys(warnings)),
     )
     bound = VideoChunkSearchResult(
-        query=selected_query, series_ids=list(inputs["series_ids"]),
+        query=last_query, series_ids=list(inputs["series_ids"]),
         agent_reply=AgentReply(message=draft.message, result_count=len(selected)), hits=selected,
         searched_video_ids=available.searched_video_ids,
         partial=available.partial, warnings=available.warnings,
@@ -157,7 +150,6 @@ def build_chat_output(
             )
         )
     return AgentFinalOutput(
-        query=draft.query,
         series_ids=list(draft.series_ids),
         agent_reply=AgentReply(
             message=rendered.answer_markdown,

@@ -48,6 +48,8 @@ def _add_prefix_task(
     compact_enabled: bool = True,
     lease_owner: str | None = None,
     lease_expire_time_ms: int | None = None,
+    status: str = "COMPLETE",
+    version: int = 1,
 ) -> str:
     task_id = str(uuid4())
     now = now_utc()
@@ -55,10 +57,10 @@ def _add_prefix_task(
         id=task_id,
         video_id=video_id,
         pipeline_version="video-parse-v2",
-        status="COMPLETE",
+        status=status,
         parse_config={"compact_enabled": compact_enabled},
         chunk_count=1,
-        version=1,
+        version=version,
         next_execute_time=now,
         attempt_count=1,
         max_attempts=3,
@@ -141,6 +143,40 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
     assert missing.playback_status == "MISSING"
     assert missing.playback_url is None
     assert missing.last_error.code == "MEDIA_MISSING"
+
+
+def test_v2_library_status_uses_latest_video_parse_task(repository, prepared_import):
+    engine, videos = repository
+    report = videos.import_video_parse(prepared_import)
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        _add_prefix_task(session, video_id=report.video_id)
+    library = LibraryService(
+        LibraryRepository(factory, execution_mode="v2")
+    )
+
+    ready = library.get_series(report.series_id, workspace_id="local-default")
+    assert ready.status == "READY"
+    assert ready.ready_video_count == 1
+    assert ready.videos[0].index_status == VideoIndexStatus.READY
+    assert ready.videos[0].parse_status == "COMPLETE"
+
+    with factory.begin() as session:
+        _add_prefix_task(
+            session,
+            video_id=report.video_id,
+            status="PENDING",
+            version=2,
+        )
+
+    reparsing = library.get_series(
+        report.series_id,
+        workspace_id="local-default",
+    )
+    assert reparsing.status == "INDEXING"
+    assert reparsing.ready_video_count == 0
+    assert reparsing.videos[0].index_status == VideoIndexStatus.NOT_READY
+    assert reparsing.videos[0].parse_status == "PENDING"
 
 
 def test_latest_job_failure_and_index_error_are_actual_and_workspace_scoped(repository, prepared_import):

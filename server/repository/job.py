@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from sqlalchemy import exists, func, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import aliased, Session, sessionmaker
 
 from ..model.dto.jobDTO import (
     ParseJobLease,
     ParseJobState,
     ParseJobSummaryState,
+    VideoParseTaskDetail,
     VideoParseTaskInputState,
     VideoParseTaskState,
     VideoChunkCheckpointState,
 )
 from ..model.job import (
+    ChunkParseTaskRecord,
+    IntervalParseTaskRecord,
     ParseJobStage,
     ParseJobStatus,
     SeriesParseJobRecord,
@@ -23,7 +26,7 @@ from ..model.job_progress import calculate_checkpoint_progress
 from ..model.upload import UploadSessionRecord, UploadSessionStatus
 from ..model.video import SeriesRecord, VideoRecord
 from ..mq.contracts import ParseJobLeaseLostError
-from ..utils.time import now_unix_time_ms
+from ..utils.time import now_unix_time_ms, unix_time_ms_to_datetime
 from ..utils.validation import require_nonempty_text
 
 
@@ -219,6 +222,181 @@ class ParseJobRepository:
             ).all()
             return [self._video_parse_task_state(record) for record in records]
 
+    def get_video_parse_task_detail(
+        self,
+        video_parse_task_id: str,
+        *,
+        workspace_id: str,
+    ) -> VideoParseTaskDetail:
+        """Read one V2 task with the public library context used by job views."""
+
+        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        with self._session_factory() as session:
+            upload_session_id = self._video_parse_upload_session_id()
+            is_latest = self._video_parse_task_is_latest()
+            row = session.execute(
+                select(
+                    VideoParseTaskRecord,
+                    SeriesRecord.workspace_id,
+                    SeriesRecord.series_id,
+                    SeriesRecord.name,
+                    VideoRecord.episode_order,
+                    VideoRecord.original_filename,
+                    VideoRecord.duration_seconds,
+                    upload_session_id,
+                    is_latest,
+                )
+                .join(
+                    VideoRecord,
+                    VideoRecord.video_id == VideoParseTaskRecord.video_id,
+                )
+                .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
+                .where(
+                    VideoParseTaskRecord.id == video_parse_task_id,
+                    VideoParseTaskRecord.is_deleted.is_(False),
+                    SeriesRecord.workspace_id == normalized_workspace,
+                )
+            ).one_or_none()
+            if row is None:
+                raise ParseJobNotFoundError(
+                    f"videoParseTaskId {video_parse_task_id!r} does not exist"
+                )
+            observed_at_ms = now_unix_time_ms()
+            active_prefix_max = self._active_prefix_max_episode_by_series(
+                session,
+                (row[2],),
+                observed_at_ms=observed_at_ms,
+            )
+            active_execution_task_ids = self._active_execution_task_ids(
+                session,
+                (row[0].id,),
+                observed_at_ms=observed_at_ms,
+            )
+            deletion_fenced_video_ids = self._deletion_fenced_video_ids(
+                session,
+                (row[0].video_id,),
+                observed_at_ms=observed_at_ms,
+            )
+            return self._video_parse_task_detail(
+                row,
+                active_prefix_max_episode=active_prefix_max.get(row[2]),
+                has_active_execution_lease=row[0].id in active_execution_task_ids,
+                has_active_deletion_lease=(
+                    row[0].video_id in deletion_fenced_video_ids
+                ),
+                observed_at_ms=observed_at_ms,
+            )
+
+    def list_video_parse_tasks_for_workspace(
+        self,
+        workspace_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        series_id: str | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[VideoParseTaskDetail]:
+        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a nonnegative integer")
+        with self._session_factory() as session:
+            upload_session_id = self._video_parse_upload_session_id()
+            is_latest = self._video_parse_task_is_latest()
+            rows = session.execute(
+                select(
+                    VideoParseTaskRecord,
+                    SeriesRecord.workspace_id,
+                    SeriesRecord.series_id,
+                    SeriesRecord.name,
+                    VideoRecord.episode_order,
+                    VideoRecord.original_filename,
+                    VideoRecord.duration_seconds,
+                    upload_session_id,
+                    is_latest,
+                )
+                .join(
+                    VideoRecord,
+                    VideoRecord.video_id == VideoParseTaskRecord.video_id,
+                )
+                .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
+                .where(
+                    *self._video_parse_task_workspace_filters(
+                        normalized_workspace,
+                        series_id=series_id,
+                        statuses=statuses,
+                    )
+                )
+                .order_by(
+                    VideoParseTaskRecord.create_time.desc(),
+                    VideoParseTaskRecord.id.desc(),
+                )
+                .limit(limit)
+                .offset(offset)
+            ).all()
+            observed_at_ms = now_unix_time_ms()
+            active_prefix_max = self._active_prefix_max_episode_by_series(
+                session,
+                tuple({row[2] for row in rows}),
+                observed_at_ms=observed_at_ms,
+            )
+            active_execution_task_ids = self._active_execution_task_ids(
+                session,
+                tuple(row[0].id for row in rows),
+                observed_at_ms=observed_at_ms,
+            )
+            deletion_fenced_video_ids = self._deletion_fenced_video_ids(
+                session,
+                tuple({row[0].video_id for row in rows}),
+                observed_at_ms=observed_at_ms,
+            )
+            return [
+                self._video_parse_task_detail(
+                    row,
+                    active_prefix_max_episode=active_prefix_max.get(row[2]),
+                    has_active_execution_lease=(
+                        row[0].id in active_execution_task_ids
+                    ),
+                    has_active_deletion_lease=(
+                        row[0].video_id in deletion_fenced_video_ids
+                    ),
+                    observed_at_ms=observed_at_ms,
+                )
+                for row in rows
+            ]
+
+    def count_video_parse_tasks_for_workspace(
+        self,
+        workspace_id: str,
+        *,
+        series_id: str | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> int:
+        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        with self._session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count(VideoParseTaskRecord.id))
+                    .join(
+                        VideoRecord,
+                        VideoRecord.video_id == VideoParseTaskRecord.video_id,
+                    )
+                    .join(
+                        SeriesRecord,
+                        SeriesRecord.series_id == VideoRecord.series_id,
+                    )
+                    .where(
+                        *self._video_parse_task_workspace_filters(
+                            normalized_workspace,
+                            series_id=series_id,
+                            statuses=statuses,
+                        )
+                    )
+                )
+                or 0
+            )
+
     def list_for_workspace(
         self,
         workspace_id: str,
@@ -348,6 +526,51 @@ class ParseJobRepository:
         if statuses is not None:
             filters.append(SeriesParseJobRecord.status.in_(statuses))
         return filters
+
+    @staticmethod
+    def _video_parse_task_workspace_filters(
+        workspace_id: str,
+        *,
+        series_id: str | None,
+        statuses: tuple[str, ...] | None,
+    ) -> list:
+        filters = [
+            SeriesRecord.workspace_id == workspace_id,
+            VideoParseTaskRecord.is_deleted.is_(False),
+        ]
+        if series_id is not None:
+            filters.append(VideoRecord.series_id == series_id)
+        if statuses is not None:
+            filters.append(VideoParseTaskRecord.status.in_(statuses))
+        return filters
+
+    @staticmethod
+    def _video_parse_upload_session_id():
+        return (
+            select(UploadSessionRecord.upload_session_id)
+            .where(
+                UploadSessionRecord.video_id == VideoParseTaskRecord.video_id,
+                UploadSessionRecord.status == UploadSessionStatus.COMPLETED.value,
+            )
+            .order_by(
+                UploadSessionRecord.created_at,
+                UploadSessionRecord.upload_session_id,
+            )
+            .limit(1)
+            .correlate(VideoParseTaskRecord)
+            .scalar_subquery()
+        )
+
+    @staticmethod
+    def _video_parse_task_is_latest():
+        newer_task = aliased(VideoParseTaskRecord)
+        return ~exists(
+            select(newer_task.id).where(
+                newer_task.video_id == VideoParseTaskRecord.video_id,
+                newer_task.is_deleted.is_(False),
+                newer_task.version > VideoParseTaskRecord.version,
+            )
+        ).correlate(VideoParseTaskRecord)
 
     def update_progress(
         self,
@@ -637,6 +860,155 @@ class ParseJobRepository:
         )
 
     @staticmethod
+    def _active_prefix_max_episode_by_series(
+        session: Session,
+        series_ids: tuple[str, ...],
+        *,
+        observed_at_ms: int,
+    ) -> dict[str, int]:
+        if not series_ids:
+            return {}
+        rows = session.execute(
+            select(
+                VideoParseTaskRecord,
+                VideoRecord.series_id,
+                VideoRecord.episode_order,
+            )
+            .join(
+                VideoRecord,
+                VideoRecord.video_id == VideoParseTaskRecord.video_id,
+            )
+            .where(
+                VideoRecord.series_id.in_(series_ids),
+                VideoParseTaskRecord.is_deleted.is_(False),
+            )
+            .order_by(
+                VideoParseTaskRecord.video_id,
+                VideoParseTaskRecord.version.desc(),
+                VideoParseTaskRecord.id.desc(),
+            )
+        ).all()
+        latest_by_video: dict[str, tuple[VideoParseTaskRecord, str, int]] = {}
+        for task, series_id, episode_order in rows:
+            latest_by_video.setdefault(
+                task.video_id,
+                (task, series_id, episode_order),
+            )
+        result: dict[str, int] = {}
+        for task, series_id, episode_order in latest_by_video.values():
+            if not _has_active_prefix_lease(task, now_ms=observed_at_ms):
+                continue
+            result[series_id] = max(result.get(series_id, 0), episode_order)
+        return result
+
+    @staticmethod
+    def _active_execution_task_ids(
+        session: Session,
+        task_ids: tuple[str, ...],
+        *,
+        observed_at_ms: int,
+    ) -> set[str]:
+        if not task_ids:
+            return set()
+        observed_at = unix_time_ms_to_datetime(observed_at_ms)
+        active_chunks = session.scalars(
+            select(ChunkParseTaskRecord.video_parse_task_id).where(
+                ChunkParseTaskRecord.video_parse_task_id.in_(task_ids),
+                ChunkParseTaskRecord.lease_owner.is_not(None),
+                ChunkParseTaskRecord.lease_expire_time > observed_at,
+            )
+        )
+        active_intervals = session.scalars(
+            select(IntervalParseTaskRecord.video_parse_task_id).where(
+                IntervalParseTaskRecord.video_parse_task_id.in_(task_ids),
+                IntervalParseTaskRecord.lease_owner.is_not(None),
+                IntervalParseTaskRecord.lease_expire_time > observed_at,
+            )
+        )
+        return {*active_chunks, *active_intervals}
+
+    @classmethod
+    def _deletion_fenced_video_ids(
+        cls,
+        session: Session,
+        video_ids: tuple[str, ...],
+        *,
+        observed_at_ms: int,
+    ) -> set[str]:
+        if not video_ids:
+            return set()
+        result = set(session.scalars(
+            select(SeriesParseJobRecord.video_id).where(
+                SeriesParseJobRecord.video_id.in_(video_ids),
+                SeriesParseJobRecord.status == ParseJobStatus.RUNNING.value,
+            )
+        ))
+        tasks = list(session.scalars(
+            select(VideoParseTaskRecord).where(
+                VideoParseTaskRecord.video_id.in_(video_ids),
+            )
+        ))
+        observed_at = unix_time_ms_to_datetime(observed_at_ms)
+        for task in tasks:
+            if (
+                task.lease_owner is not None
+                and task.lease_expire_time is not None
+                and task.lease_expire_time > observed_at
+            ) or _has_active_prefix_lease(task, now_ms=observed_at_ms):
+                result.add(task.video_id)
+        video_id_by_task_id = {task.id: task.video_id for task in tasks}
+        for task_id in cls._active_execution_task_ids(
+            session,
+            tuple(video_id_by_task_id),
+            observed_at_ms=observed_at_ms,
+        ):
+            result.add(video_id_by_task_id[task_id])
+        return result
+
+    @classmethod
+    def _video_parse_task_detail(
+        cls,
+        row,
+        *,
+        active_prefix_max_episode: int | None = None,
+        has_active_execution_lease: bool = False,
+        has_active_deletion_lease: bool = False,
+        observed_at_ms: int | None = None,
+    ) -> VideoParseTaskDetail:
+        (
+            record,
+            workspace_id,
+            series_id,
+            series_name,
+            episode_order,
+            original_filename,
+            duration_seconds,
+            upload_session_id,
+            is_latest,
+        ) = row
+        return VideoParseTaskDetail(
+            task=cls._video_parse_task_state(record),
+            workspace_id=workspace_id,
+            series_id=series_id,
+            series_name=series_name,
+            episode_order=episode_order,
+            original_filename=original_filename,
+            duration_seconds=duration_seconds,
+            upload_session_id=upload_session_id,
+            is_latest=bool(is_latest),
+            has_active_prefix_lease=_has_active_prefix_lease(
+                record,
+                now_ms=observed_at_ms,
+            ),
+            has_active_prefix_suffix_lease=(
+                active_prefix_max_episode is not None
+                and active_prefix_max_episode >= episode_order
+            ),
+            has_active_execution_lease=has_active_execution_lease,
+            has_active_deletion_lease=has_active_deletion_lease,
+        )
+
+    @staticmethod
     def _checkpoint_state(
         record: VideoChunkCheckpointRecord,
     ) -> VideoChunkCheckpointState:
@@ -654,6 +1026,25 @@ class ParseJobRepository:
             vision_embedding_artifact_uri=record.vision_embedding_artifact_uri,
             last_error=record.last_error,
         )
+
+
+def _has_active_prefix_lease(
+    record: VideoParseTaskRecord,
+    *,
+    now_ms: int | None = None,
+) -> bool:
+    detail = record.detail
+    runtime = detail.get("_worker_runtime_v2") if isinstance(detail, dict) else None
+    prefix = runtime.get("prefix") if isinstance(runtime, dict) else None
+    if not isinstance(prefix, dict) or prefix.get("lease_owner") is None:
+        return False
+    expires_at_ms = prefix.get("lease_expire_time_ms")
+    return (
+        isinstance(expires_at_ms, int)
+        and not isinstance(expires_at_ms, bool)
+        and expires_at_ms > (now_unix_time_ms() if now_ms is None else now_ms)
+    )
+
 
 def _validate_checkpoint_bounds(
     checkpoint: VideoChunkCheckpointState,

@@ -10,7 +10,7 @@ from agent.chat.video_search.state import RetrievalTraceEntry
 from ...schema import ContractModel
 from ..dto.agentDTO import EvidenceReference
 from .commonVO import Failure, UnixTimeMs
-from .searchVO import SearchEvidenceView
+from .searchVO import SearchEvidenceFieldsView
 
 
 class AgentIntegerOptionView(ContractModel):
@@ -81,7 +81,7 @@ class AgentConversationView(ContractModel):
     updated_at: UnixTimeMs
 
 
-class AgentSearchEvidenceView(SearchEvidenceView):
+class AgentSearchEvidenceView(SearchEvidenceFieldsView):
     retrieval_trace: list[RetrievalTraceEntry]
 
 
@@ -97,8 +97,6 @@ class AgentMessageView(ContractModel):
     reference: EvidenceReference | None
     content: str | None
     model_name: str | None
-    reply_to_message_id: str | None
-    retrieval_query: str | None
     search_result: AgentSearchEvidenceView | None
     render_blocks: list[AgentRenderBlockView] = Field(default_factory=list)
     timing: AgentMessageTimingView | None

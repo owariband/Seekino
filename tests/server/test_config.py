@@ -97,6 +97,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.sse.keepalive_interval_seconds == 15.0
     assert settings.retrieval.channel_top_k == 20
     assert settings.retrieval.rrf_k == 60
+    assert settings.retrieval.lexical_weight == 1.0
     assert settings.retrieval.text_weight == settings.retrieval.vision_weight == 1.0
     assert settings.database_pool_recycle_seconds == 3600
     assert settings.video_embedding_model is None
@@ -228,6 +229,7 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
         "ANIVAG_SSE_KEEPALIVE_SECONDS": "8",
         "ANIVAG_RETRIEVAL_CHANNEL_TOP_K": "32",
         "ANIVAG_RETRIEVAL_RRF_K": "45",
+        "ANIVAG_RETRIEVAL_LEXICAL_WEIGHT": "2.0",
         "ANIVAG_RETRIEVAL_TEXT_WEIGHT": "0",
         "ANIVAG_RETRIEVAL_VISION_WEIGHT": "1.5",
         "ANIVAG_DATABASE_POOL_RECYCLE_SECONDS": "1200",
@@ -260,6 +262,7 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
     assert settings.sse.keepalive_interval_seconds == 8
     assert settings.retrieval.channel_top_k == 32
     assert settings.retrieval.rrf_k == 45
+    assert settings.retrieval.lexical_weight == 2.0
     assert settings.retrieval.text_weight == 0
     assert settings.retrieval.vision_weight == 1.5
     assert settings.database_pool_recycle_seconds == 1200
@@ -327,6 +330,7 @@ def test_server_settings_accepts_legacy_worker_environment(monkeypatch) -> None:
         ("ANIVAG_VIDEO_EMBEDDING_FPS", "inf"),
         ("ANIVAG_RETRIEVAL_CHANNEL_TOP_K", "0"),
         ("ANIVAG_RETRIEVAL_RRF_K", "-1"),
+        ("ANIVAG_RETRIEVAL_LEXICAL_WEIGHT", "nan"),
         ("ANIVAG_RETRIEVAL_TEXT_WEIGHT", "nan"),
         ("ANIVAG_RETRIEVAL_VISION_WEIGHT", "-1"),
         ("ANIVAG_DATABASE_POOL_RECYCLE_SECONDS", "0"),
@@ -363,8 +367,9 @@ def test_server_settings_rejects_invalid_mq_and_index_retry_ranges(monkeypatch):
         ServerSettings.from_environment()
 
 
-def test_server_settings_reject_disabling_both_retrieval_channels(monkeypatch):
+def test_server_settings_reject_disabling_all_retrieval_channels(monkeypatch):
     _clean_anivag_environment(monkeypatch)
+    monkeypatch.setenv("ANIVAG_RETRIEVAL_LEXICAL_WEIGHT", "0")
     monkeypatch.setenv("ANIVAG_RETRIEVAL_TEXT_WEIGHT", "0")
     monkeypatch.setenv("ANIVAG_RETRIEVAL_VISION_WEIGHT", "0")
 

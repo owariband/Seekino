@@ -7,13 +7,19 @@ from uuid import uuid4
 
 import pytest
 
-from engine.retrieval.index_projection import ChunkIndexProjection, LexicalField
+from engine.retrieval import (
+    ChunkIndexProjection,
+    LexicalField,
+    VideoChunkIndexDocument,
+    compute_index_projection_revision,
+)
 from server.storage.elasticsearch import (
     ElasticsearchBulkWriteError,
     ElasticsearchDocumentConsistencyError,
     ElasticsearchIndexSchemaError,
     ElasticsearchVideoChunkStore,
-    VideoChunkIndexDocument,
+    _external_version,
+    document_id,
 )
 
 
@@ -90,31 +96,41 @@ def store(client):
 
 
 def _document(ids, *, question: str = "银河蓝松饼行动"):
+    projection = ChunkIndexProjection(
+        semantic_text="千早爱音说我没事",
+        lexical_fields=[
+            LexicalField(
+                field="dialogue", raw_text="我没事。", language="zh-Hans",
+                role="ORIGINAL", speaker="千早爱音", start_seconds=12,
+                end_seconds=15, timeline_index=3,
+            ),
+            LexicalField(
+                field="questions", raw_text=question, language="zh-Hans",
+                start_seconds=10, end_seconds=20, enrichment_index=0,
+            ),
+        ],
+    )
     return VideoChunkIndexDocument(
         workspace_id="local-default", series_id=ids.series,
         video_id=ids.video, video_chunk_id=ids.chunk,
         parse_task_id=ids.parse_task,
         content_version=2, index_generation=1, source_revision="revision-a",
+        projection_revision=compute_index_projection_revision(projection),
         retrieval_contract_id="retrieval-v1",
         semantic_encoder_id="semantic-model-v1", vision_encoder_id="vision-model-v1",
         semantic_input_sha256="a" * 64, vision_input_sha256="b" * 64,
         chunk_start_seconds=10, chunk_end_seconds=20,
-        projection=ChunkIndexProjection(
-            semantic_text="千早爱音说我没事",
-            lexical_fields=[
-                LexicalField(
-                    field="dialogue", raw_text="我没事。", language="zh-Hans",
-                    role="ORIGINAL", speaker="千早爱音", start_seconds=12,
-                    end_seconds=15, timeline_index=3,
-                ),
-                LexicalField(
-                    field="questions", raw_text=question, language="zh-Hans",
-                    start_seconds=10, end_seconds=20, enrichment_index=0,
-                ),
-            ],
-        ),
+        projection=projection,
         semantic_vector=[1.0, 0.0], vision_vector=[0.0, 1.0],
     )
+
+
+def _id(document: VideoChunkIndexDocument) -> str:
+    return document_id(document.parse_task_id, document.video_chunk_id)
+
+
+def _version(document: VideoChunkIndexDocument) -> int:
+    return _external_version(document.content_version, document.index_generation)
 
 
 def _scope(ids):
@@ -127,7 +143,7 @@ def _scope(ids):
 
 def _hit(store, document, *, inner=None):
     hit = {
-        "_id": document.document_id,
+        "_id": _id(document),
         "_score": 1.5,
         "_source": {key: value for key, value in store._document_source(document).items()
                     if key not in {"lexical_fields", "semantic_text", "semantic_vector", "vision_vector"}},
@@ -193,19 +209,19 @@ def test_delete_waits_for_refresh_and_verifies_storage_and_search_absence(
     )
     assert client.deleted[-1] == {
         "index": store.index_name,
-        "id": document.document_id,
+        "id": _id(document),
         "refresh": "wait_for",
     }
-    client.mget_response = {"docs": [{"_id": document.document_id, "found": False}]}
+    client.mget_response = {"docs": [{"_id": _id(document), "found": False}]}
     client.search_response = {"hits": {"hits": []}}
     assert store.verify_absent([(IDs.parse_task, IDs.chunk)])
-    assert client.last_search["query"] == {"ids": {"values": [document.document_id]}}
+    assert client.last_search["query"] == {"ids": {"values": [_id(document)]}}
 
-    client.search_response = {"hits": {"hits": [{"_id": document.document_id}]}}
+    client.search_response = {"hits": {"hits": [{"_id": _id(document)}]}}
     assert not store.verify_absent([(IDs.parse_task, IDs.chunk)])
     client.search_response = {"hits": {"hits": []}}
     client.mget_response = {"docs": [{
-        "_id": document.document_id, "found": True,
+        "_id": _id(document), "found": True,
         "_source": store._document_source(document),
     }]}
     assert not store.verify_absent([(IDs.parse_task, IDs.chunk)])
@@ -216,7 +232,7 @@ def test_bulk_delete_accepts_absent_documents_and_reports_item_failures(
 ):
     store.ensure_index()
     second_chunk = str(uuid4())
-    first_id = _document(IDs).document_id
+    first_id = _id(_document(IDs))
     second_id = f"{IDs.parse_task}:{second_chunk}"
     client.bulk_response = {"errors": False, "items": [
         {"delete": {"_id": first_id, "status": 200}},
@@ -252,40 +268,40 @@ def test_bulk_checks_every_item_and_does_not_assume_query_visibility(store, clie
     conflict = _document(SimpleNamespace(**{**vars(IDs), "chunk": str(uuid4())}))
     rejected = _document(SimpleNamespace(**{**vars(IDs), "chunk": str(uuid4())}))
     client.bulk_response = {"errors": True, "items": [
-        {"index": {"_id": document.document_id, "status": 201}},
+        {"index": {"_id": _id(document), "status": 201}},
         {"index": {
-            "_id": conflict.document_id, "status": 409,
+            "_id": _id(conflict), "status": 409,
             "error": {"type": "version_conflict_engine_exception"},
         }},
         {"index": {
-            "_id": rejected.document_id, "status": 429,
+            "_id": _id(rejected), "status": 429,
             "error": {"type": "rejected"},
         }},
     ]}
     with pytest.raises(ElasticsearchBulkWriteError) as caught:
         store.bulk_upsert([document, conflict, rejected])
     assert caught.value.failures == {
-        conflict.document_id: "{'type': 'version_conflict_engine_exception'}",
-        rejected.document_id: "{'type': 'rejected'}",
+        _id(conflict): "{'type': 'version_conflict_engine_exception'}",
+        _id(rejected): "{'type': 'rejected'}",
     }
     assert caught.value.status_codes == {
-        conflict.document_id: 409,
-        rejected.document_id: 429,
+        _id(conflict): 409,
+        _id(rejected): 429,
     }
-    assert caught.value.version_conflict_ids == {conflict.document_id}
+    assert caught.value.version_conflict_ids == {_id(conflict)}
     assert client.last_bulk["refresh"] is False
-    assert client.last_bulk["operations"][0]["index"]["_id"] == document.document_id
+    assert client.last_bulk["operations"][0]["index"]["_id"] == _id(document)
     assert client.last_bulk["operations"][0]["index"]["version"] == (1 << 31) | 2
     assert client.last_bulk["operations"][0]["index"]["version_type"] == "external"
     assert store.verify_ready([document]) is False
 
     client.bulk_response = {"errors": False, "items": [
-        {"index": {"_id": document.document_id, "status": 200}},
+        {"index": {"_id": _id(document), "status": 200}},
     ]}
-    assert store.bulk_upsert([document], refresh="wait_for") == [document.document_id]
+    assert store.bulk_upsert([document], refresh="wait_for") == [_id(document)]
     assert client.last_bulk["refresh"] == "wait_for"
     client.search_response = {"hits": {"hits": [{
-        "_id": document.document_id, "_source": store._document_source(document)
+        "_id": _id(document), "_source": store._document_source(document)
     }]}}
     assert store.verify_ready([document]) is True
 
@@ -313,13 +329,13 @@ def test_strict_external_version_rejects_a_lower_generation(store, client, IDs):
         _document(IDs), index_generation=2, content_version=1
     )
     client.bulk_response = {"errors": False, "items": [
-        {"index": {"_id": newer_generation.document_id, "status": 200}},
+        {"index": {"_id": _id(newer_generation), "status": 200}},
     ]}
 
     store.bulk_upsert([newer_generation])
     new_version = client.last_bulk["operations"][0]["index"]["version"]
     client.bulk_response = {"errors": True, "items": [{"index": {
-        "_id": older_generation.document_id,
+        "_id": _id(older_generation),
         "status": 409,
         "error": {"type": "version_conflict_engine_exception"},
     }}]}
@@ -328,34 +344,34 @@ def test_strict_external_version_rejects_a_lower_generation(store, client, IDs):
     old_version = client.last_bulk["operations"][0]["index"]["version"]
 
     assert new_version > old_version
-    assert caught.value.status_codes == {older_generation.document_id: 409}
-    assert caught.value.version_conflict_ids == {older_generation.document_id}
+    assert caught.value.status_codes == {_id(older_generation): 409}
+    assert caught.value.version_conflict_ids == {_id(older_generation)}
 
 
 def test_equal_external_version_conflict_supports_exact_reconciliation(store, client, IDs):
     document = _document(IDs)
     client.bulk_response = {"errors": True, "items": [{"index": {
-        "_id": document.document_id,
+        "_id": _id(document),
         "status": 409,
         "error": {"type": "version_conflict_engine_exception"},
     }}]}
 
     with pytest.raises(ElasticsearchBulkWriteError) as caught:
         store.bulk_upsert([document], refresh="wait_for")
-    assert caught.value.version_conflict_ids == {document.document_id}
+    assert caught.value.version_conflict_ids == {_id(document)}
     assert client.last_bulk["operations"][0]["index"]["version_type"] == "external"
 
     stored_source = store._document_source(document)
     client.mget_response = {"docs": [{
-        "_id": document.document_id, "found": True, "_source": stored_source,
+        "_id": _id(document), "found": True, "_source": stored_source,
     }]}
-    assert store.inspect_exact([document]) == {document.document_id: True}
+    assert store.inspect_exact([document]) == {_id(document): True}
 
     conflicting = replace(
         _document(IDs, question="同版本的不同投影"), source_revision="revision-b",
     )
-    assert conflicting.external_version == document.external_version
-    assert store.inspect_exact([conflicting]) == {document.document_id: False}
+    assert _version(conflicting) == _version(document)
+    assert store.inspect_exact([conflicting]) == {_id(document): False}
 
 
 @pytest.mark.parametrize("field", ["semantic_input_sha256", "vision_input_sha256"])
@@ -364,21 +380,30 @@ def test_bulk_rejects_unproven_embedding_input_hash(store, IDs, field):
         store.bulk_upsert([replace(_document(IDs), **{field: "not-a-digest"})])
 
 
+def test_bulk_rejects_projection_revision_that_differs_from_engine_document(
+    store, IDs,
+):
+    with pytest.raises(ValueError, match="projection_revision"):
+        store.bulk_upsert([
+            replace(_document(IDs), projection_revision="different-projection")
+        ])
+
+
 def test_content_updates_overwrite_the_same_task_chunk_document(store, client, IDs):
     original = _document(IDs)
     updated = replace(
         _document(IDs, question="更新后的检索问题"),
         content_version=3, source_revision="revision-b",
     )
-    assert original.document_id == updated.document_id == f"{IDs.parse_task}:{IDs.chunk}"
+    assert _id(original) == _id(updated) == f"{IDs.parse_task}:{IDs.chunk}"
     client.bulk_response = {"errors": False, "items": [
-        {"index": {"_id": original.document_id, "status": 200}},
+        {"index": {"_id": _id(original), "status": 200}},
     ]}
     store.bulk_upsert([original])
     old_source = client.last_bulk["operations"][1]
     store.bulk_upsert([updated])
     operations = client.last_bulk["operations"]
-    assert operations[0]["index"]["_id"] == original.document_id
+    assert operations[0]["index"]["_id"] == _id(original)
     assert operations[0]["index"]["version"] == (1 << 31) | 3
     assert operations[0]["index"]["version_type"] == "external"
     assert operations[1]["content_version"] == 3
@@ -387,7 +412,7 @@ def test_content_updates_overwrite_the_same_task_chunk_document(store, client, I
     assert "index_build_id" not in operations[1]
 
     another_task = replace(updated, parse_task_id=IDs.other_parse_task)
-    assert another_task.document_id != updated.document_id
+    assert _id(another_task) != _id(updated)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -402,7 +427,7 @@ def test_verify_ready_checks_exact_task_revision_and_required_source(
     document = _document(IDs)
     source = store._document_source(document)
     source[field] = value
-    client.search_response = {"hits": {"hits": [{"_id": document.document_id, "_source": source}]}}
+    client.search_response = {"hits": {"hits": [{"_id": _id(document), "_source": source}]}}
     assert store.is_ready([document]) is False
     with pytest.raises(ElasticsearchDocumentConsistencyError, match="differs"):
         store.verify_ready([document])
@@ -418,6 +443,9 @@ def test_lexical_query_preserves_nested_source_and_authorized_task_pair(store, c
     matches = store.search_lexical("银河蓝松饼行动", **_scope(IDs), limit=10)
     assert matches[0].matched_fields == (question,)
     assert matches[0].matched_fields[0].field == "questions"
+    assert matches[0].index_generation == 1
+    assert matches[0].semantic_encoder_id == "semantic-model-v1"
+    assert matches[0].vision_encoder_id == "vision-model-v1"
     nested_query = client.last_search["query"]["bool"]["must"][0]["nested"]
     assert nested_query["path"] == "lexical_fields"
     assert nested_query["inner_hits"]["name"] == "matched_lexical_fields"
@@ -480,7 +508,7 @@ def test_inspect_is_separate_from_query_readiness_and_delete_is_task_scoped(stor
     source = store._document_source(document)
     client.indices.mapping = store._mapping()
     client.mget_response = {"docs": [{
-        "_id": document.document_id, "found": True, "_source": source,
+        "_id": _id(document), "found": True, "_source": source,
     }]}
     state = store.inspect([(IDs.parse_task, IDs.chunk)])[(IDs.parse_task, IDs.chunk)]
     assert state.present and state.semantic_vector_present and state.vision_vector_present
@@ -490,14 +518,14 @@ def test_inspect_is_separate_from_query_readiness_and_delete_is_task_scoped(stor
     assert state.vision_vector == (0.0, 1.0)
     assert store.verify_ready([document]) is False
     store.delete(parse_task_id=IDs.parse_task, video_chunk_id=IDs.chunk)
-    assert client.deleted[0]["id"] == document.document_id
+    assert client.deleted[0]["id"] == _id(document)
 
 
 def test_inspect_does_not_treat_per_document_error_as_absence(store, client, IDs):
     client.indices.mapping = store._mapping()
     document = _document(IDs)
     client.mget_response = {"docs": [{
-        "_id": document.document_id, "found": False,
+        "_id": _id(document), "found": False,
         "error": {"type": "unavailable_shards_exception"},
     }]}
     with pytest.raises(ElasticsearchDocumentConsistencyError, match="read failed"):

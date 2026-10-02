@@ -27,6 +27,17 @@ router.add_api_route(
     response_model=VideoParseTaskView,
 )
 router.add_api_route(
+    "/api/jobs/video-parse/list",
+    jobs.list_video_parse_tasks,
+    methods=["GET"],
+    response_model=Page[VideoParseTaskView],
+)
+router.add_api_route(
+    "/api/jobs/video-parse/events",
+    jobs.stream_video_parse_task_events,
+    methods=["GET"],
+)
+router.add_api_route(
     "/api/jobs/list",
     jobs.list_jobs,
     methods=["GET"],

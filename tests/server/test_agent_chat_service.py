@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field, replace
 from queue import Empty
@@ -10,9 +11,10 @@ from uuid import uuid4
 
 import pytest
 from langchain_core.tools import BaseTool
-from sqlalchemy import event, func, select, text
+from sqlalchemy import delete, event, func, inspect, select, text
 
 from agent.chat.common.errors import AgentContextBudgetError, AgentModelInvocationError
+from agent.chat.common.state import AnswerPhase
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.context import _project_stored_search_result
 from agent.chat.video_search.runtime import AgentRuntime
@@ -25,9 +27,9 @@ from server.database import (
 from server.model.agent import (
     AgentConversationRecord,
     AgentMessageRecord,
-    AgentMessageTimingRecord,
 )
-from server.model.video import SeriesRecord
+from server.model.video import SeriesRecord, VideoChunkInfoRecord
+from server.model.dto.agentDTO import AgentMessageTimingState, AgentStageTimingState
 from server.repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
     AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
@@ -53,16 +55,16 @@ class _RetrievalStub:
         workspace_id,
         series_ids,
         top_k,
-        transcript_weight=None,
+        lexical_weight=None,
         text_weight=None,
         vision_weight=None,
     ):
         if any(
             weight is not None
-            for weight in (transcript_weight, text_weight, vision_weight)
+            for weight in (lexical_weight, text_weight, vision_weight)
         ):
-            assert None not in (transcript_weight, text_weight, vision_weight)
-            assert transcript_weight + text_weight + vision_weight == pytest.approx(1.0)
+            assert None not in (lexical_weight, text_weight, vision_weight)
+            assert lexical_weight + text_weight + vision_weight == pytest.approx(1.0)
         self.calls.append((query, list(series_ids), top_k, workspace_id))
         return VideoChunkSearchResult(
             query=query, series_ids=list(series_ids),
@@ -119,7 +121,7 @@ class _QueryModel:
                 "query": query,
                 "top_k": 8,
                 "channel_weights": {
-                    "transcript": 0.1,
+                    "lexical": 0.1,
                     "semantic": 0.5,
                     "visual": 0.4,
                 },
@@ -236,7 +238,11 @@ def build_service(tmp_path):
         retrieval = _RetrievalStub()
         query, evaluator, chat = query or _QueryModel(), evaluator or _EvaluatorModel(), chat or _ChatModel()
         video_runtime = AgentRuntime(
-            query, evaluator, chat, retrieval.search, **(runtime_kwargs or {}),
+            query,
+            evaluator,
+            chat,
+            retrieval.search,
+            **{"retrieval_channel": "lexical", **(runtime_kwargs or {})},
         )
         runtime = (
             SupervisorRuntime(
@@ -364,7 +370,6 @@ def test_supervisor_chat_without_ready_video_series(build_service):
     assert completed.user_message.series_ids == ()
     assert completed.assistant_message.series_ids == ()
     assert completed.assistant_message.content == "你好，我可以直接回答。"
-    assert completed.assistant_message.retrieval_query is None
     assert completed.assistant_message.search_result is None
     assert _agent_message_view(completed.assistant_message).series_ids == []
     prompt_context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
@@ -504,7 +509,7 @@ def test_query_agent_receives_series_transcript_language_hint(build_service):
 
     context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
     assert context["series_context"][0]["transcriptLanguageHint"] == "ja"
-    assert "Transcript 通道不会翻译 Query" in query.prompts[-1]
+    assert "Lexical 通道不会翻译 Query" in query.prompts[-1]
 
 
 def test_read_only_message_recovery_by_user_assistant_or_request_key(build_service):
@@ -523,8 +528,8 @@ def test_read_only_message_recovery_by_user_assistant_or_request_key(build_servi
         service.get_message(conversation.conversation_id, workspace_id="other-workspace", idempotency_key="message")
 
 
-def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidence_service):
-    service, conversation, _, _, query, *_ = evidence_service
+def test_reference_uses_saved_same_version_evidence_with_ordered_history(evidence_service):
+    service, conversation, _, repository, query, *_ = evidence_service
     selected = list(query.selected_ranges)
     chunk_id, start_seconds, end_seconds = selected[1]
     selected[1] = (chunk_id, start_seconds + 1, end_seconds - 1)
@@ -533,6 +538,10 @@ def test_reference_is_saved_and_loads_real_evidence_with_ordered_history(evidenc
     hits = source.assistant_message.search_result["hits"]
     reference = {"messageId": source.assistant_message.message_id,
                  "videoChunkId": hits[1]["candidate"]["videoChunkId"]}
+    with repository._session_factory.begin() as session:
+        current = session.get(VideoChunkInfoRecord, reference["videoChunkId"])
+        assert current is not None
+        current.context_before_compact = "newer current-version context"
     followup = _send(service, conversation, key="reference", content="这段的前文呢？", reference=reference)
     assert followup.user_message.reference == reference
     assert followup.assistant_message.reference is None
@@ -651,6 +660,7 @@ def test_reference_range_preserves_valid_stored_range_without_warning(caplog):
 ])
 def test_history_video_ranges_preserve_only_valid_stored_blocks(render_blocks, expected):
     result = {
+        "query": "historical single query",
         "hits": [{
             "candidate": {"videoChunkId": "chunk-1", "fusedRank": 1},
             "selectionReason": {},
@@ -660,7 +670,9 @@ def test_history_video_ranges_preserve_only_valid_stored_blocks(render_blocks, e
     if render_blocks is not None:
         result["renderBlocks"] = render_blocks
 
-    assert _project_stored_search_result(result)["videoRanges"] == expected
+    projected = _project_stored_search_result(result)
+    assert "query" not in projected
+    assert projected["videoRanges"] == expected
 
 
 @pytest.mark.parametrize("invalid", ["user-message", "missing-chunk", "other-conversation", "outside-scope"])
@@ -737,9 +749,12 @@ def test_repository_deletes_terminal_conversation_and_returns_snapshot(build_ser
         assert session.scalar(
             select(func.count()).select_from(AgentMessageRecord)
         ) == 2
-        assert session.scalar(
-            select(func.count()).select_from(AgentMessageTimingRecord)
-        ) == 1
+        assistant_detail = session.scalar(
+            select(AgentMessageRecord.detail).where(
+                AgentMessageRecord.role == "ASSISTANT"
+            )
+        )
+        assert assistant_detail["timing"]["totalDurationMs"] is not None
     before = repository.get_conversation(
         conversation.conversation_id,
         "local-default",
@@ -761,9 +776,96 @@ def test_repository_deletes_terminal_conversation_and_returns_snapshot(build_ser
         assert session.scalar(
             select(func.count()).select_from(AgentMessageRecord)
         ) == 0
-        assert session.scalar(
-            select(func.count()).select_from(AgentMessageTimingRecord)
-        ) == 0
+
+
+@pytest.mark.skipif(
+    not os.getenv("ANIVAG_TEST_DATABASE_URL"),
+    reason="ANIVAG_TEST_DATABASE_URL is not configured",
+)
+def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
+    engine = create_database_engine(
+        os.environ["ANIVAG_TEST_DATABASE_URL"],
+        environment=DatabaseEnvironment.TEST,
+    )
+    conversation_id, user_id, assistant_id = (str(uuid4()) for _ in range(3))
+    workspace_id = f"mysql-agent-timing-{uuid4()}"
+    created = False
+    try:
+        create_schema(engine)
+        assert "agent_message_timing" not in inspect(engine).get_table_names()
+        factory = create_session_factory(engine)
+        repository = AgentRepository(factory)
+        repository.create_conversation(
+            conversation_id=conversation_id, workspace_id=workspace_id,
+            title="Timing roundtrip", idempotency_key="conversation",
+        )
+        created = True
+        started_at = 1_700_000_000_000
+        repository.start_message(
+            conversation_id=conversation_id, workspace_id=workspace_id,
+            content="Test timing", model_name="chat-test", requested_top_k=1,
+            requested_run_options={}, idempotency_key="message",
+            series_ids=[], requested_series_ids=[], user_message_id=user_id,
+            assistant_message_id=assistant_id, now=started_at,
+        )
+        with factory() as session:
+            assistant = session.get(AgentMessageRecord, assistant_id)
+            assert assistant.detail == {
+                "timing": {"startedAt": started_at, "totalDurationMs": None, "stages": []}
+            }
+            initial_version = assistant.version
+            initial_updated_at = assistant.updated_at
+
+        partial = AgentMessageTimingState(
+            started_at=started_at, total_duration_ms=None,
+            stages=(AgentStageTimingState(AnswerPhase.QUEUED, 4),),
+        )
+        repository.checkpoint_assistant_message(
+            assistant_id, now=started_at + 4, timing=partial,
+        )
+        with factory() as session:
+            assistant = session.get(AgentMessageRecord, assistant_id)
+            assert assistant.version == initial_version
+            assert assistant.updated_at == initial_updated_at
+            assert assistant.detail["timing"]["stages"] == [
+                {"phase": "QUEUED", "durationMs": 4}
+            ]
+        repository.checkpoint_assistant_message(
+            assistant_id, now=started_at + 4, phase=AnswerPhase.RESPONDING,
+            timing=partial,
+        )
+        with factory() as session:
+            assert session.get(AgentMessageRecord, assistant_id).detail["timing"]["stages"] == [
+                {"phase": "QUEUED", "durationMs": 4}
+            ]
+
+        finished = AgentMessageTimingState(
+            started_at=started_at, total_duration_ms=12,
+            stages=(
+                AgentStageTimingState(AnswerPhase.QUEUED, 4),
+                AgentStageTimingState(AnswerPhase.RESPONDING, 8),
+            ),
+        )
+        result = repository.complete_assistant_message(
+            assistant_id, content="Done",
+            search_result=None, now=started_at + 12, timing=finished,
+        )
+        assert result.timing == finished
+        with factory() as session:
+            assert session.get(AgentMessageRecord, assistant_id).detail == {"timing": {
+                "startedAt": started_at, "totalDurationMs": 12,
+                "stages": [
+                    {"phase": "QUEUED", "durationMs": 4},
+                    {"phase": "RESPONDING", "durationMs": 8},
+                ],
+            }}
+    finally:
+        if created:
+            with factory.begin() as session:
+                session.execute(delete(AgentConversationRecord).where(
+                    AgentConversationRecord.conversation_id == conversation_id
+                ))
+        engine.dispose()
 
 
 def test_service_delete_is_workspace_scoped_and_rejects_processing_answer(build_service):
@@ -827,7 +929,7 @@ def test_conversation_reads_and_execution_do_not_cross_workspaces(build_service)
 
 @pytest.mark.parametrize("second_query", ["补充摔杯子", None])
 def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
-    service, conversation, retrieval, _, query, evaluator, chat = build_service(
+    service, conversation, retrieval, repository, query, evaluator, chat = build_service(
         query=_QueryModel(queries=("第一次改写", second_query)),
         evaluator=_EvaluatorModel(approve_after=2),
     )
@@ -856,6 +958,16 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
         stage.duration_ms for stage in timing.stages
     )
     assert messages[0].timing is None
+    with repository._session_factory() as session:
+        stored = session.get(AgentMessageRecord, messages[1].message_id)
+        assert stored.detail == {"timing": {
+            "startedAt": timing.started_at,
+            "totalDurationMs": timing.total_duration_ms,
+            "stages": [
+                {"phase": stage.phase.value, "durationMs": stage.duration_ms}
+                for stage in timing.stages
+            ],
+        }}
     assert [call[0] for call in retrieval.calls] == ["第一次改写"] + ([second_query] if second_query else [])
     assert evaluator.calls == 2 and len(chat.prompts) == 1
     context = json.loads(query.prompts[1].rsplit("\n\n", 1)[1])
@@ -902,14 +1014,13 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
     assert result.assistant_message.status == "COMPLETED"
     assert observed == [(9, 33, None)]
     with repository._session_factory() as session:
-        user = session.scalar(select(AgentMessageRecord).where(
-            AgentMessageRecord.idempotency_key == "custom-run-options",
-        ))
+        user = session.get(AgentMessageRecord, result.user_message.message_id)
         assert user is not None
         assert user.requested_run_options == {
             "max_model_calls_per_turn": 9,
             "max_tool_calls_per_turn": 33,
         }
+        assert user.detail["request"]["idempotencyKey"] == "custom-run-options"
     service.send_message(
         conversation.conversation_id,
         workspace_id="local-default",
@@ -927,9 +1038,13 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
     assert observed[-2:] == [(6, 24, 0), (6, 24, 100)]
     with repository._session_factory() as session:
         users = session.scalars(select(AgentMessageRecord).where(
-            AgentMessageRecord.idempotency_key.in_(["auto-loop-options", "custom-loop-options"]),
+            AgentMessageRecord.conversation_id == conversation.conversation_id,
+            AgentMessageRecord.role == "USER",
         )).all()
-        snapshots = {user.idempotency_key: user.requested_run_options for user in users}
+        snapshots = {
+            user.detail["request"]["idempotencyKey"]: user.requested_run_options
+            for user in users
+        }
     assert snapshots["auto-loop-options"]["max_loop_turns"] == 0
     assert snapshots["custom-loop-options"]["max_loop_turns"] == 100
     with pytest.raises(AgentConflictError, match="different request fields"):
@@ -1012,7 +1127,6 @@ def test_next_kick_reads_only_completed_conversation_history(build_service):
         "messageId": first.assistant_message.message_id, "status": "COMPLETED",
         "reference": None,
         "searchResult": {
-            "query": first.assistant_message.search_result["query"],
             "seriesIds": first.assistant_message.search_result["seriesIds"],
             "resultCount": 0, "hits": [], "videoRanges": [],
             "partial": False, "warnings": [],
@@ -1151,12 +1265,13 @@ def test_completed_event_observes_committed_snapshot(build_service):
     assert [event["type"] for event in events].count("answer.evidence") == 1
     evidence = next(event for event in events if event["type"] == "answer.evidence")
     assert evidence["searchResult"] == completed.search_result
+    assert "query" not in completed.search_result
     assert completed.search_result["retrievalTrace"] == [{
         "query": "第一次改写",
         "topK": service.default_top_k,
         "strategyVersion": "query-adaptive-three-channel-rrf-v2",
-        "requestedWeights": {"transcript": 0.1, "semantic": 0.5, "visual": 0.4},
-        "effectiveWeights": {"transcript": 0.1, "semantic": 0.5, "visual": 0.4},
+        "requestedWeights": {"lexical": 0.1, "semantic": 0.5, "visual": 0.4},
+        "effectiveWeights": {"lexical": 0.1, "semantic": 0.5, "visual": 0.4},
         "resultCount": 0,
         "videoChunkIds": [],
     }]
@@ -1306,6 +1421,7 @@ def test_global_settings_reload_applies_to_new_messages_only(build_service):
     service._runtime_factory = lambda current: AgentRuntime(
         _QueryModel(), _EvaluatorModel(), _ChatModel(), retrieval.search,
         evaluator_stage_timeout_seconds=current.evaluator_stage_timeout_seconds,
+        retrieval_channel="lexical",
     )
     history_limits = []
     original_history = repository.list_recent_completed_messages
@@ -1366,7 +1482,13 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
     service = AgentChatService(
         repository,
         library,
-        AgentRuntime(_QueryModel(), _EvaluatorModel(), _ChatModel(), _RetrievalStub().search),
+        AgentRuntime(
+            _QueryModel(),
+            _EvaluatorModel(),
+            _ChatModel(),
+            _RetrievalStub().search,
+            retrieval_channel="lexical",
+        ),
     )
     conversation = service.create_conversation(
         workspace_id="workspace-1",
@@ -1426,7 +1548,6 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
         repository.complete_assistant_message(
             started.assistant_message.message_id,
             content="answer",
-            retrieval_query="query",
             search_result={"hits": []},
             now=1_789_454_399_000,
         )

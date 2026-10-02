@@ -205,6 +205,7 @@ def _retrieval_card(hit: VideoChunkSearchHit) -> dict[str, Any]:
         "description": _bounded_text(hit.selection_reason.summary, 500),
         "fused_rank": hit.candidate.fused_rank,
         "fused_score": hit.candidate.fused_score,
+        "lexical_rank": hit.candidate.lexical_rank,
         "transcript_rank": hit.candidate.transcript_rank,
         "semantic_rank": hit.candidate.text_rank,
         "visual_rank": hit.candidate.vision_rank,

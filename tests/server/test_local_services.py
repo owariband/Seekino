@@ -339,3 +339,97 @@ def test_start_claude_api_key_mode_requires_configured_key(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="CUSTOM_ANTHROPIC_API_KEY"):
         local_services.start_applications()
+
+
+def test_local_start_validates_explicit_elasticsearch_before_applications(monkeypatch) -> None:
+    events: list[str] = []
+    settings = SimpleNamespace(
+        elasticsearch=SimpleNamespace(
+            url="http://127.0.0.1:9200", index_name="anivag_video_chunks_dev",
+            api_key=None,
+        ),
+        environment="development", text_vector_dimensions=3,
+        vision_vector_dimensions=3,
+    )
+
+    class FakeClient:
+        cluster = SimpleNamespace(health=lambda **_kwargs: {"status": "yellow"})
+
+        def close(self) -> None:
+            events.append("closed")
+
+    class FakeStore:
+        def __init__(self, _client, **_kwargs) -> None:
+            events.append("store")
+
+        def ensure_index(self) -> None:
+            events.append("schema")
+
+    monkeypatch.setattr(local_services, "Elasticsearch", lambda *_args, **_kwargs: FakeClient())
+    monkeypatch.setattr(local_services, "ElasticsearchVideoChunkStore", FakeStore)
+
+    local_services.start_elasticsearch(settings)
+
+    assert events == ["store", "schema", "closed"]
+
+
+def test_local_start_rejects_unready_elasticsearch_without_schema_write(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        elasticsearch=SimpleNamespace(url="http://127.0.0.1:9200", api_key=None),
+    )
+    closed = []
+
+    class FakeClient:
+        cluster = SimpleNamespace(health=lambda **_kwargs: {"status": "red"})
+
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(local_services, "Elasticsearch", lambda *_args, **_kwargs: FakeClient())
+    monkeypatch.setattr(
+        local_services, "ElasticsearchVideoChunkStore",
+        lambda *_args, **_kwargs: pytest.fail("schema must not be touched"),
+    )
+
+    with pytest.raises(RuntimeError, match="Elasticsearch 未就绪"):
+        local_services.start_elasticsearch(settings)
+    assert closed == [True]
+
+
+def test_local_start_skips_elasticsearch_without_explicit_configuration(monkeypatch) -> None:
+    monkeypatch.setattr(
+        local_services, "Elasticsearch",
+        lambda *_args, **_kwargs: pytest.fail("ES client must not be opened"),
+    )
+
+    local_services.start_elasticsearch(SimpleNamespace(elasticsearch=None))
+
+
+@pytest.mark.parametrize(("health", "expected"), [
+    ({"status": "green", "timed_out": False}, True),
+    ({"status": "red", "timed_out": True}, False),
+])
+def test_local_status_includes_explicit_elasticsearch_health(
+    monkeypatch, capsys, health, expected,
+) -> None:
+    settings = SimpleNamespace(
+        database_url="mysql+pymysql://root@127.0.0.1:3306/anivag_development",
+        qdrant_url="http://127.0.0.1:6333",
+        elasticsearch=SimpleNamespace(url="http://127.0.0.1:9200", api_key=None),
+    )
+
+    class FakeClient:
+        cluster = SimpleNamespace(health=lambda **_kwargs: health)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(local_services, "Elasticsearch", lambda *_args, **_kwargs: FakeClient())
+    monkeypatch.setattr(local_services, "listening", lambda _port: True)
+    monkeypatch.setattr(local_services, "get", lambda _url: b"ready")
+    monkeypatch.setattr(local_services, "api_ready", lambda _url: True)
+    monkeypatch.setenv("ANIVAG_HTTP_PORT", "9621")
+    monkeypatch.setenv("ANIVAG_WEB_PORT", "5173")
+
+    assert local_services.status(settings) is expected
+    assert "Elasticsearch health" in capsys.readouterr().out

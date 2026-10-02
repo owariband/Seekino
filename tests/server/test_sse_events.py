@@ -3,18 +3,21 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
 from server.api import agent as agent_api
 from server.api import jobs as jobs_api
+from server.config.parse_profile import default_video_parse_v2_config
 from server.config.sse import SSEConfig
 from server.model.dto.agentDTO import AgentMessageState
 from server.model.dto.jobDTO import (
     ParseJobDetail,
     ParseJobState,
+    VideoParseTaskDetail,
+    VideoParseTaskState,
     VideoChunkCheckpointState,
 )
 from server.repository.agent import AgentConversationNotFoundError
@@ -73,8 +76,6 @@ def _message(sequence_no: int, *, status: str = "COMPLETED") -> AgentMessageStat
         status=status,
         content=None if status == "PROCESSING" else f"message {sequence_no}",
         model_name="chat-model-v1" if is_assistant else None,
-        reply_to_message_id=f"message-{sequence_no - 1}" if is_assistant else None,
-        retrieval_query=None,
         search_result=None,
         last_error=None,
         created_at=_NOW,
@@ -354,6 +355,245 @@ class _JobService:
         index = min(len(self.calls), len(self.snapshots) - 1)
         self.calls.append((job_id, workspace_id))
         return self.snapshots[index]
+
+
+def _video_parse_task_detail(
+    *,
+    status: str = "PARSING",
+) -> VideoParseTaskDetail:
+    now = datetime(2026, 9, 14, 10, 0, tzinfo=UTC)
+    return VideoParseTaskDetail(
+        task=VideoParseTaskState(
+            video_parse_task_id="video-parse-task-1",
+            video_id="video-1",
+            pipeline_version="video-parse-v2",
+            status=status,
+            parse_config=default_video_parse_v2_config().model_dump(mode="json"),
+            chunk_count=2,
+            version=1,
+            next_execute_time=now,
+            attempt_count=1,
+            max_attempts=3,
+            lease_owner="worker-1" if status == "PARSING" else None,
+            lease_version=1,
+            lease_expire_time=(now + timedelta(minutes=5) if status == "PARSING" else None),
+            heartbeat_time=now if status == "PARSING" else None,
+            start_time=now,
+            finish_time=now if status == "COMPLETE" else None,
+            processing_duration_ms=1_000,
+            processing_timing_complete=True,
+            last_error=None,
+            is_test=False,
+            detail={
+                "source": "upload",
+                "_worker_runtime_v2": {"active": {"private": True}},
+            },
+            create_time=now,
+            update_time=now,
+        ),
+        workspace_id=_WORKSPACE_ID,
+        series_id="series-1",
+        series_name="Test Series",
+        episode_order=1,
+        original_filename="episode.mp4",
+        duration_seconds=120,
+        upload_session_id="upload-1",
+        is_latest=True,
+    )
+
+
+class _VideoParseTaskService:
+    def __init__(self, snapshots: list[VideoParseTaskDetail]) -> None:
+        self.snapshots = snapshots
+        self.calls: list[tuple[str, str]] = []
+
+    def get_video_parse_task(
+        self,
+        video_parse_task_id: str,
+        *,
+        workspace_id: str,
+    ) -> VideoParseTaskDetail:
+        index = min(len(self.calls), len(self.snapshots) - 1)
+        self.calls.append((video_parse_task_id, workspace_id))
+        return self.snapshots[index]
+
+
+def test_video_parse_task_sse_ignores_heartbeat_and_closes_on_terminal(
+    monkeypatch,
+) -> None:
+    clock = _Clock()
+    _patch_runtime(monkeypatch, jobs_api, clock)
+    initial = _video_parse_task_detail()
+    heartbeat = replace(
+        initial,
+        task=replace(
+            initial.task,
+            heartbeat_time=initial.task.heartbeat_time + timedelta(seconds=1),
+            lease_expire_time=initial.task.lease_expire_time + timedelta(minutes=1),
+            detail={
+                "source": "upload",
+                "_worker_runtime_v2": {"active": {"private": False}},
+            },
+            update_time=initial.task.update_time + timedelta(seconds=1),
+        ),
+    )
+    terminal = replace(
+        heartbeat,
+        task=replace(
+            heartbeat.task,
+            status="COMPLETE",
+            lease_owner=None,
+            lease_expire_time=None,
+            heartbeat_time=None,
+            finish_time=heartbeat.task.update_time + timedelta(seconds=1),
+            update_time=heartbeat.task.update_time + timedelta(seconds=1),
+        ),
+    )
+    service = _VideoParseTaskService([heartbeat, terminal])
+
+    events = asyncio.run(
+        _collect(
+            jobs_api._video_parse_task_events(
+                _Request(3),
+                service,
+                initial.task.video_parse_task_id,
+                _WORKSPACE_ID,
+                initial,
+                SSEConfig(poll_interval_seconds=0.5, keepalive_interval_seconds=15),
+            )
+        )
+    )
+
+    assert len(events) == 2
+    assert all(event.startswith("event: video-parse-task\n") for event in events)
+    assert [_payload(event)["status"] for event in events] == ["PARSING", "COMPLETE"]
+    assert all(_payload(event)["detail"] == {"source": "upload"} for event in events)
+    assert _payload(events[-1])["canReparse"] is True
+    assert service.calls == [
+        (initial.task.video_parse_task_id, _WORKSPACE_ID),
+        (initial.task.video_parse_task_id, _WORKSPACE_ID),
+    ]
+    assert clock.sleeps == [0.5, 0.5]
+
+
+def test_video_parse_task_projection_hides_internal_failure_detail() -> None:
+    detail = _video_parse_task_detail()
+    failed = replace(
+        detail,
+        task=replace(
+            detail.task,
+            status="INDEXING_FAILED",
+            last_error={
+                "code": "ES_BULK_REJECTED",
+                "message": "private key at https://internal/provider",
+            },
+        ),
+    )
+
+    payload = jobs_api.project_video_parse_task(failed).model_dump(
+        mode="json", by_alias=True,
+    )
+
+    assert payload["lastError"] == {
+        "code": "PROCESSING_FAILED",
+        "message": "检索索引发布失败，请重试",
+    }
+    assert "internal/provider" not in str(payload)
+
+
+def test_video_parse_task_actions_wait_for_active_prefix_lease() -> None:
+    detail = _video_parse_task_detail()
+    terminal = replace(
+        detail,
+        task=replace(detail.task, status="COMPLETE"),
+    )
+
+    assert jobs_api.project_video_parse_task(terminal).can_reparse is True
+    fenced = replace(
+        terminal,
+        has_active_prefix_lease=True,
+        has_active_prefix_suffix_lease=True,
+    )
+    view = jobs_api.project_video_parse_task(fenced)
+
+    assert view.can_retry is False
+    assert view.can_reparse is False
+
+    later_prefix = replace(
+        terminal,
+        task=replace(terminal.task, status="PARSING_FAILED"),
+        has_active_prefix_suffix_lease=True,
+    )
+    later_view = jobs_api.project_video_parse_task(later_prefix)
+    assert later_view.can_retry is True
+    assert later_view.can_reparse is False
+
+    executing = replace(
+        terminal,
+        task=replace(terminal.task, status="PARSING_FAILED"),
+        has_active_execution_lease=True,
+    )
+    executing_view = jobs_api.project_video_parse_task(executing)
+    assert executing_view.can_retry is False
+    assert executing_view.can_reparse is True
+
+
+def test_unaccepted_pending_video_parse_task_can_be_taken_over() -> None:
+    pending = replace(
+        _video_parse_task_detail(status="PENDING"),
+        task=replace(
+            _video_parse_task_detail(status="PENDING").task,
+            detail={"_worker_runtime_v2": {"accepted": False}},
+        ),
+        pending_takeover_enabled=True,
+    )
+
+    assert jobs_api.project_video_parse_task(pending).can_reparse is True
+    accepted = replace(
+        pending,
+        task=replace(
+            pending.task,
+            detail={"_worker_runtime_v2": {"accepted": True}},
+        ),
+    )
+    assert jobs_api.project_video_parse_task(accepted).can_reparse is False
+
+
+@pytest.mark.parametrize(
+    "lease_fences",
+    [
+        {
+            "has_active_prefix_lease": True,
+            "has_active_prefix_suffix_lease": True,
+        },
+        {"has_active_execution_lease": True},
+    ],
+)
+def test_video_parse_task_sse_closes_at_terminal_status(
+    monkeypatch,
+    lease_fences,
+) -> None:
+    clock = _Clock()
+    _patch_runtime(monkeypatch, jobs_api, clock)
+    terminal = replace(
+        _video_parse_task_detail(status="PARSING_FAILED"),
+        **lease_fences,
+    )
+    service = _VideoParseTaskService([terminal])
+
+    events = asyncio.run(_collect(jobs_api._video_parse_task_events(
+        _Request(2),
+        service,
+        terminal.task.video_parse_task_id,
+        _WORKSPACE_ID,
+        terminal,
+        SSEConfig(poll_interval_seconds=0.5, keepalive_interval_seconds=15),
+    )))
+
+    assert len(events) == 1
+    assert _payload(events[0])["status"] == "PARSING_FAILED"
+    assert service.calls == []
+    assert clock.sleeps == []
 
 
 def test_job_sse_ignores_heartbeat_but_emits_progress(monkeypatch) -> None:

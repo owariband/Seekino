@@ -22,7 +22,7 @@ from engine.parsev1.runtime import VideoParseRuntimeConfig
 from gateway.config import load_config
 from server.api.app import create_app
 from agent.chat.video_search.runtime import AgentRuntime
-from server.api.agent import _agent_render_blocks
+from server.api.agent import _agent_render_blocks, _agent_search_evidence_view
 from server.api.jobs import _job_event_fingerprint, _job_view
 from server.bootstrap import ApplicationServices
 from server.config.media import ImageUploadConfig
@@ -108,16 +108,16 @@ class _RetrievalStub:
         workspace_id: str,
         series_ids,
         top_k: int,
-        transcript_weight: float | None = None,
+        lexical_weight: float | None = None,
         text_weight: float | None = None,
         vision_weight: float | None = None,
     ):
         if any(
             weight is not None
-            for weight in (transcript_weight, text_weight, vision_weight)
+            for weight in (lexical_weight, text_weight, vision_weight)
         ):
-            assert None not in (transcript_weight, text_weight, vision_weight)
-            assert transcript_weight + text_weight + vision_weight == pytest.approx(1.0)
+            assert None not in (lexical_weight, text_weight, vision_weight)
+            assert lexical_weight + text_weight + vision_weight == pytest.approx(1.0)
         scope = list(series_ids)
         self.calls.append((query, scope, top_k, workspace_id))
         return VideoChunkSearchResult(
@@ -143,8 +143,6 @@ def test_agent_render_blocks_preserves_valid_blocks_and_drops_invalid_stored_blo
         role="ASSISTANT",
         status="COMPLETED",
         content="兼容完整正文",
-        reply_to_message_id="user",
-        retrieval_query="query",
         series_ids=("series",),
         model_name="chat-model",
         search_result={
@@ -225,8 +223,6 @@ def test_agent_render_blocks_drops_invalid_known_chunk_range(
         role="ASSISTANT",
         status="COMPLETED",
         content="正文",
-        reply_to_message_id="user",
-        retrieval_query="query",
         series_ids=("series",),
         model_name="chat-model",
         search_result={
@@ -283,7 +279,7 @@ class _AgentModelStub:
             "query": "她为什么哭",
             "top_k": 5,
             "channel_weights": {
-                "transcript": 0.1, "semantic": 0.7, "visual": 0.2,
+                "lexical": 0.1, "semantic": 0.7, "visual": 0.2,
             },
         })
         return result_type.model_validate({
@@ -353,6 +349,7 @@ def _client(tmp_path: Path):
             _AgentModelStub("evaluator-model-v1"),
             _AgentModelStub("chat-model-v1"),
             retrieval.search,
+            retrieval_channel="lexical",
         ),
     )
     services = ApplicationServices(
@@ -428,6 +425,8 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/jobs/list",
         "/api/jobs/get",
         "/api/jobs/video-parse/get",
+        "/api/jobs/video-parse/list",
+        "/api/jobs/video-parse/events",
         "/api/jobs/usage/get",
         "/api/jobs/summary",
         "/api/jobs/events",
@@ -493,6 +492,10 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         ("/api/uploads/complete", "post"): {"uploadSessionId"},
         ("/api/jobs/get", "get"): {"jobId"},
         ("/api/jobs/video-parse/get", "get"): {
+            "videoParseTaskId", "workspaceId",
+        },
+        ("/api/jobs/video-parse/list", "get"): {"workspaceId"},
+        ("/api/jobs/video-parse/events", "get"): {
             "videoParseTaskId", "workspaceId",
         },
         ("/api/jobs/usage/get", "get"): {"jobId", "workspaceId"},
@@ -566,6 +569,8 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
     }
     assert "agentReply" in schemas["SearchResultView"]["required"]
     assert "agentReply" not in schemas["AgentSearchEvidenceView"]["properties"]
+    assert "query" not in schemas["AgentSearchEvidenceView"]["properties"]
+    assert "query" in schemas["SearchResultView"]["required"]
     assert "retrievalTrace" in schemas["AgentSearchEvidenceView"]["required"]
     assert schemas["AgentMessageView"]["properties"]["searchResult"]["anyOf"][0] == {
         "$ref": "#/components/schemas/AgentSearchEvidenceView",
@@ -578,6 +583,8 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "endSeconds",
     } <= set(schemas["TranscriptCueView"]["required"])
     assert "modelName" in schemas["AgentMessageView"]["required"]
+    assert "replyToMessageId" not in schemas["AgentMessageView"]["properties"]
+    assert "retrievalQuery" not in schemas["AgentMessageView"]["properties"]
 
 
 def _background_png() -> bytes:
@@ -1626,6 +1633,28 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert video_parse_task.status_code == 200, video_parse_task.text
     assert video_parse_task.json()["status"] == "PENDING"
     assert video_parse_task.json()["detail"] == {}
+    assert video_parse_task.json()["workspaceId"] == "local-default"
+    assert video_parse_task.json()["seriesId"] == series_id
+    assert video_parse_task.json()["seriesName"] == "Test Series"
+    assert video_parse_task.json()["episodeOrder"] == 7
+    assert video_parse_task.json()["originalFilename"] == "episode-07.mp4"
+    assert video_parse_task.json()["uploadSessionId"] == upload_id
+    assert video_parse_task.json()["durationSeconds"] == 12
+    assert video_parse_task.json()["canRetry"] is False
+    assert video_parse_task.json()["canReparse"] is False
+    video_parse_tasks = client.get(
+        "/api/jobs/video-parse/list",
+        params={
+            "workspaceId": "local-default",
+            "seriesId": series_id,
+            "status": "PENDING",
+        },
+    )
+    assert video_parse_tasks.status_code == 200, video_parse_tasks.text
+    assert video_parse_tasks.json()["total"] == 1
+    assert [
+        item["videoParseTaskId"] for item in video_parse_tasks.json()["items"]
+    ] == [video_parse_task_id]
     assert client.get(
         "/api/jobs/video-parse/get",
         params={
@@ -1633,6 +1662,17 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
             "videoParseTaskId": video_parse_task_id,
         },
     ).status_code == 404
+    assert client.get(
+        "/api/jobs/video-parse/events",
+        params={
+            "workspaceId": "another-workspace",
+            "videoParseTaskId": video_parse_task_id,
+        },
+    ).status_code == 404
+    assert client.get(
+        "/api/jobs/video-parse/list",
+        params={"workspaceId": "another-workspace"},
+    ).json()["items"] == []
     job = client.get("/api/jobs/get", params={"workspaceId": "local-default", "jobId": job_id})
     jobs = client.get("/api/jobs/list", params={"workspaceId": "local-default"})
     assert job.status_code == 200
@@ -1701,6 +1741,23 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
         body = "\n".join(events.iter_lines())
     assert "event: job" in body
     assert '"status":"SUCCEEDED"' in body
+
+    with jobs_repository._session_factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, video_parse_task_id)
+        task.status = "COMPLETE"
+        task.finish_time = task.update_time
+    with client.stream(
+        "GET",
+        "/api/jobs/video-parse/events",
+        params={
+            "workspaceId": "local-default",
+            "videoParseTaskId": video_parse_task_id,
+        },
+    ) as events:
+        video_parse_body = "\n".join(events.iter_lines())
+    assert "event: video-parse-task" in video_parse_body
+    assert '"status":"COMPLETE"' in video_parse_body
+    assert "_worker_runtime_v2" not in video_parse_body
 
     full_video = client.get(
         "/api/videos/content",
@@ -1968,6 +2025,56 @@ def test_explicit_non_ready_series_is_rejected_before_starting_message(tmp_path)
         client.app.state.services.agent.close()
 
 
+@pytest.mark.parametrize("weights", [
+    {"transcript": 0.2, "semantic": 0.5, "visual": 0.3},
+    {"lexical": 0.2, "semantic": 0.5, "visual": 0.3},
+])
+def test_agent_evidence_view_preserves_old_and_new_retrieval_trace_weights(weights):
+    raw = {
+        "query": "门口",
+        "seriesIds": ["series-1"],
+        "searchedVideoIds": [],
+        "partial": False,
+        "warnings": [],
+        "hits": [],
+        "agentReply": {"message": "暂无片段", "resultCount": 0},
+        "retrievalTrace": [{
+            "query": "门口",
+            "topK": 5,
+            "strategyVersion": "stored-strategy",
+            "requestedWeights": weights,
+            "effectiveWeights": weights,
+            "resultCount": 0,
+            "videoChunkIds": [],
+        }],
+    }
+
+    view = _agent_search_evidence_view(
+        raw, SimpleNamespace(), workspace_id="local-default",
+    )
+
+    serialized = view.model_dump(mode="json", by_alias=True)
+    assert "query" not in serialized
+    assert serialized["retrievalTrace"] == raw["retrievalTrace"]
+
+
+def test_agent_evidence_view_reads_legacy_single_query_without_trace():
+    stored = {
+        "query": "历史单值检索词",
+        "seriesIds": ["series-1"],
+        "hits": [],
+        "agentReply": {"message": "暂无片段", "resultCount": 0},
+    }
+
+    view = _agent_search_evidence_view(
+        stored, SimpleNamespace(), workspace_id="local-default",
+    )
+
+    serialized = view.model_dump(mode="json", by_alias=True)
+    assert "query" not in serialized
+    assert serialized["retrievalTrace"] == []
+
+
 @pytest.mark.parametrize("accept", ["application/json", "text/event-stream"])
 def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
     tmp_path, prepared_import, caplog, accept,
@@ -1987,13 +2094,13 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         workspace_id,
         series_ids,
         top_k,
-        transcript_weight,
+        lexical_weight,
         text_weight,
         vision_weight,
     ):
         assert workspace_id == prepared_import.workspace_id
         assert series_ids == [prepared_import.series_id]
-        assert transcript_weight + text_weight + vision_weight == pytest.approx(1.0)
+        assert lexical_weight + text_weight + vision_weight == pytest.approx(1.0)
         evidence = video_repository.hydrate_video_chunks(report.video_chunk_ids)
         hits = [
             VideoChunkSearchHit(
@@ -2019,7 +2126,7 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                 "query": "找动作片段",
                 "top_k": 5,
                 "channel_weights": {
-                    "transcript": 0.2,
+                    "lexical": 0.2,
                     "semantic": 0.2,
                     "visual": 0.6,
                 },
@@ -2077,12 +2184,13 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
         else:
             final = response.json()["assistantMessage"]
         assert "agentReply" not in final["searchResult"]
+        assert "query" not in final["searchResult"]
         assert final["searchResult"]["retrievalTrace"] == [{
             "query": "找动作片段",
             "topK": min(5, service.default_top_k),
             "strategyVersion": "query-adaptive-three-channel-rrf-v2",
-            "requestedWeights": {"transcript": 0.2, "semantic": 0.2, "visual": 0.6},
-            "effectiveWeights": {"transcript": 0.2, "semantic": 0.2, "visual": 0.6},
+            "requestedWeights": {"lexical": 0.2, "semantic": 0.2, "visual": 0.6},
+            "effectiveWeights": {"lexical": 0.2, "semantic": 0.2, "visual": 0.6},
             "resultCount": len(report.video_chunk_ids),
             "videoChunkIds": list(report.video_chunk_ids),
         }]

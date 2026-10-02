@@ -281,6 +281,12 @@ class ServerSettings:
                 rrf_k=_environment_int(
                     "ANIVAG_RETRIEVAL_RRF_K", retrieval_defaults.rrf_k
                 ),
+                lexical_weight=float(
+                    os.getenv(
+                        "ANIVAG_RETRIEVAL_LEXICAL_WEIGHT",
+                        str(retrieval_defaults.lexical_weight),
+                    )
+                ),
                 text_weight=float(
                     os.getenv(
                         "ANIVAG_RETRIEVAL_TEXT_WEIGHT", str(retrieval_defaults.text_weight)

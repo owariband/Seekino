@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from fastapi import Request
 
+from engine.retrieval.contracts import VideoChunkSearchEvidence
+
 from .context import get_services
 from ..model.dto.mediaDTO import PlaybackMedia
 from ..model.dto.searchDTO import VideoSearchRequest
 from ..model.vo.searchVO import (
     Keyframe,
+    SearchEvidenceFieldsView,
     SearchEvidenceView,
     SearchHitView,
     SearchResultView,
@@ -98,6 +101,20 @@ def search_evidence_view(
     result: VideoChunkSearchResult | dict, media: MediaService, *, workspace_id: str,
 ) -> SearchEvidenceView:
     result = _validated_search_result(result)
+    evidence = search_evidence_fields(result, media, workspace_id=workspace_id)
+    return SearchEvidenceView(**evidence.model_dump(), query=result.query)
+
+
+def search_evidence_fields(
+    result: VideoChunkSearchEvidence | dict, media: MediaService, *, workspace_id: str,
+) -> SearchEvidenceFieldsView:
+    if isinstance(result, dict):
+        result = VideoChunkSearchEvidence.model_validate({
+            key: value for key, value in result.items()
+            if key not in {
+                "query", "renderBlocks", "render_blocks", "retrievalTrace", "retrieval_trace",
+            }
+        })
     warnings = list(getattr(result, "warnings", []))
     searched_video_ids = result.searched_video_ids
     if searched_video_ids is None:
@@ -120,8 +137,8 @@ def search_evidence_view(
             candidate=VideoChunkCandidateView(**hit.candidate.model_dump(), rank=rank),
             selection_reason=reason, evidence=evidence,
         ))
-    return SearchEvidenceView(
-        query=result.query, series_ids=result.series_ids,
+    return SearchEvidenceFieldsView(
+        series_ids=result.series_ids,
         searched_video_ids=list(searched_video_ids or []),
         partial=bool(getattr(result, "partial", False) or warnings),
         warnings=list(dict.fromkeys(warnings)), hits=hits,

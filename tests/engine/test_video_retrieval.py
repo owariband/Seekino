@@ -105,9 +105,12 @@ def _retrieval_identity(**updates: object) -> VideoChunkRetrievalIdentity:
         "video_id": "video-1",
         "parse_task_id": "task-1",
         "content_version": 3,
+        "index_generation": 1,
         "source_revision": "source-1",
         "projection_revision": "projection-1",
         "retrieval_contract_id": "retrieval-1",
+        "semantic_encoder_id": "text:sha256:semantic-1",
+        "vision_encoder_id": "video:sha256:vision-1",
     }
     values.update(updates)
     return VideoChunkRetrievalIdentity.model_validate(values)
@@ -294,9 +297,12 @@ def test_versioned_rrf_preserves_identity_across_three_channels() -> None:
         "video_id": "video-1",
         "parse_task_id": "task-1",
         "content_version": 3,
+        "index_generation": 1,
         "source_revision": "source-1",
         "projection_revision": "projection-1",
         "retrieval_contract_id": "retrieval-1",
+        "semantic_encoder_id": "text:sha256:semantic-1",
+        "vision_encoder_id": "video:sha256:vision-1",
     }
 
 
@@ -308,9 +314,12 @@ def test_versioned_rrf_preserves_identity_across_three_channels() -> None:
         ("video_id", "video-2"),
         ("parse_task_id", "task-2"),
         ("content_version", 4),
+        ("index_generation", 2),
         ("source_revision", "source-2"),
         ("projection_revision", "projection-2"),
         ("retrieval_contract_id", "retrieval-2"),
+        ("semantic_encoder_id", "text:sha256:semantic-2"),
+        ("vision_encoder_id", "video:sha256:vision-2"),
     ],
 )
 def test_versioned_rrf_rejects_cross_channel_identity_changes(

@@ -12,6 +12,12 @@ from uuid import uuid4
 from agent.video_parse_v2.input import GenerativeModelConfig
 from engine.parsev2.schemas import ActionEvent, VideoParseResult
 from engine.parsev2.validation import IntervalRefinementProposal
+from engine.retrieval import (
+    ChunkIndexingContract,
+    EncoderContract,
+    VideoClipInputContract,
+    VIDEO_CLIP_PREPROCESS_REVISION,
+)
 from gateway.config import load_config
 from gateway.embedding import EmbeddingResult
 
@@ -37,12 +43,9 @@ from server.mq.video_parse_consumer import (
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.video_parse import VideoParseRepository
 from server.service.video_parse import VideoParseRuntimeService
-from server.service.video_parse_indexing import (
-    VideoParseIndexingContract,
-    VideoParseIndexingService,
-)
+from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator
 from server.service.video_parse_media import MediaLeaseIdentity, VideoParseMediaService
-from server.storage.elasticsearch import StoredDocumentState
+from server.storage.elasticsearch import StoredDocumentState, document_id
 
 
 class _ArtifactResolver:
@@ -84,7 +87,9 @@ class _ElasticsearchBoundary:
 
     def is_ready(self, documents) -> bool:
         return all(
-            self.documents.get(document.document_id) == document
+            self.documents.get(
+                document_id(document.parse_task_id, document.video_chunk_id)
+            ) == document
             for document in documents
         )
 
@@ -98,8 +103,15 @@ class _ElasticsearchBoundary:
         assert refresh == "wait_for"
         self.bulk_calls += 1
         for document in documents:
-            self.documents[document.document_id] = document
-        return [document.document_id for document in documents]
+            physical_id = document_id(
+                document.parse_task_id,
+                document.video_chunk_id,
+            )
+            self.documents[physical_id] = document
+        return [
+            document_id(document.parse_task_id, document.video_chunk_id)
+            for document in documents
+        ]
 
     def verify_ready(self, documents) -> bool:
         return self.is_ready(documents)
@@ -235,28 +247,32 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
     ) -> IntervalRefinementProposal:
         return IntervalRefinementProposal(updates=[])
 
-    def build_indexing(_self, inputs, *, check_active):
+    def build_index_coordinator(_self, inputs, *, check_active):
         model = inputs.parse_config.models.embedding
         client = SimpleNamespace(close=lambda: None)
-        service = VideoParseIndexingService(
+        encoder = EncoderContract(
+            provider="ark",
+            model=model.model,
+            encoder_revision="test-revision",
+            dimensions=2,
+        )
+        service = VideoParseIndexCoordinator(
             repository,
             store,  # type: ignore[arg-type]
             embedding,
             media_resolver=_ArtifactResolver.resolve,
             media_service=media,
             check_active=check_active,
-            contract=VideoParseIndexingContract(
+            contract=ChunkIndexingContract(
                 retrieval_contract_id="parse-v2-retrieval-v1",
-                semantic_provider="ark",
-                semantic_model=model.model,
-                semantic_encoder_revision="test-revision",
-                semantic_dimensions=2,
-                vision_provider="ark",
-                vision_model=model.model,
-                vision_encoder_revision="test-revision",
-                vision_dimensions=2,
-                vision_fps=model.video_fps,
-                vision_max_height=inputs.parse_config.visual_input.max_height,
+                semantic_encoder=encoder,
+                vision_encoder=encoder,
+                visual_input_contract=VideoClipInputContract(
+                    fps=model.video_fps,
+                    max_height=inputs.parse_config.visual_input.max_height,
+                    mime_type="video/mp4",
+                    preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
+                ),
             ),
         )
         return service, client
@@ -273,8 +289,8 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
     )
     monkeypatch.setattr(
         runtime,
-        "_build_indexing_service",
-        MethodType(build_indexing, runtime),
+        "_build_index_coordinator",
+        MethodType(build_index_coordinator, runtime),
     )
 
     consumer = VideoParseConsumer(
@@ -329,7 +345,11 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         assert [item.status for item in intervals] == ["COMPLETE"]
         assert len(contents) == 1
         assert contents[0].detail["scope"] == [0]
-        assert contents[0].detail["_index_embeddings_v2"]["content_version"] == 1
+        index_detail = contents[0].detail["_index_embeddings_v2"]
+        assert index_detail["content_version"] == 1
+        assert index_detail["receipt"]["content_version"] == 1
+        assert index_detail["receipt"]["index_generation"] == 1
+        assert index_detail["receipt"]["parse_task_id"] == task_id
     assert embedding.text_calls == 1
     assert embedding.video_calls == 1
     assert store.bulk_calls == 1

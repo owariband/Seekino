@@ -67,13 +67,16 @@ class SearchHitView(ContractModel):
     evidence: VideoChunkEvidenceView
 
 
-class SearchEvidenceView(ContractModel):
-    query: str
+class SearchEvidenceFieldsView(ContractModel):
     series_ids: list[str]
     searched_video_ids: list[str]
     partial: bool
     warnings: list[str]
     hits: list[SearchHitView]
+
+
+class SearchEvidenceView(SearchEvidenceFieldsView):
+    query: str
 
 
 class SearchResultView(SearchEvidenceView):

@@ -27,12 +27,12 @@ from agent.chat.common.tool_result import (
 from agent.chat.video_search.context import build_workspace_checkpoint
 from agent.chat.video_search.state import DraftItem
 from agent.chat.video_search.skills import (
-    CHAT_SKILL_PROMPT, EVALUATOR_SKILL_PROMPT, QUERY_SKILL_PROMPT,
-    RETRIEVAL_SKILL_PROMPT,
+    CHAT_SKILL_PROMPT, EVALUATOR_SKILL_PROMPT, LEXICAL_RETRIEVAL_SKILL_PROMPT,
+    QUERY_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT,
 )
 from agent.chat.video_search.tools import (
-    DraftReadAudit, build_chat_tools, build_evaluator_tools,
-    build_query_tools,
+    DraftReadAudit, LexicalRetrieveArguments, RetrieveArguments,
+    build_chat_tools, build_evaluator_tools, build_query_tools,
 )
 from agent.chat.video_search.workspace import AgentWorkspace
 def _inputs() -> RunInputs:
@@ -118,14 +118,14 @@ class Retrieval:
         workspace_id,
         series_ids,
         top_k,
-        transcript_weight,
+        lexical_weight,
         text_weight,
         vision_weight,
     ) -> VideoChunkSearchResult:
         self.calls += 1
         assert workspace_id == "workspace"
         assert series_ids == ["series"]
-        assert transcript_weight + text_weight + vision_weight == pytest.approx(1)
+        assert lexical_weight + text_weight + vision_weight == pytest.approx(1)
         hits = [item.model_copy(deep=True) for item in self.hits[:top_k]]
         return VideoChunkSearchResult(
             query=query,
@@ -160,6 +160,7 @@ def _query_tools(
         maximum_result_bytes=maximum_result_bytes,
         maximum_read_chars=maximum_read_chars,
         maximum_catalog_items=maximum_catalog_items,
+        retrieval_channel="lexical",
     )
     return {tool.name: tool for tool in tools}, calls
 
@@ -169,7 +170,7 @@ def _retrieve(tools, *, top_k: int = 20) -> dict:
         "query": "broken cup",
         "top_k": top_k,
         "channel_weights": {
-            "transcript": 0,
+            "lexical": 0,
             "semantic": 0.7,
             "visual": 0.3,
         },
@@ -313,6 +314,7 @@ def test_agent_tool_adapter_enforces_the_result_byte_budget() -> None:
 def test_agent_skills_are_explicitly_work_agnostic() -> None:
     skills = (
         RETRIEVAL_SKILL_PROMPT,
+        LEXICAL_RETRIEVAL_SKILL_PROMPT,
         QUERY_SKILL_PROMPT,
         EVALUATOR_SKILL_PROMPT,
         CHAT_SKILL_PROMPT,
@@ -321,6 +323,51 @@ def test_agent_skills_are_explicitly_work_agnostic() -> None:
     assert all("作品无关" in skill for skill in skills)
     assert all("不得写入或依赖任何具体动画" in skill for skill in skills)
     assert all("丰川祥子" not in skill for skill in skills)
+
+
+def test_retrieve_tool_keeps_v1_transcript_and_v2_lexical_contracts_separate() -> None:
+    seen: list[tuple[str, float]] = []
+
+    def search(query, *, transcript_weight=None, lexical_weight=None, **kwargs):
+        del kwargs
+        if transcript_weight is not None:
+            seen.append(("transcript", transcript_weight))
+        if lexical_weight is not None:
+            seen.append(("lexical", lexical_weight))
+        return VideoChunkSearchResult(
+            query=query,
+            series_ids=["series"],
+            agent_reply=AgentReply(message="none", result_count=0),
+            hits=[],
+        )
+
+    common = dict(
+        workspace=AgentWorkspace("workspace", ("series",)),
+        inputs=_inputs(),
+        control=_control(),
+        calls=[],
+        maximum_top_k=20,
+        maximum_tool_calls=10,
+        maximum_result_bytes=1_024,
+        maximum_catalog_items=20,
+    )
+    v1 = build_query_tools(search, **common)[0]
+    assert v1.args_schema is RetrieveArguments
+    json.loads(v1.invoke({
+        "query": "spoken phrase",
+        "top_k": 5,
+        "channel_weights": {"transcript": 1, "semantic": 0, "visual": 0},
+    }))
+
+    v2 = build_query_tools(search, retrieval_channel="lexical", **common)[0]
+    assert v2.args_schema is LexicalRetrieveArguments
+    json.loads(v2.invoke({
+        "query": "structured terms",
+        "top_k": 5,
+        "channel_weights": {"lexical": 1, "semantic": 0, "visual": 0},
+    }))
+
+    assert seen == [("transcript", 1.0), ("lexical", 1.0)]
 
 
 def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> None:
@@ -363,8 +410,10 @@ def test_agent_tool_trace_records_safe_arguments_results_and_errors(caplog) -> N
 
 def test_retrieve_returns_catalog_and_read_trieve_item_ranges_full_evidence() -> None:
     maximum_result_bytes = 700
+    lexical_hit = _hit("chunk-1", episode=1, large_text="杯子碎裂。" * 500)
+    lexical_hit.candidate.lexical_rank = 3
     retrieval = Retrieval([
-        _hit("chunk-1", episode=1, large_text="杯子碎裂。" * 500),
+        lexical_hit,
         _hit("chunk-2", episode=2, large_text="人物离开。" * 500),
     ])
     workspace = AgentWorkspace("workspace", ("series",))
@@ -384,6 +433,8 @@ def test_retrieve_returns_catalog_and_read_trieve_item_ranges_full_evidence() ->
     assert first["draft_item_count"] == 0
     assert len(first["items"]) == 1
     assert first["items"][0]["video_chunk_id"] == "chunk-1"
+    assert first["items"][0]["lexical_rank"] == 3
+    assert first["items"][0]["transcript_rank"] is None
     assert "杯子碎裂" not in json.dumps(first, ensure_ascii=False)
     assert "evidence" not in first["items"][0]
     assert first["next_cursor"]
@@ -565,7 +616,7 @@ def test_success_and_validation_results_preserve_tool_call_id_and_status() -> No
             "query": "broken cup",
             "top_k": 1,
             "channel_weights": {
-                "transcript": 0,
+                "lexical": 0,
                 "semantic": 0.7,
                 "visual": 0.3,
             },

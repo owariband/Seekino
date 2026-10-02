@@ -17,6 +17,7 @@ from engine.retrieval.index_projection import (
     LexicalField,
     compute_index_projection_revision,
 )
+from engine.retrieval import VideoChunkIndexDocument
 
 from ..database import DatabaseEnvironment
 from ..identity import canonical_uuid
@@ -84,36 +85,6 @@ class ElasticsearchBulkWriteError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class VideoChunkIndexDocument:
-    workspace_id: str
-    series_id: str
-    video_id: str
-    video_chunk_id: str
-    parse_task_id: str
-    content_version: int
-    source_revision: str
-    retrieval_contract_id: str
-    index_generation: int
-    semantic_encoder_id: str
-    vision_encoder_id: str
-    semantic_input_sha256: str | None
-    vision_input_sha256: str
-    chunk_start_seconds: int
-    chunk_end_seconds: int
-    projection: ChunkIndexProjection
-    semantic_vector: Sequence[float] | None
-    vision_vector: Sequence[float]
-
-    @property
-    def document_id(self) -> str:
-        return document_id(self.parse_task_id, self.video_chunk_id)
-
-    @property
-    def external_version(self) -> int:
-        return _external_version(self.content_version, self.index_generation)
-
-
-@dataclass(frozen=True, slots=True)
 class StoredDocumentState:
     present: bool
     workspace_id: str | None = None
@@ -148,9 +119,12 @@ class VideoChunkIndexMatch:
     video_chunk_id: str
     parse_task_id: str
     content_version: int
+    index_generation: int
     source_revision: str
     projection_revision: str
     retrieval_contract_id: str
+    semantic_encoder_id: str
+    vision_encoder_id: str
     matched_fields: tuple[LexicalField, ...] = field(default_factory=tuple)
 
 
@@ -281,14 +255,18 @@ class ElasticsearchVideoChunkStore:
         expected_ids: list[str] = []
         for document in documents:
             source = self._document_source(document)
-            if document.document_id in expected_ids:
+            physical_id = document_id(document.parse_task_id, document.video_chunk_id)
+            if physical_id in expected_ids:
                 raise ValueError("bulk documents contain duplicate task/Chunk identity")
-            expected_ids.append(document.document_id)
+            expected_ids.append(physical_id)
             operations.extend(
                 ({"index": {
                     "_index": self.index_name,
-                    "_id": document.document_id,
-                    "version": document.external_version,
+                    "_id": physical_id,
+                    "version": _external_version(
+                        document.content_version,
+                        document.index_generation,
+                    ),
                     "version_type": "external",
                 }}, source)
             )
@@ -404,9 +382,10 @@ class ElasticsearchVideoChunkStore:
 
         expected: dict[str, dict[str, Any]] = {}
         for document in documents:
-            if document.document_id in expected:
+            physical_id = document_id(document.parse_task_id, document.video_chunk_id)
+            if physical_id in expected:
                 raise ValueError("documents contain duplicate task/Chunk identity")
-            expected[document.document_id] = self._document_source(document)
+            expected[physical_id] = self._document_source(document)
         matches = {document_id: False for document_id in expected}
         if not expected or not self._client.indices.exists(index=self.index_name):
             return matches
@@ -454,11 +433,15 @@ class ElasticsearchVideoChunkStore:
             raise ValueError("verify_ready requires the complete expected Chunk set")
         for document in documents:
             expected = self._document_source(document)
+            physical_id = document_id(
+                document.parse_task_id,
+                document.video_chunk_id,
+            )
             try:
                 response = self._client.search(
                     index=self.index_name,
                     query={"bool": {"filter": [
-                        {"ids": {"values": [document.document_id]}},
+                        {"ids": {"values": [physical_id]}},
                         {"term": {"workspace_id": document.workspace_id}},
                         {"term": {"video_id": document.video_id}},
                         {"term": {"parse_task_id": document.parse_task_id}},
@@ -473,11 +456,11 @@ class ElasticsearchVideoChunkStore:
             if not hits:
                 return False
             hit = hits[0]
-            if hit.get("_id") != document.document_id or hit.get("_source") != expected:
+            if hit.get("_id") != physical_id or hit.get("_source") != expected:
                 if not mismatch_is_error:
                     return False
                 raise ElasticsearchDocumentConsistencyError(
-                    f"search-visible document differs: {document.document_id}"
+                    f"search-visible document differs: {physical_id}"
                 )
         return True
 
@@ -777,9 +760,12 @@ class ElasticsearchVideoChunkStore:
                 video_chunk_id=source["video_chunk_id"],
                 parse_task_id=source["parse_task_id"],
                 content_version=source["content_version"],
+                index_generation=source["index_generation"],
                 source_revision=source["source_revision"],
                 projection_revision=source["projection_revision"],
                 retrieval_contract_id=source["retrieval_contract_id"],
+                semantic_encoder_id=source["semantic_encoder_id"],
+                vision_encoder_id=source["vision_encoder_id"],
                 matched_fields=matched_fields,
             )
             for rank, (_, score, source, matched_fields) in enumerate(parsed, start=1)
@@ -821,7 +807,13 @@ class ElasticsearchVideoChunkStore:
         canonical_uuid(document.series_id, "series_id")
         canonical_uuid(document.video_id, "video_id")
         document_id(document.parse_task_id, document.video_chunk_id)
-        for name in ("source_revision", "retrieval_contract_id", "semantic_encoder_id", "vision_encoder_id"):
+        for name in (
+            "source_revision",
+            "projection_revision",
+            "retrieval_contract_id",
+            "semantic_encoder_id",
+            "vision_encoder_id",
+        ):
             require_nonempty_text(getattr(document, name), name)
         if (
             isinstance(document.content_version, bool)
@@ -839,6 +831,11 @@ class ElasticsearchVideoChunkStore:
         ):
             raise ValueError("Chunk interval is invalid")
         projection = ChunkIndexProjection.model_validate(document.projection)
+        if (
+            compute_index_projection_revision(projection)
+            != document.projection_revision
+        ):
+            raise ValueError("projection_revision differs from the projection")
         if any(
             item.start_seconds >= document.chunk_end_seconds
             or item.end_seconds <= document.chunk_start_seconds
@@ -872,7 +869,7 @@ class ElasticsearchVideoChunkStore:
             "content_version": document.content_version,
             "index_generation": document.index_generation,
             "source_revision": document.source_revision,
-            "projection_revision": compute_index_projection_revision(projection),
+            "projection_revision": document.projection_revision,
             "retrieval_contract_id": document.retrieval_contract_id,
             "semantic_encoder_id": document.semantic_encoder_id,
             "vision_encoder_id": document.vision_encoder_id,

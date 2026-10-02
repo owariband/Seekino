@@ -15,7 +15,8 @@ from .video_item import (
     build_update_video_item_tool,
 )
 from .retrieval import (
-    ReadItemArguments, RetrieveArguments, build_read_trieve_item_tool,
+    LexicalRetrieveArguments, ReadItemArguments, RetrieveArguments,
+    build_read_trieve_item_tool,
     build_retrieve_tool,
 )
 from .shared import DraftReadAudit, RemoveItemArguments

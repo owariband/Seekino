@@ -18,7 +18,6 @@ from server.database import (
 from server.model.agent import (
     AgentConversationRecord,
     AgentMessageRecord,
-    AgentMessageTimingRecord,
 )
 from server.model.parse_usage import (
     ParseModelCallRecord,
@@ -449,12 +448,6 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
     message_ddl = str(
         CreateTable(AgentMessageRecord.__table__).compile(dialect=mysql.dialect())
     )
-    timing_ddl = str(
-        CreateTable(AgentMessageTimingRecord.__table__).compile(
-            dialect=mysql.dialect()
-        )
-    )
-
     assert "ENGINE=InnoDB" in conversation_ddl
     assert "workspace_id VARCHAR(64) NOT NULL" in conversation_ddl
     assert "session_id" not in conversation_ddl
@@ -467,12 +460,29 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
     assert "requested_top_k INTEGER" in message_ddl
     assert "requested_run_options JSON" in message_ddl
     assert "extra_context JSON" in message_ddl
+    assert "detail JSON" in message_ddl
     assert "ON DELETE CASCADE" in message_ddl
-    assert "total_duration_ms BIGINT" in timing_ddl
-    assert "started_at BIGINT NOT NULL" in timing_ddl
-    assert "stages JSON NOT NULL" in timing_ddl
-    assert "ck_agent_message_timing_total_duration" in timing_ddl
-    assert "ON DELETE CASCADE" in timing_ddl
+
+
+def test_agent_message_detail_migration_matches_supported_empty_legacy_schema() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "docs/migrations/20260927_agent_message_detail_request.sql"
+    ).read_text()
+    first_alter = migration.index("ALTER TABLE agent_message")
+    guards = migration[:first_alter]
+
+    assert "IF EXISTS (SELECT 1 FROM agent_message LIMIT 1)" in guards
+    assert "timing_table_count <> 1" in guards
+    assert "IF EXISTS (SELECT 1 FROM agent_message_timing LIMIT 1)" in guards
+    assert "detail_column_count <> 0" in guards
+    assert "ADD COLUMN detail JSON NULL AFTER extra_context" in migration
+    assert migration.index("ADD COLUMN detail JSON") < migration.index(
+        "DROP COLUMN idempotency_key"
+    )
+    assert migration.index("DROP TABLE agent_message_timing") < migration.index(
+        "CREATE UNIQUE INDEX uq_agent_message_conversation_idempotency"
+    )
 
 
 def test_create_schema_refuses_to_shadow_a_legacy_video_segment_schema() -> None:
@@ -581,7 +591,7 @@ def test_create_schema_requires_controlled_message_scope_migration(
         ).scalar_one() == "existing-message"
 
 
-def test_create_schema_accepts_current_message_scope_schema_repeatedly() -> None:
+def test_create_schema_accepts_current_message_detail_schema_repeatedly() -> None:
     engine = create_database_engine(
         "sqlite+pysqlite:///:memory:",
         environment=DatabaseEnvironment.TEST,
@@ -597,13 +607,65 @@ def test_create_schema_accepts_current_message_scope_schema_repeatedly() -> None
         column["name"] for column in inspector.get_columns("agent_message")
     }
     assert "series_ids" not in conversation_columns
-    assert {"series_ids", "requested_series_ids"} <= message_columns
-    assert {
-        "message_id", "started_at", "total_duration_ms", "stages",
-    } == {
-        column["name"]
-        for column in inspector.get_columns("agent_message_timing")
+    assert {"series_ids", "requested_series_ids", "detail"} <= message_columns
+    assert not {"idempotency_key", "reply_to_message_id", "retrieval_query"} & message_columns
+    assert "agent_message_timing" not in inspector.get_table_names()
+
+
+@pytest.mark.parametrize(
+    "column_name",
+    ["idempotency_key", "reply_to_message_id", "retrieval_query"],
+)
+def test_create_schema_rejects_legacy_agent_message_columns(
+    column_name: str,
+) -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
+    )
+    create_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(text(f"ALTER TABLE agent_message ADD COLUMN {column_name} TEXT"))
+
+    with pytest.raises(
+        SchemaUpgradeRequiredError,
+        match=rf"agent_message\.{column_name}",
+    ):
+        create_schema(engine)
+
+
+def test_create_schema_rejects_missing_agent_message_detail() -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
+    )
+    create_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(text("DROP INDEX uq_agent_message_conversation_idempotency"))
+        connection.execute(text("ALTER TABLE agent_message DROP COLUMN detail"))
+
+    with pytest.raises(SchemaUpgradeRequiredError, match="agent_message missing detail"):
+        create_schema(engine)
+
+    assert "detail" not in {
+        column["name"] for column in inspect(engine).get_columns("agent_message")
     }
+
+
+def test_create_schema_rejects_legacy_agent_message_timing_table() -> None:
+    engine = create_database_engine(
+        "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
+    )
+    create_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE agent_message_timing "
+            "(message_id TEXT PRIMARY KEY, started_at BIGINT NOT NULL, "
+            "total_duration_ms BIGINT, stages JSON)"
+        ))
+
+    with pytest.raises(SchemaUpgradeRequiredError, match="agent_message_timing"):
+        create_schema(engine)
+
+    assert "agent_message_timing" in inspect(engine).get_table_names()
 
 
 def test_create_schema_requires_controlled_video_parse_v2_migration() -> None:
@@ -942,6 +1004,7 @@ def test_create_schema_requires_extra_context_migration_and_preserves_messages()
             "CREATE TABLE agent_message ("
             "message_id TEXT, series_ids JSON, requested_series_ids JSON, "
             "phase TEXT, version INTEGER, reference JSON, requested_run_options JSON, "
+            "detail JSON, "
             "last_error_code TEXT, last_error_message TEXT)"
         ))
         connection.execute(text(
@@ -1036,20 +1099,20 @@ def test_create_schema_requires_unix_millisecond_bigint_timestamps() -> None:
     with engine.begin() as connection:
         connection.execute(
             text(
-                "CREATE TABLE agent_message_timing "
-                "(message_id TEXT, started_at DATETIME, "
-                "total_duration_ms BIGINT, stages JSON)"
+                "CREATE TABLE agent_conversation "
+                "(conversation_id TEXT, workspace_id TEXT, title_is_auto BOOL, "
+                "last_message_at DATETIME)"
             )
         )
 
     with pytest.raises(
         SchemaUpgradeRequiredError,
-        match="agent_message_timing.started_at",
+        match="agent_conversation.last_message_at",
     ):
         create_schema(engine)
 
     columns = {
         column["name"]: column["type"]
-        for column in inspect(engine).get_columns("agent_message_timing")
+        for column in inspect(engine).get_columns("agent_conversation")
     }
-    assert not isinstance(columns["started_at"], BigInteger)
+    assert not isinstance(columns["last_message_at"], BigInteger)

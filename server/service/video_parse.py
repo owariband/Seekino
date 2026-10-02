@@ -50,9 +50,18 @@ from engine.parsev2.validation import (
     ValidatedIntervalRefinement,
     ValidatedPrefixRefinement,
 )
+from engine.retrieval import (
+    ChunkIndexingContract,
+    EncoderContract,
+    VideoClipInputContract,
+    VIDEO_CLIP_PREPROCESS_REVISION,
+)
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.factory import AgentModelFactory
-from gateway.ark.embedding import DoubaoMultimodalEmbedder
+from gateway.ark.embedding import (
+    DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+    DoubaoMultimodalEmbedder,
+)
 from gateway.ark.multimodal import ArkMultimodalModel
 from gateway.config import (
     AgentFallbackConfig,
@@ -85,9 +94,8 @@ from ..repository.video_parse import (
 from ..storage.artifact import ArtifactStore
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
 from .parse_usage import ParseUsageService
-from .video_parse_indexing import (
-    VideoParseIndexingContract,
-    VideoParseIndexingService,
+from .video_parse_index_coordinator import (
+    VideoParseIndexCoordinator,
 )
 from .video_parse_media import (
     MediaLeaseIdentity,
@@ -99,7 +107,6 @@ from .video_parse_model_calls import VideoParseModelCallManager
 
 _Result = TypeVar("_Result", bound=BaseModel)
 _T = TypeVar("_T")
-_EMBEDDING_REVISION = "gateway-ark-embedding-v1"
 _RETRIEVAL_CONTRACT = "parse-v2-retrieval-v1"
 _logger = logging.getLogger(__name__)
 
@@ -250,12 +257,12 @@ class VideoParseRuntimeService:
                 category="embedding",
                 check_active=lambda: self._require_interval_active(lease),
             ) as manager:
-                indexing, client = self._build_indexing_service(
+                coordinator, client = self._build_index_coordinator(
                     inputs,
                     check_active=manager.check_active,
                 )
                 try:
-                    await self._run_blocking(indexing.index_interval, lease)
+                    await self._run_blocking(coordinator.index_interval, lease)
                 finally:
                     await asyncio.to_thread(client.close)
             self._notify_change(lease.video_parse_task_id)
@@ -1171,12 +1178,12 @@ class VideoParseRuntimeService:
             if close is not None:
                 close()
 
-    def _build_indexing_service(
+    def _build_index_coordinator(
         self,
         inputs: ParseInput,
         *,
         check_active: Callable[[], None],
-    ) -> tuple[VideoParseIndexingService, Ark]:
+    ) -> tuple[VideoParseIndexCoordinator, Ark]:
         embedding = inputs.parse_config.models.embedding
         source = self._source(embedding.source)
         if not isinstance(source, ArkModelSourceConfig):
@@ -1195,29 +1202,37 @@ class VideoParseRuntimeService:
         )
         provider = source.provider
         dimensions = embedding.dimensions
-        service = VideoParseIndexingService(
+        coordinator = VideoParseIndexCoordinator(
             self._repository,
             self._elasticsearch_store,
             embedder,
             media_resolver=self._artifact_store.resolve,
             media_service=self._media_service,
             check_active=check_active,
-            contract=VideoParseIndexingContract(
+            contract=ChunkIndexingContract(
                 retrieval_contract_id=_RETRIEVAL_CONTRACT,
-                semantic_provider=provider,
-                semantic_model=embedding.model,
-                semantic_encoder_revision=_EMBEDDING_REVISION,
-                semantic_dimensions=dimensions,
-                vision_provider=provider,
-                vision_model=embedding.model,
-                vision_encoder_revision=_EMBEDDING_REVISION,
-                vision_dimensions=dimensions,
-                vision_fps=embedding.video_fps,
-                vision_max_height=inputs.parse_config.visual_input.max_height,
+                semantic_encoder=EncoderContract(
+                    provider=provider,
+                    model=embedding.model,
+                    encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+                    dimensions=dimensions,
+                ),
+                vision_encoder=EncoderContract(
+                    provider=provider,
+                    model=embedding.model,
+                    encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+                    dimensions=dimensions,
+                ),
+                visual_input_contract=VideoClipInputContract(
+                    fps=embedding.video_fps,
+                    max_height=inputs.parse_config.visual_input.max_height,
+                    mime_type="video/mp4",
+                    preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
+                ),
                 index_generation=self._index_generation,
             ),
         )
-        return service, client
+        return coordinator, client
 
     # Lease and identity helpers -------------------------------------------
 

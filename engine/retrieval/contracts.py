@@ -114,9 +114,12 @@ class VideoChunkRetrievalIdentity(_RetrievalContractModel):
     video_id: str = Field(min_length=1)
     parse_task_id: str = Field(min_length=1)
     content_version: int = Field(gt=0, strict=True)
+    index_generation: int = Field(gt=0, strict=True)
     source_revision: str = Field(min_length=1)
     projection_revision: str = Field(min_length=1)
     retrieval_contract_id: str = Field(min_length=1)
+    semantic_encoder_id: str = Field(min_length=1)
+    vision_encoder_id: str = Field(min_length=1)
 
 
 class VideoChunkCandidate(_RetrievalContractModel):

@@ -231,7 +231,6 @@ def _project_stored_search_result(result: dict) -> dict[str, Any]:
         })
     reply = result.get("agentReply")
     return {
-        "query": result.get("query"),
         "seriesIds": list(result.get("seriesIds") or []),
         "resultCount": reply.get("resultCount") if isinstance(reply, dict) else len(hits),
         "hits": hits,

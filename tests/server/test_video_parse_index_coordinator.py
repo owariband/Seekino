@@ -8,6 +8,13 @@ from uuid import uuid4
 import pytest
 
 from engine.parsev1.usage import capture_parse_usage
+from engine.retrieval import (
+    ChunkIndexingContract,
+    EncoderContract,
+    OrderedFramesInputContract,
+    VideoClipInputContract,
+    VIDEO_CLIP_PREPROCESS_REVISION,
+)
 from gateway.embedding import EmbeddingResult
 from gateway.usage import track_model_call
 from server.model.dto.jobDTO import (
@@ -15,15 +22,16 @@ from server.model.dto.jobDTO import (
     IntervalIndexingSnapshot,
     IntervalParseLease,
 )
-from server.service.video_parse_indexing import (
-    INDEX_EMBEDDINGS_DETAIL_KEY,
-    VideoParseIndexingContract,
-    VideoParseIndexingService,
+from server.repository.video_parse import INDEX_EMBEDDINGS_DETAIL_KEY
+from server.service.video_parse_index_coordinator import (
+    VideoParseIndexCoordinator,
 )
 from server.service.video_parse_media import VideoParseMediaService
 from server.storage.elasticsearch import (
     ElasticsearchIndexSchemaError,
     StoredDocumentState,
+    _external_version,
+    document_id,
 )
 from server.utils.time import now_utc
 
@@ -74,18 +82,30 @@ class _Repository:
         return self.snapshot
 
     def save_index_embeddings(
-        self, lease, chunk_parse_task_id, content_version, representations, *, now=None,
+        self,
+        lease,
+        chunk_parse_task_id,
+        content_version,
+        representations,
+        *,
+        receipt=None,
+        now=None,
     ):
-        self.saved.append((chunk_parse_task_id, content_version, representations))
+        self.saved.append(
+            (chunk_parse_task_id, content_version, representations, receipt)
+        )
         chunk = next(
             item
             for item in self.snapshot.chunks
             if item.chunk_parse_task_id == chunk_parse_task_id
         )
-        chunk.content_detail[INDEX_EMBEDDINGS_DETAIL_KEY] = {
+        envelope = {
             "content_version": content_version,
             "representations": representations,
         }
+        if receipt is not None:
+            envelope["receipt"] = receipt
+        chunk.content_detail[INDEX_EMBEDDINGS_DETAIL_KEY] = envelope
 
     def complete_interval_indexing(self, lease, indexed_versions, *, now=None):
         self.completed.append(dict(indexed_versions))
@@ -115,7 +135,9 @@ class _Store:
 
     def inspect_exact(self, documents):
         return {
-            item.document_id: self._ready_key(item) in self.ready
+            document_id(item.parse_task_id, item.video_chunk_id): (
+                self._ready_key(item) in self.ready
+            )
             for item in documents
         }
 
@@ -143,13 +165,16 @@ class _Store:
                 semantic_vector_present=item.semantic_vector is not None,
                 vision_vector_present=True,
             )
-        return [item.document_id for item in documents]
+        return [
+            document_id(item.parse_task_id, item.video_chunk_id)
+            for item in documents
+        ]
 
     @staticmethod
     def _ready_key(item):
         return (
-            item.document_id,
-            item.external_version,
+            document_id(item.parse_task_id, item.video_chunk_id),
+            _external_version(item.content_version, item.index_generation),
             item.source_revision,
             item.retrieval_contract_id,
             item.semantic_encoder_id,
@@ -183,21 +208,70 @@ class _Embedder:
             )
 
 
-def _contract(*, index_generation=1):
-    return VideoParseIndexingContract(
+def _contract(*, index_generation=1, visual_input_contract=None):
+    encoder = EncoderContract(
+        provider="ark",
+        model="embed-v1",
+        encoder_revision="gateway-ark-embedding-v1",
+        dimensions=2,
+    )
+    return ChunkIndexingContract(
         retrieval_contract_id="parse-v2-retrieval-v1",
-        semantic_provider="ark",
-        semantic_model="embed-v1",
-        semantic_encoder_revision="gateway-ark-embedding-v1",
-        semantic_dimensions=2,
-        vision_provider="ark",
-        vision_model="embed-v1",
-        vision_encoder_revision="gateway-ark-embedding-v1",
-        vision_dimensions=2,
-        vision_fps=1,
-        vision_max_height=720,
+        semantic_encoder=encoder,
+        vision_encoder=encoder,
+        visual_input_contract=visual_input_contract or VideoClipInputContract(
+            fps=1,
+            max_height=720,
+            mime_type="video/mp4",
+            preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
+        ),
         index_generation=index_generation,
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mime_type", "video/webm"),
+        ("preprocess_revision", "another-preprocess-v2"),
+    ],
+)
+def test_coordinator_rejects_clip_contract_the_media_adapter_cannot_produce(
+    tmp_path, field, value,
+):
+    ids, media, snapshot = _fixture(tmp_path)
+    clip = replace(_contract().visual_input_contract, **{field: value})
+
+    with pytest.raises(ValueError, match="MP4 preprocessing contract"):
+        VideoParseIndexCoordinator(
+            _Repository(snapshot),
+            _Store(),
+            _Embedder(),
+            media_resolver=lambda _uri: media,
+            media_service=_media_service(tmp_path),
+            contract=_contract(visual_input_contract=clip),
+        )
+
+
+def test_coordinator_rejects_ordered_frames_until_an_adapter_implements_them(
+    tmp_path,
+):
+    _, media, snapshot = _fixture(tmp_path)
+    frames = OrderedFramesInputContract(
+        sampling_contract_id="uniform-four-v1",
+        mime_type="image/jpeg",
+        preprocess_revision="jpeg-resize-v1",
+    )
+
+    with pytest.raises(ValueError, match="does not implement ordered-frame"):
+        VideoParseIndexCoordinator(
+            _Repository(snapshot),
+            _Store(),
+            _Embedder(),
+            media_resolver=lambda _uri: media,
+            media_service=_media_service(tmp_path),
+            contract=_contract(visual_input_contract=frames),
+        )
 
 
 def _media_service(tmp_path):
@@ -243,7 +317,7 @@ def test_indexing_projects_encodes_caches_writes_and_checks_visibility(tmp_path)
     repository = _Repository(snapshot)
     store = _Store()
     embedder = _Embedder()
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -264,12 +338,20 @@ def test_indexing_projects_encodes_caches_writes_and_checks_visibility(tmp_path)
     ]
     assert repository.completed == [{ids["chunk_task"]: 2}]
     document = store.bulk_calls[0][0][0]
-    assert document.document_id == f'{ids["video_task"]}:{ids["chunk"]}'
+    assert document_id(document.parse_task_id, document.video_chunk_id) == (
+        f'{ids["video_task"]}:{ids["chunk"]}'
+    )
     assert document.projection.semantic_text
     assert store.bulk_calls[0][1] == "wait_for"
     representations = repository.saved[0][2]
     assert representations["text"]["vector"] == [1.0, 0.0]
-    assert representations["video"]["vector"] == [0.0, 1.0]
+    final_representations = repository.saved[-1][2]
+    assert final_representations["video"]["vector"] == [0.0, 1.0]
+    receipt = repository.saved[-1][3]
+    assert receipt == document.receipt.as_dict()
+    assert snapshot.chunks[0].content_detail[
+        INDEX_EMBEDDINGS_DETAIL_KEY
+    ]["receipt"] == receipt
 
     # Losing the DB cache still reuses the exactly proven ES representations.
     snapshot.chunks[0].content_detail.clear()
@@ -284,7 +366,7 @@ def test_indexing_writes_the_configured_generation(tmp_path):
     ids, media, snapshot = _fixture(tmp_path)
     repository = _Repository(snapshot)
     store = _Store()
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, store, _Embedder(),
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -306,7 +388,7 @@ def test_generation_rebuild_reuses_compatible_stored_vectors(tmp_path):
     embedder = _Embedder()
     lease = _lease(ids["video_task"], ids["interval"], ids["chunk_task"])
 
-    VideoParseIndexingService(
+    VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -314,7 +396,7 @@ def test_generation_rebuild_reuses_compatible_stored_vectors(tmp_path):
     ).index_interval(lease)
     snapshot.chunks[0].content_detail.clear()
 
-    VideoParseIndexingService(
+    VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -337,7 +419,7 @@ def test_unknown_bulk_result_completes_after_exact_readback(tmp_path):
 
     store = TimedOutAfterWriteStore()
     embedder = _Embedder()
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -363,7 +445,7 @@ def test_schema_failure_is_not_reconciled_as_an_unknown_write(tmp_path):
         def inspect_exact(self, documents):
             raise AssertionError("deterministic schema errors must not be read back")
 
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, IncompatibleStore(), _Embedder(),
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -395,7 +477,7 @@ def test_failed_bulk_retries_with_cached_vectors(tmp_path):
 
     store = FailedBeforeWriteStore()
     embedder = _Embedder()
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -406,10 +488,52 @@ def test_failed_bulk_retries_with_cached_vectors(tmp_path):
     with pytest.raises(RuntimeError, match="bulk unavailable"):
         service.index_interval(lease)
     assert repository.completed == []
+    assert repository.saved[-1][3] is not None
 
     assert service.index_interval(lease) == "complete"
     assert embedder.text_calls == embedder.video_calls == 1
     assert store.attempts == 2
+
+
+def test_legacy_receipts_reuse_proven_text_and_reencode_unproven_video(tmp_path):
+    ids, media, snapshot = _fixture(tmp_path)
+    repository = _Repository(snapshot)
+    store = _Store()
+    embedder = _Embedder()
+    service = VideoParseIndexCoordinator(
+        repository,
+        store,
+        embedder,
+        media_resolver=lambda _uri: media,
+        media_service=_media_service(tmp_path),
+        contract=_contract(),
+    )
+    lease = _lease(ids["video_task"], ids["interval"], ids["chunk_task"])
+    service.index_interval(lease)
+
+    cached = snapshot.chunks[0].content_detail[INDEX_EMBEDDINGS_DETAIL_KEY]
+    cached["representations"]["text"].pop("encoder_id")
+    for field in (
+        "encoder_id",
+        "input_contract_id",
+        "visual_input_kind",
+        "max_height",
+        "preprocess_revision",
+    ):
+        cached["representations"]["video"].pop(field)
+    cached.pop("receipt")
+    store.ready.clear()
+    store.states.clear()
+    store.bulk_calls.clear()
+
+    service.index_interval(lease)
+
+    assert embedder.text_calls == 1
+    assert embedder.video_calls == 2
+    refreshed = snapshot.chunks[0].content_detail[INDEX_EMBEDDINGS_DETAIL_KEY]
+    assert refreshed["representations"]["text"]["encoder_id"]
+    assert refreshed["representations"]["video"]["max_height"] == 720
+    assert refreshed["receipt"] == store.bulk_calls[0][0][0].receipt.as_dict()
 
 
 def test_partial_bulk_retry_writes_only_the_missing_document(tmp_path):
@@ -443,7 +567,7 @@ def test_partial_bulk_retry_writes_only_the_missing_document(tmp_path):
 
     store = PartiallyFailedStore()
     embedder = _Embedder()
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -476,7 +600,7 @@ def test_invalid_parse_content_stops_before_embedding_or_external_write(tmp_path
     repository = _Repository(snapshot)
     store = _Store()
     embedder = _Embedder()
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -499,7 +623,7 @@ def test_empty_timeline_needs_only_the_required_vision_representation(tmp_path):
     repository = _Repository(snapshot)
     store = _Store()
     embedder = _Embedder()
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -531,7 +655,7 @@ def test_partial_embedding_success_is_fenced_and_reused_on_retry(tmp_path):
             )
 
     embedder = FailVideoOnce()
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -556,7 +680,7 @@ def test_content_change_reencodes_only_changed_text_representation(tmp_path):
     repository = _Repository(snapshot)
     store = _Store()
     embedder = _Embedder()
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),
@@ -588,7 +712,7 @@ def test_lost_execution_lease_stops_before_external_write_or_complete(tmp_path):
         if embedder.video_calls and len(repository.saved) >= 2:
             raise RuntimeError("execution lease lost")
 
-    service = VideoParseIndexingService(
+    service = VideoParseIndexCoordinator(
         repository, store, embedder,
         media_resolver=lambda _uri: media,
         media_service=_media_service(tmp_path),

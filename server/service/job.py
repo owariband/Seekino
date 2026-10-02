@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from typing import Literal
+
 from ..identity import canonical_uuid
 from ..model.dto.jobDTO import (
     ParseJobDetail,
     ParseJobSummaryState,
-    VideoParseTaskState,
+    VideoParseTaskDetail,
 )
-from ..model.job import ParseJobStatus
+from ..model.job import ParseJobStatus, VideoParseTaskStatus
 from ..repository.job import ParseJobRepository
 from .library import LibraryService
 from ..utils.validation import require_nonempty_text
@@ -17,9 +20,12 @@ class ParseJobService:
         self,
         repository: ParseJobRepository,
         library: LibraryService,
+        *,
+        execution_mode: Literal["v1", "v2"] = "v1",
     ) -> None:
         self._repository = repository
         self._library = library
+        self._pending_takeover_enabled = execution_mode == "v2"
 
     def get(self, job_id: str, *, workspace_id: str) -> ParseJobDetail:
         canonical_job_id = canonical_uuid(job_id, "job_id")
@@ -43,11 +49,57 @@ class ParseJobService:
         video_parse_task_id: str,
         *,
         workspace_id: str,
-    ) -> VideoParseTaskState:
+    ) -> VideoParseTaskDetail:
         task_id = canonical_uuid(video_parse_task_id, "video_parse_task_id")
-        task = self._repository.get_video_parse_task(task_id)
-        self._library.get_video(task.video_id, workspace_id=workspace_id)
-        return task
+        return replace(
+            self._repository.get_video_parse_task_detail(
+                task_id,
+                workspace_id=require_nonempty_text(workspace_id, "workspace_id"),
+            ),
+            pending_takeover_enabled=self._pending_takeover_enabled,
+        )
+
+    def list_video_parse_tasks(
+        self,
+        *,
+        workspace_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        series_id: str | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[VideoParseTaskDetail]:
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a nonnegative integer")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        return [
+            replace(
+                detail,
+                pending_takeover_enabled=self._pending_takeover_enabled,
+            )
+            for detail in self._repository.list_video_parse_tasks_for_workspace(
+                normalized_workspace,
+                limit=limit,
+                offset=offset,
+                series_id=self._scope_series(series_id, normalized_workspace),
+                statuses=self._video_parse_statuses(statuses),
+            )
+        ]
+
+    def count_video_parse_tasks(
+        self,
+        *,
+        workspace_id: str,
+        series_id: str | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> int:
+        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        return self._repository.count_video_parse_tasks_for_workspace(
+            normalized_workspace,
+            series_id=self._scope_series(series_id, normalized_workspace),
+            statuses=self._video_parse_statuses(statuses),
+        )
 
     def list(
         self,
@@ -105,6 +157,16 @@ class ParseJobService:
     @staticmethod
     def _statuses(statuses: tuple[str, ...] | None) -> tuple[str, ...] | None:
         return tuple(sorted({ParseJobStatus(status).value for status in statuses})) if statuses is not None else None
+
+    @staticmethod
+    def _video_parse_statuses(
+        statuses: tuple[str, ...] | None,
+    ) -> tuple[str, ...] | None:
+        if statuses is None:
+            return None
+        return tuple(
+            sorted({VideoParseTaskStatus(status).value for status in statuses})
+        )
 
     def _scope_series(self, series_id: str | None, workspace_id: str) -> str | None:
         if series_id is None:

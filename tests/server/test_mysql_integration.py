@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import delete, event, func, select
+from sqlalchemy.exc import IntegrityError
 
 from server.database import (
     DatabaseEnvironment,
@@ -26,6 +27,7 @@ from server.model.video import (
     VideoChunkRecord,
 )
 from server.model.job import SeriesParseJobRecord, VideoParseTaskRecord
+from server.model.agent import AgentConversationRecord, AgentMessageRecord
 from server.model.parse_usage import ParseModelCallRecord, ParseUsageAttemptRecord
 from server.model.upload import (
     UPLOAD_DELETION_PENDING_ERROR_CODE,
@@ -40,6 +42,7 @@ from server.utils.time import (
 )
 from server.mq.contracts import ParseJobLeaseLostError
 from server.repository.job import ParseJobRepository
+from server.repository.agent import AgentRepository
 from server.repository.index_sync import IndexSyncRepository
 from server.model.dto.jobDTO import VideoChunkCheckpointState
 from server.repository.library import LibraryRepository
@@ -55,6 +58,82 @@ from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
 
 TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
+
+
+@pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")
+def test_mysql_agent_message_detail_request_idempotency_and_pairing():
+    engine = create_database_engine(
+        TEST_DATABASE_URL or "", environment=DatabaseEnvironment.TEST,
+    )
+    create_schema(engine)
+    session_factory = create_session_factory(engine)
+    repository = AgentRepository(session_factory)
+    conversation_id = str(uuid4())
+    try:
+        repository.create_conversation(
+            conversation_id=conversation_id,
+            workspace_id="mysql-agent-detail-request",
+            title="Agent detail request test",
+            idempotency_key=str(uuid4()),
+        )
+        request = dict(
+            conversation_id=conversation_id,
+            workspace_id="mysql-agent-detail-request",
+            content="Find the scene",
+            model_name="test-model",
+            requested_top_k=5,
+            requested_run_options={},
+            idempotency_key="request-key",
+            series_ids=[],
+            requested_series_ids=[],
+            user_message_id=str(uuid4()),
+            assistant_message_id=str(uuid4()),
+            now=now_unix_time_ms(),
+        )
+        started = repository.start_message(**request)
+        replayed = repository.start_message(**{
+            **request,
+            "user_message_id": str(uuid4()),
+            "assistant_message_id": str(uuid4()),
+        })
+        assert replayed.reused is True
+        assert replayed.user_message.message_id == started.user_message.message_id
+        assert replayed.assistant_message.message_id == started.assistant_message.message_id
+        assert repository.get_message_pair(
+            conversation_id, "mysql-agent-detail-request",
+            idempotency_key="request-key",
+        ).assistant_message.message_id == started.assistant_message.message_id
+        assert repository.get_message_pair(
+            conversation_id, "mysql-agent-detail-request",
+            message_id=started.assistant_message.message_id,
+        ).user_message.message_id == started.user_message.message_id
+
+        with session_factory() as session:
+            user = session.get(AgentMessageRecord, started.user_message.message_id)
+            assert user is not None
+            assert user.detail == {"request": {"idempotencyKey": "request-key"}}
+
+        with pytest.raises(IntegrityError):
+            with session_factory.begin() as session:
+                session.add(AgentMessageRecord(
+                    message_id=str(uuid4()),
+                    conversation_id=conversation_id,
+                    sequence_no=2,
+                    role="USER",
+                    status="COMPLETED",
+                    version=1,
+                    series_ids=[],
+                    detail={"request": {"idempotencyKey": "request-key"}},
+                ))
+    finally:
+        with session_factory.begin() as session:
+            session.execute(delete(AgentMessageRecord).where(
+                AgentMessageRecord.conversation_id == conversation_id,
+            ))
+            session.execute(delete(AgentConversationRecord).where(
+                AgentConversationRecord.conversation_id == conversation_id,
+            ))
+        engine.dispose()
 
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")

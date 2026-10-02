@@ -18,6 +18,7 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener
 
+from elasticsearch import Elasticsearch
 from qdrant_client import QdrantClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
@@ -30,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 from gateway.config import required_api_key_env_names, load_config
 from server.config import ServerSettings
 from server.database import create_database_engine, create_schema
+from server.storage.elasticsearch import ElasticsearchVideoChunkStore
 from server.storage.qdrant import QdrantVideoChunkStore
 
 STATE = ROOT / "outputs/local-services"
@@ -109,7 +111,10 @@ def configure() -> ServerSettings:
         raise RuntimeError("本地启动脚本只支持 ANIVAG_ENVIRONMENT=development。")
     if database.drivername != "mysql+pymysql":
         raise RuntimeError("本地启动脚本需要 mysql+pymysql 数据库 URL。")
-    for host in (database.host, qdrant.hostname, os.environ["ANIVAG_HTTP_HOST"]):
+    hosts = [database.host, qdrant.hostname, os.environ["ANIVAG_HTTP_HOST"]]
+    if settings.elasticsearch is not None:
+        hosts.append(urlsplit(settings.elasticsearch.url).hostname)
+    for host in hosts:
         if host not in ("127.0.0.1", "localhost"):
             raise RuntimeError("本地启动脚本只支持 127.0.0.1 / localhost。")
     if qdrant.scheme not in ("http", "https") or qdrant.path.rstrip("/"):
@@ -123,6 +128,13 @@ def configure() -> ServerSettings:
         text_dimensions=settings.text_vector_dimensions,
         vision_dimensions=settings.vision_vector_dimensions,
     )
+    if settings.elasticsearch is not None:
+        ElasticsearchVideoChunkStore(
+            None, index_name=settings.elasticsearch.index_name,
+            environment=settings.environment,
+            semantic_dimensions=settings.text_vector_dimensions,
+            vision_dimensions=settings.vision_vector_dimensions,
+        )
     return settings
 
 
@@ -309,6 +321,29 @@ def start_qdrant(settings: ServerSettings) -> None:
     print(f"[就绪] Qdrant / {settings.qdrant_collection}，向量 Schema 已校验", flush=True)
 
 
+def start_elasticsearch(settings: ServerSettings) -> None:
+    config = settings.elasticsearch
+    if config is None:
+        return
+    client = Elasticsearch(config.url, api_key=config.api_key, request_timeout=5)
+    try:
+        health = client.cluster.health(wait_for_status="yellow", timeout="2s")
+        if health.get("timed_out") or health.get("status") not in {"yellow", "green"}:
+            raise RuntimeError("Elasticsearch 集群未达到 yellow 状态")
+        ElasticsearchVideoChunkStore(
+            client, index_name=config.index_name, environment=settings.environment,
+            semantic_dimensions=settings.text_vector_dimensions,
+            vision_dimensions=settings.vision_vector_dimensions,
+        ).ensure_index()
+    except Exception as exc:
+        raise RuntimeError(
+            "Elasticsearch 未就绪或索引合同不匹配；请检查 Compose 的 elasticsearch profile。"
+        ) from exc
+    finally:
+        client.close()
+    print(f"[就绪] Elasticsearch / {config.index_name}，索引 Schema 已校验", flush=True)
+
+
 def api_ready(base: str) -> bool:
     payload = get(base + "/healthz")
     try:
@@ -390,6 +425,18 @@ def status(settings: ServerSettings) -> bool:
         "API / Parse Consumer": api_ready(f"http://127.0.0.1:{port('ANIVAG_HTTP_PORT')}"),
         "Web": get(f"http://127.0.0.1:{port('ANIVAG_WEB_PORT')}/@vite/client") is not None,
     }
+    if settings.elasticsearch is not None:
+        config = settings.elasticsearch
+        client = Elasticsearch(config.url, api_key=config.api_key, request_timeout=3)
+        try:
+            health = client.cluster.health(wait_for_status="yellow", timeout="2s")
+            checks["Elasticsearch health"] = (
+                not health.get("timed_out") and health.get("status") in {"yellow", "green"}
+            )
+        except Exception:
+            checks["Elasticsearch health"] = False
+        finally:
+            client.close()
     for name, ready in checks.items():
         print(f"[{'运行' if ready else '未就绪'}] {name}")
     return all(checks.values())
@@ -449,6 +496,7 @@ def main() -> int:
                     raise RuntimeError(f"{name} 的启动配置已变化，请先 ./start.sh stop 再启动。")
         start_mysql(settings)
         start_qdrant(settings)
+        start_elasticsearch(settings)
         start_applications()
         for name, child in CHILDREN.items():
             if child.poll() is not None:

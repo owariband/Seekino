@@ -10,22 +10,25 @@ import pytest
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
 from server.model.job import (
+    ChunkParseTaskRecord,
     ParseJobStage,
     ParseJobStatus,
     SeriesParseJobRecord,
     VideoParseTaskRecord,
     VideoChunkCheckpointStage,
 )
-from server.model.video import SeriesRecord, VideoRecord
+from server.model.upload import UploadSessionRecord, UploadSessionStatus
+from server.model.video import SeriesRecord, VideoChunkRecord, VideoRecord
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.job import (
     ParseJobCheckpointConflictError,
     ParseJobLeaseLostError,
+    ParseJobNotFoundError,
     ParseJobRepository,
 )
 from server.model.dto.jobDTO import VideoChunkCheckpointState
 from server.api import jobs as jobs_api
-from server.api.jobs import project_job
+from server.api.jobs import project_job, project_video_parse_task
 from server.repository.library import LibraryRepository
 from server.model.dto.jobDTO import ParseJobDetail
 from server.service.job import ParseJobService
@@ -128,10 +131,11 @@ def test_public_job_version_tracks_semantic_changes_and_not_heartbeats(repositor
 
 
 def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(repository):
-    jobs, _queue, _job_id, video_id, _now = _seed_job(repository)
+    jobs, _queue, job_id, video_id, _now = _seed_job(repository)
     engine, _video_repository = repository
     factory = create_session_factory(engine)
     first_id, second_id = str(uuid4()), str(uuid4())
+    upload_session_id = str(uuid4())
     first_time = datetime(2026, 9, 14, 10, 0, 0, 123000, tzinfo=UTC)
     second_time = first_time + timedelta(minutes=1)
     frozen_config = default_video_parse_v2_config().model_dump(mode="json")
@@ -172,6 +176,28 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
                 create_time=second_time,
                 update_time=second_time,
             ),
+            UploadSessionRecord(
+                upload_session_id=upload_session_id,
+                workspace_id="local-default",
+                series_id=session.get(VideoRecord, video_id).series_id,
+                episode_order=1,
+                upload_sequence=1,
+                original_filename="episode.mp4",
+                media_type="video/mp4",
+                total_size_bytes=100,
+                preferred_segment_size_bytes=100,
+                total_segments=1,
+                version=1,
+                status=UploadSessionStatus.COMPLETED.value,
+                idempotency_key="v2-task-observation",
+                expires_at=second_time,
+                completed_at=first_time,
+                video_id=video_id,
+                job_id=job_id,
+                initial_video_parse_task_id=first_id,
+                created_at=first_time,
+                updated_at=first_time,
+            ),
         ])
 
     first = jobs.get_video_parse_task(first_id)
@@ -195,6 +221,190 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
         2,
     )
     assert jobs.get_video_parse_task(first_id) == first
+    detail = jobs.get_video_parse_task_detail(
+        second_id,
+        workspace_id="local-default",
+    )
+    assert detail.task.video_parse_task_id == second_id
+    assert detail.workspace_id == "local-default"
+    assert detail.series_name.startswith("Series ")
+    assert detail.episode_order == 1
+    assert detail.original_filename == "episode.mp4"
+    assert detail.duration_seconds == 60
+    assert detail.upload_session_id == upload_session_id
+    assert detail.is_latest is True
+    assert project_video_parse_task(detail).can_reparse is False
+    v2_service = ParseJobService(
+        jobs,
+        LibraryService(LibraryRepository(factory)),
+        execution_mode="v2",
+    )
+    takeover = v2_service.get_video_parse_task(
+        second_id,
+        workspace_id="local-default",
+    )
+    assert takeover.pending_takeover_enabled is True
+    assert project_video_parse_task(takeover).can_reparse is True
+    assert jobs.get_video_parse_task_detail(
+        first_id,
+        workspace_id="local-default",
+    ).is_latest is False
+    failed_latest = replace(
+        detail,
+        task=replace(detail.task, status="PARSING_FAILED"),
+    )
+    assert project_video_parse_task(failed_latest).can_retry is True
+    failed_history = replace(
+        jobs.get_video_parse_task_detail(
+            first_id,
+            workspace_id="local-default",
+        ),
+        task=replace(first, status="PARSING_FAILED"),
+    )
+    assert project_video_parse_task(failed_history).can_retry is False
+    with pytest.raises(ParseJobNotFoundError):
+        jobs.get_video_parse_task_detail(second_id, workspace_id="foreign")
+
+    pending = jobs.list_video_parse_tasks_for_workspace(
+        "local-default",
+        statuses=("PENDING",),
+    )
+    assert [item.task.video_parse_task_id for item in pending] == [second_id]
+    assert jobs.count_video_parse_tasks_for_workspace(
+        "local-default",
+        statuses=("PENDING",),
+    ) == 1
+    first_page = jobs.list_video_parse_tasks_for_workspace(
+        "local-default",
+        limit=1,
+    )
+    second_page = jobs.list_video_parse_tasks_for_workspace(
+        "local-default",
+        limit=1,
+        offset=1,
+    )
+    assert [item.task.video_parse_task_id for item in first_page + second_page] == [
+        second_id,
+        first_id,
+    ]
+
+    chunk_id = str(uuid4())
+    chunk_task_id = str(uuid4())
+    with factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, second_id)
+        task.status = "PARSING_FAILED"
+        task.detail = {"_worker_runtime_v2": {"accepted": True}}
+        session.add(VideoChunkRecord(
+            video_chunk_id=chunk_id,
+            video_id=video_id,
+            sequence_no=0,
+            start_seconds=0,
+            end_seconds=10,
+            analysis_window_start_seconds=0,
+            analysis_window_end_seconds=10,
+            chunk_media_ref="artifact://test/chunk.mp4",
+            analysis_window_media_ref="artifact://test/window.mp4",
+            transcript=[],
+            keyframe_uris=[],
+        ))
+        session.add(ChunkParseTaskRecord(
+            id=chunk_task_id,
+            video_parse_task_id=second_id,
+            video_chunk_id=chunk_id,
+            status="UNDERSTANDING",
+            next_execute_time=second_time,
+            retry_count=0,
+            lease_owner="active-worker",
+            lease_version=1,
+            lease_expire_time=datetime(2099, 1, 1, tzinfo=UTC),
+        ))
+
+    executing = jobs.get_video_parse_task_detail(
+        second_id,
+        workspace_id="local-default",
+    )
+    assert executing.has_active_execution_lease is True
+    assert executing.has_active_deletion_lease is True
+    executing_view = project_video_parse_task(executing)
+    assert executing_view.can_retry is False
+    assert executing_view.can_reparse is True
+    assert executing_view.can_delete is False
+
+    with factory.begin() as session:
+        child = session.get(ChunkParseTaskRecord, chunk_task_id)
+        child.status = "FAILED"
+        child.lease_owner = None
+        child.lease_expire_time = None
+
+    released = jobs.get_video_parse_task_detail(
+        second_id,
+        workspace_id="local-default",
+    )
+    assert released.has_active_execution_lease is False
+    assert released.has_active_deletion_lease is False
+    released_view = project_video_parse_task(released)
+    assert released_view.can_retry is True
+    assert released_view.can_delete is True
+
+    later_video_id = str(uuid4())
+    later_task_id = str(uuid4())
+    active_prefix_until = datetime(2099, 1, 1, tzinfo=UTC)
+    with factory.begin() as session:
+        series_id = session.get(VideoRecord, video_id).series_id
+        session.add(VideoRecord(
+            video_id=later_video_id,
+            series_id=series_id,
+            episode_order=2,
+            upload_sequence=2,
+            original_filename="episode-2.mp4",
+            original_source_uri="artifact://test/media/episode-2.mp4",
+            content_hash="b" * 64,
+            total_bytes=100,
+            duration_seconds=60,
+            upload_status="COMPLETED",
+            parse_status="QUEUED",
+            upload_progress=100,
+            parse_progress=0,
+        ))
+        session.add(VideoParseTaskRecord(
+            id=later_task_id,
+            video_id=later_video_id,
+            pipeline_version="video-parse-v2",
+            status="PARSING",
+            parse_config=frozen_config,
+            chunk_count=1,
+            version=1,
+            next_execute_time=second_time,
+            attempt_count=1,
+            max_attempts=3,
+            lease_owner="parent-worker",
+            lease_version=1,
+            lease_expire_time=active_prefix_until,
+            heartbeat_time=second_time,
+            processing_duration_ms=0,
+            processing_timing_complete=True,
+            detail={
+                "_worker_runtime_v2": {
+                    "accepted": True,
+                    "prefix": {
+                        "lease_owner": "prefix-worker",
+                        "lease_expire_time_ms": datetime_to_unix_time_ms(
+                            active_prefix_until
+                        ),
+                    },
+                },
+            },
+            create_time=second_time,
+            update_time=second_time,
+        ))
+
+    suffix_fenced = jobs.get_video_parse_task_detail(
+        second_id,
+        workspace_id="local-default",
+    )
+    assert suffix_fenced.has_active_prefix_lease is False
+    assert suffix_fenced.has_active_prefix_suffix_lease is True
+    assert project_video_parse_task(suffix_fenced).can_reparse is False
 
 
 @pytest.mark.parametrize("expire_lease", [False, True])

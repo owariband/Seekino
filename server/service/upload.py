@@ -12,6 +12,7 @@ from typing import Literal
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 from engine.parsev1.analysis_windows import probe_video_duration_seconds
+from engine.retrieval import EncoderContract
 
 from ..config.parse_profile import ParseConfig, default_video_parse_v2_config
 from ..config.upload import UploadServiceConfig
@@ -68,12 +69,29 @@ class UploadService:
         qdrant_mutation_lock: QdrantMutationLock | None = None,
         parse_defaults: ParseConfig | None = None,
         execution_mode: Literal["v1", "v2"] = "v1",
+        video_parse_query_encoder: EncoderContract | None = None,
+        video_parse_query_encoder_source: str | None = None,
     ) -> None:
         if execution_mode not in {"v1", "v2"}:
             raise ValueError("execution_mode must be 'v1' or 'v2'")
         if video_chunk_store is not None and qdrant_mutation_lock is None:
             raise ValueError(
                 "qdrant_mutation_lock is required when video_chunk_store is configured"
+            )
+        if (video_parse_query_encoder is None) != (
+            video_parse_query_encoder_source is None
+        ):
+            raise ValueError(
+                "video_parse_query_encoder and its source must be provided together"
+            )
+        if video_parse_index_store is not None and video_parse_query_encoder is None:
+            raise ValueError(
+                "video_parse_query_encoder is required when the V2 index store is configured"
+            )
+        if video_parse_query_encoder_source is not None:
+            video_parse_query_encoder_source = require_nonempty_text(
+                video_parse_query_encoder_source,
+                "video_parse_query_encoder_source",
             )
         self._repository = repository
         self._artifact_store = artifact_store
@@ -85,6 +103,8 @@ class UploadService:
         self._qdrant_mutation_lock = qdrant_mutation_lock
         self._parse_defaults = parse_defaults
         self._execution_mode = execution_mode
+        self._video_parse_query_encoder = video_parse_query_encoder
+        self._video_parse_query_encoder_source = video_parse_query_encoder_source
 
     @property
     def parse_defaults(self) -> ParseConfig | None:
@@ -622,7 +642,8 @@ class UploadService:
         store = self._video_parse_index_store
         if store is None:
             return
-        dimensions = config.models.embedding.dimensions
+        embedding = config.models.embedding
+        dimensions = embedding.dimensions
         if (
             dimensions != store.semantic_dimensions
             or dimensions != store.vision_dimensions
@@ -630,6 +651,25 @@ class UploadService:
             raise ValueError(
                 "video_parse_config.models.embedding.dimensions must match "
                 "the active Elasticsearch semantic and vision dimensions"
+            )
+        active_encoder = self._video_parse_query_encoder
+        active_source = self._video_parse_query_encoder_source
+        if active_encoder is None or active_source is None:
+            raise ValueError(
+                "the active Elasticsearch index is missing its V2 query encoder binding"
+            )
+        # Provider and adapter revision belong to the server-owned source
+        # binding. Requiring that same source plus the public EncoderContract
+        # fields prevents an accepted task from producing vectors that the
+        # active query encoder can never search.
+        if (
+            embedding.source != active_source
+            or embedding.model != active_encoder.model
+            or embedding.dimensions != active_encoder.dimensions
+        ):
+            raise ValueError(
+                "video_parse_config.models.embedding must match the exact active "
+                "V2 query encoder source, model, and dimensions"
             )
 
 

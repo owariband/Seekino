@@ -6,34 +6,445 @@ from uuid import uuid4
 
 import pytest
 from engine.parsev1.schemas import TranscriptCue
+from engine.retrieval import EncoderContract, LexicalField, compute_encoder_id
+from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
 from qdrant_client import QdrantClient
 
 from server.database import DatabaseEnvironment, create_session_factory
 from server.repository.index_sync import IndexSyncRepository
 from server.repository.video import SeriesScopeNotFoundError
+from server.repository.video_parse import VideoParseRetrievalScope
+from server.schema import VideoChunkEvidence
 from server.service.index_sync import IndexSyncService
 from server.service.qdrant_mutation_lock import QdrantMutationLock
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.service.video_retrieval import (
     RetrievalIndexConsistencyError,
+    VideoParseRetrievalService,
     VideoRetrievalService,
 )
+from server.storage.elasticsearch import VideoChunkIndexMatch
 from server.storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
 
 
 class FakeQueryEmbedder:
-    def __init__(self, vector: list[float]) -> None:
+    def __init__(
+        self,
+        vector: list[float],
+        *,
+        model: str = "fake-shared-embedding",
+    ) -> None:
         self._vector = vector
+        self._model = model
         self.calls: list[str] = []
 
     def embed_query(self, query: str) -> EmbeddingResult:
         self.calls.append(query)
         return EmbeddingResult(
-            model="fake-shared-embedding",
+            model=self._model,
             modality="text",
             vector=self._vector,
         )
+
+
+class _V2Repository:
+    def __init__(
+        self,
+        scope: VideoParseRetrievalScope,
+        evidence: VideoChunkEvidence,
+    ) -> None:
+        self.scope = scope
+        self.evidence = evidence
+        self.scope_calls: list[tuple[tuple[str, ...], str]] = []
+        self.hydrate_calls = []
+
+    def resolve_retrieval_scope(self, series_ids, *, workspace_id):
+        self.scope_calls.append((tuple(series_ids), workspace_id))
+        return self.scope
+
+    def hydrate_retrieval_evidence(self, identities):
+        self.hydrate_calls.append(tuple(identities))
+        return [self.evidence for _candidate in identities]
+
+
+class _V2Store:
+    semantic_dimensions = 2
+    vision_dimensions = 2
+
+    def __init__(
+        self,
+        lexical_matches,
+        semantic_matches,
+        vision_matches,
+    ) -> None:
+        self.lexical_matches = lexical_matches
+        self.semantic_matches = semantic_matches
+        self.vision_matches = vision_matches
+        self.calls = []
+
+    def search_lexical(self, query, **kwargs):
+        self.calls.append(("lexical", query, kwargs))
+        return self.lexical_matches
+
+    def search_semantic(self, vector, **kwargs):
+        self.calls.append(("semantic", tuple(vector), kwargs))
+        return self.semantic_matches
+
+    def search_vision(self, vector, **kwargs):
+        self.calls.append(("vision", tuple(vector), kwargs))
+        return self.vision_matches
+
+
+def _v2_semantic_encoder() -> EncoderContract:
+    return EncoderContract(
+        provider="ark",
+        model="fake-shared-embedding",
+        encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+        dimensions=2,
+    )
+
+
+def _v2_retrieval_fixture():
+    workspace_id = "mine"
+    series_id = str(uuid4())
+    video_id = str(uuid4())
+    chunk_id = str(uuid4())
+    parse_task_id = str(uuid4())
+    scope = VideoParseRetrievalScope(
+        series_ids=(series_id,),
+        searched_video_ids=(video_id,),
+        parse_tasks_by_video_id={video_id: parse_task_id},
+        retrieval_contract_id="retrieval-v2",
+        semantic_encoder_id=compute_encoder_id("text", _v2_semantic_encoder()),
+        vision_encoder_id="vision-v2",
+        index_generation=2,
+        embedding_model="fake-shared-embedding",
+    )
+    match = VideoChunkIndexMatch(
+        rank=1,
+        score=1.5,
+        workspace_id=workspace_id,
+        series_id=series_id,
+        video_id=video_id,
+        video_chunk_id=chunk_id,
+        parse_task_id=parse_task_id,
+        content_version=3,
+        index_generation=2,
+        source_revision="source-v3",
+        projection_revision="projection-v3",
+        retrieval_contract_id="retrieval-v2",
+        semantic_encoder_id=scope.semantic_encoder_id,
+        vision_encoder_id="vision-v2",
+    )
+    evidence = VideoChunkEvidence(
+        series_id=series_id,
+        workspace_id=workspace_id,
+        series_name="V2 Series",
+        series_description=None,
+        series_status="READY",
+        important_extra_data=None,
+        character_bible=[],
+        video_id=video_id,
+        episode_order=1,
+        original_filename="episode.mp4",
+        original_source_uri="artifact://v2/episode.mp4",
+        inference_proxy_uri=None,
+        content_hash="a" * 64,
+        duration_seconds=10,
+        upload_status="COMPLETED",
+        parse_status="COMPLETE",
+        video_chunk_id=chunk_id,
+        sequence_no=0,
+        start_seconds=0,
+        end_seconds=10,
+        analysis_window_start_seconds=0,
+        analysis_window_end_seconds=10,
+        chunk_media_ref="artifact://v2/chunk.mp4",
+        analysis_window_media_ref="artifact://v2/window.mp4",
+        transcript=[],
+        baseline_visual_caption=None,
+        keyframe_uris=[],
+        all_time_events=[{
+            "event_type": "ACTION",
+            "start_seconds": 1,
+            "end_seconds": 4,
+            "description": "角色拿起蓝色杯子",
+            "participants": [],
+            "visible_persons": [],
+        }],
+        all_time_event_text="角色拿起蓝色杯子",
+        retrieval_text="角色拿起蓝色杯子并走向门口",
+        video_compact="角色准备离开",
+        context_before_compact="",
+        context_after_compact="角色准备离开",
+        window_summary="角色拿起杯子",
+        model_provider="ark",
+        model_name="understanding-v2",
+        pipeline_version="video-parse-v2",
+        is_fallback=False,
+        parse_provenance={"parseTaskId": parse_task_id},
+        parsed_at=0,
+    )
+    return scope, match, evidence
+
+
+def test_v2_retrieval_fuses_es_channels_and_hydrates_exact_identity() -> None:
+    scope, match, evidence = _v2_retrieval_fixture()
+    lexical_match = replace(
+        match,
+        matched_fields=(
+            LexicalField(
+                field="questions",
+                raw_text="谁拿起了蓝色杯子？",
+                language="zh-Hans",
+                start_seconds=0,
+                end_seconds=10,
+                enrichment_index=0,
+            ),
+            LexicalField(
+                field="event_description",
+                raw_text="角色拿起蓝色杯子",
+                start_seconds=1,
+                end_seconds=4,
+                timeline_index=0,
+            ),
+        ),
+    )
+    repository = _V2Repository(scope, evidence)
+    store = _V2Store([lexical_match], [match], [match])
+    embedder = FakeQueryEmbedder([1.0, 0.0])
+    service = VideoParseRetrievalService(
+        repository,
+        store,
+        embedder,
+        semantic_encoder=_v2_semantic_encoder(),
+        expected_index_generation=scope.index_generation,
+        exact=True,
+    )
+
+    result = service.search(
+        "  蓝色杯子  ",
+        workspace_id=evidence.workspace_id,
+        series_ids=[evidence.series_id],
+        top_k=1,
+    )
+
+    assert repository.scope_calls == [((evidence.series_id,), evidence.workspace_id)]
+    assert [call[0] for call in store.calls] == ["lexical", "semantic", "vision"]
+    assert embedder.calls == ["蓝色杯子"]
+    for _channel, _query, kwargs in store.calls:
+        assert kwargs["series_ids"] == scope.series_ids
+        assert kwargs["parse_tasks_by_video_id"] == scope.parse_tasks_by_video_id
+        assert kwargs["retrieval_contract_id"] == scope.retrieval_contract_id
+    assert len(repository.hydrate_calls) == 1
+    hydrated_chunk_id, hydrated_identity = repository.hydrate_calls[0][0]
+    assert hydrated_chunk_id == match.video_chunk_id
+    assert hydrated_identity.parse_task_id == match.parse_task_id
+    assert hydrated_identity.content_version == match.content_version
+    assert hydrated_identity.projection_revision == match.projection_revision
+    hit = result.hits[0]
+    assert hit.candidate.lexical_rank == 1
+    assert hit.candidate.text_rank == 1
+    assert hit.candidate.vision_rank == 1
+    assert [item.field for item in hit.selection_reason.lexical_matches] == [
+        "questions",
+        "event_description",
+    ]
+    assert all(
+        item.text != "谁拿起了蓝色杯子？"
+        for item in hit.selection_reason.matched_evidence
+    )
+    assert any(
+        "questions 字段仅用于召回线索" in item
+        for item in hit.selection_reason.limitations
+    )
+    assert hit.evidence is evidence
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("provider", "another-provider"),
+        ("model", "another-model"),
+        ("encoder_revision", "another-revision"),
+        ("dimensions", 3),
+        ("normalization", "l2"),
+        ("output_contract", "float-vector-v2"),
+    ],
+)
+def test_v2_retrieval_rejects_exact_semantic_encoder_identity_drift_before_es(
+    field,
+    value,
+) -> None:
+    scope, match, evidence = _v2_retrieval_fixture()
+    selected_encoder = replace(
+        _v2_semantic_encoder(),
+        **{field: value},
+    )
+    scope = replace(
+        scope,
+        semantic_encoder_id=compute_encoder_id("text", selected_encoder),
+    )
+    store = _V2Store([match], [match], [match])
+    embedder = FakeQueryEmbedder([1.0, 0.0])
+    service = VideoParseRetrievalService(
+        _V2Repository(scope, evidence),
+        store,
+        embedder,
+        semantic_encoder=_v2_semantic_encoder(),
+        expected_index_generation=scope.index_generation,
+    )
+
+    with pytest.raises(
+        RetrievalIndexConsistencyError,
+        match="semantic encoder identity",
+    ):
+        service.search(
+            "角色离开",
+            workspace_id=evidence.workspace_id,
+            series_ids=[evidence.series_id],
+        )
+
+    assert store.calls == []
+    assert embedder.calls == []
+
+
+@pytest.mark.parametrize(
+    "embedder",
+    [
+        FakeQueryEmbedder([1.0, 0.0], model="another-model"),
+        FakeQueryEmbedder([1.0, 0.0, 0.0]),
+    ],
+)
+def test_v2_retrieval_rejects_gateway_embedding_metadata_before_vector_search(
+    embedder,
+) -> None:
+    scope, match, evidence = _v2_retrieval_fixture()
+    store = _V2Store([match], [match], [match])
+    service = VideoParseRetrievalService(
+        _V2Repository(scope, evidence),
+        store,
+        embedder,
+        semantic_encoder=_v2_semantic_encoder(),
+        expected_index_generation=scope.index_generation,
+    )
+
+    with pytest.raises(RetrievalIndexConsistencyError, match="query embedder"):
+        service.search(
+            "角色离开",
+            workspace_id=evidence.workspace_id,
+            series_ids=[evidence.series_id],
+        )
+
+    assert [call[0] for call in store.calls] == ["lexical"]
+    assert embedder.calls == ["角色离开"]
+
+
+def test_v2_retrieval_rejects_index_generation_before_any_es_query() -> None:
+    scope, match, evidence = _v2_retrieval_fixture()
+    store = _V2Store([match], [match], [match])
+    embedder = FakeQueryEmbedder([1.0, 0.0])
+    service = VideoParseRetrievalService(
+        _V2Repository(scope, evidence),
+        store,
+        embedder,
+        semantic_encoder=_v2_semantic_encoder(),
+        expected_index_generation=scope.index_generation + 1,
+    )
+
+    with pytest.raises(RetrievalIndexConsistencyError, match="index generation"):
+        service.search(
+            "角色离开",
+            workspace_id=evidence.workspace_id,
+            series_ids=[evidence.series_id],
+        )
+
+    assert store.calls == []
+    assert embedder.calls == []
+
+
+def test_v2_retrieval_rejects_cross_channel_identity_drift() -> None:
+    scope, match, evidence = _v2_retrieval_fixture()
+    repository = _V2Repository(scope, evidence)
+    store = _V2Store(
+        [replace(match, matched_fields=(LexicalField(
+            field="summary",
+            raw_text="角色准备离开",
+            language="zh-Hans",
+            start_seconds=0,
+            end_seconds=10,
+            enrichment_index=0,
+        ),))],
+        [match],
+        [replace(match, content_version=match.content_version + 1)],
+    )
+    service = VideoParseRetrievalService(
+        repository,
+        store,
+        FakeQueryEmbedder([1.0, 0.0]),
+        semantic_encoder=_v2_semantic_encoder(),
+        expected_index_generation=scope.index_generation,
+    )
+
+    with pytest.raises(RetrievalIndexConsistencyError, match="identity"):
+        service.search(
+            "角色离开",
+            workspace_id=evidence.workspace_id,
+            series_ids=[evidence.series_id],
+        )
+
+    assert repository.hydrate_calls == []
+
+
+def test_v2_retrieval_rejects_legacy_transcript_weight_before_search() -> None:
+    scope, match, evidence = _v2_retrieval_fixture()
+    repository = _V2Repository(scope, evidence)
+    store = _V2Store([match], [match], [match])
+    service = VideoParseRetrievalService(
+        repository,
+        store,
+        FakeQueryEmbedder([1.0, 0.0]),
+        semantic_encoder=_v2_semantic_encoder(),
+        expected_index_generation=scope.index_generation,
+    )
+
+    with pytest.raises(ValueError, match="lexical_weight"):
+        service.search(
+            "角色离开",
+            workspace_id=evidence.workspace_id,
+            series_ids=[evidence.series_id],
+            transcript_weight=1.0,
+            text_weight=0.0,
+            vision_weight=0.0,
+        )
+
+    assert repository.scope_calls == []
+    assert store.calls == []
+
+
+def test_v2_retrieval_marks_a_complete_subset_as_partial() -> None:
+    scope, _match, evidence = _v2_retrieval_fixture()
+    warning = "部分视频的最新任务尚未完成。"
+    scope = replace(scope, partial=True, warnings=(warning,))
+    service = VideoParseRetrievalService(
+        _V2Repository(scope, evidence),
+        _V2Store([], [], []),
+        FakeQueryEmbedder([1.0, 0.0]),
+        semantic_encoder=_v2_semantic_encoder(),
+        expected_index_generation=scope.index_generation,
+    )
+
+    result = service.search(
+        "角色离开",
+        workspace_id=evidence.workspace_id,
+        series_ids=[evidence.series_id],
+    )
+
+    assert result.partial is True
+    assert result.warnings == [warning]
+    assert result.searched_video_ids == list(scope.searched_video_ids)
+    assert result.hits == []
 
 
 def _ready_retrieval(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -10,7 +11,19 @@ from uuid import uuid4
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..identity import derive_video_chunk_id
+from engine.parsev2.schemas import DialogueEvent, VideoParseResult
+from engine.retrieval.contracts import (
+    TranscriptCueView,
+    VideoChunkEvidence,
+    VideoChunkRetrievalIdentity,
+)
+from engine.retrieval.index_pipeline import compute_source_revision
+from engine.retrieval.index_projection import (
+    compute_index_projection_revision,
+    project_chunk_index,
+)
+
+from ..identity import canonical_uuid, derive_video_chunk_id
 from ..model.dto.jobDTO import (
     ChunkParseContentState,
     ChunkExecutionState,
@@ -46,6 +59,8 @@ from ..utils.time import (
     now_utc,
     unix_time_ms_to_datetime,
 )
+from ..utils.validation import require_nonempty_text
+from .video import SeriesNotReadyError, SeriesScopeNotFoundError
 
 
 RUNTIME_DETAIL_KEY = "_worker_runtime_v2"
@@ -83,6 +98,22 @@ class ModelCallConcurrencyBusyError(VideoParseRepositoryError):
 
 class ModelCallLeaseConflictError(VideoParseRepositoryError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class VideoParseRetrievalScope:
+    """Current queryable V2 task set and its shared index contract."""
+
+    series_ids: tuple[str, ...]
+    searched_video_ids: tuple[str, ...]
+    parse_tasks_by_video_id: Mapping[str, str]
+    retrieval_contract_id: str
+    semantic_encoder_id: str
+    vision_encoder_id: str
+    index_generation: int
+    embedding_model: str
+    partial: bool = False
+    warnings: tuple[str, ...] = ()
 
 
 def invalidate_series_prefixes_from(
@@ -205,6 +236,311 @@ class VideoParseRepository:
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+
+    def resolve_retrieval_scope(
+        self,
+        series_ids: Sequence[str],
+        *,
+        workspace_id: str,
+    ) -> VideoParseRetrievalScope:
+        """Select only Videos whose latest non-deleted V2 task is COMPLETE.
+
+        A newer retry/reparse immediately removes its Video from the searchable
+        scope. Every retained task must have one complete, internally consistent
+        index receipt per Chunk so query execution never guesses an ES contract.
+        """
+
+        if isinstance(series_ids, (str, bytes)):
+            raise ValueError("series_ids must be a sequence of IDs")
+        try:
+            ordered_series_ids = tuple(dict.fromkeys(
+                canonical_uuid(item, "series_id") for item in series_ids
+            ))
+        except TypeError as exc:
+            raise ValueError("series_ids must be a sequence of IDs") from exc
+        if not ordered_series_ids:
+            raise ValueError("series_ids must not be empty")
+        workspace = require_nonempty_text(workspace_id, "workspace_id")
+
+        with self._session_factory() as session:
+            existing_series_ids = set(session.scalars(
+                select(SeriesRecord.series_id).where(
+                    SeriesRecord.series_id.in_(ordered_series_ids),
+                    SeriesRecord.workspace_id == workspace,
+                )
+            ))
+            missing = [
+                series_id
+                for series_id in ordered_series_ids
+                if series_id not in existing_series_ids
+            ]
+            if missing:
+                raise SeriesScopeNotFoundError(
+                    "seriesId values do not exist in this workspace: "
+                    + ", ".join(missing)
+                )
+
+            videos = list(session.scalars(
+                select(VideoRecord)
+                .where(VideoRecord.series_id.in_(ordered_series_ids))
+                .order_by(
+                    VideoRecord.episode_order,
+                    VideoRecord.video_id,
+                )
+            ))
+            if not videos:
+                raise SeriesNotReadyError(
+                    "selected Series have no COMPLETE Video Parse V2 task"
+                )
+
+            video_ids = [video.video_id for video in videos]
+            latest_by_video: dict[str, VideoParseTaskRecord] = {}
+            for task in session.scalars(
+                select(VideoParseTaskRecord)
+                .where(
+                    VideoParseTaskRecord.video_id.in_(video_ids),
+                    VideoParseTaskRecord.is_deleted.is_(False),
+                )
+                .order_by(
+                    VideoParseTaskRecord.video_id,
+                    VideoParseTaskRecord.version.desc(),
+                    VideoParseTaskRecord.id.desc(),
+                )
+            ):
+                latest_by_video.setdefault(task.video_id, task)
+
+            selected = [
+                (video, latest_by_video[video.video_id])
+                for video in videos
+                if video.video_id in latest_by_video
+                and latest_by_video[video.video_id].status
+                == VideoParseTaskStatus.COMPLETE.value
+            ]
+            if not selected:
+                raise SeriesNotReadyError(
+                    "selected Series have no COMPLETE Video Parse V2 task"
+                )
+
+            task_ids = [task.id for _video, task in selected]
+            rows_by_task: dict[
+                str,
+                list[tuple[ChunkParseTaskRecord, VideoChunkRecord, ChunkParseContentRecord]],
+            ] = {}
+            for row in session.execute(
+                select(
+                    ChunkParseTaskRecord,
+                    VideoChunkRecord,
+                    ChunkParseContentRecord,
+                )
+                .join(
+                    VideoChunkRecord,
+                    VideoChunkRecord.video_chunk_id
+                    == ChunkParseTaskRecord.video_chunk_id,
+                )
+                .join(
+                    ChunkParseContentRecord,
+                    ChunkParseContentRecord.chunk_parse_task_id
+                    == ChunkParseTaskRecord.id,
+                )
+                .where(
+                    ChunkParseTaskRecord.video_parse_task_id.in_(task_ids),
+                    ChunkParseTaskRecord.status
+                    == ChunkParseTaskStatus.COMPLETE.value,
+                )
+                .order_by(
+                    ChunkParseTaskRecord.video_parse_task_id,
+                    VideoChunkRecord.sequence_no,
+                )
+            ):
+                rows_by_task.setdefault(row[0].video_parse_task_id, []).append(row)
+
+            shared_contract: tuple[str, str, str, int, str] | None = None
+            for video, task in selected:
+                rows = rows_by_task.get(task.id, [])
+                if (
+                    len(rows) != task.chunk_count
+                    or [chunk.sequence_no for _child, chunk, _content in rows]
+                    != list(range(task.chunk_count))
+                    or any(chunk.video_id != video.video_id for _child, chunk, _content in rows)
+                ):
+                    raise VideoParseConflictError(
+                        "COMPLETE Video Parse V2 task has incomplete Chunk content"
+                    )
+                embedding_model = _task_embedding_model(task)
+                for _child, chunk, content in rows:
+                    receipt = _index_receipt(content, task.id, chunk.video_chunk_id)
+                    contract = (
+                        receipt["retrieval_contract_id"],
+                        receipt["semantic_encoder_id"],
+                        receipt["vision_encoder_id"],
+                        receipt["index_generation"],
+                        embedding_model,
+                    )
+                    if shared_contract is None:
+                        shared_contract = contract
+                    elif shared_contract != contract:
+                        raise VideoParseConflictError(
+                            "selected Video Parse V2 tasks use different index contracts"
+                        )
+
+            if shared_contract is None:
+                raise VideoParseConflictError(
+                    "selected Video Parse V2 tasks have no index receipt"
+                )
+            retrieval_contract_id, semantic_encoder_id, vision_encoder_id, generation, model = (
+                shared_contract
+            )
+            incomplete_scope = (
+                len(selected) != len(videos)
+                or {video.series_id for video in videos} != existing_series_ids
+            )
+            return VideoParseRetrievalScope(
+                series_ids=ordered_series_ids,
+                searched_video_ids=tuple(video.video_id for video, _task in selected),
+                parse_tasks_by_video_id={
+                    video.video_id: task.id for video, task in selected
+                },
+                retrieval_contract_id=retrieval_contract_id,
+                semantic_encoder_id=semantic_encoder_id,
+                vision_encoder_id=vision_encoder_id,
+                index_generation=generation,
+                embedding_model=model,
+                partial=incomplete_scope,
+                warnings=(
+                    (
+                        "部分所选 Series 没有视频，或部分视频的最新 Video Parse V2 "
+                        "任务尚未完成，"
+                        "本次结果只覆盖当前可检索视频。"
+                    ),
+                ) if incomplete_scope else (),
+            )
+
+    def hydrate_retrieval_evidence(
+        self,
+        candidates: Sequence[tuple[str, VideoChunkRetrievalIdentity]],
+    ) -> list[VideoChunkEvidence]:
+        """Hydrate candidates only while their exact task/content receipt is current."""
+
+        if isinstance(candidates, (str, bytes)):
+            raise ValueError("candidates must be a sequence")
+        ordered = tuple(
+            (canonical_uuid(video_chunk_id, "video_chunk_id"), identity)
+            for video_chunk_id, identity in candidates
+        )
+        if not ordered:
+            return []
+        if len({video_chunk_id for video_chunk_id, _identity in ordered}) != len(ordered):
+            raise ValueError("candidates contain duplicate video_chunk_id values")
+
+        task_ids = {identity.parse_task_id for _chunk_id, identity in ordered}
+        chunk_ids = {video_chunk_id for video_chunk_id, _identity in ordered}
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(
+                    SeriesRecord,
+                    VideoRecord,
+                    VideoChunkRecord,
+                    VideoParseTaskRecord,
+                    ChunkParseTaskRecord,
+                    ChunkParseContentRecord,
+                )
+                .join(VideoRecord, VideoRecord.series_id == SeriesRecord.series_id)
+                .join(
+                    VideoParseTaskRecord,
+                    VideoParseTaskRecord.video_id == VideoRecord.video_id,
+                )
+                .join(
+                    ChunkParseTaskRecord,
+                    ChunkParseTaskRecord.video_parse_task_id
+                    == VideoParseTaskRecord.id,
+                )
+                .join(
+                    VideoChunkRecord,
+                    VideoChunkRecord.video_chunk_id
+                    == ChunkParseTaskRecord.video_chunk_id,
+                )
+                .join(
+                    ChunkParseContentRecord,
+                    ChunkParseContentRecord.chunk_parse_task_id
+                    == ChunkParseTaskRecord.id,
+                )
+                .where(
+                    VideoParseTaskRecord.id.in_(task_ids),
+                    VideoParseTaskRecord.status
+                    == VideoParseTaskStatus.COMPLETE.value,
+                    VideoParseTaskRecord.is_deleted.is_(False),
+                    ChunkParseTaskRecord.status
+                    == ChunkParseTaskStatus.COMPLETE.value,
+                    VideoChunkRecord.video_chunk_id.in_(chunk_ids),
+                )
+            ).all()
+            by_identity = {
+                (task.id, chunk.video_chunk_id): (
+                    series,
+                    video,
+                    chunk,
+                    task,
+                    content,
+                )
+                for series, video, chunk, task, _child, content in rows
+            }
+
+            hydrated: list[VideoChunkEvidence] = []
+            for video_chunk_id, identity in ordered:
+                row = by_identity.get(
+                    (identity.parse_task_id, video_chunk_id)
+                )
+                if row is None:
+                    raise VideoParseConflictError(
+                        "retrieval candidate is missing from COMPLETE V2 facts"
+                    )
+                series, video, chunk, task, content = row
+                if _latest_video_task_id(session, video.video_id) != task.id:
+                    raise VideoParseConflictError(
+                        "retrieval candidate no longer belongs to the latest V2 task"
+                    )
+                receipt = _index_receipt(content, task.id, chunk.video_chunk_id)
+                _require_matching_retrieval_identity(
+                    identity,
+                    video_chunk_id=video_chunk_id,
+                    receipt=receipt,
+                    series=series,
+                    video=video,
+                    content=content,
+                )
+                try:
+                    result = VideoParseResult.model_validate(content.content)
+                    projection = project_chunk_index(
+                        result,
+                        chunk_start_seconds=chunk.start_seconds,
+                        chunk_end_seconds=chunk.end_seconds,
+                    )
+                except ValueError as exc:
+                    raise VideoParseConflictError(
+                        "retrieval candidate content is not a valid V2 result"
+                    ) from exc
+                if compute_source_revision(result) != identity.source_revision:
+                    raise VideoParseConflictError(
+                        "retrieval candidate source revision changed in MySQL"
+                    )
+                if (
+                    compute_index_projection_revision(projection)
+                    != identity.projection_revision
+                ):
+                    raise VideoParseConflictError(
+                        "retrieval candidate projection revision changed in MySQL"
+                    )
+                hydrated.append(_video_parse_evidence(
+                    series,
+                    video,
+                    chunk,
+                    task,
+                    content,
+                    result,
+                    retrieval_text=projection.semantic_text,
+                    identity=identity,
+                ))
+            return hydrated
 
     def load_task_input(self, video_parse_task_id: str) -> VideoParseTaskInputState:
         with self._session_factory() as session:
@@ -868,6 +1204,7 @@ class VideoParseRepository:
         content_version: int,
         representations: Mapping[str, Any],
         *,
+        receipt: Mapping[str, Any] | None = None,
         now: datetime | None = None,
     ) -> None:
         """Persist reusable encoding results behind the current index lease."""
@@ -895,17 +1232,24 @@ class VideoParseRepository:
             detail = deepcopy(dict(content.detail or {}))
             cached = detail.get(INDEX_EMBEDDINGS_DETAIL_KEY)
             cached_representations: dict[str, Any] = {}
+            cached_receipt: Mapping[str, Any] | None = None
             if (
                 isinstance(cached, dict)
                 and cached.get("content_version") == content_version
                 and isinstance(cached.get("representations"), dict)
             ):
                 cached_representations = deepcopy(cached["representations"])
+                if isinstance(cached.get("receipt"), Mapping):
+                    cached_receipt = cached["receipt"]
             cached_representations.update(deepcopy(dict(representations)))
-            detail[INDEX_EMBEDDINGS_DETAIL_KEY] = {
+            envelope: dict[str, Any] = {
                 "content_version": content_version,
                 "representations": cached_representations,
             }
+            selected_receipt = receipt if receipt is not None else cached_receipt
+            if selected_receipt is not None:
+                envelope["receipt"] = deepcopy(dict(selected_receipt))
+            detail[INDEX_EMBEDDINGS_DETAIL_KEY] = envelope
             content.detail = detail
             content.update_time = saved_at
 
@@ -1991,6 +2335,220 @@ def _latest_video_task_id(session: Session, video_id: str) -> str | None:
             VideoParseTaskRecord.id,
         )
         .limit(1)
+    )
+
+
+def _task_embedding_model(task: VideoParseTaskRecord) -> str:
+    models = task.parse_config.get("models")
+    embedding = models.get("embedding") if isinstance(models, Mapping) else None
+    model = embedding.get("model") if isinstance(embedding, Mapping) else None
+    if not isinstance(model, str) or not model.strip():
+        raise VideoParseConflictError(
+            "COMPLETE Video Parse V2 task has no fixed embedding model"
+        )
+    return model.strip()
+
+
+def _index_receipt(
+    content: ChunkParseContentRecord,
+    parse_task_id: str,
+    video_chunk_id: str,
+) -> dict[str, str | int]:
+    detail = content.detail if isinstance(content.detail, Mapping) else {}
+    envelope = detail.get(INDEX_EMBEDDINGS_DETAIL_KEY)
+    receipt = envelope.get("receipt") if isinstance(envelope, Mapping) else None
+    if not isinstance(receipt, Mapping):
+        raise VideoParseConflictError(
+            "COMPLETE Video Parse V2 Chunk has no index receipt"
+        )
+    expected = {
+        "parse_task_id": parse_task_id,
+        "video_chunk_id": video_chunk_id,
+        "content_version": content.version,
+    }
+    if any(receipt.get(name) != value for name, value in expected.items()):
+        raise VideoParseConflictError(
+            "Video Parse V2 index receipt differs from current Chunk identity"
+        )
+    if envelope.get("content_version") != content.version:
+        raise VideoParseConflictError(
+            "Video Parse V2 index receipt differs from current content version"
+        )
+    normalized: dict[str, str | int] = dict(expected)
+    for name in (
+        "source_revision",
+        "projection_revision",
+        "retrieval_contract_id",
+        "semantic_encoder_id",
+        "vision_encoder_id",
+    ):
+        value = receipt.get(name)
+        if not isinstance(value, str) or not value.strip():
+            raise VideoParseConflictError(
+                f"Video Parse V2 index receipt has invalid {name}"
+            )
+        normalized[name] = value
+    generation = receipt.get("index_generation")
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation <= 0
+    ):
+        raise VideoParseConflictError(
+            "Video Parse V2 index receipt has invalid index_generation"
+        )
+    normalized["index_generation"] = generation
+    return normalized
+
+
+def _require_matching_retrieval_identity(
+    identity: VideoChunkRetrievalIdentity,
+    *,
+    video_chunk_id: str,
+    receipt: Mapping[str, str | int],
+    series: SeriesRecord,
+    video: VideoRecord,
+    content: ChunkParseContentRecord,
+) -> None:
+    mismatches: list[str] = []
+    for name, actual, expected in (
+        ("workspaceId", identity.workspace_id, series.workspace_id),
+        ("seriesId", identity.series_id, series.series_id),
+        ("videoId", identity.video_id, video.video_id),
+        ("parseTaskId", identity.parse_task_id, receipt["parse_task_id"]),
+        ("videoChunkId", video_chunk_id, receipt["video_chunk_id"]),
+        ("contentVersion", identity.content_version, content.version),
+        ("indexGeneration", identity.index_generation, receipt["index_generation"]),
+        ("sourceRevision", identity.source_revision, receipt["source_revision"]),
+        (
+            "projectionRevision",
+            identity.projection_revision,
+            receipt["projection_revision"],
+        ),
+        (
+            "retrievalContractId",
+            identity.retrieval_contract_id,
+            receipt["retrieval_contract_id"],
+        ),
+        (
+            "semanticEncoderId",
+            identity.semantic_encoder_id,
+            receipt["semantic_encoder_id"],
+        ),
+        (
+            "visionEncoderId",
+            identity.vision_encoder_id,
+            receipt["vision_encoder_id"],
+        ),
+    ):
+        if actual != expected:
+            mismatches.append(name)
+    if mismatches:
+        raise VideoParseConflictError(
+            "retrieval candidate disagrees with current MySQL fields: "
+            + ", ".join(mismatches)
+        )
+
+
+def _video_parse_evidence(
+    series: SeriesRecord,
+    video: VideoRecord,
+    chunk: VideoChunkRecord,
+    task: VideoParseTaskRecord,
+    content: ChunkParseContentRecord,
+    result: VideoParseResult,
+    *,
+    retrieval_text: str,
+    identity: VideoChunkRetrievalIdentity,
+) -> VideoChunkEvidence:
+    transcript: list[TranscriptCueView] = []
+    for event in result.timeline:
+        if not isinstance(event, DialogueEvent):
+            continue
+        variants = [
+            item for item in event.text_variants if item.role == "ORIGINAL"
+        ] or event.text_variants[:1]
+        transcript.extend(
+            TranscriptCueView(
+                speaker=event.speaker,
+                text=variant.text,
+                start_seconds=event.start_seconds,
+                end_seconds=event.end_seconds,
+            )
+            for variant in variants
+        )
+
+    events = [event.model_dump(mode="json") for event in result.timeline]
+    event_text = "\n".join(event.description for event in result.timeline).strip()
+    detail = content.detail if isinstance(content.detail, Mapping) else {}
+    compact = detail.get("compact")
+    video_compact = compact.strip() if isinstance(compact, str) else ""
+    summary = (
+        retrieval_text.strip()
+        or video_compact
+        or event_text
+        or "该片段没有结构化文字事件。"
+    )
+    models = task.parse_config.get("models")
+    understanding = (
+        models.get("understanding") if isinstance(models, Mapping) else None
+    )
+    model_provider = (
+        understanding.get("source") if isinstance(understanding, Mapping) else None
+    )
+    model_name = (
+        understanding.get("model") if isinstance(understanding, Mapping) else None
+    )
+    return VideoChunkEvidence(
+        series_id=series.series_id,
+        workspace_id=series.workspace_id,
+        series_name=series.name,
+        series_description=series.description,
+        series_status="READY",
+        important_extra_data=series.important_extra_data,
+        character_bible=series.character_bible,
+        video_id=video.video_id,
+        episode_order=video.episode_order,
+        original_filename=video.original_filename,
+        original_source_uri=video.original_source_uri,
+        inference_proxy_uri=video.inference_proxy_uri,
+        content_hash=video.content_hash,
+        duration_seconds=video.duration_seconds,
+        upload_status=video.upload_status,
+        parse_status=task.status,
+        video_chunk_id=chunk.video_chunk_id,
+        sequence_no=chunk.sequence_no,
+        start_seconds=chunk.start_seconds,
+        end_seconds=chunk.end_seconds,
+        analysis_window_start_seconds=chunk.analysis_window_start_seconds,
+        analysis_window_end_seconds=chunk.analysis_window_end_seconds,
+        chunk_media_ref=chunk.chunk_media_ref,
+        analysis_window_media_ref=chunk.analysis_window_media_ref,
+        transcript=transcript,
+        baseline_visual_caption=chunk.baseline_visual_caption,
+        keyframe_uris=chunk.keyframe_uris,
+        all_time_events=events,
+        all_time_event_text=event_text,
+        retrieval_text=retrieval_text,
+        video_compact=video_compact,
+        context_before_compact="",
+        context_after_compact=video_compact,
+        window_summary=summary,
+        model_provider=(
+            model_provider if isinstance(model_provider, str) else None
+        ),
+        model_name=model_name if isinstance(model_name, str) else None,
+        pipeline_version=task.pipeline_version,
+        is_fallback=False,
+        parse_provenance={
+            "parseTaskId": identity.parse_task_id,
+            "contentVersion": identity.content_version,
+            "sourceRevision": identity.source_revision,
+            "projectionRevision": identity.projection_revision,
+            "retrievalContractId": identity.retrieval_contract_id,
+            "indexGeneration": identity.index_generation,
+        },
+        parsed_at=datetime_to_unix_time_ms(content.update_time),
     )
 
 

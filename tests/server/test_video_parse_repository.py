@@ -7,6 +7,13 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
+from engine.parsev2.schemas import VideoParseResult
+from engine.retrieval import (
+    compute_index_projection_revision,
+    compute_source_revision,
+    project_chunk_index,
+)
+from engine.retrieval.contracts import VideoChunkRetrievalIdentity
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
 from server.model.dto.jobDTO import PrefixParseLease
@@ -20,6 +27,7 @@ from server.model.job import (
 from server.model.video import SeriesRecord, VideoChunkRecord, VideoRecord
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.video_parse import (
+    INDEX_EMBEDDINGS_DETAIL_KEY,
     ModelCallBudgetExhaustedError,
     ModelCallConcurrencyBusyError,
     VideoParseConflictError,
@@ -28,6 +36,7 @@ from server.repository.video_parse import (
     VideoParseTaskNotFoundError,
     invalidate_series_prefixes_from,
 )
+from server.repository.video import SeriesNotReadyError
 
 
 NOW = datetime(2026, 9, 29, 2, 0, tzinfo=UTC)
@@ -199,6 +208,17 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
         indexed_chunk.chunk_parse_task_id,
         indexed_chunk.content_version,
         {"vision": {"vector": [2.0]}},
+        receipt={
+            "parse_task_id": indexing.video_parse_task_id,
+            "video_chunk_id": indexed_chunk.video_chunk_id,
+            "content_version": indexed_chunk.content_version,
+            "source_revision": "source-1",
+            "projection_revision": "projection-1",
+            "retrieval_contract_id": "retrieval-1",
+            "semantic_encoder_id": "semantic-1",
+            "vision_encoder_id": "vision-1",
+            "index_generation": 1,
+        },
         now=NOW + timedelta(minutes=1, seconds=2),
     )
     with factory() as session:
@@ -209,6 +229,17 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
             )
         ).detail["_index_embeddings_v2"]
         assert set(cached["representations"]) == {"semantic", "vision"}
+        assert cached["receipt"] == {
+            "parse_task_id": indexing.video_parse_task_id,
+            "video_chunk_id": indexed_chunk.video_chunk_id,
+            "content_version": indexed_chunk.content_version,
+            "source_revision": "source-1",
+            "projection_revision": "projection-1",
+            "retrieval_contract_id": "retrieval-1",
+            "semantic_encoder_id": "semantic-1",
+            "vision_encoder_id": "vision-1",
+            "index_generation": 1,
+        }
     state = repo.complete_interval_indexing(
         indexing,
         {item.chunk_parse_task_id: item.content_version for item in index_snapshot.chunks},
@@ -1286,3 +1317,163 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
             video_prefix_compact="late compact",
             now=NOW + timedelta(minutes=1, seconds=1),
         )
+
+
+def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
+    repository,
+) -> None:
+    factory, task_id = _seed(repository, chunk_count=1)
+    repo = VideoParseRepository(factory)
+    chunk_id = str(uuid4())
+    child_id = str(uuid4())
+    content = VideoParseResult.model_validate({
+        "persons": ["千早爱音"],
+        "timeline": [{
+            "event_type": "DIALOGUE",
+            "start_seconds": 1,
+            "end_seconds": 3,
+            "description": "千早爱音回答",
+            "participants": ["千早爱音"],
+            "visible_persons": ["千早爱音"],
+            "speaker": "千早爱音",
+            "text_variants": [{
+                "language": "zh-Hans",
+                "role": "ORIGINAL",
+                "text": "我没事",
+            }],
+        }],
+    })
+    projection = project_chunk_index(
+        content,
+        chunk_start_seconds=0,
+        chunk_end_seconds=10,
+    )
+    receipt = {
+        "parse_task_id": task_id,
+        "video_chunk_id": chunk_id,
+        "content_version": 1,
+        "source_revision": compute_source_revision(content),
+        "projection_revision": compute_index_projection_revision(projection),
+        "retrieval_contract_id": "retrieval-v2",
+        "semantic_encoder_id": "semantic-v2",
+        "vision_encoder_id": "vision-v2",
+        "index_generation": 2,
+    }
+    with factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, task_id)
+        assert task is not None
+        task.status = "COMPLETE"
+        task.finish_time = NOW
+        video = session.get(VideoRecord, task.video_id)
+        assert video is not None
+        video.parse_status = "COMPLETE"
+        video.parse_progress = 100
+        session.add(VideoChunkRecord(
+            video_chunk_id=chunk_id,
+            video_id=task.video_id,
+            sequence_no=0,
+            start_seconds=0,
+            end_seconds=10,
+            analysis_window_start_seconds=0,
+            analysis_window_end_seconds=10,
+            chunk_media_ref="artifact://v2/chunk.mp4",
+            analysis_window_media_ref="artifact://v2/window.mp4",
+            transcript=[],
+            baseline_visual_caption=None,
+            keyframe_uris=[],
+        ))
+        session.add(ChunkParseTaskRecord(
+            id=child_id,
+            video_parse_task_id=task_id,
+            video_chunk_id=chunk_id,
+            status="COMPLETE",
+            next_execute_time=NOW,
+            retry_count=0,
+            lease_version=0,
+            detail=None,
+            create_time=NOW,
+            update_time=NOW,
+        ))
+        session.add(ChunkParseContentRecord(
+            id=str(uuid4()),
+            chunk_parse_task_id=child_id,
+            content=content.model_dump(mode="json"),
+            version=1,
+            detail={
+                "compact": "她表示自己没事。",
+                INDEX_EMBEDDINGS_DETAIL_KEY: {
+                    "content_version": 1,
+                    "representations": {},
+                    "receipt": receipt,
+                },
+            },
+            create_time=NOW,
+            update_time=NOW,
+        ))
+
+    scope = repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
+    assert scope.searched_video_ids == (video.video_id,)
+    assert scope.parse_tasks_by_video_id == {video.video_id: task_id}
+    identity = VideoChunkRetrievalIdentity(
+        workspace_id="mine",
+        series_id=video.series_id,
+        video_id=video.video_id,
+        parse_task_id=task_id,
+        content_version=1,
+        index_generation=2,
+        source_revision=receipt["source_revision"],
+        projection_revision=receipt["projection_revision"],
+        retrieval_contract_id="retrieval-v2",
+        semantic_encoder_id="semantic-v2",
+        vision_encoder_id="vision-v2",
+    )
+    evidence = repo.hydrate_retrieval_evidence([(chunk_id, identity)])
+    assert evidence[0].video_chunk_id == chunk_id
+    assert evidence[0].transcript[0].text == "我没事"
+    assert evidence[0].parse_provenance["contentVersion"] == 1
+
+    empty_series_id = str(uuid4())
+    with factory.begin() as session:
+        session.add(SeriesRecord(
+            series_id=empty_series_id,
+            workspace_id="mine",
+            name="Empty Series",
+            description=None,
+            status="INDEXING",
+            important_extra_data=None,
+            character_bible=[],
+        ))
+    partial_scope = repo.resolve_retrieval_scope(
+        [video.series_id, empty_series_id],
+        workspace_id="mine",
+    )
+    assert partial_scope.partial is True
+    assert partial_scope.searched_video_ids == (video.video_id,)
+    assert "没有视频" in partial_scope.warnings[0]
+
+    with factory.begin() as session:
+        session.add(VideoParseTaskRecord(
+            id=str(uuid4()),
+            video_id=video.video_id,
+            pipeline_version="video-parse-v2",
+            status="PENDING",
+            parse_config=_config(chunk_count=1),
+            chunk_count=1,
+            version=2,
+            next_execute_time=NOW + timedelta(minutes=1),
+            attempt_count=0,
+            max_attempts=3,
+            lease_version=0,
+            processing_duration_ms=0,
+            processing_timing_complete=True,
+            is_test=True,
+            is_deleted=False,
+            detail={"_worker_runtime_v2": {"accepted": True}},
+            create_time=NOW + timedelta(minutes=1),
+            update_time=NOW + timedelta(minutes=1),
+        ))
+
+    with pytest.raises(SeriesNotReadyError, match="no COMPLETE"):
+        repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
+    with pytest.raises(VideoParseConflictError, match="latest V2 task"):
+        repo.hydrate_retrieval_evidence([(chunk_id, identity)])

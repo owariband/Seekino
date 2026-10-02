@@ -22,7 +22,12 @@ from ...common.tool_output import cursor_position, page_items
 from ...common.tool_result import TextToolResult, ToolResult
 from ..errors import VideoRetrievalError
 from ..output import validate_result
-from ..state import RetrievalCall, RetrievalChannelWeights
+from ..state import (
+    LexicalRetrievalChannelWeights,
+    RetrievalCall,
+    RetrievalChannelContract,
+    RetrievalChannelWeights,
+)
 from ..workspace import AgentWorkspace
 from .shared import (
     _OptionalCursor, _ToolCallBudget, _bounded_text, _detail_sections,
@@ -42,6 +47,29 @@ class RetrieveArguments(BaseModel):
 
     @model_validator(mode="after")
     def validate_initial_or_continuation_call(self) -> RetrieveArguments:
+        search_values = (self.query, self.top_k, self.channel_weights)
+        if self.cursor is None and any(value is None for value in search_values):
+            raise ValueError(
+                "query, top_k and channel_weights are required without cursor"
+            )
+        if self.cursor is not None and any(value is not None for value in search_values):
+            raise ValueError("cursor continuation must not repeat search arguments")
+        return self
+
+
+class LexicalRetrieveArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000),
+    ] | None = None
+    top_k: int | None = Field(default=None, ge=1, le=100)
+    channel_weights: LexicalRetrievalChannelWeights | None = None
+    cursor: _OptionalCursor = None
+
+    @model_validator(mode="after")
+    def validate_initial_or_continuation_call(self) -> LexicalRetrieveArguments:
         search_values = (self.query, self.top_k, self.channel_weights)
         if self.cursor is None and any(value is None for value in search_values):
             raise ValueError(
@@ -76,9 +104,13 @@ def build_retrieve_tool(
     maximum_top_k: int,
     maximum_result_bytes: int,
     maximum_catalog_items: int,
+    retrieval_channel: RetrievalChannelContract = "transcript",
     budget: _ToolCallBudget | None = None,
 ) -> AgentTool:
     """Return bounded discovery cards while retaining canonical hits in Workspace."""
+
+    if retrieval_channel not in ("transcript", "lexical"):
+        raise ValueError("retrieval_channel must be transcript or lexical")
 
     catalogs: dict[str, tuple[list[dict[str, Any]], dict[str, Any]]] = {}
     invocation_lock = Lock()
@@ -86,7 +118,9 @@ def build_retrieve_tool(
     def retrieve(
         query: str | None = None,
         top_k: int | None = None,
-        channel_weights: RetrievalChannelWeights | None = None,
+        channel_weights: (
+            RetrievalChannelWeights | LexicalRetrievalChannelWeights | None
+        ) = None,
         cursor: str | None = None,
     ) -> ToolResult:
         with invocation_lock:
@@ -124,29 +158,49 @@ def build_retrieve_tool(
                 raise AgentToolInvocationError(
                     "retrieve requires query, top_k and channel_weights"
                 )
-            channel_weights = RetrievalChannelWeights.model_validate(channel_weights)
             bounded_top_k = min(top_k, inputs["requested_top_k"], maximum_top_k)
-            transcript_weight, semantic_weight, visual_weight = (
+            if retrieval_channel == "lexical":
+                requested_weights = LexicalRetrievalChannelWeights.model_validate(
+                    channel_weights
+                )
+                first_weight = requested_weights.lexical
+            else:
+                requested_weights = RetrievalChannelWeights.model_validate(
+                    channel_weights
+                )
+                first_weight = requested_weights.transcript
+            first_effective, semantic_weight, visual_weight = (
                 normalize_hybrid_retrieval_weights(
-                    channel_weights.transcript,
-                    channel_weights.semantic,
-                    channel_weights.visual,
+                    first_weight,
+                    requested_weights.semantic,
+                    requested_weights.visual,
                 )
             )
-            effective_weights = RetrievalChannelWeights(
-                transcript=transcript_weight,
-                semantic=semantic_weight,
-                visual=visual_weight,
-            )
+            if retrieval_channel == "lexical":
+                effective_weights: (
+                    RetrievalChannelWeights | LexicalRetrievalChannelWeights
+                ) = LexicalRetrievalChannelWeights(
+                    lexical=first_effective,
+                    semantic=semantic_weight,
+                    visual=visual_weight,
+                )
+                first_weight_argument = {"lexical_weight": first_effective}
+            else:
+                effective_weights = RetrievalChannelWeights(
+                    transcript=first_effective,
+                    semantic=semantic_weight,
+                    visual=visual_weight,
+                )
+                first_weight_argument = {"transcript_weight": first_effective}
             try:
                 result = search(
                     query,
                     workspace_id=inputs["workspace_id"],
                     series_ids=list(inputs["series_ids"]),
                     top_k=bounded_top_k,
-                    transcript_weight=transcript_weight,
                     text_weight=semantic_weight,
                     vision_weight=visual_weight,
+                    **first_weight_argument,
                 )
             except AgentModelInvocationError:
                 raise
@@ -166,7 +220,7 @@ def build_retrieve_tool(
             calls.append(RetrievalCall(
                 query=query,
                 top_k=bounded_top_k,
-                requested_weights=channel_weights.model_copy(deep=True),
+                requested_weights=requested_weights.model_copy(deep=True),
                 effective_weights=effective_weights,
                 result=result,
             ))
@@ -180,7 +234,7 @@ def build_retrieve_tool(
                 "warnings": [_bounded_text(value, 500) for value in result.warnings[:8]],
                 "retrieval_strategy": {
                     "version": AGENT_RETRIEVAL_STRATEGY_VERSION,
-                    "requested_weights": channel_weights.model_dump(mode="json"),
+                    "requested_weights": requested_weights.model_dump(mode="json"),
                     "effective_weights": effective_weights.model_dump(mode="json"),
                 },
             }
@@ -207,7 +261,11 @@ def build_retrieve_tool(
             "the full Evidence. Use read_trieve_item to inspect a selected handle. "
             "When next_cursor is present, call retrieve with cursor only."
         ),
-        args_schema=RetrieveArguments,
+        args_schema=(
+            LexicalRetrieveArguments
+            if retrieval_channel == "lexical"
+            else RetrieveArguments
+        ),
         maximum_result_bytes=maximum_result_bytes,
         draft_item_count=workspace.draft_item_count,
     )

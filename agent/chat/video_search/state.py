@@ -7,7 +7,7 @@ from pydantic import (
     BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator,
 )
 
-from engine.retrieval.contracts import VideoChunkSearchResult
+from engine.retrieval.contracts import VideoChunkSearchEvidence, VideoChunkSearchResult
 from engine.retrieval.video_retrieval import AGENT_RETRIEVAL_STRATEGY_VERSION
 
 from ..common.errors import AgentContextBudgetError
@@ -23,6 +23,7 @@ _VideoChunkId = Annotated[
     StringConstraints(strip_whitespace=True, min_length=1, max_length=36),
 ]
 _Markdown = Annotated[str, StringConstraints(min_length=1, max_length=20_000)]
+RetrievalChannelContract = Literal["transcript", "lexical"]
 
 
 def _to_camel(value: str) -> str:
@@ -84,7 +85,7 @@ class DraftItem(BaseModel):
 
 
 class RetrievalChannelWeights(BaseModel):
-    """Agent-selected relative weights for the currently available channels."""
+    """ASR/Semantic/Visual weights retained for live V1 calls and old traces."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -127,6 +128,29 @@ class RetrievalChannelWeights(BaseModel):
     @model_validator(mode="after")
     def require_enabled_channel(self) -> "RetrievalChannelWeights":
         if self.transcript == 0 and self.semantic == 0 and self.visual == 0:
+            raise ValueError("at least one channel weight must be greater than zero")
+        return self
+
+
+class LexicalRetrievalChannelWeights(BaseModel):
+    """Lexical/Semantic/Visual weights for the current retrieval contract."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lexical: float = Field(ge=0, le=1, allow_inf_nan=False)
+    semantic: float = Field(ge=0, le=1, allow_inf_nan=False)
+    visual: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+    @field_validator("lexical", "semantic", "visual", mode="before")
+    @classmethod
+    def reject_boolean_weights(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("channel weights must be numbers, not booleans")
+        return value
+
+    @model_validator(mode="after")
+    def require_enabled_channel(self) -> "LexicalRetrievalChannelWeights":
+        if self.lexical == 0 and self.semantic == 0 and self.visual == 0:
             raise ValueError("at least one channel weight must be greater than zero")
         return self
 
@@ -204,13 +228,19 @@ class RetrievalTraceEntry(_AgentContractModel):
     query: _Text
     top_k: int = Field(ge=1, le=100)
     strategy_version: str = Field(min_length=1, max_length=255)
-    requested_weights: RetrievalChannelWeights
-    effective_weights: RetrievalChannelWeights
+    requested_weights: RetrievalChannelWeights | LexicalRetrievalChannelWeights
+    effective_weights: RetrievalChannelWeights | LexicalRetrievalChannelWeights
     result_count: int = Field(ge=0)
     video_chunk_ids: list[_VideoChunkId] = Field(max_length=100)
 
+    @model_validator(mode="after")
+    def require_matching_weight_channels(self) -> "RetrievalTraceEntry":
+        if type(self.requested_weights) is not type(self.effective_weights):
+            raise ValueError("requested and effective weights must use the same channels")
+        return self
 
-class AgentFinalOutput(VideoChunkSearchResult):
+
+class AgentFinalOutput(VideoChunkSearchEvidence):
     render_blocks: list[FinalRenderBlock] = Field(min_length=1, max_length=200)
     retrieval_trace: list[RetrievalTraceEntry] = Field(min_length=1)
 
@@ -239,8 +269,8 @@ class RunLimits:
 class RetrievalCall:
     query: str
     top_k: int
-    requested_weights: RetrievalChannelWeights
-    effective_weights: RetrievalChannelWeights
+    requested_weights: RetrievalChannelWeights | LexicalRetrievalChannelWeights
+    effective_weights: RetrievalChannelWeights | LexicalRetrievalChannelWeights
     result: VideoChunkSearchResult
     strategy_version: str = AGENT_RETRIEVAL_STRATEGY_VERSION
 

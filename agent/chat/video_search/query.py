@@ -28,6 +28,7 @@ def run_query(
     control: ExecutionControl,
     context_budget: ModelContextBudget,
     workspace: AgentWorkspace,
+    retrieval_skill_prompt: str = RETRIEVAL_SKILL_PROMPT,
 ) -> QueryCompletion:
     context = {
         "inputs": project_inputs(inputs),
@@ -49,7 +50,7 @@ def run_query(
         "以下是当前角色的 Skill：\n"
         + QUERY_SKILL_PROMPT
         + "\n\n以下是通用 Retrieval Skill：\n"
-        + RETRIEVAL_SKILL_PROMPT
+        + retrieval_skill_prompt
     )
     context_payload = context_json(context)
     prompt = instructions + "\n\n" + context_payload

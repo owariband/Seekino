@@ -23,6 +23,7 @@ from server.database import create_schema
 from server.mq import __main__ as mq_main
 from server.mq.video_parse_consumer import VideoParseConsumer
 from server.service.video_parse import VideoParseRuntimeService
+from server.service.video_retrieval import VideoParseRetrievalService
 from server.storage.elasticsearch import ElasticsearchVideoChunkStore
 
 
@@ -260,6 +261,7 @@ def test_process_assembly_receives_runtime_configuration(
         assert received["consumer"]["poll_interval_seconds"] == settings.mq.poll_interval_seconds
         assert received["consumer"]["lease_duration"] == settings.mq.lease_duration
         runtime = services.agent._runtime
+        assert runtime._retrieval_channel == "transcript"
         assert runtime._query_model.model_name == expected_models[0]
         assert runtime._evaluator_model.model_name == expected_models[1]
         assert runtime._chat_model.model_name == expected_models[2]
@@ -396,7 +398,27 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert consumer._maintenance_interval == settings.mq.lease_duration
         assert isinstance(runtime._elasticsearch_store, ElasticsearchVideoChunkStore)
         assert runtime._elasticsearch_store._client is services.elasticsearch_client
+        assert isinstance(services.retrieval, VideoParseRetrievalService)
+        assert services.retrieval._store is runtime._elasticsearch_store
+        assert services.retrieval._repository is runtime._repository
+        assert services.retrieval._expected_index_generation == 7
+        assert services.retrieval._semantic_encoder.claims() == {
+            "provider": "ark",
+            "model": services.uploads.parse_defaults.embedding.model,
+            "encoder_revision": "gateway-ark-embedding-v1",
+            "dimensions": settings.text_vector_dimensions,
+            "normalization": "none",
+            "output_contract": "float-vector-v1",
+        }
+        assert (
+            services.uploads._video_parse_query_encoder
+            is services.retrieval._semantic_encoder
+        )
+        assert services.uploads._video_parse_query_encoder_source == (
+            services.uploads.parse_defaults.embedding.source
+        )
         assert runtime._index_generation == 7
+        assert services.agent._runtime._retrieval_channel == "lexical"
         assert services.uploads._video_parse_index_store is runtime._elasticsearch_store
         assert runtime._media_service.base_directory == (
             tmp_path / "artifacts" / "test" / "work" / "video-parse-v2"

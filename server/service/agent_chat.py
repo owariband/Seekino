@@ -15,6 +15,7 @@ from agent.chat.common.errors import (
 from agent.chat.common.state import AnswerPhase, RunInputs
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.runtime import AgentRuntime
+from engine.retrieval.contracts import VideoChunkEvidence
 
 from ..config.agent import AgentServiceConfig
 from ..identity import canonical_uuid
@@ -33,7 +34,7 @@ from ..repository.agent import (
     AgentMessageInProgressError,
     AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
 )
-from ..repository.video import SeriesNotReadyError, VideoChunkNotFoundError
+from ..repository.video import SeriesNotReadyError
 from ..utils.time import now_unix_time_ms
 from ..utils.validation import require_nonempty_text
 from .library import LibraryService
@@ -613,7 +614,10 @@ class AgentChatService:
                         if hit["candidate"]["videoChunkId"] == reference["videoChunkId"]), None)
             if hit is None:
                 raise AgentReferenceInvalidError("引用的片段不在该回答的候选中。")
-            evidence = self._repository.load_reference_evidence(reference["videoChunkId"])
+            try:
+                evidence = VideoChunkEvidence.model_validate(hit["evidence"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise AgentReferenceInvalidError("引用的历史证据已损坏。") from exc
             if evidence.workspace_id != workspace_id or evidence.series_id not in scope:
                 raise AgentReferenceInvalidError("引用的片段不属于本次检索范围。")
             selected_range = _validated_stored_video_range(
@@ -628,8 +632,8 @@ class AgentChatService:
                     "selectionReason": hit["selectionReason"],
                     "selectedRange": selected_range,
                     "evidence": evidence.model_dump(mode="json", by_alias=True)}
-        except (AgentMessageNotFoundError, VideoChunkNotFoundError) as exc:
-            raise AgentReferenceInvalidError("引用的消息或片段已失效。") from exc
+        except AgentMessageNotFoundError as exc:
+            raise AgentReferenceInvalidError("引用的消息已失效。") from exc
 
     def _resolve_scope(
         self, requested: list[str], workspace_id: str, *, allow_empty: bool,
@@ -757,7 +761,6 @@ class AgentChatService:
                     video_result.model_dump(mode="json", by_alias=True)
                     if video_result is not None else None
                 )
-                retrieval_query = video_result.query if video_result is not None else None
                 if search_result is not None and content != video_result.agent_reply.message:
                     video_answer = video_result.agent_reply.message
                     if not content.startswith(video_answer):
@@ -772,10 +775,9 @@ class AgentChatService:
                     search_result["agentReply"]["message"] = content
             else:
                 content = final.agent_reply.message
-                retrieval_query = final.query
                 search_result = final.model_dump(mode="json", by_alias=True)
             assistant = self._repository.complete_assistant_message(
-                assistant_id, content=content, retrieval_query=retrieval_query,
+                assistant_id, content=content,
                 search_result=search_result, now=self._clock(),
                 timing=terminal_timing,
             )

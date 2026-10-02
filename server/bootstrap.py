@@ -10,10 +10,14 @@ from agent.chat.video_search.runtime import AgentRuntime
 from arkruntime import Ark
 from elasticsearch import Elasticsearch
 from engine.parsev1.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from engine.retrieval import EncoderContract
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.factory import AgentModelFactory
-from gateway.ark.embedding import DoubaoMultimodalEmbedder
-from gateway.config import load_config
+from gateway.ark.embedding import (
+    DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+    DoubaoMultimodalEmbedder,
+)
+from gateway.config import ArkModelSourceConfig, load_config
 from gateway.embedding import EmbeddingResult
 from gateway.web_search import WebSearcher
 from qdrant_client import QdrantClient
@@ -52,7 +56,10 @@ from .service.upload import UploadService
 from .service.video_parse import VideoParseRuntimeService
 from .service.video_parse_media import VideoParseMediaService
 from .service.video_processing import VideoProcessingService
-from .service.video_retrieval import VideoRetrievalService
+from .service.video_retrieval import (
+    VideoParseRetrievalService,
+    VideoRetrievalService,
+)
 from .storage.artifact import LocalArtifactStore
 from .storage.elasticsearch import ElasticsearchVideoChunkStore
 from .storage.qdrant import QdrantVideoChunkStore
@@ -66,7 +73,7 @@ class ApplicationServices:
     uploads: UploadService
     jobs: ParseJobService
     media: MediaService
-    retrieval: VideoRetrievalService
+    retrieval: VideoRetrievalService | VideoParseRetrievalService
     agent: AgentChatService
     index_sync: IndexSyncService
     parse_consumer: ParseJobConsumer | VideoParseConsumer | None = None
@@ -132,14 +139,25 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         settings.artifact_root,
         environment=settings.environment,
     )
-    library = LibraryService(LibraryRepository(session_factory), artifact_store)
+    library = LibraryService(
+        LibraryRepository(
+            session_factory,
+            execution_mode=settings.parse_execution_mode,
+        ),
+        artifact_store,
+    )
     job_repository = ParseJobRepository(session_factory)
-    jobs = ParseJobService(job_repository, library)
+    jobs = ParseJobService(
+        job_repository,
+        library,
+        execution_mode=settings.parse_execution_mode,
+    )
     parse_usage = ParseUsageService(
         ParseUsageRepository(session_factory), jobs,
         load_model_pricing(settings.model_pricing_path),
     )
     video_repository = VideoRepository(session_factory)
+    video_parse_repository = VideoParseRepository(session_factory)
     media = MediaService(library, artifact_store, video_repository, config=settings.images)
 
     qdrant_client = QdrantClient(
@@ -188,6 +206,21 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             semantic_dimensions=parse_defaults.embedding.dimensions,
             vision_dimensions=parse_defaults.embedding.dimensions,
         )
+    video_parse_query_encoder = None
+    video_parse_query_encoder_source = None
+    if elasticsearch_store is not None:
+        video_parse_query_encoder_source = parse_defaults.embedding.source
+        embedding_source = gateway_config.model_sources.get(
+            video_parse_query_encoder_source
+        )
+        if not isinstance(embedding_source, ArkModelSourceConfig):
+            raise ValueError("Video Parse V2 embedding requires an Ark source")
+        video_parse_query_encoder = EncoderContract(
+            provider=embedding_source.provider,
+            model=parse_defaults.embedding.model,
+            encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+            dimensions=parse_defaults.embedding.dimensions,
+        )
     uploads = UploadService(
         UploadRepository(session_factory),
         artifact_store,
@@ -197,6 +230,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         qdrant_mutation_lock=qdrant_mutation_lock,
         parse_defaults=parse_defaults,
         execution_mode=settings.parse_execution_mode,
+        video_parse_query_encoder=video_parse_query_encoder,
+        video_parse_query_encoder_source=video_parse_query_encoder_source,
     )
     embedder = _LazyQueryEmbedder(
         model=embedding_model,
@@ -206,15 +241,36 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
         ),
     )
-    retrieval = VideoRetrievalService(
-        video_repository,
-        vector_store,
-        embedder,
-        channel_top_k=settings.retrieval.channel_top_k,
-        rrf_k=settings.retrieval.rrf_k,
-        text_weight=settings.retrieval.text_weight,
-        vision_weight=settings.retrieval.vision_weight,
-    )
+    if settings.parse_execution_mode == "v1":
+        retrieval: VideoRetrievalService | VideoParseRetrievalService = (
+            VideoRetrievalService(
+                video_repository,
+                vector_store,
+                embedder,
+                channel_top_k=settings.retrieval.channel_top_k,
+                rrf_k=settings.retrieval.rrf_k,
+                text_weight=settings.retrieval.text_weight,
+                vision_weight=settings.retrieval.vision_weight,
+            )
+        )
+    else:
+        # V2 retrieval is fail-closed: it never substitutes the V1/Qdrant
+        # service when ES or the selected task contract is unavailable.
+        assert settings.elasticsearch is not None
+        assert elasticsearch_store is not None
+        assert video_parse_query_encoder is not None
+        retrieval = VideoParseRetrievalService(
+            video_parse_repository,
+            elasticsearch_store,
+            embedder,
+            semantic_encoder=video_parse_query_encoder,
+            expected_index_generation=settings.elasticsearch.index_generation,
+            channel_top_k=settings.retrieval.channel_top_k,
+            rrf_k=settings.retrieval.rrf_k,
+            lexical_weight=settings.retrieval.lexical_weight,
+            text_weight=settings.retrieval.text_weight,
+            vision_weight=settings.retrieval.vision_weight,
+        )
     query_model_name = settings.agent_query_model or agent_model_config.model
     evaluator_model_name = settings.agent_evaluator_model or agent_model_config.model
     chat_model_name = settings.agent_chat_model or agent_model_config.model
@@ -274,6 +330,11 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
             evaluator_stage_timeout_seconds=agent_config.evaluator_stage_timeout_seconds,
             chat_timeout_seconds=agent_config.chat_timeout_seconds,
             execution_timeout_seconds=agent_config.execution_timeout_seconds,
+            retrieval_channel=(
+                "lexical"
+                if settings.parse_execution_mode == "v2"
+                else "transcript"
+            ),
         )
     def build_supervisor_runtime(
         video_runtime: AgentRuntime, agent_config: AgentServiceConfig,
@@ -459,7 +520,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         assert settings.elasticsearch is not None
         assert elasticsearch_client is not None
         assert elasticsearch_store is not None
-        v2_repository = VideoParseRepository(session_factory)
+        v2_repository = video_parse_repository
         v2_queue = MySqlVideoParseQueue(session_factory)
         v2_runtime = VideoParseRuntimeService(
             v2_repository,

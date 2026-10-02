@@ -44,7 +44,32 @@ services:
       start_period: 10s
     stop_grace_period: 30s
 
+  # Opt in during ES preparation; default local services still require Qdrant.
+  elasticsearch:
+    profiles: [elasticsearch]
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.22
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"  # Loopback-only local development instance.
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "127.0.0.1:${ANIVAG_ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -ec
+        - 'exec 3<>/dev/tcp/127.0.0.1/9200; printf "GET /_cluster/health?wait_for_status=yellow&timeout=1s HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3; read -r status <&3; [[ "$$status" == *" 200 "* ]]'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    stop_grace_period: 60s
+
 volumes:
   mysql_data:
   qdrant_data:
   qdrant_snapshots:
+  elasticsearch_data:

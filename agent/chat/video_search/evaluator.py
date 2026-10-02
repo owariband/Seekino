@@ -31,6 +31,7 @@ def evaluate(
     control: ExecutionControl,
     max_prompt_chars: int,
     workspace: AgentWorkspace,
+    retrieval_skill_prompt: str = RETRIEVAL_SKILL_PROMPT,
 ) -> EvalDecision:
     original_plan = (
         previous_turns[0].plan_context
@@ -65,7 +66,7 @@ def evaluate(
         "以下是当前角色的 Skill：\n"
         + EVALUATOR_SKILL_PROMPT
         + "\n\n以下是通用 Retrieval Skill：\n"
-        + RETRIEVAL_SKILL_PROMPT
+        + retrieval_skill_prompt
     )
     context_payload = context_json(context)
     prompt = instructions + "\n\n" + context_payload

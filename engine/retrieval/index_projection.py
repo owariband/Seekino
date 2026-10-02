@@ -83,7 +83,7 @@ class LexicalField(_ProjectionModel):
 
 
 class ChunkIndexProjection(_ProjectionModel):
-    """Search text for a Chunk; identity, vectors, and publication belong to Server."""
+    """Search text for a Chunk before the Engine joins identity and vectors."""
 
     lexical_fields: list[LexicalField]
     semantic_text: str

@@ -128,8 +128,6 @@ class AgentMessageState:
     content: str | None
     series_ids: tuple[str, ...]
     model_name: str | None
-    reply_to_message_id: str | None
-    retrieval_query: str | None
     search_result: dict | None
     last_error: AgentFailure | None
     created_at: int

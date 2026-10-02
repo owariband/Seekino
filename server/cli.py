@@ -6,11 +6,18 @@ import os
 from pathlib import Path
 from typing import Any
 
+from elasticsearch import Elasticsearch
+from engine.retrieval import EncoderContract
+from gateway.constants import ARK_PROVIDER
 from gateway.config import load_config
-from gateway.ark.embedding import DoubaoMultimodalEmbedder
+from gateway.ark.embedding import (
+    DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+    DoubaoMultimodalEmbedder,
+)
 from qdrant_client import QdrantClient
 
 from .constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
+from .config.elasticsearch import ElasticsearchConfig
 from .database import (
     DatabaseEnvironment,
     create_database_engine,
@@ -19,12 +26,17 @@ from .database import (
 )
 from .repository.index_sync import IndexSyncRepository
 from .repository.video import VideoRepository
+from .repository.video_parse import VideoParseRepository
 from .service.index_sync import IndexSyncService
 from .service.keyframe_backfill import KeyframeBackfillService
 from .service.parse_import import prepare_video_parse_import
 from .service.qdrant_mutation_lock import QdrantMutationLock
-from .service.video_retrieval import VideoRetrievalService
+from .service.video_retrieval import (
+    VideoParseRetrievalService,
+    VideoRetrievalService,
+)
 from .storage.artifact import LocalArtifactStore
+from .storage.elasticsearch import ElasticsearchVideoChunkStore
 from .storage.qdrant import QdrantVideoChunkStore
 
 
@@ -35,11 +47,28 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    init_es_index = subparsers.add_parser(
+        "init-es-index",
+        help="Create or validate the explicitly configured Elasticsearch index.",
+    )
+    _add_environment_argument(init_es_index)
+    _add_elasticsearch_arguments(init_es_index)
+
     init_database = subparsers.add_parser(
         "init-db",
         help="Create the initial anivag persistence schema.",
     )
     _add_database_arguments(init_database)
+
+    request_es_rebuild = subparsers.add_parser(
+        "request-es-index-rebuild",
+        help=(
+            "Schedule all refined Intervals in one current Parse V2 task "
+            "for Elasticsearch reconstruction."
+        ),
+    )
+    _add_database_arguments(request_es_rebuild)
+    request_es_rebuild.add_argument("--video-parse-task-id", required=True)
 
     import_parse = subparsers.add_parser(
         "import-parse",
@@ -163,17 +192,24 @@ def _build_parser() -> argparse.ArgumentParser:
 
     rebuild_index = subparsers.add_parser(
         "rebuild-index",
-        help="Replay every current MySQL index intent after Qdrant data loss.",
+        help="Request an execution-mode-specific index rebuild.",
     )
     _add_database_arguments(rebuild_index)
+    _add_execution_mode_argument(rebuild_index)
     _add_qdrant_arguments(rebuild_index)
+    rebuild_index.add_argument(
+        "--video-parse-task-id",
+        help="Required in V2 mode; the current VideoParseTask to rebuild.",
+    )
 
     search = subparsers.add_parser(
         "search",
-        help="Run scoped Text/Vision retrieval and batch-hydrate its evidence.",
+        help="Run scoped retrieval using the selected parse execution mode.",
     )
     _add_database_arguments(search)
+    _add_execution_mode_argument(search)
     _add_qdrant_arguments(search)
+    _add_elasticsearch_arguments(search, include_vector_dimensions=False)
     search.add_argument("--query", required=True)
     search.add_argument("--workspace-id", default=DEFAULT_LOCAL_WORKSPACE_ID)
     search.add_argument(
@@ -191,7 +227,7 @@ def _build_parser() -> argparse.ArgumentParser:
     search.add_argument(
         "--exact",
         action="store_true",
-        help="Use exact Qdrant search; intended for deterministic diagnostics.",
+        help="Use exact vector search; intended for deterministic diagnostics.",
     )
     search.add_argument(
         "--config",
@@ -211,6 +247,10 @@ def _add_database_arguments(parser: argparse.ArgumentParser) -> None:
         default=os.getenv("ANIVAG_DATABASE_URL"),
         help="SQLAlchemy MySQL URL; defaults to ANIVAG_DATABASE_URL.",
     )
+    _add_environment_argument(parser)
+
+
+def _add_environment_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--environment",
         choices=tuple(item.value for item in DatabaseEnvironment),
@@ -219,6 +259,46 @@ def _add_database_arguments(parser: argparse.ArgumentParser) -> None:
             DatabaseEnvironment.DEVELOPMENT.value,
         ),
     )
+
+
+def _add_execution_mode_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--execution-mode",
+        choices=("v1", "v2"),
+        type=_execution_mode,
+        default=_execution_mode(os.getenv("ANIVAG_PARSE_EXECUTION_MODE", "v1")),
+        help="Parse/retrieval backend; defaults to ANIVAG_PARSE_EXECUTION_MODE.",
+    )
+
+
+def _add_elasticsearch_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    include_vector_dimensions: bool = True,
+) -> None:
+    parser.add_argument(
+        "--elasticsearch-url", default=os.getenv("ANIVAG_ELASTICSEARCH_URL"),
+    )
+    parser.add_argument(
+        "--elasticsearch-index", default=os.getenv("ANIVAG_ELASTICSEARCH_INDEX"),
+    )
+    parser.add_argument(
+        "--elasticsearch-api-key", default=os.getenv("ANIVAG_ELASTICSEARCH_API_KEY"),
+    )
+    parser.add_argument(
+        "--elasticsearch-index-generation",
+        type=_positive_int,
+        default=os.getenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "1"),
+    )
+    if include_vector_dimensions:
+        parser.add_argument(
+            "--text-vector-dimensions", type=_positive_int,
+            default=os.getenv("ANIVAG_TEXT_VECTOR_DIMENSIONS", "1024"),
+        )
+        parser.add_argument(
+            "--vision-vector-dimensions", type=_positive_int,
+            default=os.getenv("ANIVAG_VISION_VECTOR_DIMENSIONS", "1024"),
+        )
 
 
 def _add_qdrant_arguments(parser: argparse.ArgumentParser) -> None:
@@ -259,6 +339,36 @@ def _add_qdrant_arguments(parser: argparse.ArgumentParser) -> None:
 
 def main() -> None:
     args = _build_parser().parse_args()
+    if args.command == "init-es-index":
+        config = ElasticsearchConfig(
+            url=args.elasticsearch_url or "",
+            index_name=args.elasticsearch_index or "",
+            api_key=args.elasticsearch_api_key or None,
+            index_generation=args.elasticsearch_index_generation,
+        )
+        environment = DatabaseEnvironment(args.environment)
+        config.validate_environment(environment)
+        client = Elasticsearch(config.url, api_key=config.api_key)
+        try:
+            ElasticsearchVideoChunkStore(
+                client,
+                index_name=config.index_name,
+                environment=environment,
+                semantic_dimensions=args.text_vector_dimensions,
+                vision_dimensions=args.vision_vector_dimensions,
+            ).ensure_index()
+        finally:
+            client.close()
+        print(
+            json.dumps(
+                {
+                    "schemaReady": True,
+                    "index": config.index_name,
+                    "indexGeneration": config.index_generation,
+                }
+            )
+        )
+        return
     if not args.database_url:
         raise ValueError(
             "database URL is required via --database-url or ANIVAG_DATABASE_URL"
@@ -269,6 +379,20 @@ def main() -> None:
     if args.command == "init-db":
         create_schema(engine)
         print(json.dumps({"schemaCreated": True, "environment": environment.value}))
+        return
+
+    if args.command == "request-es-index-rebuild" or (
+        args.command == "rebuild-index" and args.execution_mode == "v2"
+    ):
+        if not args.video_parse_task_id:
+            raise ValueError("--video-parse-task-id is required in V2 mode")
+        interval_ids = VideoParseRepository(
+            create_session_factory(engine)
+        ).request_index_rebuild(args.video_parse_task_id)
+        print(json.dumps({
+            "videoParseTaskId": args.video_parse_task_id,
+            "scheduledIntervalParseTaskIds": list(interval_ids),
+        }))
         return
 
     if args.command == "import-parse":
@@ -319,6 +443,76 @@ def main() -> None:
             report.model_dump(mode="json", by_alias=True),
             ensure_ascii=False,
         ))
+        return
+
+    if args.command == "search" and args.execution_mode == "v2":
+        if not args.elasticsearch_url:
+            raise ValueError(
+                "Elasticsearch URL is required via --elasticsearch-url or "
+                "ANIVAG_ELASTICSEARCH_URL"
+            )
+        if not args.elasticsearch_index:
+            raise ValueError(
+                "Elasticsearch index is required via --elasticsearch-index or "
+                "ANIVAG_ELASTICSEARCH_INDEX"
+            )
+        config = ElasticsearchConfig(
+            url=args.elasticsearch_url,
+            index_name=args.elasticsearch_index,
+            api_key=args.elasticsearch_api_key or None,
+            index_generation=args.elasticsearch_index_generation,
+        )
+        config.validate_environment(environment)
+        client = Elasticsearch(config.url, api_key=config.api_key)
+        try:
+            store = ElasticsearchVideoChunkStore(
+                client,
+                index_name=config.index_name,
+                environment=environment,
+                semantic_dimensions=args.text_vector_dimensions,
+                vision_dimensions=args.vision_vector_dimensions,
+            )
+            embedding_config = load_config(args.config).multimodal_embedding
+            embedding_model = (
+                args.embedding_model
+                or os.getenv("ANIVAG_VIDEO_EMBEDDING_MODEL")
+                or embedding_config.model
+            )
+            embedder = DoubaoMultimodalEmbedder(
+                embedding_model,
+                output_dimensionality=args.text_vector_dimensions,
+                fps=embedding_config.fps,
+            )
+            result = VideoParseRetrievalService(
+                VideoParseRepository(create_session_factory(engine)),
+                store,
+                embedder,
+                semantic_encoder=EncoderContract(
+                    provider=ARK_PROVIDER,
+                    model=embedding_model,
+                    encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+                    dimensions=args.text_vector_dimensions,
+                ),
+                expected_index_generation=config.index_generation,
+                channel_top_k=args.channel_top_k,
+                rrf_k=args.rrf_k,
+                text_weight=args.text_weight,
+                vision_weight=args.vision_weight,
+                exact=args.exact,
+            ).search(
+                args.query,
+                workspace_id=args.workspace_id,
+                series_ids=args.series_ids,
+                top_k=args.top_k,
+            )
+        finally:
+            client.close()
+        print(
+            json.dumps(
+                result.model_dump(mode="json", by_alias=True),
+                ensure_ascii=False,
+            )
+        )
         return
 
     if args.command in {
@@ -426,6 +620,13 @@ def _positive_int(value: str) -> int:
     if parsed <= 0:
         raise argparse.ArgumentTypeError("value must be greater than zero")
     return parsed
+
+
+def _execution_mode(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"v1", "v2"}:
+        raise argparse.ArgumentTypeError("execution mode must be 'v1' or 'v2'")
+    return normalized
 
 
 if __name__ == "__main__":

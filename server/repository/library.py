@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Literal
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -9,7 +10,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..model.agent import AgentConversationRecord, AgentMessageRecord, AgentMessageRole
 from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesState, VideoSummaryState
 from ..model.index_sync import IndexSyncIntentRecord, IndexSyncOperation, IndexSyncStatus
-from ..model.job import SeriesParseJobRecord, VideoChunkCheckpointRecord
+from ..model.job import (
+    SeriesParseJobRecord,
+    VideoChunkCheckpointRecord,
+    VideoParseTaskRecord,
+    VideoParseTaskStatus,
+)
 from ..model.job_progress import calculate_checkpoint_progress
 from ..model.upload import UploadSessionRecord
 from ..model.video import (
@@ -42,8 +48,16 @@ class VideoEpisodeOrderConflictError(RuntimeError):
 
 
 class LibraryRepository:
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        *,
+        execution_mode: Literal["v1", "v2"] = "v1",
+    ) -> None:
+        if execution_mode not in {"v1", "v2"}:
+            raise ValueError("execution_mode must be 'v1' or 'v2'")
         self._session_factory = session_factory
+        self._execution_mode = execution_mode
 
     def create_series(
         self,
@@ -239,14 +253,24 @@ class LibraryRepository:
         limit: int | None = None,
     ) -> list[SeriesState]:
         with self._session_factory() as session:
-            records = session.scalars(
+            statement = (
                 select(SeriesRecord)
-                .where(*self._series_filters(workspace_id, status=status, query=query))
+                .where(*self._series_filters(
+                    workspace_id,
+                    status=status if self._execution_mode == "v1" else None,
+                    query=query,
+                ))
                 .order_by(SeriesRecord.created_at, SeriesRecord.series_id)
-                .offset(offset)
-                .limit(limit)
-            ).all()
-            return self._series_states(session, records)
+            )
+            if self._execution_mode == "v1":
+                records = session.scalars(
+                    statement.offset(offset).limit(limit)
+                ).all()
+                return self._series_states(session, records)
+            states = self._series_states(session, session.scalars(statement).all())
+            if status is not None:
+                states = [item for item in states if item.status == status]
+            return states[offset : None if limit is None else offset + limit]
 
     def count_series(
         self,
@@ -255,6 +279,12 @@ class LibraryRepository:
         status: str | None = None,
         query: str | None = None,
     ) -> int:
+        if self._execution_mode == "v2":
+            return len(self.list_series(
+                workspace_id,
+                status=status,
+                query=query,
+            ))
         with self._session_factory() as session:
             return int(session.scalar(
                 select(func.count(SeriesRecord.series_id)).where(
@@ -321,7 +351,15 @@ class LibraryRepository:
         videos = self._video_states(
             session, workspace_id=records[0].workspace_id, series_ids=series_ids,
         )
-        ready_video_ids = set(list_ready_video_ids(session, series_ids))
+        ready_video_ids = (
+            set(list_ready_video_ids(session, series_ids))
+            if self._execution_mode == "v1"
+            else {
+                video.video_id
+                for video in videos
+                if video.index_status == VideoIndexStatus.READY
+            }
+        )
         pending = dict(session.execute(
             select(UploadSessionRecord.series_id, func.count(UploadSessionRecord.upload_session_id))
             .where(
@@ -355,6 +393,13 @@ class LibraryRepository:
         return [
             self._state(
                 record,
+                status=(
+                    _v2_series_status(
+                        [video for video in videos if video.series_id == record.series_id]
+                    )
+                    if self._execution_mode == "v2"
+                    else record.status
+                ),
                 video_count=sum(video.series_id == record.series_id for video in videos),
                 videos=tuple(video for video in videos if video.series_id == record.series_id)
                 if include_videos else (),
@@ -364,7 +409,11 @@ class LibraryRepository:
                     for video in videos
                 ),
                 failed_video_count=sum(
-                    video.series_id == record.series_id and video.parse_status == "FAILED"
+                    video.series_id == record.series_id
+                    and (
+                        video.parse_status == "FAILED"
+                        or video.parse_status.endswith("_FAILED")
+                    )
                     for video in videos
                 ),
                 pending_upload_count=int(pending.get(record.series_id, 0)),
@@ -385,6 +434,13 @@ class LibraryRepository:
         series_ids: list[str] | None = None,
         video_id: str | None = None,
     ) -> list[VideoSummaryState]:
+        if self._execution_mode == "v2":
+            return self._video_states_v2(
+                session,
+                workspace_id=workspace_id,
+                series_ids=series_ids,
+                video_id=video_id,
+            )
         latest = select(
             SeriesParseJobRecord.video_id,
             SeriesParseJobRecord.job_id,
@@ -483,10 +539,103 @@ class LibraryRepository:
             ))
         return states
 
+    def _video_states_v2(
+        self,
+        session: Session,
+        *,
+        workspace_id: str,
+        series_ids: list[str] | None,
+        video_id: str | None,
+    ) -> list[VideoSummaryState]:
+        latest = (
+            select(
+                VideoParseTaskRecord.video_id,
+                VideoParseTaskRecord.id.label("task_id"),
+                VideoParseTaskRecord.status,
+                VideoParseTaskRecord.last_error,
+                func.row_number().over(
+                    partition_by=VideoParseTaskRecord.video_id,
+                    order_by=(
+                        VideoParseTaskRecord.version.desc(),
+                        VideoParseTaskRecord.id.desc(),
+                    ),
+                ).label("position"),
+            )
+            .where(VideoParseTaskRecord.is_deleted.is_(False))
+            .subquery()
+        )
+        statement = (
+            select(
+                VideoRecord,
+                latest.c.task_id,
+                latest.c.status,
+                latest.c.last_error,
+            )
+            .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
+            .outerjoin(
+                latest,
+                (latest.c.video_id == VideoRecord.video_id)
+                & (latest.c.position == 1),
+            )
+            .where(SeriesRecord.workspace_id == workspace_id)
+            .order_by(VideoRecord.episode_order, VideoRecord.video_id)
+        )
+        if series_ids is not None:
+            statement = statement.where(VideoRecord.series_id.in_(series_ids))
+        if video_id is not None:
+            statement = statement.where(VideoRecord.video_id == video_id)
+        rows = session.execute(statement).all()
+        if not rows:
+            return []
+
+        keyframes_by_video: dict[str, list[str]] = {}
+        chunks = session.execute(
+            select(VideoChunkRecord.video_id, VideoChunkRecord.keyframe_uris)
+            .where(VideoChunkRecord.video_id.in_([row[0].video_id for row in rows]))
+            .order_by(VideoChunkRecord.video_id, VideoChunkRecord.sequence_no)
+        )
+        for chunk in chunks:
+            values = keyframes_by_video.setdefault(chunk.video_id, [])
+            values.extend(
+                uri
+                for value in chunk.keyframe_uris
+                if (uri := stored_keyframe_uri(value)) is not None
+            )
+
+        states: list[VideoSummaryState] = []
+        for video, _task_id, task_status, last_error in rows:
+            if task_status == VideoParseTaskStatus.COMPLETE.value:
+                index_status = VideoIndexStatus.READY
+            elif task_status == VideoParseTaskStatus.INDEXING.value:
+                index_status = VideoIndexStatus.SYNCING
+            elif task_status == VideoParseTaskStatus.INDEXING_FAILED.value:
+                index_status = VideoIndexStatus.FAILED
+            else:
+                index_status = VideoIndexStatus.NOT_READY
+            parse_status = task_status or video.parse_status
+            states.append(self._video_state(
+                video,
+                workspace_id=workspace_id,
+                index_status=index_status,
+                latest_job_id=None,
+                parse_status=parse_status,
+                parse_progress=(
+                    100
+                    if task_status == VideoParseTaskStatus.COMPLETE.value
+                    else video.parse_progress
+                ),
+                last_error=_v2_error_message(last_error),
+                keyframe_uris=tuple(dict.fromkeys(
+                    keyframes_by_video.get(video.video_id, ())
+                )),
+            ))
+        return states
+
     @staticmethod
     def _state(
         record: SeriesRecord,
         *,
+        status: str | None = None,
         video_count: int,
         videos: tuple[VideoSummaryState, ...] = (),
         ready_video_count: int = 0,
@@ -501,7 +650,7 @@ class LibraryRepository:
             name=record.name,
             description=record.description,
             transcript_language_hint=record.transcript_language_hint,
-            status=record.status,
+            status=record.status if status is None else status,
             important_extra_data=record.important_extra_data,
             character_bible=record.character_bible,
             video_count=video_count,
@@ -548,3 +697,22 @@ class LibraryRepository:
             last_error=last_error,
             keyframe_uris=keyframe_uris,
         )
+
+
+def _v2_series_status(videos: list[VideoSummaryState]) -> str:
+    if not videos:
+        return "EMPTY"
+    if any(video.index_status == VideoIndexStatus.READY for video in videos):
+        return "READY"
+    if all(video.parse_status.endswith("_FAILED") for video in videos):
+        return "FAILED"
+    return "INDEXING"
+
+
+def _v2_error_message(value: object) -> str | None:
+    if isinstance(value, str):
+        return value or None
+    if isinstance(value, dict):
+        message = value.get("message")
+        return message if isinstance(message, str) and message else None
+    return None

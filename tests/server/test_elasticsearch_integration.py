@@ -9,11 +9,16 @@ from uuid import uuid4
 import pytest
 from elasticsearch import Elasticsearch
 
-from engine.retrieval.index_projection import ChunkIndexProjection, LexicalField
+from engine.retrieval import (
+    ChunkIndexProjection,
+    LexicalField,
+    VideoChunkIndexDocument,
+    compute_index_projection_revision,
+)
 from server.storage.elasticsearch import (
     ElasticsearchBulkWriteError,
     ElasticsearchVideoChunkStore,
-    VideoChunkIndexDocument,
+    document_id,
 )
 
 
@@ -41,41 +46,47 @@ def isolated_store():
 
 
 def _document(*, series_id, video_id, chunk_id, parse_task_id, question):
+    projection = ChunkIndexProjection(
+        semantic_text="千早爱音说我没事，画面上有大丈夫",
+        lexical_fields=[
+            LexicalField(
+                field="dialogue", raw_text="我没事，真的。", language="zh-Hans",
+                role="ORIGINAL", speaker="千早爱音", start_seconds=12,
+                end_seconds=15, timeline_index=3,
+            ),
+            LexicalField(
+                field="screen_text", raw_text="大丈夫", language="ja",
+                start_seconds=12, end_seconds=15, timeline_index=4,
+            ),
+            LexicalField(
+                field="person_names", raw_text="千早爱音",
+                start_seconds=12, end_seconds=15, timeline_index=3,
+            ),
+            LexicalField(
+                field="questions", raw_text=question, language="zh-Hans",
+                start_seconds=10, end_seconds=20, enrichment_index=0,
+            ),
+        ],
+    )
     return VideoChunkIndexDocument(
         workspace_id="es-test-workspace", series_id=series_id,
         video_id=video_id, video_chunk_id=chunk_id,
         parse_task_id=parse_task_id,
         content_version=1, index_generation=1, source_revision=question,
+        projection_revision=compute_index_projection_revision(projection),
         retrieval_contract_id="integration-retrieval-v1",
         semantic_encoder_id="integration-semantic-v1",
         vision_encoder_id="integration-vision-v1",
         semantic_input_sha256="a" * 64,
         vision_input_sha256="b" * 64,
         chunk_start_seconds=10, chunk_end_seconds=20,
-        projection=ChunkIndexProjection(
-            semantic_text="千早爱音说我没事，画面上有大丈夫",
-            lexical_fields=[
-                LexicalField(
-                    field="dialogue", raw_text="我没事，真的。", language="zh-Hans",
-                    role="ORIGINAL", speaker="千早爱音", start_seconds=12,
-                    end_seconds=15, timeline_index=3,
-                ),
-                LexicalField(
-                    field="screen_text", raw_text="大丈夫", language="ja",
-                    start_seconds=12, end_seconds=15, timeline_index=4,
-                ),
-                LexicalField(
-                    field="person_names", raw_text="千早爱音",
-                    start_seconds=12, end_seconds=15, timeline_index=3,
-                ),
-                LexicalField(
-                    field="questions", raw_text=question, language="zh-Hans",
-                    start_seconds=10, end_seconds=20, enrichment_index=0,
-                ),
-            ],
-        ),
+        projection=projection,
         semantic_vector=[1.0, 0.0], vision_vector=[0.0, 1.0],
     )
+
+
+def _id(document: VideoChunkIndexDocument) -> str:
+    return document_id(document.parse_task_id, document.video_chunk_id)
 
 
 def test_real_es_mapping_three_queries_and_authorized_tasks(isolated_store):
@@ -148,7 +159,7 @@ def test_real_es_mapping_three_queries_and_authorized_tasks(isolated_store):
         ),
         content_version=2,
     )
-    assert updated.document_id == current.document_id
+    assert _id(updated) == _id(current)
     store.bulk_upsert([updated], refresh="wait_for")
     assert store.verify_ready([updated])
     assert not store.verify_ready([current])
@@ -186,7 +197,7 @@ def test_real_es_bulk_partial_failure_keeps_successful_item(isolated_store, monk
     monkeypatch.setattr(store, "_document_source", with_unmapped_field)
     with pytest.raises(ElasticsearchBulkWriteError) as caught:
         store.bulk_upsert([good, bad], refresh="wait_for")
-    assert set(caught.value.failures) == {bad.document_id}
+    assert set(caught.value.failures) == {_id(bad)}
     assert store.inspect([(parse_task_id, good.video_chunk_id)])[(parse_task_id, good.video_chunk_id)].present
     assert not store.inspect([(parse_task_id, bad.video_chunk_id)])[(parse_task_id, bad.video_chunk_id)].present
 
@@ -207,8 +218,8 @@ def test_real_es_strict_generation_and_exact_replay(isolated_store):
 
     with pytest.raises(ElasticsearchBulkWriteError) as replay_error:
         store.bulk_upsert([document], refresh="wait_for")
-    assert replay_error.value.status_codes == {document.document_id: 409}
-    assert store.inspect_exact([document]) == {document.document_id: True}
+    assert replay_error.value.status_codes == {_id(document): 409}
+    assert store.inspect_exact([document]) == {_id(document): True}
 
     lower_generation = replace(
         document,
@@ -217,7 +228,7 @@ def test_real_es_strict_generation_and_exact_replay(isolated_store):
     )
     with pytest.raises(ElasticsearchBulkWriteError) as stale_error:
         store.bulk_upsert([lower_generation], refresh="wait_for")
-    assert stale_error.value.status_codes == {document.document_id: 409}
+    assert stale_error.value.status_codes == {_id(document): 409}
 
     conflicting = replace(document, source_revision="same-version-different-source")
-    assert store.inspect_exact([conflicting]) == {document.document_id: False}
+    assert store.inspect_exact([conflicting]) == {_id(document): False}

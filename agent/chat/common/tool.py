@@ -273,7 +273,7 @@ def _trace_tool_arguments(inputs: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(weights, dict):
         summary["channel_weights"] = {
             key: weights[key]
-            for key in ("transcript", "semantic", "visual")
+            for key in ("lexical", "transcript", "semantic", "visual")
             if key in weights
             and isinstance(weights[key], (int, float))
             and not isinstance(weights[key], bool)

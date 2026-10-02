@@ -13,6 +13,7 @@ from gateway.usage import ModelCallTracker, track_model_call
 
 
 _MAX_INLINE_VIDEO_BYTES = 45 * 1024 * 1024
+DOUBAO_MULTIMODAL_EMBEDDING_REVISION = "gateway-ark-embedding-v1"
 _SUPPORTED_VIDEO_MIME_TYPES = {
     "video/mp4",
     "video/quicktime",

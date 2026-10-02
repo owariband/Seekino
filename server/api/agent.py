@@ -23,7 +23,7 @@ from ..service.agent_chat import AgentChatService, AgentMessageExecution
 from ..service.media import MediaService
 from ..utils.time import now_unix_time_ms
 from ..model.vo.commonVO import Page
-from .search import search_evidence_view
+from .search import search_evidence_fields
 from .context import get_services, get_sse_config
 from ..model.vo.agentVO import (
     AgentConversationView,
@@ -332,7 +332,6 @@ def _agent_message_view(
         series_ids=list(state.series_ids), sequence_no=state.sequence_no,
         role=state.role, status=state.status, phase=state.phase, version=state.version,
         reference=state.reference, content=state.content, model_name=state.model_name,
-        reply_to_message_id=state.reply_to_message_id, retrieval_query=state.retrieval_query,
         search_result=result, render_blocks=render_blocks,
         timing=(
             AgentMessageTimingView.model_validate(state.timing)
@@ -424,7 +423,7 @@ def _agent_search_evidence_view(
     *,
     workspace_id: str,
 ) -> AgentSearchEvidenceView:
-    evidence = search_evidence_view(result, media, workspace_id=workspace_id)
+    evidence = search_evidence_fields(result, media, workspace_id=workspace_id)
     raw_trace = result.get("retrievalTrace", result.get("retrieval_trace", []))
     return AgentSearchEvidenceView(
         **evidence.model_dump(),

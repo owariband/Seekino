@@ -31,8 +31,9 @@ from .query import run_query
 from .state import (
     AgentFinalOutput, AnswerPhase, EvalDecision, ExecutionControl, LoopTurn,
     ModelContextBudget, QueryDraft, RunInputs, RunLimits, RunState,
-    SelectedVideoRange, context_json,
+    RetrievalChannelContract, SelectedVideoRange, context_json,
 )
+from .skills import LEXICAL_RETRIEVAL_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT
 from .tools import (
     DraftReadAudit, build_chat_tools, build_evaluator_tools, build_query_tools,
 )
@@ -64,6 +65,7 @@ class AgentRuntime:
         evaluator_stage_timeout_seconds: float = 480,
         chat_timeout_seconds: float = 480,
         execution_timeout_seconds: float = 480,
+        retrieval_channel: RetrievalChannelContract = "transcript",
     ) -> None:
         for name, value, maximum in [
             ("max_loop_turns", max_loop_turns, 3),
@@ -91,6 +93,8 @@ class AgentRuntime:
             raise ValueError("max_tool_result_bytes must be at least 512")
         if not isinstance(limits_enabled, bool):
             raise ValueError("limits_enabled must be a boolean")
+        if retrieval_channel not in ("transcript", "lexical"):
+            raise ValueError("retrieval_channel must be transcript or lexical")
         for name, value in (
             ("stage_timeout_seconds", stage_timeout_seconds),
             ("evaluator_stage_timeout_seconds", evaluator_stage_timeout_seconds),
@@ -116,6 +120,12 @@ class AgentRuntime:
         self._evaluator_stage_timeout = evaluator_stage_timeout_seconds
         self._chat_timeout = chat_timeout_seconds
         self._execution_timeout = execution_timeout_seconds
+        self._retrieval_channel = retrieval_channel
+        self._retrieval_skill_prompt = (
+            LEXICAL_RETRIEVAL_SKILL_PROMPT
+            if retrieval_channel == "lexical"
+            else RETRIEVAL_SKILL_PROMPT
+        )
         builder = StateGraph(RunState)
         builder.add_node("turn", self.turn)
         builder.add_node("chat", self._chat)
@@ -263,6 +273,7 @@ class AgentRuntime:
             maximum_result_bytes=self._max_tool_result_bytes,
             maximum_read_chars=self._max_read_chars_per_call,
             maximum_catalog_items=self._max_catalog_items,
+            retrieval_channel=self._retrieval_channel,
         )
         attach_agent_tool_logging(query_tools, role="Query", inputs=inputs)
         try:
@@ -275,6 +286,7 @@ class AgentRuntime:
                 control=query_control,
                 context_budget=context_budget,
                 workspace=workspace,
+                retrieval_skill_prompt=self._retrieval_skill_prompt,
             )
             query_control.check()
             control.check()
@@ -329,6 +341,7 @@ class AgentRuntime:
             maximum_read_chars=self._max_read_chars_per_call,
             maximum_catalog_items=self._max_catalog_items,
             audit=audit,
+            retrieval_channel=self._retrieval_channel,
         )
         attach_agent_tool_logging(evaluator_tools, role="Evaluator", inputs=inputs)
         try:
@@ -344,6 +357,7 @@ class AgentRuntime:
                 control=evaluator_control,
                 max_prompt_chars=self._max_prompt_chars,
                 workspace=workspace,
+                retrieval_skill_prompt=self._retrieval_skill_prompt,
             )
             evaluator_control.check()
             control.check()

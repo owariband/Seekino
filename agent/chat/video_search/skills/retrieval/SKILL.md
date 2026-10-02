@@ -8,7 +8,7 @@
 
 - `query`：可独立理解的检索语句。写入人物、对白含义、事件、动作、物体、场景或画面约束。
 - `top_k`：本次最多召回多少个候选。问题明确时使用较小值；人物、事件或时间表达不确定时再扩大。
-- `channel_weights.transcript`：ASR 原话词法匹配。原句、短语、专名或口头禅应提高它。
+- `channel_weights.lexical`：结构化词项匹配。原句、短语、专名、人物或口头禅应提高它；它只表示召回线索，不自动成为事实证据。
 - `channel_weights.semantic`：剧情、因果、人物关系、事件和对白语义检索。
 - `channel_weights.visual`：可见动作、物体、颜色、服装、地点和构图检索。
 - `cursor`：同一次召回的续页游标。存在 `next_cursor` 时，继续调用同一个 `retrieve` 并只传该游标；不要同时重传初始检索参数。
@@ -20,7 +20,7 @@ Skill 必须保持作品无关：不得写入或依赖任何具体动画、角�
   "query": "目标人物在目标地点完成目标事件",
   "top_k": 8,
   "channel_weights": {
-    "transcript": 0.1,
+    "lexical": 0.1,
     "semantic": 0.7,
     "visual": 0.2
   }
@@ -47,17 +47,17 @@ Catalog 中常用字段：
 
 只允许读取当前 Workspace 中已经由 `retrieve` 发现的 ID。最终结论、claim 和播放范围必须来自精读后的证据，不能只根据 Catalog 描述决定。
 
-## Transcript 语言
+## Lexical 语言与词项
 
-Transcript 通道不会翻译 Query。`inputs.series_context[].transcriptLanguageHint` 是用户配置的原文语言提示，只用于检索路由，不证明某句台词存在，也不决定最终回答语言。
+Lexical 通道不会翻译 Query。`inputs.series_context[].transcriptLanguageHint` 是用户配置的原文语言提示，只用于检索路由，不证明某句台词存在，也不决定最终回答语言。命中的 `questions` 等字段只能帮助发现候选，最终回答仍须核验正式 Evidence。
 
-- 用户给出原文时，保留原语言和原脚本，抽取连续短语进行 Transcript-heavy 检索。
-- 用户只给出译文或剧情释义时，先做 Semantic-heavy 检索；从精读结果复制真实原语言短语，再按需做 Transcript-heavy 复查。
+- 用户给出原文时，保留原语言和原脚本，抽取连续短语进行 Lexical-heavy 检索。
+- 用户只给出译文或剧情释义时，先做 Semantic-heavy 检索；从精读结果复制真实原语言短语，再按需做 Lexical-heavy 复查。
 - 没有语言提示时，不得从作品名或文件名臆断语言。
 
 ## 检索与精读策略
 
-- 原话、短句、专名：Transcript-heavy，例如 `0.8 / 0.15 / 0.05`。
+- 原话、短句、专名：Lexical-heavy，例如 `0.8 / 0.15 / 0.05`。
 - 剧情、因果、人物关系：Semantic-heavy，例如 `0.1 / 0.75 / 0.15`。
 - 可见动作、物体、地点或构图：Visual-heavy，例如 `0.05 / 0.15 / 0.8`。
 - 同时核验对白、语义和画面：使用较均衡权重，必要时拆成两次独立检索。

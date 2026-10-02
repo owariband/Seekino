@@ -12,6 +12,8 @@ from sqlalchemy import event, select
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 from engine.parsev1.runtime import VideoParseRuntimeConfig
+from engine.retrieval import EncoderContract
+from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.config import load_config
 from server.config.media import ImageUploadConfig
 from server.config.parse_profile import ParseConfig, default_video_parse_v2_config
@@ -103,6 +105,21 @@ def _upload_service(
         )
     store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
     upload_repository = UploadRepository(create_session_factory(engine))
+    active_video_parse_config = (
+        parse_defaults.to_video_parse_v2()
+        if parse_defaults is not None
+        else default_video_parse_v2_config()
+    )
+    if video_parse_index_store is not None and parse_defaults is None:
+        embedding = active_video_parse_config.models.embedding.model_copy(
+            update={"dimensions": video_parse_index_store.semantic_dimensions}
+        )
+        active_video_parse_config = active_video_parse_config.model_copy(update={
+            "models": active_video_parse_config.models.model_copy(
+                update={"embedding": embedding}
+            )
+        })
+    active_embedding = active_video_parse_config.models.embedding
     return (
         engine,
         store,
@@ -116,6 +133,13 @@ def _upload_service(
             parse_defaults=parse_defaults,
             execution_mode=execution_mode,
             video_parse_index_store=video_parse_index_store,
+            video_parse_query_encoder=EncoderContract(
+                provider="ark",
+                model=active_embedding.model,
+                encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+                dimensions=active_embedding.dimensions,
+            ),
+            video_parse_query_encoder_source=active_embedding.source,
             qdrant_mutation_lock=QdrantMutationLock(
                 engine,
                 environment=DatabaseEnvironment.TEST,
@@ -140,9 +164,33 @@ def _video_parse_config_with_dimensions(dimensions: int) -> VideoParseV2Config:
     return config.model_copy(update={"models": models})
 
 
-def test_upload_rejects_v2_dimensions_incompatible_with_active_elasticsearch(
+def _video_parse_config_with_model(
+    model: str,
+    *,
+    dimensions: int,
+) -> VideoParseV2Config:
+    config = _video_parse_config_with_dimensions(dimensions)
+    embedding = config.models.embedding.model_copy(update={"model": model})
+    return config.model_copy(update={
+        "models": config.models.model_copy(update={"embedding": embedding})
+    })
+
+
+@pytest.mark.parametrize(
+    ("video_parse_config", "error"),
+    [
+        (_video_parse_config_with_dimensions(3), "active Elasticsearch"),
+        (
+            _video_parse_config_with_model("another-embedding", dimensions=2),
+            "exact active V2 query encoder",
+        ),
+    ],
+)
+def test_upload_rejects_v2_encoder_incompatible_with_active_elasticsearch(
     repository,
     tmp_path,
+    video_parse_config,
+    error,
 ) -> None:
     _engine, _store, _repository, service = _upload_service(
         repository,
@@ -150,7 +198,7 @@ def test_upload_rejects_v2_dimensions_incompatible_with_active_elasticsearch(
         video_parse_index_store=_VideoParseIndexStore(2, 2),
     )
 
-    with pytest.raises(ValueError, match="active Elasticsearch"):
+    with pytest.raises(ValueError, match=error):
         service.create_session(
             workspace_id="local-default",
             series_id="77285f16-3e5b-592e-ba15-8b224b619806",
@@ -159,7 +207,7 @@ def test_upload_rejects_v2_dimensions_incompatible_with_active_elasticsearch(
             media_type="video/mp4",
             total_size_bytes=10,
             idempotency_key="incompatible-es-dimensions",
-            video_parse_config=_video_parse_config_with_dimensions(3),
+            video_parse_config=video_parse_config,
         )
 
     assert service.list_sessions(workspace_id="local-default") == []
@@ -243,9 +291,21 @@ def test_pending_takeover_rechecks_v2_dimensions_before_accepting(
         assert task.detail["_worker_runtime_v2"]["accepted"] is False
 
 
-def test_reparse_rejects_v2_dimensions_before_creating_a_new_task(
+@pytest.mark.parametrize(
+    ("video_parse_config", "error"),
+    [
+        (_video_parse_config_with_dimensions(3), "active Elasticsearch"),
+        (
+            _video_parse_config_with_model("another-embedding", dimensions=2),
+            "exact active V2 query encoder",
+        ),
+    ],
+)
+def test_reparse_rejects_v2_encoder_before_creating_a_new_task(
     repository,
     tmp_path,
+    video_parse_config,
+    error,
 ) -> None:
     engine, _store, _repository, service = _upload_service(
         repository,
@@ -276,12 +336,12 @@ def test_reparse_rejects_v2_dimensions_before_creating_a_new_task(
         )
         task.status = "COMPLETE"
 
-    with pytest.raises(ValueError, match="active Elasticsearch"):
+    with pytest.raises(ValueError, match=error):
         service.reparse(
             upload.upload_session_id,
             workspace_id="local-default",
             expected_job_version=1,
-            video_parse_config=_video_parse_config_with_dimensions(3),
+            video_parse_config=video_parse_config,
         )
 
     with create_session_factory(engine)() as session:

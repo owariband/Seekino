@@ -26,7 +26,8 @@ from agent.chat.video_search.errors import (
     VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase,
 )
 from agent.chat.video_search.state import (
-    QueryDraft, RetrievalChannelWeights,
+    LexicalRetrievalChannelWeights, QueryDraft, RetrievalChannelWeights,
+    RetrievalTraceEntry,
 )
 from agent.chat.video_search.tools import UpdateVideoItemArguments
 def _inputs(name="conversation", *, workspace="workspace", series="series") -> RunInputs:
@@ -41,7 +42,7 @@ def _retrieval_args(
     query: str,
     top_k: int,
     *,
-    transcript: float = 0.0,
+    lexical: float = 0.0,
     semantic: float = 0.5,
     visual: float = 0.5,
 ) -> dict:
@@ -49,7 +50,7 @@ def _retrieval_args(
         "query": query,
         "top_k": top_k,
         "channel_weights": {
-            "transcript": transcript,
+            "lexical": lexical,
             "semantic": semantic,
             "visual": visual,
         },
@@ -141,12 +142,12 @@ class Retrieval:
         workspace_id,
         series_ids,
         top_k,
-        transcript_weight,
+        lexical_weight,
         text_weight,
         vision_weight,
     ):
         self.calls.append((query, workspace_id, series_ids, top_k))
-        self.weights.append((transcript_weight, text_weight, vision_weight))
+        self.weights.append((lexical_weight, text_weight, vision_weight))
         hits = [hit.model_copy(deep=True) for hit in self.hits[:top_k]]
         return VideoChunkSearchResult(
             query=query, series_ids=series_ids,
@@ -197,7 +198,7 @@ class Query:
                     _invoke_json(tools_by_name["retrieve"], _retrieval_args(
                         f"query-{number}-{index}",
                         8,
-                        transcript=self.channel_weights[0],
+                        lexical=self.channel_weights[0],
                         semantic=self.channel_weights[1],
                         visual=self.channel_weights[2],
                     ))
@@ -320,7 +321,16 @@ def _runtime(query=None, evaluator=None, chat=None, retrieval=None, **kwargs):
     query, evaluator, chat, retrieval = (
         query or Query(), evaluator or Evaluator(), chat or Chat(), retrieval or Retrieval()
     )
+    kwargs.setdefault("retrieval_channel", "lexical")
     return AgentRuntime(query, evaluator, chat, retrieval.search, **kwargs), query, evaluator, chat, retrieval
+
+
+def test_runtime_defaults_to_the_v1_transcript_contract() -> None:
+    runtime = AgentRuntime(Query(), Evaluator(), Chat(), Retrieval().search)
+
+    assert runtime._retrieval_channel == "transcript"
+    assert "channel_weights.transcript" in runtime._retrieval_skill_prompt
+    assert "channel_weights.lexical" not in runtime._retrieval_skill_prompt
 
 
 def test_runtime_rejects_nonpositive_read_character_limit() -> None:
@@ -602,7 +612,7 @@ def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
         assert "retrieval_result" not in record
         assert "draft_output" not in record
     assert third["turns"][1]["evidence_source_turns"] == {"chunk-1": 2}
-    assert result.query == "query-2-1"
+    assert "query" not in result.model_dump(mode="json", by_alias=True)
     assert [
         entry.model_dump(mode="json", by_alias=True)
         for entry in result.retrieval_trace
@@ -612,12 +622,12 @@ def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
             "topK": 8,
             "strategyVersion": "query-adaptive-three-channel-rrf-v2",
             "requestedWeights": {
-                "transcript": 0.0,
+                "lexical": 0.0,
                 "semantic": 0.5,
                 "visual": 0.5,
             },
             "effectiveWeights": {
-                "transcript": 0.0,
+                "lexical": 0.0,
                 "semantic": 0.5,
                 "visual": 0.5,
             },
@@ -1096,12 +1106,12 @@ def test_model_selected_weights_are_normalized_recorded_and_returned_to_agent():
     assert retrieval.weights[0] == pytest.approx((0.6, 0.3, 0.1))
     strategy = query.tool_results[0]["retrieval_strategy"]
     assert strategy["requested_weights"] == {
-        "transcript": 0.6,
+        "lexical": 0.6,
         "semantic": 0.3,
         "visual": 0.1,
     }
     assert strategy["effective_weights"] == pytest.approx({
-        "transcript": 0.6,
+        "lexical": 0.6,
         "semantic": 0.3,
         "visual": 0.1,
     })
@@ -1116,12 +1126,12 @@ def test_model_selected_weights_are_normalized_recorded_and_returned_to_agent():
         "topK": 8,
         "strategyVersion": "query-adaptive-three-channel-rrf-v2",
         "requestedWeights": {
-            "transcript": 0.6,
+            "lexical": 0.6,
             "semantic": 0.3,
             "visual": 0.1,
         },
         "effectiveWeights": pytest.approx({
-            "transcript": 0.6,
+            "lexical": 0.6,
             "semantic": 0.3,
             "visual": 0.1,
         }),
@@ -1156,6 +1166,62 @@ def test_legacy_two_channel_trace_weights_default_transcript_to_zero():
         "semantic": 0.6,
         "visual": 0.4,
     }
+
+
+@pytest.mark.parametrize("requested", [
+    {"transcript": 0.2, "semantic": 0.5, "visual": 0.3},
+    {"semantic": 0.5, "visual": 0.5},
+])
+def test_historical_retrieval_trace_keeps_asr_weights(requested):
+    trace = RetrievalTraceEntry.model_validate({
+        "query": "original phrase",
+        "topK": 5,
+        "strategyVersion": "query-adaptive-three-channel-rrf-v2",
+        "requestedWeights": requested,
+        "effectiveWeights": requested,
+        "resultCount": 0,
+        "videoChunkIds": [],
+    })
+
+    encoded = trace.model_dump(mode="json", by_alias=True)
+    assert encoded["requestedWeights"]["transcript"] == requested.get("transcript", 0.0)
+    assert "lexical" not in encoded["requestedWeights"]
+    assert encoded["effectiveWeights"] == encoded["requestedWeights"]
+
+
+def test_lexical_retrieval_trace_is_distinct_from_asr_history():
+    weights = {"lexical": 0.6, "semantic": 0.3, "visual": 0.1}
+    trace = RetrievalTraceEntry.model_validate({
+        "query": "scene details",
+        "topK": 5,
+        "strategyVersion": "lexical-three-channel-rrf-v3",
+        "requestedWeights": weights,
+        "effectiveWeights": weights,
+        "resultCount": 1,
+        "videoChunkIds": ["chunk-1"],
+    })
+
+    assert isinstance(trace.requested_weights, LexicalRetrievalChannelWeights)
+    encoded = trace.model_dump(mode="json", by_alias=True)
+    assert encoded["requestedWeights"] == weights
+    assert encoded["effectiveWeights"] == weights
+    assert "transcript" not in encoded["requestedWeights"]
+
+    with pytest.raises(ValueError, match="same channels"):
+        RetrievalTraceEntry.model_validate({
+            **encoded,
+            "effectiveWeights": {"transcript": 0.6, "semantic": 0.3, "visual": 0.1},
+        })
+
+
+@pytest.mark.parametrize("weights", [
+    {"lexical": True, "semantic": 0.5, "visual": 0.5},
+    {"lexical": 0.0, "semantic": 0.0, "visual": 0.0},
+    {"lexical": 0.5, "semantic": 0.5, "visual": 0.0, "transcript": 0.0},
+])
+def test_lexical_trace_weights_reject_invalid_values(weights):
+    with pytest.raises(ValueError):
+        LexicalRetrievalChannelWeights.model_validate(weights)
 
 
 def test_query_can_make_more_tool_calls_than_the_removed_budget():
@@ -1704,18 +1770,21 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
         workspace_id,
         series_ids,
         top_k,
-        transcript_weight,
+        lexical_weight,
         text_weight,
         vision_weight,
     ):
         assert workspace_id == f"workspace-{query}"
         assert series_ids == [f"series-{query}"]
-        assert (transcript_weight, text_weight, vision_weight) == (0.0, 0.5, 0.5)
+        assert (lexical_weight, text_weight, vision_weight) == (0.0, 0.5, 0.5)
         hit = _hit(f"chunk-{query}", workspace=workspace_id, series=series_ids[0])
         return VideoChunkSearchResult(query=query, series_ids=series_ids,
             agent_reply=AgentReply(message=query, result_count=1), hits=[hit])
 
-    runtime = AgentRuntime(ScopedQuery(), Approve(), EchoChat(), search)
+    runtime = AgentRuntime(
+        ScopedQuery(), Approve(), EchoChat(), search,
+        retrieval_channel="lexical",
+    )
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {
             name: executor.submit(runtime.kick,
@@ -1764,4 +1833,5 @@ def test_multiple_searches_may_choose_one_valid_hit_within_budget():
     assert result.agent_reply.result_count == 1
     assert result.hits[0].evidence.video_chunk_id == "chunk-2"
     assert len(evaluator.contexts[0]["retrieval_calls"]) == 2
-    assert result.query == "query-1-1"
+    assert [entry.query for entry in result.retrieval_trace] == ["query-1-0", "query-1-1"]
+    assert "query" not in result.model_dump(mode="json", by_alias=True)
