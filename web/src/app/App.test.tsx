@@ -117,7 +117,7 @@ function renderApp(
   const conversationMessages = new Map<string, AgentMessageView[]>();
   const assistantMessage: AgentMessageView = {
     messageId: "assistant", conversationId: "conversation", seriesIds: [apiSeries.seriesId], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", phase: "QUEUED", version: 1, reference: null, content: null,
-    modelName: null, replyToMessageId: "user", retrievalQuery: null, searchResult: null,
+    modelName: null, searchResult: null,
     renderBlocks: [], timing: null, lastError: null, createdAt: now, updatedAt: now,
   };
   const userMessage = { ...assistantMessage, messageId: "user", sequenceNo: 0, role: "USER", status: "COMPLETED", content: "雨天门口" };
@@ -238,7 +238,7 @@ function renderApp(
       const index = messageSends++;
       const existingMessages = conversationMessages.get(conversationId) ?? [];
       const userSnapshot: AgentMessageView = { ...userMessage, conversationId, messageId: `user-${index}`, sequenceNo: existingMessages.length, role: "USER", status: "COMPLETED", content: request.content, seriesIds };
-      const assistantSnapshot: AgentMessageView = { ...assistantMessage, conversationId, messageId: `assistant-${index}`, replyToMessageId: userSnapshot.messageId, sequenceNo: existingMessages.length + 1, seriesIds };
+      const assistantSnapshot: AgentMessageView = { ...assistantMessage, conversationId, messageId: `assistant-${index}`, sequenceNo: existingMessages.length + 1, seriesIds };
       conversationMessages.set(conversationId, [...existingMessages, userSnapshot, assistantSnapshot]);
       conversations = conversations.map((item) => item.conversationId === conversationId ? {
         ...item,
@@ -252,7 +252,7 @@ function renderApp(
         const emit = (type: string, payload: unknown) => controller.enqueue(new TextEncoder().encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`));
         const base = { occurredAt: now, conversationId, messageId: assistantSnapshot.messageId };
         emit("answer.started", { ...base, sequence: 1, userMessage: userSnapshot, assistantMessage: assistantSnapshot });
-        emit("answer.evidence", { ...base, sequence: 2, searchResult: { query: "雨天门口", seriesIds, searchedVideoIds: [], partial: false, warnings: [], hits: [] } });
+        emit("answer.evidence", { ...base, sequence: 2, searchResult: { seriesIds, searchedVideoIds: [], partial: false, warnings: [], hits: [] } });
         emit("answer.delta", { ...base, sequence: 3, delta: "这是 Agent Chat" });
         finishAnswer = () => {
           const completed: AgentMessageView = { ...assistantSnapshot, version: 2, phase: null, status: "COMPLETED", content: "这是 Agent Chat 保存的完整回答。" };

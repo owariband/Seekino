@@ -99,4 +99,107 @@ describe("search evidence explanations", () => {
       explainHit(visualOnly).limitations.some((item) => item.includes("文本通道没有召回")),
     ).toBe(true);
   });
+
+  it("shows a general lexical hit without claiming generated questions are ASR", () => {
+    const lexicalOnly: VideoChunkSearchHit = {
+      ...hit,
+      candidate: {
+        ...hit.candidate,
+        lexicalRank: 3,
+        lexicalScore: 1.2,
+        transcriptRank: null,
+        transcriptScore: null,
+        textRank: null,
+        textScore: null,
+        visionRank: null,
+        visionScore: null,
+      },
+      selectionReason: { ...hit.selectionReason, matchedEvidence: [] },
+    };
+
+    expect(explainHit(lexicalOnly).sources).toEqual(["词项召回第 3"]);
+  });
+
+  it("keeps lexical and historical ASR ranks as separate sources", () => {
+    const both: VideoChunkSearchHit = {
+      ...hit,
+      candidate: { ...hit.candidate, lexicalRank: 2, lexicalScore: 1.1 },
+    };
+
+    expect(explainHit(both).sources).toEqual(
+      expect.arrayContaining(["词项召回第 2", "ASR 原话 · 词法召回第 1"]),
+    );
+  });
+
+  it("identifies a timeline dialogue match without assigning an ASR rank", () => {
+    const dialogue: VideoChunkSearchHit = {
+      ...hit,
+      candidate: {
+        ...hit.candidate,
+        lexicalRank: 1,
+        lexicalScore: 3,
+        transcriptRank: null,
+        transcriptScore: null,
+      },
+      selectionReason: {
+        ...hit.selectionReason,
+        lexicalMatches: [{
+          field: "dialogue",
+          rawText: "我们在门口等你。",
+          language: "zh",
+          role: "ORIGINAL",
+          speaker: "角色甲",
+          startSeconds: 12,
+          endSeconds: 14,
+          timelineIndex: 0,
+          enrichmentIndex: null,
+        }],
+      },
+    };
+
+    expect(explainHit(dialogue).sources).toContain("对白词项命中");
+    expect(explainHit(dialogue).sources.join(" ")).not.toContain("ASR 原话");
+  });
+
+  it("keeps a generated question as a retrieval hint, not dialogue evidence", () => {
+    const question: VideoChunkSearchHit = {
+      ...hit,
+      candidate: {
+        ...hit.candidate,
+        lexicalRank: 2,
+        lexicalScore: 1.1,
+        transcriptRank: null,
+        transcriptScore: null,
+        textRank: null,
+        textScore: null,
+        visionRank: null,
+        visionScore: null,
+      },
+      selectionReason: {
+        summary: "命中生成的问题，仍需核验视频证据。",
+        matchedEvidence: [],
+        limitations: [],
+        lexicalMatches: [{
+          field: "questions",
+          rawText: "谁在门口等待？",
+          language: "zh",
+          role: null,
+          speaker: null,
+          startSeconds: 12,
+          endSeconds: 15,
+          timelineIndex: null,
+          enrichmentIndex: 0,
+        }],
+      },
+    };
+
+    const explanation = explainHit(question);
+    expect(explanation.sources).toEqual([
+      "词项召回第 2",
+      "生成问题词项命中（仅召回线索）",
+    ]);
+    expect(explanation.matchedFacts).toEqual([]);
+    expect(explanation.sources.join(" ")).not.toContain("ASR 原话");
+    expect(readableTranscript(question)).not.toContain("谁在门口等待？");
+  });
 });

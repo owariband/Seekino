@@ -35,6 +35,9 @@ function TaskRow({ task }: { task: UploadTask }) {
     : task.job?.completedThroughSeconds !== null && task.job?.completedThroughSeconds !== undefined
       ? `连续解析到 ${formatTimecode(task.job.completedThroughSeconds)} / ${formatTimecode(task.job.totalDurationSeconds)}`
       : "等待精确检查点";
+  const videoParsePosition = task.videoParseTask
+    ? `${task.videoParseTask.chunkCount} 个固定切片`
+    : null;
   const selectedConfig = task.job?.parseConfig ?? task.session?.parseConfig ?? task.parseConfig;
 
   return (
@@ -60,10 +63,17 @@ function TaskRow({ task }: { task: UploadTask }) {
         >
           <span style={{ width: `${progress}%` }} />
         </div>
-        {task.status === "processing" && task.job ? (
+        {task.status === "processing" && (task.job || task.videoParseTask) ? (
           <div className={styles.stageLine}>
-            <span>{publicParseStageLabel(task.job.stage)} · {parsePosition}</span>
-            <span>{task.job.attemptCount}/{task.job.maxAttempts} 次尝试</span>
+            <span>
+              {task.videoParseTask
+                ? `${taskStatusLabel(task)} · ${videoParsePosition}`
+                : `${publicParseStageLabel(task.job!.stage)} · ${parsePosition}`}
+            </span>
+            <span>
+              {(task.videoParseTask ?? task.job)!.attemptCount}/
+              {(task.videoParseTask ?? task.job)!.maxAttempts} 次尝试
+            </span>
           </div>
         ) : null}
         {selectedConfig ? <p className={styles.taskConfig}>

@@ -3,7 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiClientError } from "../../api/client";
-import type { ParseConfig, ParseJobView, UploadSessionView } from "../../api/contracts";
+import type {
+  ParseConfig,
+  ParseJobView,
+  UploadSessionView,
+  VideoParseTaskView,
+} from "../../api/contracts";
 import { UploadDialog } from "./UploadDialog";
 import { UploadProvider, useUploads } from "./UploadProvider";
 
@@ -13,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   createUploadSession: vi.fn(),
   getParseConfig: vi.fn(),
   getUploadSession: vi.fn(),
+  getVideoParseTask: vi.fn(),
   deleteUploadSession: vi.fn(),
   completeUpload: vi.fn(),
   uploadSegment: vi.fn(),
@@ -23,6 +29,7 @@ vi.mock("../../api/client", async (importOriginal) => ({
   createUploadSession: mocks.createUploadSession,
   getParseConfig: mocks.getParseConfig,
   getUploadSession: mocks.getUploadSession,
+  getVideoParseTask: mocks.getVideoParseTask,
   deleteUploadSession: mocks.deleteUploadSession,
   completeUpload: mocks.completeUpload,
   uploadSegment: mocks.uploadSegment,
@@ -66,6 +73,42 @@ const retriedJob: ParseJobView = {
   checkpoints: [], createdAt: 1, updatedAt: 2,
 };
 
+const videoParseTask: VideoParseTaskView = {
+  videoParseTaskId: "task-a",
+  videoId: "video-a",
+  pipelineVersion: "video-parse-v2",
+  status: "PARSING",
+  parseConfig: {},
+  chunkCount: 2,
+  version: 1,
+  nextExecuteTime: 1,
+  attemptCount: 1,
+  maxAttempts: 3,
+  leaseOwner: "worker-a",
+  leaseVersion: 1,
+  leaseExpireTime: 3,
+  heartbeatTime: 2,
+  startTime: 1,
+  finishTime: null,
+  processingDurationMs: 100,
+  processingTimingComplete: false,
+  lastError: null,
+  isTest: false,
+  detail: {},
+  createTime: 1,
+  updateTime: 2,
+  workspaceId: "local-default",
+  seriesId: "series-a",
+  seriesName: "测试系列",
+  episodeOrder: 1,
+  originalFilename: file.name,
+  uploadSessionId: session.uploadSessionId,
+  durationSeconds: 10,
+  canRetry: false,
+  canReparse: false,
+  canDelete: false,
+};
+
 function Controls() {
   const {
     enqueue,
@@ -89,6 +132,7 @@ beforeEach(() => {
   mocks.createUploadSession.mockReset().mockResolvedValue(session);
   mocks.getParseConfig.mockReset().mockResolvedValue(parseConfig);
   mocks.getUploadSession.mockReset().mockResolvedValue(session);
+  mocks.getVideoParseTask.mockReset().mockResolvedValue(videoParseTask);
   mocks.deleteUploadSession.mockReset().mockResolvedValue({ ...session, status: "EXPIRED" });
   mocks.completeUpload.mockReset();
   mocks.uploadSegment.mockReset().mockImplementation(({ signal }: { signal: AbortSignal }) =>
@@ -242,6 +286,7 @@ describe("upload deletion", () => {
       uploadSession: { ...completing, status: "COMPLETED", completionStage: null },
       videoId: "video-a",
       jobId: "job-a",
+      videoParseTaskId: "task-a",
     });
     vi.stubGlobal("EventSource", class {
       onerror: (() => void) | null = null;
@@ -257,6 +302,69 @@ describe("upload deletion", () => {
     await waitFor(() => expect(mocks.completeUpload).toHaveBeenCalledWith(session.uploadSessionId));
     expect(mocks.uploadSegment).not.toHaveBeenCalled();
     expect(mocks.createUploadSession).not.toHaveBeenCalled();
+  });
+
+  it("observes a V2 task identity when completion has no legacy job", async () => {
+    const completing = {
+      ...session,
+      status: "COMPLETING" as const,
+      uploadedSegmentCount: 3,
+      uploadedSizeBytes: session.totalSizeBytes,
+      missingSegmentNumbers: [],
+      completionStage: "PROBING" as const,
+    };
+    mocks.selectedSeries.pendingUploads = [completing];
+    mocks.getUploadSession.mockResolvedValue(completing);
+    mocks.completeUpload.mockResolvedValue({
+      uploadSession: {
+        ...completing,
+        status: "COMPLETED",
+        completionStage: null,
+        initialVideoParseTaskId: "task-a",
+      },
+      videoId: "video-a",
+      jobId: null,
+      videoParseTaskId: "task-a",
+    });
+    let source!: EventTarget & { close: ReturnType<typeof vi.fn>; url: string };
+    vi.stubGlobal("EventSource", class extends EventTarget {
+      onerror: (() => void) | null = null;
+      close = vi.fn();
+      url: string;
+      constructor(url: string) {
+        super();
+        this.url = url;
+        source = this;
+      }
+    });
+
+    render(<UploadProvider><Controls /></UploadProvider>);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "上传面板" }));
+    await user.click(screen.getByRole("button", { name: `继续合并 ${file.name}` }));
+
+    await waitFor(() => expect(source.url).toBe(
+      "/api/jobs/video-parse/events?videoParseTaskId=task-a&workspaceId=local-default",
+    ));
+    act(() => source.dispatchEvent(new MessageEvent("video-parse-task", {
+      data: JSON.stringify(videoParseTask),
+    })));
+    await waitFor(() => expect(screen.getByText(file.name).closest("article")).toHaveTextContent(
+      "解析画面与对白 · 2 个固定切片",
+    ));
+
+    act(() => source.dispatchEvent(new MessageEvent("video-parse-task", {
+      data: JSON.stringify({
+        ...videoParseTask,
+        status: "COMPLETE",
+        finishTime: 3,
+        processingTimingComplete: true,
+        updateTime: 3,
+      }),
+    })));
+    await waitFor(() => expect(screen.getByText(file.name).closest("article")).toHaveTextContent("已可检索"));
+    expect(source.close).toHaveBeenCalledOnce();
+    expect(mocks.refreshSeries).toHaveBeenCalled();
   });
 
   it("keeps the completion retry available while the server still owns a fresh merge", async () => {

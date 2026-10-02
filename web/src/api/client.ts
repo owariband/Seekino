@@ -26,6 +26,7 @@ import type {
   VideoChunkSearchResult,
   VideoChunkEvidence,
   VideoSummary,
+  VideoParseTaskView,
   VideoSearchRequest,
 } from "./contracts";
 
@@ -191,7 +192,7 @@ export function deleteUploadSession(uploadSessionId: string): Promise<UploadSess
 export function retryUploadParse(
   uploadSessionId: string,
   expectedJobVersion: number,
-): Promise<ParseJobView> {
+): Promise<VideoParseTaskView> {
   return requestJson(
     `/api/uploads/retry-parse?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
       `&workspaceId=${WORKSPACE_QUERY}` +
@@ -203,7 +204,7 @@ export function retryUploadParse(
 export function reparseUpload(
   uploadSessionId: string,
   expectedJobVersion: number,
-): Promise<ParseJobView> {
+): Promise<VideoParseTaskView> {
   return requestJson(
     `/api/uploads/reparse?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
       `&workspaceId=${WORKSPACE_QUERY}` +
@@ -248,6 +249,48 @@ export function getJob(jobId: string): Promise<ParseJobView> {
   );
 }
 
+export function listVideoParseTasks(
+  cursor?: string,
+  limit = 100,
+  signal?: AbortSignal,
+): Promise<Page<VideoParseTaskView>> {
+  return requestJson(
+    `/api/jobs/video-parse/list?workspaceId=${WORKSPACE_QUERY}&limit=${limit}` +
+      `${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+    { signal },
+  );
+}
+
+export async function listAllVideoParseTasks(
+  signal?: AbortSignal,
+): Promise<VideoParseTaskView[]> {
+  const items = new Map<string, VideoParseTaskView>();
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await listVideoParseTasks(cursor, 100, signal);
+    for (const task of page.items) items.set(task.videoParseTaskId, task);
+    if (page.hasMore && !page.nextCursor) {
+      throw new Error("V2 解析任务列表缺少下一页游标");
+    }
+    cursor = page.hasMore ? page.nextCursor! : undefined;
+    if (cursor && cursors.has(cursor)) {
+      throw new Error("V2 解析任务列表返回了重复的分页游标");
+    }
+    if (cursor) cursors.add(cursor);
+  } while (cursor);
+  return [...items.values()];
+}
+
+export function getVideoParseTask(
+  videoParseTaskId: string,
+): Promise<VideoParseTaskView> {
+  return requestJson(
+    `/api/jobs/video-parse/get?videoParseTaskId=${encodeURIComponent(videoParseTaskId)}` +
+      `&workspaceId=${WORKSPACE_QUERY}`,
+  );
+}
+
 export function getParseUsage(jobId: string, signal?: AbortSignal): Promise<ParseUsageVO> {
   return requestJson(
     `/api/jobs/usage/get?workspaceId=${WORKSPACE_QUERY}&jobId=${encodeURIComponent(jobId)}`,
@@ -258,6 +301,13 @@ export function getParseUsage(jobId: string, signal?: AbortSignal): Promise<Pars
 export function jobEventsUrl(jobId: string): string {
   return apiUrl(
     `/api/jobs/events?jobId=${encodeURIComponent(jobId)}` +
+      `&workspaceId=${WORKSPACE_QUERY}`,
+  );
+}
+
+export function videoParseTaskEventsUrl(videoParseTaskId: string): string {
+  return apiUrl(
+    `/api/jobs/video-parse/events?videoParseTaskId=${encodeURIComponent(videoParseTaskId)}` +
       `&workspaceId=${WORKSPACE_QUERY}`,
   );
 }

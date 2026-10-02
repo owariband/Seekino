@@ -1,4 +1,10 @@
-import type { ParseConfig, ParseJobView, UploadSessionView } from "../../api/contracts";
+import type {
+  ParseConfig,
+  ParseJobView,
+  UploadSessionView,
+  VideoParseTaskStatus,
+  VideoParseTaskView,
+} from "../../api/contracts";
 import { publicParseStageLabel } from "../../shared/format";
 
 export type UploadTaskStatus =
@@ -52,8 +58,19 @@ export interface UploadTask {
   parseConfig?: ParseConfig;
   session?: UploadSessionView;
   job?: ParseJobView;
+  videoParseTask?: VideoParseTaskView;
   error?: string;
 }
+
+const videoParseTaskStatusLabel: Record<VideoParseTaskStatus, string> = {
+  PENDING: "等待解析",
+  PREPARING: "准备解析",
+  PARSING: "解析画面与对白",
+  INDEXING: "发布检索结果",
+  COMPLETE: "已可检索",
+  PARSING_FAILED: "解析失败",
+  INDEXING_FAILED: "索引发布失败",
+};
 
 export function configuredMin(recommended: number, current: number): number {
   return Math.min(recommended, current);
@@ -114,7 +131,7 @@ export function validateParseConfig(config: ParseConfig, defaults: ParseConfig):
 export function taskProgress(task: UploadTask): number {
   if (
     ["completing", "processing", "completed"].includes(task.status)
-    || (task.status === "failed" && task.job)
+    || (task.status === "failed" && (task.job || task.videoParseTask))
   ) return 100;
   if (task.totalBytes <= 0) return 0;
   return Math.min(
@@ -136,6 +153,9 @@ export function taskStatusLabel(task: UploadTask): string {
     case "completing":
       return "校验并合并";
     case "processing":
+      if (task.videoParseTask) {
+        return videoParseTaskStatusLabel[task.videoParseTask.status];
+      }
       return task.job?.stage ? publicParseStageLabel(task.job.stage) : "等待解析";
     case "completed":
       return "已可检索";

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentMessageView, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
+import type { AgentMessageView, RetrievalChannelWeights, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
 import { SearchPage, type SearchPageHandle } from "./SearchPage";
 
 const mocks = vi.hoisted(() => ({
@@ -108,10 +108,7 @@ function assistantMessage(content: string, hits: VideoChunkSearchHit[] = []): Ag
     reference: null,
     content,
     modelName: "deepseek-flash",
-    replyToMessageId: "user-1",
-    retrievalQuery: "雨天门口",
     searchResult: hits.length ? {
-      query: "雨天门口",
       seriesIds: [series.seriesId],
       searchedVideoIds: ["video-1"],
       partial: false,
@@ -299,7 +296,6 @@ describe("Search assistant presentation", () => {
     renderPage({
       ...assistantMessage("[公开资料](https://example.com/source)"),
       seriesIds: [],
-      retrievalQuery: null,
     }, []);
     const user = userEvent.setup();
 
@@ -314,11 +310,15 @@ describe("Search assistant presentation", () => {
     expect(screen.getByText("问题已发送，正在处理")).toBeInTheDocument();
   });
 
-  it("distinguishes retrieved candidates from a truly empty retrieval", () => {
+  const traceCases: Array<{ label: string; weights: RetrievalChannelWeights }> = [
+    { label: "historical ASR", weights: { transcript: 0.2, semantic: 0.5, visual: 0.3 } },
+    { label: "lexical", weights: { lexical: 0.2, semantic: 0.5, visual: 0.3 } },
+  ];
+
+  it.each(traceCases)("distinguishes retrieved candidates from an empty retrieval with $label trace", ({ weights }) => {
     const message = {
       ...assistantMessage("只生成了文字"),
       searchResult: {
-        query: "雨天门口",
         seriesIds: [series.seriesId],
         searchedVideoIds: ["video-1"],
         partial: false,
@@ -328,8 +328,8 @@ describe("Search assistant presentation", () => {
           query: "雨天门口",
           topK: 8,
           strategyVersion: "test",
-          requestedWeights: { transcript: 0.2, semantic: 0.5, visual: 0.3 },
-          effectiveWeights: { transcript: 0.2, semantic: 0.5, visual: 0.3 },
+          requestedWeights: weights,
+          effectiveWeights: weights,
           resultCount: 2,
           videoChunkIds: ["chunk-1", "chunk-2"],
         }],

@@ -17,9 +17,12 @@ import {
   getParseUsage,
   getSeries,
   getUploadSession,
+  getVideoParseTask,
   imageContentUrl,
   jobEventsUrl,
   listJobs,
+  listAllVideoParseTasks,
+  listVideoParseTasks,
   listSeries,
   listAgentConversations,
   listAgentMessages,
@@ -31,6 +34,7 @@ import {
   streamAgentMessage,
   subscribeAgentMessages,
   videoContentUrl,
+  videoParseTaskEventsUrl,
   updateSeries,
   updateAgentGlobalSettings,
   updateVideoEpisode,
@@ -442,5 +446,46 @@ describe("current API routes", () => {
     expect(videoContentUrl("video/id")).toBe(
       "/api/videos/content?videoId=video%2Fid&workspaceId=local-default",
     );
+  });
+});
+
+describe("Video Parse V2 task routes", () => {
+  it("uses the V2 task identity for list, get and events", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({
+      items: [], total: 0, hasMore: false, nextCursor: null,
+    }), { headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listVideoParseTasks("next/cursor", 25);
+    await getVideoParseTask("task/id");
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "/api/jobs/video-parse/list?workspaceId=local-default&limit=25&cursor=next%2Fcursor",
+    );
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      "/api/jobs/video-parse/get?videoParseTaskId=task%2Fid&workspaceId=local-default",
+    );
+    expect(videoParseTaskEventsUrl("task/id")).toBe(
+      "/api/jobs/video-parse/events?videoParseTaskId=task%2Fid&workspaceId=local-default",
+    );
+  });
+
+  it("walks V2 pagination and de-duplicates task identities", async () => {
+    const item = (id: string) => ({ videoParseTaskId: id });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const cursor = new URL(String(input), "http://localhost").searchParams.get("cursor");
+      return new Response(JSON.stringify(cursor
+        ? { items: [item("task-1"), item("task-2")], total: 2, hasMore: false, nextCursor: null }
+        : { items: [item("task-1")], total: 2, hasMore: true, nextCursor: "page-2" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listAllVideoParseTasks()).resolves.toEqual([
+      item("task-1"),
+      item("task-2"),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

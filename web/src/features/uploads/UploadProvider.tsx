@@ -16,11 +16,18 @@ import {
   errorMessage,
   getJob,
   getUploadSession,
+  getVideoParseTask,
   jobEventsUrl,
   uploadSegment,
+  videoParseTaskEventsUrl,
   WORKSPACE_ID,
 } from "../../api/client";
-import type { ParseJobView, UploadSessionView } from "../../api/contracts";
+import type {
+  ParseJobView,
+  UploadCompleteView,
+  UploadSessionView,
+  VideoParseTaskView,
+} from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import type { UploadInput, UploadTask } from "./upload-types";
 import { mediaTypeForFile, taskProgress } from "./upload-types";
@@ -43,7 +50,7 @@ interface UploadContextValue {
   retry: (taskId: string) => void;
   cancel: (taskId: string) => Promise<void>;
   forgetDeletedSession: (uploadSessionId: string) => void;
-  syncRequeuedParse: (job: ParseJobView) => void;
+  syncRequeuedParse: (task: ParseJobView | VideoParseTaskView) => void;
   dismissFinished: () => void;
 }
 
@@ -79,6 +86,26 @@ export function UploadProvider({ children }: PropsWithChildren) {
               ? "failed"
               : "processing",
         error: job.status === "FAILED" ? job.lastError?.message || "解析任务失败" : undefined,
+      }));
+    },
+    [updateTask],
+  );
+
+  const acceptVideoParseTask = useCallback(
+    (taskId: string, videoParseTask: VideoParseTaskView) => {
+      const failed = videoParseTask.status === "PARSING_FAILED"
+        || videoParseTask.status === "INDEXING_FAILED";
+      updateTask(taskId, (task) => ({
+        ...task,
+        videoParseTask,
+        status: videoParseTask.status === "COMPLETE"
+          ? "completed"
+          : failed
+            ? "failed"
+            : "processing",
+        error: failed
+          ? videoParseTask.lastError?.message || "解析任务失败"
+          : undefined,
       }));
     },
     [updateTask],
@@ -125,6 +152,64 @@ export function UploadProvider({ children }: PropsWithChildren) {
       };
     },
     [acceptJob, refreshSeries],
+  );
+
+  const watchVideoParseTask = useCallback(
+    (taskId: string, initialTask: VideoParseTaskView | { videoParseTaskId: string }) => {
+      jobSources.current.get(taskId)?.close();
+      const source = new EventSource(
+        videoParseTaskEventsUrl(initialTask.videoParseTaskId),
+      );
+      jobSources.current.set(taskId, source);
+      let recovering = false;
+
+      const close = () => {
+        source.close();
+        if (jobSources.current.get(taskId) === source) {
+          jobSources.current.delete(taskId);
+        }
+      };
+      const accept = (videoParseTask: VideoParseTaskView) => {
+        acceptVideoParseTask(taskId, videoParseTask);
+        if (
+          videoParseTask.status === "COMPLETE"
+          || videoParseTask.status === "PARSING_FAILED"
+          || videoParseTask.status === "INDEXING_FAILED"
+        ) {
+          close();
+          void refreshSeries();
+        }
+      };
+
+      source.addEventListener("video-parse-task", (event) => {
+        accept(JSON.parse((event as MessageEvent).data) as VideoParseTaskView);
+      });
+      source.onerror = async () => {
+        if (recovering) return;
+        recovering = true;
+        try {
+          accept(await getVideoParseTask(initialTask.videoParseTaskId));
+        } catch {
+          // EventSource reconnects automatically. The next successful snapshot is authoritative.
+        } finally {
+          recovering = false;
+        }
+      };
+    },
+    [acceptVideoParseTask, refreshSeries],
+  );
+
+  const watchCompletedParse = useCallback(
+    (taskId: string, completed: UploadCompleteView) => {
+      if (completed.jobId) {
+        watchJob(taskId, { jobId: completed.jobId });
+        return;
+      }
+      watchVideoParseTask(taskId, {
+        videoParseTaskId: completed.videoParseTaskId,
+      });
+    },
+    [watchJob, watchVideoParseTask],
   );
 
   const runRealTask = useCallback(
@@ -182,7 +267,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
           session: completed.uploadSession,
           status: "processing",
         }));
-        watchJob(task.taskId, { jobId: completed.jobId });
+        watchCompletedParse(task.taskId, completed);
         return;
       }
       if (session.status === "COMPLETED") {
@@ -195,7 +280,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
           confirmedBytes: task.totalBytes,
           inFlightBytes: 0,
         }));
-        watchJob(task.taskId, { jobId: completed.jobId });
+        watchCompletedParse(task.taskId, completed);
         return;
       }
       if (!task.file) throw new Error("恢复上传需要重新选择原视频文件");
@@ -270,9 +355,9 @@ export function UploadProvider({ children }: PropsWithChildren) {
         session: completed.uploadSession,
         status: "processing",
       }));
-      watchJob(task.taskId, { jobId: completed.jobId });
+      watchCompletedParse(task.taskId, completed);
     },
-    [updateTask, watchJob],
+    [updateTask, watchCompletedParse],
   );
 
   const runTask = useCallback(
@@ -456,22 +541,29 @@ export function UploadProvider({ children }: PropsWithChildren) {
   );
 
   const syncRequeuedParse = useCallback(
-    (job: ParseJobView) => {
-      if (!job.uploadSessionId) return;
+    (parseTask: ParseJobView | VideoParseTaskView) => {
+      const uploadSessionId = parseTask.uploadSessionId;
+      if (!uploadSessionId) return;
       const task = tasks.find((item) =>
         (sessions.current.get(item.taskId) ?? item.session)?.uploadSessionId
-          === job.uploadSessionId,
+          === uploadSessionId,
       );
       if (!task) return;
       updateTask(task.taskId, (current) => ({
         ...current,
-        job,
+        ...("jobId" in parseTask
+          ? { job: parseTask }
+          : { videoParseTask: parseTask }),
         status: "processing",
         error: undefined,
       }));
-      watchJob(task.taskId, job);
+      if ("jobId" in parseTask) {
+        watchJob(task.taskId, parseTask);
+      } else {
+        watchVideoParseTask(task.taskId, parseTask);
+      }
     },
-    [tasks, updateTask, watchJob],
+    [tasks, updateTask, watchJob, watchVideoParseTask],
   );
 
   const visibleTasks = tasks.filter((task) => task.status !== "cancelled");

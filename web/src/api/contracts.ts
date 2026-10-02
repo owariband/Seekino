@@ -21,6 +21,14 @@ export type ParseJobStatus =
   | "RETRY_WAIT"
   | "SUCCEEDED"
   | "FAILED";
+export type VideoParseTaskStatus =
+  | "PENDING"
+  | "PREPARING"
+  | "PARSING"
+  | "INDEXING"
+  | "COMPLETE"
+  | "PARSING_FAILED"
+  | "INDEXING_FAILED";
 
 export interface ApiErrorView extends Failure {
   requestId: string;
@@ -190,17 +198,20 @@ export interface UploadSessionView {
   expiresAt: UnixTimeMs;
   videoId: string | null;
   jobId: string | null;
+  initialVideoParseTaskId?: string | null;
   lastError: Failure | null;
   version: number;
   createdAt: UnixTimeMs;
   updatedAt: UnixTimeMs;
   parseConfig?: ParseConfig | null;
+  videoParseConfig?: Record<string, unknown> | null;
 }
 
 export interface UploadCompleteView {
   uploadSession: UploadSessionView;
   videoId: string;
-  jobId: string;
+  jobId: string | null;
+  videoParseTaskId: string;
 }
 
 export interface VideoChunkCheckpointView {
@@ -263,6 +274,43 @@ export interface ParseJobView {
   parseConfig?: ParseConfig | null;
 }
 
+export interface VideoParseTaskView {
+  videoParseTaskId: string;
+  videoId: string;
+  pipelineVersion: string;
+  status: VideoParseTaskStatus;
+  parseConfig: Record<string, unknown>;
+  chunkCount: number;
+  version: number;
+  nextExecuteTime: UnixTimeMs;
+  attemptCount: number;
+  maxAttempts: number;
+  leaseOwner: string | null;
+  leaseVersion: number;
+  leaseExpireTime: UnixTimeMs | null;
+  heartbeatTime: UnixTimeMs | null;
+  startTime: UnixTimeMs | null;
+  finishTime: UnixTimeMs | null;
+  processingDurationMs: number;
+  processingTimingComplete: boolean;
+  lastError: Failure | null;
+  isTest: boolean;
+  detail: Record<string, unknown>;
+  createTime: UnixTimeMs;
+  updateTime: UnixTimeMs;
+  /** Null on retry/reparse action responses; list/get/events always include this context. */
+  workspaceId: string | null;
+  seriesId: string | null;
+  seriesName: string | null;
+  episodeOrder: number | null;
+  originalFilename: string | null;
+  uploadSessionId: string | null;
+  durationSeconds: number | null;
+  canRetry: boolean;
+  canReparse: boolean;
+  canDelete: boolean;
+}
+
 export type ParseUsageCoverage = "not_started" | "recorded" | "partial" | "unknown";
 
 export interface ParseUsageRowVO {
@@ -303,6 +351,8 @@ export interface VideoChunkCandidate {
   rank: number;
   fusedRank: number;
   fusedScore: number;
+  lexicalRank?: number | null;
+  lexicalScore?: number | null;
   transcriptRank: number | null;
   transcriptScore: number | null;
   textRank: number | null;
@@ -362,10 +412,33 @@ export interface MatchedEvidence {
   endSeconds: number | null;
 }
 
+export type LexicalFieldName =
+  | "dialogue"
+  | "screen_text"
+  | "person_names"
+  | "event_description"
+  | "keywords"
+  | "questions"
+  | "summary";
+
+export interface LexicalMatch {
+  field: LexicalFieldName;
+  rawText: string;
+  language: string | null;
+  role: "ORIGINAL" | "TRANSLATION" | null;
+  speaker: string | null;
+  startSeconds: number;
+  endSeconds: number;
+  timelineIndex: number | null;
+  enrichmentIndex: number | null;
+}
+
 export interface SelectionReason {
   summary: string;
   matchedEvidence: MatchedEvidence[];
   limitations: string[];
+  /** Matched search text and its source; generated questions are retrieval hints, not facts. */
+  lexicalMatches?: LexicalMatch[];
 }
 
 export interface VideoChunkSearchHit {
@@ -392,11 +465,21 @@ export interface VideoChunkSearchResult extends VideoChunkSearchEvidence {
   agentReply: AgentReply;
 }
 
-export interface RetrievalChannelWeights {
+export interface LegacyRetrievalChannelWeights {
   transcript: number;
   semantic: number;
   visual: number;
+  lexical?: never;
 }
+
+export interface LexicalRetrievalChannelWeights {
+  lexical: number;
+  semantic: number;
+  visual: number;
+  transcript?: never;
+}
+
+export type RetrievalChannelWeights = LegacyRetrievalChannelWeights | LexicalRetrievalChannelWeights;
 
 export interface RetrievalTraceEntry {
   query: string;
@@ -408,7 +491,7 @@ export interface RetrievalTraceEntry {
   videoChunkIds: string[];
 }
 
-export interface AgentSearchEvidence extends VideoChunkSearchEvidence {
+export interface AgentSearchEvidence extends Omit<VideoChunkSearchEvidence, "query"> {
   retrievalTrace?: RetrievalTraceEntry[];
 }
 
@@ -454,8 +537,6 @@ export interface AgentMessageView {
   reference: EvidenceReference | null;
   content: string | null;
   modelName: string | null;
-  replyToMessageId: string | null;
-  retrievalQuery: string | null;
   searchResult: AgentSearchEvidence | null;
   renderBlocks: AgentRenderBlock[];
   timing: AgentMessageTiming | null;

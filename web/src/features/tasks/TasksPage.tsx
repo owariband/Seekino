@@ -16,59 +16,95 @@ import { useState } from "react";
 import {
   deleteUploadSession,
   errorMessage,
-  listAllJobs,
+  listAllVideoParseTasks,
   reparseUpload,
   retryUploadParse,
   shouldRetryApiRequest,
 } from "../../api/client";
-import type { ParseJobStatus, ParseJobView } from "../../api/contracts";
+import type {
+  VideoParseTaskStatus,
+  VideoParseTaskView,
+} from "../../api/contracts";
+import { episodeLabel } from "../../shared/format";
 import { useUploads } from "../uploads/UploadProvider";
-import { episodeLabel, formatTimecode, formatTimeRange } from "../../shared/format";
 import styles from "./tasks.module.css";
-import { ParseUsageDetails } from "./ParseUsageDetails";
 
-type Filter = "all" | ParseJobStatus;
+type Filter = "all" | VideoParseTaskStatus;
 
 const PIPELINE = ["解析画面与对白", "发布检索结果", "可检索"];
 
-const PIPELINE_STAGE_INDEX: Record<string, number> = {
-  QUEUED: 0,
+const PIPELINE_STAGE_INDEX: Record<VideoParseTaskStatus, number> = {
+  PENDING: 0,
   PREPARING: 0,
-  SPLIT_READY: 0,
   PARSING: 0,
-  TEXT_EMBEDDING: 1,
-  VISION_EMBEDDING: 1,
-  PERSISTING: 1,
+  PARSING_FAILED: 0,
   INDEXING: 1,
-  COMPLETED: 2,
+  INDEXING_FAILED: 1,
+  COMPLETE: 2,
 };
 
-const statusText: Record<ParseJobStatus, string> = {
-  QUEUED: "排队中",
-  RUNNING: "进行中",
-  RETRY_WAIT: "等待重试",
-  SUCCEEDED: "已完成",
-  FAILED: "异常",
+const statusText: Record<VideoParseTaskStatus, string> = {
+  PENDING: "排队中",
+  PREPARING: "准备中",
+  PARSING: "解析中",
+  INDEXING: "发布索引中",
+  COMPLETE: "已完成",
+  PARSING_FAILED: "解析异常",
+  INDEXING_FAILED: "索引异常",
 };
+
+const activeStatuses = new Set<VideoParseTaskStatus>([
+  "PREPARING",
+  "PARSING",
+  "INDEXING",
+]);
+const failedStatuses = new Set<VideoParseTaskStatus>([
+  "PARSING_FAILED",
+  "INDEXING_FAILED",
+]);
 
 function formatProcessingDuration(durationMs: number): string {
   if (durationMs < 1_000) return `${durationMs} 毫秒`;
-  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(durationMs % 1_000 === 0 ? 0 : 1)} 秒`;
+  if (durationMs < 60_000) {
+    return `${(durationMs / 1_000).toFixed(durationMs % 1_000 === 0 ? 0 : 1)} 秒`;
+  }
   const totalSeconds = Math.floor(durationMs / 1_000);
   return `${Math.floor(totalSeconds / 60)} 分 ${totalSeconds % 60} 秒`;
 }
 
-function processingDurationText(job: ParseJobView): string {
-  if (job.attemptCount === 0) return "未开始";
-  if (job.status === "RUNNING") {
-    return job.processingDurationMs > 0
-      ? `${formatProcessingDuration(job.processingDurationMs)}（进行中）`
-      : "首个片段处理中";
+function processingDurationText(task: VideoParseTaskView): string {
+  if (task.attemptCount === 0) return "未开始";
+  if (activeStatuses.has(task.status)) {
+    return task.processingDurationMs > 0
+      ? `${formatProcessingDuration(task.processingDurationMs)}（进行中）`
+      : "当前阶段处理中";
   }
-  if (job.processingTimingComplete) return formatProcessingDuration(job.processingDurationMs);
-  return job.processingDurationMs > 0
-    ? `至少 ${formatProcessingDuration(job.processingDurationMs)}（不完整）`
+  if (task.processingTimingComplete) {
+    return formatProcessingDuration(task.processingDurationMs);
+  }
+  return task.processingDurationMs > 0
+    ? `至少 ${formatProcessingDuration(task.processingDurationMs)}（不完整）`
     : "尚未完整记录";
+}
+
+function mergeTaskProjection(
+  current: VideoParseTaskView,
+  updated: VideoParseTaskView,
+): VideoParseTaskView {
+  return {
+    ...current,
+    ...updated,
+    workspaceId: updated.workspaceId ?? current.workspaceId,
+    seriesId: updated.seriesId ?? current.seriesId,
+    seriesName: updated.seriesName ?? current.seriesName,
+    episodeOrder: updated.episodeOrder ?? current.episodeOrder,
+    originalFilename: updated.originalFilename ?? current.originalFilename,
+    uploadSessionId: updated.uploadSessionId ?? current.uploadSessionId,
+    durationSeconds: updated.durationSeconds ?? current.durationSeconds,
+    canRetry: updated.canRetry,
+    canReparse: updated.canReparse,
+    canDelete: updated.canDelete,
+  };
 }
 
 export function TasksPage() {
@@ -78,35 +114,42 @@ export function TasksPage() {
   const [deletingUploadSessionIds, setDeletingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [retryingUploadSessionIds, setRetryingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [reparsingUploadSessionIds, setReparsingUploadSessionIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [confirmingDeleteJobId, setConfirmingDeleteJobId] = useState<string | null>(null);
-  const [confirmingReparseJobId, setConfirmingReparseJobId] = useState<string | null>(null);
+  const [confirmingDeleteTaskId, setConfirmingDeleteTaskId] = useState<string | null>(null);
+  const [confirmingReparseTaskId, setConfirmingReparseTaskId] = useState<string | null>(null);
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
-  const jobsQuery = useQuery({
-    queryKey: ["jobs"],
-    queryFn: ({ signal }) => listAllJobs(signal),
+  const tasksQuery = useQuery({
+    queryKey: ["video-parse-tasks"],
+    queryFn: ({ signal }) => listAllVideoParseTasks(signal),
     retry: shouldRetryApiRequest,
     refetchInterval: 5_000,
   });
 
-  const deleteTask = async (job: ParseJobView) => {
-    const uploadSessionId = job.uploadSessionId;
-    if (!uploadSessionId || job.status === "RUNNING" || deletingUploadSessionIds.has(uploadSessionId) || retryingUploadSessionIds.has(uploadSessionId) || reparsingUploadSessionIds.has(uploadSessionId)) return;
-    setConfirmingDeleteJobId(null);
-    setConfirmingReparseJobId(null);
+  const deleteTask = async (task: VideoParseTaskView) => {
+    const uploadSessionId = task.uploadSessionId;
+    if (
+      !uploadSessionId
+      || !task.canDelete
+      || deletingUploadSessionIds.has(uploadSessionId)
+      || retryingUploadSessionIds.has(uploadSessionId)
+      || reparsingUploadSessionIds.has(uploadSessionId)
+    ) return;
+    setConfirmingDeleteTaskId(null);
+    setConfirmingReparseTaskId(null);
     setDeletingUploadSessionIds((current) => new Set(current).add(uploadSessionId));
     setActionErrors((current) => {
       const next = { ...current };
-      delete next[job.jobId];
+      delete next[task.videoParseTaskId];
       return next;
     });
     try {
       await deleteUploadSession(uploadSessionId);
-      queryClient.setQueryData<ParseJobView[]>(["jobs"], (current) =>
-        current?.filter((item) => item.uploadSessionId !== uploadSessionId),
+      queryClient.setQueryData<VideoParseTaskView[]>(
+        ["video-parse-tasks"],
+        (current) => current?.filter((item) => item.uploadSessionId !== uploadSessionId),
       );
       forgetDeletedSession(uploadSessionId);
       void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+        queryClient.invalidateQueries({ queryKey: ["video-parse-tasks"] }),
         queryClient.invalidateQueries({ queryKey: ["series"] }),
         queryClient.invalidateQueries({ queryKey: ["series-detail"] }),
         queryClient.invalidateQueries({ queryKey: ["usage-overview"] }),
@@ -114,7 +157,7 @@ export function TasksPage() {
     } catch (error) {
       setActionErrors((current) => ({
         ...current,
-        [job.jobId]: `删除失败：${errorMessage(error)}`,
+        [task.videoParseTaskId]: `删除失败：${errorMessage(error)}`,
       }));
     } finally {
       setDeletingUploadSessionIds((current) => {
@@ -125,34 +168,45 @@ export function TasksPage() {
     }
   };
 
-  const retryParse = async (job: ParseJobView) => {
-    const uploadSessionId = job.uploadSessionId;
-    if (!uploadSessionId || !job.canRetry || deletingUploadSessionIds.has(uploadSessionId) || retryingUploadSessionIds.has(uploadSessionId) || reparsingUploadSessionIds.has(uploadSessionId)) return;
-    setConfirmingDeleteJobId(null);
-    setConfirmingReparseJobId(null);
+  const retryParse = async (task: VideoParseTaskView) => {
+    const uploadSessionId = task.uploadSessionId;
+    if (
+      !uploadSessionId
+      || !task.canRetry
+      || deletingUploadSessionIds.has(uploadSessionId)
+      || retryingUploadSessionIds.has(uploadSessionId)
+      || reparsingUploadSessionIds.has(uploadSessionId)
+    ) return;
+    setConfirmingDeleteTaskId(null);
+    setConfirmingReparseTaskId(null);
     setRetryingUploadSessionIds((current) => new Set(current).add(uploadSessionId));
     setActionErrors((current) => {
       const next = { ...current };
-      delete next[job.jobId];
+      delete next[task.videoParseTaskId];
       return next;
     });
     try {
-      const retried = await retryUploadParse(uploadSessionId, job.version);
-      queryClient.setQueryData<ParseJobView[]>(["jobs"], (current) =>
-        current?.map((item) => item.jobId === job.jobId ? retried : item),
+      const retried = mergeTaskProjection(
+        task,
+        await retryUploadParse(uploadSessionId, task.version),
+      );
+      queryClient.setQueryData<VideoParseTaskView[]>(
+        ["video-parse-tasks"],
+        (current) => current?.map((item) => (
+          item.videoParseTaskId === task.videoParseTaskId ? retried : item
+        )),
       );
       syncRequeuedParse(retried);
       void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+        queryClient.invalidateQueries({ queryKey: ["video-parse-tasks"] }),
         queryClient.invalidateQueries({ queryKey: ["series"] }),
         queryClient.invalidateQueries({ queryKey: ["series-detail"] }),
-        queryClient.invalidateQueries({ queryKey: ["parse-usage"] }),
         queryClient.invalidateQueries({ queryKey: ["usage-overview"] }),
       ]);
     } catch (error) {
       setActionErrors((current) => ({
         ...current,
-        [job.jobId]: `重试失败：${errorMessage(error)}`,
+        [task.videoParseTaskId]: `重试失败：${errorMessage(error)}`,
       }));
     } finally {
       setRetryingUploadSessionIds((current) => {
@@ -163,34 +217,45 @@ export function TasksPage() {
     }
   };
 
-  const reparse = async (job: ParseJobView) => {
-    const uploadSessionId = job.uploadSessionId;
-    if (!uploadSessionId || !job.canReparse || deletingUploadSessionIds.has(uploadSessionId) || retryingUploadSessionIds.has(uploadSessionId) || reparsingUploadSessionIds.has(uploadSessionId)) return;
-    setConfirmingDeleteJobId(null);
-    setConfirmingReparseJobId(null);
+  const reparse = async (task: VideoParseTaskView) => {
+    const uploadSessionId = task.uploadSessionId;
+    if (
+      !uploadSessionId
+      || !task.canReparse
+      || deletingUploadSessionIds.has(uploadSessionId)
+      || retryingUploadSessionIds.has(uploadSessionId)
+      || reparsingUploadSessionIds.has(uploadSessionId)
+    ) return;
+    setConfirmingDeleteTaskId(null);
+    setConfirmingReparseTaskId(null);
     setReparsingUploadSessionIds((current) => new Set(current).add(uploadSessionId));
     setActionErrors((current) => {
       const next = { ...current };
-      delete next[job.jobId];
+      delete next[task.videoParseTaskId];
       return next;
     });
     try {
-      const reparsed = await reparseUpload(uploadSessionId, job.version);
-      queryClient.setQueryData<ParseJobView[]>(["jobs"], (current) =>
-        current?.map((item) => item.jobId === job.jobId ? reparsed : item),
+      const reparsed = mergeTaskProjection(
+        task,
+        await reparseUpload(uploadSessionId, task.version),
+      );
+      queryClient.setQueryData<VideoParseTaskView[]>(
+        ["video-parse-tasks"],
+        (current) => current?.map((item) => (
+          item.videoParseTaskId === task.videoParseTaskId ? reparsed : item
+        )),
       );
       syncRequeuedParse(reparsed);
       void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+        queryClient.invalidateQueries({ queryKey: ["video-parse-tasks"] }),
         queryClient.invalidateQueries({ queryKey: ["series"] }),
         queryClient.invalidateQueries({ queryKey: ["series-detail"] }),
-        queryClient.invalidateQueries({ queryKey: ["parse-usage"] }),
         queryClient.invalidateQueries({ queryKey: ["usage-overview"] }),
       ]);
     } catch (error) {
       setActionErrors((current) => ({
         ...current,
-        [job.jobId]: `整集重新解析失败：${errorMessage(error)}`,
+        [task.videoParseTaskId]: `${task.status === "PENDING" ? "开始 V2 解析" : "整集重新解析"}失败：${errorMessage(error)}`,
       }));
     } finally {
       setReparsingUploadSessionIds((current) => {
@@ -201,29 +266,38 @@ export function TasksPage() {
     }
   };
 
-  const jobs = jobsQuery.data ?? [];
-  const visibleJobs = filter === "all" ? jobs : jobs.filter((job) => job.status === filter);
-  const runningCount = jobs.filter((job) => job.status === "RUNNING").length;
-  const completedCount = jobs.filter((job) => job.status === "SUCCEEDED").length;
-  const checkpointCount = jobs.reduce((sum, job) => sum + job.checkpoints.length, 0);
+  const tasks = tasksQuery.data ?? [];
+  const visibleTasks = filter === "all"
+    ? tasks
+    : tasks.filter((task) => task.status === filter);
+  const runningCount = tasks.filter((task) => activeStatuses.has(task.status)).length;
+  const completedCount = tasks.filter((task) => task.status === "COMPLETE").length;
+  const chunkCount = tasks.reduce((sum, task) => sum + task.chunkCount, 0);
+  const latestVersionByVideo = new Map<string, number>();
+  for (const task of tasks) {
+    latestVersionByVideo.set(
+      task.videoId,
+      Math.max(latestVersionByVideo.get(task.videoId) ?? 0, task.version),
+    );
+  }
 
   return (
     <main className="page">
       <header className={styles.header}>
-        <div>
-          <h1 className="page-title">解析任务</h1>
-        </div>
+        <div><h1 className="page-title">解析任务</h1></div>
         <div className={styles.headerActions}>
-          <button className="button-secondary" type="button" onClick={openDialog}><UploadCloud size={15} />管理上传</button>
-          <button className="button-secondary" type="button" disabled={jobsQuery.isFetching} onClick={() => void jobsQuery.refetch()}>
-            <RefreshCw size={15} className={jobsQuery.isFetching ? styles.spinning : undefined} />同步状态
+          <button className="button-secondary" type="button" onClick={openDialog}>
+            <UploadCloud size={15} />管理上传
+          </button>
+          <button className="button-secondary" type="button" disabled={tasksQuery.isFetching} onClick={() => void tasksQuery.refetch()}>
+            <RefreshCw size={15} className={tasksQuery.isFetching ? styles.spinning : undefined} />同步状态
           </button>
         </div>
       </header>
 
       <section className={styles.metrics} aria-label="任务概况">
         <article><Activity size={17} /><div><span>进行中</span><strong>{runningCount}</strong></div></article>
-        <article><Rows3 size={17} /><div><span>切片检查点</span><strong>{checkpointCount}</strong></div></article>
+        <article><Rows3 size={17} /><div><span>固定切片</span><strong>{chunkCount}</strong></div></article>
         <article><CheckCircle2 size={17} /><div><span>已完成</span><strong>{completedCount}</strong></div></article>
       </section>
 
@@ -231,11 +305,13 @@ export function TasksPage() {
         <div role="group" aria-label="筛选解析任务">
           {([
             ["all", "全部"],
-            ["QUEUED", "排队中"],
-            ["RUNNING", "进行中"],
-            ["RETRY_WAIT", "等待重试"],
-            ["FAILED", "异常"],
-            ["SUCCEEDED", "已完成"],
+            ["PENDING", "排队中"],
+            ["PREPARING", "准备中"],
+            ["PARSING", "解析中"],
+            ["INDEXING", "发布中"],
+            ["PARSING_FAILED", "解析异常"],
+            ["INDEXING_FAILED", "索引异常"],
+            ["COMPLETE", "已完成"],
           ] as const).map(([value, label]) => (
             <button type="button" key={value} aria-pressed={filter === value} className={filter === value ? styles.filterActive : undefined} onClick={() => setFilter(value)}>{label}</button>
           ))}
@@ -244,83 +320,86 @@ export function TasksPage() {
       </div>
 
       <section className={styles.jobList} aria-live="polite">
-        {jobsQuery.isPending ? (
+        {tasksQuery.isPending ? (
           <div className={styles.loadState}><RefreshCw className={styles.spinning} size={22} /><p>正在从 API 读取解析任务…</p></div>
         ) : null}
-        {jobsQuery.error instanceof Error ? (
-          <div className={styles.loadState} data-error="true"><CircleAlert size={22} /><h2>任务接口暂时不可用</h2><p>{jobsQuery.error.message}</p></div>
+        {tasksQuery.error instanceof Error ? (
+          <div className={styles.loadState} data-error="true"><CircleAlert size={22} /><h2>任务接口暂时不可用</h2><p>{tasksQuery.error.message}</p></div>
         ) : null}
-        {visibleJobs.map((job) => {
-          const currentStageIndex = PIPELINE_STAGE_INDEX[job.stage] ?? 0;
+        {visibleTasks.map((task) => {
+          const currentStageIndex = PIPELINE_STAGE_INDEX[task.status];
           const pipelineProgress = (currentStageIndex / (PIPELINE.length - 1)) * 100;
-          const userStageLabel = PIPELINE[currentStageIndex];
-          const jobStageTitle = job.status === "RUNNING" && job.stage !== "COMPLETED"
-            ? `正在${userStageLabel}`
-            : userStageLabel;
-          const deleting = job.uploadSessionId ? deletingUploadSessionIds.has(job.uploadSessionId) : false;
-          const retrying = job.uploadSessionId ? retryingUploadSessionIds.has(job.uploadSessionId) : false;
-          const reparsing = job.uploadSessionId ? reparsingUploadSessionIds.has(job.uploadSessionId) : false;
-          const running = job.status === "RUNNING";
+          const stageTitle = activeStatuses.has(task.status)
+            ? `正在${PIPELINE[currentStageIndex]}`
+            : statusText[task.status];
+          const uploadSessionId = task.uploadSessionId ?? null;
+          const deleting = uploadSessionId ? deletingUploadSessionIds.has(uploadSessionId) : false;
+          const retrying = uploadSessionId ? retryingUploadSessionIds.has(uploadSessionId) : false;
+          const reparsing = uploadSessionId ? reparsingUploadSessionIds.has(uploadSessionId) : false;
+          const latest = task.version === latestVersionByVideo.get(task.videoId);
+          const filename = task.originalFilename || task.videoId;
+          const episodeOrder = task.episodeOrder ?? 1;
+          const pendingTakeover = task.status === "PENDING" && task.canReparse;
           return (
-            <article className={styles.job} key={job.jobId}>
+            <article className={styles.job} key={task.videoParseTaskId}>
               <header className={styles.jobHeader}>
-                <div className={styles.episodeSeal}>{episodeLabel(job.episodeOrder)}</div>
+                <div className={styles.episodeSeal}>{episodeLabel(episodeOrder)}</div>
                 <div className={styles.jobName}>
-                  <span className="eyebrow">{job.seriesName}</span>
-                  <h2>{jobStageTitle}</h2>
+                  <span className="eyebrow">{task.seriesName || "视频解析 V2"}</span>
+                  <h2>{stageTitle}</h2>
                 </div>
                 <div className={styles.jobActions}>
-                  <div className={styles.jobStatus} data-status={job.status}>
-                    <i />{statusText[job.status]}
+                  <div className={styles.jobStatus} data-status={task.status}>
+                    <i />{statusText[task.status]}
                   </div>
                   <div className={styles.jobPercent}>
                     <small>任务进度</small>
-                    <strong>{job.overallProgress === null ? "—" : `${job.overallProgress}%`}</strong>
+                    <strong>{task.status === "COMPLETE" ? "100%" : task.status === "PENDING" ? "0%" : "—"}</strong>
                   </div>
                 </div>
               </header>
 
               <div className={styles.jobControls}>
                 <span className={styles.uploadState}><CheckCircle2 size={14} />文件已上传</span>
-                {job.uploadSessionId ? (
+                {uploadSessionId && latest ? (
                   <div className={styles.controlButtons}>
-                    {job.canRetry ? (
+                    {task.canRetry ? (
                       <button
                         className={clsx("button-primary", styles.retryTask)}
                         type="button"
                         disabled={deleting || retrying || reparsing}
-                        onClick={() => void retryParse(job)}
-                        aria-label={`重试解析 ${job.originalFilename}`}
-                        title="从已有检查点继续解析"
+                        onClick={() => void retryParse(task)}
+                        aria-label={`重试解析 ${filename}`}
+                        title="沿用同一 V2 task identity 重试"
                       >
                         <RotateCcw size={14} />{retrying ? "正在重试…" : "重试解析"}
                       </button>
                     ) : null}
-                    {job.canReparse ? (
+                    {task.canReparse ? (
                       <button
                         className={clsx("button-secondary", styles.reparseTask)}
                         type="button"
                         disabled={deleting || retrying || reparsing}
                         onClick={() => {
-                          setConfirmingDeleteJobId(null);
-                          setConfirmingReparseJobId(job.jobId);
+                          setConfirmingDeleteTaskId(null);
+                          setConfirmingReparseTaskId(task.videoParseTaskId);
                         }}
-                        aria-label={`整集重新解析 ${job.originalFilename}`}
-                        title="清空本集解析检查点，从视频开头重新解析"
+                        aria-label={`${pendingTakeover ? "开始 V2 解析" : "整集重新解析"} ${filename}`}
+                        title={pendingTakeover ? "接管历史占位任务并沿用当前 V2 任务身份" : "创建新的 V2 task identity，从视频开头重新解析"}
                       >
-                        <RefreshCw size={14} />{reparsing ? "正在重新解析…" : "整集重新解析"}
+                        <RefreshCw size={14} />{reparsing ? (pendingTakeover ? "正在接管…" : "正在重新解析…") : (pendingTakeover ? "开始 V2 解析" : "整集重新解析")}
                       </button>
                     ) : null}
                     <button
                       className={clsx("button-secondary", styles.deleteTask)}
                       type="button"
-                      disabled={running || deleting || retrying || reparsing}
+                      disabled={!task.canDelete || deleting || retrying || reparsing}
                       onClick={() => {
-                        setConfirmingReparseJobId(null);
-                        setConfirmingDeleteJobId(job.jobId);
+                        setConfirmingReparseTaskId(null);
+                        setConfirmingDeleteTaskId(task.videoParseTaskId);
                       }}
-                      aria-label={`删除任务 ${job.originalFilename}`}
-                      title={running ? "任务正在运行，等待本次执行结束后再删除" : "删除本次上传及其解析产物"}
+                      aria-label={`删除任务 ${filename}`}
+                      title={task.canDelete ? "删除本次上传及其解析产物" : "任务仍有执行租约，等待释放后再删除"}
                     >
                       <Trash2 size={14} />{deleting ? "正在删除…" : "删除任务"}
                     </button>
@@ -328,41 +407,41 @@ export function TasksPage() {
                 ) : null}
               </div>
 
-              {confirmingReparseJobId === job.jobId ? (
+              {confirmingReparseTaskId === task.videoParseTaskId ? (
                 <div className={styles.reparseConfirmation} role="alert">
                   <div>
-                    <strong>从头重新解析这一整集？</strong>
-                    <p>本任务的切片检查点会被清空，并从视频开头重新运行。当前可检索结果会保留到新结果导入成功；新的模型调用会计入用量。</p>
+                    <strong>{pendingTakeover ? "开始这一集的 V2 解析？" : "从头重新解析这一整集？"}</strong>
+                    <p>{pendingTakeover ? "系统会接管历史占位任务并沿用当前任务身份；新的模型调用会计入用量。" : "系统会建立新的 V2 任务身份并从视频开头运行；新的模型调用会计入用量。"}</p>
                   </div>
                   <div className={styles.confirmActions}>
-                    <button className="button-quiet" type="button" onClick={() => setConfirmingReparseJobId(null)}>取消</button>
+                    <button className="button-quiet" type="button" onClick={() => setConfirmingReparseTaskId(null)}>取消</button>
                     <button
                       className={clsx("button-primary", styles.confirmReparse)}
                       type="button"
-                      disabled={running || deleting || retrying || reparsing}
-                      onClick={() => void reparse(job)}
-                      aria-label={`确认整集重新解析 ${job.originalFilename}`}
+                      disabled={!task.canReparse || deleting || retrying || reparsing}
+                      onClick={() => void reparse(task)}
+                      aria-label={`${pendingTakeover ? "确认开始 V2 解析" : "确认整集重新解析"} ${filename}`}
                     >
-                      <RefreshCw size={14} />确认从头解析
+                      <RefreshCw size={14} />{pendingTakeover ? "确认开始解析" : "确认从头解析"}
                     </button>
                   </div>
                 </div>
               ) : null}
 
-              {confirmingDeleteJobId === job.jobId ? (
+              {confirmingDeleteTaskId === task.videoParseTaskId ? (
                 <div className={styles.deleteConfirmation} role="alert">
                   <div>
                     <strong>确认删除这个视频任务？</strong>
                     <p>上传文件、解析产物和检索索引都会被删除；聊天记录会保留，但旧证据无法再播放。此操作无法撤销。</p>
                   </div>
                   <div className={styles.confirmActions}>
-                    <button className="button-quiet" type="button" onClick={() => setConfirmingDeleteJobId(null)}>取消</button>
+                    <button className="button-quiet" type="button" onClick={() => setConfirmingDeleteTaskId(null)}>取消</button>
                     <button
                       className={clsx("button-secondary", styles.confirmDelete)}
                       type="button"
-                      disabled={running || deleting || retrying || reparsing}
-                      onClick={() => void deleteTask(job)}
-                      aria-label={`确认删除 ${job.originalFilename}`}
+                      disabled={!task.canDelete || deleting || retrying || reparsing}
+                      onClick={() => void deleteTask(task)}
+                      aria-label={`确认删除 ${filename}`}
                     >
                       <Trash2 size={14} />确认删除
                     </button>
@@ -370,7 +449,7 @@ export function TasksPage() {
                 </div>
               ) : null}
 
-              {actionErrors[job.jobId] ? <p className={styles.actionError} role="alert">{actionErrors[job.jobId]}</p> : null}
+              {actionErrors[task.videoParseTaskId] ? <p className={styles.actionError} role="alert">{actionErrors[task.videoParseTaskId]}</p> : null}
 
               <div className={styles.pipeline}>
                 <div className={styles.pipelineLine}><span style={{ width: `${pipelineProgress}%` }} /></div>
@@ -379,70 +458,40 @@ export function TasksPage() {
                     key={stage}
                     className={clsx(styles.pipelineStage, index < currentStageIndex && styles.stageDone, index === currentStageIndex && styles.stageCurrent)}
                   >
-                    <i />
-                    <span>{stage}</span>
+                    <i /><span>{stage}</span>
                   </div>
                 ))}
               </div>
 
               <div className={styles.progressFacts} aria-label="解析任务进度">
-                <span>
-                  连续解析到{" "}
-                  <strong>
-                    {job.completedThroughSeconds === null
-                      ? "等待检查点"
-                      : `${formatTimecode(job.completedThroughSeconds)} / ${formatTimecode(job.videoDurationSeconds)}`}
-                  </strong>
-                </span>
-                <span>
-                  已解析{" "}
-                  <strong>
-                    {job.completedChunkCount === null
-                      ? `— / ${job.totalChunkCount} 段`
-                      : `${job.completedChunkCount} / ${job.totalChunkCount} 段`}
-                  </strong>
-                </span>
-                {job.currentChunk ? (
-                  <span>
-                    当前解析 <strong>{formatTimeRange(job.currentChunk.startSeconds, job.currentChunk.endSeconds)}</strong>
-                  </span>
-                ) : null}
+                <span>固定切片 <strong>{task.chunkCount} 段</strong></span>
+                <span>任务身份 <strong>v{task.version}</strong></span>
+                <span>租约版本 <strong>{task.leaseVersion}</strong></span>
               </div>
 
               <div className={styles.jobDetail}>
                 <div className={styles.checkpoints}>
-                  <div className={styles.detailTitle}><span>切片检查点 · {job.checkpoints.length}</span><small>颜色越深，处理越靠后</small></div>
-                  <div className={styles.checkpointGrid}>
-                    {job.checkpoints.length > 0 ? job.checkpoints.map((checkpoint) => (
-                      <i
-                        key={checkpoint.videoChunkId}
-                        data-stage={checkpoint.stage}
-                        title={checkpoint.chunkStartSeconds === null || checkpoint.chunkEndSeconds === null
-                          ? `片段 ${checkpoint.sequenceNo + 1} · ${checkpoint.stage}`
-                          : `片段 ${checkpoint.sequenceNo + 1} · ${formatTimeRange(checkpoint.chunkStartSeconds, checkpoint.chunkEndSeconds)} · ${checkpoint.stage}`}
-                      />
-                    )) : <span>等待媒体切片完成后生成</span>}
-                  </div>
+                  <div className={styles.detailTitle}><span>V2 任务状态</span><small>以服务端持久状态为准</small></div>
+                  <div className={styles.checkpointGrid}><span>{statusText[task.status]} · {task.chunkCount} 个固定切片</span></div>
                 </div>
                 <dl>
-                  <div><dt>文件</dt><dd>{job.originalFilename}</dd></div>
-                  <div><dt>尝试次数</dt><dd>{job.attemptCount} / {job.maxAttempts}</dd></div>
-                  <div><dt>{job.status === "SUCCEEDED" || job.status === "FAILED" ? "解析耗时" : "累计解析耗时"}</dt><dd>{processingDurationText(job)}</dd></div>
-                  <div><dt>流水线</dt><dd>{job.pipelineVersion}</dd></div>
-                  <div><dt>更新于</dt><dd>{new Date(job.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</dd></div>
+                  <div><dt>文件</dt><dd>{filename}</dd></div>
+                  <div><dt>尝试次数</dt><dd>{task.attemptCount} / {task.maxAttempts}</dd></div>
+                  <div><dt>{task.status === "COMPLETE" || failedStatuses.has(task.status) ? "解析耗时" : "累计解析耗时"}</dt><dd>{processingDurationText(task)}</dd></div>
+                  <div><dt>流水线</dt><dd>{task.pipelineVersion}</dd></div>
+                  <div><dt>更新于</dt><dd>{new Date(task.updateTime).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</dd></div>
                 </dl>
               </div>
 
-              {job.lastError ? (
-                <div className={styles.jobError}><CircleAlert size={15} /><div><strong>最近一次错误</strong><p>{job.lastError.message}</p></div></div>
+              {task.lastError ? (
+                <div className={styles.jobError}><CircleAlert size={15} /><div><strong>最近一次错误</strong><p>{task.lastError.message}</p></div></div>
               ) : null}
-              {job.status === "RETRY_WAIT" ? <p className={styles.retryNote}><Clock3 size={13} />服务端会在可用时间自动重试，前端不会重复创建任务。</p> : null}
-              <ParseUsageDetails jobId={job.jobId} status={job.status} />
+              {task.status === "PENDING" ? <p className={styles.retryNote}><Clock3 size={13} />服务端会按任务调度时间执行，前端不会重复创建任务。</p> : null}
             </article>
           );
         })}
-        {jobsQuery.isSuccess && visibleJobs.length === 0 ? (
-          <div className={styles.empty}><Activity size={25} strokeWidth={1.4} /><h2>这里暂时很安静</h2><p>上传完成并创建解析任务后，阶段与切片检查点会出现在这里。</p></div>
+        {tasksQuery.isSuccess && visibleTasks.length === 0 ? (
+          <div className={styles.empty}><Activity size={25} strokeWidth={1.4} /><h2>这里暂时很安静</h2><p>上传完成并创建 V2 解析任务后，持久状态会出现在这里。</p></div>
         ) : null}
       </section>
     </main>

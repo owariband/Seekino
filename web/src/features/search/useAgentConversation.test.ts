@@ -22,14 +22,14 @@ vi.mock("../../api/client", async (importOriginal) => ({
 
 const now = Date.parse("2026-09-15T00:00:00Z");
 function page<T>(items: T[]) { return { items, total: items.length, hasMore: false, nextCursor: null }; }
-function searchResult(seriesIds = ["A", "B"], hits: VideoChunkSearchHit[] = []) { return { query: "query", seriesIds, searchedVideoIds: ["video"], partial: false, warnings: [], hits }; }
+function searchResult(seriesIds = ["A", "B"], hits: VideoChunkSearchHit[] = []) { return { seriesIds, searchedVideoIds: ["video"], partial: false, warnings: [], hits }; }
 function conversation(conversationId = "conv-A"): AgentConversationView {
   return { conversationId, workspaceId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
 }
 function message(conversationId: string, overrides: Partial<AgentMessageView> = {}): AgentMessageView {
   return {
     messageId: "assistant", conversationId, seriesIds: ["A"], sequenceNo: 1, role: "ASSISTANT", status: "PROCESSING", phase: "QUEUED", reference: null, content: null,
-    modelName: null, replyToMessageId: "user", retrievalQuery: null, searchResult: null,
+    modelName: null, searchResult: null,
     renderBlocks: [], timing: null, lastError: null, createdAt: now, updatedAt: now,
     ...overrides, version: overrides.version ?? (overrides.status && overrides.status !== "PROCESSING" ? 2 : 1),
   };
@@ -37,7 +37,7 @@ function message(conversationId: string, overrides: Partial<AgentMessageView> = 
 function started(conversationId: string): AgentAnswerEvent {
   return {
     type: "answer.started", occurredAt: now, conversationId, messageId: "assistant", sequence: 1,
-    userMessage: message(conversationId, { messageId: "user", sequenceNo: 0, role: "USER", status: "COMPLETED", content: "query", replyToMessageId: null }),
+    userMessage: message(conversationId, { messageId: "user", sequenceNo: 0, role: "USER", status: "COMPLETED", content: "query" }),
     assistantMessage: message(conversationId),
   };
 }

@@ -93,6 +93,28 @@ describe("upload presentation state", () => {
     } }))).toBe(100);
   });
 
+  it("uses the persisted V2 task status without translating it through a V1 job", () => {
+    const videoParseTask = {
+      videoParseTaskId: "task-1", videoId: "video-1", pipelineVersion: "video-parse-v2",
+      status: "INDEXING" as const, parseConfig: {}, chunkCount: 3, version: 1,
+      nextExecuteTime: 1, attemptCount: 1, maxAttempts: 3, leaseOwner: "worker-1",
+      leaseVersion: 1, leaseExpireTime: 3, heartbeatTime: 2, startTime: 1,
+      finishTime: null, processingDurationMs: 10, processingTimingComplete: false,
+      lastError: null, isTest: false, detail: {}, createTime: 1, updateTime: 2,
+      workspaceId: null, seriesId: null, seriesName: null, episodeOrder: null,
+      originalFilename: null, uploadSessionId: null, durationSeconds: null,
+      canRetry: false, canReparse: false, canDelete: false,
+    };
+    const processing = task({ status: "processing", videoParseTask });
+
+    expect(taskProgress(processing)).toBe(100);
+    expect(taskStatusLabel(processing)).toBe("发布检索结果");
+    expect(taskStatusLabel(task({
+      status: "failed",
+      videoParseTask: { ...videoParseTask, status: "INDEXING_FAILED" },
+    }))).toBe("需要处理");
+  });
+
   it("normalizes only media types accepted by the upload API", () => {
     expect(mediaTypeForFile(new File([], "episode.MOV"))).toBe("video/quicktime");
     expect(mediaTypeForFile(new File([], "episode.mp4", { type: "video/mp4" }))).toBe("video/mp4");

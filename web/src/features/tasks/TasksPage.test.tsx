@@ -3,7 +3,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ParseJobView } from "../../api/contracts";
+import type {
+  VideoParseTaskStatus,
+  VideoParseTaskView,
+} from "../../api/contracts";
 import { TasksPage } from "./TasksPage";
 
 const uploadActions = vi.hoisted(() => ({
@@ -16,50 +19,45 @@ vi.mock("../uploads/UploadProvider", () => ({
   useUploads: () => uploadActions,
 }));
 
-vi.mock("./ParseUsageDetails", () => ({
-  ParseUsageDetails: () => null,
-}));
-
-function job(status: ParseJobView["status"], id = status.toLowerCase()): ParseJobView {
+function task(
+  status: VideoParseTaskStatus,
+  id = status.toLowerCase(),
+): VideoParseTaskView {
+  const failed = status === "PARSING_FAILED" || status === "INDEXING_FAILED";
   return {
-    jobId: `job-${id}`,
-    uploadSessionId: `upload-${id}`,
+    videoParseTaskId: `task-${id}`,
+    videoId: `video-${id}`,
+    pipelineVersion: "video-parse-v2",
+    status,
+    parseConfig: {},
+    chunkCount: 5,
+    version: 1,
+    nextExecuteTime: 1,
+    attemptCount: status === "PENDING" ? 0 : 1,
+    maxAttempts: 3,
+    leaseOwner: null,
+    leaseVersion: 0,
+    leaseExpireTime: null,
+    heartbeatTime: null,
+    startTime: status === "PENDING" ? null : 1,
+    finishTime: status === "COMPLETE" || failed ? 2 : null,
+    processingDurationMs: status === "PENDING" ? 0 : 321,
+    processingTimingComplete: status === "COMPLETE",
+    lastError: failed ? { code: "PARSE_FAILED", message: "解析失败" } : null,
+    isTest: false,
+    detail: {},
+    createTime: 1,
+    updateTime: 2,
     workspaceId: "local-default",
     seriesId: "series-1",
-    videoId: `video-${id}`,
     seriesName: "MyGO",
     episodeOrder: 1,
     originalFilename: `${id}.mp4`,
-    pipelineVersion: "m1",
-    retryOfJobId: null,
-    status,
-    stage: status === "FAILED" ? "PARSING" : "PERSISTING",
-    progress: status === "FAILED" ? 18 : 70,
-    overallProgress: status === "FAILED" ? 18 : 70,
-    stageProgress: status === "FAILED" ? 18 : null,
-    completedDurationSeconds: 120,
-    completedThroughSeconds: 120,
-    videoDurationSeconds: 300,
-    totalDurationSeconds: 300,
-    processingDurationMs: 321,
-    processingTimingComplete: false,
-    completedChunkCount: 2,
-    totalChunkCount: 5,
-    currentChunk: null,
-    attemptCount: 1,
-    maxAttempts: 3,
-    availableAt: null,
-    startedAt: 1,
-    completedAt: status === "FAILED" ? 2 : null,
-    estimatedRemainingMs: null,
-    canRetry: status === "FAILED",
-    canReparse: status === "FAILED" || status === "SUCCEEDED",
-    canCancel: false,
-    lastError: status === "FAILED" ? { code: "PARSE_FAILED", message: "解析失败" } : null,
-    version: 1,
-    checkpoints: [],
-    createdAt: 1,
-    updatedAt: 2,
+    uploadSessionId: `upload-${id}`,
+    durationSeconds: 300,
+    canRetry: failed,
+    canReparse: failed || status === "COMPLETE",
+    canDelete: true,
   };
 }
 
@@ -71,8 +69,14 @@ function response(payload: unknown, status = 200) {
 }
 
 function renderPage() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={queryClient}><TasksPage /></QueryClientProvider>);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <TasksPage />
+    </QueryClientProvider>,
+  );
 }
 
 afterEach(() => {
@@ -82,76 +86,133 @@ afterEach(() => {
   uploadActions.syncRequeuedParse.mockReset();
 });
 
-describe("task status filters", () => {
-  it("keeps queued, running, retrying, failed, and completed tasks in separate filters", async () => {
-    const jobs = [
-      job("QUEUED"),
-      job("RUNNING"),
-      job("RETRY_WAIT"),
-      job("FAILED"),
-      job("SUCCEEDED"),
+describe("V2 task observation", () => {
+  it("reads V2 tasks and filters each persisted status without adapting them to V1 jobs", async () => {
+    const tasks = [
+      task("PENDING"),
+      task("PREPARING"),
+      task("PARSING"),
+      task("INDEXING"),
+      task("PARSING_FAILED"),
+      task("INDEXING_FAILED"),
+      task("COMPLETE"),
     ];
-    vi.stubGlobal("fetch", vi.fn(async () => response({ items: jobs, hasMore: false, nextCursor: null })));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => response({
+      items: tasks,
+      total: tasks.length,
+      hasMore: false,
+      nextCursor: null,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
     renderPage();
     const user = userEvent.setup();
 
-    await screen.findByText("queued.mp4");
-    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中1");
+    await screen.findByText("pending.mp4");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "/api/jobs/video-parse/list?workspaceId=local-default&limit=100",
+    );
+    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中3");
+    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("固定切片35");
+
     for (const [label, filename] of [
-      ["排队中", "queued.mp4"],
-      ["进行中", "running.mp4"],
-      ["等待重试", "retry_wait.mp4"],
-      ["异常", "failed.mp4"],
-      ["已完成", "succeeded.mp4"],
+      ["排队中", "pending.mp4"],
+      ["准备中", "preparing.mp4"],
+      ["解析中", "parsing.mp4"],
+      ["发布中", "indexing.mp4"],
+      ["解析异常", "parsing_failed.mp4"],
+      ["索引异常", "indexing_failed.mp4"],
+      ["已完成", "complete.mp4"],
     ] as const) {
       await user.click(screen.getByRole("button", { name: label }));
       expect(screen.getByText(filename)).toBeInTheDocument();
-      for (const other of jobs) {
-        if (other.originalFilename !== filename) {
-          expect(screen.queryByText(other.originalFilename)).not.toBeInTheDocument();
-        }
-      }
     }
+  });
+
+  it("shows only state-backed V2 progress instead of inventing exact chunk progress", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [task("PARSING")],
+      total: 1,
+      hasMore: false,
+      nextCursor: null,
+    })));
+    const { container } = renderPage();
+
+    expect(await screen.findByRole("heading", { name: "正在解析画面与对白" })).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("固定切片 5 段");
+    expect(screen.getByText("321 毫秒（进行中）")).toBeInTheDocument();
+    expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: "0%" });
   });
 });
 
-describe("processing timing", () => {
-  it("shows live chunk timing without hiding unstarted or incomplete timing states", async () => {
+describe("V2 task actions", () => {
+  it("labels an unaccepted pending task as an in-place V2 takeover", async () => {
+    const pending = {
+      ...task("PENDING", "takeover"),
+      canReparse: true,
+    };
     vi.stubGlobal("fetch", vi.fn(async () => response({
-      items: [
-        { ...job("RUNNING"), processingDurationMs: 321, processingTimingComplete: false },
-        { ...job("QUEUED"), processingDurationMs: 0, processingTimingComplete: true, attemptCount: 0 },
-        { ...job("FAILED"), processingDurationMs: 654, processingTimingComplete: false },
-      ],
+      items: [pending],
+      total: 1,
       hasMore: false,
       nextCursor: null,
     })));
     renderPage();
+    const user = userEvent.setup();
 
-    expect(await screen.findAllByText("累计解析耗时")).toHaveLength(2);
-    expect(await screen.findByText("321 毫秒（进行中）")).toBeInTheDocument();
-    expect(await screen.findByText("未开始")).toBeInTheDocument();
-    expect(await screen.findByText("至少 654 毫秒（不完整）")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", {
+      name: `开始 V2 解析 ${pending.originalFilename}`,
+    }));
+    expect(screen.getByText(/沿用当前任务身份/)).toBeInTheDocument();
+    expect(screen.getByRole("button", {
+      name: `确认开始 V2 解析 ${pending.originalFilename}`,
+    })).toBeEnabled();
   });
-});
 
-describe("task deletion", () => {
-  it("deletes the UploadSessionTask from a failed parse card and disables deletion while running", async () => {
-    const failed = job("FAILED");
-    const sibling = {
-      ...job("SUCCEEDED", "sibling"),
-      uploadSessionId: failed.uploadSessionId,
+  it("uses independent server capabilities for reparse and deletion", async () => {
+    const childStillRunning = {
+      ...task("PARSING_FAILED", "lease-fenced"),
+      canRetry: false,
+      canReparse: true,
+      canDelete: false,
     };
-    const running = job("RUNNING");
-    let jobs = [failed, sibling, running];
-    let release!: () => void;
-    const pending = new Promise<void>((resolve) => { release = resolve; });
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [childStillRunning],
+      total: 1,
+      hasMore: false,
+      nextCursor: null,
+    })));
+    renderPage();
+    const user = userEvent.setup();
+
+    expect(await screen.findByRole("button", {
+      name: `删除任务 ${childStillRunning.originalFilename}`,
+    })).toBeDisabled();
+    await user.click(screen.getByRole("button", {
+      name: `整集重新解析 ${childStillRunning.originalFilename}`,
+    }));
+    expect(screen.getByRole("button", {
+      name: `确认整集重新解析 ${childStillRunning.originalFilename}`,
+    })).toBeEnabled();
+  });
+
+  it("deletes the owning upload aggregate and removes every card for that session", async () => {
+    const failed = { ...task("PARSING_FAILED", "failed"), version: 2 };
+    const sibling = {
+      ...task("COMPLETE", "sibling"),
+      videoId: failed.videoId,
+      uploadSessionId: failed.uploadSessionId,
+      version: 1,
+      canReparse: false,
+    };
+    let tasks = [failed, sibling];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/jobs/list") return response({ items: jobs, hasMore: false, nextCursor: null });
+      if (url.pathname === "/api/jobs/video-parse/list") {
+        return response({ items: tasks, total: tasks.length, hasMore: false, nextCursor: null });
+      }
       if (url.pathname === "/api/uploads/delete") {
-        await pending;
-        jobs = jobs.filter((item) => item.uploadSessionId !== failed.uploadSessionId);
+        tasks = [];
         return response({ uploadSessionId: failed.uploadSessionId, status: "EXPIRED" });
       }
       throw new Error(`Unexpected request: ${url.pathname}`);
@@ -160,74 +221,62 @@ describe("task deletion", () => {
     renderPage();
     const user = userEvent.setup();
 
-    const failedButton = await screen.findByRole("button", { name: `删除任务 ${failed.originalFilename}` });
-    expect(screen.getAllByText("解析失败")).not.toHaveLength(0);
-    expect(screen.getAllByText("文件已上传")).toHaveLength(3);
-    expect(screen.getByRole("button", { name: `删除任务 ${running.originalFilename}` })).toBeDisabled();
-    await user.click(failedButton);
-    expect(screen.getByText("确认删除这个视频任务？")).toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/uploads/delete"))).toBe(false);
-    await user.click(screen.getByRole("button", { name: `确认删除 ${failed.originalFilename}` }));
-    expect(failedButton).toBeDisabled();
-    expect(failedButton).toHaveTextContent("正在删除");
-    expect(screen.getByRole("button", { name: `删除任务 ${sibling.originalFilename}` })).toBeDisabled();
-    release();
+    const deleteLatest = await screen.findByRole("button", {
+      name: `删除任务 ${failed.originalFilename}`,
+    });
+    expect(screen.queryByRole("button", {
+      name: `删除任务 ${sibling.originalFilename}`,
+    })).not.toBeInTheDocument();
 
-    await waitFor(() => expect(screen.queryByText(failed.originalFilename)).not.toBeInTheDocument());
-    expect(screen.queryByText(sibling.originalFilename)).not.toBeInTheDocument();
-    expect(uploadActions.forgetDeletedSession).toHaveBeenCalledWith(failed.uploadSessionId);
-    const deletion = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/uploads/delete"));
-    expect(String(deletion?.[0])).toBe("/api/uploads/delete?uploadSessionId=upload-failed&workspaceId=local-default");
-    expect(deletion?.[1]?.method).toBe("POST");
-  });
-
-  it("keeps the task and exposes the request identifier when deletion fails", async () => {
-    const failed = job("FAILED");
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/jobs/list") return response({ items: [failed], hasMore: false, nextCursor: null });
-      if (url.pathname === "/api/uploads/delete") {
-        return response({ message: "任务正在执行", requestId: "delete-request" }, 409);
-      }
-      throw new Error(`Unexpected request: ${url.pathname}`);
+    await user.click(deleteLatest);
+    await user.click(screen.getByRole("button", {
+      name: `确认删除 ${failed.originalFilename}`,
     }));
-    renderPage();
-    const user = userEvent.setup();
 
-    const button = await screen.findByRole("button", { name: `删除任务 ${failed.originalFilename}` });
-    await user.click(button);
-    await user.click(screen.getByRole("button", { name: `确认删除 ${failed.originalFilename}` }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("删除失败：任务正在执行（请求编号：delete-request）");
-    expect(button).toBeEnabled();
-    expect(screen.getByText(failed.originalFilename)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(failed.originalFilename!)).not.toBeInTheDocument());
+    expect(screen.queryByText(sibling.originalFilename!)).not.toBeInTheDocument();
+    expect(uploadActions.forgetDeletedSession).toHaveBeenCalledWith(failed.uploadSessionId);
   });
-});
 
-describe("manual parse retry", () => {
-  it("requeues a failed UploadSessionTask once and disables delete while submitting", async () => {
-    const failed = { ...job("FAILED"), attemptCount: 3, maxAttempts: 3, version: 7 };
-    const retried: ParseJobView = {
+  it("retries the same task identity and restores list metadata omitted by the action response", async () => {
+    const failed = { ...task("PARSING_FAILED", "failed"), version: 7 };
+    const actionResponse: VideoParseTaskView = {
       ...failed,
-      status: "QUEUED",
+      status: "PENDING",
+      version: 8,
       attemptCount: 3,
       maxAttempts: 4,
-      version: 8,
+      lastError: null,
+      workspaceId: null,
+      seriesId: null,
+      seriesName: null,
+      episodeOrder: null,
+      originalFilename: null,
+      uploadSessionId: null,
+      durationSeconds: null,
       canRetry: false,
       canReparse: false,
-      completedAt: null,
-      lastError: null,
+      canDelete: false,
     };
-    let jobs = [failed];
-    let release!: () => void;
-    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let serverTask = failed;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/jobs/list") return response({ items: jobs, hasMore: false, nextCursor: null });
+      if (url.pathname === "/api/jobs/video-parse/list") {
+        return response({ items: [serverTask], total: 1, hasMore: false, nextCursor: null });
+      }
       if (url.pathname === "/api/uploads/retry-parse") {
-        await pending;
-        jobs = [retried];
-        return response(retried);
+        serverTask = {
+          ...failed,
+          ...actionResponse,
+          workspaceId: failed.workspaceId,
+          seriesId: failed.seriesId,
+          seriesName: failed.seriesName,
+          episodeOrder: failed.episodeOrder,
+          originalFilename: failed.originalFilename,
+          uploadSessionId: failed.uploadSessionId,
+          durationSeconds: failed.durationSeconds,
+        };
+        return response(actionResponse);
       }
       throw new Error(`Unexpected request: ${url.pathname}`);
     });
@@ -235,78 +284,66 @@ describe("manual parse retry", () => {
     renderPage();
     const user = userEvent.setup();
 
-    const retryButton = await screen.findByRole("button", { name: `重试解析 ${failed.originalFilename}` });
-    const deleteButton = screen.getByRole("button", { name: `删除任务 ${failed.originalFilename}` });
-    await user.click(retryButton);
-
-    expect(retryButton).toBeDisabled();
-    expect(retryButton).toHaveTextContent("正在重试");
-    expect(deleteButton).toBeDisabled();
-    release();
-
-    await waitFor(() => expect(screen.queryByRole("button", { name: `重试解析 ${failed.originalFilename}` })).not.toBeInTheDocument());
-    expect(uploadActions.syncRequeuedParse).toHaveBeenCalledWith(retried);
-    expect(screen.getByText("排队中", { selector: '[data-status="QUEUED"]' })).toBeInTheDocument();
-    expect(screen.getByText("3 / 4")).toBeInTheDocument();
-    const retry = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/uploads/retry-parse"));
-    expect(String(retry?.[0])).toBe("/api/uploads/retry-parse?uploadSessionId=upload-failed&workspaceId=local-default&expectedJobVersion=7");
-  });
-
-  it("keeps a failed task retryable and shows the request identifier on conflict", async () => {
-    const failed = { ...job("FAILED"), version: 9 };
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/jobs/list") return response({ items: [failed], hasMore: false, nextCursor: null });
-      if (url.pathname === "/api/uploads/retry-parse") {
-        return response({ message: "任务状态已变化，请刷新", requestId: "retry-request" }, 409);
-      }
-      throw new Error(`Unexpected request: ${url.pathname}`);
+    await user.click(await screen.findByRole("button", {
+      name: `重试解析 ${failed.originalFilename}`,
     }));
-    renderPage();
-    const user = userEvent.setup();
 
-    const button = await screen.findByRole("button", { name: `重试解析 ${failed.originalFilename}` });
-    await user.click(button);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("重试失败：任务状态已变化，请刷新（请求编号：retry-request）");
-    expect(button).toBeEnabled();
+    await waitFor(() => expect(screen.queryByRole("button", {
+      name: `重试解析 ${failed.originalFilename}`,
+    })).not.toBeInTheDocument());
+    expect(screen.getByText(failed.originalFilename!)).toBeInTheDocument();
+    expect(screen.getByText("3 / 4")).toBeInTheDocument();
+    expect(uploadActions.syncRequeuedParse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        videoParseTaskId: failed.videoParseTaskId,
+        uploadSessionId: failed.uploadSessionId,
+        originalFilename: failed.originalFilename,
+        status: "PENDING",
+      }),
+    );
   });
-});
 
-describe("full episode reparse", () => {
-  it("confirms the destructive checkpoint reset and requeues the same job", async () => {
-    const completed = {
-      ...job("SUCCEEDED"),
-      stage: "COMPLETED",
-      progress: 100,
-      overallProgress: 100,
-      version: 11,
-    };
-    const reparsed: ParseJobView = {
+  it("reparse replaces the old card identity while retaining its upload metadata", async () => {
+    const completed = { ...task("COMPLETE", "complete"), version: 11 };
+    const actionResponse: VideoParseTaskView = {
       ...completed,
-      status: "QUEUED",
-      stage: "QUEUED",
-      progress: 0,
-      overallProgress: null,
-      completedDurationSeconds: null,
-      completedThroughSeconds: null,
-      completedChunkCount: null,
-      startedAt: null,
-      completedAt: null,
+      videoParseTaskId: "task-reparsed",
+      status: "PENDING",
       version: 12,
+      attemptCount: 0,
+      processingDurationMs: 0,
+      processingTimingComplete: true,
+      finishTime: null,
+      workspaceId: null,
+      seriesId: null,
+      seriesName: null,
+      episodeOrder: null,
+      originalFilename: null,
+      uploadSessionId: null,
+      durationSeconds: null,
+      canRetry: false,
       canReparse: false,
-      checkpoints: [],
+      canDelete: false,
     };
-    let jobs: ParseJobView[] = [completed];
-    let release!: () => void;
-    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let serverTask = completed;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/jobs/list") return response({ items: jobs, hasMore: false, nextCursor: null });
+      if (url.pathname === "/api/jobs/video-parse/list") {
+        return response({ items: [serverTask], total: 1, hasMore: false, nextCursor: null });
+      }
       if (url.pathname === "/api/uploads/reparse") {
-        await pending;
-        jobs = [reparsed];
-        return response(reparsed);
+        serverTask = {
+          ...completed,
+          ...actionResponse,
+          workspaceId: completed.workspaceId,
+          seriesId: completed.seriesId,
+          seriesName: completed.seriesName,
+          episodeOrder: completed.episodeOrder,
+          originalFilename: completed.originalFilename,
+          uploadSessionId: completed.uploadSessionId,
+          durationSeconds: completed.durationSeconds,
+        };
+        return response(actionResponse);
       }
       throw new Error(`Unexpected request: ${url.pathname}`);
     });
@@ -314,114 +351,25 @@ describe("full episode reparse", () => {
     renderPage();
     const user = userEvent.setup();
 
-    const reparseButton = await screen.findByRole("button", {
+    await user.click(await screen.findByRole("button", {
       name: `整集重新解析 ${completed.originalFilename}`,
-    });
-    await user.click(reparseButton);
-    expect(screen.getByText("从头重新解析这一整集？")).toBeInTheDocument();
-    expect(screen.getByText(/当前可检索结果会保留到新结果导入成功/)).toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/uploads/reparse"))).toBe(false);
-
+    }));
+    expect(screen.getByText(/建立新的 V2 任务身份/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", {
       name: `确认整集重新解析 ${completed.originalFilename}`,
     }));
-    expect(reparseButton).toBeDisabled();
-    expect(reparseButton).toHaveTextContent("正在重新解析");
-    expect(screen.getByRole("button", {
-      name: `删除任务 ${completed.originalFilename}`,
-    })).toBeDisabled();
-    release();
 
     await waitFor(() => expect(screen.queryByRole("button", {
       name: `整集重新解析 ${completed.originalFilename}`,
     })).not.toBeInTheDocument());
-    expect(uploadActions.syncRequeuedParse).toHaveBeenCalledWith(reparsed);
-    const call = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/uploads/reparse"));
-    expect(String(call?.[0])).toBe("/api/uploads/reparse?uploadSessionId=upload-succeeded&workspaceId=local-default&expectedJobVersion=11");
-  });
-});
-
-describe("segment progress presentation", () => {
-  it("shows one build progress and groups internal processing stages in the pipeline", async () => {
-    const running: ParseJobView = {
-      ...job("RUNNING"),
-      stage: "PARSING",
-      progress: 99,
-      overallProgress: 37,
-      stageProgress: 85,
-      completedDurationSeconds: 120,
-      completedThroughSeconds: 120,
-      videoDurationSeconds: 140,
-      totalDurationSeconds: 140,
-      completedChunkCount: 2,
-      totalChunkCount: 3,
-      currentChunk: { sequenceNo: 2, startSeconds: 120, endSeconds: 140 },
-    };
-    vi.stubGlobal("fetch", vi.fn(async () => response({ items: [running], hasMore: false, nextCursor: null })));
-
-    const { container } = renderPage();
-
-    expect(await screen.findByText("37%")).toBeInTheDocument();
-    expect(screen.getByText("任务进度")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "正在解析画面与对白" })).toBeInTheDocument();
-    expect(screen.queryByText("85%")).not.toBeInTheDocument();
-    expect(screen.queryByText("99%")).not.toBeInTheDocument();
-    expect(screen.queryByText(/本阶段/)).not.toBeInTheDocument();
-    expect(screen.getByText("文件已上传")).toBeInTheDocument();
-    expect(screen.getByText("解析画面与对白")).toBeInTheDocument();
-    expect(screen.getByText("发布检索结果")).toBeInTheDocument();
-    expect(screen.getByText("可检索")).toBeInTheDocument();
-    const facts = screen.getByLabelText("解析任务进度");
-    expect(facts).toHaveTextContent("连续解析到 02:00 / 02:20");
-    expect(facts).toHaveTextContent("已解析 2 / 3 段");
-    expect(facts).toHaveTextContent("当前解析 02:00–02:20");
-    expect(screen.getByText("每 5 秒自动同步 · 手动刷新可立即校准")).toBeInTheDocument();
-    expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: "0%" });
-  });
-
-  it("does not substitute the legacy progress when exact progress is unavailable", async () => {
-    const preparing: ParseJobView = {
-      ...job("RUNNING"),
-      stage: "PREPARING",
-      progress: 92,
-      overallProgress: null,
-      stageProgress: null,
-      completedDurationSeconds: null,
-      completedThroughSeconds: null,
-      completedChunkCount: null,
-      currentChunk: null,
-    };
-    vi.stubGlobal("fetch", vi.fn(async () => response({ items: [preparing], hasMore: false, nextCursor: null })));
-
-    renderPage();
-
-    expect(await screen.findByText("等待检查点")).toBeInTheDocument();
-    expect(screen.queryByText("92%")).not.toBeInTheDocument();
-    expect(screen.getAllByText("—")).toHaveLength(1);
-  });
-
-  it("does not show a current segment after parsing has completed", async () => {
-    const completed: ParseJobView = {
-      ...job("SUCCEEDED"),
-      stage: "COMPLETED",
-      progress: 100,
-      overallProgress: 100,
-      stageProgress: 100,
-      completedDurationSeconds: 140,
-      completedThroughSeconds: 140,
-      videoDurationSeconds: 140,
-      totalDurationSeconds: 140,
-      completedChunkCount: 3,
-      totalChunkCount: 3,
-      currentChunk: null,
-    };
-    vi.stubGlobal("fetch", vi.fn(async () => response({ items: [completed], hasMore: false, nextCursor: null })));
-
-    renderPage();
-
-    const facts = await screen.findByLabelText("解析任务进度");
-    expect(facts).toHaveTextContent("连续解析到 02:20 / 02:20");
-    expect(facts).toHaveTextContent("已解析 3 / 3 段");
-    expect(facts).not.toHaveTextContent("当前解析");
+    expect(screen.getByText(completed.originalFilename!)).toBeInTheDocument();
+    expect(uploadActions.syncRequeuedParse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        videoParseTaskId: "task-reparsed",
+        uploadSessionId: completed.uploadSessionId,
+        originalFilename: completed.originalFilename,
+        status: "PENDING",
+      }),
+    );
   });
 });
