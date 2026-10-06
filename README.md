@@ -6,7 +6,7 @@ anivag 是一个面向事件级视频检索与时间证据定位的多模态视�
 
 从私有视频到有据可查的回答：anivag 在后台解析语音、画面与时间线，建立可检索的多模态索引，再把自然语言问题对应到具体片段。
 
-[![anivag 架构图：私有视频输入、持久化解析、多模态索引、检索 Agent 与可跳转的视频证据](diagrams/anivag-open-source-architecture.png)](diagrams/anivag-open-source-architecture.png)
+[![anivag 架构图：私有视频输入、持久化解析、多模态索引、检索 Agent 与可跳转的视频证据](assets/diagrams/anivag-open-source-architecture.png)](assets/diagrams/anivag-open-source-architecture.png)
 
 *点击图片查看完整架构图。*
 
@@ -142,14 +142,15 @@ anivag/
 ├── config.yaml                       # 可提交的模型默认配置
 ├── config/model-pricing.yaml          # Parse 模型计价属性与价格版本，人民币
 ├── gateway/                          # 模型供应商调用；agent_model/ 提供模型执行协议
-├── engine/                           # parsev1、parsev2 与 retrieval 领域算法
+├── engine/                           # parsev1、parsev2 与 rag 领域算法
 ├── agent/                            # Chat 与 Video Parse V2 的 Agent／LangGraph 程序
 ├── server/                           # 可靠执行、事实源、持久化与外部接口
 ├── tests/                            # 按 agent/server/engine/gateway/evals 分区的测试
 ├── evals/                            # 算法评测工具、数据集与报告
 ├── outputs/                          # 本地运行产物，不进入 Git
 ├── deploy/                           # 本地基础设施与部署配置
-├── assets/                           # 本地样例素材与领域参考
+├── assets/                           # 架构图、本地样例素材与领域参考
+│   └── diagrams/                     # README 架构图
 └── docs/                             # 方案、决策与开发记录
 ```
 

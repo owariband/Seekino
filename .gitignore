@@ -6,8 +6,8 @@ docs/ui-design/
 /.baoyu-skills/
 /.agents/skills/anivag-change-gate/
 /engines/*
-/diagrams/*
-!/diagrams/anivag-open-source-architecture.png
+/assets/diagrams/*
+!/assets/diagrams/anivag-open-source-architecture.png
 /infographic/
 /docs/*.dataflow.json
 /docs/*.visual-check.*
