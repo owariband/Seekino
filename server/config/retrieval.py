@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from engine.retrieval.video_retrieval import fuse_video_chunk_rankings
+from engine.rag.retrieval.fusion import fuse_video_chunk_rankings
 
 
 @dataclass(frozen=True, slots=True)

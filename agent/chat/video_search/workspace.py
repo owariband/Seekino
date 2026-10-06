@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from threading import RLock
 
-from engine.retrieval.contracts import VideoChunkSearchHit, VideoChunkSearchResult
+from engine.rag.contracts import VideoChunkSearchHit, VideoChunkSearchResult
 
 from ..common.errors import (
     AgentModelInvocationError, UnknownToolItemError,

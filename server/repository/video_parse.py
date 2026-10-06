@@ -12,13 +12,13 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from engine.parsev2.schemas import DialogueEvent, VideoParseResult
-from engine.retrieval.contracts import (
+from engine.rag.contracts import (
     TranscriptCueView,
     VideoChunkEvidence,
     VideoChunkRetrievalIdentity,
 )
-from engine.retrieval.index_pipeline import compute_source_revision
-from engine.retrieval.index_projection import (
+from engine.rag.indexing.pipeline import compute_source_revision
+from engine.rag.indexing.projection import (
     compute_index_projection_revision,
     project_chunk_index,
 )
@@ -1282,6 +1282,24 @@ class VideoParseRepository:
                 raise VideoParseConflictError(
                     "only the latest VideoParseTask can rebuild its index"
                 )
+            failure_status = _video_failure_status(task) or (
+                task.status if task.status in {
+                    VideoParseTaskStatus.PARSING_FAILED.value,
+                    VideoParseTaskStatus.INDEXING_FAILED.value,
+                } else None
+            )
+            if failure_status is not None and (
+                failure_status != VideoParseTaskStatus.INDEXING_FAILED.value
+                or task.status != VideoParseTaskStatus.INDEXING_FAILED.value
+                or any(interval.lease_owner is not None for interval in intervals)
+                or session.scalar(select(ChunkParseTaskRecord.id).where(
+                    ChunkParseTaskRecord.video_parse_task_id == task.id,
+                    ChunkParseTaskRecord.lease_owner.is_not(None),
+                ).limit(1)) is not None
+            ):
+                raise VideoParseConflictError(
+                    "index rebuild requires a settled indexing failure; parsing failures require retry"
+                )
 
             refined_interval_ids = set(session.scalars(
                 select(IntervalParseContentRecord.interval_parse_task_id).where(
@@ -1308,6 +1326,13 @@ class VideoParseRepository:
                 interval.update_time = requested_at
                 reset.append(interval.id)
 
+            if reset and failure_status is not None:
+                detail = deepcopy(dict(task.detail or {}))
+                runtime = detail.get(RUNTIME_DETAIL_KEY)
+                if isinstance(runtime, dict):
+                    runtime.pop("failure_status", None)
+                task.detail = detail
+                task.status = VideoParseTaskStatus.INDEXING.value
             task = _aggregate_video_task(session, task.id, requested_at)
             if reset:
                 # A completed or exhausted coordinator must be claimable again
@@ -2117,22 +2142,34 @@ def _reset_indexing_for_changed_members(
     return tuple(reset)
 
 
+def _video_failure_status(task: VideoParseTaskRecord) -> str | None:
+    runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY)
+    status = runtime.get("failure_status") if isinstance(runtime, dict) else None
+    return status if status in {
+        VideoParseTaskStatus.PARSING_FAILED.value,
+        VideoParseTaskStatus.INDEXING_FAILED.value,
+    } else None
+
+
 def _aggregate_video_task(
     session: Session,
     video_parse_task_id: str,
     now: datetime,
     *,
     release_terminal_lease: bool = False,
+    failure_status: str | None = None,
 ) -> VideoParseTaskRecord:
     task = session.scalar(
         select(VideoParseTaskRecord)
         .where(VideoParseTaskRecord.id == video_parse_task_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if task is None:
         raise VideoParseTaskNotFoundError(
             f"VideoParseTask {video_parse_task_id!r} does not exist"
         )
+    previous_status = task.status
     chunks = list(session.scalars(
         select(ChunkParseTaskRecord).where(
             ChunkParseTaskRecord.video_parse_task_id == video_parse_task_id
@@ -2163,8 +2200,38 @@ def _aggregate_video_task(
         status = VideoParseTaskStatus.INDEXING.value
     else:
         status = VideoParseTaskStatus.COMPLETE.value
+    recorded_failure = _video_failure_status(task) or (
+        task.status if task.status in {
+            VideoParseTaskStatus.PARSING_FAILED.value,
+            VideoParseTaskStatus.INDEXING_FAILED.value,
+        } else None
+    )
+    failure_status = failure_status or recorded_failure
+    if VideoParseTaskStatus.PARSING_FAILED.value in {status, recorded_failure, failure_status}:
+        failure_status = VideoParseTaskStatus.PARSING_FAILED.value
+    elif failure_status is None and status == VideoParseTaskStatus.INDEXING_FAILED.value:
+        failure_status = status
+    if failure_status is not None:
+        detail = deepcopy(dict(task.detail or {}))
+        detail.setdefault(RUNTIME_DETAIL_KEY, {})["failure_status"] = failure_status
+        task.detail = detail
+        status = failure_status
     persisted_status = status
-    if not release_terminal_lease and task.lease_owner is not None:
+    if failure_status is not None and task.status not in {
+        VideoParseTaskStatus.PARSING_FAILED.value,
+        VideoParseTaskStatus.INDEXING_FAILED.value,
+    } and (
+        any(child.lease_owner is not None for child in [*chunks, *intervals])
+        or not release_terminal_lease
+    ):
+        # Only the coordinator or the queue's fresh drain transaction publishes
+        # a new failure. An expired owner still needs row-locked reclamation.
+        persisted_status = (
+            VideoParseTaskStatus.PARSING.value
+            if failure_status == VideoParseTaskStatus.PARSING_FAILED.value
+            else VideoParseTaskStatus.INDEXING.value
+        )
+    elif not release_terminal_lease and task.lease_owner is not None:
         if status == VideoParseTaskStatus.PARSING_FAILED.value:
             persisted_status = VideoParseTaskStatus.PARSING.value
         elif status in {
@@ -2173,11 +2240,18 @@ def _aggregate_video_task(
         }:
             persisted_status = VideoParseTaskStatus.INDEXING.value
     task.status = persisted_status
-    task.finish_time = now if persisted_status in {
+    if persisted_status in {
         VideoParseTaskStatus.COMPLETE.value,
         VideoParseTaskStatus.PARSING_FAILED.value,
         VideoParseTaskStatus.INDEXING_FAILED.value,
-    } else None
+    }:
+        if previous_status not in {
+            VideoParseTaskStatus.PARSING_FAILED.value,
+            VideoParseTaskStatus.INDEXING_FAILED.value,
+        } or task.finish_time is None:
+            task.finish_time = now
+    else:
+        task.finish_time = None
     task.update_time = now
     if release_terminal_lease and persisted_status in {
         VideoParseTaskStatus.COMPLETE.value,

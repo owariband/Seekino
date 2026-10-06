@@ -4,11 +4,12 @@ from dataclasses import replace
 
 import pytest
 
-from engine.retrieval.embedding_reuse import (
+from engine.rag.encoding import (
     EmbeddingReuseDecision,
     EmbeddingReuseTarget,
     assess_embedding_reuse,
     embedding_receipt,
+    validate_sparse_weights,
 )
 
 INPUT_SHA = "a" * 64
@@ -250,3 +251,44 @@ def test_visual_target_requires_complete_preprocess_identity() -> None:
         replace(_target("video"), max_height=None)
     with pytest.raises(ValueError, match="preprocess"):
         replace(_target("video"), preprocess_revision=None)
+
+
+def test_sparse_weights_are_sorted_copied_and_keep_small_positive_values() -> None:
+    weights = {"scene": 2, "quiet": 1e-12, "千早爱音": 0.5, "zero": 0.0}
+
+    validated = validate_sparse_weights(weights)
+
+    assert validated == (("quiet", 1e-12), ("scene", 2.0), ("千早爱音", 0.5))
+    assert weights["zero"] == 0.0
+    weights["scene"] = 9
+    assert validated[1] == ("scene", 2.0)
+
+
+@pytest.mark.parametrize("weights", [{}, {"zero": 0}, {"zero": -0.0}])
+def test_sparse_empty_or_zero_only_weights_are_valid(weights: dict[str, float]) -> None:
+    assert validate_sparse_weights(weights) == ()
+
+
+@pytest.mark.parametrize("token", ["", " ", 1, None])
+def test_sparse_weights_require_nonblank_string_tokens(token: object) -> None:
+    with pytest.raises(ValueError):
+        validate_sparse_weights({token: 0.0})
+
+
+@pytest.mark.parametrize(
+    "weight",
+    [
+        True,
+        False,
+        -0.1,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        10**1000,
+        "1.0",
+        None,
+    ],
+)
+def test_sparse_weights_require_finite_nonnegative_numeric_values(weight: object) -> None:
+    with pytest.raises(ValueError):
+        validate_sparse_weights({"scene": weight})

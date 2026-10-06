@@ -1,3 +1,3 @@
-from .interval_refine import IntervalRefine
+from .agent import IntervalRefine
 
 __all__ = ["IntervalRefine"]

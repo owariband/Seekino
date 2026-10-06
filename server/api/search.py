@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import Request
 
-from engine.retrieval.contracts import VideoChunkSearchEvidence
+from engine.rag.contracts import VideoChunkSearchEvidence
 
 from .context import get_services
 from ..model.dto.mediaDTO import PlaybackMedia

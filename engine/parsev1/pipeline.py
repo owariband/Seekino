@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from engine.retrieval.video_retrieval import VideoChunkRetrievalDocument
+from .retrieval import VideoChunkRetrievalDocument
 
 from .background import BackgroundImage
 from .embed import ChunkEmbedding, EmbedStage

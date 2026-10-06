@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from elasticsearch import Elasticsearch
-from engine.retrieval import EncoderContract
+from engine.rag import EncoderContract
 from gateway.constants import ARK_PROVIDER
 from gateway.config import load_config
 from gateway.ark.embedding import (

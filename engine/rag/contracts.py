@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
-from engine.retrieval.index_projection import LexicalField
+from engine.rag.indexing.projection import LexicalField
 
 _MAX_UNIX_TIME_MS = 9_223_372_036_854_775_807
 
@@ -120,6 +120,15 @@ class VideoChunkRetrievalIdentity(_RetrievalContractModel):
     retrieval_contract_id: str = Field(min_length=1)
     semantic_encoder_id: str = Field(min_length=1)
     vision_encoder_id: str = Field(min_length=1)
+    sparse_encoder_id: str | None = Field(default=None, min_length=1)
+
+    @model_serializer(mode="wrap")
+    def serialize_identity(self, handler: Any) -> dict[str, Any]:
+        identity = handler(self)
+        if self.sparse_encoder_id is None:
+            identity.pop("sparse_encoder_id", None)
+            identity.pop("sparseEncoderId", None)
+        return identity
 
 
 class VideoChunkCandidate(_RetrievalContractModel):

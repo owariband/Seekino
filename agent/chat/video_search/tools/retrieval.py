@@ -6,8 +6,8 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from engine.retrieval.contracts import VideoChunkSearchResult
-from engine.retrieval.video_retrieval import (
+from engine.rag.contracts import VideoChunkSearchResult
+from engine.rag.retrieval.fusion import (
     AGENT_RETRIEVAL_STRATEGY_VERSION,
     normalize_hybrid_retrieval_weights,
 )

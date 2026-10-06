@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import NotRequired, TypedDict
 
 from .input import ParseInput
-from .runtime import LeaseToken, VideoChunk, VideoTaskStatus
+from .host import LeaseToken, VideoChunk, VideoTaskStatus
 
 
 class RunState(TypedDict):

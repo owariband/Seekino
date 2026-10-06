@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 from pydantic import BaseModel
 
-from engine.retrieval.contracts import (
+from engine.rag.contracts import (
     AgentReply,
     SelectionReason,
     VideoChunkCandidate,

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from engine.parsev1.schemas import TranscriptCue
-from engine.retrieval import EncoderContract, LexicalField, compute_encoder_id
+from engine.rag import EncoderContract, LexicalField, compute_encoder_id
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
 from qdrant_client import QdrantClient

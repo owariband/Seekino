@@ -15,7 +15,7 @@ from agent.chat.common.errors import (
 from agent.chat.common.state import AnswerPhase, RunInputs
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.runtime import AgentRuntime
-from engine.retrieval.contracts import VideoChunkEvidence
+from engine.rag.contracts import VideoChunkEvidence
 
 from ..config.agent import AgentServiceConfig
 from ..identity import canonical_uuid

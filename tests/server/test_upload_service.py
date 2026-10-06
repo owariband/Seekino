@@ -12,7 +12,7 @@ from sqlalchemy import event, select
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 from engine.parsev1.runtime import VideoParseRuntimeConfig
-from engine.retrieval import EncoderContract
+from engine.rag import EncoderContract
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.config import load_config
 from server.config.media import ImageUploadConfig
@@ -1153,7 +1153,7 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
     session_factory = create_session_factory(engine)
     jobs = ParseJobRepository(session_factory)
     assert retried.video_parse_task_id == completed.video_parse_task_id
-    assert (retried.version, retried.status) == (1, "PARSING")
+    assert (retried.version, retried.status) == (1, "PREPARING")
     assert (retried.attempt_count, retried.max_attempts) == (3, 4)
     assert retried.parse_config == original_config
     assert retried.next_execute_time == unix_time_ms_to_datetime(retry_at)
@@ -1296,6 +1296,179 @@ def prepared_v2_retry(repository, tmp_path):
     return service, upload, completed.video_parse_task_id, factory, chunk_ids, interval_ids, now
 
 
+@pytest.fixture
+def prepared_short_v2_retry(prepared_v2_retry):
+    service, upload, task_id, factory, chunk_ids, interval_ids, now = prepared_v2_retry
+    with factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, task_id)
+        task.parse_config = {**task.parse_config, "interval_duration": 15}
+        task.status = "INDEXING_FAILED"
+        short_interval = session.get(IntervalParseTaskRecord, interval_ids[0])
+        short_interval.chunk_count = len(chunk_ids)
+        short_interval.chunk_parse_task_ids = chunk_ids
+        short_interval.ready_mask = (1 << len(chunk_ids)) - 1
+        short_interval.status = "INDEXING_FAILED"
+        for interval_id in interval_ids[1:]:
+            session.delete(session.get(IntervalParseTaskRecord, interval_id))
+    return service, upload, task_id, factory, chunk_ids, interval_ids[0], now
+
+
+def test_indexing_retry_accepts_the_unique_short_interval_and_retains_results(
+    prepared_short_v2_retry,
+):
+    service, upload, task_id, factory, chunk_ids, interval_id, now = (
+        prepared_short_v2_retry
+    )
+    with factory() as session:
+        task = session.get(VideoParseTaskRecord, task_id)
+        frozen_config = task.parse_config
+        chunk_results = [
+            (row.id, row.content, row.version, row.detail)
+            for row in session.scalars(
+                select(ChunkParseContentRecord).order_by(ChunkParseContentRecord.id)
+            )
+        ]
+        interval_result = session.get(IntervalParseContentRecord, interval_id).content
+
+    retried = service.retry_parse(
+        upload.upload_session_id,
+        workspace_id="local-default",
+        expected_job_version=1,
+    )
+
+    assert (retried.video_parse_task_id, retried.status, retried.version) == (
+        task_id,
+        "INDEXING",
+        1,
+    )
+    assert retried.parse_config == frozen_config
+    with factory() as session:
+        interval = session.get(IntervalParseTaskRecord, interval_id)
+        assert (
+            interval.start_sequence_no,
+            interval.chunk_count,
+            interval.chunk_parse_task_ids,
+            interval.status,
+            interval.next_execute_time,
+        ) == (0, len(chunk_ids), chunk_ids, "INDEXING", now)
+        assert [
+            child.status for child in session.scalars(
+                select(ChunkParseTaskRecord)
+                .where(ChunkParseTaskRecord.video_parse_task_id == task_id)
+                .order_by(ChunkParseTaskRecord.id)
+            )
+        ] == ["COMPLETE"] * len(chunk_ids)
+        assert [
+            (row.id, row.content, row.version, row.detail)
+            for row in session.scalars(
+                select(ChunkParseContentRecord).order_by(ChunkParseContentRecord.id)
+            )
+        ] == chunk_results
+        assert session.get(IntervalParseContentRecord, interval_id).content == interval_result
+
+
+@pytest.mark.parametrize(
+    ("invalid", "error"),
+    [
+        ("missing_window", "complete preparation"),
+        ("wrong_start", "Interval preparation"),
+        ("wrong_count", "Interval preparation"),
+        ("wrong_members", "Interval members"),
+    ],
+)
+def test_indexing_retry_rejects_invalid_short_window_without_mutation(
+    prepared_short_v2_retry,
+    invalid,
+    error,
+):
+    service, upload, task_id, factory, chunk_ids, interval_id, _now = (
+        prepared_short_v2_retry
+    )
+    with factory.begin() as session:
+        failed_child = session.get(ChunkParseTaskRecord, chunk_ids[-1])
+        failed_child.status = "FAILED"
+        interval = session.get(IntervalParseTaskRecord, interval_id)
+        if invalid == "missing_window":
+            session.delete(interval)
+        elif invalid == "wrong_start":
+            interval.start_sequence_no = 1
+        elif invalid == "wrong_count":
+            interval.chunk_count = len(chunk_ids) - 1
+            interval.chunk_parse_task_ids = chunk_ids[:-1]
+            interval.ready_mask = (1 << (len(chunk_ids) - 1)) - 1
+        else:
+            interval.chunk_parse_task_ids = [*chunk_ids[1:], chunk_ids[0]]
+
+    def persisted_state():
+        with factory() as session:
+            parent = session.get(VideoParseTaskRecord, task_id)
+            chunks = list(session.scalars(
+                select(ChunkParseTaskRecord)
+                .where(ChunkParseTaskRecord.video_parse_task_id == task_id)
+                .order_by(ChunkParseTaskRecord.id)
+            ))
+            intervals = list(session.scalars(
+                select(IntervalParseTaskRecord)
+                .where(IntervalParseTaskRecord.video_parse_task_id == task_id)
+                .order_by(IntervalParseTaskRecord.id)
+            ))
+            return (
+                (
+                    parent.status,
+                    parent.parse_config,
+                    parent.next_execute_time,
+                    parent.finish_time,
+                    parent.last_error,
+                ),
+                [
+                    (
+                        child.id,
+                        child.status,
+                        child.next_execute_time,
+                        child.finish_time,
+                        child.last_error,
+                    )
+                    for child in chunks
+                ],
+                [
+                    (
+                        interval.id,
+                        interval.start_sequence_no,
+                        interval.chunk_count,
+                        interval.chunk_parse_task_ids,
+                        interval.status,
+                        interval.next_execute_time,
+                        interval.finish_time,
+                        interval.last_error,
+                    )
+                    for interval in intervals
+                ],
+                [
+                    (row.id, row.chunk_parse_task_id, row.content, row.version, row.detail)
+                    for row in session.scalars(
+                        select(ChunkParseContentRecord)
+                        .order_by(ChunkParseContentRecord.id)
+                    )
+                ],
+                [
+                    (row.interval_parse_task_id, row.content, row.detail)
+                    for row in session.scalars(
+                        select(IntervalParseContentRecord)
+                        .order_by(IntervalParseContentRecord.interval_parse_task_id)
+                    )
+                ],
+            )
+
+    before = persisted_state()
+    with pytest.raises(UploadConflictError, match=error):
+        service.retry_parse(
+            upload.upload_session_id,
+            workspace_id="local-default",
+            expected_job_version=1,
+        )
+    assert persisted_state() == before
+
+
 @pytest.mark.parametrize("chunk_states,interval_states,parent_state,expected", [
     (["COMPLETE", "COMPLETE", "FAILED", "QUEUED"],
      ["INDEXING_FAILED", "PARSING_FAILED", "WAITING"], "PARSING_FAILED", "PARSING"),
@@ -1314,6 +1487,25 @@ def test_manual_retry_restores_each_child_phase_and_retains_results(
         task = session.get(VideoParseTaskRecord, task_id)
         task.status = parent_state
         config = task.parse_config
+        runtime = {
+            **task.detail["_worker_runtime_v2"],
+            "failure_status": parent_state,
+            "model_calls": {"used_call_ids": ["call-1", "call-2"], "active": {}},
+            "prefix": {
+                "next_chunk_sequence_no": 2,
+                "lease_owner": None,
+                "lease_version": 7,
+                "lease_expire_time_ms": None,
+                "execution_task_id": None,
+                "next_execute_time_ms": 0,
+                "retry_count": 0,
+                "video_prefix_compact": "retained-video-prefix",
+                "series_prefix_compact": "retained-series-prefix",
+                "last_error": None,
+                "committed_leases": {"6": {"sequence_no": 1, "execution_task_id": "prior-prefix"}},
+            },
+        }
+        task.detail = {**task.detail, "_worker_runtime_v2": runtime}
         for model, ids, states in (
             (ChunkParseTaskRecord, chunk_ids, chunk_states),
             (IntervalParseTaskRecord, interval_ids, interval_states),
@@ -1334,6 +1526,9 @@ def test_manual_retry_restores_each_child_phase_and_retains_results(
     assert retried.last_error == {"code": "CHILD_FAILED", "message": "retained failure"}
     transitions = {"FAILED": "QUEUED", "PARSING_FAILED": "WAITING", "INDEXING_FAILED": "INDEXING"}
     with factory() as session:
+        assert session.get(VideoParseTaskRecord, task_id).detail["_worker_runtime_v2"] == {
+            key: value for key, value in runtime.items() if key != "failure_status"
+        }
         for model, ids, states in (
             (ChunkParseTaskRecord, chunk_ids, chunk_states),
             (IntervalParseTaskRecord, interval_ids, interval_states),
@@ -1356,6 +1551,43 @@ def test_manual_retry_restores_each_child_phase_and_retains_results(
             content = session.get(IntervalParseContentRecord, interval_id)
             if interval_states[start] is not None:
                 assert content.content == {"retained": start}
+
+
+@pytest.mark.parametrize("lease_expired", [False, True])
+def test_manual_retry_rejects_failure_drain_without_clearing_intent(
+    prepared_v2_retry, lease_expired,
+):
+    service, upload, task_id, factory, chunk_ids, _interval_ids, now = prepared_v2_retry
+    with factory.begin() as session:
+        parent = session.get(VideoParseTaskRecord, task_id)
+        parent.status = "PARSING"
+        parent.finish_time = None
+        parent.detail = {
+            **parent.detail,
+            "_worker_runtime_v2": {
+                **parent.detail["_worker_runtime_v2"],
+                "failure_status": "PARSING_FAILED",
+            },
+        }
+        session.get(ChunkParseTaskRecord, chunk_ids[-1]).status = "FAILED"
+        inflight = session.get(ChunkParseTaskRecord, chunk_ids[0])
+        inflight.status = "UNDERSTANDING"
+        inflight.lease_owner = "inflight-worker"
+        inflight.lease_expire_time = now if lease_expired else now + timedelta(minutes=5)
+        before = parent.detail
+
+    with pytest.raises(UploadStateError):
+        service.retry_parse(
+            upload.upload_session_id,
+            workspace_id="local-default",
+            expected_job_version=1,
+        )
+    with factory() as session:
+        parent = session.get(VideoParseTaskRecord, task_id)
+        assert parent.status == "PARSING" and parent.finish_time is None
+        assert parent.detail == before
+        assert session.get(ChunkParseTaskRecord, chunk_ids[-1]).status == "FAILED"
+        assert session.get(ChunkParseTaskRecord, chunk_ids[0]).lease_owner == "inflight-worker"
 
 
 @pytest.mark.parametrize(

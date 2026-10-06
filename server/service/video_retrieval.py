@@ -3,17 +3,19 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from engine.retrieval import EncoderContract, compute_encoder_id
-from engine.retrieval.video_retrieval import (
+from engine.rag import EncoderContract, compute_encoder_id
+from engine.rag.nlp.transcript import (
     RankedTranscriptMatch,
+    rank_transcript_chunks,
+)
+from engine.rag.retrieval.fusion import (
     RankedVideoChunkMatch,
     VersionedRankedVideoChunkMatch,
     fuse_video_chunk_rankings,
     fuse_versioned_video_chunk_rankings,
     normalize_hybrid_retrieval_weights,
-    rank_transcript_chunks,
 )
-from engine.retrieval.contracts import LexicalMatch, VideoChunkRetrievalIdentity
+from engine.rag.contracts import LexicalMatch, VideoChunkRetrievalIdentity
 from gateway.embedding import EmbeddingResult
 
 from ..config.retrieval import RetrievalConfig

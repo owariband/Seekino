@@ -10,7 +10,7 @@ from agent.chat.video_search.runtime import AgentRuntime
 from arkruntime import Ark
 from elasticsearch import Elasticsearch
 from engine.parsev1.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
-from engine.retrieval import EncoderContract
+from engine.rag import EncoderContract
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.factory import AgentModelFactory
 from gateway.ark.embedding import (

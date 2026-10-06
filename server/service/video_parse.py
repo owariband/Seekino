@@ -16,15 +16,15 @@ from arkruntime import Ark
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent.video_parse_v2.agent import ParseAgent
+from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.input import (
     ASRModelConfig,
     GenerativeModelConfig,
     ParseInput,
 )
-from agent.video_parse_v2.precompact.context import PrefixContext
+from agent.video_parse_v2.prefix.context import PrefixContext
 from agent.video_parse_v2.refine.input import RefineInput
-from agent.video_parse_v2.runtime import (
+from agent.video_parse_v2.host import (
     ChunkExecution,
     ChunkScheduleEntry,
     ChunkScheduleSnapshot,
@@ -50,7 +50,7 @@ from engine.parsev2.validation import (
     ValidatedIntervalRefinement,
     ValidatedPrefixRefinement,
 )
-from engine.retrieval import (
+from engine.rag import (
     ChunkIndexingContract,
     EncoderContract,
     VideoClipInputContract,

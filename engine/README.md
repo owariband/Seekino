@@ -2,7 +2,8 @@
 
 Engine 是 anivag 的领域算法边界。现有解析实现完整冻结在 `parsev1/`；新的
 Video Parse V2 算法策略只进入 `parsev2/`，其 Agent／LangGraph 运行程序位于
-`agent/video_parse_v2/`。`retrieval/` 独立拥有检索表示、排序、融合和共享检索契约。
+`agent/video_parse_v2/`。`rag/` 独立拥有索引表示、输入处理、召回、融合与证据核验；
+V1 专用检索文档构造归入 `parsev1/retrieval.py`。
 
 Engine 不拥有生产 Job、Lease、Checkpoint、Artifact、MySQL 或 Qdrant；这些执行与
 持久化生命周期仍由 Server 负责。外部模型请求由根目录下的 `gateway/` 实现。
@@ -63,12 +64,16 @@ Engine 内部仍负责单个 VideoChunk 的 Prompt、显式 Transcript 融合、
 
 ## 代码边界
 
-算法代码按版本和职责分为三个互相独立的目录：
+算法代码按版本和职责组织：
 
 - `parsev1/`：当前生产解析实现，只接受兼容性修复和明确的 V1 维护；
 - `parsev2/`：Video Parse V2 的领域策略、状态不变量和 Patch／投影算法；不放
   LangGraph 调度、Server 恢复逻辑，也不导入 `parsev1`；
-- `retrieval/`：检索表示、共享契约、排序与融合算法，不隶属于任一 Parse 版本。
+- `rag/`：存储与模型中立的索引、查询与检索策略，消费 `parsev2` 正式 Schema，
+  不依赖解析运行程序或 Agent／Server／Gateway／存储 SDK；
+
+调用方直接导入 `engine.rag` 或具体能力模块；旧 `engine/retrieval/` 已删除。
+`rag/` 不导入 `parsev1`，也不借旧路径转发实现。
 
 `parsev1/` 的主路径按现有 Pipeline 阶段命名：
 
@@ -82,12 +87,43 @@ Engine 内部仍负责单个 VideoChunk 的 Prompt、显式 Transcript 融合、
 - `parsev1/prompts.py`：实现 Transcript 与事件时间线的证据约束；
 - `parsev1/analysis_windows.py`：提供视频窗口规划与物化原语。
 
-Retrieve 边界保持独立：`retrieval/contracts.py` 是 Engine／Agent／Server 共享的检索
-领域契约，`retrieval/video_retrieval.py` 负责 `VideoChunkRetrievalDocument` 构造与
-Text/Vision RRF 等纯算法。Query Embedding、Qdrant 查询和 MySQL hydrate 由
-`server/service/video_retrieval.py` 负责，正式 Qdrant 持久化由 `server/storage/`
-承担；不为了形式另增 `RetrieveClient` 或空 facade。会组合 Engine、Gateway 与实验
-Qdrant 数据集的召回评测工具位于 `evals/recall/`。
+RAG 能力按处理职责分开：
+
+```text
+rag/
+├── contracts.py              # Engine／Agent／Server 共享的检索领域合同
+├── encoding.py               # 编码合同、响应校验、输入身份和向量复用
+├── query_pipeline.py         # 查询上下文校验与输入处理编排
+├── indexing/
+│   ├── projection.py         # 正式 Timeline → 来源词项与文字语义输入
+│   └── pipeline.py           # Chunk Source → Index Plan → Document／Receipt
+├── nlp/
+│   ├── query.py              # 文字查询 → 编码信号及结果校验
+│   └── transcript.py         # 通用 ASR cue 短语匹配及真实时间范围
+├── vision/inputs.py          # 视频片段／有序帧输入、采样与实际 manifest
+└── retrieval/
+    ├── contracts.py          # 查询、可信任务范围、候选与证据数据结构
+    ├── pipeline.py           # 编码信号 → 召回请求 → Chunk 候选归并
+    ├── fusion.py             # 共享排名与 RRF
+    └── evidence.py           # 同版正式事实、相邻来源、人物／对白／时序核验
+```
+
+索引入口是 `plan_chunk_index`／`finalize_chunk_index`；查询先由
+`plan_retrieval_query` 准备输入信号，再由 `build_recall_requests`、
+`fuse_retrieval_candidates` 和 `verify_retrieval_evidence` 处理召回与真实来源。
+调用方提供可信 COMPLETE 任务及正式事实，执行媒体读取、模型调用和 ES 查询；
+Engine 只产出中立计划、校验返回值并执行策略。文字输入可以产生兼容的文字或视觉
+Dense 信号，输入模态不与召回通道一一绑定。
+
+当前 `nlp/query.py` 实现文字查询处理，`vision/inputs.py` 承接已实现的索引视觉输入
+规则；图片／GIF 查询处理及视觉证据定位仍属于 P4 后续开发。新查询 pipeline 的
+产品接入与真实协议验收也需分别完成，目录迁移不代表这些能力已接线。
+
+V1 `VideoChunkRetrievalDocument` 构造位于 `parsev1/retrieval.py`，消费 V1 正式成果；
+通用 ASR cue 短语匹配位于 `rag/nlp/transcript.py`，不依赖解析版本。
+V1 和 V2 调用方直接消费 `rag/retrieval/fusion.py` 的共享排名与 RRF。
+投影版本常量仍参与 `rag/indexing/projection.py` 的指纹计算。存储读写和正式事实
+回查由 Server 实现，模型执行由 Gateway 实现，召回评测入口仍在 `evals/recall/`。
 
 ## 本地实验兼容层
 

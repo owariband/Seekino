@@ -4,9 +4,9 @@
 
 模型按职责分目录：`server/model/dto/` 存放请求参数和业务传输对象，`server/model/vo/` 存放前端公开视图，`server/model/` 下保留 ORM 与业务枚举。两类模型均按资源分文件，如 `agentDTO.py` / `agentVO.py`、`libraryDTO.py` / `libraryVO.py`、`uploadDTO.py` / `uploadVO.py`。Repository、Service 直接引用 DTO，不再各自定义跨层数据类。请求沿用原类名、字段、默认值、校验与 camelCase JSON 别名；内部状态类继续使用 dataclass 和 snake_case 字段，不直接作为 HTTP 返回结构。持久化和跨层传递的绝对时间统一为 Unix epoch 毫秒整数，转换与校验收口在 `server/utils/time.py`。
 
-解析导入、索引同步与核对的结果报告也分别放在 `parseDTO.py` / `indexSyncDTO.py`；它们是业务传输对象，沿用原 Pydantic 字段校验。`server/schema.py` 保留 Server 通用契约基类，并兼容性 re-export `engine/retrieval/contracts.py` 拥有的检索证据契约。
+解析导入、索引同步与核对的结果报告也分别放在 `parseDTO.py` / `indexSyncDTO.py`；它们是业务传输对象，沿用原 Pydantic 字段校验。`server/schema.py` 保留 Server 通用契约基类，并兼容性 re-export `engine/rag/contracts.py` 拥有的检索证据契约。
 
-VO 按 `commonVO.py`、`libraryVO.py`、`uploadVO.py`、`jobVO.py`、`agentVO.py`、`searchVO.py`、`systemVO.py` 分组；投影函数留在对应 API 模块。旧 `server/api/schema.py` 作为兼容导入入口，分别引用 DTO 请求与 VO 返回模型。Agent 程序位于 `agent/chat/`，原始检索契约位于 `engine/retrieval/contracts.py`，二者都不依赖 HTTP VO。公开投影在 API 边界明确转换，内部媒体 URI、执行租约和模型审核意见不出现在公开 Evidence / Message 中。
+VO 按 `commonVO.py`、`libraryVO.py`、`uploadVO.py`、`jobVO.py`、`agentVO.py`、`searchVO.py`、`systemVO.py` 分组；投影函数留在对应 API 模块。旧 `server/api/schema.py` 作为兼容导入入口，分别引用 DTO 请求与 VO 返回模型。Agent 程序位于 `agent/chat/`，原始检索契约位于 `engine/rag/contracts.py`，二者都不依赖 HTTP VO。公开投影在 API 边界明确转换，内部媒体 URI、执行租约和模型审核意见不出现在公开 Evidence / Message 中。
 
 | 类型分组 | 公开模型 | UI 使用的数据 |
 | --- | --- | --- |

@@ -9,7 +9,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 from engine.parsev1.schemas import VideoParseProvenance
-from engine.retrieval.video_retrieval import VideoChunkRetrievalDocument
+from engine.parsev1.retrieval import VideoChunkRetrievalDocument
 from sqlalchemy import event, func, inspect, select, update
 
 from server.model.index_sync import IndexSyncIntentRecord

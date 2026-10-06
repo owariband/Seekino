@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from engine.retrieval.contracts import (
+from engine.rag.contracts import (
     AgentReply,
     LexicalMatch,
     SelectionReason,

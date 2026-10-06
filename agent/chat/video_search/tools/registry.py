@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from engine.retrieval.contracts import VideoChunkSearchResult
+from engine.rag.contracts import VideoChunkSearchResult
 
 from ...common.state import ExecutionControl, RunInputs
 from ...common.tool import AgentTool

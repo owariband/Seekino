@@ -23,11 +23,13 @@ from engine.parsev1.analysis_windows import (
     plan_analysis_windows,
 )
 from engine.parsev1.schemas import AnalysisWindow, VideoParseResult
-from engine.retrieval.video_retrieval import (
+from engine.rag.retrieval.fusion import (
     RankedVideoChunk,
+    weighted_reciprocal_rank_fusion,
+)
+from engine.parsev1.retrieval import (
     VideoChunkRetrievalDocument,
     build_video_chunk_retrieval_documents,
-    weighted_reciprocal_rank_fusion,
 )
 
 from .elasticsearch_index import ElasticsearchVideoChunkIndex

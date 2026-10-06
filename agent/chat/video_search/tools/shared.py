@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from engine.retrieval.contracts import VideoChunkSearchHit
+from engine.rag.contracts import VideoChunkSearchHit
 
 from ...common.errors import AgentModelInvocationError, AgentToolFeedbackError
 from ...common.state import ExecutionControl

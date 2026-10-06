@@ -30,12 +30,14 @@ from ..model.video import VideoChunkRecord
 from ..repository.video_parse import (
     RUNTIME_DETAIL_KEY,
     _REFINE_SUBMITTED,
+    _aggregate_video_task,
     _ensure_runtime,
     _error_detail,
     _execution_config,
     _indexed_versions,
     _positive_int,
     _submitted_intervals_by_member,
+    _video_failure_status,
 )
 from ..utils.time import datetime_to_unix_time_ms, now_utc
 from ..utils.validation import require_nonempty_text
@@ -112,7 +114,7 @@ class MySqlVideoParseQueue:
                         )
                         .with_for_update(skip_locked=True)
                     )
-                    if task is None or not _accepted(task):
+                    if task is None or not _accepted(task) or _video_failure_status(task):
                         continue
                     if task.status == VideoParseTaskStatus.PENDING.value:
                         task.status = VideoParseTaskStatus.PREPARING.value
@@ -229,6 +231,7 @@ class MySqlVideoParseQueue:
                         or parent.status != VideoParseTaskStatus.PARSING.value
                         or parent.is_deleted
                         or not _accepted(parent)
+                        or _video_failure_status(parent) is not None
                         or not _dispatch_requested(child)
                         or not _chunk_claim_allowed(
                             session, parent, chunk.sequence_no
@@ -279,7 +282,9 @@ class MySqlVideoParseQueue:
                 .order_by(VideoChunkRecord.sequence_no)
             ))
             terminal = None
-            if any(task.status == ChunkParseTaskStatus.FAILED.value for task, _chunk in rows):
+            if _video_failure_status(parent) is not None:
+                terminal = "VideoParseTask is draining after a terminal failure"
+            elif any(task.status == ChunkParseTaskStatus.FAILED.value for task, _chunk in rows):
                 terminal = "a Chunk Understanding task exhausted its retry budget"
             entries = tuple(
                 ChunkScheduleEntryState(
@@ -476,6 +481,7 @@ class MySqlVideoParseQueue:
                         }
                         or parent.is_deleted
                         or not _accepted(parent)
+                        or _video_failure_status(parent) is not None
                     ):
                         continue
                     if phase == IntervalParseTaskStatus.REFINING.value:
@@ -815,22 +821,25 @@ class MySqlVideoParseQueue:
                 return False
             exhausted = task.attempt_count >= task.max_attempts
             current_status = task.status
-            if exhausted:
-                task.status = (
-                    VideoParseTaskStatus.INDEXING_FAILED.value
-                    if current_status == VideoParseTaskStatus.INDEXING.value
-                    else VideoParseTaskStatus.PARSING_FAILED.value
-                )
-            elif current_status == VideoParseTaskStatus.PREPARING.value:
+            if not exhausted and current_status == VideoParseTaskStatus.PREPARING.value:
                 # Retry preparation at its idempotent entry point.
                 task.status = VideoParseTaskStatus.PREPARING.value
             task.next_execute_time = retry_at
             task.lease_owner = None
             task.lease_expire_time = None
             task.heartbeat_time = None
-            task.finish_time = failed_at if exhausted else None
+            task.finish_time = None
             task.last_error = _error_detail(error)
             task.update_time = failed_at
+            if exhausted or _video_failure_status(task) is not None:
+                _aggregate_video_task(
+                    session, task.id, failed_at, release_terminal_lease=True,
+                    failure_status=(
+                        VideoParseTaskStatus.INDEXING_FAILED.value
+                        if current_status == VideoParseTaskStatus.INDEXING.value
+                        else VideoParseTaskStatus.PARSING_FAILED.value
+                    ) if exhausted else None,
+                )
             return True
 
     def retry_chunk(
@@ -868,6 +877,8 @@ class MySqlVideoParseQueue:
             task.finish_time = failed_at if exhausted else None
             task.last_error = _error_detail(error)
             task.update_time = failed_at
+            if exhausted:
+                _aggregate_video_task(session, task.video_parse_task_id, failed_at)
             return True
 
     def retry_interval(
@@ -911,6 +922,8 @@ class MySqlVideoParseQueue:
             interval.finish_time = failed_at if exhausted else None
             interval.last_error = _error_detail(error)
             interval.update_time = failed_at
+            if exhausted:
+                _aggregate_video_task(session, interval.video_parse_task_id, failed_at)
             return True
 
     def release_interval_wait(
@@ -954,7 +967,7 @@ class MySqlVideoParseQueue:
         """Reap every lease family without one family consuming another's limit."""
 
         reaped_at = now if now is not None else now_utc()
-        return sum((
+        reaped = sum((
             self.reap_expired_videos(
                 retry_delay=retry_delay, now=reaped_at, limit=limit
             ),
@@ -965,6 +978,46 @@ class MySqlVideoParseQueue:
                 retry_delay=retry_delay, now=reaped_at, limit=limit
             ),
         ))
+        self._finalize_draining_videos(now=reaped_at, limit=limit)
+        return reaped
+
+    def _finalize_draining_videos(self, *, now: datetime, limit: int) -> None:
+        with self._session_factory() as session:
+            candidate_ids = list(session.scalars(
+                select(VideoParseTaskRecord.id).where(
+                    VideoParseTaskRecord.status.in_([
+                        VideoParseTaskStatus.PARSING.value,
+                        VideoParseTaskStatus.INDEXING.value,
+                    ]),
+                    VideoParseTaskRecord.lease_owner.is_(None),
+                    VideoParseTaskRecord.is_deleted.is_(False),
+                    VideoParseTaskRecord.detail[RUNTIME_DETAIL_KEY]["failure_status"]
+                    .as_string().in_([
+                        VideoParseTaskStatus.PARSING_FAILED.value,
+                        VideoParseTaskStatus.INDEXING_FAILED.value,
+                    ]),
+                ).order_by(VideoParseTaskRecord.update_time, VideoParseTaskRecord.id)
+                .limit(limit)
+            ))
+        for task_id in candidate_ids:
+            # No earlier snapshot: parent admission is serialized before the
+            # first child read. Never take child locks while holding parent.
+            with self._session_factory.begin() as session:
+                task = session.scalar(
+                    select(VideoParseTaskRecord).where(
+                        VideoParseTaskRecord.id == task_id,
+                        VideoParseTaskRecord.lease_owner.is_(None),
+                        VideoParseTaskRecord.is_deleted.is_(False),
+                        VideoParseTaskRecord.status.in_([
+                            VideoParseTaskStatus.PARSING.value,
+                            VideoParseTaskStatus.INDEXING.value,
+                        ]),
+                    ).with_for_update(skip_locked=True)
+                )
+                if task is not None and _video_failure_status(task) is not None:
+                    _aggregate_video_task(
+                        session, task.id, now, release_terminal_lease=True
+                    )
 
     def reap_expired_videos(
         self,
@@ -1016,20 +1069,23 @@ class MySqlVideoParseQueue:
                     continue
                 exhausted = task.attempt_count >= task.max_attempts
                 current_status = task.status
-                if exhausted:
-                    task.status = (
-                        VideoParseTaskStatus.INDEXING_FAILED.value
-                        if current_status == VideoParseTaskStatus.INDEXING.value
-                        else VideoParseTaskStatus.PARSING_FAILED.value
-                    )
                 task.next_execute_time = retry_at
                 task.lease_owner = None
                 task.lease_expire_time = None
                 task.heartbeat_time = None
-                task.finish_time = reaped_at if exhausted else None
+                task.finish_time = None
                 task.last_error = _error_detail("worker lease expired")
                 task.processing_timing_complete = False
                 task.update_time = reaped_at
+                if exhausted or _video_failure_status(task) is not None:
+                    _aggregate_video_task(
+                        session, task.id, reaped_at, release_terminal_lease=True,
+                        failure_status=(
+                            VideoParseTaskStatus.INDEXING_FAILED.value
+                            if current_status == VideoParseTaskStatus.INDEXING.value
+                            else VideoParseTaskStatus.PARSING_FAILED.value
+                        ) if exhausted else None,
+                    )
                 changed += 1
         return changed
 
@@ -1099,6 +1155,8 @@ class MySqlVideoParseQueue:
                 task.finish_time = reaped_at if exhausted else None
                 task.last_error = _error_detail("worker lease expired")
                 task.update_time = reaped_at
+                if exhausted:
+                    _aggregate_video_task(session, task.video_parse_task_id, reaped_at)
                 changed += 1
         return changed
 
@@ -1181,6 +1239,8 @@ class MySqlVideoParseQueue:
                 interval.finish_time = reaped_at if exhausted else None
                 interval.last_error = _error_detail("worker lease expired")
                 interval.update_time = reaped_at
+                if exhausted:
+                    _aggregate_video_task(session, interval.video_parse_task_id, reaped_at)
                 changed += 1
         return changed
 
@@ -1214,6 +1274,8 @@ def _chunk_dispatch_allowed(
     candidate_sequence: int,
     now: datetime,
 ) -> bool:
+    if _video_failure_status(parent) is not None:
+        return False
     batch_size = _positive_int(parent.parse_config.get("batch_max_size"), "batch_max_size")
     active_count = int(session.scalar(
         select(func.count(ChunkParseTaskRecord.id))

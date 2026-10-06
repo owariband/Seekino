@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from agent.video_parse_v2 import ParseAgent
-from agent.video_parse_v2.chunk_interval_listener import ChunkIntervalListener
-from agent.video_parse_v2.chunk_scheduler import ChunkScheduler
-from agent.video_parse_v2.chunk_understanding import ChunkUnderstandingWorkflow
+from agent.video_parse_v2.listener import ChunkIntervalListener
+from agent.video_parse_v2.scheduler import ChunkScheduler
+from agent.video_parse_v2.understanding import ChunkUnderstandingWorkflow
 from agent.video_parse_v2.input import ParseInput
-from agent.video_parse_v2.precompact import PrefixContextAgent
+from agent.video_parse_v2.prefix import PrefixContextAgent
 from agent.video_parse_v2.refine import IntervalRefine
-from agent.video_parse_v2.runtime import (
+from agent.video_parse_v2.host import (
     ChunkExecution,
     ChunkScheduleEntry,
     ChunkScheduleSnapshot,

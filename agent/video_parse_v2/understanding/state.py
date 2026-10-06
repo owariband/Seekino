@@ -5,7 +5,7 @@ from typing import NotRequired, TypedDict
 from engine.parsev2.schemas import VideoParseResult
 
 from ..input import ParseInput
-from ..runtime import ChunkExecution
+from ..host import ChunkExecution
 
 
 class ChunkState(TypedDict):

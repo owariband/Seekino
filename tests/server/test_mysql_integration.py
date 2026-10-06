@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
-from threading import Barrier, Event
+from threading import Barrier, Event, current_thread
 from uuid import uuid4
 
 import pytest
@@ -26,7 +27,14 @@ from server.model.video import (
     VideoChunkEmbeddingRecord,
     VideoChunkRecord,
 )
-from server.model.job import SeriesParseJobRecord, VideoParseTaskRecord
+from server.model.job import (
+    ChunkParseContentRecord,
+    ChunkParseTaskRecord,
+    IntervalParseContentRecord,
+    IntervalParseTaskRecord,
+    SeriesParseJobRecord,
+    VideoParseTaskRecord,
+)
 from server.model.agent import AgentConversationRecord, AgentMessageRecord
 from server.model.parse_usage import ParseModelCallRecord, ParseUsageAttemptRecord
 from server.model.upload import (
@@ -35,6 +43,7 @@ from server.model.upload import (
     UploadSessionStatus,
 )
 from server.mq.mysql_queue import MySqlParseJobQueue
+from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.utils.time import (
     now_unix_time_ms,
     timedelta_to_ms,
@@ -44,10 +53,14 @@ from server.mq.contracts import ParseJobLeaseLostError
 from server.repository.job import ParseJobRepository
 from server.repository.agent import AgentRepository
 from server.repository.index_sync import IndexSyncRepository
-from server.model.dto.jobDTO import VideoChunkCheckpointState
+from server.model.dto.jobDTO import (
+    ChunkParseLease, IntervalParseLease, PrefixParseLease, VideoChunkCheckpointState,
+)
+from server.config.parse_profile import default_video_parse_v2_config
 from server.repository.library import LibraryRepository
 from server.repository.upload import UploadConflictError, UploadRepository, UploadStateError
 from server.repository.video import VideoRepository
+from server.repository.video_parse import VideoParseLeaseLostError, VideoParseRepository
 from server.service.library import LibraryService
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.service.qdrant_mutation_lock import (
@@ -342,6 +355,620 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
                 delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id)
             )
         engine.dispose()
+
+
+@pytest.fixture
+def mysql_v2_series():
+    if not TEST_DATABASE_URL:
+        pytest.skip("ANIVAG_TEST_DATABASE_URL is not configured")
+    engine = create_database_engine(
+        TEST_DATABASE_URL, environment=DatabaseEnvironment.TEST,
+    )
+    assert engine.dialect.name == "mysql", "V2 lock evidence requires real MySQL"
+    create_schema(engine)
+
+    def bounded_lock_wait(dbapi_connection, _record, _proxy):
+        with dbapi_connection.cursor() as cursor:
+            cursor.execute("SET SESSION innodb_lock_wait_timeout = 3")
+
+    event.listen(engine, "checkout", bounded_lock_wait)
+    factory = create_session_factory(engine)
+    now = unix_time_ms_to_datetime(now_unix_time_ms())
+    series_id = str(uuid4())
+    workspace_id = f"mysql-v2-{uuid4()}"
+    config = default_video_parse_v2_config().model_dump(mode="json")
+    config.update({
+        "chunk_duration": 10,
+        "interval_duration": 10,
+        "compact_enabled": True,
+        "prefix_context": {
+            "series_compact_max_chars": 1000,
+            "video_compact_max_chars": 1000,
+            "max_tool_calls": 2,
+        },
+    })
+    config["models"]["prefix_context"] = deepcopy(config["models"]["understanding"])
+    episodes = []
+    try:
+        with factory.begin() as session:
+            session.add(SeriesRecord(
+                series_id=series_id, workspace_id=workspace_id,
+                name=f"V2 lock test {series_id}", status="READY",
+                character_bible=[],
+            ))
+            session.flush()
+            for order in range(1, 4):
+                ids = {name: str(uuid4()) for name in (
+                    "upload_id", "video_id", "task_id", "chunk_id",
+                    "chunk_task_id", "interval_id",
+                )}
+                episodes.append(ids)
+                session.add(VideoRecord(
+                    video_id=ids["video_id"], series_id=series_id,
+                    episode_order=order, upload_sequence=order,
+                    original_filename=f"episode-{order}.mp4",
+                    original_source_uri=f"artifact://test/{order}.mp4",
+                    content_hash=str(order) * 64, total_bytes=4, duration_seconds=10,
+                    upload_status="COMPLETED", parse_status="COMPLETE",
+                    upload_progress=100, parse_progress=100,
+                ))
+                session.flush()
+                session.add(VideoParseTaskRecord(
+                    id=ids["task_id"], video_id=ids["video_id"],
+                    pipeline_version="video-parse-v2", status="COMPLETE",
+                    parse_config=deepcopy(config), chunk_count=1, version=1,
+                    next_execute_time=now, max_attempts=3, lease_version=0,
+                    is_test=True, is_deleted=False,
+                    detail={"_worker_runtime_v2": {
+                        "accepted": True, "execution_mode": "v2",
+                        "unrelated": {"preserved": True},
+                        "prefix": {
+                            "next_chunk_sequence_no": 1,
+                            "lease_owner": None, "lease_version": order,
+                            "lease_expire_time_ms": None, "execution_task_id": None,
+                            "retry_count": 0, "next_execute_time_ms": 0,
+                            "video_prefix_compact": f"video-{order}",
+                            "series_prefix_compact": f"series-{order}",
+                        },
+                    }},
+                    create_time=now, update_time=now,
+                ))
+                session.flush()
+                session.add(VideoChunkRecord(
+                    video_chunk_id=ids["chunk_id"], video_id=ids["video_id"],
+                    sequence_no=0, start_seconds=0, end_seconds=10,
+                    analysis_window_start_seconds=0, analysis_window_end_seconds=10,
+                    chunk_media_ref="artifact://test/chunk.mp4",
+                    analysis_window_media_ref="artifact://test/window.mp4",
+                    transcript=[], keyframe_uris=[],
+                ))
+                session.flush()
+                session.add(ChunkParseTaskRecord(
+                    id=ids["chunk_task_id"], video_parse_task_id=ids["task_id"],
+                    video_chunk_id=ids["chunk_id"], status="COMPLETE",
+                    next_execute_time=now, lease_version=1,
+                ))
+                session.flush()
+                session.add(ChunkParseContentRecord(
+                    id=str(uuid4()), chunk_parse_task_id=ids["chunk_task_id"],
+                    content={"persons": ["retained"], "timeline": []}, version=1,
+                    detail={"scope": [0], "compact": "retained child"},
+                ))
+                session.add(IntervalParseTaskRecord(
+                    id=ids["interval_id"], chunk_parse_task_id=ids["chunk_task_id"],
+                    video_parse_task_id=ids["task_id"],
+                    chunk_parse_task_ids=[ids["chunk_task_id"]],
+                    start_sequence_no=0, chunk_count=1, ready_mask=1,
+                    status="INDEXING", next_execute_time=now, lease_version=1,
+                ))
+                session.flush()
+                session.add(IntervalParseContentRecord(
+                    interval_parse_task_id=ids["interval_id"], content={"retained": True},
+                ))
+                session.add(UploadSessionRecord(
+                    upload_session_id=ids["upload_id"], workspace_id=workspace_id,
+                    series_id=series_id, episode_order=order, upload_sequence=order,
+                    original_filename=f"episode-{order}.mp4", media_type="video/mp4",
+                    total_size_bytes=4, preferred_segment_size_bytes=4, total_segments=1,
+                    status="COMPLETED", idempotency_key=str(uuid4()),
+                    expires_at=now + timedelta(hours=1), completed_at=now,
+                    video_id=ids["video_id"], initial_video_parse_task_id=ids["task_id"],
+                    video_parse_config=deepcopy(config),
+                ))
+        yield engine, factory, series_id, workspace_id, now, episodes
+    finally:
+        event.remove(engine, "checkout", bounded_lock_wait)
+        with factory.begin() as session:
+            session.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series_id))
+        engine.dispose()
+
+
+@pytest.mark.parametrize("takeover", [False, True], ids=["reparse", "pending-takeover"])
+@pytest.mark.parametrize("active", [True, False], ids=["active-prefix", "expired-prefix"])
+def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
+    mysql_v2_series, takeover, active,
+):
+    engine, factory, _series_id, workspace_id, now, episodes = mysql_v2_series
+    first, second, third = episodes
+    expires = now + (timedelta(minutes=5) if active else -timedelta(seconds=1))
+    with factory.begin() as session:
+        parent = session.get(VideoParseTaskRecord, first["task_id"])
+        if takeover:
+            parent.status = "PENDING"
+            detail = deepcopy(parent.detail)
+            detail["_worker_runtime_v2"]["accepted"] = False
+            parent.detail = detail
+        later = session.get(VideoParseTaskRecord, second["task_id"])
+        detail = deepcopy(later.detail)
+        detail["_worker_runtime_v2"]["prefix"].update({
+            "next_chunk_sequence_no": 0, "lease_owner": "old-prefix",
+            "lease_expire_time_ms": int(expires.timestamp() * 1000),
+            "execution_task_id": second["chunk_task_id"],
+        })
+        later.detail = detail
+        session.flush()
+        before = {
+            item["task_id"]: deepcopy(session.get(VideoParseTaskRecord, item["task_id"]).detail)
+            for item in episodes
+        }
+
+    locked, requested, observed, release = Event(), Event(), Event(), Event()
+    connections = {}
+
+    def watch_reparse(connection, _cursor, statement, parameters, _context, _many):
+        sql = " ".join(statement.lower().replace("`", "").split())
+        values = parameters.values() if isinstance(parameters, dict) else (parameters or ())
+        if (
+            current_thread().name.startswith("mysql-reparse-contender")
+            and "from video_parse_task" in sql and "for update" in sql
+            and second["task_id"] in values
+        ):
+            connections["reparse"] = id(connection.connection.driver_connection)
+            requested.set()
+
+    def hold_later_parent():
+        with factory.begin() as session:
+            session.scalar(select(VideoParseTaskRecord).where(
+                VideoParseTaskRecord.id == second["task_id"],
+            ).with_for_update())
+            connections["holder"] = id(session.connection().connection.driver_connection)
+            locked.set()
+            assert requested.wait(5), "reparse never requested the locked suffix parent"
+            visible = list(session.scalars(select(VideoParseTaskRecord).where(
+                VideoParseTaskRecord.video_id == first["video_id"],
+            )))
+            assert [(task.id, task.version) for task in visible] == [(first["task_id"], 1)]
+            assert visible[0].detail == before[first["task_id"]]
+            observed.set()
+            assert release.wait(5), "suffix lock was not released by the test"
+
+    event.listen(engine, "before_cursor_execute", watch_reparse)
+    try:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="mysql-prefix-holder") as holders, \
+                ThreadPoolExecutor(max_workers=1, thread_name_prefix="mysql-reparse-contender") as contenders:
+            holder = holders.submit(hold_later_parent)
+            try:
+                assert locked.wait(5), "holder did not acquire the later parent lock"
+                future = contenders.submit(
+                    UploadRepository(factory).reparse, first["upload_id"],
+                    workspace_id=workspace_id, expected_job_version=1,
+                    execution_mode="v2", now=now,
+                )
+                assert observed.wait(5), "uncommitted entry changes were not observed"
+            finally:
+                release.set()
+            holder.result(timeout=5)
+            assert connections["holder"] != connections["reparse"]
+            if active:
+                with pytest.raises(UploadStateError, match="active lease"):
+                    future.result(timeout=5)
+            else:
+                result = future.result(timeout=5)
+    finally:
+        release.set()
+        event.remove(engine, "before_cursor_execute", watch_reparse)
+
+    with factory() as session:
+        all_tasks = list(session.scalars(select(VideoParseTaskRecord).where(
+            VideoParseTaskRecord.video_id.in_([item["video_id"] for item in episodes]),
+        )))
+        assert len(all_tasks) == (3 if active or takeover else 4)
+        if active:
+            assert {task.id: task.detail for task in all_tasks} == before
+            assert session.get(VideoParseTaskRecord, first["task_id"]).status == (
+                "PENDING" if takeover else "COMPLETE"
+            )
+        else:
+            assert result.version == (1 if takeover else 2)
+            invalidated_ids = [result.video_parse_task_id, second["task_id"], third["task_id"]]
+            for task_id in invalidated_ids:
+                runtime = session.get(VideoParseTaskRecord, task_id).detail["_worker_runtime_v2"]
+                prefix = runtime["prefix"]
+                assert prefix["next_chunk_sequence_no"] == 0
+                assert prefix["series_prefix_compact"] == prefix["video_prefix_compact"] == ""
+                assert prefix["lease_owner"] is prefix["execution_task_id"] is None
+                assert prefix["lease_version"] > before.get(task_id, {}).get(
+                    "_worker_runtime_v2", {},
+                ).get("prefix", {}).get("lease_version", 0)
+            if takeover:
+                assert result.video_parse_task_id == first["task_id"]
+                runtime = session.get(VideoParseTaskRecord, first["task_id"]).detail["_worker_runtime_v2"]
+                assert runtime["accepted"] is True
+                assert runtime["unrelated"] == {"preserved": True}
+            else:
+                assert result.video_parse_task_id != first["task_id"]
+                assert session.get(VideoParseTaskRecord, first["task_id"]).detail == before[first["task_id"]]
+        for item in episodes:
+            content = session.scalar(select(ChunkParseContentRecord).where(
+                ChunkParseContentRecord.chunk_parse_task_id == item["chunk_task_id"],
+            ))
+            assert content.content == {"persons": ["retained"], "timeline": []}
+            assert content.detail == {"scope": [0], "compact": "retained child"}
+
+    if not active:
+        stale = PrefixParseLease(
+            video_parse_task_id=second["task_id"], chunk_parse_task_id=second["chunk_task_id"],
+            video_chunk_id=second["chunk_id"], sequence_no=0, worker_id="old-prefix",
+            lease_version=2, lease_expire_time=expires, retry_count=0,
+            content_version=1, content={"persons": ["retained"], "timeline": []},
+            content_detail={"scope": [0], "compact": "retained child"},
+            series_prefix_compact="series-2", video_prefix_compact="video-2",
+        )
+        repository = VideoParseRepository(factory)
+        assert not repository.heartbeat_prefix(stale, lease_duration=timedelta(minutes=1), now=now)
+        assert not repository.retry_prefix(stale, error="late", retry_at=now, now=now)
+        with pytest.raises(VideoParseLeaseLostError):
+            repository.commit_prefix(
+                stale, content_updates={"persons": ["late"]},
+                video_prefix_compact="late", now=now,
+            )
+
+
+@pytest.mark.parametrize("kind", ["chunk", "refine", "index"])
+def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series, kind):
+    engine, factory, _series_id, workspace_id, now, episodes = mysql_v2_series
+    target = episodes[0]
+    queue = MySqlVideoParseQueue(factory)
+    table = "chunk_parse_task" if kind == "chunk" else "interval_parse_task"
+    with factory.begin() as session:
+        parent = session.get(VideoParseTaskRecord, target["task_id"])
+        parent.status = "INDEXING" if kind == "index" else "PARSING"
+        chunk = session.get(ChunkParseTaskRecord, target["chunk_task_id"])
+        interval = session.get(IntervalParseTaskRecord, target["interval_id"])
+        if kind == "chunk":
+            chunk.status = "QUEUED"
+            chunk.detail = {"dispatch_requested": True}
+            interval.status = "WAITING"
+            interval.ready_mask = 0
+        elif kind == "refine":
+            interval.status = "WAITING"
+        if kind != "index":
+            session.execute(delete(IntervalParseContentRecord).where(
+                IntervalParseContentRecord.interval_parse_task_id == target["interval_id"],
+            ))
+
+    candidates_read, resume_claim = Event(), Event()
+    retry_locked, release_retry, claim_attempted = Event(), Event(), Event()
+    connections = {}
+
+    def after_query(connection, _cursor, statement, _parameters, _context, _many):
+        sql = " ".join(statement.lower().replace("`", "").split())
+        role = current_thread().name
+        if f"from {table}" not in sql:
+            return
+        if role.startswith("mysql-claim-worker") and "limit" in sql and "for update" not in sql:
+            if not candidates_read.is_set():
+                connections["claim"] = id(connection.connection.driver_connection)
+                candidates_read.set()
+                assert resume_claim.wait(5), "claim advisory read was not released"
+        elif role.startswith("mysql-manual-retry") and "for update" in sql:
+            if not retry_locked.is_set():
+                connections["retry"] = id(connection.connection.driver_connection)
+                retry_locked.set()
+                assert release_retry.wait(5), "retry child locks were not released"
+
+    def before_query(_connection, _cursor, statement, _parameters, _context, _many):
+        sql = " ".join(statement.lower().replace("`", "").split())
+        if (
+            current_thread().name.startswith("mysql-claim-worker")
+            and f"from {table}" in sql and "for update" in sql
+        ):
+            claim_attempted.set()
+
+    claim = {
+        "chunk": queue.claim_chunk,
+        "refine": queue.claim_interval_refine,
+        "index": queue.claim_interval_index,
+    }[kind]
+    event.listen(engine, "after_cursor_execute", after_query)
+    event.listen(engine, "before_cursor_execute", before_query)
+    try:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="mysql-claim-worker") as workers, \
+                ThreadPoolExecutor(max_workers=1, thread_name_prefix="mysql-manual-retry") as retries:
+            worker = workers.submit(
+                claim, "claim-worker", lease_duration=timedelta(minutes=5),
+                video_parse_task_id=target["task_id"], now=now,
+            )
+            try:
+                assert candidates_read.wait(5), "worker never read an eligible candidate"
+                # Fail the parent after the advisory read. Keep the child runnable
+                # so rejection below requires the actual held child lock.
+                with factory.begin() as session:
+                    parent = session.get(VideoParseTaskRecord, target["task_id"])
+                    parent.status = "INDEXING_FAILED" if kind == "index" else "PARSING_FAILED"
+                retry = retries.submit(
+                    UploadRepository(factory).retry_parse, target["upload_id"],
+                    workspace_id=workspace_id, expected_job_version=1, now=now,
+                )
+                assert retry_locked.wait(5), "retry never acquired the candidate child lock"
+                resume_claim.set()
+                assert worker.result(timeout=5) is None
+                assert claim_attempted.is_set(), "worker never attempted the locked candidate"
+                assert connections["claim"] != connections["retry"]
+            finally:
+                resume_claim.set()
+                release_retry.set()
+            restored = retry.result(timeout=5)
+        assert restored.video_parse_task_id == target["task_id"]
+        assert restored.status == ("INDEXING" if kind == "index" else "PARSING")
+        claimed = claim(
+            "after-retry", lease_duration=timedelta(minutes=5),
+            video_parse_task_id=target["task_id"], now=now,
+        )
+        assert claimed is not None and claimed.video_parse_task_id == target["task_id"]
+        assert claimed.lease_version == 2
+    finally:
+        resume_claim.set()
+        release_retry.set()
+        event.remove(engine, "after_cursor_execute", after_query)
+        event.remove(engine, "before_cursor_execute", before_query)
+
+
+@pytest.mark.parametrize("kind", ["chunk", "refine"])
+def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series, kind):
+    engine, factory, _series_id, workspace_id, now, episodes = mysql_v2_series
+    target = episodes[0]
+    expires = now + timedelta(minutes=5)
+    with factory.begin() as session:
+        session.get(VideoParseTaskRecord, target["task_id"]).status = "PARSING_FAILED"
+        chunk = session.get(ChunkParseTaskRecord, target["chunk_task_id"])
+        interval = session.get(IntervalParseTaskRecord, target["interval_id"])
+        active = chunk if kind == "chunk" else interval
+        active.status = "UNDERSTANDING" if kind == "chunk" else "REFINING"
+        active.lease_owner = "commit-worker"
+        active.lease_expire_time = expires
+        if kind == "chunk":
+            interval.status = "WAITING"
+            interval.ready_mask = 0
+        session.execute(delete(IntervalParseContentRecord).where(
+            IntervalParseContentRecord.interval_parse_task_id == target["interval_id"],
+        ))
+
+    repository = VideoParseRepository(factory)
+    worker_locked, resume_worker = Event(), Event()
+    retry_chunk_locked = Event()
+    connections = {}
+
+    def before_query(_connection, _cursor, statement, _parameters, _context, _many):
+        sql = " ".join(statement.lower().replace("`", "").split())
+        if (
+            current_thread().name.startswith("mysql-commit-retry")
+            and "from interval_parse_task" in sql and "for update" in sql
+            and not retry_chunk_locked.is_set()
+        ):
+            # An Interval-first retry will wait for the Worker without owning
+            # Chunk locks, so let the Worker finish its actual commit.
+            resume_worker.set()
+
+    def after_query(connection, _cursor, statement, _parameters, _context, _many):
+        sql = " ".join(statement.lower().replace("`", "").split())
+        if "for update" not in sql:
+            return
+        role = current_thread().name
+        if role.startswith("mysql-commit-worker") and "from interval_parse_task" in sql:
+            if not worker_locked.is_set():
+                connections["worker"] = id(connection.connection.driver_connection)
+                worker_locked.set()
+                assert resume_worker.wait(5), "retry did not reach a competing child lock"
+        elif role.startswith("mysql-commit-retry") and "from chunk_parse_task" in sql:
+            connections["retry"] = id(connection.connection.driver_connection)
+            retry_chunk_locked.set()
+            # A Chunk-first retry now owns the opposing lock. Continue both
+            # production methods and require safety, without hiding deadlocks.
+            resume_worker.set()
+
+    def commit():
+        if kind == "chunk":
+            lease = ChunkParseLease(
+                chunk_parse_task_id=target["chunk_task_id"], video_parse_task_id=target["task_id"],
+                video_chunk_id=target["chunk_id"], worker_id="commit-worker", lease_version=1,
+                lease_expire_time=expires, retry_count=0, max_retry_count=2,
+            )
+            return repository.commit_chunk_result(
+                lease, content={"persons": ["worker"], "timeline": []}, now=now,
+            )
+        lease = IntervalParseLease(
+            interval_parse_task_id=target["interval_id"], video_parse_task_id=target["task_id"],
+            chunk_parse_task_ids=(target["chunk_task_id"],), start_sequence_no=0, chunk_count=1,
+            phase="REFINING", worker_id="commit-worker", lease_version=1,
+            lease_expire_time=expires, retry_count=0, max_retry_count=2,
+        )
+        return repository.commit_interval_refinement(
+            lease, interval_content={"refined": True},
+            member_updates={target["chunk_task_id"]: {"persons": ["worker"]}}, now=now,
+        )
+
+    event.listen(engine, "before_cursor_execute", before_query)
+    event.listen(engine, "after_cursor_execute", after_query)
+    try:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="mysql-commit-worker") as workers, \
+                ThreadPoolExecutor(max_workers=1, thread_name_prefix="mysql-commit-retry") as retries:
+            worker = workers.submit(commit)
+            try:
+                assert worker_locked.wait(5), "worker did not acquire its Interval locks"
+                retry = retries.submit(
+                    UploadRepository(factory).retry_parse, target["upload_id"],
+                    workspace_id=workspace_id, expected_job_version=1, now=now,
+                )
+                worker.result(timeout=8)
+                restored = retry.result(timeout=8)
+            finally:
+                resume_worker.set()
+        assert connections["worker"] != connections["retry"]
+        assert restored.video_parse_task_id == target["task_id"]
+        assert restored.status == ("PARSING" if kind == "chunk" else "INDEXING")
+        with factory() as session:
+            content = session.scalar(select(ChunkParseContentRecord).where(
+                ChunkParseContentRecord.chunk_parse_task_id == target["chunk_task_id"],
+            ))
+            assert content.content["persons"] == ["worker"]
+            assert content.version == (1 if kind == "chunk" else 2)
+            assert session.get(ChunkParseTaskRecord, target["chunk_task_id"]).status == "COMPLETE"
+    finally:
+        resume_worker.set()
+        event.remove(engine, "before_cursor_execute", before_query)
+        event.remove(engine, "after_cursor_execute", after_query)
+
+
+@pytest.mark.parametrize("kind", ["chunk", "refine", "index"])
+@pytest.mark.parametrize("expired", [False, True], ids=["live-lease", "expired-owner"])
+def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
+    mysql_v2_series, kind, expired,
+):
+    engine, factory, _series_id, _workspace_id, now, episodes = mysql_v2_series
+    target = episodes[0]
+    expires = now + timedelta(minutes=5)
+    checked_at = now + (timedelta(minutes=6) if expired else timedelta(seconds=2))
+    failure = "INDEXING_FAILED" if kind == "index" else "PARSING_FAILED"
+    running = "INDEXING" if kind == "index" else "PARSING"
+    with factory.begin() as session:
+        parent = session.get(VideoParseTaskRecord, target["task_id"])
+        parent.status = running
+        detail = deepcopy(parent.detail)
+        detail["_worker_runtime_v2"]["failure_status"] = failure
+        parent.detail = detail
+        chunk = session.get(ChunkParseTaskRecord, target["chunk_task_id"])
+        interval = session.get(IntervalParseTaskRecord, target["interval_id"])
+        active = chunk if kind == "chunk" else interval
+        active.status = {
+            "chunk": "UNDERSTANDING", "refine": "REFINING", "index": "INDEXING",
+        }[kind]
+        active.lease_owner = "draining-worker"
+        active.lease_expire_time = expires
+        if kind == "chunk":
+            interval.status = "WAITING"
+            interval.ready_mask = 0
+        if kind != "index":
+            session.execute(delete(IntervalParseContentRecord).where(
+                IntervalParseContentRecord.interval_parse_task_id == target["interval_id"],
+            ))
+
+    queue, repository = MySqlVideoParseQueue(factory), VideoParseRepository(factory)
+    update_pending, release_commit = Event(), Event()
+    table = "chunk_parse_task" if kind == "chunk" else "interval_parse_task"
+    connections = {}
+
+    def after_query(connection, _cursor, statement, _parameters, _context, _many):
+        sql = " ".join(statement.lower().replace("`", "").split())
+        role = current_thread().name
+        if role.startswith("mysql-drain-commit") and sql.startswith(f"update {table} "):
+            # The real result commit has cleared the owner inside its SQL
+            # transaction, but neither the result nor that release is visible yet.
+            if not update_pending.is_set():
+                connections["worker"] = id(connection.connection.driver_connection)
+                update_pending.set()
+                assert release_commit.wait(5), "child commit was not released"
+        elif (
+            role.startswith("mysql-drain-publisher")
+            and "from video_parse_task" in sql and "for update" in sql
+        ):
+            connections["publisher"] = id(connection.connection.driver_connection)
+
+    def commit():
+        committed_at = now + timedelta(seconds=1)
+        if kind == "chunk":
+            lease = ChunkParseLease(
+                chunk_parse_task_id=target["chunk_task_id"],
+                video_parse_task_id=target["task_id"], video_chunk_id=target["chunk_id"],
+                worker_id="draining-worker", lease_version=1,
+                lease_expire_time=expires, retry_count=0, max_retry_count=2,
+            )
+            return repository.commit_chunk_result(
+                lease, content={"persons": ["drained"], "timeline": []}, now=committed_at,
+            )
+        lease = IntervalParseLease(
+            interval_parse_task_id=target["interval_id"],
+            video_parse_task_id=target["task_id"],
+            chunk_parse_task_ids=(target["chunk_task_id"],),
+            start_sequence_no=0, chunk_count=1,
+            phase="INDEXING" if kind == "index" else "REFINING",
+            worker_id="draining-worker", lease_version=1,
+            lease_expire_time=expires, retry_count=0, max_retry_count=2,
+        )
+        if kind == "index":
+            return repository.complete_interval_indexing(
+                lease, {target["chunk_task_id"]: 1}, now=committed_at,
+            )
+        return repository.commit_interval_refinement(
+            lease, interval_content={"refined": "drained"},
+            member_updates={target["chunk_task_id"]: {"persons": ["drained"]}},
+            now=committed_at,
+        )
+
+    event.listen(engine, "after_cursor_execute", after_query)
+    try:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="mysql-drain-commit") as workers, \
+                ThreadPoolExecutor(max_workers=1, thread_name_prefix="mysql-drain-publisher") as publishers:
+            worker = workers.submit(commit)
+            try:
+                assert update_pending.wait(5), "result commit never updated its child row"
+                publishers.submit(
+                    queue.reap_expired, retry_delay=timedelta(0), now=checked_at,
+                ).result(timeout=5)
+                assert connections["worker"] != connections["publisher"]
+                assert not worker.done(), "result commit was not held during the drain scan"
+                with factory() as session:
+                    parent = session.get(VideoParseTaskRecord, target["task_id"])
+                    assert parent.status == running and parent.finish_time is None
+                    assert parent.detail["_worker_runtime_v2"]["failure_status"] == failure
+                    active = session.get(
+                        ChunkParseTaskRecord if kind == "chunk" else IntervalParseTaskRecord,
+                        target["chunk_task_id"] if kind == "chunk" else target["interval_id"],
+                    )
+                    assert active.lease_owner == "draining-worker"
+                    if expired:
+                        assert active.lease_expire_time < checked_at
+            finally:
+                release_commit.set()
+            worker.result(timeout=5)
+            publishers.submit(
+                queue.reap_expired, retry_delay=timedelta(0), now=checked_at,
+            ).result(timeout=5)
+
+        with factory() as session:
+            parent = session.get(VideoParseTaskRecord, target["task_id"])
+            assert parent.status == failure and parent.finish_time == checked_at
+            chunk = session.get(ChunkParseTaskRecord, target["chunk_task_id"])
+            interval = session.get(IntervalParseTaskRecord, target["interval_id"])
+            assert chunk.status == "COMPLETE" and chunk.lease_owner is None
+            assert interval.lease_owner is None
+            content = session.scalar(select(ChunkParseContentRecord).where(
+                ChunkParseContentRecord.chunk_parse_task_id == target["chunk_task_id"],
+            ))
+            if kind != "index":
+                assert content.content["persons"] == ["drained"]
+            if kind == "refine":
+                assert content.version == 2
+                assert session.get(IntervalParseContentRecord, target["interval_id"]).content == {
+                    "refined": "drained",
+                }
+            elif kind == "index":
+                assert interval.status == "COMPLETE"
+                detail = session.get(IntervalParseContentRecord, target["interval_id"]).detail
+                assert detail["indexed_versions"] == {target["chunk_task_id"]: 1}
+    finally:
+        release_commit.set()
+        event.remove(engine, "after_cursor_execute", after_query)
 
 
 @pytest.mark.skipif(not TEST_DATABASE_URL, reason="ANIVAG_TEST_DATABASE_URL is not configured")

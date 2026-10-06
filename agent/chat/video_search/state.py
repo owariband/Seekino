@@ -7,8 +7,8 @@ from pydantic import (
     BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator,
 )
 
-from engine.retrieval.contracts import VideoChunkSearchEvidence, VideoChunkSearchResult
-from engine.retrieval.video_retrieval import AGENT_RETRIEVAL_STRATEGY_VERSION
+from engine.rag.contracts import VideoChunkSearchEvidence, VideoChunkSearchResult
+from engine.rag.retrieval.fusion import AGENT_RETRIEVAL_STRATEGY_VERSION
 
 from ..common.errors import AgentContextBudgetError
 from ..common.state import AnswerPhase, ExecutionControl, RunInputs, context_json

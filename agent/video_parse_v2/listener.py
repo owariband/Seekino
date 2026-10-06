@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .runtime import VideoParseRuntime
+from .host import VideoParseRuntime
 
 
 class ChunkIntervalListener:

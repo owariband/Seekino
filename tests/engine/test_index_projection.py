@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-import engine.retrieval.index_projection as projection_module
+import engine.rag.indexing.projection as projection_module
 from engine.parsev2.schemas import VideoParseResult
-from engine.retrieval.index_projection import (
+from engine.rag.indexing.projection import (
     INDEX_PROJECTION_VERSION,
     LEXICAL_FIELD_WEIGHTS,
     LEXICAL_PHRASE_FIELDS,

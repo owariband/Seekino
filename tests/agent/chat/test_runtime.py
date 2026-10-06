@@ -8,7 +8,7 @@ from time import monotonic
 
 import pytest
 
-from engine.retrieval.contracts import (
+from engine.rag.contracts import (
     AgentReply,
     MatchedEvidence,
     SelectionReason,

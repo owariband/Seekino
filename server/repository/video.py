@@ -8,7 +8,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from engine.retrieval.video_retrieval import (
+from engine.rag.nlp.transcript import (
     TranscriptChunkDocument,
     TranscriptCueDocument,
 )

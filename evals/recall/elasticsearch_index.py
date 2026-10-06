@@ -10,10 +10,8 @@ from uuid import NAMESPACE_URL, uuid5
 
 from elasticsearch import Elasticsearch
 
-from engine.retrieval.video_retrieval import (
-    RankedVideoChunk,
-    VideoChunkRetrievalDocument,
-)
+from engine.rag.retrieval.fusion import RankedVideoChunk
+from engine.parsev1.retrieval import VideoChunkRetrievalDocument
 
 _EVAL_INDEX_PATTERN = re.compile(r"^anivag_recall_eval_[a-z0-9][a-z0-9_-]*$")
 _INDEX_PURPOSE = {"anivag_recall_eval": 1}

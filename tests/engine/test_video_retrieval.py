@@ -9,7 +9,7 @@ from engine.parsev1.schemas import (
     VideoChunkParseResult,
     VideoParseResult,
 )
-from engine.retrieval.contracts import (
+from engine.rag.contracts import (
     LexicalMatch,
     SelectionReason,
     VideoChunkCandidate,
@@ -17,21 +17,23 @@ from engine.retrieval.contracts import (
     VideoChunkRetrievalIdentity,
     VideoChunkSearchHit,
 )
-from engine.retrieval.index_projection import LexicalField
-from engine.retrieval.video_retrieval import (
+from engine.rag.indexing.projection import LexicalField
+from engine.rag.retrieval.fusion import (
     RankedVideoChunk,
     RankedVideoChunkMatch,
-    TranscriptChunkDocument,
-    TranscriptCueDocument,
     VersionedRankedVideoChunkMatch,
-    build_video_chunk_retrieval_documents,
     fuse_video_chunk_rankings,
     fuse_versioned_video_chunk_rankings,
     normalize_hybrid_retrieval_weights,
     normalize_video_retrieval_weights,
-    rank_transcript_chunks,
     weighted_reciprocal_rank_fusion,
 )
+from engine.rag.nlp.transcript import (
+    TranscriptChunkDocument,
+    TranscriptCueDocument,
+    rank_transcript_chunks,
+)
+from engine.parsev1.retrieval import build_video_chunk_retrieval_documents
 
 
 def _parse_result() -> VideoParseResult:
@@ -320,6 +322,7 @@ def test_versioned_rrf_preserves_identity_across_three_channels() -> None:
         ("retrieval_contract_id", "retrieval-2"),
         ("semantic_encoder_id", "text:sha256:semantic-2"),
         ("vision_encoder_id", "video:sha256:vision-2"),
+        ("sparse_encoder_id", "sparse:sha256:sparse-2"),
     ],
 )
 def test_versioned_rrf_rejects_cross_channel_identity_changes(
@@ -397,6 +400,118 @@ def test_versioned_rrf_rejects_unversioned_channel_input() -> None:
             channel_top_k=10,
             rrf_k=60,
         )
+
+
+def test_versioned_rrf_fuses_four_channels_and_preserves_sparse_evidence() -> None:
+    identity = _retrieval_identity(sparse_encoder_id="sparse:sha256:sparse-1")
+    first = VersionedRankedVideoChunkMatch(
+        rank=1, video_chunk_id="chunk-a", score=0.9,
+        retrieval_identity=identity,
+    )
+    second = first.model_copy(update={"video_chunk_id": "chunk-b", "rank": 2})
+    reversed_rankings = [
+        second.model_copy(update={"rank": 1}),
+        first.model_copy(update={"rank": 2}),
+    ]
+    fused = fuse_versioned_video_chunk_rankings(
+        [first, second], reversed_rankings,
+        lexical_rankings=[first, second], lexical_weight=0.25,
+        sparse_rankings=reversed_rankings, sparse_weight=0.25,
+        text_weight=0.25, vision_weight=0.25, channel_top_k=2, rrf_k=60,
+    )
+
+    assert [item.video_chunk_id for item in fused] == ["chunk-a", "chunk-b"]
+    assert fused[0].fused_score == pytest.approx(0.5 / 61 + 0.5 / 62)
+    assert (fused[0].sparse_rank, fused[0].sparse_score) == (2, 0.9)
+    assert fused[0].model_dump()["sparse_rank"] == 2
+    assert fused[0].retrieval_identity == identity
+
+
+def test_versioned_rrf_default_wire_and_disabled_sparse_are_compatible() -> None:
+    from pydantic import TypeAdapter
+
+    first = VersionedRankedVideoChunkMatch(
+        rank=1, video_chunk_id="chunk-a", score=0.9,
+        retrieval_identity=_retrieval_identity(),
+    )
+    kwargs = dict(text_weight=1.0, vision_weight=1.0, channel_top_k=2, rrf_k=60)
+    expected = fuse_video_chunk_rankings([first], [first], **kwargs)[0].model_dump()
+    fused = fuse_versioned_video_chunk_rankings(
+        [first], [first],
+        # Disabled Sparse neither accepts a vote nor consumes an identity.
+        sparse_rankings=[RankedVideoChunkMatch(
+            rank=1, video_chunk_id="other-chunk", score=9.0,
+        )],  # type: ignore[list-item]
+        **kwargs,
+    )
+    expected["retrieval_identity"] = first.retrieval_identity.model_dump()
+    assert fused[0].model_dump() == expected
+    assert TypeAdapter(list[type(fused[0])]).dump_python(fused) == [expected]
+    assert "sparse_rank" not in fused[0].model_dump_json()
+
+
+def test_versioned_rrf_accepts_sparse_as_only_enabled_channel() -> None:
+    match = VersionedRankedVideoChunkMatch(
+        rank=1, video_chunk_id="chunk-a", score=1.5,
+        retrieval_identity=_retrieval_identity(sparse_encoder_id="sparse-1"),
+    )
+    fused = fuse_versioned_video_chunk_rankings(
+        [], [], sparse_rankings=[match], sparse_weight=1.0,
+        text_weight=0.0, vision_weight=0.0, channel_top_k=1, rrf_k=60,
+    )
+    assert fused[0].fused_score == 1 / 61
+    assert (fused[0].sparse_rank, fused[0].sparse_score) == (1, 1.5)
+    assert fused[0].text_rank is None
+
+
+@pytest.mark.parametrize("channel", ["text", "sparse"])
+def test_enabled_sparse_rrf_requires_encoder_identity(channel: str) -> None:
+    match = VersionedRankedVideoChunkMatch(
+        rank=1, video_chunk_id="chunk-a", score=1.5,
+        retrieval_identity=_retrieval_identity(),
+    )
+    with pytest.raises(ValueError, match="requires sparse_encoder_id"):
+        fuse_versioned_video_chunk_rankings(
+            [match] if channel == "text" else [], [],
+            sparse_rankings=[match] if channel == "sparse" else [],
+            sparse_weight=1.0, text_weight=1.0, vision_weight=0.0,
+            channel_top_k=2, rrf_k=60,
+        )
+
+
+def test_sparse_rrf_rejects_duplicate_votes_and_cross_channel_identity() -> None:
+    match = VersionedRankedVideoChunkMatch(
+        rank=1, video_chunk_id="chunk-a", score=1.5,
+        retrieval_identity=_retrieval_identity(sparse_encoder_id="sparse-1"),
+    )
+    kwargs = dict(sparse_weight=1.0, text_weight=1.0, vision_weight=0.0,
+                  channel_top_k=2, rrf_k=60)
+    with pytest.raises(ValueError, match="sparse rankings contain duplicate"):
+        fuse_versioned_video_chunk_rankings(
+            [], [], sparse_rankings=[match, match], **kwargs,
+        )
+    changed = match.model_copy(update={
+        "retrieval_identity": _retrieval_identity(sparse_encoder_id="sparse-2"),
+    })
+    with pytest.raises(ValueError, match="identity changed between channels"):
+        fuse_versioned_video_chunk_rankings(
+            [match], [], sparse_rankings=[changed], **kwargs,
+        )
+
+
+@pytest.mark.parametrize("parameter,value", [
+    ("sparse_weight", True), ("sparse_weight", -1),
+    ("sparse_weight", float("inf")), ("sparse_weight", float("nan")),
+    ("channel_top_k", True), ("channel_top_k", 1.5),
+    ("channel_top_k", 0), ("rrf_k", True), ("rrf_k", 1.5), ("rrf_k", 0),
+])
+def test_versioned_rrf_rejects_invalid_sparse_and_budget_parameters(
+    parameter: str, value: object,
+) -> None:
+    kwargs = dict(text_weight=1.0, vision_weight=0.0, channel_top_k=2, rrf_k=60)
+    kwargs[parameter] = value
+    with pytest.raises(ValueError, match=parameter):
+        fuse_versioned_video_chunk_rankings([], [], **kwargs)
 
 
 def test_candidate_keeps_lexical_and_legacy_transcript_ranks_separate() -> None:

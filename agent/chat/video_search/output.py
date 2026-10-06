@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from engine.retrieval.contracts import (
+from engine.rag.contracts import (
     AgentReply,
     VideoChunkSearchHit,
     VideoChunkSearchResult,

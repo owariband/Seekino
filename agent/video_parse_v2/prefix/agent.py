@@ -7,9 +7,9 @@ from engine.parsev2.validation import (
     validate_prefix_refinement,
 )
 
-from ..chunk_interval_listener import ChunkIntervalListener
+from ..listener import ChunkIntervalListener
 from ..prompts import build_prefix_prompt
-from ..runtime import VideoParseRuntime
+from ..host import VideoParseRuntime
 from .context import PrefixContext
 from .tools import build_tools
 

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from gateway.embedding import EmbeddingResult
 
-from engine.retrieval.video_retrieval import (
+from .retrieval import (
     VideoChunkRetrievalDocument,
     build_video_chunk_retrieval_documents,
 )

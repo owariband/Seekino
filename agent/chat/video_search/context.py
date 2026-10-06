@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Any, Literal
 
-from engine.retrieval.contracts import (
+from engine.rag.contracts import (
     VideoChunkEvidence,
     VideoChunkSearchHit,
     VideoChunkSearchResult,

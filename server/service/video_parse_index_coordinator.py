@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 from engine.parsev1.usage import parse_chunk_scope
 from engine.parsev2.schemas import VideoParseResult
-from engine.retrieval import (
+from engine.rag import (
     ChunkIndexSource,
     ChunkIndexingContract,
     EmbeddingArtifact,
@@ -80,6 +80,12 @@ class VideoParseIndexCoordinationError(RuntimeError):
 
 class VideoParseIndexCoordinator:
     """Execute one Engine index plan against media, Gateway, MySQL, and ES."""
+
+    # TODO(video-parse-v2/engine-owner): Engine must review and finalize the
+    # existing plan_chunk_index/finalize_chunk_index API, input identity and reuse.
+    # Expected: formal Chunk content, identity and prepared media -> encoding
+    # plan and final index document. Server executes I/O only; do not extend
+    # Engine contracts or ordered-frame support in Parse V2 pipeline work.
 
     def __init__(
         self,

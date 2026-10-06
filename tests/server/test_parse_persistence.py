@@ -11,7 +11,7 @@ import pytest
 from engine.parsev1.embed import ChunkEmbedding
 from engine.parsev1.pipeline import ParsePipelineResult
 from engine.parsev1.schemas import VideoChunkCheckpoint
-from engine.retrieval.video_retrieval import (
+from engine.parsev1.retrieval import (
     build_video_chunk_retrieval_documents,
 )
 from gateway.embedding import EmbeddingResult

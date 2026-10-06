@@ -6,7 +6,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 import pytest
 from elasticsearch import Elasticsearch
 
-from engine.retrieval.video_retrieval import VideoChunkRetrievalDocument
+from engine.parsev1.retrieval import VideoChunkRetrievalDocument
 from evals.recall.elasticsearch_index import (
     ElasticsearchDatasetConflictError,
     ElasticsearchEvaluationWriteError,

@@ -13,7 +13,7 @@ parsev2/
 ```
 
 Search projection lives in
-[`engine/retrieval/index_projection.py`](../retrieval/index_projection.py). The
+[`engine/rag/indexing/projection.py`](../rag/indexing/projection.py). The
 Server reads the current effective Chunk content and version only after all
 Intervals containing that Chunk have submitted Refine, then calls that
 projection before encoding and Elasticsearch writes.

@@ -1,32 +1,16 @@
-"""Pure retrieval algorithms for parsed video chunks."""
+"""Shared Chunk ranking and RRF algorithms, independent of Parse versions."""
 
 from __future__ import annotations
 
 import math
-import unicodedata
 from collections.abc import Sequence
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
-from ..parsev1.schemas import VideoParseResult
-from .contracts import VideoChunkRetrievalIdentity
+from engine.rag.contracts import VideoChunkRetrievalIdentity
 
 AGENT_RETRIEVAL_STRATEGY_VERSION = "query-adaptive-three-channel-rrf-v2"
-
-_TRANSCRIPT_PHRASE_BASE_SCORE = 0.9
-_TRANSCRIPT_PHRASE_COVERAGE_BONUS = 0.09
-
-
-class VideoChunkRetrievalDocument(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    sequence_no: int = Field(ge=0)
-    start_seconds: int = Field(ge=0)
-    end_seconds: int = Field(gt=0)
-    video_compact: str = Field(min_length=1)
-    text: str = Field(min_length=1)
-    is_fallback: bool
-
 
 class RankedVideoChunk(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -52,39 +36,6 @@ class VersionedRankedVideoChunkMatch(RankedVideoChunkMatch):
     retrieval_identity: VideoChunkRetrievalIdentity
 
 
-class TranscriptCueDocument(BaseModel):
-    """One absolute-time ASR cue available to lexical retrieval."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    text: str = Field(min_length=1)
-    start_seconds: int = Field(ge=0)
-    end_seconds: int = Field(ge=0)
-
-    @model_validator(mode="after")
-    def validate_time_range(self) -> "TranscriptCueDocument":
-        if self.end_seconds < self.start_seconds:
-            raise ValueError("end_seconds must not be less than start_seconds")
-        return self
-
-
-class TranscriptChunkDocument(BaseModel):
-    """The ordered ASR cues owned by one searchable VideoChunk."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    video_chunk_id: str = Field(min_length=1)
-    cues: list[TranscriptCueDocument] = Field(min_length=1)
-
-
-class RankedTranscriptMatch(RankedVideoChunkMatch):
-    """One lexical ASR match with the exact cue range kept for explanation."""
-
-    matched_text: str = Field(min_length=1)
-    start_seconds: int = Field(ge=0)
-    end_seconds: int = Field(ge=0)
-
-
 class FusedVideoChunkRanking(BaseModel):
     """RRF output with the original channel evidence preserved."""
 
@@ -107,40 +58,16 @@ class VersionedFusedVideoChunkRanking(FusedVideoChunkRanking):
     """RRF output that remains pinned to its formal result and projection."""
 
     retrieval_identity: VideoChunkRetrievalIdentity
+    sparse_rank: int | None = Field(default=None, gt=0)
+    sparse_score: float | None = Field(default=None, allow_inf_nan=False)
 
-
-def build_video_chunk_retrieval_documents(
-    parse_result: VideoParseResult,
-) -> list[VideoChunkRetrievalDocument]:
-    """Build self-owned retrieval text for every canonical video chunk."""
-
-    _validate_canonical_chunks(parse_result)
-    documents: list[VideoChunkRetrievalDocument] = []
-    for chunk in parse_result.chunks:
-        video_compact = chunk.self_compact.strip()
-        # The compact carries semantic continuity; owned events preserve exact
-        # actions and dialogue terms. Their partial overlap is intentional.
-        parts = [video_compact]
-        for event in chunk.events:
-            parts.append(event.description.strip())
-            if event.text:
-                parts.append(event.text.strip())
-        text = "\n".join(part for part in parts if part).strip()
-        if not video_compact or not text:
-            raise ValueError(
-                f"chunk {chunk.window.sequence_no} has no self-owned retrieval text"
-            )
-        documents.append(
-            VideoChunkRetrievalDocument(
-                sequence_no=chunk.window.sequence_no,
-                start_seconds=chunk.window.chunk_start_seconds,
-                end_seconds=chunk.window.chunk_end_seconds,
-                video_compact=video_compact,
-                text=text,
-                is_fallback=chunk.is_fallback,
-            )
-        )
-    return documents
+    @model_serializer(mode="wrap")
+    def serialize_ranking(self, handler: Any) -> dict[str, Any]:
+        ranking = handler(self)
+        for field in ("sparse_rank", "sparse_score"):
+            if getattr(self, field) is None:
+                ranking.pop(field, None)
+        return ranking
 
 
 def weighted_reciprocal_rank_fusion(
@@ -279,6 +206,8 @@ def fuse_versioned_video_chunk_rankings(
     lexical_weight: float = 0.0,
     transcript_rankings: Sequence[VersionedRankedVideoChunkMatch] = (),
     transcript_weight: float = 0.0,
+    sparse_rankings: Sequence[VersionedRankedVideoChunkMatch] = (),
+    sparse_weight: float = 0.0,
     text_weight: float,
     vision_weight: float,
     channel_top_k: int,
@@ -286,89 +215,59 @@ def fuse_versioned_video_chunk_rankings(
 ) -> list[VersionedFusedVideoChunkRanking]:
     """Fuse only candidates whose cross-channel result identity agrees."""
 
-    fused = fuse_video_chunk_rankings(
-        text_rankings,
-        vision_rankings,
-        lexical_rankings=lexical_rankings,
+    for name, value in (("channel_top_k", channel_top_k), ("rrf_k", rrf_k)):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+    _validate_rrf_parameters(
         lexical_weight=lexical_weight,
-        transcript_rankings=transcript_rankings,
         transcript_weight=transcript_weight,
+        sparse_weight=sparse_weight,
         text_weight=text_weight,
         vision_weight=vision_weight,
         channel_top_k=channel_top_k,
         rrf_k=rrf_k,
     )
-    identities = _validated_versioned_identities(
-        (
-            ("lexical", lexical_rankings[:channel_top_k]),
-            ("transcript", transcript_rankings[:channel_top_k]),
-            ("text", text_rankings[:channel_top_k]),
-            ("vision", vision_rankings[:channel_top_k]),
+    if lexical_weight > 0 and transcript_weight > 0:
+        raise ValueError(
+            "lexical_weight and transcript_weight cannot both be greater than zero"
         )
+    channels = (
+        ("lexical", lexical_rankings[:channel_top_k], lexical_weight),
+        ("transcript", transcript_rankings[:channel_top_k], transcript_weight),
+        ("text", text_rankings[:channel_top_k], text_weight),
+        ("vision", vision_rankings[:channel_top_k], vision_weight),
+        ("sparse", sparse_rankings[:channel_top_k] if sparse_weight else (), sparse_weight),
     )
+    identities = _validated_versioned_identities(
+        tuple((name, rankings) for name, rankings, _ in channels)
+    )
+    if sparse_weight > 0 and any(
+        identity.sparse_encoder_id is None for identity in identities.values()
+    ):
+        raise ValueError("enabled sparse retrieval requires sparse_encoder_id")
+    scores: dict[str, float] = {}
+    channel_evidence: dict[str, dict[str, object]] = {}
+    for name, rankings, weight in channels:
+        by_id = _rankings_by_video_chunk_id(rankings, channel_name=name)
+        for chunk_id, ranked in by_id.items():
+            channel_evidence.setdefault(chunk_id, {}).update({
+                f"{name}_rank": ranked.rank,
+                f"{name}_score": ranked.score,
+            })
+            if weight:
+                scores[chunk_id] = scores.get(chunk_id, 0.0) + weight / (
+                    rrf_k + ranked.rank
+                )
+    ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
     return [
         VersionedFusedVideoChunkRanking(
-            **ranking.model_dump(),
-            retrieval_identity=identities[ranking.video_chunk_id],
+            video_chunk_id=chunk_id,
+            fused_rank=rank,
+            fused_score=score,
+            retrieval_identity=identities[chunk_id],
+            **channel_evidence[chunk_id],
         )
-        for ranking in fused
-    ]
-
-
-def rank_transcript_chunks(
-    query: str,
-    documents: Sequence[TranscriptChunkDocument],
-    *,
-    limit: int,
-) -> list[RankedTranscriptMatch]:
-    """Rank literal ASR phrase matches without pretending they are semantic hits."""
-
-    if not isinstance(query, str) or not query.strip():
-        raise ValueError("query must not be empty")
-    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
-        raise ValueError("limit must be a positive integer")
-    normalized_query = _normalize_transcript_text(query)
-    if not normalized_query:
-        return []
-
-    matches: list[tuple[float, str, int, int, str]] = []
-    seen_ids: set[str] = set()
-    for document in documents:
-        if document.video_chunk_id in seen_ids:
-            raise ValueError(
-                "transcript documents contain duplicate video_chunk_id "
-                f"{document.video_chunk_id!r}"
-            )
-        seen_ids.add(document.video_chunk_id)
-        best = _best_transcript_match(normalized_query, document.cues)
-        if best is None:
-            continue
-        score, first_cue, last_cue = best
-        matched_cues = document.cues[first_cue : last_cue + 1]
-        matches.append(
-            (
-                score,
-                document.video_chunk_id,
-                matched_cues[0].start_seconds,
-                matched_cues[-1].end_seconds,
-                " ".join(cue.text.strip() for cue in matched_cues),
-            )
-        )
-
-    matches.sort(key=lambda item: (-item[0], item[2], item[1]))
-    return [
-        RankedTranscriptMatch(
-            rank=rank,
-            video_chunk_id=video_chunk_id,
-            score=score,
-            matched_text=matched_text,
-            start_seconds=start_seconds,
-            end_seconds=end_seconds,
-        )
-        for rank, (score, video_chunk_id, start_seconds, end_seconds, matched_text) in enumerate(
-            matches[:limit],
-            start=1,
-        )
+        for rank, (chunk_id, score) in enumerate(ordered, start=1)
     ]
 
 
@@ -475,6 +374,7 @@ def _validate_rrf_parameters(
     *,
     lexical_weight: float = 0.0,
     transcript_weight: float = 0.0,
+    sparse_weight: float = 0.0,
     text_weight: float,
     vision_weight: float,
     channel_top_k: int,
@@ -487,6 +387,7 @@ def _validate_rrf_parameters(
     weights = (
         ("lexical_weight", lexical_weight),
         ("transcript_weight", transcript_weight),
+        ("sparse_weight", sparse_weight),
         ("text_weight", text_weight),
         ("vision_weight", vision_weight),
     )
@@ -502,65 +403,16 @@ def _validate_rrf_parameters(
         raise ValueError("at least one channel weight must be greater than zero")
 
 
-def _normalize_transcript_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", value).casefold()
-    return "".join(character for character in normalized if character.isalnum())
-
-
-def _best_transcript_match(
-    query: str,
-    cues: Sequence[TranscriptCueDocument],
-) -> tuple[float, int, int] | None:
-    normalized_cues = [_normalize_transcript_text(cue.text) for cue in cues]
-    joined = "".join(normalized_cues)
-    best: tuple[float, int, int] | None = None
-
-    offset = joined.find(query)
-    while offset >= 0:
-        first_cue = _cue_index_at_offset(normalized_cues, offset)
-        last_cue = _cue_index_at_offset(
-            normalized_cues,
-            offset + len(query) - 1,
-        )
-        span_length = sum(
-            len(value) for value in normalized_cues[first_cue : last_cue + 1]
-        )
-        score = (
-            1.0
-            if span_length == len(query)
-            else _TRANSCRIPT_PHRASE_BASE_SCORE
-            + _TRANSCRIPT_PHRASE_COVERAGE_BONUS * (len(query) / span_length)
-        )
-        candidate = (score, first_cue, last_cue)
-        if best is None or score > best[0] or (
-            score == best[0] and (first_cue, last_cue) < (best[1], best[2])
-        ):
-            best = candidate
-        offset = joined.find(query, offset + 1)
-    return best
-
-
-def _cue_index_at_offset(cues: Sequence[str], offset: int) -> int:
-    consumed = 0
-    for index, cue in enumerate(cues):
-        consumed += len(cue)
-        if offset < consumed:
-            return index
-    return len(cues) - 1
-
-
-def _validate_canonical_chunks(parse_result: VideoParseResult) -> None:
-    if not parse_result.chunks:
-        raise ValueError("parse result contains no chunks")
-    expected_start_seconds = 0
-    for expected_sequence_no, chunk in enumerate(parse_result.chunks):
-        window = chunk.window
-        if window.sequence_no != expected_sequence_no:
-            raise ValueError(
-                "parse result chunks must use contiguous sequence numbers"
-            )
-        if window.chunk_start_seconds != expected_start_seconds:
-            raise ValueError("parse result canonical chunks must be contiguous")
-        expected_start_seconds = window.chunk_end_seconds
-    if expected_start_seconds != parse_result.duration_seconds:
-        raise ValueError("parse result does not cover the complete video duration")
+__all__ = [
+    "AGENT_RETRIEVAL_STRATEGY_VERSION",
+    "RankedVideoChunk",
+    "RankedVideoChunkMatch",
+    "VersionedRankedVideoChunkMatch",
+    "FusedVideoChunkRanking",
+    "VersionedFusedVideoChunkRanking",
+    "weighted_reciprocal_rank_fusion",
+    "fuse_video_chunk_rankings",
+    "fuse_versioned_video_chunk_rankings",
+    "normalize_hybrid_retrieval_weights",
+    "normalize_video_retrieval_weights"
+]

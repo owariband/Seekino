@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -10,6 +11,8 @@ from uuid import uuid4
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
+
+from engine.parsev2.planning import plan_intervals
 
 from ..identity import derive_parse_job_id
 from ..model.dto.jobDTO import VideoParseTaskState
@@ -51,6 +54,7 @@ from ..model.video import (
 from ..utils.time import datetime_to_unix_time_ms, now_utc
 from .index_sync import refresh_series_statuses
 from .video_parse import (
+    RUNTIME_DETAIL_KEY,
     VideoParseConflictError,
     invalidate_series_prefixes_from,
 )
@@ -294,15 +298,8 @@ class UploadRepository:
                     "upload session VideoParseTask no longer exists"
                 )
 
-            # Queue claims lock one execution row before its parent. Manual
-            # retry follows the same direction across every child family so
-            # it cannot hold the parent while a Worker waits to validate it.
-            chunks = list(session.scalars(
-                select(ChunkParseTaskRecord)
-                .where(ChunkParseTaskRecord.video_parse_task_id == task_id)
-                .order_by(ChunkParseTaskRecord.id)
-                .with_for_update()
-            ))
+            # Match result commits: Interval -> Chunk -> parent. Queue claims
+            # still acquire their execution row before checking the parent.
             intervals = list(session.scalars(
                 select(IntervalParseTaskRecord)
                 .where(IntervalParseTaskRecord.video_parse_task_id == task_id)
@@ -310,6 +307,12 @@ class UploadRepository:
                     IntervalParseTaskRecord.start_sequence_no,
                     IntervalParseTaskRecord.id,
                 )
+                .with_for_update()
+            ))
+            chunks = list(session.scalars(
+                select(ChunkParseTaskRecord)
+                .where(ChunkParseTaskRecord.video_parse_task_id == task_id)
+                .order_by(ChunkParseTaskRecord.id)
                 .with_for_update()
             ))
             task = session.scalar(
@@ -404,6 +407,11 @@ class UploadRepository:
             task.lease_expire_time = None
             task.heartbeat_time = None
             task.finish_time = None
+            detail = deepcopy(dict(task.detail or {}))
+            runtime = detail.get(RUNTIME_DETAIL_KEY)
+            if isinstance(runtime, dict):
+                runtime.pop("failure_status", None)
+            task.detail = detail
             task.update_time = now
             session.flush()
             return self._task_snapshot(task)
@@ -1607,23 +1615,27 @@ def _parse_preparation_complete(
     interval_size = math.ceil(
         task.parse_config["interval_duration"] / task.parse_config["chunk_duration"]
     )
-    interval_count = max(0, chunk_count - interval_size + 1)
+    expected_intervals = {
+        plan.start_sequence_no: plan.chunk_count
+        for plan in plan_intervals(chunk_count=chunk_count, size=interval_size)
+    }
     for interval in intervals:
         start = interval.start_sequence_no
-        if start >= interval_count or interval.chunk_count != interval_size:
+        expected_count = expected_intervals.get(start)
+        if expected_count is None or interval.chunk_count != expected_count:
             raise UploadConflictError("VideoParseTask has incompatible Interval preparation")
         try:
             validate_interval_parse_task_members(
                 chunk_parse_task_id=interval.chunk_parse_task_id,
                 video_parse_task_id=task.id,
                 start_sequence_no=start,
-                chunk_count=interval_size,
+                chunk_count=expected_count,
                 chunk_parse_task_ids=interval.chunk_parse_task_ids,
                 members=[
                     (child, chunk.sequence_no)
-                    for child, chunk in chunk_rows[start:start + interval_size]
+                    for child, chunk in chunk_rows[start:start + expected_count]
                 ],
             )
         except ValueError as exc:
             raise UploadConflictError("VideoParseTask has incompatible Interval members") from exc
-    return len(intervals) == interval_count
+    return len(intervals) == len(expected_intervals)

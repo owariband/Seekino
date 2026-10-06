@@ -5,7 +5,7 @@ from typing import TypedDict
 from engine.parsev2.schemas import VideoParseResult
 
 from ..input import ParseInput
-from ..runtime import LeaseToken
+from ..host import LeaseToken
 
 
 class RefineInput(TypedDict):

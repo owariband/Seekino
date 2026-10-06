@@ -6,7 +6,7 @@ import json
 
 from engine.parsev2.schemas import VideoParseResult
 
-from .runtime import ChunkExecution
+from .host import ChunkExecution
 
 
 def _json(value: object) -> str:

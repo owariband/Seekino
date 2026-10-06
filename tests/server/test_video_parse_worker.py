@@ -1,26 +1,34 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 from uuid import uuid4
 
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import event
+
 from agent.video_parse_v2.input import GenerativeModelConfig
 from engine.parsev2.schemas import ActionEvent, VideoParseResult
 from engine.parsev2.validation import IntervalRefinementProposal
-from engine.retrieval import (
+from engine.rag import (
     ChunkIndexingContract,
     EncoderContract,
     VideoClipInputContract,
     VIDEO_CLIP_PREPROCESS_REVISION,
 )
 from gateway.config import load_config
+from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
 
+from server.api.app import create_app
+from server.bootstrap import ApplicationServices
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import (
     DatabaseEnvironment,
@@ -35,6 +43,7 @@ from server.model.job import (
     IntervalParseTaskRecord,
     VideoParseTaskRecord,
 )
+from server.model.upload import UPLOAD_DELETION_PENDING_ERROR_CODE, UploadSessionRecord
 from server.model.video import SeriesRecord, VideoRecord
 from server.mq.video_parse_consumer import (
     VideoParseConsumer,
@@ -42,10 +51,23 @@ from server.mq.video_parse_consumer import (
 )
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.video_parse import VideoParseRepository
+from server.repository.job import ParseJobRepository
+from server.repository.library import LibraryRepository
+from server.repository.upload import UploadRepository
+from server.service.job import ParseJobService
+from server.service.library import LibraryService
+from server.service.media import MediaService
+from server.service.upload import UploadService, UploadServiceConfig
+from server.service.video_retrieval import VideoParseRetrievalService
 from server.service.video_parse import VideoParseRuntimeService
 from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator
 from server.service.video_parse_media import MediaLeaseIdentity, VideoParseMediaService
-from server.storage.elasticsearch import StoredDocumentState, document_id
+from server.storage.artifact import LocalArtifactStore
+from server.storage.elasticsearch import (
+    StoredDocumentState,
+    VideoChunkIndexMatch,
+    document_id,
+)
 
 
 class _ArtifactResolver:
@@ -115,6 +137,89 @@ class _ElasticsearchBoundary:
 
     def verify_ready(self, documents) -> bool:
         return self.is_ready(documents)
+
+
+class _RecoveringElasticsearchBoundary(_ElasticsearchBoundary):
+    """Local I/O boundary, not a proof of Elasticsearch query or race semantics."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_next_bulk = True
+        self.fail_next_delete = False
+        self.bulk_keys = []
+
+    def bulk_upsert(self, documents, *, refresh=False):
+        self.bulk_keys.append([
+            (item.parse_task_id, item.video_chunk_id) for item in documents
+        ])
+        if self.fail_next_bulk:
+            self.fail_next_bulk = False
+            super().bulk_upsert(documents[:1], refresh=refresh)
+            raise RuntimeError("injected partial indexing failure")
+        return super().bulk_upsert(documents, refresh=refresh)
+
+    def inspect(self, keys):
+        states = {}
+        for key in keys:
+            document = self.documents.get(document_id(*key))
+            if document is None:
+                states[key] = StoredDocumentState(present=False)
+                continue
+            states[key] = StoredDocumentState(
+                **{
+                    name: getattr(document, name)
+                    for name in StoredDocumentState.__dataclass_fields__
+                    if hasattr(document, name)
+                },
+                present=True,
+                lexical_fields_present=True,
+                semantic_text_present=True,
+                semantic_vector_present=bool(document.semantic_vector),
+                vision_vector_present=bool(document.vision_vector),
+            )
+        return states
+
+    def inspect_exact(self, documents):
+        return {
+            document_id(item.parse_task_id, item.video_chunk_id): self.is_ready([item])
+            for item in documents
+        }
+
+    def search_lexical(self, query, *, limit, **scope):
+        documents = [
+            item for item in self.documents.values()
+            if item.workspace_id == scope["workspace_id"]
+            and item.series_id in scope["series_ids"]
+            and scope["parse_tasks_by_video_id"].get(item.video_id) == item.parse_task_id
+            and item.retrieval_contract_id == scope["retrieval_contract_id"]
+            and any(query in field.raw_text for field in item.projection.lexical_fields)
+        ]
+        return [
+            VideoChunkIndexMatch(
+                rank=rank,
+                score=1.0,
+                matched_fields=tuple(
+                    field for field in item.projection.lexical_fields if query in field.raw_text
+                ),
+                **{
+                    name: getattr(item, name)
+                    for name in VideoChunkIndexMatch.__dataclass_fields__
+                    if hasattr(item, name)
+                },
+            )
+            for rank, item in enumerate(documents[:limit], 1)
+        ]
+
+    def bulk_delete(self, keys, *, refresh=False):
+        assert refresh == "wait_for"
+        if self.fail_next_delete:
+            self.fail_next_delete = False
+            raise RuntimeError("injected index cleanup failure")
+        for key in keys:
+            self.documents.pop(document_id(*key), None)
+
+    def verify_absent(self, keys):
+        return all(document_id(*key) not in self.documents for key in keys)
 
 
 def _write_media(command) -> None:
@@ -361,6 +466,273 @@ def test_consumer_async_tick_is_executable_in_isolation():
     """Keep the public async diagnostic surface explicit for event-loop callers."""
 
     assert asyncio.iscoroutinefunction(VideoParseConsumer.run_once)
+
+
+@pytest.mark.parametrize("interval_duration_seconds", [20, 30], ids=["full-window", "short-window"])
+def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_delete(
+    monkeypatch, tmp_path, interval_duration_seconds,
+):
+    """Exercise real Server/Agent boundaries with SQLite and offline model/ES I/O."""
+
+    engine = create_database_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'product-pipeline.sqlite'}",
+        environment=DatabaseEnvironment.TEST,
+    )
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(connection, _record):
+        connection.execute("PRAGMA foreign_keys=ON")
+
+    create_schema(engine)
+    factory = create_session_factory(engine)
+    artifacts = LocalArtifactStore(tmp_path / "artifacts", environment="test")
+    repository = VideoParseRepository(factory)
+    queue = MySqlVideoParseQueue(factory)
+    store = _RecoveringElasticsearchBoundary()
+    media = VideoParseMediaService(tmp_path / "media", command_runner=_write_media)
+    parse_config = _parse_config()
+    parse_config["interval_duration"] = interval_duration_seconds
+    parse_config["execution"]["max_retry_count"] = 0
+    embedding = _EmbeddingClient(parse_config["models"]["embedding"]["model"])
+    encoder = EncoderContract(
+        provider="ark", model=embedding.model, dimensions=2,
+        encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+    )
+    uploads = UploadService(
+        UploadRepository(factory), artifacts,
+        config=UploadServiceConfig(
+            preferred_segment_size_bytes=1024, maximum_upload_size_bytes=1024,
+        ),
+        probe_duration=lambda _path: 20,
+        execution_mode="v2", video_parse_index_store=store,
+        video_parse_query_encoder=encoder,
+        video_parse_query_encoder_source=parse_config["models"]["embedding"]["source"],
+        # Local legacy cleanup boundary, not a Qdrant client or retrieval fallback.
+        video_chunk_store=SimpleNamespace(delete=lambda _chunk_id: None),
+        qdrant_mutation_lock=SimpleNamespace(hold=nullcontext),
+    )
+    library = LibraryService(LibraryRepository(factory, execution_mode="v2"), artifacts)
+    retrieval = VideoParseRetrievalService(
+        repository, store,
+        SimpleNamespace(embed_query=lambda _query: pytest.fail("unexpected query encoding")),
+        semantic_encoder=encoder, expected_index_generation=1,
+        lexical_weight=1, text_weight=0, vision_weight=0,
+    )
+    services = ApplicationServices(
+        library=library, uploads=uploads,
+        jobs=ParseJobService(ParseJobRepository(factory), library, execution_mode="v2"),
+        media=MediaService(library, artifacts), retrieval=retrieval,
+        agent=SimpleNamespace(close=lambda: None), index_sync=None,
+    )
+    runtime = VideoParseRuntimeService(
+        repository, queue, artifacts, media, load_config(), store,
+        worker_id="pipeline-worker", lease_duration=timedelta(seconds=10),
+        heartbeat_interval=timedelta(seconds=1),
+    )
+    model_calls = {"understanding": 0, "ocr": 0, "refine": 0}
+
+    async def generate_multimodal(_self, _binding, _inputs, **_options):
+        if _options["schema_name"] == "video_parse_v2_ocr":
+            model_calls["ocr"] += 1
+            return _options["result_type"](lines=[])
+        model_calls["understanding"] += 1
+        state = _self._require_chunk_binding().state
+        assert state is not None
+        return VideoParseResult(persons=[], timeline=[ActionEvent(
+            event_type="ACTION", start_seconds=state.start_seconds + 1,
+            end_seconds=state.start_seconds + 4,
+            description="A hand waves in the frame.", participants=[], visible_persons=[],
+        )])
+
+    async def generate_text(_self, _binding, _prompt, **_options):
+        model_calls["refine"] += 1
+        return IntervalRefinementProposal(updates=[])
+
+    def build_index_coordinator(_self, inputs, *, check_active):
+        return VideoParseIndexCoordinator(
+            repository, store, embedding, media_resolver=artifacts.resolve,
+            media_service=media, check_active=check_active,
+            contract=ChunkIndexingContract(
+                retrieval_contract_id="parse-v2-retrieval-v1",
+                semantic_encoder=encoder, vision_encoder=encoder,
+                visual_input_contract=VideoClipInputContract(
+                    fps=inputs.parse_config.models.embedding.video_fps,
+                    max_height=inputs.parse_config.visual_input.max_height,
+                    mime_type="video/mp4", preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
+                ),
+            ),
+        ), SimpleNamespace(close=lambda: None)
+
+    monkeypatch.setattr(runtime, "_generate_multimodal", MethodType(generate_multimodal, runtime))
+    monkeypatch.setattr(runtime, "_generate_text_structured", MethodType(generate_text, runtime))
+    monkeypatch.setattr(runtime, "_build_index_coordinator", MethodType(build_index_coordinator, runtime))
+    consumer = VideoParseConsumer(
+        queue, VideoParseConsumerHandlers(
+            prepare=runtime.prepare, understand=runtime.understand,
+            refine=runtime.refine, index=runtime.index,
+        ),
+        worker_id="pipeline-worker", lease_duration=timedelta(seconds=10),
+        heartbeat_interval=timedelta(seconds=1), poll_interval=timedelta(milliseconds=10),
+        retry_initial_delay=timedelta(milliseconds=10),
+        # SQLite cannot enforce FOR UPDATE; true lock competition is a MySQL case.
+        retry_max_delay=timedelta(milliseconds=100), max_concurrent_handlers=2,
+    )
+    try:
+        with TestClient(create_app(services)) as client:
+            series = client.post("/api/series/create", json={
+                "workspaceId": "pipeline-test", "name": "Product pipeline",
+            })
+            assert series.status_code == 201, series.text
+            series_id = series.json()["seriesId"]
+            created = client.post(
+                "/api/uploads/create", params={"seriesId": series_id},
+                headers={"Idempotency-Key": "pipeline-upload"},
+                json={
+                    "workspaceId": "pipeline-test", "episodeOrder": 1,
+                    "originalFilename": "episode.mp4", "mediaType": "video/mp4",
+                    "totalSizeBytes": 4, "videoParseConfig": parse_config,
+                },
+            )
+            assert created.status_code == 201, created.text
+            upload_id = created.json()["uploadSessionId"]
+            scope = {"workspaceId": "pipeline-test", "uploadSessionId": upload_id}
+            segment = client.put(
+                "/api/uploads/segments/upload", params={**scope, "segmentNumber": 0},
+                headers={
+                    "Content-Range": "bytes 0-3/4",
+                    "X-Content-SHA256": hashlib.sha256(b"abcd").hexdigest(),
+                }, content=b"abcd",
+            )
+            assert segment.status_code == 200, segment.text
+            completed = client.post("/api/uploads/complete", params=scope)
+            assert completed.status_code == 200, completed.text
+            task_id = completed.json()["videoParseTaskId"]
+            video_id = completed.json()["videoId"]
+            task_scope = {"workspaceId": "pipeline-test", "videoParseTaskId": task_id}
+            search_body = {
+                "workspaceId": "pipeline-test", "seriesIds": [series_id],
+                "query": "hand", "topK": 5,
+            }
+
+            consumer.start()
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                with factory() as session:
+                    if session.get(VideoParseTaskRecord, task_id).status == "INDEXING_FAILED":
+                        break
+                time.sleep(0.02)
+            else:
+                pytest.fail(f"index failure was not persisted: {consumer.failure!r}")
+            # Retry against the running service, on its existing event loop.
+            assert consumer.running
+            assert consumer.failure is None
+            with factory() as session:
+                task = session.get(VideoParseTaskRecord, task_id)
+                assert task.status == "INDEXING_FAILED", task.last_error
+                frozen_config = task.parse_config
+                before_contents = [
+                    (row.id, row.content, row.version, row.detail["scope"])
+                    for row in session.query(ChunkParseContentRecord).order_by(ChunkParseContentRecord.id)
+                ]
+            assert len(store.documents) == 1
+            assert len(store.bulk_keys[0]) == 2
+            unavailable = client.post("/api/search", json=search_body)
+            assert unavailable.status_code == 409, unavailable.text
+            assert unavailable.json()["code"] == "SERIES_NOT_READY"
+            failed = client.get("/api/jobs/video-parse/get", params=task_scope)
+            assert failed.status_code == 200, failed.text
+            assert failed.json()["canRetry"]
+            assert "_worker_runtime_v2" not in failed.json()["detail"]
+            assert client.get(
+                "/api/jobs/video-parse/get", params={**task_scope, "workspaceId": "other"},
+            ).status_code == 404
+
+            retried = client.post(
+                "/api/uploads/retry-parse", params={**scope, "expectedJobVersion": 1},
+            )
+            assert retried.status_code == 200, retried.text
+            assert retried.json()["videoParseTaskId"] == task_id
+            assert retried.json()["version"] == 1
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                with factory() as session:
+                    if session.get(VideoParseTaskRecord, task_id).status == "COMPLETE":
+                        break
+                time.sleep(0.02)
+            else:
+                pytest.fail(f"index recovery did not complete: {consumer.failure!r}")
+            consumer.close(timeout=2)
+            assert not consumer.running
+            assert model_calls == {"understanding": 2, "ocr": 0, "refine": 1}
+            assert (embedding.text_calls, embedding.video_calls) == (2, 2)
+            assert len(store.bulk_keys) == 2
+            assert len(store.bulk_keys[1]) == 1
+            assert store.bulk_keys[1][0] in store.bulk_keys[0]
+            with factory() as session:
+                task = session.get(VideoParseTaskRecord, task_id)
+                assert task.status == "COMPLETE"
+                assert task.parse_config == frozen_config
+                contents = session.query(ChunkParseContentRecord).order_by(ChunkParseContentRecord.id).all()
+                assert [(row.id, row.content, row.version, row.detail["scope"]) for row in contents] == before_contents
+                receipts = {
+                    row.detail["_index_embeddings_v2"]["receipt"]["video_chunk_id"]:
+                    row.detail["_index_embeddings_v2"]["receipt"] for row in contents
+                }
+            result = retrieval.search("hand", workspace_id="pipeline-test", series_ids=[series_id])
+            assert len(result.hits) == 2
+            assert result.searched_video_ids == [video_id]
+            for hit in result.hits:
+                receipt = receipts[hit.evidence.video_chunk_id]
+                provenance = hit.evidence.parse_provenance
+                assert receipt["parse_task_id"] == task_id
+                assert provenance == {
+                    "parseTaskId": receipt["parse_task_id"],
+                    "contentVersion": receipt["content_version"],
+                    "sourceRevision": receipt["source_revision"],
+                    "projectionRevision": receipt["projection_revision"],
+                    "retrievalContractId": receipt["retrieval_contract_id"],
+                    "indexGeneration": receipt["index_generation"],
+                }
+            searched = client.post("/api/search", json=search_body)
+            assert searched.status_code == 200, searched.text
+            assert len(searched.json()["hits"]) == len(receipts)
+            assert {hit["candidate"]["videoChunkId"] for hit in searched.json()["hits"]} == set(receipts)
+
+            reparsed = client.post(
+                "/api/uploads/reparse", params={**scope, "expectedJobVersion": 1},
+            )
+            assert reparsed.status_code == 200, reparsed.text
+            assert reparsed.json()["videoParseTaskId"] != task_id
+            assert reparsed.json()["version"] == 2
+            assert len(store.documents) == 2
+            superseded = client.post("/api/search", json=search_body)
+            assert superseded.status_code == 409, superseded.text
+            assert superseded.json()["code"] == "SERIES_NOT_READY"
+            with factory() as session:
+                assert session.get(VideoParseTaskRecord, task_id).status == "COMPLETE"
+
+            # Cleanup failure must fence query access before external I/O recovers.
+            store.fail_next_delete = True
+            with pytest.raises(RuntimeError, match="injected index cleanup failure"):
+                uploads.delete_session(upload_id, workspace_id="pipeline-test")
+            with factory() as session:
+                assert session.get(UploadSessionRecord, upload_id).last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
+                assert session.get(VideoParseTaskRecord, task_id).is_deleted
+            assert len(store.documents) == 2
+            fenced = client.post("/api/search", json=search_body)
+            assert fenced.status_code == 409, fenced.text
+            assert fenced.json()["code"] == "SERIES_NOT_READY"
+            assert uploads.reconcile_deletions() == (1, 0)
+            assert not store.documents
+            deleted = client.post("/api/uploads/delete", params=scope)
+            assert deleted.status_code == 200, deleted.text
+            assert deleted.json()["status"] == "EXPIRED"
+            assert deleted.json()["videoId"] is None
+            assert deleted.json()["initialVideoParseTaskId"] is None
+    finally:
+        consumer.close(timeout=2)
+        engine.dispose()
+    assert consumer.failure is None
+    assert list(media.base_directory.rglob(".lease.json")) == []
 
 
 def test_prefix_agent_factory_receives_frozen_fallback_controls(monkeypatch):

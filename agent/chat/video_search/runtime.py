@@ -9,7 +9,7 @@ from math import isfinite
 from threading import Event
 from time import monotonic
 
-from engine.retrieval.contracts import VideoChunkSearchResult
+from engine.rag.contracts import VideoChunkSearchResult
 from gateway.agent_model.contracts import AgentLoopModel, StructuredToolAgentModel
 from gateway.agent_model.errors import ModelFailureError, ModelFailureReason
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
@@ -121,6 +121,10 @@ class AgentRuntime:
         self._chat_timeout = chat_timeout_seconds
         self._execution_timeout = execution_timeout_seconds
         self._retrieval_channel = retrieval_channel
+        # TODO(video-parse-v2/chat-owner): Defer Chat retrieval/prompt and Message
+        # contract refactors until Engine publishes its query-policy contract.
+        # Then adapt to that API; do not implement Engine policy in Chat or
+        # change Message fields as part of Parse V2 pipeline work.
         self._retrieval_skill_prompt = (
             LEXICAL_RETRIEVAL_SKILL_PROMPT
             if retrieval_channel == "lexical"

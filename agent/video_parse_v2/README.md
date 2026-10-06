@@ -2,10 +2,49 @@
 
 This package coordinates the persisted V2 task state machine. It never imports
 Server repositories or Gateway clients. The host implements
-[`VideoParseRuntime`](runtime.py), injects it into [`ParseAgent`](agent.py), and
+[`VideoParseRuntime`](host.py), injects it into [`ParseAgent`](runtime.py), and
 retains database and model ownership.
 
+## Entry point and module layout
+
+`runtime.py` assembles the stages and builds the Video coordinator Graph.
+`host.py` defines the injected host capabilities and task/lease DTOs; it does
+not execute the Graph. Stage-local state stays alongside its stage.
+
+```text
+video_parse_v2/
+├── __init__.py             # public ParseAgent export
+├── runtime.py              # stage assembly, main Graph and ParseAgent.run
+├── host.py                 # Server/Gateway protocol and task/lease DTOs
+├── input.py                # task inputs and frozen configuration
+├── state.py                # main Graph state
+├── errors.py               # parse errors
+├── prepare.py              # topology and child-task initialization
+├── scheduler.py            # ordered batches and Chunk dispatch
+├── listener.py             # readiness checks and post-commit notifications
+├── prompts.py              # Understanding, Refine and Prefix prompt builders
+├── understanding/
+│   ├── __init__.py          # ChunkUnderstandingWorkflow export
+│   ├── workflow.py          # Chunk subgraph and execution cleanup
+│   └── state.py             # Chunk-local transient state
+├── refine/
+│   ├── __init__.py          # IntervalRefine export
+│   ├── agent.py             # Interval generation, validation and commit
+│   └── input.py             # member content/version/scope snapshot
+└── prefix/
+    ├── __init__.py          # PrefixContextAgent export
+    ├── agent.py             # optional background Prefix execution
+    ├── context.py           # bound Chunk and prefix context snapshot
+    └── tools.py             # target-bound, proposal-only tools
+```
+
+The public entry point remains `ParseAgent`. The host enters claimed Chunk,
+Refine, indexing and Prefix work independently; they are not serialized into
+the Video coordinator Graph.
+
 ```python
+from agent.video_parse_v2 import ParseAgent
+
 agent = ParseAgent(runtime=runtime)
 
 await agent.run(video_parse_task_id)                    # Video coordinator
@@ -82,7 +121,7 @@ Refine and indexing.
 
 ## Runtime and transaction rules
 
-[`runtime.py`](runtime.py) contains only domain DTOs and host operations.
+[`host.py`](host.py) contains only domain DTOs and host operations.
 Synchronous repositories/queues may be adapted by an async service, but model
 and media calls run outside row-locking transactions.
 

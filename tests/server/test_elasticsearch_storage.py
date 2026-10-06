@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from engine.retrieval import (
+from engine.rag import (
     ChunkIndexProjection,
     LexicalField,
     VideoChunkIndexDocument,
@@ -172,6 +172,60 @@ def test_mapping_contract_and_version_gate(store, client):
         store.ensure_index()
     client.version = "8.18.9"
     with pytest.raises(ElasticsearchIndexSchemaError, match="8.19"):
+        store.ensure_index()
+
+
+@pytest.mark.parametrize("explicit_search_analyzer", [False, True])
+def test_mapping_accepts_equivalent_search_analyzer_without_mutating_response(
+    store, client, explicit_search_analyzer,
+):
+    store.ensure_index()
+    raw_text = client.indices.mapping["properties"]["lexical_fields"]["properties"]["raw_text"]
+    if not explicit_search_analyzer:
+        raw_text.pop("search_analyzer")
+    before = deepcopy(client.indices.mapping)
+
+    store.ensure_index()
+
+    assert client.indices.created == 1
+    assert client.indices.mapping == before
+
+
+@pytest.mark.parametrize("raw_text", [
+    {"type": "text", "analyzer": "cjk", "search_analyzer": "standard"},
+    {"type": "text", "analyzer": "cjk", "search_analyzer": None},
+    {"type": "text", "analyzer": "standard"},
+    {"type": "text", "search_analyzer": "cjk"},
+    {"type": "text"},
+    {"type": "keyword", "analyzer": "cjk"},
+])
+def test_mapping_rejects_incompatible_text_analyzers_and_type(store, client, raw_text):
+    store.ensure_index()
+    client.indices.mapping["properties"]["lexical_fields"]["properties"]["raw_text"] = deepcopy(raw_text)
+    before = deepcopy(client.indices.mapping)
+
+    with pytest.raises(ElasticsearchIndexSchemaError, match="lexical_fields"):
+        store.ensure_index()
+
+    assert client.indices.created == 1
+    assert client.indices.mapping == before
+
+
+@pytest.mark.parametrize("field, key, value", [
+    ("lexical_fields", "type", "object"),
+    ("lexical_fields", "dynamic", True),
+    ("semantic_vector", "dims", 3),
+    ("vision_vector", "similarity", "dot_product"),
+])
+def test_mapping_default_search_analyzer_does_not_relax_other_fields(
+    store, client, field, key, value,
+):
+    store.ensure_index()
+    properties = client.indices.mapping["properties"]
+    properties["lexical_fields"]["properties"]["raw_text"].pop("search_analyzer")
+    properties[field][key] = value
+
+    with pytest.raises(ElasticsearchIndexSchemaError, match=field):
         store.ensure_index()
 
 

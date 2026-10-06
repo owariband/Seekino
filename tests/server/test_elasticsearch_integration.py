@@ -1,20 +1,55 @@
-"""Optional Elasticsearch 8.19 checks against a disposable test-only index."""
+"""Optional real ES checks; coordinator fixtures use SQLite, not real MySQL."""
 
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from elasticsearch import Elasticsearch
+from sqlalchemy import event, select
 
-from engine.retrieval import (
+from engine.rag import (
     ChunkIndexProjection,
+    ChunkIndexingContract,
+    EncoderContract,
     LexicalField,
+    VIDEO_CLIP_PREPROCESS_REVISION,
     VideoChunkIndexDocument,
+    VideoClipInputContract,
     compute_index_projection_revision,
 )
+from gateway.embedding import EmbeddingResult
+from server.config.parse_profile import default_video_parse_v2_config
+from server.database import (
+    DatabaseEnvironment,
+    create_database_engine,
+    create_schema,
+    create_session_factory,
+)
+from server.model.job import (
+    ChunkParseContentRecord,
+    ChunkParseTaskRecord,
+    IntervalParseContentRecord,
+    IntervalParseTaskRecord,
+    VideoParseTaskRecord,
+)
+from server.model.upload import UPLOAD_DELETION_PENDING_ERROR_CODE, UploadSessionRecord
+from server.model.video import SeriesRecord, VideoRecord
+from server.mq.video_parse_queue import MySqlVideoParseQueue
+from server.repository.upload import UploadRepository
+from server.repository.video import SeriesNotReadyError
+from server.repository.video_parse import VideoParseRepository
+from server.service.upload import UploadService
+from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator
+from server.service.video_parse_media import VideoParseMediaService
+from server.service.video_retrieval import VideoParseRetrievalService
+from server.storage.artifact import LocalArtifactStore
 from server.storage.elasticsearch import (
     ElasticsearchBulkWriteError,
     ElasticsearchVideoChunkStore,
@@ -87,6 +122,161 @@ def _document(*, series_id, video_id, chunk_id, parse_task_id, question):
 
 def _id(document: VideoChunkIndexDocument) -> str:
     return document_id(document.parse_task_id, document.video_chunk_id)
+
+
+class _EmbeddingBoundary:
+    """Deterministic responses: no provider, paid model or real media process."""
+
+    def __init__(self, model):
+        self.model = model
+        self.text_calls = self.video_calls = self.query_calls = 0
+
+    def embed_text(self, _text):
+        self.text_calls += 1
+        return EmbeddingResult(model=self.model, modality="text", vector=[1.0, 0.0])
+
+    def embed_video(self, _path):
+        self.video_calls += 1
+        return EmbeddingResult(model=self.model, modality="video", vector=[0.0, 1.0])
+
+    def embed_query(self, _query):
+        self.query_calls += 1
+        return EmbeddingResult(model=self.model, modality="text", vector=[1.0, 0.0])
+
+
+@contextmanager
+def _indexing_case(tmp_path, store):
+    """Actual Repository/Queue state, injectable ES boundary, fake model/media."""
+
+    engine = create_database_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'es-coordinator.sqlite'}",
+        environment=DatabaseEnvironment.TEST,
+    )
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(connection, _record):
+        cursor = connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
+    try:
+        create_schema(engine)
+        factory = create_session_factory(engine)
+        repository = VideoParseRepository(factory)
+        queue = MySqlVideoParseQueue(factory)
+        series_id, video_id, task_id, upload_id = (str(uuid4()) for _ in range(4))
+        now = datetime.now(UTC) - timedelta(seconds=1)
+        source = tmp_path / "episode.mp4"
+        source.write_bytes(b"deterministic-source")
+        config = default_video_parse_v2_config().model_dump(mode="json")
+        config.update(chunk_duration=10, interval_duration=30, batch_max_size=2)
+        config["models"]["embedding"]["dimensions"] = 2
+        with factory.begin() as session:
+            session.add(SeriesRecord(
+                series_id=series_id, workspace_id="es-test-workspace",
+                name="ES recovery", status="INDEXING", character_bible=[],
+            ))
+            session.flush()
+            session.add(VideoRecord(
+                video_id=video_id, series_id=series_id, episode_order=1,
+                upload_sequence=1, original_filename="episode.mp4",
+                original_source_uri=str(source), content_hash="a" * 64,
+                total_bytes=source.stat().st_size, duration_seconds=20,
+                upload_status="COMPLETED", parse_status="QUEUED",
+                upload_progress=100, parse_progress=0,
+            ))
+            session.flush()
+            session.add(VideoParseTaskRecord(
+                id=task_id, video_id=video_id, pipeline_version="video-parse-v2",
+                status="PENDING", parse_config=config, chunk_count=2, version=1,
+                next_execute_time=now, attempt_count=0, max_attempts=3,
+                lease_version=0, processing_duration_ms=0,
+                processing_timing_complete=True, is_test=True, is_deleted=False,
+                detail={"_worker_runtime_v2": {"accepted": True}},
+                create_time=now, update_time=now,
+            ))
+            session.flush()
+            session.add(UploadSessionRecord(
+                upload_session_id=upload_id, workspace_id="es-test-workspace",
+                series_id=series_id, episode_order=1, upload_sequence=1,
+                original_filename="episode.mp4", media_type="video/mp4",
+                total_size_bytes=source.stat().st_size,
+                preferred_segment_size_bytes=source.stat().st_size,
+                total_segments=1, version=1, status="COMPLETED",
+                idempotency_key=str(uuid4()), expires_at=now + timedelta(hours=1),
+                completed_at=now, video_id=video_id,
+                initial_video_parse_task_id=task_id,
+            ))
+        video_lease = queue.claim_video("prepare", lease_duration=timedelta(minutes=10))
+        assert video_lease is not None
+        chunks = repository.ensure_video_chunks(video_lease, [(0, 0, 10), (1, 10, 20)])
+        prepared = repository.ensure_parse_tasks(
+            video_lease, [chunk.video_chunk_id for chunk in chunks], [(0, 2)],
+        )
+        repository.activate_video_task(video_lease)
+        for sequence, child_id in enumerate(prepared.chunk_parse_task_ids):
+            assert queue.dispatch_chunk(child_id, video_lease)
+            lease = queue.claim_chunk("understand", lease_duration=timedelta(minutes=10))
+            assert lease is not None and lease.chunk_parse_task_id == child_id
+            repository.commit_chunk_result(lease, content={
+                "persons": [],
+                "timeline": [{
+                    "event_type": "ACTION", "start_seconds": sequence * 10 + 1,
+                    "end_seconds": sequence * 10 + 4,
+                    "description": f"恢复测试松饼行动，片段{sequence}",
+                    "participants": [], "visible_persons": [],
+                }],
+            }, detail={"fixture": "real-es-recovery"})
+        refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=10))
+        assert refine is not None
+        repository.commit_interval_refinement(
+            refine, interval_content={"summary": "unchanged"}, member_updates={},
+        )
+        index_lease = queue.claim_interval_index("index", lease_duration=timedelta(minutes=10))
+        assert index_lease is not None
+        encoder = EncoderContract(
+            provider="ark", model=config["models"]["embedding"]["model"],
+            encoder_revision="integration-revision", dimensions=2,
+        )
+        embedder = _EmbeddingBoundary(encoder.model)
+
+        def write_media(command):
+            Path(command[-1]).write_bytes(b"deterministic-prepared-media")
+
+        coordinator = VideoParseIndexCoordinator(
+            repository, store, embedder, media_resolver=Path,
+            media_service=VideoParseMediaService(tmp_path / "media", command_runner=write_media),
+            contract=ChunkIndexingContract(
+                retrieval_contract_id="integration-retrieval-v1",
+                semantic_encoder=encoder, vision_encoder=encoder,
+                visual_input_contract=VideoClipInputContract(
+                    fps=1, max_height=720, mime_type="video/mp4",
+                    preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
+                ),
+            ),
+        )
+        retrieval = VideoParseRetrievalService(
+            repository, store, embedder, semantic_encoder=encoder,
+            expected_index_generation=1, exact=True,
+        )
+        yield SimpleNamespace(
+            factory=factory, repository=repository, queue=queue, store=store,
+            series_id=series_id, video_id=video_id, task_id=task_id,
+            upload_id=upload_id, video_lease=video_lease, index_lease=index_lease,
+            prepared=prepared, coordinator=coordinator, retrieval=retrieval,
+            encoder=encoder, embedder=embedder, config=config,
+        )
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def indexing_case(isolated_store, tmp_path):
+    # isolated_store skips before creating even the local coordinator fixture.
+    with _indexing_case(tmp_path, isolated_store) as case:
+        yield case
 
 
 def test_real_es_mapping_three_queries_and_authorized_tasks(isolated_store):
@@ -232,3 +422,187 @@ def test_real_es_strict_generation_and_exact_replay(isolated_store):
 
     conflicting = replace(document, source_revision="same-version-different-source")
     assert store.inspect_exact([conflicting]) == {_id(document): False}
+
+
+def test_real_es_rejects_late_content_in_the_same_generation(isolated_store):
+    store = isolated_store
+    old = _document(
+        series_id=str(uuid4()), video_id=str(uuid4()), chunk_id=str(uuid4()),
+        parse_task_id=str(uuid4()), question="迟到的旧正文蓝莓雨伞",
+    )
+    current_projection = old.projection.model_copy(update={
+        "semantic_text": "当前正文星空布丁",
+        "lexical_fields": [
+            field.model_copy(update={"raw_text": "当前正文星空布丁"})
+            if field.field == "questions" else field
+            for field in old.projection.lexical_fields
+        ],
+    })
+    current = replace(
+        old, content_version=2, source_revision="current-content",
+        projection=current_projection,
+        projection_revision=compute_index_projection_revision(current_projection),
+    )
+    store.bulk_upsert([old], refresh="wait_for")
+    store.bulk_upsert([current], refresh="wait_for")
+    with pytest.raises(ElasticsearchBulkWriteError) as caught:
+        store.bulk_upsert([old], refresh="wait_for")
+    assert caught.value.status_codes == {_id(old): 409}
+    assert store.inspect_exact([current]) == {_id(current): True}
+    assert store.verify_ready([current])
+    assert not store.is_ready([old])
+    scope = {
+        "workspace_id": current.workspace_id, "series_ids": [current.series_id],
+        "parse_tasks_by_video_id": {current.video_id: current.parse_task_id},
+        "retrieval_contract_id": current.retrieval_contract_id,
+    }
+    assert not store.search_lexical("蓝莓雨伞", **scope, limit=10)
+    hits = store.search_lexical("星空布丁", **scope, limit=10)
+    assert [hit.content_version for hit in hits] == [2]
+
+
+def test_real_es_coordinator_recovers_partial_bulk_without_reparsing(indexing_case, monkeypatch):
+    case = indexing_case
+    store = case.store
+    snapshot = case.repository.load_interval_indexing_snapshot(case.index_lease)
+    good, bad = snapshot.chunks
+    original_source, original_bulk = store._document_source, store.bulk_upsert
+    bulk_calls = []
+
+    def reject_second(document):
+        source = original_source(document)
+        if document.video_chunk_id == bad.video_chunk_id:
+            source["unmapped_field"] = "deterministic item failure"
+        return source
+
+    def record_bulk(documents, *, refresh=False):
+        bulk_calls.append(tuple(documents))
+        return original_bulk(documents, refresh=refresh)
+
+    monkeypatch.setattr(store, "_document_source", reject_second)
+    monkeypatch.setattr(store, "bulk_upsert", record_bulk)
+    with pytest.raises(ElasticsearchBulkWriteError) as caught:
+        case.coordinator.index_interval(case.index_lease)
+    assert set(caught.value.failures) == {document_id(case.task_id, bad.video_chunk_id)}
+    keys = [(case.task_id, chunk.video_chunk_id) for chunk in snapshot.chunks]
+    state = store.inspect(keys)
+    assert state[keys[0]].present and not state[keys[1]].present
+    with case.factory() as session:
+        assert session.get(VideoParseTaskRecord, case.task_id).status != "COMPLETE"
+        interval_id = case.index_lease.interval_parse_task_id
+        assert session.get(IntervalParseTaskRecord, interval_id).status == "INDEXING"
+        assert all(
+            session.get(ChunkParseTaskRecord, child).status == "COMPLETE"
+            for child in case.prepared.chunk_parse_task_ids
+        )
+        before = [
+            (item.id, item.version, item.content, item.detail["scope"])
+            for item in session.scalars(
+                select(ChunkParseContentRecord).order_by(ChunkParseContentRecord.id)
+            )
+        ]
+        refinement = session.get(IntervalParseContentRecord, interval_id).content
+    with pytest.raises(SeriesNotReadyError):
+        case.retrieval.search(
+            "松饼行动", workspace_id="es-test-workspace", series_ids=[case.series_id],
+        )
+    assert case.embedder.query_calls == 0
+
+    monkeypatch.setattr(store, "_document_source", original_source)
+    assert case.queue.retry_interval(
+        case.index_lease, error="one ES item rejected", retry_at=datetime.now(UTC),
+    )
+    recovered = case.queue.claim_interval_index("recovery", lease_duration=timedelta(minutes=10))
+    assert recovered is not None and recovered.lease_version > case.index_lease.lease_version
+    case.coordinator.index_interval(recovered)
+    assert [[item.video_chunk_id for item in batch] for batch in bulk_calls] == [
+        [good.video_chunk_id, bad.video_chunk_id], [bad.video_chunk_id],
+    ]
+    assert case.embedder.text_calls == case.embedder.video_calls == 2
+    assert store.verify_ready(bulk_calls[0])
+    assert case.repository.aggregate_task(case.video_lease).status == "COMPLETE"
+    with case.factory() as session:
+        assert session.get(IntervalParseTaskRecord, recovered.interval_parse_task_id).status == "COMPLETE"
+        after = [
+            (item.id, item.version, item.content, item.detail["scope"])
+            for item in session.scalars(
+                select(ChunkParseContentRecord).order_by(ChunkParseContentRecord.id)
+            )
+        ]
+        assert session.get(IntervalParseContentRecord, interval_id).content == refinement
+    assert after == before
+    result = case.retrieval.search(
+        "松饼行动", workspace_id="es-test-workspace", series_ids=[case.series_id],
+    )
+    assert {hit.candidate.video_chunk_id for hit in result.hits} == {
+        good.video_chunk_id, bad.video_chunk_id,
+    }
+    assert {hit.evidence.video_id for hit in result.hits} == {case.video_id}
+    assert not result.partial
+
+
+def test_real_es_delete_reconcile_fences_an_immediately_late_writer(indexing_case, tmp_path, monkeypatch):
+    case = indexing_case
+    store = case.store
+    original_bulk, original_delete = store.bulk_upsert, store.bulk_delete
+    documents = []
+
+    def record_documents(items, *, refresh=False):
+        documents.extend(items)
+        return original_bulk(items, refresh=refresh)
+
+    monkeypatch.setattr(store, "bulk_upsert", record_documents)
+    case.coordinator.index_interval(case.index_lease)
+    assert case.repository.aggregate_task(case.video_lease).status == "COMPLETE"
+    other = _document(
+        series_id=case.series_id, video_id=str(uuid4()), chunk_id=str(uuid4()),
+        parse_task_id=str(uuid4()), question="不应删除的其他任务",
+    )
+    original_bulk([other], refresh="wait_for")
+    keys = [(document.parse_task_id, document.video_chunk_id) for document in documents]
+    deletion_calls = []
+
+    def deleted_but_response_lost(items, *, refresh=False):
+        deletion_calls.append(tuple(items))
+        original_delete(items, refresh=refresh)
+        # Check the immediate retained ES delete version, not unbounded gc_deletes.
+        with pytest.raises(ElasticsearchBulkWriteError) as caught:
+            original_bulk([documents[0]], refresh="wait_for")
+        assert caught.value.status_codes == {_id(documents[0]): 409}
+        assert store.verify_absent(keys)
+        raise TimeoutError("delete response was lost after the ES write")
+
+    uploads = UploadService(
+        UploadRepository(case.factory),
+        LocalArtifactStore(tmp_path / "artifacts", environment="test"),
+        video_parse_index_store=store,
+        video_parse_query_encoder=case.encoder,
+        video_parse_query_encoder_source=case.config["models"]["embedding"]["source"],
+        # Legacy cleanup is a local boundary, never a Qdrant client or query fallback.
+        video_chunk_store=SimpleNamespace(delete=lambda _chunk_id: None),
+        qdrant_mutation_lock=SimpleNamespace(hold=nullcontext),
+    )
+    monkeypatch.setattr(store, "bulk_delete", deleted_but_response_lost)
+    with pytest.raises(TimeoutError, match="delete response was lost"):
+        uploads.delete_session(case.upload_id, workspace_id="es-test-workspace")
+    with case.factory() as session:
+        tombstone = session.get(UploadSessionRecord, case.upload_id)
+        assert tombstone.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
+        assert tombstone.video_id == case.video_id
+        assert session.get(VideoParseTaskRecord, case.task_id).is_deleted
+    with pytest.raises(SeriesNotReadyError):
+        case.retrieval.search(
+            "松饼行动", workspace_id="es-test-workspace", series_ids=[case.series_id],
+        )
+
+    monkeypatch.setattr(store, "bulk_delete", original_delete)
+    assert uploads.reconcile_deletions() == (1, 0)
+    assert set(deletion_calls[0]) == set(keys)
+    assert store.verify_absent(keys)
+    other_key = (other.parse_task_id, other.video_chunk_id)
+    assert store.inspect([other_key])[other_key].present
+    with case.factory() as session:
+        tombstone = session.get(UploadSessionRecord, case.upload_id)
+        assert tombstone.last_error_code is None and tombstone.video_id is None
+        assert session.get(VideoRecord, case.video_id) is None
+        assert session.get(VideoParseTaskRecord, case.task_id) is None

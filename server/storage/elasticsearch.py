@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from elasticsearch import BadRequestError, Elasticsearch, NotFoundError
 
-from engine.retrieval.index_projection import (
+from engine.rag.indexing.projection import (
     INDEX_PROJECTION_VERSION,
     LEXICAL_FIELD_WEIGHTS,
     LEXICAL_PHRASE_FIELDS,
@@ -17,7 +17,7 @@ from engine.retrieval.index_projection import (
     LexicalField,
     compute_index_projection_revision,
 )
-from engine.retrieval import VideoChunkIndexDocument
+from engine.rag import VideoChunkIndexDocument
 
 from ..database import DatabaseEnvironment
 from ..identity import canonical_uuid
@@ -965,6 +965,14 @@ def _positive_limit(value: int) -> int:
 
 
 def _mapping_contains(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    # ES omits search_analyzer when it inherits the field's indexing analyzer.
+    if (
+        actual.get("type") == expected.get("type") == "text"
+        and "search_analyzer" in expected
+        and "search_analyzer" not in actual
+        and "analyzer" in actual
+    ):
+        actual = {**actual, "search_analyzer": actual["analyzer"]}
     return all(
         key in actual and (
             _mapping_contains(actual[key], value)
