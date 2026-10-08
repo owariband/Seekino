@@ -11,17 +11,16 @@ from uuid import uuid4
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from agent.video_parse_v2.input import ParseConfig
 from engine.parsev2.schemas import DialogueEvent, VideoParseResult
 from engine.rag.contracts import (
     TranscriptCueView,
     VideoChunkEvidence,
     VideoChunkRetrievalIdentity,
 )
-from engine.rag.indexing.pipeline import compute_source_revision
-from engine.rag.indexing.projection import (
-    compute_index_projection_revision,
-    project_chunk_index,
-)
+from engine.rag.indexing.projection import project_chunk_index
+from engine.rag.retrieval.contracts import ChunkRetrievalFacts
+from engine.rag.encoding import validate_sparse_weights
 
 from ..identity import canonical_uuid, derive_video_chunk_id
 from ..model.dto.jobDTO import (
@@ -107,13 +106,22 @@ class VideoParseRetrievalScope:
     series_ids: tuple[str, ...]
     searched_video_ids: tuple[str, ...]
     parse_tasks_by_video_id: Mapping[str, str]
-    retrieval_contract_id: str
-    semantic_encoder_id: str
-    vision_encoder_id: str
+    series_by_video_id: Mapping[str, str]
+    parse_config: ParseConfig
     index_generation: int
-    embedding_model: str
     partial: bool = False
     warnings: tuple[str, ...] = ()
+
+    @property
+    def embedding_model(self) -> str:
+        return self.parse_config.models.embedding.model
+
+
+@dataclass(frozen=True, slots=True)
+class HydratedRetrievalCandidate:
+    facts: ChunkRetrievalFacts
+    evidence: VideoChunkEvidence
+    contexts: tuple[ChunkRetrievalFacts, ...] = ()
 
 
 def invalidate_series_prefixes_from(
@@ -242,6 +250,7 @@ class VideoParseRepository:
         series_ids: Sequence[str],
         *,
         workspace_id: str,
+        require_sparse: bool = False,
     ) -> VideoParseRetrievalScope:
         """Select only Videos whose latest non-deleted V2 task is COMPLETE.
 
@@ -354,7 +363,8 @@ class VideoParseRepository:
             ):
                 rows_by_task.setdefault(row[0].video_parse_task_id, []).append(row)
 
-            shared_contract: tuple[str, str, str, int, str] | None = None
+            shared_contract: tuple[int, str, str, int, float, int] | None = None
+            selected_config: ParseConfig | None = None
             for video, task in selected:
                 rows = rows_by_task.get(task.id, [])
                 if (
@@ -366,18 +376,36 @@ class VideoParseRepository:
                     raise VideoParseConflictError(
                         "COMPLETE Video Parse V2 task has incomplete Chunk content"
                     )
-                embedding_model = _task_embedding_model(task)
+                try:
+                    config = ParseConfig.model_validate(task.parse_config)
+                except ValueError as exc:
+                    raise VideoParseConflictError(
+                        "COMPLETE Video Parse V2 task has invalid fixed parse configuration"
+                    ) from exc
+                embedding = config.models.embedding
                 for _child, chunk, content in rows:
                     receipt = _index_receipt(content, task.id, chunk.video_chunk_id)
+                    if require_sparse:
+                        envelope = (content.detail or {}).get(INDEX_EMBEDDINGS_DETAIL_KEY)
+                        representations = envelope.get("representations") if isinstance(envelope, Mapping) else None
+                        sparse = representations.get("sparse") if isinstance(representations, Mapping) else None
+                        if not isinstance(sparse, Mapping) or sparse.get("channel") != "sparse":
+                            raise VideoParseConflictError("selected V2 task has no completed Sparse representation")
+                        try:
+                            validate_sparse_weights(sparse.get("weights"))
+                        except ValueError as error:
+                            raise VideoParseConflictError("selected V2 task has an invalid Sparse representation") from error
                     contract = (
-                        receipt["retrieval_contract_id"],
-                        receipt["semantic_encoder_id"],
-                        receipt["vision_encoder_id"],
                         receipt["index_generation"],
-                        embedding_model,
+                        embedding.source,
+                        embedding.model,
+                        embedding.dimensions,
+                        embedding.video_fps,
+                        config.visual_input.max_height,
                     )
                     if shared_contract is None:
                         shared_contract = contract
+                        selected_config = config
                     elif shared_contract != contract:
                         raise VideoParseConflictError(
                             "selected Video Parse V2 tasks use different index contracts"
@@ -387,9 +415,7 @@ class VideoParseRepository:
                 raise VideoParseConflictError(
                     "selected Video Parse V2 tasks have no index receipt"
                 )
-            retrieval_contract_id, semantic_encoder_id, vision_encoder_id, generation, model = (
-                shared_contract
-            )
+            assert selected_config is not None
             incomplete_scope = (
                 len(selected) != len(videos)
                 or {video.series_id for video in videos} != existing_series_ids
@@ -400,11 +426,11 @@ class VideoParseRepository:
                 parse_tasks_by_video_id={
                     video.video_id: task.id for video, task in selected
                 },
-                retrieval_contract_id=retrieval_contract_id,
-                semantic_encoder_id=semantic_encoder_id,
-                vision_encoder_id=vision_encoder_id,
-                index_generation=generation,
-                embedding_model=model,
+                series_by_video_id={
+                    video.video_id: video.series_id for video, _task in selected
+                },
+                parse_config=selected_config,
+                index_generation=shared_contract[0],
                 partial=incomplete_scope,
                 warnings=(
                     (
@@ -419,23 +445,38 @@ class VideoParseRepository:
         self,
         candidates: Sequence[tuple[str, VideoChunkRetrievalIdentity]],
     ) -> list[VideoChunkEvidence]:
-        """Hydrate candidates only while their exact task/content receipt is current."""
+        """Keep the existing display-evidence interface for pinned V2 candidates."""
+
+        return [item.evidence for item in self.hydrate_retrieval_candidates(candidates)]
+
+    def hydrate_retrieval_candidates(
+        self,
+        candidates: Sequence[tuple[str, VideoChunkRetrievalIdentity]],
+        *,
+        include_context: bool = False,
+    ) -> tuple[HydratedRetrievalCandidate, ...]:
+        """Read formal facts and display evidence behind the same current receipt."""
 
         if isinstance(candidates, (str, bytes)):
             raise ValueError("candidates must be a sequence")
+        if not isinstance(include_context, bool):
+            raise ValueError("include_context must be a boolean")
         ordered = tuple(
-            (canonical_uuid(video_chunk_id, "video_chunk_id"), identity)
+            (
+                canonical_uuid(video_chunk_id, "video_chunk_id"),
+                VideoChunkRetrievalIdentity.model_validate(identity),
+            )
             for video_chunk_id, identity in candidates
         )
         if not ordered:
-            return []
+            return ()
         if len({video_chunk_id for video_chunk_id, _identity in ordered}) != len(ordered):
             raise ValueError("candidates contain duplicate video_chunk_id values")
 
         task_ids = {identity.parse_task_id for _chunk_id, identity in ordered}
         chunk_ids = {video_chunk_id for video_chunk_id, _identity in ordered}
         with self._session_factory() as session:
-            rows = session.execute(
+            query = (
                 select(
                     SeriesRecord,
                     VideoRecord,
@@ -471,8 +512,10 @@ class VideoParseRepository:
                     VideoParseTaskRecord.is_deleted.is_(False),
                     ChunkParseTaskRecord.status
                     == ChunkParseTaskStatus.COMPLETE.value,
-                    VideoChunkRecord.video_chunk_id.in_(chunk_ids),
                 )
+            )
+            rows = session.execute(
+                query.where(VideoChunkRecord.video_chunk_id.in_(chunk_ids))
             ).all()
             by_identity = {
                 (task.id, chunk.video_chunk_id): (
@@ -485,7 +528,23 @@ class VideoParseRepository:
                 for series, video, chunk, task, _child, content in rows
             }
 
-            hydrated: list[VideoChunkEvidence] = []
+            neighbors_by_sequence: dict[tuple[str, int], tuple[Any, ...]] = {}
+            if include_context and rows:
+                neighbor_conditions = [
+                    and_(
+                        VideoParseTaskRecord.id == task.id,
+                        VideoChunkRecord.sequence_no.in_(
+                            (chunk.sequence_no - 1, chunk.sequence_no + 1)
+                        ),
+                    )
+                    for _series, _video, chunk, task, _child, _content in rows
+                ]
+                neighbors_by_sequence = {
+                    (row[3].id, row[2].sequence_no): row
+                    for row in session.execute(query.where(or_(*neighbor_conditions)))
+                }
+
+            hydrated: list[HydratedRetrievalCandidate] = []
             for video_chunk_id, identity in ordered:
                 row = by_identity.get(
                     (identity.parse_task_id, video_chunk_id)
@@ -495,6 +554,10 @@ class VideoParseRepository:
                         "retrieval candidate is missing from COMPLETE V2 facts"
                     )
                 series, video, chunk, task, content = row
+                if chunk.video_id != video.video_id:
+                    raise VideoParseConflictError(
+                        "retrieval candidate Chunk belongs to a different Video"
+                    )
                 if _latest_video_task_id(session, video.video_id) != task.id:
                     raise VideoParseConflictError(
                         "retrieval candidate no longer belongs to the latest V2 task"
@@ -508,39 +571,67 @@ class VideoParseRepository:
                     video=video,
                     content=content,
                 )
-                try:
-                    result = VideoParseResult.model_validate(content.content)
-                    projection = project_chunk_index(
-                        result,
-                        chunk_start_seconds=chunk.start_seconds,
-                        chunk_end_seconds=chunk.end_seconds,
-                    )
-                except ValueError as exc:
-                    raise VideoParseConflictError(
-                        "retrieval candidate content is not a valid V2 result"
-                    ) from exc
-                if compute_source_revision(result) != identity.source_revision:
-                    raise VideoParseConflictError(
-                        "retrieval candidate source revision changed in MySQL"
-                    )
-                if (
-                    compute_index_projection_revision(projection)
-                    != identity.projection_revision
-                ):
-                    raise VideoParseConflictError(
-                        "retrieval candidate projection revision changed in MySQL"
-                    )
-                hydrated.append(_video_parse_evidence(
-                    series,
-                    video,
-                    chunk,
-                    task,
-                    content,
-                    result,
-                    retrieval_text=projection.semantic_text,
-                    identity=identity,
+                fact = _chunk_retrieval_facts(chunk, content, identity)
+                contexts = []
+                if include_context:
+                    for sequence in (chunk.sequence_no - 1, chunk.sequence_no + 1):
+                        if sequence < 0 or sequence >= task.chunk_count:
+                            continue
+                        neighbor = neighbors_by_sequence.get((task.id, sequence))
+                        if neighbor is None:
+                            raise VideoParseConflictError(
+                                "retrieval context is missing from COMPLETE V2 facts"
+                            )
+                        (other_series, other_video, other_chunk,
+                         _task, _child, other_content) = neighbor
+                        if (
+                            other_video.video_id != video.video_id
+                            or other_chunk.video_id != video.video_id
+                            or (
+                                sequence < chunk.sequence_no
+                                and other_chunk.end_seconds != chunk.start_seconds
+                            )
+                            or (
+                                sequence > chunk.sequence_no
+                                and other_chunk.start_seconds != chunk.end_seconds
+                            )
+                        ):
+                            raise VideoParseConflictError(
+                                "retrieval context is not a contiguous adjacent Chunk"
+                            )
+                        other_receipt = _index_receipt(
+                            other_content, task.id, other_chunk.video_chunk_id
+                        )
+                        if other_receipt["index_generation"] != identity.index_generation:
+                            raise VideoParseConflictError(
+                                "retrieval context uses a different index generation"
+                            )
+                        other_identity = VideoChunkRetrievalIdentity(
+                            workspace_id=other_series.workspace_id,
+                            series_id=other_series.series_id,
+                            video_id=other_video.video_id,
+                            parse_task_id=task.id,
+                            content_version=other_content.version,
+                            index_generation=other_receipt["index_generation"],
+                        )
+                        contexts.append(_chunk_retrieval_facts(
+                            other_chunk, other_content, other_identity
+                        ))
+                projection = project_chunk_index(
+                    fact.result,
+                    chunk_start_seconds=chunk.start_seconds,
+                    chunk_end_seconds=chunk.end_seconds,
+                )
+                hydrated.append(HydratedRetrievalCandidate(
+                    facts=fact,
+                    evidence=_video_parse_evidence(
+                        series, video, chunk, task, content, fact.result,
+                        retrieval_text=projection.semantic_text,
+                        identity=identity,
+                    ),
+                    contexts=tuple(contexts),
                 ))
-            return hydrated
+            return tuple(hydrated)
 
     def load_task_input(self, video_parse_task_id: str) -> VideoParseTaskInputState:
         with self._session_factory() as session:
@@ -1209,6 +1300,12 @@ class VideoParseRepository:
     ) -> None:
         """Persist reusable encoding results behind the current index lease."""
 
+        if (
+            isinstance(content_version, bool)
+            or not isinstance(content_version, int)
+            or content_version <= 0
+        ):
+            raise ValueError("content_version must be a positive integer")
         saved_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             _locked_parent_intervals(session, lease.video_parse_task_id)
@@ -1232,23 +1329,34 @@ class VideoParseRepository:
             detail = deepcopy(dict(content.detail or {}))
             cached = detail.get(INDEX_EMBEDDINGS_DETAIL_KEY)
             cached_representations: dict[str, Any] = {}
-            cached_receipt: Mapping[str, Any] | None = None
-            if (
-                isinstance(cached, dict)
-                and cached.get("content_version") == content_version
-                and isinstance(cached.get("representations"), dict)
-            ):
-                cached_representations = deepcopy(cached["representations"])
-                if isinstance(cached.get("receipt"), Mapping):
-                    cached_receipt = cached["receipt"]
+            selected_receipt: dict[str, Any] | None = None
+            if receipt is not None:
+                child = session.get(ChunkParseTaskRecord, chunk_parse_task_id)
+                if child is None or child.video_parse_task_id != lease.video_parse_task_id:
+                    raise VideoParseConflictError("embedding target belongs to a different task")
+                selected_receipt = _validate_index_receipt(
+                    receipt, lease.video_parse_task_id, child.video_chunk_id, content_version
+                )
+                try:
+                    cached_receipt = _index_receipt(
+                        content, lease.video_parse_task_id, child.video_chunk_id
+                    )
+                except VideoParseConflictError:
+                    cached_receipt = None
+                if (
+                    cached_receipt is not None
+                    and cached_receipt["index_generation"] == selected_receipt["index_generation"]
+                    and isinstance(cached, Mapping)
+                    and isinstance(cached.get("representations"), Mapping)
+                ):
+                    cached_representations = deepcopy(dict(cached["representations"]))
             cached_representations.update(deepcopy(dict(representations)))
             envelope: dict[str, Any] = {
                 "content_version": content_version,
                 "representations": cached_representations,
             }
-            selected_receipt = receipt if receipt is not None else cached_receipt
             if selected_receipt is not None:
-                envelope["receipt"] = deepcopy(dict(selected_receipt))
+                envelope["receipt"] = selected_receipt
             detail[INDEX_EMBEDDINGS_DETAIL_KEY] = envelope
             content.detail = detail
             content.update_time = saved_at
@@ -2412,22 +2520,11 @@ def _latest_video_task_id(session: Session, video_id: str) -> str | None:
     )
 
 
-def _task_embedding_model(task: VideoParseTaskRecord) -> str:
-    models = task.parse_config.get("models")
-    embedding = models.get("embedding") if isinstance(models, Mapping) else None
-    model = embedding.get("model") if isinstance(embedding, Mapping) else None
-    if not isinstance(model, str) or not model.strip():
-        raise VideoParseConflictError(
-            "COMPLETE Video Parse V2 task has no fixed embedding model"
-        )
-    return model.strip()
-
-
 def _index_receipt(
     content: ChunkParseContentRecord,
     parse_task_id: str,
     video_chunk_id: str,
-) -> dict[str, str | int]:
+) -> dict[str, Any]:
     detail = content.detail if isinstance(content.detail, Mapping) else {}
     envelope = detail.get(INDEX_EMBEDDINGS_DETAIL_KEY)
     receipt = envelope.get("receipt") if isinstance(envelope, Mapping) else None
@@ -2435,33 +2532,40 @@ def _index_receipt(
         raise VideoParseConflictError(
             "COMPLETE Video Parse V2 Chunk has no index receipt"
         )
+    version = envelope.get("content_version")
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version != content.version
+    ):
+        raise VideoParseConflictError(
+            "Video Parse V2 index receipt differs from current content version"
+        )
+    return _validate_index_receipt(receipt, parse_task_id, video_chunk_id, content.version)
+
+
+def _validate_index_receipt(
+    receipt: Mapping[str, Any],
+    parse_task_id: str,
+    video_chunk_id: str,
+    content_version: int,
+) -> dict[str, Any]:
+    if not isinstance(receipt, Mapping):
+        raise VideoParseConflictError("Video Parse V2 index receipt must be an object")
     expected = {
         "parse_task_id": parse_task_id,
         "video_chunk_id": video_chunk_id,
-        "content_version": content.version,
+        "content_version": content_version,
     }
     if any(receipt.get(name) != value for name, value in expected.items()):
         raise VideoParseConflictError(
             "Video Parse V2 index receipt differs from current Chunk identity"
         )
-    if envelope.get("content_version") != content.version:
+    version = receipt.get("content_version")
+    if isinstance(version, bool) or not isinstance(version, int) or version <= 0:
         raise VideoParseConflictError(
-            "Video Parse V2 index receipt differs from current content version"
+            "Video Parse V2 index receipt has invalid content_version"
         )
-    normalized: dict[str, str | int] = dict(expected)
-    for name in (
-        "source_revision",
-        "projection_revision",
-        "retrieval_contract_id",
-        "semantic_encoder_id",
-        "vision_encoder_id",
-    ):
-        value = receipt.get(name)
-        if not isinstance(value, str) or not value.strip():
-            raise VideoParseConflictError(
-                f"Video Parse V2 index receipt has invalid {name}"
-            )
-        normalized[name] = value
     generation = receipt.get("index_generation")
     if (
         isinstance(generation, bool)
@@ -2471,7 +2575,9 @@ def _index_receipt(
         raise VideoParseConflictError(
             "Video Parse V2 index receipt has invalid index_generation"
         )
-    normalized["index_generation"] = generation
+    normalized: dict[str, Any] = {**expected, "index_generation": generation}
+    if receipt.get("ordered_frames_manifest") is not None:
+        normalized["ordered_frames_manifest"] = deepcopy(receipt["ordered_frames_manifest"])
     return normalized
 
 
@@ -2479,7 +2585,7 @@ def _require_matching_retrieval_identity(
     identity: VideoChunkRetrievalIdentity,
     *,
     video_chunk_id: str,
-    receipt: Mapping[str, str | int],
+    receipt: Mapping[str, Any],
     series: SeriesRecord,
     video: VideoRecord,
     content: ChunkParseContentRecord,
@@ -2493,27 +2599,6 @@ def _require_matching_retrieval_identity(
         ("videoChunkId", video_chunk_id, receipt["video_chunk_id"]),
         ("contentVersion", identity.content_version, content.version),
         ("indexGeneration", identity.index_generation, receipt["index_generation"]),
-        ("sourceRevision", identity.source_revision, receipt["source_revision"]),
-        (
-            "projectionRevision",
-            identity.projection_revision,
-            receipt["projection_revision"],
-        ),
-        (
-            "retrievalContractId",
-            identity.retrieval_contract_id,
-            receipt["retrieval_contract_id"],
-        ),
-        (
-            "semanticEncoderId",
-            identity.semantic_encoder_id,
-            receipt["semantic_encoder_id"],
-        ),
-        (
-            "visionEncoderId",
-            identity.vision_encoder_id,
-            receipt["vision_encoder_id"],
-        ),
     ):
         if actual != expected:
             mismatches.append(name)
@@ -2522,6 +2607,26 @@ def _require_matching_retrieval_identity(
             "retrieval candidate disagrees with current MySQL fields: "
             + ", ".join(mismatches)
         )
+
+
+def _chunk_retrieval_facts(
+    chunk: VideoChunkRecord,
+    content: ChunkParseContentRecord,
+    identity: VideoChunkRetrievalIdentity,
+) -> ChunkRetrievalFacts:
+    try:
+        return ChunkRetrievalFacts(
+            video_chunk_id=chunk.video_chunk_id,
+            retrieval_identity=identity,
+            sequence_no=chunk.sequence_no,
+            start_seconds=chunk.start_seconds,
+            end_seconds=chunk.end_seconds,
+            result=VideoParseResult.model_validate(content.content),
+        )
+    except ValueError as exc:
+        raise VideoParseConflictError(
+            "retrieval candidate content is not a valid V2 result"
+        ) from exc
 
 
 def _video_parse_evidence(
@@ -2617,9 +2722,6 @@ def _video_parse_evidence(
         parse_provenance={
             "parseTaskId": identity.parse_task_id,
             "contentVersion": identity.content_version,
-            "sourceRevision": identity.source_revision,
-            "projectionRevision": identity.projection_revision,
-            "retrievalContractId": identity.retrieval_contract_id,
             "indexGeneration": identity.index_generation,
         },
         parsed_at=datetime_to_unix_time_ms(content.update_time),

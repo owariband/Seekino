@@ -1,33 +1,47 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from fastapi import Query, Request
 
-from ..model.dto.parseUsageDTO import ParseUsageState
-from ..model.vo.parseUsageVO import ParseUsageRowVO, ParseUsageVO
+from ..model.dto.parseUsageDTO import UsageOverviewState, UsageTotals
+from ..model.vo.parseUsageVO import UsageOverviewVO
+from ..utils.time import MAX_UNIX_TIME_MS
 from .context import get_services
 
 
-def get_parse_usage(request: Request, job_id: str = Query(alias="jobId"), workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64)) -> ParseUsageVO:
+def get_usage_overview(
+    request: Request,
+    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    from_start_time: int | None = Query(None, alias="fromStartTime", ge=0, le=MAX_UNIX_TIME_MS),
+    to_start_time: int | None = Query(None, alias="toStartTime", ge=0, le=MAX_UNIX_TIME_MS),
+    series_id: str | None = Query(None, alias="seriesId", min_length=1, max_length=64),
+    run_id: str | None = Query(None, alias="runId", min_length=1, max_length=256),
+) -> UsageOverviewVO:
     service = get_services(request).parse_usage
     if service is None:
-        raise RuntimeError("Parse usage service is unavailable")
-    return project_parse_usage(service.get(job_id, workspace_id=workspace_id))
+        raise RuntimeError("Model usage service is unavailable")
+    return project_usage_overview(service.overview(
+        workspace_id=workspace_id, from_start_time=from_start_time,
+        to_start_time=to_start_time, series_id=series_id, run_id=run_id,
+    ))
 
 
-def project_parse_usage(state: ParseUsageState) -> ParseUsageVO:
-    job = state.job
-    return ParseUsageVO(
-        job_id=job.job_id, video_id=job.video_id, series_id=job.series_id, series_name=job.series_name,
-        episode_order=job.episode_order, original_filename=job.original_filename, coverage=state.coverage,
-        total_tokens=state.total_tokens,
-        estimated_cost_cny=format(state.estimated_cost_cny, "f") if state.estimated_cost_cny is not None else None,
-        call_count=state.call_count, missing_usage_count=state.missing_usage_count, unpriced_call_count=state.unpriced_call_count,
-        items=[ParseUsageRowVO(
-            provider=item.provider, model=item.model, category=item.category, operation=item.operation,
-            call_count=item.call_count, input_tokens=item.input_tokens, output_tokens=item.output_tokens,
-            cached_input_tokens=item.cached_input_tokens, reasoning_tokens=item.reasoning_tokens,
-            total_tokens=item.total_tokens,
-            estimated_cost_cny=format(item.estimated_cost_cny, "f") if item.estimated_cost_cny is not None else None,
-            missing_usage_count=item.missing_usage_count, unpriced_call_count=item.unpriced_call_count,
-        ) for item in state.items],
+def _usage_values(state: UsageTotals) -> dict:
+    values = asdict(state)
+    values["estimated_cost_usd"] = (
+        format(state.estimated_cost_usd, "f") if state.estimated_cost_usd is not None else None
+    )
+    values["known_cost_usd"] = format(state.known_cost_usd, "f")
+    return values
+
+
+def project_usage_overview(state: UsageOverviewState) -> UsageOverviewVO:
+    return UsageOverviewVO(
+        status=state.status, message=state.message,
+        from_start_time=state.from_start_time, to_start_time=state.to_start_time,
+        fetched_at=state.fetched_at, truncated=state.truncated,
+        totals=_usage_values(state.totals),
+        models=[_usage_values(row) for row in state.models],
+        runs=[_usage_values(row) for row in state.runs],
     )

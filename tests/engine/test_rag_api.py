@@ -32,11 +32,18 @@ _PUBLIC_MODULES = [
     ]),
     ("engine.rag.retrieval.contracts", [
         "RetrievalQueryPlan", "RawChunkHit", "ChunkRetrievalFacts", "RetrievalEvidenceResult",
+        "EvidenceRequest",
     ]),
     ("engine.rag.retrieval.pipeline", [
         "build_recall_requests", "fuse_retrieval_candidates",
     ]),
-    ("engine.rag.retrieval.evidence", ["verify_retrieval_evidence"]),
+    ("engine.rag.retrieval.evidence", [
+        "build_evidence_requests", "verify_candidate_evidence", "verify_retrieval_evidence",
+    ]),
+    ("engine.rag.retrieval.rerank", [
+        "RerankScorerContract", "RerankItem", "RerankRequest", "RerankPlan", "RerankResult",
+        "plan_candidate_rerank", "accept_rerank_result", "finalize_candidate_rerank",
+    ]),
     ("engine.rag.retrieval.fusion", [
         "VersionedRankedVideoChunkMatch", "fuse_versioned_video_chunk_rankings",
         "fuse_video_chunk_rankings", "weighted_reciprocal_rank_fusion",
@@ -75,7 +82,7 @@ assert importlib.util.find_spec("engine.retrieval") is None
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_existing_top_level_exports_remain_available() -> None:
+def test_current_top_level_exports_remain_available() -> None:
     canonical = importlib.import_module("engine.rag")
     required = {
         "ChunkIndexSource", "ChunkIndexingContract", "EncoderContract", "EmbeddingArtifact",
@@ -83,8 +90,12 @@ def test_existing_top_level_exports_remain_available() -> None:
         "VideoClipInputContract", "VideoClipManifest", "VIDEO_CLIP_PREPROCESS_REVISION",
         "LexicalField", "ChunkIndexProjection", "accept_embedding_result", "compute_encoder_id",
         "compute_source_revision", "compute_index_projection_revision", "embedding_receipt",
-        "finalize_chunk_index", "plan_chunk_index", "project_chunk_index", "reuse_embedding_artifact",
+        "finalize_chunk_index", "plan_chunk_index", "project_chunk_index",
         "validate_embedding_artifact", "plan_retrieval_query", "verify_retrieval_evidence",
+        "EvidenceRequest", "build_evidence_requests",
+        "verify_candidate_evidence", "RerankScorerContract", "RerankItem", "RerankRequest",
+        "RerankPlan", "RerankResult", "plan_candidate_rerank", "accept_rerank_result",
+        "finalize_candidate_rerank",
     }
     assert required <= set(canonical.__all__)
     for name in canonical.__all__:
@@ -96,6 +107,17 @@ def test_existing_top_level_exports_remain_available() -> None:
                 assert getattr(canonical, name) is getattr(module, name)
 
 
+def test_chunk_embedding_cache_helpers_are_removed_from_public_api() -> None:
+    removed = {
+        "reuse_embedding_artifact", "reuse_sparse_embedding_artifact", "sparse_embedding_receipt",
+    }
+    for module_path in ("engine.rag", "engine.rag.encoding"):
+        module = importlib.import_module(module_path)
+        assert removed.isdisjoint(module.__all__)
+        for name in removed:
+            assert not hasattr(module, name)
+
+
 def test_projection_version_patch_changes_canonical_fingerprint(monkeypatch) -> None:
     canonical = importlib.import_module("engine.rag.indexing.projection")
     projection = canonical.ChunkIndexProjection(lexical_fields=[], semantic_text="")
@@ -105,18 +127,12 @@ def test_projection_version_patch_changes_canonical_fingerprint(monkeypatch) -> 
     assert after != before
 
 
-@pytest.mark.parametrize("sparse_encoder_id", [None, "sparse:test"])
-def test_persisted_identity_and_search_json_keep_the_existing_wire_contract(sparse_encoder_id) -> None:
+def test_persisted_identity_uses_content_version_and_generation_and_search_json_round_trips() -> None:
     canonical = importlib.import_module("engine.rag.contracts")
     payload = {
         "workspaceId": "workspace", "seriesId": "series", "videoId": "video",
         "parseTaskId": "task", "contentVersion": 2, "indexGeneration": 1,
-        "sourceRevision": "source", "projectionRevision": "projection",
-        "retrievalContractId": "retrieval", "semanticEncoderId": "text:test",
-        "visionEncoderId": "video:test",
     }
-    if sparse_encoder_id is not None:
-        payload["sparseEncoderId"] = sparse_encoder_id
     identity = canonical.VideoChunkRetrievalIdentity.model_validate(payload)
     assert identity.model_dump(mode="json", by_alias=True) == payload
     encoded = identity.model_dump_json(by_alias=True)

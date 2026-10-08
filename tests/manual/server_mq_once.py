@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import argparse
 
-from ..bootstrap import build_application_services
-from ..config import ServerSettings
-from ..utils.logging import configure_logging
+from server.bootstrap import build_application_services
+from server.config import ServerSettings
+from server.utils.logging import configure_logging
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m server.mq",
+        prog="python -m tests.manual.server_mq_once",
         description="Run at most one due anivag parse job for diagnostics.",
     )
     parser.add_argument(
@@ -24,7 +24,7 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
     if not args.once:
-        parser.error("server.mq is not a persistent process; pass --once for diagnostics")
+        parser.error("pass --once to run the single-job diagnostic")
     settings = ServerSettings.from_environment()
     configure_logging("mq", environment=settings.environment, config=settings.logging)
     services = build_application_services(settings)

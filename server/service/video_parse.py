@@ -53,6 +53,7 @@ from engine.parsev2.validation import (
 from engine.rag import (
     ChunkIndexingContract,
     EncoderContract,
+    SparseEncoderContract,
     VideoClipInputContract,
     VIDEO_CLIP_PREPROCESS_REVISION,
 )
@@ -77,6 +78,8 @@ from gateway.model_sources import ark_options, source_key
 from gateway.multimodal import ImageInput, TextInput, VideoInput
 from gateway.openai.audio import transcribe_audio
 from gateway.openai.multimodal import DeepSeekMultimodalModel
+from gateway.tracing import LangfuseTracing
+from gateway.usage import model_call_context
 
 from ..model.dto.jobDTO import (
     ChunkExecutionState,
@@ -152,7 +155,9 @@ class VideoParseRuntimeService:
         lease_duration: timedelta,
         heartbeat_interval: timedelta,
         index_generation: int = 1,
+        sparse_enabled: bool = False,
         parse_usage: ParseUsageService | None = None,
+        tracing: LangfuseTracing | None = None,
     ) -> None:
         if not worker_id.strip():
             raise ValueError("worker_id must not be blank")
@@ -168,6 +173,8 @@ class VideoParseRuntimeService:
             raise ValueError(
                 "index_generation must fit the Elasticsearch version contract"
             )
+        if not isinstance(sparse_enabled, bool):
+            raise ValueError("sparse_enabled must be a boolean")
         self._repository = repository
         self._queue = queue
         self._artifact_store = artifact_store
@@ -178,7 +185,9 @@ class VideoParseRuntimeService:
         self._lease_duration = lease_duration
         self._heartbeat_interval = heartbeat_interval
         self._index_generation = index_generation
+        self._sparse_enabled = sparse_enabled
         self._parse_usage = parse_usage
+        self._tracing = tracing
         self._video_lease: ContextVar[VideoParseLease | None] = ContextVar(
             "video_parse_v2_video_lease", default=None
         )
@@ -899,6 +908,37 @@ class VideoParseRuntimeService:
             if self._parse_usage is not None
             else nullcontext()
         )
+        context = {
+            "video_parse_task_id": lease.video_parse_task_id,
+            "run_id": lease.video_parse_task_id,
+            "lease_version": lease.lease_version,
+            "sequence_no": sequence_no,
+            "category": category,
+            "stage": (
+                "index" if category == "embedding"
+                else "refine" if isinstance(lease, IntervalParseLease)
+                else "prefix" if isinstance(lease, PrefixParseLease)
+                else "understand"
+            ),
+        }
+        for name in (
+            "chunk_parse_task_id", "interval_parse_task_id", "video_chunk_id",
+            "attempt_count", "retry_count",
+        ):
+            value = getattr(lease, name, None)
+            if value is not None:
+                context[name] = value
+        if task_input is not None:
+            context.update(
+                workspace_id=task_input.workspace_id,
+                series_id=task_input.series_id,
+                video_id=task_input.task.video_id,
+                session_id=task_input.task.video_id,
+            )
+        tracing = (
+            self._tracing.scope(context)
+            if self._tracing is not None else nullcontext()
+        )
         manager_token = self._model_manager.set(manager)
         stopped = asyncio.Event()
         heartbeat_errors: list[BaseException] = []
@@ -937,7 +977,7 @@ class VideoParseRuntimeService:
             pulse = asyncio.create_task(heartbeat())
             body_error: BaseException | None = None
             try:
-                with usage, manager.capture():
+                with model_call_context(context), tracing, usage, manager.capture():
                     yield manager
             except BaseException as error:
                 body_error = error
@@ -1230,6 +1270,14 @@ class VideoParseRuntimeService:
                     preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
                 ),
                 index_generation=self._index_generation,
+                sparse_encoder=(
+                    SparseEncoderContract(
+                        provider=provider,
+                        model=embedding.model,
+                        encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+                    )
+                    if self._sparse_enabled else None
+                ),
             ),
         )
         return coordinator, client

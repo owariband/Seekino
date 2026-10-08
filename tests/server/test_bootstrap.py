@@ -20,7 +20,7 @@ from server.config.parse_profile import ParseConfig
 from server.config.sse import SSEConfig
 from server.config.upload import UploadServiceConfig
 from server.database import create_schema
-from server.mq import __main__ as mq_main
+from tests.manual import server_mq_once as mq_main
 from server.mq.video_parse_consumer import VideoParseConsumer
 from server.service.video_parse import VideoParseRuntimeService
 from server.service.video_retrieval import VideoParseRetrievalService
@@ -94,6 +94,7 @@ def test_process_assembly_receives_runtime_configuration(
         if name.startswith("ANIVAG_"):
             monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
+    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v1")
     monkeypatch.setenv(
         "ANIVAG_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'bootstrap.sqlite'}"
     )
@@ -192,7 +193,11 @@ def test_process_assembly_receives_runtime_configuration(
             "rrf_k": 42,
             "text_weight": 0.25,
             "vision_weight": 1.5,
+            "tracing": services.tracing,
         }
+        assert services.tracing is services.agent._tracing
+        assert services.tracing is services.parse_usage._tracing
+        assert services.tracing is services.retrieval._tracing
         embedder = received["query_embedder"]
         assert embedder._model == settings.video_embedding_model
         assert embedder._fps == settings.video_embedding_fps
@@ -203,7 +208,7 @@ def test_process_assembly_receives_runtime_configuration(
             "dimensions": settings.text_vector_dimensions,
         }
         processor = received["processor"]
-        assert type(processor).__module__ == "server.service.video_processing"
+        assert type(processor).__module__ == "server.service.parsev1.video_processing"
         pipeline = processor._pipeline
         assert isinstance(pipeline, ParsePipeline)
         parse_runtime = pipeline._understand._understanding_agent._runtime
@@ -341,9 +346,11 @@ def test_process_assembly_receives_runtime_configuration(
     assert received["pool_recycle_seconds"] == settings.database_pool_recycle_seconds
 
 
+@pytest.mark.parametrize("advanced_retrieval", [False, True])
 def test_v2_mode_wires_durable_worker_and_elasticsearch(
     monkeypatch,
     tmp_path,
+    advanced_retrieval,
 ):
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
@@ -362,6 +369,24 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     settings = ServerSettings.from_environment()
+    if advanced_retrieval:
+        settings = replace(settings, retrieval=RetrievalConfig(
+            candidate_budget=80, sparse_weight=0.25, rerank_enabled=True,
+        ))
+
+    real_defaults = bootstrap.ParseConfig.from_defaults
+    def selected_defaults(**kwargs):
+        defaults = real_defaults(**kwargs)
+        return defaults.model_copy(update={"embedding": defaults.embedding.model_copy(update={
+            "model": "selected-task-embedding", "dimensions": 512, "video_fps": 2,
+        })})
+    monkeypatch.setattr(bootstrap.ParseConfig, "from_defaults", selected_defaults)
+    received = {}
+    real_retrieval = bootstrap.VideoParseRetrievalService
+    def create_retrieval(*args, **kwargs):
+        received.update(kwargs)
+        return real_retrieval(*args, **kwargs)
+    monkeypatch.setattr(bootstrap, "VideoParseRetrievalService", create_retrieval)
 
     monkeypatch.setattr(bootstrap, "QdrantClient", _QdrantClient)
     monkeypatch.setattr(bootstrap, "Elasticsearch", _ElasticsearchClient)
@@ -389,6 +414,11 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert isinstance(consumer, VideoParseConsumer)
         runtime = consumer._handlers.prepare.__self__
         assert isinstance(runtime, VideoParseRuntimeService)
+        assert services.tracing is not None
+        assert runtime._tracing is services.tracing
+        assert services.parse_usage._tracing is services.tracing
+        assert services.agent._tracing is services.tracing
+        assert services.retrieval._tracing is services.tracing
         assert consumer._queue is runtime._queue
         assert consumer._handlers.understand.__self__ is runtime
         assert consumer._handlers.refine.__self__ is runtime
@@ -399,6 +429,19 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert isinstance(runtime._elasticsearch_store, ElasticsearchVideoChunkStore)
         assert runtime._elasticsearch_store._client is services.elasticsearch_client
         assert isinstance(services.retrieval, VideoParseRetrievalService)
+        assert services.retrieval._embedder._model == "selected-task-embedding"
+        assert services.retrieval._embedder._dimensions == 512
+        assert services.retrieval._embedder._fps == 2
+        assert isinstance(services.retrieval._embedder._source, bootstrap.ArkModelSourceConfig)
+        assert received["candidate_budget"] == settings.retrieval.candidate_budget
+        assert received["sparse_weight"] == settings.retrieval.sparse_weight
+        assert received["expected_embedding_source"] == services.uploads.parse_defaults.embedding.source
+        assert runtime._sparse_enabled is advanced_retrieval
+        if advanced_retrieval:
+            assert isinstance(received["reranker"], bootstrap.StructuredTextReranker)
+            assert received["reranker"].model_name == load_config().agent_model.model
+        else:
+            assert received["reranker"] is None
         assert services.retrieval._store is runtime._elasticsearch_store
         assert services.retrieval._repository is runtime._repository
         assert services.retrieval._expected_index_generation == 7
@@ -406,7 +449,7 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
             "provider": "ark",
             "model": services.uploads.parse_defaults.embedding.model,
             "encoder_revision": "gateway-ark-embedding-v1",
-            "dimensions": settings.text_vector_dimensions,
+            "dimensions": 512,
             "normalization": "none",
             "output_contract": "float-vector-v1",
         }
@@ -476,7 +519,7 @@ def test_mq_once_reuses_application_bootstrap(monkeypatch):
         "build_application_services",
         lambda received: services if received is settings else None,
     )
-    monkeypatch.setattr(sys, "argv", ["python -m server.mq", "--once"])
+    monkeypatch.setattr(sys, "argv", ["python -m tests.manual.server_mq_once", "--once"])
 
     mq_main.main()
 
@@ -512,7 +555,7 @@ def test_mq_once_uses_v2_synchronous_diagnostic_entrypoint(monkeypatch):
         "build_application_services",
         lambda received: services if received is settings else None,
     )
-    monkeypatch.setattr(sys, "argv", ["python -m server.mq", "--once"])
+    monkeypatch.setattr(sys, "argv", ["python -m tests.manual.server_mq_once", "--once"])
 
     mq_main.main()
 
@@ -524,7 +567,7 @@ def test_mq_once_uses_v2_synchronous_diagnostic_entrypoint(monkeypatch):
 
 
 def test_mq_entrypoint_rejects_persistent_process_mode(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["python -m server.mq"])
+    monkeypatch.setattr(sys, "argv", ["python -m tests.manual.server_mq_once"])
 
     with pytest.raises(SystemExit) as error:
         mq_main.main()
@@ -541,15 +584,50 @@ def test_application_stops_consumer_before_agent_database_and_vector_store():
         agent=SimpleNamespace(close=lambda: order.append("agent")), index_sync=None,
         parse_consumer=SimpleNamespace(close=lambda: order.append("consumer")),
         agent_model_factory=SimpleNamespace(close=lambda: order.append("model_factory")),
+        tracing=SimpleNamespace(close=lambda: order.append("tracing")),
+        parse_usage=SimpleNamespace(close=lambda: order.append("usage_reader")),
         qdrant_client=SimpleNamespace(close=lambda: order.append("vectors")),
         elasticsearch_client=SimpleNamespace(close=lambda: order.append("es")),
         engine=SimpleNamespace(dispose=lambda: order.append("database")),
     )
     services.close()
-    assert order == ["consumer", "agent", "model_factory", "es", "vectors", "database"]
+    assert order == ["consumer", "agent", "model_factory", "tracing", "usage_reader", "es", "vectors", "database"]
 
 
-def test_query_embedder_uses_a_client_per_call_and_always_closes(monkeypatch):
+@pytest.mark.parametrize("failure", ["consumer", "agent"])
+def test_application_closes_tracing_after_model_teardown_even_if_host_close_fails(failure):
+    from types import SimpleNamespace
+
+    order = []
+
+    def close_agent():
+        order.append("agent")
+        if failure == "agent":
+            raise RuntimeError("agent close failed")
+
+    def close_consumer():
+        order.append("consumer")
+        if failure == "consumer":
+            raise RuntimeError("consumer close failed")
+
+    services = bootstrap.ApplicationServices(
+        library=None, uploads=None, jobs=None, media=None, retrieval=None,
+        agent=SimpleNamespace(close=close_agent), index_sync=None,
+        parse_consumer=SimpleNamespace(close=close_consumer),
+        agent_model_factory=SimpleNamespace(close=lambda: order.append("model_factory")),
+        tracing=SimpleNamespace(close=lambda: order.append("tracing")),
+        parse_usage=SimpleNamespace(close=lambda: order.append("usage_reader")),
+        qdrant_client=SimpleNamespace(close=lambda: order.append("vectors")),
+        elasticsearch_client=SimpleNamespace(close=lambda: order.append("es")),
+        engine=SimpleNamespace(dispose=lambda: order.append("database")),
+    )
+    with pytest.raises(RuntimeError, match=f"{failure} close failed"):
+        services.close()
+    assert order == ["consumer", "agent", "model_factory", "tracing", "usage_reader", "es", "vectors", "database"]
+
+
+@pytest.mark.parametrize("method", ["embed_query", "embed_image", "embed_sparse"])
+def test_query_embedder_uses_a_client_per_call_and_always_closes(monkeypatch, method):
     from types import SimpleNamespace
     clients = []
     def create_client(**kwargs):
@@ -562,19 +640,114 @@ def test_query_embedder_uses_a_client_per_call_and_always_closes(monkeypatch):
     class Embedder:
         def __init__(self, _model, **kwargs):
             self.client = kwargs["client"]
-        def embed_query(self, query):
+        def execute(self, query):
             if query == "fail":
                 raise RuntimeError("embedding failed")
             return self.client
+        embed_query = execute
+        embed_image = execute
+        embed_sparse = execute
     monkeypatch.setattr(bootstrap, "Ark", SimpleNamespace(volc=create_client))
     monkeypatch.setattr(bootstrap, "DoubaoMultimodalEmbedder", Embedder)
     embedder = bootstrap._LazyQueryEmbedder(model="embedding", dimensions=1024, fps=1, request_timeout_seconds=30)
     assert clients == []
-    assert embedder.embed_query("first") is not embedder.embed_query("second")
+    invoke = getattr(embedder, method)
+    assert invoke("first") is not invoke("second")
     with pytest.raises(RuntimeError, match="embedding failed"):
-        embedder.embed_query("fail")
+        invoke("fail")
     assert len(clients) == 3 and all(client.closed for client in clients)
     assert all(client.options == {"timeout": 30, "max_retries": 0} for client in clients)
+
+
+def test_query_embedder_uses_the_selected_ark_source_key(monkeypatch):
+    from types import SimpleNamespace
+    received = {}
+    monkeypatch.setenv("SELECTED_EMBEDDING_KEY", "selected-key")
+    class Client:
+        def close(self):
+            received["closed"] = True
+    def create_client(**kwargs):
+        received["options"] = kwargs
+        return Client()
+    class Embedder:
+        def __init__(self, _model, **kwargs):
+            received["delegate"] = kwargs
+        def embed_sparse(self, text):
+            return text
+    monkeypatch.setattr(bootstrap, "Ark", SimpleNamespace(volc=create_client))
+    monkeypatch.setattr(bootstrap, "DoubaoMultimodalEmbedder", Embedder)
+    embedder = bootstrap._LazyQueryEmbedder(
+        model="embedding", dimensions=512, fps=2, request_timeout_seconds=30,
+        source=bootstrap.ArkModelSourceConfig(api_key_env="SELECTED_EMBEDDING_KEY"),
+    )
+    assert embedder.embed_sparse("query") == "query"
+    assert received["options"] == {"timeout": 30, "max_retries": 0, "api_key": "selected-key"}
+    assert received["closed"] is True
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_text_reranker_uses_one_selected_model_and_closes_each_call(monkeypatch, fails):
+    from pydantic import BaseModel
+    from gateway.multimodal import TextInput
+    events = []
+    monkeypatch.setenv("SELECTED_RERANK_KEY", "selected-key")
+    class Output(BaseModel):
+        score: int
+    class Model:
+        def __init__(self, model, **kwargs):
+            events.append(("open", model, kwargs))
+        def generate(self, inputs, *, schema_name, result_type):
+            assert inputs == [TextInput("candidate")]
+            assert schema_name == "rerank" and result_type is Output
+            if fails:
+                raise RuntimeError("scorer failed")
+            return Output(score=1)
+        def close(self):
+            events.append(("close",))
+    monkeypatch.setattr(bootstrap, "DeepSeekMultimodalModel", Model)
+    delegate = bootstrap._LazyTextRerankModel(
+        source=bootstrap.OpenAIModelSourceConfig(
+            provider="deepseek", profile="deepseek", base_url="https://api.deepseek.com",
+            api_key_env="SELECTED_RERANK_KEY",
+        ),
+        model="selected-scorer", max_output_tokens=512, request_timeout_seconds=30,
+    )
+    if fails:
+        with pytest.raises(RuntimeError, match="scorer failed"):
+            delegate.generate([TextInput("candidate")], schema_name="rerank", result_type=Output)
+    else:
+        assert delegate.generate(
+            [TextInput("candidate")], schema_name="rerank", result_type=Output,
+        ).score == 1
+    assert events == [("open", "selected-scorer", {
+        "base_url": "https://api.deepseek.com", "api_key": "selected-key",
+        "max_output_tokens": 512, "request_timeout_seconds": 30,
+    }), ("close",)]
+
+
+@pytest.mark.parametrize("option", ["sparse", "rerank", "unsupported_source"])
+def test_unsupported_retrieval_options_fail_before_allocating_services(monkeypatch, option):
+    from types import SimpleNamespace
+    config = load_config()
+    if option == "unsupported_source":
+        config = config.model_copy(update={"agent_model": config.agent_model.model_copy(update={
+            "source": "ark_default",
+        })})
+    monkeypatch.setattr(bootstrap, "load_config", lambda _path: config)
+    def forbidden_database(*args, **kwargs):
+        raise AssertionError("invalid retrieval must fail before allocating services")
+    monkeypatch.setattr(bootstrap, "create_database_engine", forbidden_database)
+    settings = SimpleNamespace(
+        model_config_path=None,
+        parse_execution_mode="v2" if option == "unsupported_source" else "v1",
+        elasticsearch=object() if option == "unsupported_source" else None,
+        retrieval=RetrievalConfig(
+            sparse_weight=0.5 if option == "sparse" else 0,
+            rerank_enabled=option != "sparse",
+        ),
+    )
+    with pytest.raises(ValueError, match="requires a DeepSeek" if option == "unsupported_source" else "require Video Parse V2"):
+        bootstrap.build_application_services(settings)
 
 
 @pytest.mark.parametrize("injected", [False, True])

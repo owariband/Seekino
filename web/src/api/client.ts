@@ -14,7 +14,8 @@ import type {
   Page,
   ParseConfig,
   ParseJobView,
-  ParseUsageVO,
+  UsageOverviewOptions,
+  UsageOverviewVO,
   SeriesCreateRequest,
   SeriesUpdateRequest,
   SeriesView,
@@ -291,9 +292,13 @@ export function getVideoParseTask(
   );
 }
 
-export function getParseUsage(jobId: string, signal?: AbortSignal): Promise<ParseUsageVO> {
+export function getUsageOverview(options: UsageOverviewOptions = {}, signal?: AbortSignal): Promise<UsageOverviewVO> {
+  const query = new URLSearchParams({ workspaceId: WORKSPACE_ID });
+  for (const [key, value] of Object.entries(options)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
   return requestJson(
-    `/api/jobs/usage/get?workspaceId=${WORKSPACE_QUERY}&jobId=${encodeURIComponent(jobId)}`,
+    `/api/usage/overview?${query}`,
     { signal },
   );
 }

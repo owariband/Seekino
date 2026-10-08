@@ -9,9 +9,34 @@ from gateway.config import (
     ClaudeCodeModelSourceConfig,
     CodexModelSourceConfig,
     OpenAIModelSourceConfig,
+    TracingConfig,
     agent_api_key_env_names,
     load_config,
 )
+
+
+def test_tracing_is_disabled_by_default_and_accepts_local_backend() -> None:
+    assert not TracingConfig().enabled
+    assert load_config().tracing.enabled
+    settings = TracingConfig(enabled=True, base_url="http://127.0.0.1:3000/")
+    assert settings.base_url == "http://127.0.0.1:3000"
+    assert settings.public_key_env == "LANGFUSE_PUBLIC_KEY"
+    assert settings.secret_key_env == "LANGFUSE_SECRET_KEY"
+
+
+@pytest.mark.parametrize("configuration", [
+    {"base_url": "https://user:password@example.test"},
+    {"base_url": "https://example.test?secret=value"},
+    {"base_url": "file:///tmp/traces"},
+    {"queue_size": 0},
+    {"export_timeout_seconds": 0},
+    {"close_timeout_seconds": 0.01},
+    {"public_key_env": ""},
+    {"input_export": True},
+])
+def test_tracing_configuration_rejects_invalid_bounds_and_payload_export(configuration) -> None:
+    with pytest.raises(ValidationError):
+        TracingConfig.model_validate(configuration)
 
 
 def _config_payload() -> dict[str, object]:

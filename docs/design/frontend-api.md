@@ -12,6 +12,14 @@
 解析任务进度、视频播放、正式检索及 Workspace 下的 Agent Conversation / Message。
 运行中的 FastAPI OpenAPI 是字段级最终事实源；接口已实现不等于真实模型效果已验收。
 
+2026-10-08 模型用量接口改为 `GET /api/usage/overview`，固定 `source=langfuse`、
+`currency=USD`；旧 `/api/jobs/usage/get` 已退出公开路由。请求显式传 `workspaceId`，
+可选 Unix 毫秒时间窗、`seriesId`、`runId`，默认查询最近30天。响应直接提供模型与
+运行汇总，页面不再列举 V1 Job 并逐个查询费用；未配置、读取失败、缺用量、未计价与
+分页截断均有明确状态，未知金额保持 null。详细字段和配置见
+[模型用量与预估成本](../parse-model-usage.md)。Server 和 CLI 默认执行模式为 V2，
+需要 ES；仍可显式选择 V1。
+
 创建、列表和详情接口在路径中
 显式使用 `create`、`list`、`get`，不依靠 HTTP Method 隐含操作名称；用于定位路由资源的
 ID 统一通过 camelCase Query 参数传递，不放在 URL Path 中。检索请求中的 `seriesIds` 是
@@ -1169,7 +1177,7 @@ ParseJobConsumer，从 MySQL DB Queue Claim ParseJob；任务持久性、Lease �
 不能作为常驻进程与 API 并行启动：
 
 ```bash
-uv run --env-file .env.local python -m server.mq --once
+uv run --env-file .env.local python -m tests.manual.server_mq_once --once
 ```
 
 基础检查：

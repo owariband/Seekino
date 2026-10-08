@@ -1,6 +1,8 @@
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from threading import Barrier
 from types import SimpleNamespace
 
 import httpx
@@ -35,7 +37,7 @@ from gateway.openai import structured as structured_module
 from gateway.openai import agent as openai_agent_module
 from gateway.openai.agent import OpenAIAgentModel
 from gateway.openai.structured import OpenAIStructuredToolAgentModel
-from gateway.usage import capture_model_usage
+from gateway.usage import capture_model_usage, model_call_context
 
 
 class QueryDraft(BaseModel):
@@ -1730,6 +1732,98 @@ def _query_chat_model(
     )
 
 
+@pytest.mark.parametrize("finish_reason", ["length", "content_filter"])
+def test_structured_request_keeps_usage_before_response_validation(
+    monkeypatch, finish_reason,
+) -> None:
+    response = _completion("QueryDraft", {}, reason=finish_reason)
+    response["usage"] = {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
+
+    def generate(chat_model, messages, **kwargs):
+        chat_model._get_request_payload(messages, **kwargs)
+        return chat_model._create_chat_result(response)
+
+    monkeypatch.setattr(structured_module.ChatOpenAI, "_generate", generate)
+    records = []
+    with capture_model_usage(records.append), pytest.raises(
+        (QueryModelIncompleteError, ContentFilterError),
+    ):
+        _query_chat_model("ark", "ark-test")._generate([HumanMessage("query")])
+
+    assert len(records) == 1
+    assert records[0].status == "failed"
+    assert records[0].granularity == "provider_request"
+    assert records[0].usage_source == "provider_usage"
+    assert records[0].usage.total_tokens == 10
+
+
+def test_structured_same_provider_fallback_has_two_independent_records(monkeypatch) -> None:
+    def generate(chat_model, messages, **kwargs):
+        chat_model._get_request_payload(messages, **kwargs)
+        response = _completion(
+            "QueryDraft", {},
+            reason="length" if chat_model.model_name == "primary" else "tool_calls",
+        )
+        response["model"] = chat_model.model_name
+        response["usage"] = {
+            "prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10,
+        }
+        return chat_model._create_chat_result(response)
+
+    monkeypatch.setattr(structured_module.ChatOpenAI, "_generate", generate)
+    records = []
+    with capture_model_usage(records.append):
+        _query_chat_model("ark", "primary", fallback_model_name="fallback")._generate(
+            [HumanMessage("query")],
+        )
+
+    assert len(records) == 2
+    assert len({record.call_id for record in records}) == 2
+    assert [record.model for record in records] == ["primary", "fallback"]
+    assert [record.status for record in records] == ["failed", "completed"]
+    assert [record.usage.total_tokens for record in records] == [10, 10]
+
+
+def test_structured_shared_model_keeps_concurrent_usage_and_context_separate(monkeypatch) -> None:
+    barrier = Barrier(2)
+    model = _query_chat_model("ark", "shared")
+
+    def generate(chat_model, messages, **_kwargs):
+        tokens = int(messages[0].content)
+        chat_model._get_request_payload(messages, **_kwargs)
+        barrier.wait(timeout=2)
+        response = _completion("QueryDraft", {})
+        response["usage"] = {
+            "prompt_tokens": tokens, "completion_tokens": 1, "total_tokens": tokens + 1,
+        }
+        return chat_model._create_chat_result(response)
+
+    monkeypatch.setattr(structured_module.ChatOpenAI, "_generate", generate)
+
+    def invoke(tokens):
+        records = []
+        with model_call_context({"task_id": str(tokens)}), capture_model_usage(records.append):
+            model._generate([HumanMessage(str(tokens))])
+        return records
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = list(pool.map(invoke, (7, 19)))
+    assert len(first) == len(second) == 1
+    assert first[0].call_id != second[0].call_id
+    assert [first[0].usage.input_tokens, second[0].usage.input_tokens] == [7, 19]
+    assert [first[0].context["task_id"], second[0].context["task_id"]] == ["7", "19"]
+
+
+def test_structured_local_payload_rejection_creates_no_request_record() -> None:
+    records = []
+    with capture_model_usage(records.append), pytest.raises(ValueError):
+        _query_chat_model("ark", "ark-test")._generate([{
+            "role": "unsupported", "content": "local invalid message",
+        }])
+
+    assert records == []
+
+
 def test_query_fallback_uses_remaining_single_request_timeout(monkeypatch) -> None:
     ticks = iter([100.0, 100.75])
     monkeypatch.setattr(structured_module, "monotonic", lambda: next(ticks))
@@ -2090,23 +2184,23 @@ def test_context_middleware_keeps_recent_tool_reasoning_when_compacting() -> Non
 
 def test_sdk_query_falls_back_to_lite_only_after_provider_failure() -> None:
     requested_models = []
+    records = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         requested_models.append(payload["model"])
         if payload["model"] == "doubao-pro":
             return httpx.Response(503, json={"error": {"message": "unavailable"}})
-        return httpx.Response(
-            200,
-            json=_completion(
-                "QueryDraft",
-                {
-                    "plan_context": "检索完成",
-                    "message": "没有匹配片段",
-                    "selected_video_chunk_ids": [],
-                },
-            ),
-        )
+        response = _completion("QueryDraft", {
+            "plan_context": "检索完成",
+            "message": "没有匹配片段",
+            "selected_video_chunk_ids": [],
+        })
+        response["model"] = payload["model"]
+        response["usage"] = {
+            "prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10,
+        }
+        return httpx.Response(200, json=response)
 
     client = Ark(
         api_key="test-ark-key",
@@ -2121,12 +2215,20 @@ def test_sdk_query_falls_back_to_lite_only_after_provider_failure() -> None:
         client=client,
     )
 
-    result = model.run_structured(
-        "检索", tools=[], result_type=QueryDraft, max_model_calls=1,
-    )
+    with capture_model_usage(records.append):
+        result = model.run_structured(
+            "检索", tools=[], result_type=QueryDraft, max_model_calls=1,
+        )
 
     assert result.selected_video_chunk_ids == []
     assert requested_models == ["doubao-pro", "doubao-lite"]
+    assert len(records) == 2
+    assert len({record.call_id for record in records}) == 2
+    assert [record.model for record in records] == ["doubao-pro", "doubao-lite"]
+    assert records[0].status == "failed"
+    assert records[0].usage is None
+    assert records[0].usage_source is None
+    assert records[1].usage.total_tokens == 10
     client.close()
 
 
@@ -2145,16 +2247,20 @@ def test_structured_agent_guides_missing_tool_call_in_same_session(
     result_type, arguments,
 ) -> None:
     requests = []
+    records = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         requests.append(payload)
         if len(requests) == 1:
-            return httpx.Response(200, json=_completion_without_tool("ark-test"))
-        return httpx.Response(
-            200,
-            json=_completion(result_type.__name__, arguments, call_id="call-2"),
-        )
+            response = _completion_without_tool("ark-test")
+        else:
+            response = _completion(result_type.__name__, arguments, call_id="call-2")
+        response["usage"] = {
+            "prompt_tokens": 7 * len(requests), "completion_tokens": 3,
+            "total_tokens": 7 * len(requests) + 3,
+        }
+        return httpx.Response(200, json=response)
 
     client = Ark(
         api_key="test-ark-key",
@@ -2165,12 +2271,17 @@ def test_structured_agent_guides_missing_tool_call_in_same_session(
         "ark-test", request_timeout_seconds=3, max_output_tokens=400, client=client,
     )
 
-    result = model.run_structured(
-        "审核检索结果", tools=[], result_type=result_type, max_model_calls=2,
-    )
+    with capture_model_usage(records.append):
+        result = model.run_structured(
+            "审核检索结果", tools=[], result_type=result_type, max_model_calls=2,
+        )
 
     assert result == result_type.model_validate(arguments)
     assert len(requests) == 2
+    assert len(records) == 2
+    assert len({record.call_id for record in records}) == 2
+    assert [record.usage.input_tokens for record in records] == [7, 14]
+    assert all(record.granularity == "provider_request" for record in records)
     assert [request["model"] for request in requests] == ["ark-test"] * 2
     assert requests[1]["messages"][:len(requests[0]["messages"])] == (
         requests[0]["messages"]
@@ -2277,6 +2388,7 @@ def test_structured_missing_tool_retry_respects_stage_deadline(monkeypatch) -> N
 def test_sdk_query_falls_back_from_deepseek_to_ark_with_same_request_state() -> None:
     deepseek_requests = []
     ark_requests = []
+    records = []
 
     def deepseek_respond(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
@@ -2331,13 +2443,17 @@ def test_sdk_query_falls_back_from_deepseek_to_ark_with_same_request_state() -> 
         use_legacy_token_parameter=True,
     )
 
-    result = model.run_structured(
-        "检索", tools=[], result_type=QueryDraft, max_model_calls=3,
-    )
+    with capture_model_usage(records.append):
+        result = model.run_structured(
+            "检索", tools=[], result_type=QueryDraft, max_model_calls=3,
+        )
 
     assert result.selected_video_chunk_ids == []
     assert len(deepseek_requests) == 2
     assert len(ark_requests) == 1
+    assert len(records) == 3
+    assert len({record.call_id for record in records}) == 3
+    assert [record.provider for record in records] == ["deepseek", "deepseek", "ark"]
     assert deepseek_requests[0]["model"] == "deepseek-flash"
     assert deepseek_requests[0]["thinking"] == {"type": "disabled"}
     assert deepseek_requests[0]["tool_choice"] == "required"

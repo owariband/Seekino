@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Mapping, Sequence
 
 from engine.rag.encoding import (
@@ -57,7 +56,7 @@ def plan_text_query_signals(
             raise ValueError("enabled Sparse requires an indexing Sparse encoder")
         sparse_request = SparseEmbeddingRequest(
             encoder=index_contract.sparse_encoder,
-            input_sha256=hashlib.sha256(query.encode()).hexdigest(), text=query,
+            text=query,
         )
     return tuple(bindings.values()), tuple(requests.values()), sparse_request
 

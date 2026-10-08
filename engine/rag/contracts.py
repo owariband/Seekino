@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from engine.rag.indexing.projection import LexicalField
 
@@ -99,7 +99,7 @@ class VideoChunkEvidence(_RetrievalContractModel):
 
 
 class VideoChunkRetrievalIdentity(_RetrievalContractModel):
-    """Immutable MySQL/index identity required by versioned retrieval."""
+    """Formal task/content version and fixed index generation within a scope."""
 
     model_config = ConfigDict(
         alias_generator=_to_camel,
@@ -115,20 +115,6 @@ class VideoChunkRetrievalIdentity(_RetrievalContractModel):
     parse_task_id: str = Field(min_length=1)
     content_version: int = Field(gt=0, strict=True)
     index_generation: int = Field(gt=0, strict=True)
-    source_revision: str = Field(min_length=1)
-    projection_revision: str = Field(min_length=1)
-    retrieval_contract_id: str = Field(min_length=1)
-    semantic_encoder_id: str = Field(min_length=1)
-    vision_encoder_id: str = Field(min_length=1)
-    sparse_encoder_id: str | None = Field(default=None, min_length=1)
-
-    @model_serializer(mode="wrap")
-    def serialize_identity(self, handler: Any) -> dict[str, Any]:
-        identity = handler(self)
-        if self.sparse_encoder_id is None:
-            identity.pop("sparse_encoder_id", None)
-            identity.pop("sparseEncoderId", None)
-        return identity
 
 
 class VideoChunkCandidate(_RetrievalContractModel):

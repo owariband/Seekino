@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from engine.parsev2.schemas import VideoParseResult
+from engine.rag._validation import _sha256_json
 from engine.rag.contracts import VideoChunkRetrievalIdentity
 from engine.rag.encoding import (
     EmbeddingReuseTarget, EncoderContract, SparseEmbeddingRequest, compute_encoder_id,
@@ -23,6 +24,8 @@ RecallChannel = Literal["lexical", "semantic", "vision", "sparse"]
 _NonBlank = Annotated[str, Field(min_length=1, pattern=r"\S")]
 _PositiveInt = Annotated[int, Field(gt=0, strict=True)]
 _Weight = Annotated[float, Field(ge=0, allow_inf_nan=False, strict=True)]
+_Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+_ImageMime = Annotated[str, Field(pattern=r"^image/[a-z0-9][a-z0-9.+-]*$")]
 
 
 class RetrievalConsistencyError(ValueError):
@@ -131,6 +134,47 @@ class QueryEncoderBinding(_QueryModel):
     document_encoder_id: _NonBlank
     query_encoder: EncoderContract
     compatibility_provenance: _NonBlank
+    query_modality: Literal["text", "image", "gif"] = "text"
+
+
+class VisualQueryFrame(_QueryModel):
+    """Prepared frame at a relative GIF time, never a source-video location."""
+
+    input_sha256: _Sha256
+    at_seconds: Annotated[float, Field(ge=0, allow_inf_nan=False, strict=True)]
+
+
+class ImageQueryInput(_QueryModel):
+    """One prepared still image; the caller retains and supplies its actual bytes."""
+
+    input_sha256: _Sha256
+    mime_type: _ImageMime
+    preprocess_revision: _NonBlank
+    kind: Literal["image"] = "image"
+
+    @model_validator(mode="after")
+    def validate_image_mime(self) -> ImageQueryInput:
+        if self.mime_type == "image/gif":
+            raise ValueError("image query requires a prepared still-image MIME type")
+        return self
+
+
+class GifQueryInput(_QueryModel):
+    """Prepared GIF frames retain their order and relative times in one query."""
+
+    frames: Annotated[tuple[VisualQueryFrame, ...], Field(min_length=2)]
+    mime_type: _ImageMime
+    preprocess_revision: _NonBlank
+    kind: Literal["gif"] = "gif"
+
+    @model_validator(mode="after")
+    def validate_frames(self) -> GifQueryInput:
+        if self.mime_type == "image/gif":
+            raise ValueError("GIF query requires the prepared frames' still-image MIME type")
+        if any(current.at_seconds <= previous.at_seconds
+               for previous, current in zip(self.frames, self.frames[1:])):
+            raise ValueError("GIF frame times must be strictly increasing")
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,11 +184,50 @@ class QueryEncodingRequest:
     encoder: EncoderContract
 
     @property
+    def input_sha256(self) -> str:
+        return hashlib.sha256(self.text.encode()).hexdigest()
+
+    @property
+    def encoder_id(self) -> str:
+        return compute_encoder_id("text", self.encoder)
+
+    @property
     def target(self) -> EmbeddingReuseTarget:
         return EmbeddingReuseTarget(
-            modality="text", input_sha256=hashlib.sha256(self.text.encode()).hexdigest(),
-            encoder_id=compute_encoder_id("text", self.encoder), **self.encoder.claims(),
+            modality="text", input_sha256=self.input_sha256,
+            encoder_id=self.encoder_id, **self.encoder.claims(),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class VisualQueryEncodingRequest:
+    channels: tuple[Literal["vision"], ...]
+    visual_input: ImageQueryInput | GifQueryInput
+    encoder: EncoderContract
+
+    def __post_init__(self) -> None:
+        if self.channels != ("vision",):
+            raise ValueError("visual query encoding must target the vision channel")
+        if isinstance(self.visual_input, ImageQueryInput):
+            visual_input = ImageQueryInput.model_validate(self.visual_input)
+        elif isinstance(self.visual_input, GifQueryInput):
+            visual_input = GifQueryInput.model_validate(self.visual_input)
+        else:
+            raise ValueError("visual query requires an image or GIF input")
+        object.__setattr__(self, "visual_input", visual_input)
+
+    @property
+    def input_sha256(self) -> str:
+        return _sha256_json(self.visual_input.model_dump(mode="json"))
+
+    @property
+    def encoder_id(self) -> str:
+        claims = {
+            **self.encoder.claims(),
+            "mime_type": self.visual_input.mime_type,
+            "preprocess_revision": self.visual_input.preprocess_revision,
+        }
+        return f"{self.visual_input.kind}:sha256:{_sha256_json(claims)}"
 
 
 class QueryVectorArtifact(_QueryModel):
@@ -155,12 +238,12 @@ class QueryVectorArtifact(_QueryModel):
 
 @dataclass(frozen=True, slots=True)
 class RetrievalQueryPlan:
-    query: str
+    query: str | ImageQueryInput | GifQueryInput
     scope: RetrievalScope
     index_contract: ChunkIndexingContract
     policy: RetrievalPolicy
     encoder_bindings: tuple[QueryEncoderBinding, ...]
-    encoding_requests: tuple[QueryEncodingRequest, ...]
+    encoding_requests: tuple[QueryEncodingRequest | VisualQueryEncodingRequest, ...]
     sparse_request: SparseEmbeddingRequest | None
     constraints: tuple[EventConstraint, ...]
     temporal_constraints: tuple[TemporalConstraint, ...]
@@ -172,10 +255,8 @@ class RecallRequest:
 
     channel: RecallChannel
     scope: RetrievalScope
-    retrieval_contract_id: str
     index_generation: int
     limit: int
-    document_encoder_id: str | None = None
     text: str | None = None
     vector: tuple[float, ...] | None = None
     token_weights: tuple[tuple[str, float], ...] | None = None
@@ -205,6 +286,17 @@ class RetrievalCandidate(_QueryModel):
     start_seconds: int = Field(ge=0, strict=True)
     end_seconds: _PositiveInt
     lexical_matches: tuple[LexicalField, ...] = ()
+
+
+class EvidenceRequest(_QueryModel):
+    """Read pinned candidate facts, optionally with one direct neighbor per side.
+
+    Neighbors belong to the same video/task and retain their own content versions.
+    The caller distinguishes video boundaries from failed neighbor reads.
+    """
+
+    candidate: RetrievalCandidate
+    include_context: bool = Field(default=False, strict=True)
 
 
 class ChunkRetrievalFacts(_QueryModel):
@@ -260,13 +352,7 @@ class RetrievalEvidenceResult(_QueryModel):
 
 def validate_retrieval_identity(plan: RetrievalQueryPlan, identity: VideoChunkRetrievalIdentity) -> None:
     task = next((item for item in plan.scope.tasks if item.video_id == identity.video_id), None)
-    contract = plan.index_contract
-    sparse_id = contract.sparse_encoder.encoder_id if contract.sparse_encoder else None
     if (task is None or identity.workspace_id != plan.scope.workspace_id
             or identity.series_id != task.series_id or identity.parse_task_id != task.parse_task_id
-            or identity.retrieval_contract_id != contract.retrieval_contract_id
-            or identity.index_generation != contract.index_generation
-            or identity.semantic_encoder_id != contract.semantic_encoder_id
-            or identity.vision_encoder_id != contract.vision_encoder_id
-            or identity.sparse_encoder_id != sparse_id):
+            or identity.index_generation != plan.index_contract.index_generation):
         raise RetrievalConsistencyError("identity falls outside trusted scope or active index contract")

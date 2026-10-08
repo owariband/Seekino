@@ -241,10 +241,6 @@ def fuse_versioned_video_chunk_rankings(
     identities = _validated_versioned_identities(
         tuple((name, rankings) for name, rankings, _ in channels)
     )
-    if sparse_weight > 0 and any(
-        identity.sparse_encoder_id is None for identity in identities.values()
-    ):
-        raise ValueError("enabled sparse retrieval requires sparse_encoder_id")
     scores: dict[str, float] = {}
     channel_evidence: dict[str, dict[str, object]] = {}
     for name, rankings, weight in channels:
@@ -344,7 +340,7 @@ def _validated_versioned_identities(
     ],
 ) -> dict[str, VideoChunkRetrievalIdentity]:
     by_id: dict[str, VideoChunkRetrievalIdentity] = {}
-    trusted_scope: tuple[str, str] | None = None
+    trusted_scope: tuple[str, int] | None = None
     for channel_name, rankings in channels:
         for ranked in rankings:
             if not isinstance(ranked, VersionedRankedVideoChunkMatch):
@@ -353,12 +349,12 @@ def _validated_versioned_identities(
                     "VersionedRankedVideoChunkMatch"
                 )
             identity = ranked.retrieval_identity
-            scope = (identity.workspace_id, identity.retrieval_contract_id)
+            scope = (identity.workspace_id, identity.index_generation)
             if trusted_scope is None:
                 trusted_scope = scope
             elif trusted_scope != scope:
                 raise ValueError(
-                    "versioned rankings span multiple workspace/retrieval scopes"
+                    "versioned rankings span multiple workspace/index generations"
                 )
             current = by_id.get(ranked.video_chunk_id)
             if current is not None and current != identity:

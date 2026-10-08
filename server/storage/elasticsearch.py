@@ -15,15 +15,18 @@ from engine.rag.indexing.projection import (
     LEXICAL_PHRASE_FIELDS,
     ChunkIndexProjection,
     LexicalField,
-    compute_index_projection_revision,
 )
-from engine.rag import VideoChunkIndexDocument
+from engine.rag import (
+    RawChunkHit, RecallRequest, VideoChunkIndexDocument,
+)
+from engine.rag.contracts import VideoChunkRetrievalIdentity
+from engine.rag.encoding import validate_sparse_weights
 
 from ..database import DatabaseEnvironment
 from ..identity import canonical_uuid
 from ..utils.validation import require_nonempty_text
 
-INDEX_CONTRACT_VERSION = "anivag-video-chunk-es-4"
+INDEX_CONTRACT_VERSION = "anivag-video-chunk-es-5"
 ANALYSIS_CONTRACT_VERSION = "cjk-1"
 _MAX_EXTERNAL_VERSION = 9_223_372_036_854_775_807
 _EXTERNAL_VERSION_SHIFT = 31
@@ -37,13 +40,6 @@ _SOURCE_FIELDS = (
     "parse_task_id",
     "content_version",
     "index_generation",
-    "source_revision",
-    "projection_revision",
-    "retrieval_contract_id",
-    "semantic_encoder_id",
-    "vision_encoder_id",
-    "semantic_input_sha256",
-    "vision_input_sha256",
     "chunk_start_seconds",
     "chunk_end_seconds",
 )
@@ -94,19 +90,13 @@ class StoredDocumentState:
     video_chunk_id: str | None = None
     content_version: int | None = None
     index_generation: int | None = None
-    source_revision: str | None = None
-    projection_revision: str | None = None
-    retrieval_contract_id: str | None = None
-    semantic_encoder_id: str | None = None
-    vision_encoder_id: str | None = None
-    semantic_input_sha256: str | None = None
-    vision_input_sha256: str | None = None
     lexical_fields_present: bool = False
     semantic_text_present: bool = False
     semantic_vector_present: bool = False
     vision_vector_present: bool = False
     semantic_vector: tuple[float, ...] | None = None
     vision_vector: tuple[float, ...] | None = None
+    sparse_token_weights: tuple[tuple[str, float], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,11 +110,8 @@ class VideoChunkIndexMatch:
     parse_task_id: str
     content_version: int
     index_generation: int
-    source_revision: str
-    projection_revision: str
-    retrieval_contract_id: str
-    semantic_encoder_id: str
-    vision_encoder_id: str
+    chunk_start_seconds: int
+    chunk_end_seconds: int
     matched_fields: tuple[LexicalField, ...] = field(default_factory=tuple)
 
 
@@ -134,7 +121,7 @@ class _TrustedScope:
     workspace_id: str
     series_ids: frozenset[str]
     parse_tasks_by_video_id: Mapping[str, str]
-    retrieval_contract_id: str
+    index_generation: int
 
 
 def document_id(parse_task_id: str, video_chunk_id: str) -> str:
@@ -359,19 +346,13 @@ class ElasticsearchVideoChunkStore:
                 video_chunk_id=source.get("video_chunk_id"),
                 content_version=source.get("content_version"),
                 index_generation=source.get("index_generation"),
-                source_revision=source.get("source_revision"),
-                projection_revision=source.get("projection_revision"),
-                retrieval_contract_id=source.get("retrieval_contract_id"),
-                semantic_encoder_id=source.get("semantic_encoder_id"),
-                vision_encoder_id=source.get("vision_encoder_id"),
-                semantic_input_sha256=source.get("semantic_input_sha256"),
-                vision_input_sha256=source.get("vision_input_sha256"),
                 lexical_fields_present=isinstance(source.get("lexical_fields"), list),
                 semantic_text_present=isinstance(source.get("semantic_text"), str),
                 semantic_vector_present=semantic_vector is not None,
                 vision_vector_present=vision_vector is not None,
                 semantic_vector=semantic_vector,
                 vision_vector=vision_vector,
+                sparse_token_weights=_stored_sparse_weights(source.get("sparse_vector")),
             )
         return states
 
@@ -445,7 +426,8 @@ class ElasticsearchVideoChunkStore:
                         {"term": {"workspace_id": document.workspace_id}},
                         {"term": {"video_id": document.video_id}},
                         {"term": {"parse_task_id": document.parse_task_id}},
-                        {"term": {"source_revision": document.source_revision}},
+                        {"term": {"content_version": document.content_version}},
+                        {"term": {"index_generation": document.index_generation}},
                     ]}},
                     size=1,
                     source=True,
@@ -547,6 +529,54 @@ class ElasticsearchVideoChunkStore:
             raise ElasticsearchDocumentConsistencyError("delete verification has no search hits")
         return not hits
 
+    def recall(self, request: RecallRequest, *, exact: bool = False) -> tuple[RawChunkHit, ...]:
+        """Execute one Engine request without changing its scope, channel or budget."""
+
+        if not isinstance(request, RecallRequest):
+            raise ValueError("recall requires an Engine RecallRequest")
+        if not isinstance(exact, bool):
+            raise ValueError("exact must be a bool")
+        if not request.scope.tasks:
+            return ()
+        scope = {
+            "workspace_id": request.scope.workspace_id,
+            "series_ids": tuple(task.series_id for task in request.scope.tasks),
+            "parse_tasks_by_video_id": {task.video_id: task.parse_task_id for task in request.scope.tasks},
+            "index_generation": request.index_generation,
+            "limit": request.limit,
+        }
+        if request.channel == "lexical":
+            if request.vector is not None or request.token_weights is not None:
+                raise ValueError("lexical request must contain only text")
+            matches = self.search_lexical(request.text, **scope)
+        elif request.channel in ("semantic", "vision"):
+            if request.text is not None or request.token_weights is not None:
+                raise ValueError("dense request must contain only a vector")
+            search = self.search_semantic if request.channel == "semantic" else self.search_vision
+            matches = search(request.vector, **scope, exact=exact)
+        elif request.channel == "sparse":
+            if request.text is not None or request.vector is not None or request.token_weights is None:
+                raise ValueError("sparse request must contain only token weights")
+            matches = self.search_sparse(dict(request.token_weights), **scope)
+        else:
+            raise ValueError("unsupported recall channel")
+        tasks = {task.video_id: task for task in request.scope.tasks}
+        hits = []
+        for match in matches:
+            if match.series_id != tasks[match.video_id].series_id:
+                raise ElasticsearchDocumentConsistencyError("search hit differs from the selected video's series")
+            hits.append(RawChunkHit(
+                channel=request.channel, video_chunk_id=match.video_chunk_id,
+                retrieval_identity=VideoChunkRetrievalIdentity(
+                    workspace_id=match.workspace_id, series_id=match.series_id,
+                    video_id=match.video_id, parse_task_id=match.parse_task_id,
+                    content_version=match.content_version, index_generation=match.index_generation,
+                ), rank=match.rank, score=match.score,
+                start_seconds=match.chunk_start_seconds, end_seconds=match.chunk_end_seconds,
+                lexical_matches=match.matched_fields,
+            ))
+        return tuple(hits)
+
     def search_lexical(
         self,
         query: str,
@@ -554,7 +584,7 @@ class ElasticsearchVideoChunkStore:
         workspace_id: str,
         series_ids: Sequence[str],
         parse_tasks_by_video_id: Mapping[str, str],
-        retrieval_contract_id: str,
+        index_generation: int,
         field_weights: Mapping[str, float] | None = None,
         phrase_fields: Sequence[str] | None = None,
         limit: int,
@@ -578,7 +608,7 @@ class ElasticsearchVideoChunkStore:
                     match_kind: {"lexical_fields.raw_text": {"query": text, "boost": boost}}
                 }}})
         scope = self._scope_query(
-            workspace_id, series_ids, parse_tasks_by_video_id, retrieval_contract_id
+            workspace_id, series_ids, parse_tasks_by_video_id, index_generation
         )
         response = self._client.search(
             index=self.index_name,
@@ -596,48 +626,42 @@ class ElasticsearchVideoChunkStore:
     def search_semantic(
         self, query_vector: Sequence[float], *, workspace_id: str,
         series_ids: Sequence[str], parse_tasks_by_video_id: Mapping[str, str],
-        retrieval_contract_id: str, encoder_id: str, limit: int,
+        index_generation: int, limit: int,
         exact: bool = False,
     ) -> list[VideoChunkIndexMatch]:
         return self._search_vector(
             query_vector, "semantic_vector", self.semantic_dimensions,
             workspace_id=workspace_id, series_ids=series_ids,
             parse_tasks_by_video_id=parse_tasks_by_video_id,
-            retrieval_contract_id=retrieval_contract_id,
-            encoder_id=encoder_id, limit=limit, exact=exact,
+            index_generation=index_generation, limit=limit, exact=exact,
         )
 
     def search_vision(
         self, query_vector: Sequence[float], *, workspace_id: str,
         series_ids: Sequence[str], parse_tasks_by_video_id: Mapping[str, str],
-        retrieval_contract_id: str, encoder_id: str, limit: int,
+        index_generation: int, limit: int,
         exact: bool = False,
     ) -> list[VideoChunkIndexMatch]:
         return self._search_vector(
             query_vector, "vision_vector", self.vision_dimensions,
             workspace_id=workspace_id, series_ids=series_ids,
             parse_tasks_by_video_id=parse_tasks_by_video_id,
-            retrieval_contract_id=retrieval_contract_id,
-            encoder_id=encoder_id, limit=limit, exact=exact,
+            index_generation=index_generation, limit=limit, exact=exact,
         )
 
     def _search_vector(
         self, query_vector: Sequence[float], vector_field: str, dimensions: int,
         *, workspace_id: str, series_ids: Sequence[str],
-        parse_tasks_by_video_id: Mapping[str, str], retrieval_contract_id: str,
-        encoder_id: str, limit: int, exact: bool,
+        parse_tasks_by_video_id: Mapping[str, str], index_generation: int,
+        limit: int, exact: bool,
     ) -> list[VideoChunkIndexMatch]:
         vector = _validated_vector(query_vector, dimensions, "query_vector")
         if not isinstance(exact, bool):
             raise ValueError("exact must be a bool")
         scope = self._scope_query(
-            workspace_id, series_ids, parse_tasks_by_video_id, retrieval_contract_id
+            workspace_id, series_ids, parse_tasks_by_video_id, index_generation
         )
-        encoder_field = (
-            "semantic_encoder_id" if vector_field == "semantic_vector" else "vision_encoder_id"
-        )
-        encoder = require_nonempty_text(encoder_id, "encoder_id")
-        filters = [scope.query, {"term": {encoder_field: encoder}}, {"exists": {"field": vector_field}}]
+        filters = [scope.query, {"exists": {"field": vector_field}}]
         k = _positive_limit(limit)
         if not exact and k > 10_000:
             raise ValueError("approximate vector limit must not exceed 10000")
@@ -667,15 +691,31 @@ class ElasticsearchVideoChunkStore:
                 size=k,
                 source_includes=list(_SOURCE_FIELDS),
             )
-        matches = self._parse_hits(response, scope, lexical=False)
-        for hit in response["hits"]["hits"]:
-            if hit.get("_source", {}).get(encoder_field) != encoder:
-                raise ElasticsearchDocumentConsistencyError("vector encoder differs")
-        return matches
+        return self._parse_hits(response, scope, lexical=False)
+
+    def search_sparse(
+        self, query_weights: Mapping[str, float], *, workspace_id: str,
+        series_ids: Sequence[str], parse_tasks_by_video_id: Mapping[str, str],
+        index_generation: int, limit: int,
+    ) -> list[VideoChunkIndexMatch]:
+        weights = dict(validate_sparse_weights(query_weights))
+        scope = self._scope_query(workspace_id, series_ids, parse_tasks_by_video_id, index_generation)
+        size = _positive_limit(limit)
+        if not weights:
+            return []
+        response = self._client.search(
+            index=self.index_name, query={"bool": {
+                "filter": [scope.query],
+                "must": [{"sparse_vector": {
+                    "field": "sparse_vector", "query_vector": weights, "prune": False,
+                }}],
+            }}, size=size, source_includes=list(_SOURCE_FIELDS),
+        )
+        return self._parse_hits(response, scope, lexical=False)
 
     def _scope_query(
         self, workspace_id: str, series_ids: Sequence[str],
-        parse_tasks_by_video_id: Mapping[str, str], retrieval_contract_id: str,
+        parse_tasks_by_video_id: Mapping[str, str], index_generation: int,
     ) -> _TrustedScope:
         workspace = require_nonempty_text(workspace_id, "workspace_id")
         series = list(dict.fromkeys(canonical_uuid(item, "series_id") for item in series_ids))
@@ -687,7 +727,7 @@ class ElasticsearchVideoChunkStore:
         }
         if not tasks:
             raise ValueError("parse_tasks_by_video_id must not be empty")
-        contract = require_nonempty_text(retrieval_contract_id, "retrieval_contract_id")
+        _external_version(1, index_generation)
         pairs = [
             {"bool": {"filter": [
                 {"term": {"video_id": video_id}},
@@ -699,7 +739,7 @@ class ElasticsearchVideoChunkStore:
             "bool": {"filter": [
                 {"term": {"workspace_id": workspace}},
                 {"terms": {"series_id": series}},
-                {"term": {"retrieval_contract_id": contract}},
+                {"term": {"index_generation": index_generation}},
                 {"bool": {"should": pairs, "minimum_should_match": 1}},
             ]}
         }
@@ -708,7 +748,7 @@ class ElasticsearchVideoChunkStore:
             workspace_id=workspace,
             series_ids=frozenset(series),
             parse_tasks_by_video_id=tasks,
-            retrieval_contract_id=contract,
+            index_generation=index_generation,
         )
 
     def _parse_hits(
@@ -729,7 +769,7 @@ class ElasticsearchVideoChunkStore:
             if (
                 source.get("workspace_id") != scope.workspace_id
                 or source.get("series_id") not in scope.series_ids
-                or source.get("retrieval_contract_id") != scope.retrieval_contract_id
+                or source.get("index_generation") != scope.index_generation
                 or scope.parse_tasks_by_video_id.get(video_id) != source["parse_task_id"]
             ):
                 raise ElasticsearchDocumentConsistencyError("search hit is outside the authorized video/task scope")
@@ -761,11 +801,8 @@ class ElasticsearchVideoChunkStore:
                 parse_task_id=source["parse_task_id"],
                 content_version=source["content_version"],
                 index_generation=source["index_generation"],
-                source_revision=source["source_revision"],
-                projection_revision=source["projection_revision"],
-                retrieval_contract_id=source["retrieval_contract_id"],
-                semantic_encoder_id=source["semantic_encoder_id"],
-                vision_encoder_id=source["vision_encoder_id"],
+                chunk_start_seconds=source["chunk_start_seconds"],
+                chunk_end_seconds=source["chunk_end_seconds"],
                 matched_fields=matched_fields,
             )
             for rank, (_, score, source, matched_fields) in enumerate(parsed, start=1)
@@ -775,9 +812,7 @@ class ElasticsearchVideoChunkStore:
         try:
             if hit_id != document_id(source["parse_task_id"], source["video_chunk_id"]):
                 raise ValueError("document ID differs")
-            for name in ("workspace_id", "source_revision", "retrieval_contract_id", "semantic_encoder_id", "vision_encoder_id"):
-                require_nonempty_text(source[name], name)
-            require_nonempty_text(source["projection_revision"], "projection_revision")
+            require_nonempty_text(source["workspace_id"], "workspace_id")
             for name in ("series_id", "video_id"):
                 canonical_uuid(source[name], name)
             version = source["content_version"]
@@ -807,14 +842,6 @@ class ElasticsearchVideoChunkStore:
         canonical_uuid(document.series_id, "series_id")
         canonical_uuid(document.video_id, "video_id")
         document_id(document.parse_task_id, document.video_chunk_id)
-        for name in (
-            "source_revision",
-            "projection_revision",
-            "retrieval_contract_id",
-            "semantic_encoder_id",
-            "vision_encoder_id",
-        ):
-            require_nonempty_text(getattr(document, name), name)
         if (
             isinstance(document.content_version, bool)
             or not isinstance(document.content_version, int)
@@ -831,11 +858,6 @@ class ElasticsearchVideoChunkStore:
         ):
             raise ValueError("Chunk interval is invalid")
         projection = ChunkIndexProjection.model_validate(document.projection)
-        if (
-            compute_index_projection_revision(projection)
-            != document.projection_revision
-        ):
-            raise ValueError("projection_revision differs from the projection")
         if any(
             item.start_seconds >= document.chunk_end_seconds
             or item.end_seconds <= document.chunk_start_seconds
@@ -844,15 +866,6 @@ class ElasticsearchVideoChunkStore:
             raise ValueError("lexical field does not overlap its Chunk")
         if bool(projection.semantic_text.strip()) != (document.semantic_vector is not None):
             raise ValueError("semantic vector presence must match semantic text")
-        if bool(projection.semantic_text.strip()) != (
-            document.semantic_input_sha256 is not None
-        ):
-            raise ValueError("semantic input hash presence must match semantic text")
-        if document.semantic_input_sha256 is not None:
-            _validated_sha256(
-                document.semantic_input_sha256, "semantic_input_sha256"
-            )
-        _validated_sha256(document.vision_input_sha256, "vision_input_sha256")
         semantic_vector = (
             _validated_vector(document.semantic_vector, self.semantic_dimensions, "semantic_vector")
             if document.semantic_vector is not None else None
@@ -860,7 +873,7 @@ class ElasticsearchVideoChunkStore:
         vision_vector = _validated_vector(
             document.vision_vector, self.vision_dimensions, "vision_vector"
         )
-        return {
+        source = {
             "workspace_id": document.workspace_id,
             "series_id": document.series_id,
             "video_id": document.video_id,
@@ -868,20 +881,20 @@ class ElasticsearchVideoChunkStore:
             "parse_task_id": document.parse_task_id,
             "content_version": document.content_version,
             "index_generation": document.index_generation,
-            "source_revision": document.source_revision,
-            "projection_revision": document.projection_revision,
-            "retrieval_contract_id": document.retrieval_contract_id,
-            "semantic_encoder_id": document.semantic_encoder_id,
-            "vision_encoder_id": document.vision_encoder_id,
-            "semantic_input_sha256": document.semantic_input_sha256,
-            "vision_input_sha256": document.vision_input_sha256,
             "chunk_start_seconds": document.chunk_start_seconds,
             "chunk_end_seconds": document.chunk_end_seconds,
             "lexical_fields": [item.model_dump(mode="json") for item in projection.lexical_fields],
             "semantic_text": projection.semantic_text,
             "semantic_vector": semantic_vector,
             "vision_vector": vision_vector,
+            "ordered_frames_manifest": (
+                document.ordered_frames_manifest.as_dict()
+                if document.ordered_frames_manifest is not None else None
+            ),
         }
+        if document.sparse_token_weights is not None:
+            source["sparse_vector"] = dict(validate_sparse_weights(dict(document.sparse_token_weights)))
+        return source
 
     def _mapping(self) -> dict[str, Any]:
         return {
@@ -894,16 +907,15 @@ class ElasticsearchVideoChunkStore:
             "properties": {
                 **{name: {"type": "keyword"} for name in (
                     "workspace_id", "series_id", "video_id", "video_chunk_id",
-                    "parse_task_id", "source_revision",
-                    "projection_revision", "retrieval_contract_id",
-                    "semantic_encoder_id", "vision_encoder_id",
-                    "semantic_input_sha256", "vision_input_sha256",
+                    "parse_task_id",
                 )},
                 "content_version": {"type": "integer"},
                 "index_generation": {"type": "integer"},
                 "chunk_start_seconds": {"type": "long"},
                 "chunk_end_seconds": {"type": "long"},
                 "semantic_text": {"type": "text", "index": False},
+                "sparse_vector": {"type": "sparse_vector"},
+                "ordered_frames_manifest": {"type": "object", "enabled": False},
                 "lexical_fields": {"type": "nested", "dynamic": "strict", "properties": {
                     "field": {"type": "keyword"},
                     "raw_text": {"type": "text", "analyzer": "cjk", "search_analyzer": "cjk"},
@@ -940,14 +952,11 @@ def _validated_vector(value: Sequence[float], dimensions: int, name: str) -> lis
     return [float(item) for item in vector]
 
 
-def _validated_sha256(value: str, name: str) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) != 64
-        or any(character not in "0123456789abcdef" for character in value)
-    ):
-        raise ValueError(f"{name} must be a lowercase SHA-256 digest")
-    return value
+def _stored_sparse_weights(value: object) -> tuple[tuple[str, float], ...] | None:
+    try:
+        return validate_sparse_weights(value)
+    except ValueError:
+        return None
 
 
 def _valid_stored_vector(value: object, dimensions: int) -> bool:

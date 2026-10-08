@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from gateway.ark.embedding import DoubaoMultimodalEmbedder
+from gateway.usage import capture_model_usage
 
 
 class FakeMultimodalEmbeddings:
@@ -12,7 +13,10 @@ class FakeMultimodalEmbeddings:
     def create(self, **kwargs: object) -> object:
         self.calls.append(kwargs)
         return SimpleNamespace(
-            data=SimpleNamespace(embedding=[0.1, 0.2, 0.3])
+            model=kwargs["model"],
+            data=SimpleNamespace(embedding=[0.1, 0.2, 0.3],
+                                 sparse_embedding=[SimpleNamespace(index=7, value=0.3)]),
+            usage=SimpleNamespace(prompt_tokens=3, total_tokens=3),
         )
 
 
@@ -60,3 +64,89 @@ def test_embedding_dimension_must_be_supported() -> None:
             output_dimensionality=4096,
             client=SimpleNamespace(),
         )
+
+
+def test_selected_model_supports_image_and_sparse_without_another_model(tmp_path) -> None:
+    provider = FakeMultimodalEmbeddings()
+    embedder = DoubaoMultimodalEmbedder("doubao-embedding-vision-250615",
+                                      client=SimpleNamespace(multimodal_embeddings=provider))
+    image = tmp_path / "prepared.png"
+    image.write_bytes(b"prepared-image")
+    calls = []
+    with capture_model_usage(calls.append):
+        dense = embedder.embed_image(image)
+        sparse = embedder.embed_sparse("  formal text  ")
+    image_call, sparse_call = provider.calls
+    assert dense.model == sparse.model == "doubao-embedding-vision-250615"
+    assert dense.modality == "image" and sparse.weights == {"7": 0.3}
+    assert image_call["input"][0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert sparse_call["input"] == [{"type": "text", "text": "formal text"}]
+    assert sparse_call["sparse_embedding"] == {"type": "enabled"}
+    assert image_call["dimensions"] == sparse_call["dimensions"] == 1024
+    assert [call.operation for call in calls] == ["image_embedding", "text_embedding"]
+    assert all(call.usage.input_tokens == 3 and call.usage.output_tokens == 0 for call in calls)
+
+
+@pytest.mark.parametrize("model,supports", [("doubao-embedding-vision-250615", False),
+                                           ("doubao-embedding-vision-251215", True),
+                                           ("unknown-model", False)])
+def test_video_fps_is_sent_only_when_the_model_protocol_supports_it(tmp_path, model, supports):
+    provider = FakeMultimodalEmbeddings()
+    embedder = DoubaoMultimodalEmbedder(model, fps=2.0,
+                                      client=SimpleNamespace(multimodal_embeddings=provider))
+    video = tmp_path / "prepared.mp4"
+    video.write_bytes(b"prepared-video")
+    embedder.embed_video(video)
+    assert embedder.supports_video_fps is supports
+    video_url = provider.calls[0]["input"][0]["video_url"]
+    assert ("fps" in video_url) is supports
+    if supports:
+        assert video_url["fps"] == 2.0
+
+
+def test_provider_response_model_is_preserved_without_requested_model_substitution():
+    provider = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(
+        model="actual-provider-model", data=SimpleNamespace(embedding=[1.0, 0.0]),
+    ))
+    embedder = DoubaoMultimodalEmbedder("requested-model",
+                                      client=SimpleNamespace(multimodal_embeddings=provider))
+    assert embedder.embed_text("query").model == "actual-provider-model"
+
+
+@pytest.mark.parametrize("model", [None, "", " "])
+def test_provider_must_report_actual_model(model):
+    provider = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(
+        model=model, data=SimpleNamespace(embedding=[1.0, 0.0]),
+    ))
+    embedder = DoubaoMultimodalEmbedder("requested-model",
+                                      client=SimpleNamespace(multimodal_embeddings=provider))
+    with pytest.raises(RuntimeError, match="actual response model"):
+        embedder.embed_text("query")
+
+
+@pytest.mark.parametrize("entries,valid", [([], True), (None, False),
+    ([SimpleNamespace(index=7, value=0.2), SimpleNamespace(index=7, value=0.3)], False),
+    ([SimpleNamespace(index=True, value=0.2)], False),
+])
+def test_sparse_provider_response_distinguishes_empty_activations_from_invalid_entries(entries, valid):
+    provider = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(
+        model="selected-model", data=SimpleNamespace(sparse_embedding=entries),
+    ))
+    embedder = DoubaoMultimodalEmbedder("selected-model",
+                                      client=SimpleNamespace(multimodal_embeddings=provider))
+    if valid:
+        assert embedder.embed_sparse("query").weights == {}
+    else:
+        with pytest.raises(RuntimeError):
+            embedder.embed_sparse("query")
+
+
+def test_image_endpoint_rejects_gif_without_claiming_a_temporal_encoding_protocol(tmp_path):
+    provider = FakeMultimodalEmbeddings()
+    embedder = DoubaoMultimodalEmbedder("doubao-embedding-vision-250615",
+                                      client=SimpleNamespace(multimodal_embeddings=provider))
+    gif = tmp_path / "input.gif"
+    gif.write_bytes(b"gif")
+    with pytest.raises(ValueError, match="unsupported image file type"):
+        embedder.embed_image(gif)
+    assert provider.calls == []

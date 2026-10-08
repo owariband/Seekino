@@ -34,7 +34,7 @@ def build_recall_requests(
         artifacts[key] = artifact
     dense_signals = {}
     for request in plan.encoding_requests:
-        artifact = artifacts.pop((request.target.input_sha256, request.target.encoder_id), None)
+        artifact = artifacts.pop((request.input_sha256, request.encoder_id), None)
         if artifact is None:
             raise ValueError("planned query vector is missing")
         vector = validate_embedding_vector(artifact.vector, dimensions=request.encoder.dimensions)
@@ -54,17 +54,10 @@ def build_recall_requests(
     for channel, weight in plan.policy.weights.items():
         if not weight:
             continue
-        encoder_id = (
-            getattr(plan.index_contract, f"{channel}_encoder_id")
-            if channel in ("semantic", "vision") else
-            plan.sparse_request.encoder.encoder_id if channel == "sparse" else None
-        )
         requests.append(RecallRequest(
             channel=channel, scope=plan.scope,
-            retrieval_contract_id=plan.index_contract.retrieval_contract_id,
             index_generation=plan.index_contract.index_generation, limit=plan.policy.channel_top_k,
-            document_encoder_id=encoder_id,
-            text=plan.query if channel == "lexical" else None,
+            text=plan.query if channel == "lexical" and isinstance(plan.query, str) else None,
             vector=dense_signals.get(channel),
             token_weights=sparse_weights if channel == "sparse" else None,
         ))

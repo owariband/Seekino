@@ -26,6 +26,7 @@ from engine.rag import (
 from gateway.config import load_config
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
+from gateway.usage import capture_model_usage, model_call_context, track_model_call
 
 from server.api.app import create_app
 from server.bootstrap import ApplicationServices
@@ -898,6 +899,7 @@ def test_model_stage_accepts_post_commit_heartbeat_loss(monkeypatch):
     runtime._lease_duration = timedelta(seconds=1)
     runtime._heartbeat_interval = timedelta(milliseconds=1)
     runtime._parse_usage = None
+    runtime._tracing = None
     runtime._model_manager = ContextVar("test_model_manager", default=None)
     lease = VideoParseLease(
         video_parse_task_id=str(uuid4()),
@@ -923,6 +925,73 @@ def test_model_stage_accepts_post_commit_heartbeat_loss(monkeypatch):
     asyncio.run(execute())
     assert runtime._queue.checked >= 1
     assert managers[0].cancel_count == 1
+
+
+def test_model_stage_traces_actual_worker_calls_without_a_ledger(monkeypatch):
+    from threading import get_ident
+
+    main_thread = get_ident()
+    traced, thread_ids, outer = [], [], []
+
+    def observe(call):
+        traced.append(call)
+        thread_ids.append(get_ident())
+
+    class Tracing:
+        @contextmanager
+        def scope(self, context):
+            with model_call_context(context), capture_model_usage(observe, combine=True):
+                yield
+
+    class Manager:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def capture(self):
+            return nullcontext()
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr("server.service.video_parse.VideoParseModelCallManager", Manager)
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._repository = object()
+    runtime._queue = object()
+    runtime._lease_duration = timedelta(seconds=5)
+    runtime._heartbeat_interval = timedelta(seconds=1)
+    runtime._parse_usage = None
+    runtime._tracing = Tracing()
+    runtime._model_manager = ContextVar("tracing_test_manager", default=None)
+    lease = VideoParseLease(
+        video_parse_task_id="task", video_id="video", worker_id="worker",
+        lease_version=9, lease_expire_time=datetime.now(UTC) + timedelta(seconds=5),
+        attempt_count=2, max_attempts=3, parse_config={},
+    )
+    task_input = SimpleNamespace(
+        workspace_id="workspace", series_id="series",
+        task=SimpleNamespace(video_id="video"),
+    )
+
+    def invoke():
+        with track_model_call(provider="fixture", model="chat", operation="video_parse"):
+            pass
+
+    async def execute():
+        with capture_model_usage(outer.append):
+            async with runtime._model_stage(
+                lease, task_input, sequence_no=2, category="parse",
+                check_active=lambda: None,
+            ):
+                await runtime._run_blocking(invoke)
+
+    asyncio.run(execute())
+    assert len(traced) == len(outer) == 1
+    assert thread_ids[0] != main_thread
+    assert traced[0].context["workspace_id"] == "workspace"
+    assert traced[0].context["video_parse_task_id"] == "task"
+    assert traced[0].context["lease_version"] == 9
+    assert traced[0].context["attempt_count"] == 2
+    assert traced[0].context["sequence_no"] == 2
 
 
 def test_media_reaper_uses_exact_queue_identity_and_fails_closed():

@@ -5,6 +5,7 @@ import logging
 import os
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field, replace
+from contextlib import contextmanager
 from queue import Empty
 from threading import Event
 from uuid import uuid4
@@ -19,6 +20,7 @@ from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.context import _project_stored_search_result
 from agent.chat.video_search.runtime import AgentRuntime
 from gateway.web_search import WebSearchHit, WebSearcher
+from gateway.usage import capture_model_usage, model_call_context, track_model_call
 from server.api.agent import _agent_message_view
 from server.config.agent import AgentServiceConfig
 from server.database import (
@@ -307,6 +309,44 @@ def _collect(execution):
         if event is None:
             return events
         events.append(event)
+
+
+def test_chat_tracing_binds_message_identity_in_the_actual_executor(build_service):
+    from threading import get_ident
+
+    main_thread = get_ident()
+    observed, thread_ids = [], []
+
+    def observe(call):
+        observed.append(call)
+        thread_ids.append(get_ident())
+
+    class Tracing:
+        @contextmanager
+        def scope(self, context):
+            with model_call_context(context), capture_model_usage(observe, combine=True):
+                yield
+
+    class QueryModel(_QueryModel):
+        def run_structured(self, *args, **kwargs):
+            with track_model_call(provider="fixture", model=self.model_name, operation="query"):
+                return super().run_structured(*args, **kwargs)
+
+    service, conversation, *_ = build_service(
+        query=QueryModel(), service_kwargs={"tracing": Tracing()},
+    )
+    first = _send(service, conversation)
+    repeated = _send(service, conversation)
+    assert repeated == first
+    assert len(observed) == 1
+    assert thread_ids[0] != main_thread
+    context = observed[0].context
+    assert context["workspace_id"] == "local-default"
+    assert context["conversation_id"] == conversation.conversation_id
+    assert context["user_message_id"] == first.user_message.message_id
+    assert context["assistant_message_id"] == first.assistant_message.message_id
+    assert context["run_id"] == first.assistant_message.message_id
+    assert "content" not in context
 
 
 class _DirectSupervisorModel:

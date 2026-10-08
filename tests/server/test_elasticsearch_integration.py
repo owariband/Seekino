@@ -19,10 +19,12 @@ from engine.rag import (
     ChunkIndexingContract,
     EncoderContract,
     LexicalField,
+    RecallRequest,
+    RetrievalScope,
+    SelectedVideoTask,
     VIDEO_CLIP_PREPROCESS_REVISION,
     VideoChunkIndexDocument,
     VideoClipInputContract,
-    compute_index_projection_revision,
 )
 from gateway.embedding import EmbeddingResult
 from server.config.parse_profile import default_video_parse_v2_config
@@ -107,13 +109,7 @@ def _document(*, series_id, video_id, chunk_id, parse_task_id, question):
         workspace_id="es-test-workspace", series_id=series_id,
         video_id=video_id, video_chunk_id=chunk_id,
         parse_task_id=parse_task_id,
-        content_version=1, index_generation=1, source_revision=question,
-        projection_revision=compute_index_projection_revision(projection),
-        retrieval_contract_id="integration-retrieval-v1",
-        semantic_encoder_id="integration-semantic-v1",
-        vision_encoder_id="integration-vision-v1",
-        semantic_input_sha256="a" * 64,
-        vision_input_sha256="b" * 64,
+        content_version=1, index_generation=1,
         chunk_start_seconds=10, chunk_end_seconds=20,
         projection=projection,
         semantic_vector=[1.0, 0.0], vision_vector=[0.0, 1.0],
@@ -310,7 +306,7 @@ def test_real_es_mapping_three_queries_and_authorized_tasks(isolated_store):
         "workspace_id": "es-test-workspace",
         "series_ids": [series_id],
         "parse_tasks_by_video_id": {video_id: current.parse_task_id, other_video: other_parse_task},
-        "retrieval_contract_id": "integration-retrieval-v1",
+        "index_generation": 1,
     }
     question_hits = store.search_lexical("松饼行动", **scope, limit=10)
     assert [hit.video_chunk_id for hit in question_hits] == [chunk_id]
@@ -331,15 +327,15 @@ def test_real_es_mapping_three_queries_and_authorized_tasks(isolated_store):
     assert name_hits and any(field.field == "person_names" for field in name_hits[0].matched_fields)
 
     semantic = store.search_semantic(
-        [1, 0], **scope, encoder_id="integration-semantic-v1", limit=10,
+        [1, 0], **scope, limit=10,
     )
     vision = store.search_vision(
-        [0, 1], **scope, encoder_id="integration-vision-v1", limit=10, exact=True,
+        [0, 1], **scope, limit=10, exact=True,
     )
     assert {hit.video_chunk_id for hit in semantic} == {chunk_id, other.video_chunk_id}
     assert {hit.video_chunk_id for hit in vision} == {chunk_id, other.video_chunk_id}
     assert not store.search_semantic(
-        [1, 0], **scope, encoder_id="different-vector-space", limit=10,
+        [1, 0], **{**scope, "index_generation": 2}, limit=10,
     )
 
     updated = replace(
@@ -361,6 +357,51 @@ def test_real_es_mapping_three_queries_and_authorized_tasks(isolated_store):
                  refresh="wait_for")
     assert store.verify_absent([(old.parse_task_id, chunk_id)])
     assert store.inspect([(current.parse_task_id, chunk_id)])[(current.parse_task_id, chunk_id)].present
+
+
+def test_real_es_engine_recall_keeps_channels_and_sparse_inputs(isolated_store):
+    store = isolated_store
+    document = replace(_document(
+        series_id=str(uuid4()), video_id=str(uuid4()), chunk_id=str(uuid4()),
+        parse_task_id=str(uuid4()), question="松饼行动",
+    ), sparse_token_weights=(("utterance", 0.5),))
+    other_task = replace(document, parse_task_id=str(uuid4()))
+    store.bulk_upsert([document, other_task], refresh="wait_for")
+    scope = RetrievalScope(workspace_id=document.workspace_id, tasks=(SelectedVideoTask(
+        series_id=document.series_id, video_id=document.video_id,
+        parse_task_id=document.parse_task_id, status="COMPLETE",
+    ),))
+    for channel in ("lexical", "semantic", "vision", "sparse"):
+        request = RecallRequest(
+            channel=channel, scope=scope, index_generation=1, limit=3,
+            text="松饼行动" if channel == "lexical" else None,
+            vector=(1.0, 0.0) if channel in ("semantic", "vision") else None,
+            token_weights=(("utterance", 0.8),) if channel == "sparse" else None,
+        )
+        hit, = store.recall(request, exact=True)
+        assert hit.channel == channel
+        assert hit.retrieval_identity == document.retrieval_identity
+        assert hit.video_chunk_id == document.video_chunk_id
+        assert (hit.start_seconds, hit.end_seconds) == (10, 20)
+        assert bool(hit.lexical_matches) == (channel == "lexical")
+        if channel == "sparse":
+            assert hit.score == pytest.approx(0.4, abs=0.005)
+        assert store.recall(replace(request, index_generation=2), exact=True) == ()
+    state = store.inspect([(document.parse_task_id, document.video_chunk_id)])[
+        (document.parse_task_id, document.video_chunk_id)
+    ]
+    assert state.sparse_token_weights == (("utterance", 0.5),)
+    source = store._client.get(index=store.index_name, id=_id(document))["_source"]
+    assert source["sparse_vector"] == {"utterance": 0.5}
+    assert "source_revision" not in source and "semantic_encoder_id" not in source
+    inactive = replace(document, content_version=2, sparse_token_weights=())
+    store.bulk_upsert([inactive], refresh="wait_for")
+    assert store.verify_ready([inactive])
+    assert store.recall(request, exact=True) == ()
+    state = store.inspect([(inactive.parse_task_id, inactive.video_chunk_id)])[
+        (inactive.parse_task_id, inactive.video_chunk_id)
+    ]
+    assert state.sparse_token_weights == ()
 
 
 def test_real_es_bulk_partial_failure_keeps_successful_item(isolated_store, monkeypatch):
@@ -420,7 +461,7 @@ def test_real_es_strict_generation_and_exact_replay(isolated_store):
         store.bulk_upsert([lower_generation], refresh="wait_for")
     assert stale_error.value.status_codes == {_id(document): 409}
 
-    conflicting = replace(document, source_revision="same-version-different-source")
+    conflicting = replace(document, semantic_vector=[0.5, 0.5])
     assert store.inspect_exact([conflicting]) == {_id(document): False}
 
 
@@ -439,9 +480,8 @@ def test_real_es_rejects_late_content_in_the_same_generation(isolated_store):
         ],
     })
     current = replace(
-        old, content_version=2, source_revision="current-content",
+        old, content_version=2,
         projection=current_projection,
-        projection_revision=compute_index_projection_revision(current_projection),
     )
     store.bulk_upsert([old], refresh="wait_for")
     store.bulk_upsert([current], refresh="wait_for")
@@ -454,7 +494,7 @@ def test_real_es_rejects_late_content_in_the_same_generation(isolated_store):
     scope = {
         "workspace_id": current.workspace_id, "series_ids": [current.series_id],
         "parse_tasks_by_video_id": {current.video_id: current.parse_task_id},
-        "retrieval_contract_id": current.retrieval_contract_id,
+        "index_generation": current.index_generation,
     }
     assert not store.search_lexical("蓝莓雨伞", **scope, limit=10)
     hits = store.search_lexical("星空布丁", **scope, limit=10)

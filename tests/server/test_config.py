@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from server.config import ServerSettings
+from server.config.retrieval import RetrievalConfig
 from server.config.global_agent_settings import (
     GlobalAgentSettingsConflictError,
     patch_global_agent_settings,
@@ -99,6 +100,9 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.retrieval.rrf_k == 60
     assert settings.retrieval.lexical_weight == 1.0
     assert settings.retrieval.text_weight == settings.retrieval.vision_weight == 1.0
+    assert settings.retrieval.candidate_budget == 60
+    assert settings.retrieval.sparse_weight == 0.0
+    assert settings.retrieval.rerank_enabled is False
     assert settings.database_pool_recycle_seconds == 3600
     assert settings.video_embedding_model is None
     assert settings.video_embedding_fps is None
@@ -110,7 +114,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.logging.maximum_file_size_bytes == 10 * 1024 * 1024
     assert settings.logging.backup_count == 5
     assert settings.elasticsearch is None
-    assert settings.parse_execution_mode == "v1"
+    assert settings.parse_execution_mode == "v2"
 
 
 def test_server_settings_select_exactly_one_parse_worker_family(monkeypatch) -> None:
@@ -118,6 +122,9 @@ def test_server_settings_select_exactly_one_parse_worker_family(monkeypatch) -> 
     monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "V2")
 
     assert ServerSettings.from_environment().parse_execution_mode == "v2"
+
+    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v1")
+    assert ServerSettings.from_environment().parse_execution_mode == "v1"
 
     monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "both")
     with pytest.raises(ValueError, match="must be 'v1' or 'v2'"):
@@ -232,6 +239,9 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
         "ANIVAG_RETRIEVAL_LEXICAL_WEIGHT": "2.0",
         "ANIVAG_RETRIEVAL_TEXT_WEIGHT": "0",
         "ANIVAG_RETRIEVAL_VISION_WEIGHT": "1.5",
+        "ANIVAG_RETRIEVAL_CANDIDATE_BUDGET": "80",
+        "ANIVAG_RETRIEVAL_SPARSE_WEIGHT": "0.75",
+        "ANIVAG_RETRIEVAL_RERANK_ENABLED": "true",
         "ANIVAG_DATABASE_POOL_RECYCLE_SECONDS": "1200",
         "ANIVAG_VIDEO_EMBEDDING_MODEL": " embedding-test-model ",
         "ANIVAG_VIDEO_EMBEDDING_FPS": "2.0",
@@ -265,6 +275,9 @@ def test_server_settings_load_sse_retrieval_database_and_embedding_overrides(mon
     assert settings.retrieval.lexical_weight == 2.0
     assert settings.retrieval.text_weight == 0
     assert settings.retrieval.vision_weight == 1.5
+    assert settings.retrieval.candidate_budget == 80
+    assert settings.retrieval.sparse_weight == 0.75
+    assert settings.retrieval.rerank_enabled is True
     assert settings.database_pool_recycle_seconds == 1200
     assert settings.video_embedding_model == "embedding-test-model"
     assert settings.video_embedding_fps == 2.0
@@ -333,6 +346,10 @@ def test_server_settings_accepts_legacy_worker_environment(monkeypatch) -> None:
         ("ANIVAG_RETRIEVAL_LEXICAL_WEIGHT", "nan"),
         ("ANIVAG_RETRIEVAL_TEXT_WEIGHT", "nan"),
         ("ANIVAG_RETRIEVAL_VISION_WEIGHT", "-1"),
+        ("ANIVAG_RETRIEVAL_CANDIDATE_BUDGET", "0"),
+        ("ANIVAG_RETRIEVAL_SPARSE_WEIGHT", "nan"),
+        ("ANIVAG_RETRIEVAL_SPARSE_WEIGHT", "-1"),
+        ("ANIVAG_RETRIEVAL_RERANK_ENABLED", "invalid"),
         ("ANIVAG_DATABASE_POOL_RECYCLE_SECONDS", "0"),
         ("ANIVAG_MAX_IMAGE_UPLOAD_SIZE_BYTES", "0"),
         ("ANIVAG_MAX_IMAGE_PIXELS", "-1"),
@@ -373,8 +390,14 @@ def test_server_settings_reject_disabling_all_retrieval_channels(monkeypatch):
     monkeypatch.setenv("ANIVAG_RETRIEVAL_TEXT_WEIGHT", "0")
     monkeypatch.setenv("ANIVAG_RETRIEVAL_VISION_WEIGHT", "0")
 
-    with pytest.raises(ValueError, match="at least one channel weight"):
+    with pytest.raises(ValueError, match="at least one recall channel"):
         ServerSettings.from_environment()
+
+
+@pytest.mark.parametrize("rerank_enabled", [0, 1, "true", None])
+def test_retrieval_config_rejects_nonboolean_rerank_flag(rerank_enabled):
+    with pytest.raises(ValueError, match="rerank_enabled must be a boolean"):
+        RetrievalConfig(rerank_enabled=rerank_enabled)
 
 
 def test_server_settings_reject_agent_default_above_maximum(monkeypatch) -> None:

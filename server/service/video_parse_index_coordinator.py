@@ -11,22 +11,23 @@ from engine.parsev1.usage import parse_chunk_scope
 from engine.parsev2.schemas import VideoParseResult
 from engine.rag import (
     ChunkIndexSource,
+    ChunkIndexReceipt,
     ChunkIndexingContract,
     EmbeddingArtifact,
     EmbeddingRequest,
     OrderedFramesInputContract,
+    SparseEmbeddingArtifact,
+    SparseEmbeddingRequest,
     VIDEO_CLIP_PREPROCESS_REVISION,
     VideoChunkIndexDocument,
     VideoClipInputContract,
     VideoClipManifest,
     accept_embedding_result,
-    embedding_receipt,
+    accept_sparse_result,
     finalize_chunk_index,
     plan_chunk_index,
-    reuse_embedding_artifact,
-    validate_embedding_artifact,
 )
-from gateway.embedding import EmbeddingResult
+from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
 
 from ..model.dto.jobDTO import (
     IndexableChunkState,
@@ -73,6 +74,8 @@ class MultimodalChunkEmbedder(Protocol):
 
     def embed_video(self, video_path: str | Path) -> EmbeddingResult: ...
 
+    def embed_sparse(self, text: str) -> SparseEmbeddingResult: ...
+
 
 class VideoParseIndexCoordinationError(RuntimeError):
     """The current Interval could not make every released Chunk query-visible."""
@@ -80,12 +83,6 @@ class VideoParseIndexCoordinationError(RuntimeError):
 
 class VideoParseIndexCoordinator:
     """Execute one Engine index plan against media, Gateway, MySQL, and ES."""
-
-    # TODO(video-parse-v2/engine-owner): Engine must review and finalize the
-    # existing plan_chunk_index/finalize_chunk_index API, input identity and reuse.
-    # Expected: formal Chunk content, identity and prepared media -> encoding
-    # plan and final index document. Server executes I/O only; do not extend
-    # Engine contracts or ordered-frame support in Parse V2 pipeline work.
 
     def __init__(
         self,
@@ -106,7 +103,11 @@ class VideoParseIndexCoordinator:
             raise ValueError(
                 "the current Server adapter does not implement ordered-frame encoding"
             )
+        if contract.sparse_encoder is not None and not callable(getattr(embedder, "embed_sparse", None)):
+            raise ValueError("the configured sparse encoder requires a Gateway sparse adapter")
         visual_contract = contract.visual_input_contract
+        if getattr(embedder, "supports_video_fps", None) is False:
+            raise ValueError("the configured Gateway model cannot execute the visual sampling contract")
         if (
             visual_contract.mime_type != "video/mp4"
             or visual_contract.preprocess_revision
@@ -241,18 +242,19 @@ class VideoParseIndexCoordinator:
                 ),
                 self.contract,
             )
-            cached = _cached_representations(
-                chunk.content_detail,
-                content_version=chunk.content_version,
-            )
+            receipt = ChunkIndexReceipt(
+                parse_task_id=plan.parse_task_id, video_chunk_id=plan.video_chunk_id,
+                content_version=plan.content_version, index_generation=plan.index_generation,
+            ).as_dict()
+            cached = _cached_representations(chunk.content_detail, receipt=receipt)
             artifacts: dict[str, EmbeddingArtifact] = {}
             representations: dict[str, dict[str, object]] = {}
 
             for request in plan.encoding_requests:
                 receipt_key = _receipt_key(request)
-                artifact = _reuse_cached(request, cached.get(receipt_key))
+                artifact = _restore_cached(request, cached.get(receipt_key))
                 if artifact is None:
-                    artifact = self._reuse_stored(
+                    artifact = self._restore_stored(
                         request,
                         stored,
                         snapshot=snapshot,
@@ -260,10 +262,7 @@ class VideoParseIndexCoordinator:
                     )
                 if artifact is not None:
                     artifacts[request.channel] = artifact
-                    representations[receipt_key] = embedding_receipt(
-                        request.target,
-                        artifact.vector,
-                    )
+                    representations[receipt_key] = _representation(artifact)
 
             if plan.semantic_request is not None and "semantic" not in artifacts:
                 request = plan.semantic_request
@@ -273,11 +272,8 @@ class VideoParseIndexCoordinator:
                 artifact = _accept_result(request, response)
                 self._check_active()
                 artifacts[request.channel] = artifact
-                representations[_receipt_key(request)] = embedding_receipt(
-                    request.target,
-                    artifact.vector,
-                )
-                self._save_representations(lease, chunk, representations)
+                representations[_receipt_key(request)] = _representation(artifact)
+                self._save_representations(lease, chunk, representations, receipt=receipt)
 
             if "vision" not in artifacts:
                 request = plan.vision_request
@@ -287,15 +283,37 @@ class VideoParseIndexCoordinator:
                 artifact = _accept_result(request, response)
                 self._check_active()
                 artifacts[request.channel] = artifact
-                representations[_receipt_key(request)] = embedding_receipt(
-                    request.target,
-                    artifact.vector,
-                )
-                self._save_representations(lease, chunk, representations)
+                representations[_receipt_key(request)] = _representation(artifact)
+                self._save_representations(lease, chunk, representations, receipt=receipt)
+
+            sparse_artifact = None
+            if plan.sparse_request is not None:
+                request = plan.sparse_request
+                sparse_artifact = _restore_sparse(request, cached.get("sparse"))
+                if (sparse_artifact is None and stored.sparse_token_weights is not None
+                        and self._same_stored_version(stored, snapshot, chunk)):
+                    sparse_artifact = _restore_sparse(request, {
+                        "channel": "sparse", "weights": dict(stored.sparse_token_weights),
+                    })
+                if sparse_artifact is None:
+                    self._check_active()
+                    with parse_chunk_scope(chunk.sequence_no, category="embedding"):
+                        response = self._embedder.embed_sparse(request.text)
+                    try:
+                        sparse_artifact = accept_sparse_result(
+                            request, model=response.model, weights=response.weights,
+                        )
+                    except ValueError as exc:
+                        raise VideoParseIndexCoordinationError(str(exc)) from exc
+                    self._check_active()
+                representations["sparse"] = {
+                    "channel": "sparse", "weights": dict(sparse_artifact.token_weights),
+                }
+                self._save_representations(lease, chunk, representations, receipt=receipt)
 
         # This final repository call is also the last lease/content check before
         # the external write. ES external versions still order a following race.
-        document = finalize_chunk_index(plan, tuple(artifacts.values()))
+        document = finalize_chunk_index(plan, tuple(artifacts.values()), sparse_artifact=sparse_artifact)
         self._save_representations(
             lease,
             chunk,
@@ -304,7 +322,7 @@ class VideoParseIndexCoordinator:
         )
         return document
 
-    def _reuse_stored(
+    def _restore_stored(
         self,
         request: EmbeddingRequest,
         stored: StoredDocumentState,
@@ -312,8 +330,23 @@ class VideoParseIndexCoordinator:
         snapshot: IntervalIndexingSnapshot,
         chunk: IndexableChunkState,
     ) -> EmbeddingArtifact | None:
-        if not stored.present:
+        if not self._same_stored_version(stored, snapshot, chunk):
             return None
+        vector = stored.semantic_vector if request.channel == "semantic" else stored.vision_vector
+        try:
+            return accept_embedding_result(
+                request, modality="text" if request.channel == "semantic" else "video",
+                model=request.encoder.model, vector=vector,
+            )
+        except ValueError:
+            return None
+
+    def _same_stored_version(
+        self, stored: StoredDocumentState, snapshot: IntervalIndexingSnapshot,
+        chunk: IndexableChunkState,
+    ) -> bool:
+        if not stored.present:
+            return False
         expected_identity = (
             chunk.workspace_id,
             chunk.series_id,
@@ -333,25 +366,8 @@ class VideoParseIndexCoordinator:
                 "Elasticsearch document identity differs from the indexing snapshot"
             )
 
-        try:
-            if request.channel == "semantic":
-                artifact = EmbeddingArtifact(
-                    channel="semantic",
-                    input_sha256=stored.semantic_input_sha256 or "",
-                    encoder_id=stored.semantic_encoder_id or "",
-                    vector=stored.semantic_vector or (),
-                )
-            else:
-                artifact = EmbeddingArtifact(
-                    channel="vision",
-                    input_sha256=stored.vision_input_sha256 or "",
-                    encoder_id=stored.vision_encoder_id or "",
-                    vector=stored.vision_vector or (),
-                )
-            validate_embedding_artifact(request, artifact)
-        except ValueError:
-            return None
-        return artifact
+        return (stored.content_version == chunk.content_version
+                and stored.index_generation == self.contract.index_generation)
 
     def _save_representations(
         self,
@@ -359,7 +375,7 @@ class VideoParseIndexCoordinator:
         chunk: IndexableChunkState,
         representations: Mapping[str, Any],
         *,
-        receipt: Mapping[str, Any] | None = None,
+        receipt: Mapping[str, Any],
     ) -> None:
         self._check_active()
         self._repository.save_index_embeddings(
@@ -377,34 +393,48 @@ def _file_sha256(path: Path) -> str:
 
 
 def _cached_representations(
-    detail: Mapping[str, Any], *, content_version: int,
+    detail: Mapping[str, Any], *, receipt: Mapping[str, object],
 ) -> Mapping[str, Any]:
     cached = detail.get(INDEX_EMBEDDINGS_DETAIL_KEY)
     if not isinstance(cached, Mapping):
         return {}
-    cached_version = cached.get("content_version")
-    if (
-        isinstance(cached_version, bool)
-        or not isinstance(cached_version, int)
-        or not 1 <= cached_version <= content_version
-    ):
+    proof = cached.get("receipt")
+    if (type(cached.get("content_version")) is not int
+            or cached["content_version"] != receipt["content_version"]
+            or not isinstance(proof, Mapping)
+            or any(type(proof.get(name)) is not type(value) or proof.get(name) != value
+                   for name, value in receipt.items())):
         return {}
     representations = cached.get("representations")
     return representations if isinstance(representations, Mapping) else {}
 
 
-def _reuse_cached(
+def _restore_cached(
     request: EmbeddingRequest,
     representation: object,
 ) -> EmbeddingArtifact | None:
-    if not isinstance(representation, Mapping):
+    if not isinstance(representation, Mapping) or representation.get("channel") != request.channel:
         return None
-    return reuse_embedding_artifact(
-        request,
-        source_kind="v2_index_cache",
-        metadata=representation,
-        vector=representation.get("vector"),  # type: ignore[arg-type]
-    )
+    try:
+        return accept_embedding_result(
+            request, modality="text" if request.channel == "semantic" else "video",
+            model=request.encoder.model, vector=representation.get("vector"),
+        )
+    except ValueError:
+        return None
+
+
+def _restore_sparse(request: SparseEmbeddingRequest, representation: object) -> SparseEmbeddingArtifact | None:
+    if not isinstance(representation, Mapping) or representation.get("channel") != "sparse":
+        return None
+    try:
+        return accept_sparse_result(request, model=request.encoder.model, weights=representation.get("weights"))
+    except ValueError:
+        return None
+
+
+def _representation(artifact: EmbeddingArtifact) -> dict[str, object]:
+    return {"channel": artifact.channel, "vector": list(artifact.vector)}
 
 
 def _accept_result(

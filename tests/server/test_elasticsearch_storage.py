@@ -10,8 +10,12 @@ import pytest
 from engine.rag import (
     ChunkIndexProjection,
     LexicalField,
+    OrderedFrame,
+    OrderedFramesManifest,
+    RecallRequest,
+    RetrievalScope,
+    SelectedVideoTask,
     VideoChunkIndexDocument,
-    compute_index_projection_revision,
 )
 from server.storage.elasticsearch import (
     ElasticsearchBulkWriteError,
@@ -114,11 +118,7 @@ def _document(ids, *, question: str = "银河蓝松饼行动"):
         workspace_id="local-default", series_id=ids.series,
         video_id=ids.video, video_chunk_id=ids.chunk,
         parse_task_id=ids.parse_task,
-        content_version=2, index_generation=1, source_revision="revision-a",
-        projection_revision=compute_index_projection_revision(projection),
-        retrieval_contract_id="retrieval-v1",
-        semantic_encoder_id="semantic-model-v1", vision_encoder_id="vision-model-v1",
-        semantic_input_sha256="a" * 64, vision_input_sha256="b" * 64,
+        content_version=2, index_generation=1,
         chunk_start_seconds=10, chunk_end_seconds=20,
         projection=projection,
         semantic_vector=[1.0, 0.0], vision_vector=[0.0, 1.0],
@@ -137,7 +137,7 @@ def _scope(ids):
     return {
         "workspace_id": "local-default", "series_ids": [ids.series],
         "parse_tasks_by_video_id": {ids.video: ids.parse_task},
-        "retrieval_contract_id": "retrieval-v1",
+        "index_generation": 1,
     }
 
 
@@ -421,33 +421,32 @@ def test_equal_external_version_conflict_supports_exact_reconciliation(store, cl
     }]}
     assert store.inspect_exact([document]) == {_id(document): True}
 
-    conflicting = replace(
-        _document(IDs, question="同版本的不同投影"), source_revision="revision-b",
-    )
+    conflicting = _document(IDs, question="同版本的不同投影")
     assert _version(conflicting) == _version(document)
     assert store.inspect_exact([conflicting]) == {_id(document): False}
 
 
-@pytest.mark.parametrize("field", ["semantic_input_sha256", "vision_input_sha256"])
-def test_bulk_rejects_unproven_embedding_input_hash(store, IDs, field):
-    with pytest.raises(ValueError, match="SHA-256"):
-        store.bulk_upsert([replace(_document(IDs), **{field: "not-a-digest"})])
+def test_document_and_mapping_keep_only_outer_versions_and_real_search_content(store, IDs):
+    document = _document(IDs)
+    source = store._document_source(document)
+    removed = {"source_revision", "projection_revision", "retrieval_contract_id",
+               "semantic_encoder_id", "vision_encoder_id", "semantic_input_sha256", "vision_input_sha256"}
+    assert removed.isdisjoint(source)
+    assert removed.isdisjoint(store._mapping()["properties"])
+    assert (source["content_version"], source["index_generation"]) == (2, 1)
+    assert source["lexical_fields"][0]["raw_text"] == "我没事。"
 
 
-def test_bulk_rejects_projection_revision_that_differs_from_engine_document(
-    store, IDs,
-):
-    with pytest.raises(ValueError, match="projection_revision"):
-        store.bulk_upsert([
-            replace(_document(IDs), projection_revision="different-projection")
-        ])
+def test_bulk_rejects_semantic_vector_presence_inconsistent_with_formal_text(store, IDs):
+    with pytest.raises(ValueError, match="presence must match semantic text"):
+        store.bulk_upsert([replace(_document(IDs), semantic_vector=None)])
 
 
 def test_content_updates_overwrite_the_same_task_chunk_document(store, client, IDs):
     original = _document(IDs)
     updated = replace(
         _document(IDs, question="更新后的检索问题"),
-        content_version=3, source_revision="revision-b",
+        content_version=3,
     )
     assert _id(original) == _id(updated) == f"{IDs.parse_task}:{IDs.chunk}"
     client.bulk_response = {"errors": False, "items": [
@@ -461,8 +460,7 @@ def test_content_updates_overwrite_the_same_task_chunk_document(store, client, I
     assert operations[0]["index"]["version"] == (1 << 31) | 3
     assert operations[0]["index"]["version_type"] == "external"
     assert operations[1]["content_version"] == 3
-    assert operations[1]["source_revision"] == "revision-b"
-    assert operations[1]["projection_revision"] != old_source["projection_revision"]
+    assert operations[1]["lexical_fields"] != old_source["lexical_fields"]
     assert "index_build_id" not in operations[1]
 
     another_task = replace(updated, parse_task_id=IDs.other_parse_task)
@@ -470,12 +468,12 @@ def test_content_updates_overwrite_the_same_task_chunk_document(store, client, I
 
 
 @pytest.mark.parametrize("field,value", [
-    ("source_revision", "old-revision"),
+    ("parse_task_id", "another-task"),
     ("content_version", 1),
-    ("projection_revision", "old-projection"),
+    ("index_generation", 2),
     ("vision_vector", None),
 ])
-def test_verify_ready_checks_exact_task_revision_and_required_source(
+def test_verify_ready_checks_exact_task_version_generation_and_required_source(
     store, client, IDs, field, value,
 ):
     document = _document(IDs)
@@ -487,7 +485,8 @@ def test_verify_ready_checks_exact_task_revision_and_required_source(
         store.verify_ready([document])
     filters = client.last_search["query"]["bool"]["filter"]
     assert {"term": {"parse_task_id": IDs.parse_task}} in filters
-    assert {"term": {"source_revision": "revision-a"}} in filters
+    assert {"term": {"content_version": 2}} in filters
+    assert {"term": {"index_generation": 1}} in filters
 
 
 def test_lexical_query_preserves_nested_source_and_authorized_task_pair(store, client, IDs):
@@ -498,8 +497,6 @@ def test_lexical_query_preserves_nested_source_and_authorized_task_pair(store, c
     assert matches[0].matched_fields == (question,)
     assert matches[0].matched_fields[0].field == "questions"
     assert matches[0].index_generation == 1
-    assert matches[0].semantic_encoder_id == "semantic-model-v1"
-    assert matches[0].vision_encoder_id == "vision-model-v1"
     nested_query = client.last_search["query"]["bool"]["must"][0]["nested"]
     assert nested_query["path"] == "lexical_fields"
     assert nested_query["inner_hits"]["name"] == "matched_lexical_fields"
@@ -508,13 +505,13 @@ def test_lexical_query_preserves_nested_source_and_authorized_task_pair(store, c
     assert pairs == [{"bool": {"filter": [
         {"term": {"video_id": IDs.video}}, {"term": {"parse_task_id": IDs.parse_task}}
     ]}}]
-    assert "source_revision" in client.last_search["source_includes"]
+    assert "content_version" in client.last_search["source_includes"]
 
     for name, value in (
         ("parse_task_id", IDs.other_parse_task),
         ("workspace_id", "another-workspace"),
         ("series_id", str(uuid4())),
-        ("retrieval_contract_id", "another-contract"),
+        ("index_generation", 2),
     ):
         wrong = _hit(store, document, inner=[question])
         wrong["_source"][name] = value
@@ -529,7 +526,7 @@ def test_lexical_query_preserves_nested_source_and_authorized_task_pair(store, c
         store.search_lexical(
             "银河蓝松饼行动", workspace_id="local-default", series_ids=[IDs.series],
             parse_tasks_by_video_id={IDs.video: IDs.parse_task, other_video: IDs.other_parse_task},
-            retrieval_contract_id="retrieval-v1", limit=10,
+            index_generation=1, limit=10,
         )
     with pytest.raises(ValueError, match="parse_tasks_by_video_id must not be empty"):
         store.search_lexical(
@@ -537,23 +534,23 @@ def test_lexical_query_preserves_nested_source_and_authorized_task_pair(store, c
         )
 
 
-def test_vector_search_prefilters_scope_and_encoder(store, client, IDs):
+def test_vector_search_prefilters_scope_and_generation(store, client, IDs):
     document = _document(IDs)
     client.search_response = {"hits": {"hits": [_hit(store, document)]}}
     matches = store.search_semantic(
-        [1, 0], **_scope(IDs), encoder_id="semantic-model-v1", limit=5,
+        [1, 0], **_scope(IDs), limit=5,
     )
     assert matches[0].video_chunk_id == IDs.chunk
     knn = client.last_search["knn"]
     assert knn["field"] == "semantic_vector"
-    assert {"term": {"semantic_encoder_id": "semantic-model-v1"}} in knn["filter"]["bool"]["filter"]
+    assert {"term": {"index_generation": 1}} in knn["filter"]["bool"]["filter"][0]["bool"]["filter"]
     store.search_vision(
-        [0, 1], **_scope(IDs), encoder_id="vision-model-v1", limit=5, exact=True,
+        [0, 1], **_scope(IDs), limit=5, exact=True,
     )
     assert client.last_search["query"]["script_score"]["script"]["source"].startswith("cosineSimilarity")
     with pytest.raises(ValueError, match="nonzero"):
         store.search_semantic(
-            [0, 0], **_scope(IDs), encoder_id="semantic-model-v1", limit=5,
+            [0, 0], **_scope(IDs), limit=5,
         )
 
 
@@ -584,3 +581,93 @@ def test_inspect_does_not_treat_per_document_error_as_absence(store, client, IDs
     }]}
     with pytest.raises(ElasticsearchDocumentConsistencyError, match="read failed"):
         store.inspect([(IDs.parse_task, IDs.chunk)])
+
+
+@pytest.mark.parametrize("channel", ["lexical", "semantic", "vision", "sparse"])
+def test_recall_executes_engine_channel_scope_budget_and_returns_formal_identity(store, client, IDs, channel):
+    document = replace(_document(IDs), sparse_token_weights=(("utterance", 0.5),))
+    lexical = (document.projection.lexical_fields[0],) if channel == "lexical" else ()
+    client.search_response = {"hits": {"hits": [_hit(store, document, inner=lexical or None)]}}
+    scope = RetrievalScope(workspace_id="local-default", tasks=(SelectedVideoTask(
+        series_id=IDs.series, video_id=IDs.video, parse_task_id=IDs.parse_task, status="COMPLETE",
+    ),))
+    request = RecallRequest(
+        channel=channel, scope=scope, index_generation=1, limit=7,
+        text="我没事" if channel == "lexical" else None,
+        vector=(1.0, 0.0) if channel in ("semantic", "vision") else None,
+        token_weights=(("utterance", 0.8),) if channel == "sparse" else None,
+    )
+    hit, = store.recall(request, exact=True)
+    assert (hit.channel, hit.video_chunk_id, hit.rank, hit.score) == (channel, IDs.chunk, 1, 1.5)
+    assert hit.retrieval_identity == document.retrieval_identity
+    assert (hit.start_seconds, hit.end_seconds) == (10, 20)
+    assert hit.lexical_matches == lexical
+    assert client.last_search["size"] == 7
+    if channel == "sparse":
+        assert client.last_search["query"]["bool"]["must"] == [{"sparse_vector": {
+            "field": "sparse_vector", "query_vector": {"utterance": 0.8}, "prune": False,
+        }}]
+        assert store._document_source(document)["sparse_vector"] == {"utterance": 0.5}
+
+
+def test_recall_empty_scope_and_inactive_sparse_query_need_no_storage_call(store, client, IDs):
+    empty = RecallRequest(channel="vision", scope=RetrievalScope(workspace_id="local-default", tasks=()),
+                          index_generation=1, limit=1, vector=(1.0, 0.0))
+    assert store.recall(empty) == ()
+    scope = RetrievalScope(workspace_id="local-default", tasks=(SelectedVideoTask(
+        series_id=IDs.series, video_id=IDs.video, parse_task_id=IDs.parse_task, status="COMPLETE",
+    ),))
+    inactive = RecallRequest(channel="sparse", scope=scope, index_generation=1, limit=1, token_weights=())
+    assert store.recall(inactive) == ()
+    assert client.last_search is None
+
+
+def test_recall_checks_each_selected_video_series_pair(store, client, IDs):
+    other_series = str(uuid4())
+    document = replace(_document(IDs), series_id=other_series)
+    client.search_response = {"hits": {"hits": [_hit(store, document)]}}
+    scope = RetrievalScope(workspace_id="local-default", tasks=(
+        SelectedVideoTask(series_id=IDs.series, video_id=IDs.video, parse_task_id=IDs.parse_task, status="COMPLETE"),
+        SelectedVideoTask(series_id=other_series, video_id=str(uuid4()), parse_task_id=str(uuid4()), status="COMPLETE"),
+    ))
+    request = RecallRequest(channel="semantic", scope=scope, index_generation=1, limit=3, vector=(1.0, 0.0))
+    with pytest.raises(ElasticsearchDocumentConsistencyError, match="selected video's series"):
+        store.recall(request)
+
+
+def test_sparse_mapping_storage_inspection_and_invalid_weights(store, client, IDs):
+    document = replace(_document(IDs), sparse_token_weights=(("utterance", 0.8),))
+    source = store._document_source(document)
+    assert "sparse_vector" not in store._document_source(replace(document, sparse_token_weights=None))
+    assert store._document_source(replace(document, sparse_token_weights=()))["sparse_vector"] == {}
+    assert store._mapping()["properties"]["sparse_vector"] == {"type": "sparse_vector"}
+    client.indices.mapping = store._mapping()
+    client.mget_response = {"docs": [{"_id": _id(document), "found": True, "_source": source}]}
+    state = store.inspect([(IDs.parse_task, IDs.chunk)])[(IDs.parse_task, IDs.chunk)]
+    assert state.sparse_token_weights == (("utterance", 0.8),)
+    with pytest.raises(ValueError, match="nonnegative"):
+        store.search_sparse({"utterance": -0.5}, **_scope(IDs), limit=2)
+    with pytest.raises(ValueError, match="nonnegative"):
+        store._document_source(replace(document, sparse_token_weights=(("utterance", -0.5),)))
+
+
+def test_old_physical_contract_is_rejected_without_mutating_the_index(store, client):
+    store.ensure_index()
+    client.indices.mapping["_meta"]["index_contract_version"] = "anivag-video-chunk-es-4"
+    before = deepcopy(client.indices.mapping)
+    with pytest.raises(ElasticsearchIndexSchemaError, match="metadata differs"):
+        store.ensure_index()
+    assert client.indices.mapping == before
+    assert client.indices.created == 1
+
+
+def test_prepared_ordered_frames_retain_absolute_times_and_actual_manifest(store, IDs):
+    manifest = OrderedFramesManifest(
+        frames=(OrderedFrame(ordinal=0, at_seconds=12.0, input_sha256="a" * 64),
+                OrderedFrame(ordinal=1, at_seconds=18.0, input_sha256="b" * 64)),
+        sampling_contract_id="prepared-sampling", mime_type="image/png", preprocess_revision="v1",
+    )
+    source = store._document_source(replace(_document(IDs), ordered_frames_manifest=manifest))
+    assert source["ordered_frames_manifest"] == manifest.as_dict()
+    assert [frame["at_seconds"] for frame in source["ordered_frames_manifest"]["frames"]] == [12.0, 18.0]
+    assert store._mapping()["properties"]["ordered_frames_manifest"] == {"type": "object", "enabled": False}

@@ -1,4 +1,6 @@
 from dataclasses import replace
+import logging
+import sys
 
 import pytest
 from pydantic import ValidationError
@@ -6,22 +8,22 @@ from pydantic import ValidationError
 from engine.parsev2.schemas import VideoParseResult
 from engine.rag.contracts import VideoChunkRetrievalIdentity
 from engine.rag.encoding import embedding_receipt
-from engine.rag.indexing.pipeline import (
-    ChunkIndexingContract,
-    compute_source_revision,
-)
+from engine.rag.indexing.pipeline import ChunkIndexingContract
 from engine.rag.encoding import (
     EncoderContract,
     SparseEncoderContract,
     accept_sparse_result,
 )
 from engine.rag.vision.inputs import VideoClipInputContract
+from engine.rag.vision.query import accept_visual_query_vector
 from engine.rag.indexing.projection import (
-    SourceEnrichment, compute_index_projection_revision, project_chunk_index,
+    SourceEnrichment, project_chunk_index,
 )
 from engine.rag.retrieval.contracts import (
     ChunkRetrievalFacts,
     EventConstraint,
+    GifQueryInput,
+    ImageQueryInput,
     QueryEncoderBinding,
     QueryVectorArtifact,
     RawChunkHit,
@@ -30,6 +32,7 @@ from engine.rag.retrieval.contracts import (
     RetrievalScope,
     SelectedVideoTask,
     TemporalConstraint,
+    VisualQueryFrame,
 )
 from engine.rag.nlp.query import (
     accept_query_vector,
@@ -40,7 +43,9 @@ from engine.rag.retrieval.pipeline import (
     fuse_retrieval_candidates,
 )
 from engine.rag.query_pipeline import plan_retrieval_query
-from engine.rag.retrieval.evidence import verify_retrieval_evidence
+from engine.rag.retrieval.evidence import (
+    build_evidence_requests, verify_candidate_evidence, verify_retrieval_evidence,
+)
 
 
 def _encoder(model="embedding"):
@@ -87,6 +92,27 @@ def _plan(*, contract=None, policy=None, constraints=(), temporal=(), scope=None
                                 constraints=constraints, temporal_constraints=temporal)
 
 
+def _visual_query(kind):
+    if kind == "image":
+        return ImageQueryInput(input_sha256="a" * 64, mime_type="image/png", preprocess_revision="v1")
+    return GifQueryInput(
+        frames=tuple(VisualQueryFrame(input_sha256=digest * 64, at_seconds=at_seconds)
+                     for digest, at_seconds in (("a", 0.0), ("b", 0.2), ("c", 0.4))),
+        mime_type="image/png", preprocess_revision="v1",
+    )
+
+
+def _visual_plan(kind, *, policy=None, scope=None):
+    contract = _contract()
+    return plan_retrieval_query(
+        _visual_query(kind), scope=scope or _scope(), index_contract=contract,
+        policy=policy or _policy(), encoder_bindings=(QueryEncoderBinding(
+            channel="vision", query_modality=kind, document_encoder_id=contract.vision_encoder_id,
+            query_encoder=_encoder(), compatibility_provenance="test visual output-space proof",
+        ),),
+    )
+
+
 def _event(text="我没事", start=1, end=3, speaker="千早爱音", role="ORIGINAL"):
     return dict(event_type="DIALOGUE", start_seconds=start, end_seconds=end,
                 description=f"{speaker}回答", participants=[speaker], visible_persons=[speaker],
@@ -98,17 +124,10 @@ def _fact(plan, *, chunk="chunk", sequence=0, bounds=(0, 10), version=2,
     result = VideoParseResult.model_validate({
         "persons": ["千早爱音", "高松灯"], "timeline": events or [_event()],
     })
-    projection = project_chunk_index(result, chunk_start_seconds=bounds[0], chunk_end_seconds=bounds[1],
-                                     description_language="zh-Hans", enrichments=enrichments)
     contract = plan.index_contract
     identity = VideoChunkRetrievalIdentity(
         workspace_id="workspace", series_id="series", video_id="video", parse_task_id="task",
         content_version=version, index_generation=contract.index_generation,
-        source_revision=compute_source_revision(result),
-        projection_revision=compute_index_projection_revision(projection),
-        retrieval_contract_id=contract.retrieval_contract_id,
-        semantic_encoder_id=contract.semantic_encoder_id, vision_encoder_id=contract.vision_encoder_id,
-        sparse_encoder_id=contract.sparse_encoder.encoder_id if contract.sparse_encoder else None,
     )
     return ChunkRetrievalFacts(video_chunk_id=chunk, retrieval_identity=identity, sequence_no=sequence,
                                start_seconds=bounds[0], end_seconds=bounds[1], result=result,
@@ -141,7 +160,8 @@ def test_text_pipeline_shares_compatible_encoding_and_preserves_formal_event():
     requests = build_recall_requests(plan, vectors=[vector])
     assert [request.channel for request in requests] == ["lexical", "semantic", "vision"]
     assert requests[1].vector == requests[2].vector == (1.0, 0.0)
-    assert requests[1].document_encoder_id != requests[2].document_encoder_id
+    assert all(request.scope == plan.scope for request in requests)
+    assert all(request.index_generation == plan.index_contract.index_generation for request in requests)
     fact = _fact(plan)
     dialogue = next(field for field in _projection(fact).lexical_fields if field.field == "dialogue")
     candidates = fuse_retrieval_candidates(plan, [_hit(fact), _hit(fact, "vision"),
@@ -152,6 +172,51 @@ def test_text_pipeline_shares_compatible_encoding_and_preserves_formal_event():
     assert proof.source.speaker == "千早爱音"
     assert proof.retrieval_identity == fact.retrieval_identity
     assert (proof.start_seconds, proof.end_seconds) == (1, 3)
+
+
+@pytest.mark.parametrize("kind", ["image", "gif"])
+def test_visual_query_reuses_recall_fusion_and_formal_facts_without_frame_localization(kind):
+    policy = _policy(sparse_weight=1.0)
+    plan = _visual_plan(kind, policy=policy)
+    assert policy.weights == {"lexical": 1.0, "semantic": 1.0, "vision": 1.0, "sparse": 1.0}
+    assert plan.policy.weights == {"lexical": 0.0, "semantic": 0.0, "vision": 1.0, "sparse": 0.0}
+    assert plan.sparse_request is None
+    assert len(plan.encoding_requests) == 1
+    request = plan.encoding_requests[0]
+    assert request.channels == ("vision",)
+    assert request.visual_input == plan.query
+    if kind == "gif":
+        assert tuple(frame.at_seconds for frame in request.visual_input.frames) == (0.0, 0.2, 0.4)
+    vector = accept_visual_query_vector(request, model="embedding", vector=[1, 0])
+    recalls = build_recall_requests(plan, vectors=[vector])
+    assert len(recalls) == 1
+    assert recalls[0].channel == "vision"
+    assert recalls[0].text is None and recalls[0].token_weights is None
+    assert recalls[0].vector == (1.0, 0.0)
+    assert recalls[0].scope == plan.scope
+    assert recalls[0].index_generation == plan.index_contract.index_generation
+    fact = _fact(plan)
+    candidates = fuse_retrieval_candidates(plan, [_hit(fact, "vision")])
+    output = verify_retrieval_evidence(plan, candidates, [fact])
+    proof = output.accepted[0].evidence[0]
+    assert proof.retrieval_identity == fact.retrieval_identity
+    assert proof.granularity == "chunk" and proof.source is None
+    assert (proof.start_seconds, proof.end_seconds) == (fact.start_seconds, fact.end_seconds)
+
+
+@pytest.mark.parametrize("kind", ["image", "gif"])
+def test_visual_recall_requires_the_planned_input_and_empty_scope_needs_no_encoding(kind):
+    plan = _visual_plan(kind)
+    request = plan.encoding_requests[0]
+    vector = accept_visual_query_vector(request, model="embedding", vector=[1, 0])
+    with pytest.raises(ValueError, match="missing"):
+        build_recall_requests(plan)
+    with pytest.raises(ValueError, match="missing"):
+        build_recall_requests(plan, vectors=[vector.model_copy(update={"input_sha256": "old"})])
+    empty = _visual_plan(kind, scope=RetrievalScope(workspace_id="workspace", tasks=()))
+    assert empty.encoding_requests == ()
+    assert build_recall_requests(empty) == ()
+    assert fuse_retrieval_candidates(empty, []) == ()
 
 
 def test_distinct_query_encoders_require_two_calls():
@@ -205,9 +270,13 @@ def test_sparse_off_requires_no_output_and_on_reaches_request_and_fusion():
     sparse = accept_sparse_result(plan.sparse_request, model="sparse", weights={"123": 0.3, "empty": 0})
     with pytest.raises(ValueError, match="Sparse.*missing"):
         build_recall_requests(plan, vectors=[vector])
+    other_plan = _plan(contract=_contract(True), policy=_policy(sparse_weight=1.0))
+    other_sparse = accept_sparse_result(other_plan.sparse_request, model="sparse", weights={"123": 0.3})
+    with pytest.raises(ValueError, match="different plan request"):
+        build_recall_requests(plan, vectors=[vector], sparse=other_sparse)
     requests = build_recall_requests(plan, vectors=[vector], sparse=sparse)
     assert requests[-1].token_weights == (("123", 0.3),)
-    assert requests[-1].document_encoder_id == plan.index_contract.sparse_encoder.encoder_id
+    assert requests[-1].index_generation == plan.index_contract.index_generation
     fact = _fact(plan)
     candidates = fuse_retrieval_candidates(plan, [_hit(fact), _hit(fact, "sparse")])
     assert candidates[0].ranking.sparse_rank == 1
@@ -227,7 +296,8 @@ def test_empty_scope_needs_no_paid_encodings_and_non_complete_is_rejected():
 
 
 @pytest.mark.parametrize("changes", [{"parse_task_id": "old-task"}, {"index_generation": 2},
-                                     {"workspace_id": "other"}, {"semantic_encoder_id": "old"}])
+                                     {"workspace_id": "other"}, {"series_id": "other"},
+                                     {"video_id": "other"}])
 def test_raw_hits_outside_pinned_scope_fail(changes):
     plan = _plan()
     hit = _hit(_fact(plan))
@@ -276,6 +346,23 @@ def test_fact_verification_honors_fused_rank_even_when_input_order_differs():
         verify_retrieval_evidence(plan, [candidates[0], duplicate_rank], facts)
 
 
+def test_candidate_evidence_returns_full_qualified_pool_and_old_entry_keeps_top_k():
+    plan = _plan(policy=_policy(top_k=1), constraints=[
+        EventConstraint(key="quote", field="dialogue", text="我没事"),
+    ])
+    facts = [_fact(plan, chunk="first"),
+             _fact(plan, chunk="rejected", events=[_event("不匹配")]),
+             _fact(plan, chunk="tail")]
+    candidates = fuse_retrieval_candidates(plan, [_hit(fact, rank=rank)
+                                                  for rank, fact in enumerate(facts, 1)])
+    full = verify_candidate_evidence(plan, tuple(reversed(candidates)), facts)
+    assert [item.candidate.ranking.video_chunk_id for item in full.accepted] == ["first", "tail"]
+    assert full.rejected_chunk_ids == ("rejected",)
+    limited = verify_retrieval_evidence(plan, candidates, facts)
+    assert limited.accepted == full.accepted[:1]
+    assert limited.rejected == full.rejected
+
+
 def test_neighbor_also_used_as_candidate_cannot_change_its_content_version():
     plan = _plan()
     fact = _fact(plan, sequence=1, bounds=(10, 20), events=[_event(start=11, end=13)])
@@ -288,13 +375,24 @@ def test_neighbor_also_used_as_candidate_cannot_change_its_content_version():
         verify_retrieval_evidence(plan, candidates, [fact, before], contexts={"chunk": [changed]})
 
 
-@pytest.mark.parametrize("field", ["source_revision", "projection_revision"])
-def test_forged_revision_cannot_be_used_as_fact(field):
+@pytest.mark.parametrize("changes", [{"parse_task_id": "old-task"}, {"content_version": 1},
+                                     {"content_version": 3}, {"index_generation": 2}])
+def test_formal_fact_must_match_exact_candidate_task_version_and_generation(changes):
     plan = _plan()
     fact = _fact(plan)
-    forged = fact.model_copy(update={"retrieval_identity": fact.retrieval_identity.model_copy(update={field: "forged"})})
-    with pytest.raises(RetrievalConsistencyError):
-        _verify(plan, forged)
+    candidates = fuse_retrieval_candidates(plan, [_hit(fact)])
+    changed = fact.model_copy(update={
+        "retrieval_identity": fact.retrieval_identity.model_copy(update=changes),
+    })
+    with pytest.raises(RetrievalConsistencyError, match="candidate version"):
+        verify_retrieval_evidence(plan, candidates, [changed])
+
+
+def test_formal_projection_configuration_must_match_active_index_contract():
+    plan = _plan()
+    fact = _fact(plan).model_copy(update={"description_language": "en"})
+    with pytest.raises(RetrievalConsistencyError, match="projection configuration"):
+        _verify(plan, fact)
 
 
 def test_forged_lexical_source_and_missing_facts_fail():
@@ -376,3 +474,177 @@ def test_external_vector_artifacts_cannot_coerce_invalid_numbers(vector):
     with pytest.raises(ValidationError):
         QueryVectorArtifact(input_sha256=request.target.input_sha256,
                             encoder_id=request.target.encoder_id, vector=vector)
+
+
+@pytest.mark.parametrize("include_context", [False, True])
+def test_evidence_read_requests_feed_existing_formal_and_adjacent_verification(include_context):
+    quote = "先前原话" if include_context else "本块原话"
+    plan = _plan(constraints=[EventConstraint(
+        key="quote", field="dialogue", text=quote, include_context=include_context,
+    )])
+    fact = _fact(plan, sequence=1, bounds=(10, 20), events=[_event("本块原话", 11, 13)])
+    before = _fact(plan, chunk="before", sequence=0, version=9,
+                   events=[_event("先前原话", 9, 11)])
+    candidates = fuse_retrieval_candidates(plan, [_hit(fact)])
+    requests = build_evidence_requests(plan, candidates)
+    request, = requests
+    assert request.candidate == candidates[0]
+    assert request.include_context is include_context
+    stored = {fact.video_chunk_id: fact}
+    facts = [stored[item.candidate.ranking.video_chunk_id] for item in requests]
+    contexts = {item.candidate.ranking.video_chunk_id: [before]
+                for item in requests if item.include_context}
+    output = verify_retrieval_evidence(plan, candidates, facts, contexts=contexts)
+    proof, = output.accepted[0].evidence
+    if include_context:
+        assert proof.video_chunk_id == "before" and proof.context == "before"
+        assert proof.retrieval_identity.content_version == 9
+        assert (proof.start_seconds, proof.end_seconds) == (9, 11)
+    else:
+        assert contexts == {}
+        assert proof.video_chunk_id == "chunk" and proof.context == "self"
+        assert (proof.start_seconds, proof.end_seconds) == (11, 13)
+
+
+def test_evidence_requests_do_not_drop_candidates_before_hard_validation_and_top_k():
+    plan = _plan(policy=_policy(candidate_budget=2, top_k=1), constraints=[
+        EventConstraint(key="quote", field="dialogue", text="我没事"),
+    ])
+    facts = [_fact(plan, chunk="first", events=[_event("不匹配")]),
+             _fact(plan, chunk="second")]
+    candidates = fuse_retrieval_candidates(plan, [_hit(facts[0]), _hit(facts[1], rank=2)])
+    requests = build_evidence_requests(plan, tuple(reversed(candidates)))
+    assert [item.candidate.ranking.video_chunk_id for item in requests] == ["first", "second"]
+    stored = {fact.video_chunk_id: fact for fact in facts}
+    loaded = [stored[item.candidate.ranking.video_chunk_id] for item in requests]
+    output = verify_retrieval_evidence(plan, [item.candidate for item in requests], loaded)
+    assert output.rejected_chunk_ids == ("first",)
+    assert output.accepted[0].candidate.ranking.video_chunk_id == "second"
+
+
+def test_evidence_requests_support_cross_chunk_time_conditions_and_each_source_version():
+    plan = _plan(constraints=[
+        EventConstraint(key="a", field="dialogue", text="先说", include_context=False),
+        EventConstraint(key="b", field="dialogue", text="后说", include_context=True),
+    ], temporal=[TemporalConstraint(left="a", right="b", relation="before")])
+    fact = _fact(plan, sequence=1, bounds=(10, 20), events=[_event("先说", 11, 13)])
+    after = _fact(plan, chunk="after", sequence=2, bounds=(20, 30), version=7,
+                  events=[_event("后说", 21, 23)])
+    candidates = fuse_retrieval_candidates(plan, [_hit(fact)])
+    requests = build_evidence_requests(plan, candidates)
+    assert requests[0].include_context is True
+    contexts = {item.candidate.ranking.video_chunk_id: [after]
+                for item in requests if item.include_context}
+    output = verify_retrieval_evidence(plan, candidates, [fact], contexts=contexts)
+    proofs = output.accepted[0].evidence
+    assert [(proof.video_chunk_id, proof.retrieval_identity.content_version) for proof in proofs] == [
+        ("chunk", 2), ("after", 7),
+    ]
+    assert [(proof.start_seconds, proof.end_seconds) for proof in proofs] == [(11, 13), (21, 23)]
+
+
+def test_evidence_requests_allow_empty_candidates_and_no_neighbor_at_video_boundary():
+    plan = _plan(constraints=[EventConstraint(
+        key="quote", field="dialogue", text="我没事", include_context=True,
+    )])
+    assert build_evidence_requests(plan, []) == ()
+    empty = verify_retrieval_evidence(plan, [], [])
+    assert empty.accepted == () and empty.rejected == ()
+    fact = _fact(plan)
+    candidates = fuse_retrieval_candidates(plan, [_hit(fact)])
+    requests = build_evidence_requests(plan, candidates)
+    assert requests[0].include_context is True
+    assert verify_retrieval_evidence(plan, candidates, [fact], contexts={"chunk": []}).accepted
+
+
+@pytest.mark.parametrize("changes", [
+    {"workspace_id": "other"}, {"series_id": "other"}, {"video_id": "other"},
+    {"parse_task_id": "old-task"}, {"index_generation": 2},
+])
+def test_evidence_requests_reject_candidates_outside_trusted_scope_or_generation(changes):
+    plan = _plan()
+    candidate, = fuse_retrieval_candidates(plan, [_hit(_fact(plan))])
+    changed = candidate.model_copy(update={"ranking": candidate.ranking.model_copy(update={
+        "retrieval_identity": candidate.ranking.retrieval_identity.model_copy(update=changes),
+    })})
+    with pytest.raises(RetrievalConsistencyError):
+        build_evidence_requests(plan, [changed])
+    with pytest.raises(RetrievalConsistencyError):
+        verify_retrieval_evidence(plan, [changed], [])
+
+
+@pytest.mark.parametrize("failure", ["duplicate-chunk", "duplicate-rank", "over-budget"])
+def test_evidence_requests_reject_duplicate_or_over_budget_candidates(failure):
+    plan = _plan()
+    facts = [_fact(plan, chunk="first"), _fact(plan, chunk="second")]
+    first, second = fuse_retrieval_candidates(plan, [_hit(facts[0]), _hit(facts[1], rank=2)])
+    if failure == "duplicate-chunk":
+        candidates = [first, first]
+    elif failure == "duplicate-rank":
+        candidates = [first, second.model_copy(update={
+            "ranking": second.ranking.model_copy(update={"fused_rank": first.ranking.fused_rank}),
+        })]
+    else:
+        plan = replace(plan, policy=_policy(candidate_budget=1, top_k=1))
+        candidates = [first, second]
+    with pytest.raises(RetrievalConsistencyError):
+        build_evidence_requests(plan, candidates)
+
+
+@pytest.mark.parametrize("bounds", [{"end_seconds": 0}, {"start_seconds": -1}, {"start_seconds": 10}])
+def test_evidence_requests_reject_invalid_candidate_time_bounds(bounds):
+    plan = _plan()
+    candidate, = fuse_retrieval_candidates(plan, [_hit(_fact(plan))])
+    with pytest.raises(ValueError):
+        build_evidence_requests(plan, [candidate.model_copy(update=bounds)])
+
+
+@pytest.mark.parametrize("kind", ["image", "gif"])
+def test_visual_candidates_keep_chunk_evidence_through_read_requests(kind):
+    plan = _visual_plan(kind)
+    fact = _fact(plan)
+    candidates = fuse_retrieval_candidates(plan, [_hit(fact, "vision")])
+    requests = build_evidence_requests(plan, candidates)
+    assert requests[0].include_context is False
+    output = verify_retrieval_evidence(plan, [item.candidate for item in requests], [fact])
+    proof, = output.accepted[0].evidence
+    assert proof.granularity == "chunk" and proof.source is None
+    assert (proof.start_seconds, proof.end_seconds) == (0, 10)
+
+
+def test_deep_event_assignment_warns_without_leaking_text_or_stopping_verification(caplog):
+    recursion_limit = sys.getrecursionlimit()
+    condition_count = recursion_limit + 10
+    quote = "深度校验中的原话不得出现在日志里"
+    plan = _plan(constraints=[
+        EventConstraint(key=f"condition_{index}", field="dialogue", text=quote)
+        for index in range(condition_count)
+    ], temporal=[TemporalConstraint(left="condition_0", right="condition_1", relation="overlap")])
+    facts = [_fact(plan, chunk="deep", events=[_event(quote)]),
+             _fact(plan, chunk="next", events=[_event("不满足原话条件")])]
+    candidates = fuse_retrieval_candidates(plan, [_hit(facts[0]), _hit(facts[1], rank=2)])
+    with caplog.at_level(logging.WARNING, logger="engine.rag.retrieval.evidence"):
+        output = verify_retrieval_evidence(plan, candidates, facts)
+    assert output.accepted == ()
+    assert output.rejected_chunk_ids == ("deep", "next")
+    assert output.rejected[0].message == (
+        "Event condition verification incomplete: recursion depth limit reached."
+    )
+    assert output.rejected[1].message.startswith("No formal event satisfies conditions:")
+    warning, = caplog.records
+    assert warning.levelno == logging.WARNING
+    assert warning.name == "engine.rag.retrieval.evidence"
+    assert warning.exc_info is None
+    assert "chunk_id=deep" in warning.getMessage()
+    assert f"conditions={condition_count}" in warning.getMessage()
+    assert "temporal_relations=1" in warning.getMessage()
+    assert quote not in caplog.text
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+    assert sys.getrecursionlimit() == recursion_limit
+
+    caplog.clear()
+    ordinary = _plan(constraints=[EventConstraint(key="quote", field="dialogue", text=quote)])
+    output = _verify(ordinary, _fact(ordinary, events=[_event(quote)]))
+    assert len(output.accepted) == 1 and output.rejected == ()
+    assert output.accepted[0].evidence[0].source.raw_text == quote
+    assert caplog.records == []

@@ -1,35 +1,29 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ParseJobView, ParseUsageVO } from "../../api/contracts";
-import { formatCostCny } from "../../shared/format";
+import type { UsageOverviewVO, UsageTotals } from "../../api/contracts";
 import { UsagePage } from "./UsagePage";
-import { summarizeUsage } from "./usage";
 
-function job(id: string, seriesId = "series-A"): ParseJobView {
+function totals(overrides: Partial<UsageTotals> = {}): UsageTotals {
   return {
-    jobId: id, uploadSessionId: `upload-${id}`, workspaceId: "local-default", seriesId, videoId: `video-${id}`, seriesName: seriesId,
-    episodeOrder: 1, originalFilename: `episode-${id}.mp4`, pipelineVersion: "v1", retryOfJobId: null,
-    status: "SUCCEEDED", stage: "COMPLETED", progress: 100, overallProgress: 100, stageProgress: 100,
-    completedDurationSeconds: 60, completedThroughSeconds: 60, videoDurationSeconds: 60, totalDurationSeconds: 60,
-    processingDurationMs: 0, processingTimingComplete: true,
-    completedChunkCount: 1, totalChunkCount: 1, currentChunk: null, attemptCount: 2, maxAttempts: 3,
-    availableAt: null, startedAt: 1, completedAt: 2, estimatedRemainingMs: null, canRetry: false, canReparse: true, canCancel: false,
-    lastError: null, version: 1, checkpoints: [], createdAt: 1, updatedAt: 2,
+    callCount: 2, inputTokens: 1_000, outputTokens: 200, cachedInputTokens: 80, cacheWriteInputTokens: 40,
+    reasoningTokens: 60, totalTokens: 1_200, knownTokens: 1_200,
+    estimatedCostUsd: "0.123456789", knownCostUsd: "0.123456789", missingUsageCount: 0, unpricedCallCount: 0,
+    ...overrides,
   };
 }
 
-function usage(item: ParseJobView, overrides: Partial<ParseUsageVO> = {}): ParseUsageVO {
+function overview(overrides: Partial<UsageOverviewVO> = {}): UsageOverviewVO {
   return {
-    jobId: item.jobId, videoId: item.videoId, seriesId: item.seriesId, seriesName: item.seriesName,
-    episodeOrder: item.episodeOrder, originalFilename: item.originalFilename, currency: "CNY", coverage: "recorded",
-    totalTokens: 1_200, estimatedCostCny: "0.00000004", callCount: 1, missingUsageCount: 0, unpricedCallCount: 0,
-    items: [{ provider: "provider-A", model: "model-A", category: "parse", operation: "video_timeline", callCount: 1,
-      inputTokens: 1_000, outputTokens: 200, cachedInputTokens: 80, reasoningTokens: 60, totalTokens: 1_200,
-      estimatedCostCny: "0.00000004", missingUsageCount: 0, unpricedCallCount: 0 }],
+    source: "langfuse", currency: "USD", status: "available", message: null,
+    fromStartTime: 1_759_968_000_000, toStartTime: 1_762_560_000_000, fetchedAt: 1_762_560_000_000, truncated: false,
+    totals: totals(),
+    models: [{ ...totals({ callCount: 1, estimatedCostUsd: "0.00000004", knownCostUsd: "0.00000004" }), provider: "provider-A", model: "model-A", category: "parse", operation: "video_timeline" }],
+    runs: [{ ...totals({ callCount: 1 }), runId: "parse-A", kind: "parse", seriesId: "series-A", videoId: "video-A" },
+      { ...totals({ callCount: 1 }), runId: "chat-B", kind: "chat", seriesId: "series-B", videoId: null }],
     ...overrides,
   };
 }
@@ -42,135 +36,133 @@ function renderPage(queryClient = new QueryClient({ defaultOptions: { queries: {
   return { queryClient, ...render(<QueryClientProvider client={queryClient}><MemoryRouter><UsagePage /></MemoryRouter></QueryClientProvider>) };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-describe("usage aggregation", () => {
-  it("sums exact tiny decimal costs and token subsets without double counting", () => {
-    const first = job("first");
-    const second = job("second");
-    const secondUsage = usage(second, { estimatedCostCny: "0.00000005" });
-    secondUsage.items[0]!.estimatedCostCny = "0.00000005";
-    const total = summarizeUsage([{ job: first, usage: usage(first), error: null }, { job: second, usage: secondUsage, error: null }]);
-    expect(total.totalTokens).toBe(2_400);
-    expect(total.estimatedCostCny).toBe("0.00000009");
-    expect(formatCostCny(total.estimatedCostCny)).toBe("¥0.00000009");
-    expect(total.models).toHaveLength(1);
-    expect(total.models[0]).toMatchObject({ inputTokens: 2_000, outputTokens: 400, cachedInputTokens: 160, reasoningTokens: 120, totalTokens: 2_400, estimatedCostCny: "0.00000009" });
-  });
-
-  it("preserves precision when decimal costs carry into the integer part", () => {
-    const item = job("first");
-    const total = summarizeUsage([{ job: item, usage: usage(item, { estimatedCostCny: "999.99999999" }), error: null }, { job: job("second"), usage: usage(job("second"), { estimatedCostCny: "0.00000001" }), error: null }]);
-    expect(total.estimatedCostCny).toBe("1000.00000000");
-    expect(formatCostCny(total.estimatedCostCny)).toBe("¥1,000.00000000");
-  });
-
-  it("keeps incomplete totals unknown and retains only explicitly known subtotals", () => {
-    const first = job("first");
-    const second = job("second");
-    const incomplete = usage(second, { coverage: "partial", missingUsageCount: 1 });
-    incomplete.items[0] = { ...incomplete.items[0]!, missingUsageCount: 1 };
-    const total = summarizeUsage([{ job: first, usage: usage(first), error: null }, { job: second, usage: incomplete, error: null }]);
-    expect(total.totalTokens).toBeNull();
-    expect(total.estimatedCostCny).toBeNull();
-    expect(total.knownTokens).toBe(2_400);
-    expect(total.knownCostCny).toBe("0.00000008");
-    expect(total.models[0]!.totalTokens).toBe(2_400);
-    expect(total.models[0]!.estimatedCostCny).toBe("0.00000008");
-  });
-});
-
-describe("model usage page", () => {
-  it("reads every page, deduplicates jobs, aggregates models and filters tasks by series", async () => {
-    const first = job("first");
-    const second = job("second", "series-B");
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/jobs/list") return response(url.searchParams.has("cursor")
-        ? { items: [first, second], hasMore: false, nextCursor: null }
-        : { items: [first], hasMore: true, nextCursor: "next-page" });
-      if (url.pathname === "/api/jobs/usage/get") return response(usage(url.searchParams.get("jobId") === "first" ? first : second));
-      throw new Error(`Unexpected API: ${url.pathname}`);
-    });
+describe("Langfuse model usage page", () => {
+  it("reads one overview and displays server totals and USD without per-job queries or local sums", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => response(overview()));
     vi.stubGlobal("fetch", fetchMock);
     renderPage();
-    expect(await screen.findByText("2 个解析任务")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("模型消耗概况")).getByText("2,400")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("模型消耗概况")).getByText("¥0.00000008")).toBeInTheDocument();
-    expect(screen.getByText(/不含 Agent 聊天/)).toBeInTheDocument();
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/usage/get"))).toHaveLength(2);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("cursor=next-page"))).toBe(true);
-    expect(screen.getByText("model-A")).toBeInTheDocument();
+    expect(await screen.findByText("2 条调用记录已同步")).toBeInTheDocument();
+    const summary = within(screen.getByLabelText("模型消耗概况"));
+    expect(summary.getByText("1,200")).toBeInTheDocument();
+    expect(summary.getByText("$0.123456789")).toBeInTheDocument();
+    expect(screen.getByText("$0.00000004")).toBeInTheDocument();
+    expect(screen.getByText(/最近 30 天/)).toBeInTheDocument();
+    expect(screen.getByText(/解析、向量化与 Chat/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/usage/overview?workspaceId=local-default");
+    expect(screen.queryByText(/人民币/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "任务与 Chat" }));
+    expect(screen.getByText("parse-A")).toBeInTheDocument();
+    expect(screen.getByText("chat-B")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
 
+  it("requests a series filter from the server while retaining the complete series options", async () => {
+    const filtered = overview({ totals: totals({ callCount: 1, totalTokens: 333, knownTokens: 333, estimatedCostUsd: "1.000000009" }), runs: [overview().runs[1]!] });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => response(new URL(String(input), "http://localhost").searchParams.get("seriesId") ? filtered : overview()));
+    vi.stubGlobal("fetch", fetchMock);
+    renderPage();
+    await screen.findByText("model-A");
     await userEvent.selectOptions(screen.getByLabelText("视频系列"), "series-B");
-    expect(within(screen.getByLabelText("模型消耗概况")).getByText("1,200")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "按任务" }));
-    expect(screen.getByText(second.originalFilename)).toBeInTheDocument();
-    expect(screen.queryByText(first.originalFilename)).not.toBeInTheDocument();
+    expect(await screen.findByText("1 条调用记录已同步")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("模型消耗概况")).getByText("333")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("模型消耗概况")).getByText("$1.000000009")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "series-A" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("seriesId=series-B");
+    await userEvent.click(screen.getByRole("button", { name: "任务与 Chat" }));
+    expect(screen.getByText("chat-B")).toBeInTheDocument();
+    expect(screen.queryByText("parse-A")).not.toBeInTheDocument();
   });
 
-  it("shows read failures and unknown history, then refreshes cached usage on explicit retry", async () => {
-    const jobs = [job("good"), job("failed"), job("old")];
-    let failedOnce = false;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/jobs/list") return response({ items: jobs, hasMore: false, nextCursor: null });
-      const item = jobs.find(({ jobId }) => jobId === url.searchParams.get("jobId"))!;
-      if (item.jobId === "failed" && !failedOnce) { failedOnce = true; return response({ code: "NOT_FOUND", message: "用量暂不可读" }, 404); }
-      return response(item.jobId === "old" ? usage(item, { coverage: "unknown", totalTokens: null, estimatedCostCny: null, callCount: 0, items: [] }) : usage(item));
-    });
+  it("shows explicitly known subtotals for missing usage and unpriced calls", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response(overview({ totals: totals({ totalTokens: null, estimatedCostUsd: null, missingUsageCount: 1, unpricedCallCount: 1 }) }))));
+    renderPage();
+    expect(await screen.findByText(/1 条调用记录缺少完整 Token 用量/)).toBeInTheDocument();
+    expect(screen.getByText(/1 条调用记录尚未计价/)).toBeInTheDocument();
+    const summary = within(screen.getByLabelText("模型消耗概况"));
+    expect(summary.getByText("已知 Token 小计")).toBeInTheDocument();
+    expect(summary.getByText("已计价费用小计（USD）")).toBeInTheDocument();
+    expect(summary.getByText("1,200")).toBeInTheDocument();
+    expect(summary.getByText("$0.123456789")).toBeInTheDocument();
+    expect(summary.getByText("记录不完整，不能代表总消耗")).toBeInTheDocument();
+  });
+
+  it("labels truncated results as partial statistics", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response(overview({ truncated: true, totals: totals({ callCount: 0 }), models: [], runs: [] }))));
+    renderPage();
+    expect(await screen.findByText(/当前结果被截断/)).toBeInTheDocument();
+    expect(screen.getByText("当前已读取 0 条调用记录（结果截断）")).toBeInTheDocument();
+    expect(screen.getByText("已知 Token 小计")).toBeInTheDocument();
+    expect(screen.getByText("已计价费用小计（USD）")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "当前窗口暂无已同步调用" })).not.toBeInTheDocument();
+  });
+
+  it("keeps unknown model metadata visible without inventing a provider or purpose", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response(overview({ models: [{ ...totals(), provider: null, model: null, category: null, operation: null }] }))));
+    renderPage();
+    expect(await screen.findByText("未知模型")).toBeInTheDocument();
+    expect(screen.getByText("未知服务商")).toBeInTheDocument();
+    expect(screen.getByText("未知用途")).toBeInTheDocument();
+    expect(screen.getByText("未分类")).toBeInTheDocument();
+  });
+
+  it.each(["disabled", "not_configured", "unavailable"] as const)("does not display zero success for %s", async (status) => {
+    vi.stubGlobal("fetch", vi.fn(async () => response(overview({ status, totals: totals({ callCount: null }), models: [], runs: [], message: "配置或连接暂不可用" }))));
+    renderPage();
+    expect(await screen.findByText("统计暂不可用")).toBeInTheDocument();
+    const summary = within(screen.getByLabelText("模型消耗概况"));
+    expect(summary.getAllByText("—")).toHaveLength(3);
+    expect(summary.queryByText("0")).not.toBeInTheDocument();
+    expect(summary.queryByText("$0.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("当前窗口暂无已同步调用")).not.toBeInTheDocument();
+    if (status === "not_configured") expect(screen.getByText(/LANGFUSE_PUBLIC_KEY、LANGFUSE_SECRET_KEY 和 LANGFUSE_BASE_URL/)).toBeInTheDocument();
+  });
+
+  it("shows a failed read and refreshes with a single retry request", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(response({ code: "NOT_FOUND", message: "无法读取用量" }, 404)).mockResolvedValueOnce(response(overview()));
     vi.stubGlobal("fetch", fetchMock);
     renderPage();
-    expect(await screen.findByText(/1 个任务的用量读取失败/)).toBeInTheDocument();
-    expect(screen.getByText(/1 个历史任务没有用量记录/)).toBeInTheDocument();
-    const overview = within(screen.getByLabelText("模型消耗概况"));
-    expect(overview.getByText("已记录 Token 小计")).toBeInTheDocument();
-    expect(overview.getByText("已估算费用小计")).toBeInTheDocument();
-    expect(overview.getByText("1,200")).toBeInTheDocument();
-    expect(overview.getByText("¥0.00000004")).toBeInTheDocument();
-    expect(overview.getByText("记录不完整，不能代表总消耗")).toBeInTheDocument();
-    expect(overview.getByText("计价不完整，不能代表总费用")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "按任务" }));
-    expect(screen.getByText("用量暂不可读")).toBeInTheDocument();
-    expect(screen.getByText("历史未记录")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("无法读取用量");
+    expect(within(screen.getByLabelText("模型消耗概况")).getAllByText("—")).toHaveLength(3);
     await userEvent.click(screen.getByRole("button", { name: "刷新用量" }));
-    await waitFor(() => expect(screen.queryByText(/1 个任务的用量读取失败/)).not.toBeInTheDocument());
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("jobId=good"))).toHaveLength(2);
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("jobId=failed"))).toHaveLength(2);
-    expect(overview.getByText("2,400")).toBeInTheDocument();
+    expect(await screen.findByText("2 条调用记录已同步")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the page accessible with no jobs and does not request invented usage", async () => {
-    const fetchMock = vi.fn(async () => response({ items: [], hasMore: false, nextCursor: null }));
+  it("keeps an available empty window distinct from an unconfigured backend", async () => {
+    const fetchMock = vi.fn(async () => response(overview({ totals: totals({ callCount: 0, totalTokens: 0, knownTokens: 0, estimatedCostUsd: "0", knownCostUsd: "0" }), models: [], runs: [] })));
     vi.stubGlobal("fetch", fetchMock);
     renderPage();
-    expect(await screen.findByRole("heading", { name: "暂无解析任务" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "当前窗口暂无已同步调用" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "前往资料库" })).toHaveAttribute("href", "/library");
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("bounds concurrent reads to six and reuses finalized usage on revisiting", async () => {
-    const jobs = Array.from({ length: 8 }, (_, index) => job(String(index)));
-    let active = 0;
-    let peak = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/jobs/list") return response({ items: jobs, hasMore: false, nextCursor: null });
-      active += 1;
-      peak = Math.max(peak, active);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      active -= 1;
-      return response(usage(jobs.find(({ jobId }) => jobId === url.searchParams.get("jobId"))!));
-    });
+  it("reuses a fresh overview when revisiting within 30 seconds", async () => {
+    const fetchMock = vi.fn(async () => response(overview()));
     vi.stubGlobal("fetch", fetchMock);
     const { unmount, queryClient } = renderPage();
-    expect(await screen.findByText("8 个解析任务")).toBeInTheDocument();
-    expect(peak).toBe(6);
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/usage/get"))).toHaveLength(8);
+    await screen.findByText("model-A");
     unmount();
     renderPage(queryClient);
-    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/jobs/list"))).toHaveLength(2));
+    expect(screen.getByText("model-A")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "刷新用量" })).toBeEnabled());
-    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/usage/get"))).toHaveLength(8);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("polls at 60 seconds rather than refetching continuously", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => response(overview()));
+    vi.stubGlobal("fetch", fetchMock);
+    renderPage();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await act(async () => { await vi.advanceTimersByTimeAsync(59_999); });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

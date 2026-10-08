@@ -8,13 +8,13 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from .config import load_config
-from .ark.embedding import DoubaoMultimodalEmbedder
+from gateway.config import load_config
+from gateway.ark.embedding import DoubaoMultimodalEmbedder
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m gateway.cli",
+        prog="python -m tests.manual.gateway_embedding",
         description="Smoke-test anivag model gateway capabilities.",
     )
     parser.add_argument(

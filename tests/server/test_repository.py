@@ -28,7 +28,7 @@ from server.repository.video import (
 )
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.schema import VideoChunkKeyframeReference
-from server.service.parse_import import _load_embedding, prepare_video_parse_import
+from server.service.parsev1.parse_import import _load_embedding, prepare_video_parse_import
 
 
 def _table_counts(engine) -> dict[str, int]:

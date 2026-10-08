@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
+from contextvars import copy_context
 from threading import Lock
 from time import monotonic
 from types import SimpleNamespace
@@ -176,13 +177,16 @@ class CodexAgentModel:
             max_model_calls=max_model_calls,
             check_control=check_control,
         )
+        latest_turn: object | None = None
 
         def execute() -> tuple[object, _ResultModel]:
+            nonlocal latest_turn
             try:
                 turn = session.run_turn(
                     rendered_prompt,
                     output_schema=output_schema,
                 )
+                latest_turn = turn
                 response = _turn_field(turn, "final_response")
                 if not isinstance(response, str) or not response.strip():
                     raise MissingStructuredQueryDraftError(
@@ -206,6 +210,7 @@ class CodexAgentModel:
             timeout=timeout,
             check_control=check_control,
             operation=self._operation("structured", tools),
+            latest_turn=lambda: latest_turn,
         )
         del turn
         return value
@@ -241,11 +246,14 @@ class CodexAgentModel:
             max_model_calls=max_model_calls,
             check_control=check_control,
         )
+        latest_turn: object | None = None
 
         def execute() -> object:
+            nonlocal latest_turn
             try:
                 turn_count = 1
                 turn = session.run_turn(rendered_prompt)
+                latest_turn = turn
                 if require_tool_call and session.tool_call_count == 0:
                     if max_model_calls is not None and turn_count >= max_model_calls:
                         raise MissingRequiredFunctionCallError(
@@ -256,6 +264,7 @@ class CodexAgentModel:
                     turn = session.run_turn(
                         "请先调用一个可用工具，再根据工具结果完成回答。"
                     )
+                    latest_turn = turn
                     if session.tool_call_count == 0:
                         raise MissingRequiredFunctionCallError(
                             "Codex stopped twice without the required tool call"
@@ -280,6 +289,7 @@ class CodexAgentModel:
                         )
                     turn_count += 1
                     turn = session.run_turn(feedback[:500])
+                    latest_turn = turn
             finally:
                 session.close()
 
@@ -289,6 +299,7 @@ class CodexAgentModel:
             timeout=timeout,
             check_control=check_control,
             operation=self._operation("agent_loop", tools),
+            latest_turn=lambda: latest_turn,
         )
 
     def close(self) -> None:
@@ -337,51 +348,57 @@ class CodexAgentModel:
         timeout: float,
         check_control: Callable[[], None] | None,
         operation: str,
+        latest_turn: Callable[[], object | None],
     ) -> Any:
         deadline = monotonic() + timeout
-        future: Future[Any] = self._executor.submit(execute)
+        future: Future[Any] = self._executor.submit(copy_context().run, execute)
         try:
             with track_model_call(
                 provider=self.provider_name,
                 model=self.model_name,
                 operation=operation,
+                granularity="sdk_turn_run",
+                usage_source="codex_thread_total",
             ) as usage_call:
-                while True:
-                    if check_control is not None:
-                        try:
-                            check_control()
-                        except Exception:
+                try:
+                    while True:
+                        if check_control is not None:
+                            try:
+                                check_control()
+                            except Exception:
+                                self._cancel_session(session, future)
+                                raise
+                        remaining = deadline - monotonic()
+                        if remaining <= 0:
                             self._cancel_session(session, future)
+                            raise AgentModelTimeoutError(
+                                "Codex Agent execution deadline expired"
+                            )
+                        try:
+                            result = future.result(timeout=min(remaining, 0.05))
+                            break
+                        except FutureTimeout:
+                            continue
+                        except ModelFailureError:
                             raise
-                    remaining = deadline - monotonic()
-                    if remaining <= 0:
-                        self._cancel_session(session, future)
-                        raise AgentModelTimeoutError(
-                            "Codex Agent execution deadline expired"
-                        )
-                    try:
-                        result = future.result(timeout=min(remaining, 0.05))
-                        break
-                    except FutureTimeout:
-                        continue
-                    except ModelFailureError:
-                        raise
-                    except CodexModelCallLimitError as exc:
-                        raise CodexAgentModelError(
-                            "Codex agent exhausted max_model_calls",
-                            reason=ModelFailureReason.LOOP_LIMIT,
-                        ) from exc
-                    except Exception as exc:
-                        raise CodexAgentModelError(
-                            f"Codex request failed for model {self.model_name}",
-                            reason=_failure_reason(exc),
-                        ) from exc
-                turn = result[0] if isinstance(result, tuple) else result
-                usage_call.capture_response(SimpleNamespace(
-                    model=self.model_name,
-                    usage=self._turn_usage(turn),
-                ))
-                return result
+                        except CodexModelCallLimitError as exc:
+                            raise CodexAgentModelError(
+                                "Codex agent exhausted max_model_calls",
+                                reason=ModelFailureReason.LOOP_LIMIT,
+                            ) from exc
+                        except Exception as exc:
+                            raise CodexAgentModelError(
+                                f"Codex request failed for model {self.model_name}",
+                                reason=_failure_reason(exc),
+                            ) from exc
+                    return result
+                finally:
+                    turn = latest_turn()
+                    if turn is not None:
+                        usage_call.capture_response(SimpleNamespace(
+                            model=self.model_name,
+                            usage=self._turn_usage(turn),
+                        ))
         finally:
             with self._lock:
                 self._sessions.discard(session)
@@ -403,6 +420,7 @@ class CodexAgentModel:
             "total_tokens": total_tokens,
             "input_tokens_details": {
                 "cached_tokens": _turn_field(total, "cached_input_tokens"),
+                "cache_write_tokens": _turn_field(total, "cache_write_input_tokens"),
             },
             "output_tokens_details": {
                 "reasoning_tokens": _turn_field(

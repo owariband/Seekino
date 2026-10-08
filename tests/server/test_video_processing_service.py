@@ -22,9 +22,9 @@ from server.identity import derive_video_chunk_id
 from server.model.dto.jobDTO import ParseJobLease
 from server.model.job import ParseJobStage, VideoChunkCheckpointStage
 from server.mq.contracts import ParseJobLeaseLostError
-from server.service.parse_persistence import VideoParsePersistence
+from server.service.parsev1.parse_persistence import VideoParsePersistence
 from server.service.upload import UploadServiceConfig
-from server.service.video_processing import VideoProcessingService
+from server.service.parsev1.video_processing import VideoProcessingService
 from server.utils.files import write_json_once
 from server.utils.time import now_unix_time_ms, timedelta_to_ms
 
@@ -428,15 +428,15 @@ def _unit_processor(
         lambda *_args: (None, [], False),
     )
     monkeypatch.setattr(
-        "server.service.video_processing.materialize_analysis_window",
+        "server.service.parsev1.video_processing.materialize_analysis_window",
         _materialize_analysis_one,
     )
     monkeypatch.setattr(
-        "server.service.video_processing.materialize_canonical_chunk",
+        "server.service.parsev1.video_processing.materialize_canonical_chunk",
         _materialize_canonical_one,
     )
     monkeypatch.setattr(
-        "server.service.video_processing.extract_video_frames",
+        "server.service.parsev1.video_processing.extract_video_frames",
         _extract_frames,
     )
     return processor, artifacts, index
@@ -581,11 +581,11 @@ def test_late_old_lease_media_cannot_replace_new_lease_checkpoint_pointers(
         return path
 
     monkeypatch.setattr(
-        "server.service.video_processing.materialize_analysis_window",
+        "server.service.parsev1.video_processing.materialize_analysis_window",
         materialize_analysis,
     )
     monkeypatch.setattr(
-        "server.service.video_processing.materialize_canonical_chunk",
+        "server.service.parsev1.video_processing.materialize_canonical_chunk",
         materialize_canonical,
     )
     first_lease = _lease()

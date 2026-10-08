@@ -36,7 +36,7 @@ from gateway.agent_model.context import (
     preflight_context,
 )
 from gateway.schema_normalization import inline_schema_refs
-from gateway.usage import ModelCallTracker, track_model_call
+from gateway.usage import ModelCallTracker, SDKModelUsage, TokenUsage, track_model_call
 
 from .tools import ToolBridge, build_tool_bridge
 
@@ -478,6 +478,8 @@ class ClaudeAgentModel:
                     provider=self.provider_name,
                     model=self.model_name,
                     operation="agent",
+                    granularity="sdk_turn_run",
+                    usage_source="claude_result_usage",
                 ) as tracker:
                     messages = await self._receive_with_control(
                         client,
@@ -699,6 +701,7 @@ def _capture_usage(
     model_name: str,
 ) -> None:
     usage = dict(result.usage or {})
+    tracker.usage_scope = "main_loop"
     input_tokens = usage.get("input_tokens")
     output_tokens = usage.get("output_tokens")
     cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
@@ -719,9 +722,48 @@ def _capture_usage(
         usage["input_tokens"] = total_input_tokens
         usage["total_tokens"] = total_input_tokens + output_tokens
         usage["input_tokens_details"] = {
-            "cached_tokens": cache_read_tokens,
+            "cached_tokens": usage.get("cache_read_input_tokens"),
+            "cache_write_tokens": usage.get("cache_creation_input_tokens"),
         }
+        cache_creation = usage.get("cache_creation")
+        if isinstance(cache_creation, Mapping):
+            usage["input_tokens_details"].update({
+                "cache_write_5m_tokens": cache_creation.get("ephemeral_5m_input_tokens"),
+                "cache_write_1h_tokens": cache_creation.get("ephemeral_1h_input_tokens"),
+            })
     tracker.capture_response({"model": model_name, "usage": usage})
+    breakdown = result.model_usage
+    if not isinstance(breakdown, Mapping):
+        return
+    model_records = []
+    for actual_model, reported in breakdown.items():
+        if not isinstance(actual_model, str) or not actual_model.strip() or not isinstance(reported, Mapping):
+            _logger.warning("Claude SDK returned invalid per-model usage metadata")
+            continue
+        tokens = None
+        try:
+            plain_input = reported.get("inputTokens")
+            cached_input = reported.get("cacheReadInputTokens")
+            cache_write = reported.get("cacheCreationInputTokens")
+            output = reported.get("outputTokens")
+            values = (plain_input, cached_input, cache_write, output)
+            if all(isinstance(value, int) and not isinstance(value, bool) for value in values):
+                total_input = plain_input + cached_input + cache_write
+                tokens = TokenUsage(
+                    total_input, output, total_input + output, cached_input, None,
+                    cache_write_input_tokens=cache_write,
+                )
+        except ValueError:
+            _logger.warning("Claude SDK returned invalid per-model token counts")
+        canonical_model = reported.get("canonicalModel")
+        actual_model = canonical_model if isinstance(canonical_model, str) and canonical_model.strip() else actual_model
+        try:
+            record = SDKModelUsage(actual_model, tokens, reported.get("costUSD"))
+        except ValueError:
+            _logger.warning("Claude SDK returned invalid per-model cost metadata")
+            record = SDKModelUsage(actual_model, tokens)
+        model_records.append(record)
+    tracker.sdk_model_usage = tuple(model_records)
 
 
 async def _interrupt(client: Any) -> None:

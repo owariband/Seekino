@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
+from threading import Barrier
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +14,9 @@ from gateway.codex.client import (
     CodexModelCallLimitError,
     CodexSession,
     codex_reasoning_effort,
+)
+from gateway.usage import (
+    capture_model_usage, control_model_calls, model_call_context, track_model_call,
 )
 
 
@@ -90,6 +96,91 @@ def test_model_call_budget_has_a_hard_upper_bound() -> None:
     with pytest.raises(CodexModelCallLimitError, match="max_model_calls"):
         budget.reserve()
     assert budget.used == 2
+
+
+def test_reader_tools_keep_host_identity_and_isolate_concurrent_contexts() -> None:
+    identity = ContextVar("codex_reader_test_identity", default="outside")
+    barrier = Barrier(4)
+    sessions = []
+    handlers = []
+    records_by_host = {}
+    controls_by_host = {}
+
+    class Control:
+        def __init__(self):
+            self.acquired = []
+            self.released = []
+
+        def acquire(self, call):
+            self.acquired.append(call.call_id)
+
+        def release(self, call):
+            self.released.append(call.call_id)
+
+    def lookup(wait: bool) -> str:
+        original = identity.get()
+        if wait:
+            barrier.wait(timeout=2)
+        with track_model_call(provider="test", model=original, operation="tool"):
+            pass
+        identity.set("changed inside tool")
+        return original
+
+    tool = StructuredTool.from_function(
+        lookup, name="lookup", description="Read the host identity.",
+    )
+    for host in ("alpha", "beta"):
+        records = records_by_host[host] = []
+        control = controls_by_host[host] = Control()
+
+        def factory(_config, handler):
+            handlers.append(handler)
+            return _FakeClient()
+
+        token = identity.set(host)
+        try:
+            with (
+                model_call_context({"task_id": host}),
+                capture_model_usage(records.append),
+                control_model_calls(control),
+            ):
+                session = CodexSession(
+                    model="gpt-5.3-codex", tools=[tool], reasoning_effort="high",
+                    codex_bin=None, cwd=None, max_tool_calls=None,
+                    check_control=None, client_factory=factory,
+                )
+        finally:
+            identity.reset(token)
+        session.open()
+        sessions.append(session)
+
+    def invoke(handler, call_id, *, wait):
+        return handler("item/tool/call", {
+            "callId": call_id, "tool": "lookup", "arguments": {"wait": wait},
+        })
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [
+                pool.submit(invoke, handler, f"concurrent-{index}-{call}", wait=True)
+                for index, handler in enumerate(handlers)
+                for call in range(2)
+            ]
+            assert all(future.result(timeout=3)["success"] for future in futures)
+        for index, handler in enumerate(handlers):
+            assert invoke(handler, f"later-{index}", wait=False)["success"]
+    finally:
+        for session in sessions:
+            session.close()
+
+    for host, records in records_by_host.items():
+        assert len(records) == 3
+        assert all(record.model == host for record in records)
+        assert all(record.context["task_id"] == host for record in records)
+        control = controls_by_host[host]
+        assert set(control.acquired) == {record.call_id for record in records}
+        assert set(control.released) == set(control.acquired)
+    assert identity.get() == "outside"
 
 
 def test_none_reasoning_effort_is_sent_explicitly() -> None:

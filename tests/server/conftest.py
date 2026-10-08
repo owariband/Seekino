@@ -20,7 +20,7 @@ from server.database import (
     create_session_factory,
 )
 from server.model.dto.parseDTO import PreparedVideoParseImport
-from server.service.parse_import import prepare_video_parse_import
+from server.service.parsev1.parse_import import prepare_video_parse_import
 from server.repository.video import VideoRepository
 
 

@@ -20,7 +20,7 @@ from server.model.upload import (
 )
 from server.model.video import SeriesRecord, VideoChunkRecord
 from server.repository.index_sync import IndexSyncRepository
-from server.service.index_sync import IndexSyncInvariantError, IndexSyncService
+from server.service.parsev1.index_sync import IndexSyncInvariantError, IndexSyncService
 from server.service.qdrant_mutation_lock import QdrantMutationLock
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint

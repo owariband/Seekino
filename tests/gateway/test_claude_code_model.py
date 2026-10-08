@@ -243,13 +243,15 @@ def test_agent_loop_emits_text_and_applies_stop_feedback() -> None:
 
     feedback = iter(["add the missing detail", None])
     emitted: list[str] = []
-    _model(factory).run_agent_loop(
-        "question",
-        tools=[_tool()],
-        max_model_calls=4,
-        handle_text=emitted.append,
-        stop_feedback=lambda: next(feedback),
-    )
+    records = []
+    with capture_model_usage(records.append):
+        _model(factory).run_agent_loop(
+            "question",
+            tools=[_tool()],
+            max_model_calls=4,
+            handle_text=emitted.append,
+            stop_feedback=lambda: next(feedback),
+        )
 
     assert emitted == ["draft", "final"]
     assert created[0].prompts == ["question"]
@@ -268,6 +270,11 @@ def test_agent_loop_emits_text_and_applies_stop_feedback() -> None:
         client.options.extra_args == {"no-session-persistence": None}
         for client in created
     )
+    assert len(records) == 2
+    assert len({record.call_id for record in records}) == 2
+    assert all(record.granularity == "sdk_turn_run" for record in records)
+    assert all(record.usage_source == "claude_result_usage" for record in records)
+    assert [record.usage.total_tokens for record in records] == [16, 16]
 
 
 def test_agent_loop_reduces_follow_up_turn_budget_and_rejects_overrun() -> None:
@@ -352,7 +359,10 @@ def test_invalid_structured_result_is_not_classified_as_a_missing_tool() -> None
     def factory(options):
         return _FakeClient(options, [[_result(structured={"answer": 3})]])
 
-    with pytest.raises(MissingStructuredQueryDraftError) as captured:
+    records = []
+    with capture_model_usage(records.append), pytest.raises(
+        MissingStructuredQueryDraftError,
+    ) as captured:
         _model(factory).run_structured(
             "answer with evidence",
             tools=[_tool()],
@@ -361,6 +371,10 @@ def test_invalid_structured_result_is_not_classified_as_a_missing_tool() -> None
         )
 
     assert captured.value.reason is ModelFailureReason.INVALID_MODEL_RESPONSE
+    assert len(records) == 1
+    # ResultMessage succeeded; business schema validation happens afterwards.
+    assert records[0].status == "completed"
+    assert records[0].usage.total_tokens == 16
 
 
 def test_required_tool_gets_one_correction_then_fails() -> None:
@@ -641,6 +655,9 @@ def test_result_usage_is_reported_to_the_shared_tracker() -> None:
     assert records[0].provider == "claude_code"
     assert records[0].model == "claude-test"
     assert records[0].status == "completed"
+    assert records[0].granularity == "sdk_turn_run"
+    assert records[0].usage_source == "claude_result_usage"
+    assert records[0].usage_scope == "main_loop"
     assert records[0].usage is not None
     assert records[0].usage.input_tokens == 12
     assert records[0].usage.output_tokens == 4
@@ -655,6 +672,7 @@ def test_usage_includes_cache_creation_and_cache_read_tokens() -> None:
         "output_tokens": 4,
         "cache_creation_input_tokens": 3,
         "cache_read_input_tokens": 5,
+        "cache_creation": {"ephemeral_5m_input_tokens": 1, "ephemeral_1h_input_tokens": 2},
     }
 
     def factory(options):
@@ -674,6 +692,62 @@ def test_usage_includes_cache_creation_and_cache_read_tokens() -> None:
     assert usage.output_tokens == 4
     assert usage.total_tokens == 24
     assert usage.cached_input_tokens == 5
+    assert usage.cache_write_input_tokens == 3
+    assert usage.cache_write_5m_input_tokens == 1 and usage.cache_write_1h_input_tokens == 2
+
+
+def test_sdk_model_usage_keeps_actual_models_and_scoped_cost_without_reusing_run_total() -> None:
+    records = []
+    result = _result(text="ok")
+    result.total_cost_usd = 0.012
+    result.model_usage = {
+        "sonnet-alias": {"canonicalModel": "actual-sonnet", "inputTokens": 12, "outputTokens": 4,
+                         "cacheReadInputTokens": 5, "cacheCreationInputTokens": 3, "costUSD": 0.01},
+        "actual-haiku": {"inputTokens": 3, "outputTokens": 2, "cacheReadInputTokens": 2,
+                         "cacheCreationInputTokens": 1, "costUSD": 0.002},
+    }
+    with capture_model_usage(records.append):
+        _model(lambda options: _FakeClient(options, [[_assistant("ok"), result]])).run_agent_loop(
+            "question", tools=[_tool()], max_model_calls=1, handle_text=lambda _text: None,
+        )
+    assert len(records) == 1
+    sonnet, haiku = records[0].sdk_model_usage
+    assert sonnet.model == "actual-sonnet" and haiku.model == "actual-haiku"
+    assert sonnet.usage.input_tokens == 20 and sonnet.usage.total_tokens == 24
+    assert sonnet.usage.cached_input_tokens == 5 and sonnet.usage.cache_write_input_tokens == 3
+    assert haiku.usage.total_tokens == 8
+    assert sonnet.cost_usd == 0.01 and haiku.cost_usd == 0.002
+    assert records[0].usage.total_tokens == 16  # Result usage only describes the main loop.
+    assert records[0].usage_scope == "main_loop"
+
+
+def test_result_cost_without_model_breakdown_is_not_attached_to_main_loop_tokens() -> None:
+    records = []
+    result = _result(text="ok")
+    result.total_cost_usd = 0.02
+    with capture_model_usage(records.append):
+        _model(lambda options: _FakeClient(options, [[_assistant("ok"), result]])).run_agent_loop(
+            "question", tools=[_tool()], max_model_calls=1, handle_text=lambda _text: None,
+        )
+    assert records[0].sdk_model_usage == ()
+    assert records[0].usage_scope == "main_loop"
+    assert records[0].usage.total_tokens == 16
+
+
+def test_invalid_sdk_model_usage_and_cost_remain_unknown_without_breaking_result() -> None:
+    records = []
+    result = _result(text="ok")
+    result.model_usage = {
+        "actual": {"inputTokens": 2, "outputTokens": 1, "cacheReadInputTokens": -1,
+                   "cacheCreationInputTokens": 0, "costUSD": float("nan")},
+    }
+    with capture_model_usage(records.append):
+        _model(lambda options: _FakeClient(options, [[_assistant("ok"), result]])).run_agent_loop(
+            "question", tools=[_tool()], max_model_calls=1, handle_text=lambda _text: None,
+        )
+    assert records[0].status == "completed"
+    assert records[0].sdk_model_usage[0].usage is None
+    assert records[0].sdk_model_usage[0].cost_usd is None
 
 
 def test_prompt_limit_and_close_are_enforced() -> None:

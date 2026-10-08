@@ -26,7 +26,7 @@ from server.repository.index_sync import IndexSyncRepository
 from server.repository.library import LibraryRepository
 from server.repository.video import VideoRepository
 from server.service.agent_chat import AgentChatService
-from server.service.index_sync import IndexSyncService
+from server.service.parsev1.index_sync import IndexSyncService
 from server.service.library import LibraryService
 from server.service.qdrant_mutation_lock import QdrantMutationLock
 from server.service.video_retrieval import VideoRetrievalService

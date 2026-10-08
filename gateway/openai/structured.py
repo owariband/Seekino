@@ -4,7 +4,9 @@ import logging
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
+from contextvars import ContextVar
 from copy import deepcopy
+from dataclasses import dataclass
 from time import monotonic
 from typing import Any, TypeVar
 
@@ -48,6 +50,7 @@ from gateway.agent_model.tool_loop import (
     _log_incomplete_model_response,
     _raise_query_timeout,
 )
+from gateway.usage import ModelCallTracker, track_model_call
 
 from .profiles import (
     OpenAIProfile,
@@ -58,6 +61,17 @@ from .profiles import (
 
 _ResultModel = TypeVar("_ResultModel", bound=BaseModel)
 _logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _QueryRequestUsage:
+    stack: ExitStack
+    call: ModelCallTracker | None = None
+
+
+_query_usage_scope: ContextVar[_QueryRequestUsage | None] = ContextVar(
+    "structured_query_usage_scope", default=None,
+)
 
 class _AgentChatOpenAI(ChatOpenAI):
     """Validate Query tool responses and keep fallback at the model-call boundary."""
@@ -128,7 +142,7 @@ class _AgentChatOpenAI(ChatOpenAI):
             monotonic() if self.fallback_model_name is not None else None
         )
         try:
-            return super()._generate(*args, **request_kwargs)
+            return self._generate_request(*args, **request_kwargs)
         except BaseException as exc:
             if not isinstance(exc, (
                 *self._provider_error_types,
@@ -168,12 +182,20 @@ class _AgentChatOpenAI(ChatOpenAI):
                     _raise_query_timeout(fallback_exc)
                     raise
             try:
-                return super()._generate(*args, **fallback_kwargs)
+                return self._generate_request(*args, **fallback_kwargs)
             except BaseException as fallback_exc:
                 if not isinstance(fallback_exc, self._provider_error_types):
                     raise
                 _raise_query_timeout(fallback_exc)
                 raise
+
+    def _generate_request(self, *args: Any, **kwargs: Any):
+        with ExitStack() as stack:
+            token = _query_usage_scope.set(_QueryRequestUsage(stack))
+            try:
+                return super()._generate(*args, **kwargs)
+            finally:
+                _query_usage_scope.reset(token)
 
     def _get_request_payload(self, input_: Any, *, stop: Any = None, **kwargs: Any):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
@@ -210,9 +232,20 @@ class _AgentChatOpenAI(ChatOpenAI):
                 else "max_completion_tokens"
             ),
         )
+        scope = _query_usage_scope.get()
+        if scope is not None and scope.call is None:
+            scope.call = scope.stack.enter_context(track_model_call(
+                provider=self.provider_name,
+                model=self.model_name,
+                operation="structured_query",
+            ))
+            scope.call.raise_if_cancelled()
         return payload
 
     def _create_chat_result(self, response: Any, generation_info: Any = None):
+        scope = _query_usage_scope.get()
+        if scope is not None and scope.call is not None:
+            scope.call.capture_response(response)
         if isinstance(response, BaseModel):
             response = response.model_dump()
         for choice in response.get("choices", []):

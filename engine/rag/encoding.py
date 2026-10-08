@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -11,10 +10,7 @@ from typing import Literal
 from engine.rag._validation import (
     _nonblank, _nonnegative_finite, _positive_finite, _sha256_json, is_sha256,
 )
-from engine.rag.vision.inputs import (
-    VisualInputContract, VisualInputManifest, compute_visual_input_contract_id,
-    compute_visual_input_revision,
-)
+from engine.rag.vision.inputs import VisualInputContract, VisualInputManifest
 
 DEFAULT_ENCODER_NORMALIZATION = "none"
 DEFAULT_ENCODER_OUTPUT_CONTRACT = "float-vector-v1"
@@ -39,7 +35,7 @@ ReuseGapReason = Literal[
 
 @dataclass(frozen=True, slots=True)
 class EmbeddingReuseTarget:
-    """Exact input and encoder identity required by one index build."""
+    """Exact input and encoder identity for query-vector cache reuse."""
 
     modality: Modality
     input_sha256: str
@@ -330,33 +326,25 @@ class SparseEncoderContract:
             "output_contract": self.output_contract,
         }
 
-    @property
-    def encoder_id(self) -> str:
-        return f"sparse:sha256:{_sha256_json(self.claims())}"
-
 
 @dataclass(frozen=True, slots=True)
 class SparseEmbeddingRequest:
     encoder: SparseEncoderContract
-    input_sha256: str
     text: str
 
     def __post_init__(self) -> None:
         if not _nonblank(self.text):
             raise ValueError("sparse request requires nonblank text")
-        if hashlib.sha256(self.text.encode("utf-8")).hexdigest() != self.input_sha256:
-            raise ValueError("sparse input hash differs from its text")
 
 
 @dataclass(frozen=True, slots=True)
 class SparseEmbeddingArtifact:
-    input_sha256: str
-    encoder_id: str
+    request: SparseEmbeddingRequest
     token_weights: tuple[tuple[str, float], ...]
 
     def __post_init__(self) -> None:
-        if not is_sha256(self.input_sha256) or not _nonblank(self.encoder_id):
-            raise ValueError("sparse artifact requires input hash and encoder identity")
+        if not isinstance(self.request, SparseEmbeddingRequest):
+            raise ValueError("sparse artifact requires its original request")
         entries = tuple(self.token_weights)
         weights = dict(entries)
         if len(weights) != len(entries):
@@ -367,46 +355,34 @@ class SparseEmbeddingArtifact:
 @dataclass(frozen=True, slots=True)
 class EmbeddingRequest:
     channel: EncodingChannel
-    target: EmbeddingReuseTarget
+    encoder: EncoderContract
     semantic_text: str | None = None
     visual_input: VisualInputManifest | None = None
 
     def __post_init__(self) -> None:
         if self.channel == "semantic":
-            if self.target.modality != "text":
-                raise ValueError("semantic request requires a text target")
             if not _nonblank(self.semantic_text) or self.visual_input is not None:
                 raise ValueError("semantic request requires only semantic_text")
         elif self.channel == "vision":
-            if self.target.modality != "video":
-                raise ValueError("vision request requires a video target")
             if self.semantic_text is not None or self.visual_input is None:
                 raise ValueError("vision request requires only visual_input")
-            if (
-                compute_visual_input_revision(self.visual_input) != self.target.input_sha256
-                or compute_visual_input_contract_id(self.visual_input.input_contract)
-                != self.target.input_contract_id
-            ):
-                raise ValueError("vision request manifest differs from its input identity")
         else:
             raise ValueError("embedding channel must be semantic or vision")
 
 
 @dataclass(frozen=True, slots=True)
 class EmbeddingArtifact:
-    channel: EncodingChannel
-    input_sha256: str
-    encoder_id: str
+    request: EmbeddingRequest
     vector: tuple[float, ...]
 
     def __post_init__(self) -> None:
-        if self.channel not in ("semantic", "vision"):
-            raise ValueError("embedding channel must be semantic or vision")
-        if not is_sha256(self.input_sha256):
-            raise ValueError("artifact input_sha256 must be lowercase SHA-256")
-        if not _nonblank(self.encoder_id):
-            raise ValueError("artifact encoder_id must be nonblank")
+        if not isinstance(self.request, EmbeddingRequest):
+            raise ValueError("embedding artifact requires its original request")
         object.__setattr__(self, "vector", tuple(self.vector))
+
+    @property
+    def channel(self) -> EncodingChannel:
+        return self.request.channel
 
 
 def accept_sparse_result(
@@ -418,8 +394,7 @@ def accept_sparse_result(
     if model != request.encoder.model:
         raise ValueError("sparse embedding response model differs from its request")
     return SparseEmbeddingArtifact(
-        input_sha256=request.input_sha256,
-        encoder_id=request.encoder.encoder_id,
+        request=request,
         token_weights=validate_sparse_weights(weights),
     )
 
@@ -428,50 +403,9 @@ def validate_sparse_artifact(
     request: SparseEmbeddingRequest,
     artifact: SparseEmbeddingArtifact,
 ) -> tuple[tuple[str, float], ...]:
-    if artifact.input_sha256 != request.input_sha256:
-        raise ValueError("sparse artifact input differs from its request")
-    if artifact.encoder_id != request.encoder.encoder_id:
-        raise ValueError("sparse artifact encoder differs from its request")
+    if artifact.request is not request:
+        raise ValueError("sparse artifact belongs to a different plan request")
     return artifact.token_weights
-
-
-def sparse_embedding_receipt(
-    request: SparseEmbeddingRequest,
-    artifact: SparseEmbeddingArtifact,
-) -> dict[str, object]:
-    return {
-        "input_sha256": request.input_sha256,
-        **request.encoder.claims(),
-        "encoder_id": request.encoder.encoder_id,
-        "token_weights": dict(validate_sparse_artifact(request, artifact)),
-    }
-
-
-def reuse_sparse_embedding_artifact(
-    request: SparseEmbeddingRequest,
-    *,
-    source_kind: SourceKind,
-    metadata: Mapping[str, object],
-) -> SparseEmbeddingArtifact | None:
-    """Reuse only exact text/encoder proof, including an explicitly empty result."""
-
-    expected = {
-        "input_sha256": request.input_sha256,
-        **request.encoder.claims(),
-        "encoder_id": request.encoder.encoder_id,
-    }
-    if source_kind not in ("v1_native_artifact", "v2_index_cache", "import_parse_cache"):
-        return None
-    if any(metadata.get(name) != value for name, value in expected.items()):
-        return None
-    try:
-        return accept_sparse_result(
-            request,
-            model=request.encoder.model,
-            weights=metadata.get("token_weights"),
-        )
-    except ValueError:
-        return None
 
 
 def accept_embedding_result(
@@ -483,16 +417,15 @@ def accept_embedding_result(
 ) -> EmbeddingArtifact:
     """Validate an external encoder response before it becomes an artifact."""
 
-    if modality != request.target.modality or model != request.target.model:
+    expected_modality = "text" if request.channel == "semantic" else "video"
+    if modality != expected_modality or model != request.encoder.model:
         raise ValueError(f"{request.channel} embedding response contract differs")
     validated = validate_embedding_vector(
         vector,
-        dimensions=request.target.dimensions,
+        dimensions=request.encoder.dimensions,
     )
     return EmbeddingArtifact(
-        channel=request.channel,
-        input_sha256=request.target.input_sha256,
-        encoder_id=request.target.encoder_id,
+        request=request,
         vector=validated,
     )
 
@@ -501,42 +434,15 @@ def validate_embedding_artifact(
     request: EmbeddingRequest,
     artifact: EmbeddingArtifact,
 ) -> tuple[float, ...]:
-    """Validate a cached or persisted artifact against one exact request."""
+    """Validate a result against the request owned by the outer plan."""
 
     if artifact.channel != request.channel:
         raise ValueError("embedding artifact channel differs from its request")
-    if artifact.input_sha256 != request.target.input_sha256:
-        raise ValueError("embedding artifact input differs from its request")
-    if artifact.encoder_id != request.target.encoder_id:
-        raise ValueError("embedding artifact encoder differs from its request")
+    if artifact.request is not request:
+        raise ValueError("embedding artifact belongs to a different plan request")
     return validate_embedding_vector(
         artifact.vector,
-        dimensions=request.target.dimensions,
-    )
-
-
-def reuse_embedding_artifact(
-    request: EmbeddingRequest,
-    *,
-    source_kind: SourceKind,
-    metadata: Mapping[str, object],
-    vector: Sequence[float] | None,
-) -> EmbeddingArtifact | None:
-    """Return a plan-bound artifact only when persisted proof is compatible."""
-
-    decision = assess_embedding_reuse(
-        request.target,
-        source_kind=source_kind,
-        metadata=metadata,
-        vector=vector,
-    )
-    if decision.vector is None:
-        return None
-    return EmbeddingArtifact(
-        channel=request.channel,
-        input_sha256=request.target.input_sha256,
-        encoder_id=request.target.encoder_id,
-        vector=decision.vector,
+        dimensions=request.encoder.dimensions,
     )
 
 
@@ -554,26 +460,6 @@ def compute_encoder_id(
     if visual_input_contract is not None:
         payload.update(visual_input_contract.claims())
     return f"{modality}:sha256:{_sha256_json(payload)}"
-
-
-def _target(
-    *,
-    modality: Literal["text", "video"],
-    input_sha256: str,
-    encoder: EncoderContract,
-    encoder_id: str,
-) -> EmbeddingReuseTarget:
-    return EmbeddingReuseTarget(
-        modality=modality,
-        input_sha256=input_sha256,
-        provider=encoder.provider,
-        model=encoder.model,
-        encoder_revision=encoder.encoder_revision,
-        dimensions=encoder.dimensions,
-        normalization=encoder.normalization,
-        output_contract=encoder.output_contract,
-        encoder_id=encoder_id,
-    )
 
 
 __all__ = [
@@ -596,11 +482,8 @@ __all__ = [
     "EmbeddingArtifact",
     "accept_sparse_result",
     "validate_sparse_artifact",
-    "sparse_embedding_receipt",
-    "reuse_sparse_embedding_artifact",
     "accept_embedding_result",
     "validate_embedding_artifact",
-    "reuse_embedding_artifact",
     "compute_encoder_id",
     "EncodingChannel",
     "DEFAULT_ENCODER_NORMALIZATION",

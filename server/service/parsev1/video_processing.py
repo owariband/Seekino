@@ -26,20 +26,20 @@ from engine.parsev1.pipeline import (
 )
 from engine.parsev1.schemas import AnalysisWindow
 
-from ..config.video_processing import VideoProcessingConfig
-from ..config.parse_profile import ParseConfig
-from ..identity import derive_video_chunk_id
-from ..model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
-from ..model.job import ParseJobStage, VideoChunkCheckpointStage
-from ..mq.contracts import ParseJobLeaseLostError
-from ..repository.job import ParseJobRepository
-from ..repository.video import VideoRepository
-from ..schema import VideoChunkKeyframeReference
-from ..storage.artifact import ArtifactIntegrityError, ArtifactStore
-from ..utils.files import write_json_once
+from ...config.video_processing import VideoProcessingConfig
+from ...config.parse_profile import ParseConfig
+from ...identity import derive_video_chunk_id
+from ...model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
+from ...model.job import ParseJobStage, VideoChunkCheckpointStage
+from ...mq.contracts import ParseJobLeaseLostError
+from ...repository.job import ParseJobRepository
+from ...repository.video import VideoRepository
+from ...schema import VideoChunkKeyframeReference
+from ...storage.artifact import ArtifactIntegrityError, ArtifactStore
+from ...utils.files import write_json_once
 from .index_sync import IndexSyncService
 from .parse_persistence import VideoParsePersistence
-from .parse_usage import ParseUsageService
+from ..parse_usage import ParseUsageService
 
 
 @dataclass(frozen=True, slots=True)

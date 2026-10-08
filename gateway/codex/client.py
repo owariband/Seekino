@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextvars import copy_context
 from threading import Lock
 from typing import Any, Protocol
 
@@ -156,6 +157,7 @@ class CodexSession:
             max_tool_calls=max_tool_calls,
             before_tool_call=self._model_call_budget.reserve,
         )
+        self._tool_context = copy_context()
         self._config = CodexConfig(
             codex_bin=codex_bin,
             config_overrides=_DISABLED_FEATURE_OVERRIDES,
@@ -188,7 +190,7 @@ class CodexSession:
                 return
             client = self._client_factory(
                 self._config,
-                self._tool_bridge.handle,
+                self._handle_request,
             )
             self._client = client
         try:
@@ -212,6 +214,12 @@ class CodexSession:
         except BaseException:
             self.close()
             raise
+
+    def _handle_request(
+        self, method: str, params: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        # SDK reader threads do not inherit the host's execution scope.
+        return self._tool_context.copy().run(self._tool_bridge.handle, method, params)
 
     def run_turn(
         self,

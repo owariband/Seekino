@@ -6,7 +6,6 @@ from dataclasses import replace
 import pytest
 
 from engine.parsev2.schemas import VideoParseResult
-from engine.rag.encoding import embedding_receipt
 from engine.rag.indexing.pipeline import (
     ChunkIndexSource,
     ChunkIndexingContract,
@@ -21,9 +20,6 @@ from engine.rag.encoding import (
     SparseEncoderContract,
     accept_embedding_result,
     accept_sparse_result,
-    reuse_embedding_artifact,
-    reuse_sparse_embedding_artifact,
-    sparse_embedding_receipt,
     validate_embedding_artifact,
 )
 from engine.rag.vision.inputs import (
@@ -180,8 +176,8 @@ def _dense_artifacts(plan) -> tuple[EmbeddingArtifact, ...]:
     return tuple(
         accept_embedding_result(
             request,
-            modality=request.target.modality,
-            model=request.target.model,
+            modality="text" if request.channel == "semantic" else "video",
+            model=request.encoder.model,
             vector=[1, 0] if request.channel == "semantic" else [0, 1],
         )
         for request in plan.encoding_requests
@@ -210,10 +206,24 @@ def _source(
     )
 
 
+def _another_plan(plan, change: str):
+    if change == "replace_version":
+        return replace(plan, content_version=plan.content_version + 1)
+    if change == "replace_generation":
+        return replace(plan, index_generation=plan.index_generation + 1)
+    return plan_chunk_index(
+        _source(content_version=plan.content_version + (change == "version")),
+        _contract(
+            index_generation=plan.index_generation + (change == "generation"),
+            sparse_encoder=plan.sparse_encoder,
+        ),
+    )
+
+
 def test_plan_projects_formal_source_and_emits_two_exact_encoding_requests() -> None:
     plan = plan_chunk_index(_source(), _contract())
 
-    assert plan.source_revision == compute_source_revision(_result())
+    assert (plan.content_version, plan.index_generation) == (2, 1)
     assert plan.projection_revision
     assert [request.channel for request in plan.encoding_requests] == [
         "semantic",
@@ -222,23 +232,28 @@ def test_plan_projects_formal_source_and_emits_two_exact_encoding_requests() -> 
     assert plan.semantic_request is not None
     assert plan.semantic_request.semantic_text == plan.projection.semantic_text
     assert plan.vision_request.visual_input == _clip()
-    assert plan.vision_request.target.input_sha256 == "a" * 64
-    assert plan.semantic_encoder_id.startswith("text:sha256:")
-    assert plan.vision_encoder_id.startswith("video:sha256:")
+    assert plan.vision_request.visual_input.input_sha256 == "a" * 64
+    assert plan.semantic_request.encoder == _contract().semantic_encoder
+    assert plan.vision_request.encoder == _contract().vision_encoder
+    for request in plan.encoding_requests:
+        for field in ("target", "input_sha256", "encoder_id", "content_version", "index_generation"):
+            assert not hasattr(request, field)
 
 
 def test_source_revision_tracks_only_formal_source_content() -> None:
-    initial = plan_chunk_index(_source(content_version=2), _contract(index_generation=1))
-    rebuilt = plan_chunk_index(_source(content_version=9), _contract(index_generation=7))
-    changed = plan_chunk_index(_source(result=_result("其实我很难过")), _contract())
+    initial_source = _source(content_version=2)
+    rebuilt_source = _source(content_version=9)
+    changed_source = _source(result=_result("其实我很难过"))
+    initial = plan_chunk_index(initial_source, _contract(index_generation=1))
+    rebuilt = plan_chunk_index(rebuilt_source, _contract(index_generation=7))
 
-    assert initial.source_revision == rebuilt.source_revision
-    assert initial.source_revision != changed.source_revision
+    assert compute_source_revision(initial_source.result) == compute_source_revision(rebuilt_source.result)
+    assert compute_source_revision(initial_source.result) != compute_source_revision(changed_source.result)
     assert initial.projection_revision == rebuilt.projection_revision
-    assert initial.vision_request.target.input_sha256 == rebuilt.vision_request.target.input_sha256
+    assert initial.vision_request.visual_input == rebuilt.vision_request.visual_input
 
 
-def test_questions_are_lexical_only_and_do_not_invalidate_semantic_vector() -> None:
+def test_questions_are_lexical_only_and_do_not_change_semantic_input() -> None:
     old = plan_chunk_index(
         _source(enrichments=(SourceEnrichment(
             language="zh-Hans",
@@ -255,21 +270,20 @@ def test_questions_are_lexical_only_and_do_not_invalidate_semantic_vector() -> N
     )
 
     assert old.projection_revision != new.projection_revision
-    assert old.source_revision == new.source_revision
     assert old.semantic_request is not None and new.semantic_request is not None
-    assert old.semantic_request.target.input_sha256 == new.semantic_request.target.input_sha256
+    assert old.semantic_request.semantic_text == new.semantic_request.semantic_text
     assert "是谁说了没事？" not in new.semantic_request.semantic_text
 
 
-def test_semantic_source_change_invalidates_only_the_semantic_representation() -> None:
+def test_semantic_source_change_updates_text_and_preserves_visual_input() -> None:
     old = plan_chunk_index(_source(result=_result("我没事")), _contract())
     new = plan_chunk_index(_source(result=_result("其实我很难过")), _contract())
 
     assert old.semantic_request is not None and new.semantic_request is not None
-    assert old.source_revision != new.source_revision
     assert old.projection_revision != new.projection_revision
-    assert old.semantic_request.target.input_sha256 != new.semantic_request.target.input_sha256
-    assert old.vision_request.target == new.vision_request.target
+    assert old.semantic_request.semantic_text != new.semantic_request.semantic_text
+    assert old.vision_request.visual_input == new.vision_request.visual_input
+    assert old.vision_request.encoder == new.vision_request.encoder
 
 
 @pytest.mark.parametrize(
@@ -281,7 +295,7 @@ def test_semantic_source_change_invalidates_only_the_semantic_representation() -
         ("preprocess_revision", "ffmpeg-h264-v2"),
     ],
 )
-def test_visual_preprocess_change_invalidates_encoder_and_reuse_identity(
+def test_visual_preprocess_change_preserves_the_requested_media_contract(
     field: str,
     value: object,
 ) -> None:
@@ -293,15 +307,9 @@ def test_visual_preprocess_change_invalidates_encoder_and_reuse_identity(
         _contract(visual_input_contract=changed_contract),
     )
 
-    assert old.vision_encoder_id != new.vision_encoder_id
-    assert old.vision_request.target.input_contract_id != new.vision_request.target.input_contract_id
-    receipt = embedding_receipt(old.vision_request.target, [0.0, 1.0])
-    assert reuse_embedding_artifact(
-        new.vision_request,
-        source_kind="v2_index_cache",
-        metadata=receipt,
-        vector=receipt["vector"],
-    ) is None
+    assert new.vision_request.visual_input == changed_input
+    assert new.vision_request.visual_input.input_contract == changed_contract
+    assert old.vision_request.visual_input != new.vision_request.visual_input
 
 
 def test_ordered_frame_input_revision_covers_frame_order_time_and_content() -> None:
@@ -338,8 +346,9 @@ def test_ordered_frame_input_revision_covers_frame_order_time_and_content() -> N
         _source(visual_input=manifest),
         _contract(visual_input_contract=contract),
     )
-    assert plan.vision_request.target.visual_input_kind == "ordered_frames"
-    assert plan.vision_request.target.sampling_contract_id == contract.sampling_contract_id
+    assert plan.vision_request.visual_input == manifest
+    assert plan.vision_request.visual_input.kind == "ordered_frames"
+    assert plan.vision_request.visual_input.input_contract == contract
 
 
 def test_ordered_frames_must_stay_inside_the_chunk() -> None:
@@ -370,7 +379,7 @@ def test_ordered_frames_must_stay_inside_the_chunk() -> None:
         ("preprocess_revision", "rgb-resize-v2"),
     ],
 )
-def test_ordered_frame_contract_change_invalidates_visual_identity(
+def test_ordered_frame_contract_change_updates_the_actual_visual_input(
     field: str,
     value: str,
 ) -> None:
@@ -396,15 +405,9 @@ def test_ordered_frame_contract_change_invalidates_visual_identity(
         _contract(visual_input_contract=changed_contract),
     )
 
-    assert old.vision_encoder_id != new.vision_encoder_id
-    assert (
-        old.vision_request.target.input_contract_id
-        != new.vision_request.target.input_contract_id
-    )
-    assert (
-        old.vision_request.target.input_sha256
-        != new.vision_request.target.input_sha256
-    )
+    assert old.vision_request.visual_input.input_contract != new.vision_request.visual_input.input_contract
+    assert new.vision_request.visual_input == changed_manifest
+    assert new.vision_request.visual_input.input_contract == changed_contract
 
 
 @pytest.mark.parametrize(
@@ -492,7 +495,7 @@ def test_structured_manifest_validates_requested_plan_and_actual_times() -> None
         ("input", "preprocess_revision", "jpeg-rgb-resize-v2"),
     ],
 )
-def test_structured_frame_rule_change_rejects_old_visual_reuse(
+def test_structured_frame_rule_change_requires_a_result_for_the_new_plan(
     scope: str,
     field: str,
     value: object,
@@ -508,18 +511,14 @@ def test_structured_frame_rule_change_rejects_old_visual_reuse(
     assert (old_contract.sampling_contract_id != new_contract.sampling_contract_id) == (
         scope == "sampling"
     )
-    assert old.vision_encoder_id != new.vision_encoder_id
-    receipt = embedding_receipt(old.vision_request.target, [0.0, 1.0])
-    assert reuse_embedding_artifact(
-        new.vision_request,
-        source_kind="v2_index_cache",
-        metadata=receipt,
-        vector=receipt["vector"],
-    ) is None
+    assert old.vision_request.visual_input.input_contract != new.vision_request.visual_input.input_contract
+    old_result = _dense_artifacts(old)[1]
+    with pytest.raises(ValueError, match="different plan request"):
+        validate_embedding_artifact(new.vision_request, old_result)
 
 
 @pytest.mark.parametrize("change", ["actual_time", "frame_bytes"])
-def test_realized_frame_change_invalidates_only_visual_input_reuse(change: str) -> None:
+def test_realized_frame_change_retains_actual_media_and_requires_its_own_result(change: str) -> None:
     contract = _frames_contract()
     original = _frames_manifest(contract)
     first = replace(
@@ -530,22 +529,22 @@ def test_realized_frame_change_invalidates_only_visual_input_reuse(change: str) 
     old = _frames_plan(contract, original)
     new = _frames_plan(contract, changed)
 
-    assert old.source_revision == new.source_revision
     assert old.projection_revision == new.projection_revision
-    assert old.vision_request.target.input_sha256 != new.vision_request.target.input_sha256
-    receipt = embedding_receipt(old.vision_request.target, [0.0, 1.0])
-    assert reuse_embedding_artifact(
-        new.vision_request,
-        source_kind="v2_index_cache",
-        metadata=receipt,
-        vector=receipt["vector"],
-    ) is None
-    with pytest.raises(ValueError, match="manifest differs from its input identity"):
-        replace(old.vision_request, visual_input=changed)
+    assert new.vision_request.visual_input == changed
+    assert compute_visual_input_revision(original) != compute_visual_input_revision(changed)
+    changed_request = replace(old.vision_request, visual_input=changed)
+    assert changed_request.visual_input == changed
+    with pytest.raises(ValueError, match="different plan request"):
+        validate_embedding_artifact(changed_request, _dense_artifacts(old)[1])
 
 
-def test_external_results_are_validated_before_finalizing_logical_document() -> None:
-    plan = plan_chunk_index(_source(), _contract())
+@pytest.mark.parametrize(("content_version", "index_generation"), [(2, 1), (9, 7)])
+def test_external_results_are_validated_before_finalizing_logical_document(
+    content_version: int, index_generation: int,
+) -> None:
+    plan = plan_chunk_index(
+        _source(content_version=content_version), _contract(index_generation=index_generation),
+    )
     assert plan.semantic_request is not None
     semantic = accept_embedding_result(
         plan.semantic_request,
@@ -562,9 +561,12 @@ def test_external_results_are_validated_before_finalizing_logical_document() -> 
 
     document = finalize_chunk_index(plan, [semantic, vision])
 
-    assert document.projection_revision == plan.projection_revision
-    assert document.semantic_input_sha256 == plan.semantic_request.target.input_sha256
-    assert document.vision_input_sha256 == plan.vision_request.target.input_sha256
+    assert semantic.request is plan.semantic_request
+    assert vision.request is plan.vision_request
+    for artifact in (semantic, vision):
+        for field in ("input_sha256", "encoder_id", "content_version", "index_generation"):
+            assert not hasattr(artifact, field)
+    assert document.projection == plan.projection
     assert document.semantic_vector == (1.0, 0.0)
     assert document.vision_vector == (0.0, 1.0)
     assert document.retrieval_identity.model_dump() == {
@@ -572,27 +574,36 @@ def test_external_results_are_validated_before_finalizing_logical_document() -> 
         "series_id": "series-1",
         "video_id": "video-1",
         "parse_task_id": "task-1",
-        "content_version": 2,
-        "index_generation": 1,
-        "source_revision": plan.source_revision,
-        "projection_revision": plan.projection_revision,
-        "retrieval_contract_id": "parse-v2-retrieval-v1",
-        "semantic_encoder_id": plan.semantic_encoder_id,
-        "vision_encoder_id": plan.vision_encoder_id,
+        "content_version": content_version,
+        "index_generation": index_generation,
     }
     assert document.receipt.as_dict() == {
         "parse_task_id": "task-1",
         "video_chunk_id": "chunk-1",
-        "content_version": 2,
-        "source_revision": plan.source_revision,
-        "projection_revision": plan.projection_revision,
-        "retrieval_contract_id": "parse-v2-retrieval-v1",
-        "semantic_encoder_id": plan.semantic_encoder_id,
-        "vision_encoder_id": plan.vision_encoder_id,
-        "index_generation": 1,
+        "content_version": content_version,
+        "index_generation": index_generation,
     }
+    for field in (
+        "source_revision", "projection_revision", "retrieval_contract_id",
+        "semantic_encoder_id", "vision_encoder_id", "semantic_input_sha256",
+        "vision_input_sha256", "sparse_encoder_id", "sparse_input_sha256",
+    ):
+        assert not hasattr(document, field)
+        assert not hasattr(document.receipt, field)
     assert not hasattr(document, "document_id")
     assert not hasattr(document, "external_version")
+
+
+@pytest.mark.parametrize("field", ["lexical", "semantic"])
+def test_finalization_rejects_projection_changes_after_planning(field: str) -> None:
+    plan = plan_chunk_index(_source(), _contract())
+    artifacts = _dense_artifacts(plan)
+    if field == "lexical":
+        plan.projection.lexical_fields[0].raw_text = "千早爱音离开"
+    else:
+        plan.projection.semantic_text = "不同的索引文字"
+    with pytest.raises(ValueError, match="index projection changed after planning"):
+        finalize_chunk_index(plan, artifacts)
 
 
 @pytest.mark.parametrize(
@@ -621,21 +632,49 @@ def test_external_response_must_match_request_contract(
         )
 
 
-def test_cached_artifact_must_match_channel_input_encoder_and_dimension() -> None:
-    request = plan_chunk_index(_source(), _contract()).vision_request
-    valid = EmbeddingArtifact(
-        channel="vision",
-        input_sha256=request.target.input_sha256,
-        encoder_id=request.target.encoder_id,
-        vector=(0.0, 1.0),
-    )
+@pytest.mark.parametrize("change", ["channel", "request", "vector"])
+def test_artifact_must_match_request_channel_and_vector_dimension(change: str) -> None:
+    plan = plan_chunk_index(_source(), _contract())
+    request = plan.vision_request
+    valid = EmbeddingArtifact(request=request, vector=(0.0, 1.0))
     assert validate_embedding_artifact(request, valid) == (0.0, 1.0)
 
-    with pytest.raises(ValueError, match="encoder"):
-        validate_embedding_artifact(
-            request,
-            replace(valid, encoder_id="video:sha256:" + "f" * 64),
-        )
+    if change == "channel":
+        invalid = replace(valid, request=plan.semantic_request)
+        message = "channel"
+    elif change == "request":
+        invalid = replace(valid, request=replace(request))
+        message = "different plan request"
+    else:
+        invalid = replace(valid, vector=(1.0,))
+        message = "dimensions"
+    with pytest.raises(ValueError, match=message):
+        validate_embedding_artifact(request, invalid)
+    with pytest.raises(ValueError, match="duplicate" if change == "channel" else message):
+        finalize_chunk_index(plan, [_dense_artifacts(plan)[0], invalid])
+
+
+@pytest.mark.parametrize("channel", ["semantic", "vision"])
+@pytest.mark.parametrize("change", [
+    "same_input", "version", "generation", "replace_version", "replace_generation",
+])
+def test_dense_results_cannot_be_injected_into_another_plan(channel: str, change: str) -> None:
+    old = plan_chunk_index(_source(), _contract())
+    new = _another_plan(old, change)
+    old_request = getattr(old, f"{channel}_request")
+    new_request = getattr(new, f"{channel}_request")
+    assert old_request == new_request
+    assert old_request is not new_request
+    old_result = next(item for item in _dense_artifacts(old) if item.channel == channel)
+    results = [old_result if item.channel == channel else item for item in _dense_artifacts(new)]
+
+    with pytest.raises(ValueError, match="different plan request"):
+        finalize_chunk_index(new, results)
+
+    document = finalize_chunk_index(new, _dense_artifacts(new))
+    assert (document.content_version, document.index_generation) == (
+        new.content_version, new.index_generation,
+    )
 
 
 def test_empty_projection_requests_only_required_visual_embedding() -> None:
@@ -651,14 +690,13 @@ def test_empty_projection_requests_only_required_visual_embedding() -> None:
         vector=[0, 1],
     )
     document = finalize_chunk_index(plan, [vision])
-    assert document.semantic_input_sha256 is None
     assert document.semantic_vector is None
 
 
 def test_sparse_is_opt_in_and_persists_versioned_identity() -> None:
     disabled = plan_chunk_index(_source(), _contract())
     disabled_document = finalize_chunk_index(disabled, _dense_artifacts(disabled))
-    assert disabled.sparse_request is None and disabled.sparse_encoder_id is None
+    assert disabled.sparse_request is None and disabled.sparse_encoder is None
     assert "sparse_encoder_id" not in disabled_document.receipt.as_dict()
     encoder = _sparse_encoder()
     plan = _sparse_plan(encoder=encoder)
@@ -673,18 +711,17 @@ def test_sparse_is_opt_in_and_persists_versioned_identity() -> None:
         plan, _dense_artifacts(plan), sparse_artifact=artifact,
     )
     assert document.sparse_token_weights == (("dialogue", 1.2), ("scene", 0.4))
-    assert document.receipt.as_dict()["sparse_encoder_id"] == encoder.encoder_id
+    assert document.receipt.as_dict() == disabled_document.receipt.as_dict()
 
     ranked = VersionedRankedVideoChunkMatch(
         rank=1, video_chunk_id="chunk-1", score=0.9,
         retrieval_identity=document.retrieval_identity,
     )
-    for by_alias, key in ((False, "sparse_encoder_id"), (True, "sparseEncoderId")):
+    for by_alias in (False, True):
         wire = ranked.model_dump(mode="json", by_alias=by_alias)
-        assert wire["retrieval_identity"][key] == encoder.encoder_id
         assert VersionedRankedVideoChunkMatch.model_validate(wire) == ranked
     changed_identity = document.retrieval_identity.model_copy(
-        update={"sparse_encoder_id": "sparse:sha256:" + "f" * 64},
+        update={"content_version": plan.content_version + 1},
     )
     with pytest.raises(ValueError, match="identity changed between channels"):
         fuse_versioned_video_chunk_rankings(
@@ -699,10 +736,11 @@ def test_sparse_is_opt_in_and_persists_versioned_identity() -> None:
         language="zh-Hans", questions=["是谁说了没事？"],
     ),), encoder=encoder)
     assert old.projection_revision != new.projection_revision
-    assert old.sparse_request.input_sha256 == new.sparse_request.input_sha256
+    assert old.sparse_request.text == new.sparse_request.text
+    assert old.sparse_request.encoder == new.sparse_request.encoder
 
 
-def test_sparse_artifact_and_plan_proofs_must_match_exactly() -> None:
+def test_sparse_results_must_match_the_plan_request_and_model_contract() -> None:
     plan = _sparse_plan()
     request = plan.sparse_request
     assert request is not None
@@ -711,12 +749,8 @@ def test_sparse_artifact_and_plan_proofs_must_match_exactly() -> None:
 
     with pytest.raises(ValueError, match="required"):
         finalize_chunk_index(plan, dense)
-    for artifact, message in (
-        (replace(valid, input_sha256="f" * 64), "input"),
-        (replace(valid, encoder_id="sparse:sha256:" + "f" * 64), "encoder"),
-    ):
-        with pytest.raises(ValueError, match=message):
-            finalize_chunk_index(plan, dense, sparse_artifact=artifact)
+    with pytest.raises(ValueError, match="different plan request"):
+        finalize_chunk_index(plan, dense, sparse_artifact=replace(valid, request=replace(request)))
     disabled = plan_chunk_index(_source(), _contract())
     with pytest.raises(ValueError, match="not requested"):
         finalize_chunk_index(disabled, _dense_artifacts(disabled), sparse_artifact=valid)
@@ -724,25 +758,44 @@ def test_sparse_artifact_and_plan_proofs_must_match_exactly() -> None:
         accept_sparse_result(request, model="other", weights={"scene": 1})
     with pytest.raises(ValueError, match="duplicate"):
         SparseEmbeddingArtifact(
-            request.input_sha256, request.encoder.encoder_id,
-            (("scene", 1.0), ("scene", 2.0)),
+            request=request, token_weights=(("scene", 1.0), ("scene", 2.0)),
         )
 
     other = _sparse_plan(result=_result("其实我很难过"))
     for forged in (
         replace(plan, sparse_request=other.sparse_request),
-        replace(plan, sparse_encoder_id="sparse:sha256:" + "f" * 64),
+        replace(plan, sparse_encoder=replace(request.encoder, model="sparse-v2")),
         replace(plan, sparse_request=None),
     ):
         with pytest.raises(ValueError, match="sparse request"):
             finalize_chunk_index(forged, _dense_artifacts(forged), sparse_artifact=valid)
 
 
-def test_sparse_empty_activation_and_cache_proof_are_explicit() -> None:
+@pytest.mark.parametrize("change", [
+    "same_input", "version", "generation", "replace_version", "replace_generation",
+])
+def test_sparse_results_cannot_be_injected_into_another_plan(change: str) -> None:
+    old = _sparse_plan()
+    new = _another_plan(old, change)
+    assert old.sparse_request == new.sparse_request
+    assert old.sparse_request is not new.sparse_request
+    old_result = accept_sparse_result(
+        old.sparse_request, model=old.sparse_request.encoder.model, weights={"scene": 1},
+    )
+    with pytest.raises(ValueError, match="different plan request"):
+        finalize_chunk_index(new, _dense_artifacts(new), sparse_artifact=old_result)
+
+    result = accept_sparse_result(
+        new.sparse_request, model=new.sparse_request.encoder.model, weights={"scene": 1},
+    )
+    document = finalize_chunk_index(new, _dense_artifacts(new), sparse_artifact=result)
+    assert document.sparse_token_weights == (("scene", 1.0),)
+
+
+def test_sparse_empty_activation_is_valid_without_a_separate_identity() -> None:
     empty = _sparse_plan(result=VideoParseResult(persons=[], timeline=[]))
-    assert empty.sparse_encoder_id is not None and empty.sparse_request is None
+    assert empty.sparse_encoder is not None and empty.sparse_request is None
     empty_document = finalize_chunk_index(empty, _dense_artifacts(empty))
-    assert empty_document.sparse_input_sha256 is None
     assert empty_document.sparse_token_weights is None
 
     plan = _sparse_plan()
@@ -751,30 +804,11 @@ def test_sparse_empty_activation_and_cache_proof_are_explicit() -> None:
     artifact = accept_sparse_result(
         request, model=request.encoder.model, weights={"scene": 0},
     )
-    receipt = sparse_embedding_receipt(request, artifact)
     document = finalize_chunk_index(
         plan, _dense_artifacts(plan), sparse_artifact=artifact,
     )
     assert artifact.token_weights == document.sparse_token_weights == ()
-    assert receipt["token_weights"] == {}
-    assert reuse_sparse_embedding_artifact(
-        request, source_kind="v2_index_cache", metadata=receipt,
-    ) == artifact
-
-    changed_input = _sparse_plan(result=_result("其实我很难过")).sparse_request
-    assert changed_input is not None
-    assert reuse_sparse_embedding_artifact(
-        changed_input, source_kind="v2_index_cache", metadata=receipt,
-    ) is None
-    for field, value in (
-        ("provider", "remote"), ("model", "sparse-v2"),
-        ("encoder_revision", "runtime-v2"), ("normalization", "l2"),
-    ):
-        changed = _sparse_plan(encoder=replace(_sparse_encoder(), **{field: value}))
-        assert reuse_sparse_embedding_artifact(
-            changed.sparse_request, source_kind="v2_index_cache", metadata=receipt,
-        ) is None
-    invalid = {**receipt, "token_weights": {"scene": 10**10000}}
-    assert reuse_sparse_embedding_artifact(
-        request, source_kind="v2_index_cache", metadata=invalid,
-    ) is None
+    assert artifact.request is request
+    for value in (request, artifact):
+        for field in ("input_sha256", "encoder_id", "content_version", "index_generation"):
+            assert not hasattr(value, field)

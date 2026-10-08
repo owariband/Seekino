@@ -14,10 +14,10 @@ export function formatTokens(value: number | null): string {
   return value === null ? "未记录" : value.toLocaleString("zh-CN");
 }
 
-export function formatCostCny(value: string | null): string {
-  if (value === null) return "未估算";
+export function formatMoneyUsd(value: string | null): string {
+  if (value === null) return "未计价";
   const [integer, fraction = ""] = value.split(".");
-  return `¥${integer!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction.padEnd(2, "0")}`;
+  return `$${integer!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction.padEnd(2, "0")}`;
 }
 
 export function formatTimecode(seconds: number): string {

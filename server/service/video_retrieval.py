@@ -1,22 +1,36 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import nullcontext
+import logging
 from typing import Protocol
 
-from engine.rag import EncoderContract, compute_encoder_id
+from engine.rag import EncoderContract, VIDEO_CLIP_PREPROCESS_REVISION
+from engine.rag.encoding import SparseEncoderContract, accept_sparse_result
+from engine.rag.indexing.pipeline import ChunkIndexingContract
+from engine.rag.nlp.query import accept_query_vector
+from engine.rag.query_pipeline import plan_retrieval_query
+from engine.rag.retrieval.contracts import (
+    RetrievalConsistencyError, RetrievalPolicy, RetrievalScope, SelectedVideoTask,
+    QueryEncoderBinding, VerifiedRetrievalCandidate,
+)
+from engine.rag.retrieval.pipeline import build_recall_requests, fuse_retrieval_candidates
+from engine.rag.retrieval.rerank import plan_candidate_rerank, finalize_candidate_rerank
+from engine.rag.vision.inputs import VideoClipInputContract
 from engine.rag.nlp.transcript import (
     RankedTranscriptMatch,
     rank_transcript_chunks,
 )
 from engine.rag.retrieval.fusion import (
     RankedVideoChunkMatch,
-    VersionedRankedVideoChunkMatch,
     fuse_video_chunk_rankings,
-    fuse_versioned_video_chunk_rankings,
     normalize_hybrid_retrieval_weights,
 )
-from engine.rag.contracts import LexicalMatch, VideoChunkRetrievalIdentity
+from engine.rag.contracts import LexicalMatch
 from gateway.embedding import EmbeddingResult
+from gateway.tracing import LangfuseTracing
+from gateway.usage import ModelCallControlError, model_call_context
+from gateway.rerank import StructuredTextReranker
 
 from ..config.retrieval import RetrievalConfig
 from ..model.index_sync import IndexSyncOperation, IndexSyncStatus
@@ -71,6 +85,7 @@ class VideoRetrievalService:
         text_weight: float = _DEFAULT_RETRIEVAL_CONFIG.text_weight,
         vision_weight: float = _DEFAULT_RETRIEVAL_CONFIG.vision_weight,
         exact: bool = False,
+        tracing: LangfuseTracing | None = None,
     ) -> None:
         if store.text_dimensions != store.vision_dimensions:
             raise ValueError(
@@ -91,6 +106,7 @@ class VideoRetrievalService:
         self._repository = repository
         self._store = store
         self._embedder = embedder
+        self._tracing = tracing
         self._channel_top_k = channel_top_k
         self._rrf_k = rrf_k
         self._text_weight = text_weight
@@ -172,7 +188,18 @@ class VideoRetrievalService:
         text_matches: list[QdrantVideoChunkIndexMatch] = []
         vision_matches: list[QdrantVideoChunkIndexMatch] = []
         if effective_text_weight > 0 or effective_vision_weight > 0:
-            embedding = self._embedder.embed_query(normalized_query)
+            context = {
+                "workspace_id": workspace_id,
+                "series_ids": tuple(scope),
+                "video_ids": tuple(searched_video_ids),
+                "stage": "retrieval",
+            }
+            tracing = (
+                self._tracing.scope(context)
+                if self._tracing is not None else nullcontext()
+            )
+            with model_call_context(context), tracing:
+                embedding = self._embedder.embed_query(normalized_query)
             if embedding.modality != "text":
                 raise RuntimeError("query embedder returned a non-text embedding")
 
@@ -275,297 +302,174 @@ class VideoRetrievalService:
 
 
 class VideoParseRetrievalService:
-    """Execute V2 ES channels and hydrate only exact current MySQL evidence."""
+    """Execute Engine recall, verify current facts, then score and select top_k."""
 
     def __init__(
-        self,
-        repository: VideoParseRepository,
-        store: ElasticsearchVideoChunkStore,
-        embedder: QueryEmbedder,
-        *,
-        semantic_encoder: EncoderContract,
+        self, repository: VideoParseRepository, store: ElasticsearchVideoChunkStore,
+        embedder: QueryEmbedder, *, semantic_encoder: EncoderContract,
         expected_index_generation: int,
+        expected_embedding_source: str | None = None,
         channel_top_k: int = _DEFAULT_RETRIEVAL_CONFIG.channel_top_k,
         rrf_k: int = _DEFAULT_RETRIEVAL_CONFIG.rrf_k,
         lexical_weight: float = _DEFAULT_RETRIEVAL_CONFIG.lexical_weight,
         text_weight: float = _DEFAULT_RETRIEVAL_CONFIG.text_weight,
         vision_weight: float = _DEFAULT_RETRIEVAL_CONFIG.vision_weight,
-        exact: bool = False,
+        candidate_budget: int = 60, sparse_weight: float = 0.0,
+        reranker: StructuredTextReranker | None = None,
+        exact: bool = False, tracing: LangfuseTracing | None = None,
     ) -> None:
-        if store.semantic_dimensions != store.vision_dimensions:
-            raise ValueError(
-                "semantic and vision dimensions must match for shared query embedding"
-            )
-        if store.semantic_dimensions != semantic_encoder.dimensions:
-            raise ValueError(
-                "semantic dimensions differ between the query encoder and store"
-            )
-        if (
-            isinstance(expected_index_generation, bool)
-            or not isinstance(expected_index_generation, int)
-            or not 1 <= expected_index_generation <= (1 << 31) - 1
-        ):
-            raise ValueError(
-                "expected_index_generation must fit the Elasticsearch version contract"
-            )
+        if (store.semantic_dimensions != store.vision_dimensions
+                or store.semantic_dimensions != semantic_encoder.dimensions):
+            raise ValueError("query encoder and both store dimensions must match")
+        if (isinstance(expected_index_generation, bool)
+                or not isinstance(expected_index_generation, int)
+                or not 1 <= expected_index_generation <= (1 << 31) - 1):
+            raise ValueError("expected_index_generation must fit the Elasticsearch version contract")
         if not isinstance(exact, bool):
             raise ValueError("exact must be a bool")
-        # Engine owns channel validation, candidate identity and fusion policy.
-        fuse_versioned_video_chunk_rankings(
-            [],
-            [],
-            lexical_rankings=[],
-            lexical_weight=lexical_weight,
-            text_weight=text_weight,
-            vision_weight=vision_weight,
-            channel_top_k=channel_top_k,
-            rrf_k=rrf_k,
+        if expected_embedding_source is not None and (
+                not isinstance(expected_embedding_source, str) or not expected_embedding_source.strip()):
+            raise ValueError("expected_embedding_source must be nonblank when supplied")
+        self._policy = RetrievalPolicy(
+            lexical_weight=lexical_weight, semantic_weight=text_weight,
+            vision_weight=vision_weight, sparse_weight=sparse_weight,
+            channel_top_k=channel_top_k, candidate_budget=candidate_budget,
+            top_k=1, rrf_k=rrf_k,
         )
-        self._repository = repository
-        self._store = store
-        self._embedder = embedder
+        self._repository, self._store, self._embedder = repository, store, embedder
         self._semantic_encoder = semantic_encoder
-        self._semantic_encoder_id = compute_encoder_id("text", semantic_encoder)
         self._expected_index_generation = expected_index_generation
-        self._channel_top_k = channel_top_k
-        self._rrf_k = rrf_k
-        self._lexical_weight = lexical_weight
-        self._text_weight = text_weight
-        self._vision_weight = vision_weight
-        self._exact = exact
+        self._expected_embedding_source = expected_embedding_source
+        self._reranker, self._tracing, self._exact = reranker, tracing, exact
 
     def search(
-        self,
-        query: str,
-        *,
-        workspace_id: str,
-        series_ids: Sequence[str],
-        top_k: int = 10,
-        lexical_weight: float | None = None,
-        transcript_weight: float | None = None,
-        text_weight: float | None = None,
+        self, query: str, *, workspace_id: str, series_ids: Sequence[str],
+        top_k: int = 10, lexical_weight: float | None = None,
+        transcript_weight: float | None = None, text_weight: float | None = None,
         vision_weight: float | None = None,
     ) -> VideoChunkSearchResult:
-        if (
-            not isinstance(workspace_id, str)
-            or not workspace_id
-            or workspace_id != workspace_id.strip()
-        ):
+        if (not isinstance(workspace_id, str) or not workspace_id
+                or workspace_id != workspace_id.strip()):
             raise ValueError("workspace_id must be a non-empty string")
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must not be empty")
-        if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
-            raise ValueError("top_k must be a positive integer")
         if transcript_weight is not None:
-            raise ValueError(
-                "Video Parse V2 retrieval uses lexical_weight, not transcript_weight"
-            )
+            raise ValueError("Video Parse V2 retrieval uses lexical_weight, not transcript_weight")
         overrides = (lexical_weight, text_weight, vision_weight)
         if any(value is not None for value in overrides) and not all(
-            value is not None for value in overrides
-        ):
-            raise ValueError(
-                "lexical_weight, text_weight and vision_weight must be provided together"
-            )
-        requested_lexical_weight = (
-            self._lexical_weight if lexical_weight is None else lexical_weight
-        )
-        requested_text_weight = self._text_weight if text_weight is None else text_weight
-        requested_vision_weight = (
-            self._vision_weight if vision_weight is None else vision_weight
-        )
-        # TODO(video-parse-v2/P8): When Engine publishes its query-policy
-        # abstraction, call it here for channel selection. Server should only
-        # consume that plan and call Engine fusion, never duplicate policy.
-        (
-            effective_lexical_weight,
-            effective_text_weight,
-            effective_vision_weight,
-        ) = normalize_hybrid_retrieval_weights(
-            requested_lexical_weight,
-            requested_text_weight,
-            requested_vision_weight,
-        )
-
-        normalized_query = query.strip()
+                value is not None for value in overrides):
+            raise ValueError("lexical_weight, text_weight and vision_weight must be provided together")
+        policy = RetrievalPolicy.model_validate(self._policy.model_copy(update={
+            "top_k": top_k,
+            **({"lexical_weight": lexical_weight, "semantic_weight": text_weight,
+                "vision_weight": vision_weight} if lexical_weight is not None else {}),
+        }))
+        query = query.strip()
         try:
-            scope = self._repository.resolve_retrieval_scope(
-                series_ids,
-                workspace_id=workspace_id,
+            selected = self._repository.resolve_retrieval_scope(
+                series_ids, workspace_id=workspace_id,
+                **({"require_sparse": True} if policy.sparse_weight else {}),
             )
-        except VideoParseConflictError as exc:
-            raise RetrievalIndexConsistencyError(str(exc)) from exc
-
-        if scope.index_generation != self._expected_index_generation:
-            raise RetrievalIndexConsistencyError(
-                "selected V2 task index generation differs from the active "
-                "Elasticsearch generation"
-            )
-        vectors_enabled = effective_text_weight > 0 or effective_vision_weight > 0
-        if vectors_enabled:
-            if scope.semantic_encoder_id != self._semantic_encoder_id:
-                raise RetrievalIndexConsistencyError(
-                    "selected V2 task semantic encoder identity differs from the "
-                    "active query encoder contract"
-                )
-            if scope.embedding_model != self._semantic_encoder.model:
-                raise RetrievalIndexConsistencyError(
-                    "selected V2 task embedding model differs from the active "
-                    "query encoder contract"
-                )
-
-        search_scope = {
-            "workspace_id": workspace_id,
-            "series_ids": scope.series_ids,
-            "parse_tasks_by_video_id": scope.parse_tasks_by_video_id,
-            "retrieval_contract_id": scope.retrieval_contract_id,
+        except VideoParseConflictError as error:
+            raise RetrievalIndexConsistencyError(str(error)) from error
+        if selected.index_generation != self._expected_index_generation:
+            raise RetrievalIndexConsistencyError("selected V2 task index generation differs from the active Elasticsearch generation")
+        embedding = selected.parse_config.models.embedding
+        if (policy.semantic_weight or policy.vision_weight or policy.sparse_weight) and (
+                self._expected_embedding_source is not None
+                and embedding.source != self._expected_embedding_source):
+            raise RetrievalIndexConsistencyError("selected V2 task embedding source differs from the active query source")
+        if (policy.semantic_weight or policy.vision_weight or policy.sparse_weight) and (
+                embedding.model != self._semantic_encoder.model
+                or embedding.dimensions != self._semantic_encoder.dimensions):
+            raise RetrievalIndexConsistencyError("selected V2 task embedding model or dimensions differ from the active query encoder contract")
+        contract = ChunkIndexingContract(
+            retrieval_contract_id="parse-v2-retrieval-v1",
+            semantic_encoder=self._semantic_encoder, vision_encoder=self._semantic_encoder,
+            visual_input_contract=VideoClipInputContract(
+                fps=embedding.video_fps, max_height=selected.parse_config.visual_input.max_height,
+                mime_type="video/mp4", preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
+            ), index_generation=selected.index_generation,
+            sparse_encoder=SparseEncoderContract(
+                provider=self._semantic_encoder.provider, model=embedding.model,
+                encoder_revision=self._semantic_encoder.encoder_revision,
+            ) if policy.sparse_weight else None,
+        )
+        scope = RetrievalScope(workspace_id=workspace_id, tasks=tuple(
+            SelectedVideoTask(series_id=selected.series_by_video_id[video_id],
+                video_id=video_id, parse_task_id=task_id, status="COMPLETE")
+            for video_id, task_id in selected.parse_tasks_by_video_id.items()
+        ))
+        bindings = tuple(QueryEncoderBinding(
+            channel=channel, document_encoder_id=getattr(contract, f"{channel}_encoder_id"),
+            query_encoder=self._semantic_encoder,
+            compatibility_provenance="Ark multimodal vectorization: shared text/image/video embedding space",
+        ) for channel in ("semantic", "vision") if policy.weights[channel])
+        plan = plan_retrieval_query(query, scope=scope, index_contract=contract,
+                                    policy=policy, encoder_bindings=bindings)
+        context = {
+            "workspace_id": workspace_id, "series_ids": selected.series_ids,
+            "video_ids": selected.searched_video_ids,
+            "video_parse_task_ids": tuple(selected.parse_tasks_by_video_id.values()),
+            "index_generation": selected.index_generation, "stage": "retrieval",
         }
+        tracing = self._tracing.scope(context) if self._tracing is not None else nullcontext()
         try:
-            lexical_matches = (
-                self._store.search_lexical(
-                    normalized_query,
-                    **search_scope,
-                    limit=self._channel_top_k,
+            with model_call_context(context), tracing:
+                vectors = []
+                for request in plan.encoding_requests:
+                    result = self._embedder.embed_query(request.text)
+                    if result.modality != "text":
+                        raise RetrievalConsistencyError("query embedder returned a non-text embedding")
+                    vectors.append(accept_query_vector(request, model=result.model, vector=result.vector))
+                sparse = None
+                if plan.sparse_request is not None:
+                    result = self._embedder.embed_sparse(plan.sparse_request.text)
+                    sparse = accept_sparse_result(plan.sparse_request, model=result.model, weights=result.weights)
+            requests = build_recall_requests(plan, vectors=vectors, sparse=sparse)
+            raw_hits = tuple(hit for request in requests for hit in self._store.recall(request, exact=self._exact))
+            candidates = fuse_retrieval_candidates(plan, raw_hits)
+            hydrated = self._repository.hydrate_retrieval_candidates([
+                (item.ranking.video_chunk_id, item.ranking.retrieval_identity) for item in candidates
+            ]) if candidates else ()
+            rerank_plan = plan_candidate_rerank(
+                plan, candidates, [item.facts for item in hydrated],
+                scorer=self._reranker.contract if self._reranker is not None else None,
+                contexts={item.facts.video_chunk_id: item.contexts for item in hydrated},
+            )
+        except (VideoParseConflictError, ElasticsearchDocumentConsistencyError, ValueError) as error:
+            raise RetrievalIndexConsistencyError(str(error)) from error
+        scores = None
+        if rerank_plan.request is not None:
+            scoring_context = {**context, "stage": "retrieval_rerank"}
+            tracing = self._tracing.scope(scoring_context) if self._tracing is not None else nullcontext()
+            try:
+                with model_call_context(scoring_context), tracing:
+                    scores = self._reranker.score(rerank_plan.request)
+            except ModelCallControlError:
+                raise
+            except Exception as error:
+                logging.getLogger(__name__).warning(
+                    "Retrieval scorer failed; using RRF: candidates=%d error=%s",
+                    len(rerank_plan.request.items), type(error).__name__,
                 )
-                if effective_lexical_weight > 0
-                else []
-            )
-
-            semantic_matches: list[ElasticsearchVideoChunkIndexMatch] = []
-            vision_matches: list[ElasticsearchVideoChunkIndexMatch] = []
-            if vectors_enabled:
-                embedding = self._embedder.embed_query(normalized_query)
-                if embedding.modality != "text":
-                    raise RuntimeError("query embedder returned a non-text embedding")
-                if embedding.model != self._semantic_encoder.model:
-                    raise RetrievalIndexConsistencyError(
-                        "query embedder returned a model outside its semantic "
-                        "encoder contract"
-                    )
-                if embedding.dimension != self._semantic_encoder.dimensions:
-                    raise RetrievalIndexConsistencyError(
-                        "query embedder returned dimensions outside its semantic "
-                        "encoder contract"
-                    )
-                semantic_matches = (
-                    self._store.search_semantic(
-                        embedding.vector,
-                        **search_scope,
-                        encoder_id=scope.semantic_encoder_id,
-                        limit=self._channel_top_k,
-                        exact=self._exact,
-                    )
-                    if effective_text_weight > 0
-                    else []
-                )
-                vision_matches = (
-                    self._store.search_vision(
-                        embedding.vector,
-                        **search_scope,
-                        encoder_id=scope.vision_encoder_id,
-                        limit=self._channel_top_k,
-                        exact=self._exact,
-                    )
-                    if effective_vision_weight > 0
-                    else []
-                )
-        except ElasticsearchDocumentConsistencyError as exc:
-            raise RetrievalIndexConsistencyError(str(exc)) from exc
-
-        try:
-            fused = fuse_versioned_video_chunk_rankings(
-                _versioned_engine_rankings(semantic_matches),
-                _versioned_engine_rankings(vision_matches),
-                lexical_rankings=_versioned_engine_rankings(lexical_matches),
-                lexical_weight=effective_lexical_weight,
-                text_weight=effective_text_weight,
-                vision_weight=effective_vision_weight,
-                channel_top_k=self._channel_top_k,
-                rrf_k=self._rrf_k,
-            )[:top_k]
-        except (TypeError, ValueError) as exc:
-            raise RetrievalIndexConsistencyError(str(exc)) from exc
-        if not fused:
-            return VideoChunkSearchResult(
-                query=normalized_query,
-                series_ids=list(scope.series_ids),
-                searched_video_ids=list(scope.searched_video_ids),
-                partial=scope.partial,
-                warnings=list(scope.warnings),
-                agent_reply=_agent_reply([]),
-                hits=[],
-            )
-
-        try:
-            hydrated = self._repository.hydrate_retrieval_evidence(
-                [
-                    (item.video_chunk_id, item.retrieval_identity)
-                    for item in fused
-                ]
-            )
-        except VideoParseConflictError as exc:
-            raise RetrievalIndexConsistencyError(str(exc)) from exc
-        if len(hydrated) != len(fused):
-            raise RetrievalIndexConsistencyError(
-                "MySQL hydrate returned a different number of V2 VideoChunks"
-            )
-
-        lexical_by_id = {
-            match.video_chunk_id: match for match in lexical_matches
-        }
-        hits: list[VideoChunkSearchHit] = []
-        for ranking, evidence in zip(fused, hydrated, strict=True):
+        verified = finalize_candidate_rerank(rerank_plan, scores)
+        displays = {item.facts.video_chunk_id: item.evidence for item in hydrated}
+        hits = []
+        for item in verified.accepted:
+            ranking = item.candidate.ranking
             candidate = VideoChunkCandidate.model_validate(
-                ranking.model_dump(exclude={"retrieval_identity"})
+                ranking.model_dump(include=set(VideoChunkCandidate.model_fields)),
             )
-            lexical_match = lexical_by_id.get(ranking.video_chunk_id)
             hits.append(VideoChunkSearchHit(
-                candidate=candidate,
-                selection_reason=_v2_selection_reason(
-                    candidate,
-                    evidence,
-                    lexical_match=lexical_match,
-                    lexical_enabled=effective_lexical_weight > 0,
-                    text_enabled=effective_text_weight > 0,
-                    vision_enabled=effective_vision_weight > 0,
-                ),
-                evidence=evidence,
+                candidate=candidate, selection_reason=_v2_selection_reason(item),
+                evidence=displays[ranking.video_chunk_id],
             ))
         return VideoChunkSearchResult(
-            query=normalized_query,
-            series_ids=list(scope.series_ids),
-            searched_video_ids=list(scope.searched_video_ids),
-            partial=scope.partial,
-            warnings=list(scope.warnings),
-            agent_reply=_agent_reply(hits),
-            hits=hits,
+            query=query, series_ids=list(selected.series_ids),
+            searched_video_ids=list(selected.searched_video_ids), partial=selected.partial,
+            warnings=list(selected.warnings), agent_reply=_agent_reply(hits), hits=hits,
         )
-
-
-def _versioned_engine_rankings(
-    matches: Sequence[ElasticsearchVideoChunkIndexMatch],
-) -> list[VersionedRankedVideoChunkMatch]:
-    return [
-        VersionedRankedVideoChunkMatch(
-            rank=match.rank,
-            video_chunk_id=match.video_chunk_id,
-            score=match.score,
-            retrieval_identity=VideoChunkRetrievalIdentity(
-                workspace_id=match.workspace_id,
-                series_id=match.series_id,
-                video_id=match.video_id,
-                parse_task_id=match.parse_task_id,
-                content_version=match.content_version,
-                index_generation=match.index_generation,
-                source_revision=match.source_revision,
-                projection_revision=match.projection_revision,
-                retrieval_contract_id=match.retrieval_contract_id,
-                semantic_encoder_id=match.semantic_encoder_id,
-                vision_encoder_id=match.vision_encoder_id,
-            ),
-        )
-        for match in matches
-    ]
 
 
 def _engine_rankings(
@@ -640,118 +544,28 @@ def _validate_hydrated_state(
         )
 
 
-def _v2_selection_reason(
-    candidate: VideoChunkCandidate,
-    evidence: VideoChunkEvidence,
-    *,
-    lexical_match: ElasticsearchVideoChunkIndexMatch | None,
-    lexical_enabled: bool,
-    text_enabled: bool,
-    vision_enabled: bool,
-) -> SelectionReason:
-    has_lexical = candidate.lexical_rank is not None
-    has_text = candidate.text_rank is not None
-    has_vision = candidate.vision_rank is not None
-    lexical_matches = (
-        [LexicalMatch.model_validate(item) for item in lexical_match.matched_fields]
-        if lexical_match is not None
-        else []
-    )
-    if has_lexical and not lexical_matches:
-        raise RetrievalIndexConsistencyError(
-            "fused lexical rank has no matching ES field evidence"
-        )
+def _v2_selection_reason(verified: VerifiedRetrievalCandidate) -> SelectionReason:
+    """Display only Engine-verified source evidence and its stated granularity."""
 
-    matched: list[MatchedEvidence] = []
-    for item in lexical_matches:
-        if item.field in {"questions", "keywords"}:
-            continue
+    matched = []
+    for proof in verified.evidence:
+        source = proof.source
         matched.append(MatchedEvidence(
-            kind=(
-                "TRANSCRIPT"
-                if item.field == "dialogue"
-                else "VISUAL_EVENT"
-                if item.field in {"event_description", "screen_text"}
-                else "CONTEXT"
-            ),
-            text=item.raw_text,
-            start_seconds=item.start_seconds,
-            end_seconds=item.end_seconds,
+            kind=("TRANSCRIPT" if source is not None and source.field == "dialogue"
+                  else "VISUAL_EVENT" if source is not None and source.field in {"event_description", "screen_text"}
+                  else "CONTEXT"),
+            text=source.raw_text if source is not None else "匹配结果定位到此 Chunk。",
+            start_seconds=proof.start_seconds, end_seconds=proof.end_seconds,
         ))
-        if len(matched) == 2:
-            break
-
-    if has_text:
-        semantic_text = evidence.retrieval_text.strip() or evidence.window_summary.strip()
-        if semantic_text:
-            matched.append(MatchedEvidence(
-                kind="CONTEXT",
-                text=semantic_text,
-                start_seconds=evidence.start_seconds,
-                end_seconds=evidence.end_seconds,
-            ))
-    if has_vision:
-        visual = _first_visual_evidence(evidence)
-        if visual is not None:
-            matched.append(visual)
-    if not matched:
-        matched.append(MatchedEvidence(
-            kind="CONTEXT",
-            text=evidence.window_summary,
-            start_seconds=evidence.start_seconds,
-            end_seconds=evidence.end_seconds,
-        ))
-
-    fact_summary = "、".join(
-        (
-            f"“{item.text[:57].rstrip()}…”"
-            if len(item.text) > 60
-            else f"“{item.text}”"
-        )
-        for item in matched[:2]
-    )
-    channel_labels = [
-        label
-        for present, label in (
-            (has_lexical, "BM25 字面"),
-            (has_text, "文本语义"),
-            (has_vision, "视觉"),
-        )
-        if present
-    ]
-    limitations = [
-        message
-        for condition, message in (
-            (not lexical_enabled, "本次检索策略未启用 BM25 字面通道。"),
-            (
-                lexical_enabled and not has_lexical,
-                "BM25 字面通道已启用，但该片段未进入该通道候选。",
-            ),
-            (not text_enabled, "本次检索策略未启用文本语义通道。"),
-            (
-                text_enabled and not has_text,
-                "文本语义通道已启用，但该片段未进入该通道候选。",
-            ),
-            (not vision_enabled, "本次检索策略未启用视觉通道。"),
-            (
-                vision_enabled and not has_vision,
-                "视觉通道已启用，但该片段未进入该通道候选。",
-            ),
-            (
-                any(item.field == "questions" for item in lexical_matches),
-                "questions 字段仅用于召回线索，不作为对白或事实证据。",
-            ),
-        )
-        if condition
-    ]
+    lexical = [LexicalMatch.model_validate(item) for item in verified.candidate.lexical_matches]
+    limitations = []
+    if any(proof.granularity == "chunk" for proof in verified.evidence):
+        limitations.append("此结果只定位到 Chunk，尚未定位到具体事件或帧。")
+    if any(source.field in {"questions", "keywords"} for source in lexical):
+        limitations.append("questions / keywords 只用于召回线索，不作为事件证据。")
     return SelectionReason(
-        summary=(
-            f"该片段进入{'、'.join(channel_labels)}通道，融合排序第 "
-            f"{candidate.fused_rank}；返回证据包含 {fact_summary}，保留它用于核验。"
-        ),
-        matched_evidence=matched,
-        limitations=limitations,
-        lexical_matches=lexical_matches,
+        summary="返回范围和证据已与当前 Chunk 的正式内容核对。",
+        matched_evidence=matched, limitations=limitations, lexical_matches=lexical,
     )
 
 

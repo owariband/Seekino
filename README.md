@@ -20,9 +20,14 @@ anivag 是一个面向事件级视频检索与时间证据定位的多模态视�
 
 四层职责固定为：Gateway 统一模型调用，Engine 定义领域算法与检索策略，Agent
 运行 Agent／LangGraph 程序，Server 负责可靠执行、持久化和对外协议。默认解析模式
-仍是冻结在 `engine/parsev1/` 的 V1；显式设置 `ANIVAG_PARSE_EXECUTION_MODE=v2`
-后，新上传任务由 `engine/parsev2/`、`agent/video_parse_v2/` 和 Server V2 Worker 执行，
-不从 V1 转发实现。
+为 V2，新上传任务由 `engine/parsev2/`、`agent/video_parse_v2/` 和 Server V2 Worker 执行，
+需要配置 Elasticsearch。冻结在 `engine/parsev1/` 的旧链可显式设置
+`ANIVAG_PARSE_EXECUTION_MODE=v1` 使用。
+
+模型消耗页面从 Langfuse 查询已同步的解析、向量化与聊天用量，预估成本统一为 USD。
+在 `.env.local` 配置 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`；
+仓库的 `config.yaml` 已启用用量记录通道。未配置项目时页面明确提示，模型执行仍可继续。
+配置和统计边界见 [模型用量与预估成本](docs/parse-model-usage.md)。
 
 ## M1 边界
 
@@ -33,9 +38,9 @@ anivag 是一个面向事件级视频检索与时间证据定位的多模态视�
 - 在线查询融合语音文本、视觉与角色事件候选，返回时间证据。
 - V1 使用 MySQL 持久化 Queue + anivag Server 进程内 Consumer；RocketMQ 不是单用户 MVP 的前置依赖。
 
-## 当前生产 Parse V1
+## 保留的 Parse V1
 
-生产业务数据按 V1 Pipeline 推进；ASR 阶段内部可以按配置并发处理多个待解析窗口：
+显式选择 V1 时，业务数据按 V1 Pipeline 推进；ASR 阶段内部可以按配置并发处理多个待解析窗口：
 
 ```text
 准备窗口与媒体 → ASR Agent → VideoUnderstandingAgent → EmbeddingAgent → MySQL 业务事实 → Qdrant 索引
@@ -70,7 +75,7 @@ cp .env.example .env.local
 # 编辑 .env.local，按所选 provider 填写需要的 API Key 和个人 ep-* Endpoint。
 
 uv sync
-uv run --env-file .env.local python -m gateway.cli --help
+uv run --env-file .env.local python -m tests.manual.gateway_embedding --help
 ```
 
 视频解析命令见 [`engine/README.md`](engine/README.md)，模型调用与跨模态向量
@@ -164,19 +169,24 @@ Artifact Store 自动外置。完整目标结构与阶段记录维护在
 ## 运行入口
 
 根 `pyproject.toml` 只负责依赖和工具配置，没有构建系统、分发包入口或全量公共 API。
-当前运行和调试使用以下显式模块入口：
+当前服务、管理和评测使用以下显式模块入口：
 
 ```bash
 uv run python -m engine.parsev1.cli --help
 uv run python -m evals.recall.cli --help
-uv run python -m gateway.cli --help
 uv run python -m server.cli --help
 uv run python -m server.api
-uv run python -m server.mq --once
 ```
 
-`server.api` 是唯一常驻 Backend PSM；`server.mq --once` 只用于领取至多一个到期任务的
-诊断，不是需要与 API 并行启动的常驻服务。
+手动冒烟和单任务诊断入口放在 `tests/manual/`，从仓库根目录显式运行：
+
+```bash
+uv run python -m tests.manual.gateway_embedding --help
+uv run python -m tests.manual.server_mq_once --once
+```
+
+`server.api` 是唯一常驻 Backend PSM；单任务诊断只领取至多一个到期任务，
+不应与 API 并行启动。上述手动脚本不属于默认 pytest 收集的测试文件。
 
 ## 上游归属
 

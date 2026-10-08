@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 from queue import Empty, Full, Queue
 from threading import Event, Lock
@@ -16,6 +17,8 @@ from agent.chat.common.state import AnswerPhase, RunInputs
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.runtime import AgentRuntime
 from engine.rag.contracts import VideoChunkEvidence
+from gateway.tracing import LangfuseTracing
+from gateway.usage import model_call_context
 
 from ..config.agent import AgentServiceConfig
 from ..identity import canonical_uuid
@@ -205,6 +208,7 @@ class AgentChatService:
         runtime_factory: Callable[[AgentServiceConfig], AgentRuntime | SupervisorRuntime] | None = None,
         supervisor_factory: Callable[[AgentRuntime, AgentServiceConfig], SupervisorRuntime] | None = None,
         config_revision: str | None = None,
+        tracing: LangfuseTracing | None = None,
         clock: Callable[[], int] = now_unix_time_ms,
         monotonic_clock: Callable[[], int] = monotonic_ns,
     ) -> None:
@@ -212,6 +216,7 @@ class AgentChatService:
         self._library = library
         self._runtime = runtime
         self._supervisor_runtime = supervisor_runtime
+        self._tracing = tracing
         self._config = config or AgentServiceConfig()
         self._config_loader = config_loader
         self._runtime_factory = runtime_factory
@@ -741,14 +746,30 @@ class AgentChatService:
                     "max_tool_calls_per_turn": run_options.max_tool_calls_per_turn,
                     "max_loop_turns": max_loop_turns,
                 }
-                final = (
-                    runtime.kick(
-                        inputs, load_video_context=load_video_context,
-                        **run_kwargs,
-                    )
-                    if isinstance(runtime, SupervisorRuntime)
-                    else runtime.kick(inputs, **run_kwargs)
+                context = {
+                    "workspace_id": workspace_id,
+                    "conversation_id": conversation_id,
+                    "session_id": conversation_id,
+                    "user_message_id": initial.user_message.message_id,
+                    "assistant_message_id": assistant_id,
+                    "run_id": assistant_id,
+                    "series_ids": tuple(initial.user_message.series_ids),
+                    "stage": "agent_chat",
+                }
+                tracing = (
+                    self._tracing.scope(context)
+                    if self._tracing is not None else nullcontext()
                 )
+                # This scope belongs to the executor thread that invokes the models.
+                with model_call_context(context), tracing:
+                    final = (
+                        runtime.kick(
+                            inputs, load_video_context=load_video_context,
+                            **run_kwargs,
+                        )
+                        if isinstance(runtime, SupervisorRuntime)
+                        else runtime.kick(inputs, **run_kwargs)
+                    )
             except AgentToolInvocationError as exc:
                 if exc.__cause__ is None:
                     raise

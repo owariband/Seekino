@@ -14,7 +14,7 @@ VO 按 `commonVO.py`、`libraryVO.py`、`uploadVO.py`、`jobVO.py`、`agentVO.py
 | library | Character、SeriesSummary、SeriesDetail、VideoSummary、LastSearchView | 视频 ready / failed 数量、待完成上传、最近检索、ASR 原文语言提示、视频索引与播放状态、实际 latestJobId |
 | upload | UploadSessionCreateRequest、UploadSessionView、UploadSegmentView、UploadCompleteView | 完整上传确认点、缺失分段、真实合并阶段、源 SHA、后续 Job、资源 version |
 | job | ParseJobView、VideoChunkCheckpointView、JobCounts、JobSummary | 实际阶段 / 进度 / 检查点、结构化错误、单调 version、全范围权威统计 |
-| parseUsage | ParseUsageVO、ParseUsageRowVO | 真实视频与动画身份、按模型和职责汇总的 Token／调用数、人民币预估金额、消耗记录完整性 |
+| parseUsage | UsageOverviewVO、UsageTotalsVO、UsageModelRowVO、UsageRunRowVO | Langfuse 已同步用量、USD 预估成本、按模型和运行汇总、缺失与截断状态 |
 | agent | Conversation / Message 请求与 View、EvidenceReference、各类回答事件 | 历史 preview、Unix 毫秒绝对时间、媒体秒范围、消息 phase / version、候选引用、Evaluator 审核后的精确视频范围、恢复同一轮消息对 |
 | search | VideoChunkEvidenceView、VideoChunkCandidateView、SearchHitView、SearchResultView、Keyframe | 正文与证据、视频定位、完整检索范围、最终 rank、partial / warnings、可读取媒体 |
 | system | HealthView | API 存活与真实 serverTime |
@@ -53,7 +53,7 @@ ParseJob 另返回 `videoDurationSeconds`（原视频时长）和兼容别名 `t
 | POST /api/uploads/retry-parse | workspaceId、uploadSessionId、expectedJobVersion；仅重排 UploadSession.job_id 指向的 FAILED 主任务，保留 Checkpoint / attempt / 用量，版本冲突或删除中返回 409 | ParseJobView |
 | POST /api/uploads/reparse | workspaceId、uploadSessionId、expectedJobVersion；对 SUCCEEDED / FAILED 主任务清空 Checkpoint 后整集从头解析，保留 attempt / 用量历史及已成功的可检索快照，版本冲突或活动任务返回 409 | ParseJobView |
 | GET /api/jobs/summary | workspaceId；可选 seriesId | JobSummary |
-| GET /api/jobs/usage/get | workspaceId、jobId | ParseUsageVO：指定任务全部执行尝试，按模型与职责展示真实 Token、人民币预估费用和记录完整性；详见 [Parse 模型消耗统计](parse-model-usage.md) |
+| GET /api/usage/overview | workspaceId；可选 fromStartTime、toStartTime、seriesId、runId | UsageOverviewVO：最近30天或指定有界时间窗内的 Langfuse 模型与运行用量、USD 预估成本；详见 [模型用量统计](parse-model-usage.md) |
 | POST /api/agent/conversations/delete | workspaceId、conversationId；存在 PROCESSING 回答时返回 409 | 删除前的 AgentConversationView；终态对话及 Message / Timing 级联删除 |
 | GET /api/agent/messages/get | workspaceId、conversationId；messageId 与 idempotencyKey 恰好一个 | 同一 USER / ASSISTANT 消息对 |
 | GET /api/video-chunks/get | workspaceId、videoChunkId | 可刷新媒体状态的事实 Evidence |
@@ -61,7 +61,7 @@ ParseJob 另返回 `videoDurationSeconds`（原视频时长）和兼容别名 `t
 
 已有 series / jobs / conversations / messages 列表同步改为 Page。series/list 支持 status、query；jobs/list 支持 seriesId、status（逗号分隔）；conversations/list 支持 query、历史消息实际 seriesId；messages/list 保留 afterSequenceNo，并增加 cursor / limit。
 
-Parse 用量由前端 `getParseUsage(jobId)` 读取，Workspace 与 Job ID 放 Query，返回模型对应 `server/model/vo/parseUsageVO.py` 和 `web/src/api/contracts.ts`。任务页每张卡片包含 `ParseUsageDetails`：展开后按模型、parse/embedding 分类及 operation 展示用量，金额 `estimatedCostCny` 是十进制字符串，以 `¥` 显示并保留小额精度；Token 和金额的 null 分别显示“未记录”和“未估算”，不能转成零。coverage=unknown 明确提示无法还原历史费用；partial 展示已采集明细并说明缺口；只有已完整跟踪且零次请求才能显示零费用。统计单独调用只读接口，运行中每 5 秒刷新，终态 partial 每 15 秒刷新，收起后停止。
+模型消耗由前端 `getUsageOverview()` 一次读取。后端以 workspace、环境和有界时间窗查询 Langfuse，返回 `totals`、`models`、`runs`；页面复用模型与任务/聊天两种视图。金额 `estimatedCostUsd` 是 USD 十进制字符串，前端仅格式化并保留小额精度；未配置和读取失败不显示零，缺少用量/价格的完整合计保持 null，已知小计单独展示。响应 `truncated=true` 表示有界查询未读完，不能当作完整累计。旧 SQL 用量和价格快照保留为历史数据，不混入新的 Langfuse 统计；V2 任务预算、租约和取消控制仍由原执行管理器负责。
 
 创建与发送示例：
 

@@ -53,7 +53,7 @@ class ServerSettings:
     images: ImageUploadConfig = field(default_factory=ImageUploadConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     elasticsearch: ElasticsearchConfig | None = None
-    parse_execution_mode: Literal["v1", "v2"] = "v1"
+    parse_execution_mode: Literal["v1", "v2"] = "v2"
 
     @classmethod
     def from_environment(cls) -> "ServerSettings":
@@ -117,7 +117,7 @@ class ServerSettings:
         if asr_mode not in {"lite", "none"}:
             raise ValueError("ANIVAG_ASR_MODE must be 'lite' or 'none'")
         parse_execution_mode = os.getenv(
-            "ANIVAG_PARSE_EXECUTION_MODE", "v1"
+            "ANIVAG_PARSE_EXECUTION_MODE", "v2"
         ).strip().casefold()
         if parse_execution_mode not in {"v1", "v2"}:
             raise ValueError("ANIVAG_PARSE_EXECUTION_MODE must be 'v1' or 'v2'")
@@ -297,6 +297,17 @@ class ServerSettings:
                         "ANIVAG_RETRIEVAL_VISION_WEIGHT", str(retrieval_defaults.vision_weight)
                     )
                 ),
+                candidate_budget=_environment_int(
+                    "ANIVAG_RETRIEVAL_CANDIDATE_BUDGET", retrieval_defaults.candidate_budget
+                ),
+                sparse_weight=float(
+                    os.getenv(
+                        "ANIVAG_RETRIEVAL_SPARSE_WEIGHT", str(retrieval_defaults.sparse_weight)
+                    )
+                ),
+                rerank_enabled=_environment_bool(
+                    "ANIVAG_RETRIEVAL_RERANK_ENABLED", retrieval_defaults.rerank_enabled
+                ),
             ),
             database_pool_recycle_seconds=_environment_int(
                 "ANIVAG_DATABASE_POOL_RECYCLE_SECONDS", 3600
@@ -363,3 +374,15 @@ def _environment_nonnegative_int(name: str, default: int) -> int:
     if value < 0:
         raise ValueError(f"{name} must be nonnegative")
     return value
+
+
+def _environment_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value")

@@ -12,10 +12,11 @@ from engine.rag import (
     ChunkIndexingContract,
     EncoderContract,
     OrderedFramesInputContract,
+    SparseEncoderContract,
     VideoClipInputContract,
     VIDEO_CLIP_PREPROCESS_REVISION,
 )
-from gateway.embedding import EmbeddingResult
+from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
 from gateway.usage import track_model_call
 from server.model.dto.jobDTO import (
     IndexableChunkState,
@@ -154,16 +155,11 @@ class _Store:
                 video_chunk_id=item.video_chunk_id,
                 content_version=item.content_version,
                 index_generation=item.index_generation,
-                source_revision=item.source_revision,
-                retrieval_contract_id=item.retrieval_contract_id,
-                semantic_encoder_id=item.semantic_encoder_id,
-                vision_encoder_id=item.vision_encoder_id,
-                semantic_input_sha256=item.semantic_input_sha256,
-                vision_input_sha256=item.vision_input_sha256,
                 semantic_vector=tuple(item.semantic_vector) if item.semantic_vector else None,
                 vision_vector=tuple(item.vision_vector),
                 semantic_vector_present=item.semantic_vector is not None,
                 vision_vector_present=True,
+                sparse_token_weights=item.sparse_token_weights,
             )
         return [
             document_id(item.parse_task_id, item.video_chunk_id)
@@ -175,12 +171,10 @@ class _Store:
         return (
             document_id(item.parse_task_id, item.video_chunk_id),
             _external_version(item.content_version, item.index_generation),
-            item.source_revision,
-            item.retrieval_contract_id,
-            item.semantic_encoder_id,
-            item.vision_encoder_id,
-            item.semantic_input_sha256,
-            item.vision_input_sha256,
+            item.workspace_id, item.series_id, item.video_id,
+            item.chunk_start_seconds, item.chunk_end_seconds,
+            item.projection.model_dump_json(), item.semantic_vector,
+            item.vision_vector, item.sparse_token_weights,
         )
 
 
@@ -381,7 +375,7 @@ def test_indexing_writes_the_configured_generation(tmp_path):
     assert document.index_generation == 7
 
 
-def test_generation_rebuild_reuses_compatible_stored_vectors(tmp_path):
+def test_generation_rebuild_reencodes_each_representation(tmp_path):
     ids, media, snapshot = _fixture(tmp_path)
     repository = _Repository(snapshot)
     store = _Store()
@@ -403,7 +397,7 @@ def test_generation_rebuild_reuses_compatible_stored_vectors(tmp_path):
         contract=_contract(index_generation=2),
     ).index_interval(lease)
 
-    assert embedder.text_calls == embedder.video_calls == 1
+    assert embedder.text_calls == embedder.video_calls == 2
     assert len(store.bulk_calls) == 2
     assert store.bulk_calls[1][0][0].index_generation == 2
 
@@ -495,7 +489,7 @@ def test_failed_bulk_retries_with_cached_vectors(tmp_path):
     assert store.attempts == 2
 
 
-def test_legacy_receipts_reuse_proven_text_and_reencode_unproven_video(tmp_path):
+def test_cached_vectors_without_current_generation_proof_are_reencoded(tmp_path):
     ids, media, snapshot = _fixture(tmp_path)
     repository = _Repository(snapshot)
     store = _Store()
@@ -512,27 +506,18 @@ def test_legacy_receipts_reuse_proven_text_and_reencode_unproven_video(tmp_path)
     service.index_interval(lease)
 
     cached = snapshot.chunks[0].content_detail[INDEX_EMBEDDINGS_DETAIL_KEY]
-    cached["representations"]["text"].pop("encoder_id")
-    for field in (
-        "encoder_id",
-        "input_contract_id",
-        "visual_input_kind",
-        "max_height",
-        "preprocess_revision",
-    ):
-        cached["representations"]["video"].pop(field)
-    cached.pop("receipt")
+    cached["receipt"].pop("index_generation")
     store.ready.clear()
     store.states.clear()
     store.bulk_calls.clear()
 
     service.index_interval(lease)
 
-    assert embedder.text_calls == 1
+    assert embedder.text_calls == 2
     assert embedder.video_calls == 2
     refreshed = snapshot.chunks[0].content_detail[INDEX_EMBEDDINGS_DETAIL_KEY]
-    assert refreshed["representations"]["text"]["encoder_id"]
-    assert refreshed["representations"]["video"]["max_height"] == 720
+    assert refreshed["representations"]["text"] == {"channel": "semantic", "vector": [1.0, 0.0]}
+    assert refreshed["representations"]["video"] == {"channel": "vision", "vector": [0.0, 1.0]}
     assert refreshed["receipt"] == store.bulk_calls[0][0][0].receipt.as_dict()
 
 
@@ -675,7 +660,7 @@ def test_partial_embedding_success_is_fenced_and_reused_on_retry(tmp_path):
     assert len(store.bulk_calls) == 1
 
 
-def test_content_change_reencodes_only_changed_text_representation(tmp_path):
+def test_content_change_reencodes_all_representations(tmp_path):
     ids, media, snapshot = _fixture(tmp_path)
     repository = _Repository(snapshot)
     store = _Store()
@@ -697,7 +682,7 @@ def test_content_change_reencodes_only_changed_text_representation(tmp_path):
     service.index_interval(lease)
 
     assert embedder.text_calls == 2
-    assert embedder.video_calls == 1
+    assert embedder.video_calls == 2
     assert repository.completed[-1] == {ids["chunk_task"]: 3}
     assert len(store.bulk_calls) == 2
 
@@ -726,3 +711,112 @@ def test_lost_execution_lease_stops_before_external_write_or_complete(tmp_path):
         )
     assert embedder.text_calls == embedder.video_calls == 1
     assert store.bulk_calls == repository.completed == []
+
+
+def test_coordinator_rejects_a_model_without_required_video_fps_support(tmp_path):
+    _, media, snapshot = _fixture(tmp_path)
+    embedder = _Embedder()
+    embedder.supports_video_fps = False
+    with pytest.raises(ValueError, match="cannot execute the visual sampling contract"):
+        VideoParseIndexCoordinator(
+            _Repository(snapshot), _Store(), embedder, media_resolver=lambda _: media,
+            media_service=_media_service(tmp_path), contract=_contract(),
+        )
+    assert embedder.text_calls == embedder.video_calls == 0
+
+
+@pytest.mark.parametrize("field,value", [
+    ("parse_task_id", "other-task"), ("video_chunk_id", "other-chunk"),
+    ("content_version", 1), ("index_generation", 2),
+])
+def test_cached_results_require_the_current_outer_plan_identity(tmp_path, field, value):
+    ids, media, snapshot = _fixture(tmp_path)
+    repository, store, embedder = _Repository(snapshot), _Store(), _Embedder()
+    service = VideoParseIndexCoordinator(
+        repository, store, embedder, media_resolver=lambda _: media,
+        media_service=_media_service(tmp_path), contract=_contract(),
+    )
+    lease = _lease(ids["video_task"], ids["interval"], ids["chunk_task"])
+    service.index_interval(lease)
+    snapshot.chunks[0].content_detail[INDEX_EMBEDDINGS_DETAIL_KEY]["receipt"][field] = value
+    store.states.clear()
+    store.ready.clear()
+    service.index_interval(lease)
+    assert embedder.text_calls == embedder.video_calls == 2
+    for _, _, representations, receipt in repository.saved:
+        assert receipt is not None
+        assert set(receipt) == {"parse_task_id", "video_chunk_id", "content_version", "index_generation"}
+        assert all(set(result) == {"channel", "vector"} for result in representations.values())
+
+
+def test_sparse_partial_failure_restores_dense_results_and_binds_current_sparse_request(tmp_path):
+    ids, media, snapshot = _fixture(tmp_path)
+    repository, store = _Repository(snapshot), _Store()
+
+    class SparseEmbedder(_Embedder):
+        sparse_calls = 0
+
+        def embed_sparse(self, text):
+            assert "我没事" in text
+            self.sparse_calls += 1
+            if self.sparse_calls == 1:
+                raise RuntimeError("sparse provider unavailable")
+            return SparseEmbeddingResult(model="sparse-v1", weights={"utterance": 0.5, "inactive": 0.0})
+
+    embedder = SparseEmbedder()
+    contract = replace(_contract(), sparse_encoder=SparseEncoderContract(
+        provider="test", model="sparse-v1", encoder_revision="v1",
+    ))
+    service = VideoParseIndexCoordinator(
+        repository, store, embedder, media_resolver=lambda _: media,
+        media_service=_media_service(tmp_path), contract=contract,
+    )
+    lease = _lease(ids["video_task"], ids["interval"], ids["chunk_task"])
+    with pytest.raises(RuntimeError, match="sparse provider unavailable"):
+        service.index_interval(lease)
+    assert store.bulk_calls == repository.completed == []
+    assert repository.saved[-1][3]["index_generation"] == contract.index_generation
+    assert service.index_interval(lease) == "complete"
+    assert embedder.text_calls == embedder.video_calls == 1
+    assert embedder.sparse_calls == 2
+    document = store.bulk_calls[-1][0][0]
+    assert document.sparse_token_weights == (("utterance", 0.5),)
+    assert repository.saved[-1][2]["sparse"] == {"channel": "sparse", "weights": {"utterance": 0.5}}
+    snapshot.chunks[0].content_detail.clear()
+    assert service.index_interval(lease) == "complete"
+    assert embedder.text_calls == embedder.video_calls == 1
+    assert embedder.sparse_calls == 2
+
+
+def test_generation_change_does_not_reuse_a_stale_channel_after_partial_failure(tmp_path):
+    ids, media, snapshot = _fixture(tmp_path)
+    repository, store = _Repository(snapshot), _Store()
+
+    class FailVideoOnce(_Embedder):
+        fail = False
+
+        def embed_video(self, path):
+            result = super().embed_video(path)
+            if self.fail:
+                self.fail = False
+                raise RuntimeError("video provider unavailable")
+            return result
+
+    embedder = FailVideoOnce()
+    lease = _lease(ids["video_task"], ids["interval"], ids["chunk_task"])
+    VideoParseIndexCoordinator(
+        repository, store, embedder, media_resolver=lambda _: media,
+        media_service=_media_service(tmp_path), contract=_contract(),
+    ).index_interval(lease)
+    service = VideoParseIndexCoordinator(
+        repository, store, embedder, media_resolver=lambda _: media,
+        media_service=_media_service(tmp_path), contract=_contract(index_generation=2),
+    )
+    embedder.fail = True
+    with pytest.raises(RuntimeError, match="video provider unavailable"):
+        service.index_interval(lease)
+    assert set(repository.saved[-1][2]) == {"text"}
+    assert repository.saved[-1][3]["index_generation"] == 2
+    assert service.index_interval(lease) == "complete"
+    assert (embedder.text_calls, embedder.video_calls) == (2, 3)
+    assert store.bulk_calls[-1][0][0].index_generation == 2

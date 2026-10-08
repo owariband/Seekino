@@ -244,6 +244,35 @@ class MultimodalEmbeddingConfig(BaseModel):
     fps: float = Field(ge=0.2, le=5.0)
 
 
+def _tracing_base_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError("tracing base_url must be an HTTP(S) URL without credentials, query, or fragment")
+    return value.rstrip("/")
+
+
+class TracingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    base_url: Annotated[_NonEmptyString, AfterValidator(_tracing_base_url)] | None = None
+    public_key_env: _NonEmptyString = "LANGFUSE_PUBLIC_KEY"
+    secret_key_env: _NonEmptyString = "LANGFUSE_SECRET_KEY"
+    environment: _NonEmptyString = "development"
+    release: _NonEmptyString | None = None
+    export_timeout_seconds: float = Field(default=5, gt=0, le=60)
+    close_timeout_seconds: float = Field(default=5, ge=0.2, le=60)
+    queue_size: int = Field(default=2048, ge=1, le=100_000)
+
+
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -255,6 +284,7 @@ class GatewayConfig(BaseModel):
     agent_model: AgentModelConfig = Field(default_factory=_default_agent_model_config)
     video_parser: VideoParseConfig
     multimodal_embedding: MultimodalEmbeddingConfig
+    tracing: TracingConfig = Field(default_factory=TracingConfig)
     # Runtime tuning is validated by the Server, which owns its constraints.
     agent_runtime: dict[str, object] = Field(default_factory=dict)
 

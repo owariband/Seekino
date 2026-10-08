@@ -22,7 +22,7 @@ from server.model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
 from server.model.job import ParseJobStage, VideoChunkCheckpointStage
 from server.mq.contracts import ParseJobLeaseLostError
 from server.schema import VideoChunkKeyframeReference
-from server.service.parse_persistence import VideoParsePersistence
+from server.service.parsev1.parse_persistence import VideoParsePersistence
 from server.storage.artifact import ArtifactIntegrityError
 from server.utils.time import now_unix_time_ms, timedelta_to_ms
 
@@ -463,7 +463,7 @@ def test_late_old_lease_artifact_cannot_replace_the_committed_parse_pointer(
     old_persistence.load_completed_chunks([window], models=result.models)
     new_persistence.load_completed_chunks([window], models=result.models)
 
-    from server.service import parse_persistence as persistence_module
+    from server.service.parsev1 import parse_persistence as persistence_module
 
     original_write = persistence_module._write_json_atomic
     old_write_started = Event()

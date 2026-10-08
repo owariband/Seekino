@@ -20,6 +20,8 @@ from gateway.usage import (
     TokenUsage,
     capture_model_usage,
     control_model_calls,
+    fanout_model_usage,
+    model_call_context,
     track_model_call,
 )
 
@@ -268,6 +270,8 @@ def test_nonterminal_initial_zero_usage_does_not_turn_interrupted_call_into_zero
 @pytest.mark.parametrize("usage", [
     {"input_tokens": 10, "output_tokens": 2, "total_tokens": 13},
     {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12, "input_tokens_details": {"cached_tokens": 11}},
+    {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12, "input_tokens_details": {"cached_tokens": 5, "cache_write_tokens": 6}},
+    {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12, "input_tokens_details": {"cache_write_tokens": 3, "cache_write_5m_tokens": 4}},
     {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12, "input_tokens_details": {"audio_tokens": 11}},
     {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12, "input_tokens_details": {"audio_tokens": 3, "audio_cached_tokens": 4}},
     {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12, "output_tokens_details": {"reasoning_tokens": 3}},
@@ -289,6 +293,30 @@ def test_unreported_cache_reasoning_and_modality_counts_stay_unknown():
     with capture_model_usage(calls.append):
         request_sse_json(Responses(response=response), model="model", input=[])
     assert calls[0].usage == TokenUsage(10, 2, 12, None, None)
+
+
+def test_reported_cache_write_and_ttl_are_preserved_without_changing_inclusive_totals():
+    calls = []
+    response = _response()
+    response.usage = {
+        "input_tokens": 10, "output_tokens": 2, "total_tokens": 12,
+        "input_tokens_details": {"cached_tokens": 2, "cache_write_tokens": 3,
+                                 "cache_write_5m_tokens": 1, "cache_write_1h_tokens": 2},
+    }
+    with capture_model_usage(calls.append):
+        request_sse_json(Responses(response=response), model="model", input=[])
+    usage = calls[0].usage
+    assert usage.input_tokens == 10 and usage.total_tokens == 12
+    assert usage.cache_write_input_tokens == 3
+    assert usage.cache_write_5m_input_tokens == 1 and usage.cache_write_1h_input_tokens == 2
+
+
+@pytest.mark.parametrize("cost", [True, -0.1, float("nan"), float("inf"), "0.1"])
+def test_sdk_cost_rejects_values_that_cannot_be_usd_estimates(cost):
+    from gateway.usage import SDKModelUsage
+
+    with pytest.raises(ValueError, match="finite nonnegative"):
+        SDKModelUsage("model", None, cost)
 
 
 @pytest.mark.parametrize("provider", ["ark", "deepseek", "ollama", "llama_cpp"])
@@ -345,6 +373,7 @@ def test_host_control_reserves_before_request_and_releases_same_call_id():
         def create(self, **request):
             events.append(("request", None))
             return SimpleNamespace(
+                model="embedding",
                 data=SimpleNamespace(embedding=[1.0, 0.0]),
                 usage=SimpleNamespace(prompt_tokens=1, total_tokens=1),
             )
@@ -364,7 +393,7 @@ def test_host_control_reserves_before_request_and_releases_same_call_id():
 def test_usage_start_excludes_admission_wait_and_observation_follows_release(
     monkeypatch,
 ):
-    timestamps = iter([1_000_000, 9_000_000])
+    timestamps = iter([1_000_000, 9_000_000, 12_000_000])
     monkeypatch.setattr("gateway.usage.time.time_ns", lambda: next(timestamps))
     events = []
     calls = []
@@ -386,6 +415,7 @@ def test_usage_start_excludes_admission_wait_and_observation_follows_release(
 
     assert events == ["admitted", "request", "released", "observed"]
     assert calls[0].started_at == 9
+    assert calls[0].ended_at == 12
 
 
 def test_rejected_admission_is_not_recorded_as_a_provider_request():
@@ -440,3 +470,144 @@ def test_control_cancellation_closes_stream_and_rejects_late_result():
     with control_model_calls(Control()), pytest.raises(ModelCallCancelledError):
         request_sse_json(provider, model="model", input=[])
     assert provider_stream.closed
+
+
+def test_lifecycle_finisher_keeps_failed_usage_and_runs_once():
+    events = []
+
+    class Observer:
+        def __call__(self, call):
+            pytest.fail("start hook's finisher must own the terminal event")
+
+        def on_start(self, tracker):
+            events.append(("start", tracker.call_id, tracker.started_at))
+            return lambda call: events.append(("end", call))
+
+    with capture_model_usage(Observer()), pytest.raises(ValueError, match="invalid result"):
+        with track_model_call(
+            provider="codex", model="m", operation="query",
+            granularity="sdk_turn_run", usage_source="codex_thread_total",
+        ) as tracker:
+            tracker.capture_response(_response())
+            raise ValueError("invalid result")
+    assert [event[0] for event in events] == ["start", "end"]
+    call = events[1][1]
+    assert call.call_id == events[0][1]
+    assert call.ended_at >= call.started_at == events[0][2]
+    assert call.status == "failed" and call.usage.total_tokens == 130
+    assert (call.granularity, call.usage_source) == ("sdk_turn_run", "codex_thread_total")
+
+
+def test_context_snapshot_merges_restores_and_ignores_later_caller_mutation():
+    calls = []
+    context = {"workspace_id": "w", "metadata": {"attempt": 1}}
+    with capture_model_usage(calls.append), model_call_context(context):
+        context["metadata"]["attempt"] = 99
+        with model_call_context({"task_id": "t"}):
+            with track_model_call(provider="ark", model="m", operation="query"):
+                pass
+        with track_model_call(provider="ark", model="m", operation="query"):
+            pass
+    with capture_model_usage(calls.append):
+        with track_model_call(provider="ark", model="m", operation="query"):
+            pass
+    assert dict(calls[0].context) == {
+        "workspace_id": "w", "metadata": {"attempt": 1}, "task_id": "t",
+    }
+    assert "task_id" not in calls[1].context
+    assert not calls[2].context
+    with pytest.raises(TypeError):
+        calls[0].context["workspace_id"] = "other"
+
+
+def test_explicit_fanout_isolates_start_and_finish_failures(caplog):
+    ledger, traced = [], []
+
+    class BrokenStart:
+        def on_start(self, tracker):
+            raise RuntimeError("secret exporter detail")
+
+        def __call__(self, call):
+            raise RuntimeError("secret exporter detail")
+
+    class Tracing:
+        def on_start(self, tracker):
+            return traced.append
+
+        def __call__(self, call):
+            pytest.fail("finisher expected")
+
+    with capture_model_usage(fanout_model_usage(BrokenStart(), ledger.append, Tracing())):
+        with track_model_call(provider="ark", model="m", operation="query"):
+            pass
+    assert len(ledger) == len(traced) == 1
+    assert ledger[0] is traced[0]
+    assert "start observer failed" in caplog.text
+    assert "observer failed" in caplog.text
+    assert "secret exporter detail" not in caplog.text
+
+
+def test_explicit_combine_deduplicates_nested_subscriber():
+    outer, inner = [], []
+    subscriber = outer.append
+    with capture_model_usage(subscriber):
+        with capture_model_usage(inner.append, combine=True):
+            with capture_model_usage(subscriber, combine=True):
+                with track_model_call(provider="ark", model="m", operation="query"):
+                    pass
+    assert len(outer) == len(inner) == 1
+    assert outer[0] is inner[0]
+
+
+def test_lifecycle_start_is_after_admission_and_rejection_emits_nothing():
+    events = []
+
+    class Control:
+        def acquire(self, tracker):
+            events.append("reject")
+            raise RuntimeError("no admission")
+
+        def release(self, tracker):
+            pytest.fail("not admitted")
+
+    class Observer:
+        def on_start(self, tracker):
+            events.append("start")
+
+        def __call__(self, call):
+            events.append("finish")
+
+    with control_model_calls(Control()), capture_model_usage(Observer()):
+        with pytest.raises(RuntimeError, match="no admission"):
+            with track_model_call(provider="ark", model="m", operation="query"):
+                pytest.fail("provider must not run")
+    assert events == ["reject"]
+
+
+def test_concurrent_host_scopes_and_finisher_restore_identity():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    barrier = Barrier(2)
+
+    def run(identity):
+        calls = []
+        with model_call_context({"task_id": identity}), capture_model_usage(calls.append):
+            with track_model_call(provider="ark", model="m", operation="query"):
+                barrier.wait(timeout=5)
+        return calls[0]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(run, ("a", "b")))
+    assert [call.context["task_id"] for call in results] == ["a", "b"]
+    assert results[0].call_id != results[1].call_id
+    assert all(call.ended_at is not None and call.usage_source is None for call in results)
+
+
+def test_old_record_constructor_remains_compatible():
+    from gateway.usage import ModelCallUsage
+
+    record = ModelCallUsage("id", "ark", "m", "query", 1, None, None, "completed")
+    assert record.ended_at is None
+    assert record.granularity == "provider_request"
+    assert record.usage_source is None and not record.context

@@ -228,15 +228,15 @@ uv sync
 uv run pytest tests/gateway
 ```
 
-Gateway CLI 只保留 Embedding 冒烟命令：
+Embedding 手动冒烟入口位于 `tests/manual/gateway_embedding.py`，从仓库根目录运行：
 
 ```bash
-uv run --env-file .env.local python -m gateway.cli \
+uv run --env-file .env.local python -m tests.manual.gateway_embedding \
   --config config.yaml embed-video \
   --video /absolute/path/to/video-chunk.mp4 \
   --output outputs/gateway/video-chunk.embedding.json
 
-uv run --env-file .env.local python -m gateway.cli \
+uv run --env-file .env.local python -m tests.manual.gateway_embedding \
   --config config.yaml embed-query \
   --query "惊世一跪发生在哪里？" \
   --output outputs/gateway/query.embedding.json
@@ -246,3 +246,83 @@ Ark Base64 内联媒体的保守上限为 45 MiB。更大的输入应由上层�
 
 旧的 Gateway `parse-video` 子命令与 parser 类已移除；视频解析统一从
 `python -m engine.parsev1.cli parse-video` 进入，避免 Gateway 重新承担 Prompt、抽帧和领域结果归一。
+
+## Langfuse 模型观测
+
+`tracing` 默认关闭。Server 使用 `LangfuseTracing(config.tracing)` 单例，Parse worker、Chat
+和检索通过 `tracing.scope(context)` 关联模型调用与业务 ID。构造器不读取
+密钥、不启动线程或进程，首次启用的范围才初始化。缺失后端地址或密钥、初始化和导出故障
+只产生通用日志，模型结果与 ParseUsageLedger 继续保留。
+
+```yaml
+tracing:
+  enabled: true
+  base_url: https://your-langfuse-host.example
+  public_key_env: LANGFUSE_PUBLIC_KEY
+  secret_key_env: LANGFUSE_SECRET_KEY
+  environment: development
+  release: your-revision
+  queue_size: 2048
+  export_timeout_seconds: 5
+  close_timeout_seconds: 5
+```
+
+`base_url` 也可通过 `LANGFUSE_BASE_URL` 提供；配置中显式值优先。地址应指向现有
+Langfuse 实例，密钥仅从指定环境变量读取。当前桥接以 Unix socketpair 和 `pass_fds`
+实现进程隔离，支持本项目的 macOS / Linux 运行环境。
+
+桥接使用独立的 OpenTelemetry 1.45.0 `TracerProvider` 和 Langfuse 官方 OTLP/HTTP
+接口 `/api/public/otel/v1/traces`，以 HTTP Protobuf、Basic Auth 和
+`x-langfuse-ingestion-version: 4` 发送。不修改进程全局 TracerProvider，也不安装未消费的
+Langfuse SDK。SDK 4.17.0 的隔离探针证实 OTel `force_flush(timeout_millis)` 不约束阻塞
+exporter 的整体等待，因此生产实现由自有进程执行 HTTP，主进程的
+`SimpleSpanProcessor` 只进行序列化和有界队列的非阻塞入队，不执行网络请求。
+官方字段依据见 [原生 OpenTelemetry 接入](https://langfuse.com/integrations/native/opentelemetry)。
+
+根 span 表示执行范围；Generation / Embedding 在真实模型请求开始时创建，在终态结束，
+耗时来自 Gateway 的开始 / 结束时间。业务范围失败时根 span 标记通用 `ERROR`，原错误
+继续传播；模型调用失败也只导出通用状态，不导出错误正文。普通 Provider 请求标记
+`provider_request`；Codex / Claude SDK 聚合记录标记 `sdk_turn_run` 和实际 usage 来源。
+有效的 32 位十六进制 `trace_id` 与 16 位 `parent_span_id` 可继承远端父节点；业务层的
+任意字符串 `run_id` 仅用于关联。`session_id`（或 `conversation_id`）写入 session。
+`asyncio.to_thread` 自动继承当前上下文；自行创建的线程需显式传递上下文。
+
+仅允许导出工作区、系列、视频、任务、会话和执行 ID、阶段、分类、重试及 lease 等关联
+字段。提示、回答、媒体、工具正文和凭据不进入 input / output。Token usage 未知时省略
+`usage_details` 并标记 `usage_status=unknown`；明确的零值保留。标准 usage 只写入
+`input` / `output` / `total`，缓存、推理和模态子集保存在 metadata，避免与 inclusive
+总量重复计数。`usage_subsets_semantics` 说明推理属于 output、其余当前子集属于 input，
+各子集可能互相重叠。人民币费用和币种只写入 metadata，并可携带 `ledger_call_id`；
+不把 CNY 写入 USD `cost_details`。ParseUsageLedger 继续作为业务账本。
+
+宿主关闭时应先停止并等待模型工作，再调用 `tracing.close()`。关闭先停止接受新记录，
+在 `close_timeout_seconds`（最小 0.2 秒）内尝试排空；截止时终止并回收自有 HTTP 子进程，
+停止 IPC 线程。OS 调度可能使墙钟略超配置，未在截止内退出的资源会记录 error。
+顺序重复 close 不再执行；并发重复 close 立即返回，第一次 close 负责收尾，报告在首次
+收尾结束后可读。`close_report` 各计数含义如下：
+
+- `exported`：获得成功 HTTP 响应且未被 OTLP `partial_success` 拒绝的单 span 传输数。
+- `failed`：HTTP / 网络失败、响应无法解析或 collector 明确拒绝的传输数。
+- `dropped`：已知的队列满、超大记录或关停后入队拒绝数。
+- `unconfirmed`：已接受入队但没有确认响应的记录数；其中可能已被后端接收。
+- `forced`：截止时使用了进程终止；`worker_exited` / `ipc_thread_exited` 分别说明资源状态。
+
+配置帧通过专用 IPC 首帧发送，不占业务队列。队列满会丢弃观测并发出通用告警，导出
+失败不会重跑模型。HTTP 确认只说明传输被接受，不保证后端查询可见、可靠投递或 exactly-once；
+失败请求也可能已被后端处理，不能把 `failed` / `unconfirmed` 解读为确定未入库。
+
+离线字段与生命周期验证运行：
+
+```bash
+uv run pytest tests/gateway/test_tracing.py tests/gateway/test_langfuse_integration.py
+```
+
+真实后端验证默认跳过。获得具体项目写入授权并设置三个 `LANGFUSE_*` 环境变量后，可
+显式设置 `ANIVAG_LANGFUSE_INTEGRATION=1`，单独运行
+`tests/gateway/test_langfuse_integration.py::test_real_langfuse_v2_observations_read_back`。
+该入口只发送合成记录，不调用模型，再通过
+`GET /api/public/v2/observations` 的 `core,basic,model,usage,metadata,metrics,trace_context,io`
+字段组检查父子节点、模型、session、usage、时间和正文省略。需要 Langfuse Cloud 或
+自托管 v4；此轮未向真实后端发送数据。
+[官方 v2 Observations 查询合同](https://langfuse.com/docs/api-and-data-platform/features/public-api)
+说明字段组、时间范围和版本兼容性。

@@ -157,10 +157,14 @@ def test_request_es_index_rebuild_schedules_one_v2_task(
     }
 
 
+@pytest.mark.parametrize("configured_mode", [None, "V2", "v1"])
 def test_business_commands_default_execution_mode_from_environment(
-    monkeypatch,
+    monkeypatch, configured_mode,
 ) -> None:
-    monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "V2")
+    if configured_mode is None:
+        monkeypatch.delenv("ANIVAG_PARSE_EXECUTION_MODE", raising=False)
+    else:
+        monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", configured_mode)
     parser = cli._build_parser()
 
     search = parser.parse_args([
@@ -168,8 +172,9 @@ def test_business_commands_default_execution_mode_from_environment(
     ])
     rebuild = parser.parse_args(["rebuild-index"])
 
-    assert search.execution_mode == "v2"
-    assert rebuild.execution_mode == "v2"
+    expected = "v1" if configured_mode == "v1" else "v2"
+    assert search.execution_mode == expected
+    assert rebuild.execution_mode == expected
 
 
 def test_rebuild_index_v2_requests_task_without_index_client(

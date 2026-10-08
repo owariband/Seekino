@@ -1,84 +1,102 @@
-# Parse 模型用量与预估费用
+# 模型用量与 USD 预估成本
 
-视频建库任务按 **视频、模型、职责** 统计模型消耗，费用统一为人民币 `CNY`，页面显示 `¥`。Token 取自 Provider 返回的 `usage`；预估费用按实际用量和调用开始时适用的单价计算，不包含免费额度、赠金、资源包、商务折扣或账单核对。
+模型用量和预估成本由 Langfuse 保存与计价，AniVAG 的模型消耗页面通过 Server
+查询这些已同步记录。覆盖解析、向量化、检索查询编码与聊天；记录来自实际 Gateway
+调用完成边界，包含已返回用量的失败调用。页面显示 USD，后端没有人民币价格引擎或汇率转换。
 
-## 统计范围
+## 配置
 
-| 分类 | operation | 职责 |
-| --- | --- | --- |
-| parse | candidate_transcript | 独立 ASRAgent 阶段的转写；仅在启用 ASR 时产生 |
-| parse | video_timeline | VideoUnderstandingAgent 视频语义解析 |
-| parse | neutral_visual_evidence | fallback 分组视觉识别，每个实际请求单独计数 |
-| parse | fallback_video_timeline | fallback 证据整理 |
-| embedding | text_embedding | 建库文本向量 |
-| embedding | video_embedding | 建库视频向量 |
+仓库 `config.yaml` 已开启现有记录通道：
 
-`candidate_transcript` 是现有账本 operation 名，不代表 ASR 与理解 Agent 互调。内容审核
-fallback 只复用 Parse Graph 已传入的 Transcript，不会自行发起
-`candidate_transcript` 或其他 ASR 调用；因此 ASR 调用数和费用只来自启用后的独立
-ASRAgent 阶段。
-
-Query、Evaluator、Chat 和检索问题的 Embedding 不计入 Parse 账本。FFmpeg、切片、抽帧、数据库和 Qdrant 操作没有模型 Token。缓存复用没有发出模型请求时，不新增调用或费用记录；历史已经发生的调用仍保留。
-
-## 模型价格
-
-默认配置为 [config/model-pricing.yaml](../config/model-pricing.yaml)，自定义路径通过 `ANIVAG_MODEL_PRICING_CONFIG` 指定。`server/config/usage.py` 对配置做类型和范围校验，价格使用带引号的十进制字符串；计算使用 `Decimal`，不通过浮点数计价。
-
-每个价格条目记录 Provider、完整模型 ID、分类、币种、每百万 Token 的单位、输入长度档位、输入／输出／缓存／音频或向量细分单价、价格版本生效时间及核对来源。DeepSeek 另有北京时间峰谷时段。新增或替换模型时，显式配置对应完整 ID；没有匹配条目时，费用保持未知。
-
-2026-09-15 核对的默认价格如下，单位为 **元／百万 Token**：
-
-| 模型 | 输入长度（千 Token）／时段 | 非音频输入 | 音频输入 | 非音频缓存命中 | 音频缓存命中 | 输出 |
-| --- | --- | --- | --- | --- | --- | --- |
-| doubao-seed-2-0-lite-260428 | [0, 32] | 0.6 | 9 | 0.12 | 1.8 | 3.6 |
-| 同上 | (32, 128] | 0.9 | 13.5 | 0.18 | 2.7 | 5.4 |
-| 同上 | (128, 256] | 1.8 | 27 | 0.36 | 5.4 | 10.8 |
-| doubao-seed-2-1-pro-260628 | [0, 256] | 6 | — | 1.2 | — | 30 |
-| deepseek-flash | 谷价 | 1 | — | 0.02 | — | 4 |
-| deepseek-flash | 峰价 | 2 | — | 0.04 | — | 8 |
-
-方舟价格以常规在线推理为口径，档位依据官方表头“千 Token”转换为整数区间；价格版本从本次核对日期起使用，不补算未记录的历史请求。[方舟模型价格](https://www.volcengine.com/docs/82379/1544106?lang=zh)、[模型列表](https://www.volcengine.com/docs/82379/1330310?lang=zh)
-
-`doubao-embedding-vision-250615` 的文本输入为 `0.7`，图像输入为 `1.8`；视频帧消耗读取 Embedding 响应的 `image_tokens`。[方舟模型价格](https://www.volcengine.com/docs/82379/1544106?lang=zh)
-
-DeepSeek 峰价为北京时间周一至周五 `09:00–12:00`、`14:00–18:00`，其余为谷价；此版本价格于北京时间 2026-09-10 12:00 生效，直接采用官方人民币价格。[DeepSeek 模型与价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)
-
-输入中的缓存命中 Token 只计一次，推理 Token 已包含在输出 Token 中，不再累加。Lite 按音频和非音频分别计价；向量按文本和图像分别计价。缺少计算所需的细分用量时，费用返回 `null`，不使用文本单价套算全量多模态 Token。当前调用没有显式创建缓存存储，因此统计不包含独立的缓存存储时长费用。
-
-每次调用保存实际 Token 细分及采用的完整价格快照。修改配置后只影响后续调用，历史汇总使用已保存的金额。
-
-## 采集与持久化
-
-Gateway 在 Ark SSE、DeepSeek Responses 和多模态 Embedding 的原始响应边界采集用量，然后解析和校验业务结果。业务 JSON 无效、Provider 失败或流不完整时，已经返回的用量仍计入。响应没有用量时，调用保留，Token 和金额标为未知。
-
-Parse 层用上下文作用域传递片段编号和分类；ASR 并发任务各自复制上下文，避免不同任务和片段串账。进程内 ParseJobConsumer 在一次处理生命周期中绑定视频、任务、执行次数和租约代次，再由 Service 写入独立调用账本。
-
-调用账本以 `callId` 唯一去重，保存 `jobId`、`attemptCount`、`leaseVersion`、`workspaceId`、`seriesId`、`videoId`、可空片段编号／ID、Provider、模型、职责、请求编号、开始时间、状态、Token、金额及价格快照。失败尝试和旧租约已经发生的消耗也保留；记账不修改 Job 状态。
-
-独立的执行记录标记是否完整采集，区分缓存复用的真实零调用和历史无账本。采集写入失败不会重跑已经付费的模型调用，查询会标记账本不完整。默认模型客户端关闭 SDK 隐式重试，视频任务仍由 MySQL DB Queue 的重试机制调度。
-
-新增表 `parse_model_call`、`parse_usage_attempt`。已有数据库使用受控的 `init-db` 创建缺失表；不会清空数据，也不修改现有表字段。
-
-## 查询接口与页面
-
-```http
-GET /api/jobs/usage/get?workspaceId=local-default&jobId=<jobId>
+```yaml
+tracing:
+  enabled: true
+  environment: development
 ```
 
-请求先验证 Job 对当前 Workspace 的归属。返回 `ParseUsageVO`，DTO 在 `server/model/dto/parseUsageDTO.py`，公开 VO 在 `server/model/vo/parseUsageVO.py`。汇总范围是指定 Job 的全部执行尝试；调用记录、采集完成标记及当前执行次数通过同一条 SQL 读取，避免任务并发完成或重试时漏算最后一笔消耗。
+在 `.env.local` 配置项目连接信息，不把密钥放进前端：
+
+```dotenv
+LANGFUSE_BASE_URL=https://your-langfuse-host
+LANGFUSE_PUBLIC_KEY=your-project-public-key
+LANGFUSE_SECRET_KEY=your-project-secret-key
+```
+
+可以使用 Langfuse Cloud 或自托管 v4+。显式 `tracing.base_url` 优先于环境地址；
+`public_key_env`、`secret_key_env` 可沿用已有配置指定变量名。没有连接配置时，
+业务模型仍可执行，消耗页面显示“尚未配置”，不会把未记录用量显示为零。
+配置生效需要由运行负责人重启进程；本次代码修改不自动重启服务。
+
+本批仅复用现有模型调用记录，不采集 prompt/response 正文或工具完整轨迹。
+默认解析执行模式改为 V2，需配置 ES；显式 `ANIVAG_PARSE_EXECUTION_MODE=v1`
+仍能运行旧链，新统计入口同样使用 Langfuse。
+
+## 用量与价格
+
+Token 总量保留 Provider/SDK 返回的 inclusive 输入与输出合同。写入 Langfuse 的
+计价桶拆成普通输入、缓存读取、缓存写入和输出，避免缓存被重复计入普通输入。
+只有返回了完整 TTL 细分时才分别记录缓存写入5分钟/1小时；推理量仍属于输出子集。
+已知且可拆开的模态使用互斥文字/图片/音频桶，缓存与模态交集未知时不猜交集。
+
+当前字段键为 `input`、`input_cached_tokens`、`input_cache_creation_tokens`、
+`input_cache_creation_5m_tokens`、`input_cache_creation_1h_tokens`、
+`input_text_tokens`、`input_image_tokens`、`input_audio_tokens`、`output` 和 `total`。
+缓存写入总桶与 TTL 子桶二选一；普通输入只保留未被缓存或已知模态桶覆盖的剩余量，
+与这些细分桶互不重叠。
+模型价格必须与实际写入的用量键对应；在 Langfuse **Project Settings > Models**
+配置 USD 单价与模型匹配，不在 AniVAG 维护第二套价格配置。
+[Langfuse 用量与成本合同](https://langfuse.com/docs/observability/features/token-and-cost-tracking)
+
+Claude SDK 提供实际模型汇总时，按模型记录该轮 SDK 用量和 USD 预估成本，
+外层 run 不重复记录总量和成本。它们是 SDK 聚合，不能解释为每个内部 Provider 请求。
+仅有主循环 usage 时保留这个粒度，不拿范围不同的子 Agent 总费用冒充同一模型成本。
+调用数按 Gateway call ID 去重，Token/成本按独立 Langfuse observation ID 汇总。
+
+没有 SDK 成本时使用 Langfuse 推算；缺价格、细分不完整或价格仅覆盖部分用量时，
+完整成本为 null，保留可证明的已知小计。费用是模型预估成本，不是供应商账单金额。
+
+## 查询接口
+
+```http
+GET /api/usage/overview?workspaceId=local-default
+```
+
+可选 `fromStartTime`、`toStartTime` 为 Unix 毫秒，默认最近30天；时间窗必须有界，
+也可用 `seriesId`、`runId` 筛选。Server 查询固定 Langfuse 环境和 workspace，
+同时精确核验返回的 workspace，系列多选按 metadata 中的真实 ID 匹配。
+目前 workspace 仍是数据范围，登录与成员授权尚未实现。
+
+查询使用 `/api/public/v2/observations`，选择 usage/model/metadata 字段并分页读取。
+单次最多20页、每页1000条，总读取预算15秒；未读完时 `truncated=true`，
+完整 Token/成本合计保持未知。缓存以 workspace 和时间窗隔离，最长30秒、最多32个条目，
+用于合并页面查询；没有新增 SQL 聚合表。
+[Langfuse Public API](https://langfuse.com/docs/api-and-data-platform/features/public-api)
 
 | 字段 | 含义 |
 | --- | --- |
-| jobId、videoId、seriesId、seriesName、episodeOrder、originalFilename | 对应任务和真实视频身份 |
-| currency | 固定 `CNY` |
-| coverage | `not_started` 尚未执行；`recorded` 已完整记录；`partial` 部分或正在采集；`unknown` 历史无完整账本 |
-| callCount、missingUsageCount、unpricedCallCount | 已记录调用数、缺用量调用数、有用量但不能计价的调用数 |
-| totalTokens | 完整统计时的总 Token；不完整时为 `null` |
-| estimatedCostCny | 完整统计和计价时的十进制金额字符串；未知时为 `null` |
-| items | 按 Provider、模型、分类和职责汇总的行，包括调用数、输入／输出／缓存／推理／总 Token、金额和缺失数 |
+| source / currency | 固定 `langfuse` / `USD` |
+| status | `available`、`disabled`、`not_configured`、`unavailable` |
+| fromStartTime / toStartTime / fetchedAt | 查询时间窗与本次结果返回时间，Unix 毫秒 |
+| truncated | 是否受有界分页限制；不能把截断小计当完整合计 |
+| totals | 已同步调用、输入/输出/缓存/推理/总量与预估成本汇总 |
+| models | 按服务商、实际模型、分类与操作分组 |
+| runs | 按解析任务、聊天运行或其他运行分组 |
+| totalTokens / estimatedCostUsd | 完整已同步记录合计；缺失或截断时 null |
+| knownTokens / knownCostUsd | 仅已知记录的小计；金额为十进制字符串 |
+| missingUsageCount / unpricedCallCount | 缺少用量或完整计价的调用数量 |
 
-任务页展开“模型消耗”后按需读取接口，按行展示模型、职责、Token 和 ¥ 预估费用。运行且展开时每 5 秒刷新，任务进入终态后立即刷新；终态账本仍为 `partial` 时每 15 秒继续读取迟到消耗，收起或记录完整后停止。未知字段显示“未记录”或“未估算”，历史无账本不会显示成零。
+页面一次查询并使用服务端汇总，前端仅格式化 USD 字符串，不重复计算价格。
+页面明确说明“已同步记录”；写入队列、网络失败和 Langfuse 处理延迟仍可能使最新
+调用暂未出现在查询中，`available` 不代表所有业务调用都已成功上传。
 
-本功能不能恢复添加采集前的历史模型消耗。记录从新版 ParseJobConsumer 实际执行模型请求时开始，而非按上传日期判断：已有但尚未执行的排队任务也能记录；旧失败任务由新版 Consumer 重试时只记录新请求，旧执行没有账本则整项统计保持 partial；缓存复用不补算曾经产生缓存的费用。HTTP API 提供查询，写入由同一 anivag Server 进程内的 Consumer 完成，因此创建账本表后只需启动或重启使用新版代码的 API 进程。
+## 旧统计退出与验收边界
 
-真实模型费用验收需要运行启用采集后的 Parse 任务并与 Provider 用量核对。
+旧 `/api/jobs/usage/get` 已退出公开路由，运行时不再装配 ParseUsageRepository 或
+加载旧价格表。`capture`/`capture_video` 保留签名与身份上下文，仅订阅 Langfuse。
+V2 的调用次数预算、租约、取消和模型控制仍使用原执行管理器，与统计来源分离。
+历史 SQL 表、金额和价格快照保留，不换币种、不混入新统计、不回填历史。
+旧 `ANIVAG_MODEL_PRICING_CONFIG` 不再影响模型消耗页面。
+
+离线测试验证字段映射、范围过滤、分页、未知值、资源关闭和前端查询。
+真实验收需连接项目，执行一次真实解析或聊天，在 Langfuse 和 AniVAG 页面
+核对相同模型、用量、USD 及运行身份；没有项目凭据时不能宣称该在线验收完成。

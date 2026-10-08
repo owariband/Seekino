@@ -4,7 +4,8 @@ Server 当前同时保留 V1 与 V2 的 Upload-to-Search 纵向闭环：两者�
 Artifact Store 和 MySQL 业务事实；V1 使用 DB Queue、VideoChunk checkpoint、Index Sync
 Intent 与 Qdrant，V2 使用可恢复的 VideoParseTask/Chunk/Interval/Prefix 状态机并将同版本
 投影写入 Elasticsearch。正式检索由 `ANIVAG_PARSE_EXECUTION_MODE` 一次选择对应后端，
-API、Agent Chat 和 CLI 共用同一个检索 Service；V2 不会回退到 V1/Qdrant。模型协议仍由
+API、Agent Chat 和 CLI 共用同一个检索 Service；默认模式为 V2，显式设置 `v1` 可使用旧链。
+V2 不会回退到 V1/Qdrant。模型协议仍由
 Gateway 实现，anivag Server 进程内复用 Engine 的解析、索引投影和确定性融合能力。
 
 Multi-Agent 对话作为独立领域建立在正式检索之上：Workspace 直接拥有
@@ -25,6 +26,23 @@ MySQL/ES I/O 与恢复。查询渠道选择的后续 Engine 抽象尚未发布�
 Qdrant 与 Elasticsearch 的连接、写入和恢复都属于产品持久化适配，因此位于
 `server/storage/`；业务正文与任务版本的 durable source 始终是 MySQL，外部索引均是
 可按当前合同重建的派生数据。
+
+## 模型用量与预估成本
+
+`GET /api/usage/overview?workspaceId=...` 从 Langfuse 查询最近30天的已同步用量，
+包括解析、向量化与聊天，金额统一为 USD。可用 `fromStartTime`/`toStartTime`
+（Unix 毫秒）、`seriesId`、`runId` 缩小范围。Server 只做范围过滤和汇总，不自行定价；
+价格在 Langfuse Project Settings > Models 管理，SDK 已报告且范围明确的 USD 预估优先。
+
+`config.yaml` 的 `tracing.enabled=true` 开启现有模型用量记录，在 `.env.local` 配置
+`LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`。密钥只用于后端，
+前端访问 AniVAG API。Cloud 或自托管 Langfuse v4+ 支持此查询合同。
+缺配置和读取失败返回明确状态；未知用量/价格保持 null，分页上限会标记截断。
+
+运行时不再装配旧统计 Repository 或读取旧 CNY 价格表，原 `capture` 入口仅传递
+调用身份并订阅 Langfuse。历史 SQL 表不删除或回填，预算/租约/取消控制保持原实现。
+本批只记录模型用量和成本，没有扩展工具轨迹或模型正文采集。
+详细合同见 [模型用量与预估成本](../docs/parse-model-usage.md)。
 
 ## HTTP 分层
 
@@ -56,14 +74,14 @@ server/config/                   配置类型、环境变量读取与校验
 server/constants/workspace.py    本地默认 Workspace；不承担身份认证
 server/utils/                    时间、文本校验、异常摘要等无业务取数的纯函数
 server/bootstrap.py              唯一 Composition Root 和应用生命周期资源装配
-server/service/video_processing.py
+server/service/parsev1/video_processing.py
                                  Parse Job 适配：源文件、背景、媒体物化、Pipeline 调用与索引同步
-server/service/parse_persistence.py
+server/service/parsev1/parse_persistence.py
                                  生产 ParsePersistence：恢复、Lease、Parse Artifact／Checkpoint 与 MySQL
 server/mq/contracts.py            Queue / Handler 的最小内部协议
 server/mq/mysql_queue.py          MySQL Claim、Lease、Retry、Ack 和 Reaper adapter
 server/mq/consumer.py             进程内消费循环与 Lease Heartbeat
-server/mq/__main__.py             仅保留 --once 单任务诊断入口
+tests/manual/server_mq_once.py    --once 单任务手动诊断入口
 ```
 
 配置入口为 `ServerSettings.from_environment()`，`from server.config import
@@ -155,7 +173,7 @@ Lease 和 Fencing，不依赖进程内内存队列。
 需要单步诊断领取链路时，可运行：
 
 ```bash
-uv run python -m server.mq --once
+uv run python -m tests.manual.server_mq_once --once
 ```
 
 该命令复用 Server 的统一装配并至多处理一个到期任务；它不是常驻服务，不应与
@@ -284,7 +302,7 @@ anivag Server 在进程启动时配置 Python logging，同时写入终端和轮
 outputs/server/logs/development/api.log
 ```
 
-一次性运行 `python -m server.mq --once` 时会单独写入同目录的 `mq.log`；该文件只属于
+一次性运行 `python -m tests.manual.server_mq_once --once` 时会单独写入同目录的 `mq.log`；该文件只属于
 诊断入口，不代表存在常驻 MQ 或 Worker 进程。
 
 test / production 使用各自目录。`ANIVAG_LOG_DIRECTORY` 可覆盖日志根目录；
@@ -415,7 +433,7 @@ uv run python -m server.cli init-es-index --help
 初始化要求显式配置隔离环境的 ES URL、索引名及向量维度。设置
 `ANIVAG_PARSE_EXECUTION_MODE=v2` 后，上传只建立带接纳标记的 V2 任务，DB Queue
 Consumer 会执行 Prepare、Chunk Understanding、Interval Refine、逐 Chunk 索引放行、
-ES 写入与恢复扫描。V2 模式缺少 ES 配置时 Server 会拒绝启动；默认 `v1` 行为保持不变。
+ES 写入与恢复扫描。V2 为默认模式，缺少 ES 配置时 Server 会拒绝启动；旧链须显式选择 `v1`。
 `sync-es-index`、`repair-es-published`、`cleanup-es-deleted` 和
 `search-es-published` 已随独立索引发布实现移除。
 

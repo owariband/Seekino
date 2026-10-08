@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatBytes,
+  formatMoneyUsd,
   formatTimeRange,
   formatTimecode,
   inferEpisodeOrder,
@@ -10,6 +11,14 @@ import {
 } from "./format";
 
 describe("format helpers", () => {
+  it("preserves USD decimal precision without converting money to a floating point number", () => {
+    expect(formatMoneyUsd("0.00000004")).toBe("$0.00000004");
+    expect(formatMoneyUsd("9007199254740993.123456789012345678")).toBe("$9,007,199,254,740,993.123456789012345678");
+    expect(formatMoneyUsd("1000.00000000")).toBe("$1,000.00000000");
+    expect(formatMoneyUsd("0")).toBe("$0.00");
+    expect(formatMoneyUsd(null)).toBe("未计价");
+  });
+
   it("formats evidence time ranges consistently", () => {
     expect(formatTimecode(1_252)).toBe("20:52");
     expect(formatTimeRange(1_252, 1_259)).toBe("20:52–20:59");

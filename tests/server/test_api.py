@@ -427,7 +427,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         "/api/jobs/video-parse/get",
         "/api/jobs/video-parse/list",
         "/api/jobs/video-parse/events",
-        "/api/jobs/usage/get",
+        "/api/usage/overview",
         "/api/jobs/summary",
         "/api/jobs/events",
         "/api/videos/content",
@@ -498,7 +498,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
         ("/api/jobs/video-parse/events", "get"): {
             "videoParseTaskId", "workspaceId",
         },
-        ("/api/jobs/usage/get", "get"): {"jobId", "workspaceId"},
+        ("/api/usage/overview", "get"): {"workspaceId"},
         ("/api/jobs/events", "get"): {"jobId"},
         ("/api/videos/content", "get"): {"videoId"},
         ("/api/agent/conversations/get", "get"): {"conversationId"},

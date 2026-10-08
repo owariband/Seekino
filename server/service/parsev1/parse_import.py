@@ -14,21 +14,21 @@ from engine.parsev1.retrieval import (
     build_video_chunk_retrieval_documents,
 )
 
-from ..constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
-from ..identity import (
+from ...constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
+from ...identity import (
     canonical_uuid,
     derive_context_snapshot_id,
     derive_series_id,
     derive_video_chunk_id,
     derive_video_id,
 )
-from ..model.dto.parseDTO import (
+from ...model.dto.parseDTO import (
     PreparedEmbedding,
     PreparedVideoChunk,
     PreparedVideoParseImport,
 )
-from ..schema import VideoChunkKeyframeReference
-from ..utils.time import now_unix_time_ms, require_unix_time_ms
+from ...schema import VideoChunkKeyframeReference
+from ...utils.time import now_unix_time_ms, require_unix_time_ms
 
 
 def prepare_completed_video_parse_import(

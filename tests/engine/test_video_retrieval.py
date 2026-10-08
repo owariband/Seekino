@@ -108,11 +108,6 @@ def _retrieval_identity(**updates: object) -> VideoChunkRetrievalIdentity:
         "parse_task_id": "task-1",
         "content_version": 3,
         "index_generation": 1,
-        "source_revision": "source-1",
-        "projection_revision": "projection-1",
-        "retrieval_contract_id": "retrieval-1",
-        "semantic_encoder_id": "text:sha256:semantic-1",
-        "vision_encoder_id": "video:sha256:vision-1",
     }
     values.update(updates)
     return VideoChunkRetrievalIdentity.model_validate(values)
@@ -300,11 +295,6 @@ def test_versioned_rrf_preserves_identity_across_three_channels() -> None:
         "parse_task_id": "task-1",
         "content_version": 3,
         "index_generation": 1,
-        "source_revision": "source-1",
-        "projection_revision": "projection-1",
-        "retrieval_contract_id": "retrieval-1",
-        "semantic_encoder_id": "text:sha256:semantic-1",
-        "vision_encoder_id": "video:sha256:vision-1",
     }
 
 
@@ -317,12 +307,6 @@ def test_versioned_rrf_preserves_identity_across_three_channels() -> None:
         ("parse_task_id", "task-2"),
         ("content_version", 4),
         ("index_generation", 2),
-        ("source_revision", "source-2"),
-        ("projection_revision", "projection-2"),
-        ("retrieval_contract_id", "retrieval-2"),
-        ("semantic_encoder_id", "text:sha256:semantic-2"),
-        ("vision_encoder_id", "video:sha256:vision-2"),
-        ("sparse_encoder_id", "sparse:sha256:sparse-2"),
     ],
 )
 def test_versioned_rrf_rejects_cross_channel_identity_changes(
@@ -335,8 +319,8 @@ def test_versioned_rrf_rejects_cross_channel_identity_changes(
     with pytest.raises(
         ValueError,
         match=(
-            "multiple workspace/retrieval scopes"
-            if field in {"workspace_id", "retrieval_contract_id"}
+            "multiple workspace/index generations"
+            if field in {"workspace_id", "index_generation"}
             else "retrieval identity changed between channels"
         ),
     ):
@@ -369,8 +353,6 @@ def test_versioned_rrf_allows_different_tasks_for_different_videos() -> None:
                 video_id="video-2",
                 parse_task_id="task-2",
                 content_version=7,
-                source_revision="source-2",
-                projection_revision="projection-2",
             ),
         )],
         text_weight=1.0,
@@ -403,7 +385,7 @@ def test_versioned_rrf_rejects_unversioned_channel_input() -> None:
 
 
 def test_versioned_rrf_fuses_four_channels_and_preserves_sparse_evidence() -> None:
-    identity = _retrieval_identity(sparse_encoder_id="sparse:sha256:sparse-1")
+    identity = _retrieval_identity()
     first = VersionedRankedVideoChunkMatch(
         rank=1, video_chunk_id="chunk-a", score=0.9,
         retrieval_identity=identity,
@@ -453,7 +435,7 @@ def test_versioned_rrf_default_wire_and_disabled_sparse_are_compatible() -> None
 def test_versioned_rrf_accepts_sparse_as_only_enabled_channel() -> None:
     match = VersionedRankedVideoChunkMatch(
         rank=1, video_chunk_id="chunk-a", score=1.5,
-        retrieval_identity=_retrieval_identity(sparse_encoder_id="sparse-1"),
+        retrieval_identity=_retrieval_identity(),
     )
     fused = fuse_versioned_video_chunk_rankings(
         [], [], sparse_rankings=[match], sparse_weight=1.0,
@@ -465,24 +447,25 @@ def test_versioned_rrf_accepts_sparse_as_only_enabled_channel() -> None:
 
 
 @pytest.mark.parametrize("channel", ["text", "sparse"])
-def test_enabled_sparse_rrf_requires_encoder_identity(channel: str) -> None:
+def test_enabled_sparse_rrf_uses_the_chunk_version_identity(channel: str) -> None:
     match = VersionedRankedVideoChunkMatch(
         rank=1, video_chunk_id="chunk-a", score=1.5,
         retrieval_identity=_retrieval_identity(),
     )
-    with pytest.raises(ValueError, match="requires sparse_encoder_id"):
-        fuse_versioned_video_chunk_rankings(
-            [match] if channel == "text" else [], [],
-            sparse_rankings=[match] if channel == "sparse" else [],
-            sparse_weight=1.0, text_weight=1.0, vision_weight=0.0,
-            channel_top_k=2, rrf_k=60,
-        )
+    fused = fuse_versioned_video_chunk_rankings(
+        [match] if channel == "text" else [], [],
+        sparse_rankings=[match] if channel == "sparse" else [],
+        sparse_weight=1.0, text_weight=1.0, vision_weight=0.0,
+        channel_top_k=2, rrf_k=60,
+    )
+    assert fused[0].retrieval_identity == match.retrieval_identity
+    assert fused[0].fused_score == pytest.approx(1 / 61)
 
 
 def test_sparse_rrf_rejects_duplicate_votes_and_cross_channel_identity() -> None:
     match = VersionedRankedVideoChunkMatch(
         rank=1, video_chunk_id="chunk-a", score=1.5,
-        retrieval_identity=_retrieval_identity(sparse_encoder_id="sparse-1"),
+        retrieval_identity=_retrieval_identity(),
     )
     kwargs = dict(sparse_weight=1.0, text_weight=1.0, vision_weight=0.0,
                   channel_top_k=2, rrf_k=60)
@@ -491,7 +474,7 @@ def test_sparse_rrf_rejects_duplicate_votes_and_cross_channel_identity() -> None
             [], [], sparse_rankings=[match, match], **kwargs,
         )
     changed = match.model_copy(update={
-        "retrieval_identity": _retrieval_identity(sparse_encoder_id="sparse-2"),
+        "retrieval_identity": _retrieval_identity(content_version=4),
     })
     with pytest.raises(ValueError, match="identity changed between channels"):
         fuse_versioned_video_chunk_rankings(

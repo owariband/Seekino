@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from threading import Event, Thread
 from types import SimpleNamespace
 from typing import Any
@@ -22,7 +23,9 @@ from gateway.codex import CodexAgentModel
 from gateway.codex.client import CodexModelCallLimitError
 from gateway.codex.agent import CodexAgentModelError
 from gateway.agent_model.context import ContextWindowPolicy
-from gateway.usage import capture_model_usage
+from gateway.usage import (
+    capture_model_usage, control_model_calls, model_call_context, track_model_call,
+)
 
 
 class Result(BaseModel):
@@ -47,6 +50,7 @@ def _usage(
     total_output_tokens: int = 4,
     last_input_tokens: int | None = None,
     last_output_tokens: int | None = None,
+    cache_write_input_tokens: int | None = None,
 ) -> object:
     def breakdown(input_tokens: int, output_tokens: int) -> object:
         return SimpleNamespace(
@@ -54,6 +58,7 @@ def _usage(
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
             cached_input_tokens=min(2, input_tokens),
+            cache_write_input_tokens=cache_write_input_tokens,
             reasoning_output_tokens=min(1, output_tokens),
         )
 
@@ -177,8 +182,27 @@ def test_run_structured_uses_json_schema_and_reports_usage() -> None:
     assert session.prompts[0][1]["properties"]["answer"]["type"] == "string"
     assert len(usages) == 1
     assert usages[0].provider == "codex"
+    assert usages[0].granularity == "sdk_turn_run"
+    assert usages[0].usage_source == "codex_thread_total"
     assert usages[0].usage.input_tokens == 10
     assert usages[0].usage.reasoning_tokens == 1
+
+
+def test_codex_preserves_sdk_cache_write_counts_in_thread_total() -> None:
+    session = _FakeSession([(_turn('{"answer":"ok"}', usage=_usage(cache_write_input_tokens=3)), 1)])
+    model = _model_for(session)
+    records = []
+    try:
+        with capture_model_usage(records.append):
+            assert model.run_structured(
+                "question", tools=[], result_type=Result, max_model_calls=1,
+            ) == Result(answer="ok")
+    finally:
+        model.close()
+    assert len(records) == 1
+    usage = records[0].usage
+    assert usage.input_tokens == 10 and usage.total_tokens == 14
+    assert usage.cached_input_tokens == 2 and usage.cache_write_input_tokens == 3
 
 
 def test_context_preflight_reserves_codex_base_input_before_starting_session() -> None:
@@ -268,11 +292,15 @@ def test_context_preflight_allows_a_small_request_below_the_hard_limit() -> None
     assert emitted == ["ok"]
 
 
-def test_run_structured_rejects_invalid_final_json() -> None:
-    session = _FakeSession([(_turn("not-json"), 0)])
+@pytest.mark.parametrize("text", ["not-json", '{"unexpected":true}'])
+def test_run_structured_rejects_invalid_final_json_and_keeps_usage(text) -> None:
+    session = _FakeSession([(_turn(text), 0)])
     model = _model_for(session)
+    records = []
     try:
-        with pytest.raises(MissingStructuredQueryDraftError) as captured:
+        with capture_model_usage(records.append), pytest.raises(
+            MissingStructuredQueryDraftError,
+        ) as captured:
             model.run_structured(
                 "answer",
                 tools=[],
@@ -283,6 +311,11 @@ def test_run_structured_rejects_invalid_final_json() -> None:
         model.close()
 
     assert captured.value.reason == ModelFailureReason.INVALID_MODEL_RESPONSE
+    assert len(records) == 1
+    assert records[0].status == "failed"
+    assert records[0].granularity == "sdk_turn_run"
+    assert records[0].usage_source == "codex_thread_total"
+    assert records[0].usage.total_tokens == 14
 
 
 def test_run_structured_classifies_missing_output_as_invalid_response() -> None:
@@ -415,9 +448,72 @@ def test_agent_loop_reports_final_cumulative_thread_usage_once() -> None:
     # Codex ThreadTokenUsage.total is cumulative for this ephemeral thread.
     # Capturing the final turn once includes both outer turns without double count.
     assert len(usages) == 1
+    assert usages[0].granularity == "sdk_turn_run"
+    assert usages[0].usage_source == "codex_thread_total"
     assert usages[0].usage.input_tokens == 25
     assert usages[0].usage.output_tokens == 9
     assert usages[0].usage.total_tokens == 34
+
+
+def test_agent_loop_keeps_returned_usage_when_text_callback_fails() -> None:
+    session = _FakeSession([(_turn("draft"), 0)])
+    model = _model_for(session)
+    records = []
+
+    def fail(_text):
+        raise RuntimeError("callback failed")
+
+    try:
+        with capture_model_usage(records.append), pytest.raises(CodexAgentModelError):
+            model.run_agent_loop(
+                "answer", tools=[], max_model_calls=1, handle_text=fail,
+            )
+    finally:
+        model.close()
+
+    assert len(records) == 1
+    assert records[0].status == "failed"
+    assert records[0].usage.total_tokens == 14
+
+
+def test_executor_restores_host_context_for_nested_model_calls() -> None:
+    identity = ContextVar("codex_test_identity", default="outside")
+
+    class Session(_FakeSession):
+        def run_turn(self, prompt: str, *, output_schema=None) -> object:
+            assert identity.get() == "invocation"
+            with track_model_call(provider="test", model="nested", operation="tool"):
+                pass
+            return _turn('{"answer":"ok"}')
+
+    session = Session([])
+    model = _model_for(session)
+    records = []
+    acquired = []
+    released = []
+    control = SimpleNamespace(
+        acquire=lambda call: acquired.append(call.call_id),
+        release=lambda call: released.append(call.call_id),
+    )
+    token = identity.set("invocation")
+    try:
+        with (
+            model_call_context({"task_id": "task-context"}),
+            capture_model_usage(records.append),
+            control_model_calls(control),
+        ):
+            model.run_structured(
+                "answer", tools=[], result_type=Result, max_model_calls=1,
+            )
+    finally:
+        identity.reset(token)
+        model.close()
+
+    assert {record.model for record in records} == {"nested", "gpt-5.3-codex"}
+    assert all(record.context["task_id"] == "task-context" for record in records)
+    assert set(acquired) == {record.call_id for record in records}
+    assert set(released) == set(acquired)
+    assert identity.get() == "outside"
 
 
 def test_invocation_timeout_force_closes_without_waiting_for_interrupt() -> None:

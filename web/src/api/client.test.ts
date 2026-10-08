@@ -14,7 +14,7 @@ import {
   getAgentMessageOptions,
   getJob,
   getParseConfig,
-  getParseUsage,
+  getUsageOverview,
   getSeries,
   getUploadSession,
   getVideoParseTask,
@@ -109,15 +109,25 @@ describe("Video episode route", () => {
   });
 });
 
-describe("parse usage route", () => {
-  it("reads usage for the exact task and preserves decimal costs and missing tokens", async () => {
-    const payload = { jobId: "job/id", currency: "CNY", totalTokens: null, estimatedCostCny: "0.00000004", items: [] };
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json" } }));
+describe("Langfuse usage overview route", () => {
+  it("requests one overview with encoded filters and preserves USD decimals and missing usage", async () => {
+    const payload = { source: "langfuse", currency: "USD", totals: { totalTokens: null, estimatedCostUsd: "0.00000004" }, models: [], runs: [] };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(payload)));
     vi.stubGlobal("fetch", fetchMock);
-    const usage = await getParseUsage("job/id");
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/jobs/usage/get?workspaceId=local-default&jobId=job%2Fid");
-    expect(usage.estimatedCostCny).toBe("0.00000004");
-    expect(usage.totalTokens).toBeNull();
+    const signal = new AbortController().signal;
+    const usage = await getUsageOverview({ fromStartTime: 1, toStartTime: 2, seriesId: "series/id", runId: "run/id" }, signal);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/usage/overview?workspaceId=local-default&fromStartTime=1&toStartTime=2&seriesId=series%2Fid&runId=run%2Fid");
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(signal);
+    expect(usage.totals.estimatedCostUsd).toBe("0.00000004");
+    expect(usage.totals.totalTokens).toBeNull();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the default time window to the server and omits empty filters", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    await getUsageOverview({ seriesId: "", runId: undefined });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/usage/overview?workspaceId=local-default");
   });
 });
 

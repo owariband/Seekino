@@ -27,9 +27,9 @@ from .database import (
 from .repository.index_sync import IndexSyncRepository
 from .repository.video import VideoRepository
 from .repository.video_parse import VideoParseRepository
-from .service.index_sync import IndexSyncService
+from .service.parsev1.index_sync import IndexSyncService
 from .service.keyframe_backfill import KeyframeBackfillService
-from .service.parse_import import prepare_video_parse_import
+from .service.parsev1.parse_import import prepare_video_parse_import
 from .service.qdrant_mutation_lock import QdrantMutationLock
 from .service.video_retrieval import (
     VideoParseRetrievalService,
@@ -266,7 +266,7 @@ def _add_execution_mode_argument(parser: argparse.ArgumentParser) -> None:
         "--execution-mode",
         choices=("v1", "v2"),
         type=_execution_mode,
-        default=_execution_mode(os.getenv("ANIVAG_PARSE_EXECUTION_MODE", "v1")),
+        default=_execution_mode(os.getenv("ANIVAG_PARSE_EXECUTION_MODE", "v2")),
         help="Parse/retrieval backend; defaults to ANIVAG_PARSE_EXECUTION_MODE.",
     )
 

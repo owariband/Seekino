@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, field
 from threading import Event, Lock
+from types import MappingProxyType
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
@@ -24,6 +27,9 @@ class TokenUsage:
     image_input_tokens: int | None = None
     audio_input_tokens: int | None = None
     cached_audio_input_tokens: int | None = None
+    cache_write_input_tokens: int | None = None
+    cache_write_5m_input_tokens: int | None = None
+    cache_write_1h_input_tokens: int | None = None
 
     def __post_init__(self) -> None:
         for name in self.__dataclass_fields__:
@@ -35,7 +41,7 @@ class TokenUsage:
                 raise ValueError(f"{name} must be a nonnegative integer")
         if self.total_tokens != self.input_tokens + self.output_tokens:
             raise ValueError("total tokens must equal input plus output tokens")
-        for name in ("cached_input_tokens", "text_input_tokens", "image_input_tokens", "audio_input_tokens", "cached_audio_input_tokens"):
+        for name in ("cached_input_tokens", "text_input_tokens", "image_input_tokens", "audio_input_tokens", "cached_audio_input_tokens", "cache_write_input_tokens", "cache_write_5m_input_tokens", "cache_write_1h_input_tokens"):
             value = getattr(self, name)
             if value is not None and value > self.input_tokens:
                 raise ValueError(f"{name} must be contained in input tokens")
@@ -45,6 +51,33 @@ class TokenUsage:
             for bound in (self.audio_input_tokens, self.cached_input_tokens):
                 if bound is not None and self.cached_audio_input_tokens > bound:
                     raise ValueError("cached audio tokens must be contained in audio/cached input tokens")
+        if (self.cached_input_tokens or 0) + (self.cache_write_input_tokens or 0) > self.input_tokens:
+            raise ValueError("cache reads and writes must be contained in input tokens")
+        if self.cache_write_input_tokens is not None and (
+            (self.cache_write_5m_input_tokens or 0) + (self.cache_write_1h_input_tokens or 0)
+            > self.cache_write_input_tokens
+        ):
+            raise ValueError("cache TTL counts must be contained in cache write tokens")
+
+
+@dataclass(frozen=True, slots=True)
+class SDKModelUsage:
+    """One SDK run's reported usage and estimated USD cost for an actual model."""
+
+    model: str
+    usage: TokenUsage | None
+    cost_usd: float | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.model, str) or not self.model.strip():
+            raise ValueError("SDK model must be a nonempty string")
+        if self.cost_usd is not None and (
+            isinstance(self.cost_usd, bool)
+            or not isinstance(self.cost_usd, (int, float))
+            or not math.isfinite(self.cost_usd)
+            or self.cost_usd < 0
+        ):
+            raise ValueError("SDK cost must be a finite nonnegative USD amount")
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +90,12 @@ class ModelCallUsage:
     request_id: str | None
     usage: TokenUsage | None
     status: Literal["completed", "failed"]
+    ended_at: int | None = None
+    granularity: Literal["provider_request", "sdk_turn_run"] = "provider_request"
+    usage_source: str | None = None
+    context: Mapping[str, Any] = field(default_factory=dict)
+    sdk_model_usage: tuple[SDKModelUsage, ...] = ()
+    usage_scope: str | None = None
 
 
 class ModelCallControlError(RuntimeError):
@@ -79,11 +118,81 @@ _observer: ContextVar[Callable[[ModelCallUsage], None] | None] = ContextVar("mod
 _control: ContextVar[ModelCallControl | None] = ContextVar(
     "model_call_control", default=None
 )
+_context: ContextVar[Mapping[str, Any]] = ContextVar("model_call_context", default={})
 
 
 @contextmanager
-def capture_model_usage(observer: Callable[[ModelCallUsage], None]) -> Iterator[None]:
-    token = _observer.set(observer)
+def model_call_context(context: Mapping[str, Any]) -> Iterator[None]:
+    """Bind opaque host identities without sharing mutable caller state."""
+
+    snapshot = MappingProxyType(deepcopy({**_context.get(), **context}))
+    token = _context.set(snapshot)
+    try:
+        yield
+    finally:
+        _context.reset(token)
+
+
+def _finish_observer(
+    observer: Callable[[ModelCallUsage], None], call: ModelCallUsage
+) -> None:
+    try:
+        observer(call)
+    except Exception:
+        _logger.warning("Model usage observer failed; model result is preserved")
+
+
+def _start_observer(
+    observer: Callable[[ModelCallUsage], None], tracker: "ModelCallTracker"
+) -> Callable[[ModelCallUsage], None]:
+    start = getattr(observer, "on_start", None)
+    if callable(start):
+        try:
+            finish = start(tracker)
+            if callable(finish):
+                return finish
+        except Exception:
+            _logger.warning("Model usage start observer failed; model call is preserved")
+    return observer
+
+
+class _UsageFanout:
+    def __init__(self, observers: tuple[Callable[[ModelCallUsage], None], ...]) -> None:
+        self.observers = observers
+
+    def __call__(self, call: ModelCallUsage) -> None:
+        for observer in self.observers:
+            _finish_observer(observer, call)
+
+    def on_start(self, tracker: "ModelCallTracker") -> Callable[[ModelCallUsage], None]:
+        finishes = tuple(_start_observer(observer, tracker) for observer in self.observers)
+
+        def finish(call: ModelCallUsage) -> None:
+            for observer in finishes:
+                _finish_observer(observer, call)
+
+        return finish
+
+
+def fanout_model_usage(
+    *observers: Callable[[ModelCallUsage], None] | None,
+) -> Callable[[ModelCallUsage], None]:
+    """Explicitly combine subscribers, isolating each branch's failures."""
+
+    branches: list[Callable[[ModelCallUsage], None]] = []
+    for observer in observers:
+        candidates = observer.observers if isinstance(observer, _UsageFanout) else (observer,)
+        for candidate in candidates:
+            if candidate is not None and all(candidate is not item for item in branches):
+                branches.append(candidate)
+    return _UsageFanout(tuple(branches))
+
+
+@contextmanager
+def capture_model_usage(
+    observer: Callable[[ModelCallUsage], None], *, combine: bool = False
+) -> Iterator[None]:
+    token = _observer.set(fanout_model_usage(_observer.get(), observer) if combine else observer)
     try:
         yield
     finally:
@@ -129,6 +238,9 @@ def _normalize_usage(value: Any, *, embedding: bool) -> TokenUsage | None:
             image_input_tokens=_field(input_details, "image_tokens"),
             audio_input_tokens=_field(input_details, "audio_tokens"),
             cached_audio_input_tokens=_field(input_details, "audio_cached_tokens"),
+            cache_write_input_tokens=_field(input_details, "cache_write_tokens"),
+            cache_write_5m_input_tokens=_field(input_details, "cache_write_5m_tokens"),
+            cache_write_1h_input_tokens=_field(input_details, "cache_write_1h_tokens"),
         )
     except ValueError:
         _logger.warning("Model returned invalid token usage metadata")
@@ -136,14 +248,25 @@ def _normalize_usage(value: Any, *, embedding: bool) -> TokenUsage | None:
 
 
 class ModelCallTracker:
-    def __init__(self, *, provider: str, model: str, operation: str) -> None:
+    def __init__(
+        self, *, provider: str, model: str, operation: str,
+        granularity: Literal["provider_request", "sdk_turn_run"] = "provider_request",
+        usage_source: str | None = "provider_usage",
+    ) -> None:
+        if granularity not in {"provider_request", "sdk_turn_run"}:
+            raise ValueError("unsupported model call granularity")
         self.call_id = str(uuid4())
         self.provider = provider
         self.model = model
         self.operation = operation
+        self.granularity = granularity
+        self.usage_source = usage_source
+        self.context = MappingProxyType(deepcopy(dict(_context.get())))
         self.started_at = time.time_ns() // 1_000_000
         self.request_id: str | None = None
         self.usage: TokenUsage | None = None
+        self.sdk_model_usage: tuple[SDKModelUsage, ...] = ()
+        self.usage_scope: str | None = None
         self._cancelled = Event()
         self._cancel_lock = Lock()
         self._cancel_callbacks: dict[int, Callable[[], None]] = {}
@@ -219,13 +342,21 @@ class ModelCallTracker:
         if isinstance(model, str) and model:
             self.model = model
         if include_usage:
-            self.usage = _normalize_usage(_field(response, "usage"), embedding=self.operation in {"text_embedding", "video_embedding"})
+            self.usage = _normalize_usage(_field(response, "usage"), embedding=self.operation in {"text_embedding", "image_embedding", "video_embedding"})
 
 
 @contextmanager
-def track_model_call(*, provider: str, model: str, operation: str) -> Iterator[ModelCallTracker]:
-    tracker = ModelCallTracker(provider=provider, model=model, operation=operation)
+def track_model_call(
+    *, provider: str, model: str, operation: str,
+    granularity: Literal["provider_request", "sdk_turn_run"] = "provider_request",
+    usage_source: str | None = "provider_usage",
+) -> Iterator[ModelCallTracker]:
+    tracker = ModelCallTracker(
+        provider=provider, model=model, operation=operation,
+        granularity=granularity, usage_source=usage_source,
+    )
     observer = _observer.get()
+    finish_observer = observer
     control = _control.get()
     admitted = False
     request_started = False
@@ -237,6 +368,8 @@ def track_model_call(*, provider: str, model: str, operation: str) -> Iterator[M
         tracker.raise_if_cancelled()
         tracker.mark_request_started()
         request_started = True
+        if observer is not None:
+            finish_observer = _start_observer(observer, tracker)
         yield tracker
         tracker.raise_if_cancelled()
         status = "completed"
@@ -251,17 +384,19 @@ def track_model_call(*, provider: str, model: str, operation: str) -> Iterator[M
             ) from error
         raise
     finally:
+        ended_at = time.time_ns() // 1_000_000
         if admitted and control is not None:
             try:
                 control.release(tracker)
             except Exception:
                 _logger.warning("Model call control release failed")
-        if request_started and observer is not None:
-            try:
-                observer(ModelCallUsage(
-                    call_id=tracker.call_id, provider=tracker.provider, model=tracker.model,
-                    operation=tracker.operation, started_at=tracker.started_at,
-                    request_id=tracker.request_id, usage=tracker.usage, status=status,
-                ))
-            except Exception:
-                _logger.warning("Model usage observer failed; model result is preserved")
+        if request_started and finish_observer is not None:
+            _finish_observer(finish_observer, ModelCallUsage(
+                call_id=tracker.call_id, provider=tracker.provider, model=tracker.model,
+                operation=tracker.operation, started_at=tracker.started_at,
+                request_id=tracker.request_id, usage=tracker.usage, status=status,
+                ended_at=ended_at, granularity=tracker.granularity,
+                usage_source=tracker.usage_source if tracker.usage is not None else None,
+                context=tracker.context,
+                sdk_model_usage=tracker.sdk_model_usage, usage_scope=tracker.usage_scope,
+            ))

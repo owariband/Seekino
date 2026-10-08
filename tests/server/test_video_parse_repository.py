@@ -6,13 +6,9 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from engine.parsev2.schemas import VideoParseResult
-from engine.rag import (
-    compute_index_projection_revision,
-    compute_source_revision,
-    project_chunk_index,
-)
 from engine.rag.contracts import VideoChunkRetrievalIdentity
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
@@ -244,11 +240,18 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
     )
     assert [item.sequence_no for item in index_snapshot.chunks] == [0]
     indexed_chunk = index_snapshot.chunks[0]
+    receipt = {
+        "parse_task_id": indexing.video_parse_task_id,
+        "video_chunk_id": indexed_chunk.video_chunk_id,
+        "content_version": indexed_chunk.content_version,
+        "index_generation": 1,
+    }
     repo.save_index_embeddings(
         indexing,
         indexed_chunk.chunk_parse_task_id,
         indexed_chunk.content_version,
         {"semantic": {"vector": [1.0]}},
+        receipt=receipt,
         now=NOW + timedelta(minutes=1, seconds=2),
     )
     repo.save_index_embeddings(
@@ -256,17 +259,7 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
         indexed_chunk.chunk_parse_task_id,
         indexed_chunk.content_version,
         {"vision": {"vector": [2.0]}},
-        receipt={
-            "parse_task_id": indexing.video_parse_task_id,
-            "video_chunk_id": indexed_chunk.video_chunk_id,
-            "content_version": indexed_chunk.content_version,
-            "source_revision": "source-1",
-            "projection_revision": "projection-1",
-            "retrieval_contract_id": "retrieval-1",
-            "semantic_encoder_id": "semantic-1",
-            "vision_encoder_id": "vision-1",
-            "index_generation": 1,
-        },
+        receipt=receipt,
         now=NOW + timedelta(minutes=1, seconds=2),
     )
     with factory() as session:
@@ -277,16 +270,34 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
             )
         ).detail["_index_embeddings_v2"]
         assert set(cached["representations"]) == {"semantic", "vision"}
-        assert cached["receipt"] == {
-            "parse_task_id": indexing.video_parse_task_id,
-            "video_chunk_id": indexed_chunk.video_chunk_id,
-            "content_version": indexed_chunk.content_version,
-            "source_revision": "source-1",
-            "projection_revision": "projection-1",
-            "retrieval_contract_id": "retrieval-1",
-            "semantic_encoder_id": "semantic-1",
-            "vision_encoder_id": "vision-1",
-            "index_generation": 1,
+        assert cached["receipt"] == receipt
+    for invalid in (
+        {**receipt, "content_version": True},
+        {**receipt, "index_generation": True},
+        {**receipt, "index_generation": 0},
+        {**receipt, "parse_task_id": str(uuid4())},
+    ):
+        with pytest.raises(VideoParseConflictError, match="receipt"):
+            repo.save_index_embeddings(
+                indexing,
+                indexed_chunk.chunk_parse_task_id,
+                indexed_chunk.content_version,
+                {"semantic": {"vector": [999.0]}},
+                receipt=invalid,
+                now=NOW + timedelta(minutes=1, seconds=2),
+            )
+    next_receipt = {**receipt, "index_generation": 2}
+    repo.save_index_embeddings(
+        indexing, indexed_chunk.chunk_parse_task_id, indexed_chunk.content_version,
+        {"semantic": {"vector": [3.0]}}, receipt=next_receipt,
+        now=NOW + timedelta(minutes=1, seconds=2),
+    )
+    with factory() as session:
+        current = session.scalar(select(ChunkParseContentRecord).where(
+            ChunkParseContentRecord.chunk_parse_task_id == indexed_chunk.chunk_parse_task_id
+        ))
+        assert current.detail[INDEX_EMBEDDINGS_DETAIL_KEY]["representations"] == {
+            "semantic": {"vector": [3.0]},
         }
     state = repo.complete_interval_indexing(
         indexing,
@@ -1797,9 +1808,7 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
         assert one_content.version == new_one.content_version + 1
 
 
-def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
-    repository,
-) -> None:
+def _seed_retrieval_chunk(repository):
     factory, task_id = _seed(repository, chunk_count=1)
     repo = VideoParseRepository(factory)
     chunk_id = str(uuid4())
@@ -1821,20 +1830,10 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
             }],
         }],
     })
-    projection = project_chunk_index(
-        content,
-        chunk_start_seconds=0,
-        chunk_end_seconds=10,
-    )
     receipt = {
         "parse_task_id": task_id,
         "video_chunk_id": chunk_id,
         "content_version": 1,
-        "source_revision": compute_source_revision(content),
-        "projection_revision": compute_index_projection_revision(projection),
-        "retrieval_contract_id": "retrieval-v2",
-        "semantic_encoder_id": "semantic-v2",
-        "vision_encoder_id": "vision-v2",
         "index_generation": 2,
     }
     with factory.begin() as session:
@@ -1889,9 +1888,6 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
             update_time=NOW,
         ))
 
-    scope = repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
-    assert scope.searched_video_ids == (video.video_id,)
-    assert scope.parse_tasks_by_video_id == {video.video_id: task_id}
     identity = VideoChunkRetrievalIdentity(
         workspace_id="mine",
         series_id=video.series_id,
@@ -1899,16 +1895,34 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         parse_task_id=task_id,
         content_version=1,
         index_generation=2,
-        source_revision=receipt["source_revision"],
-        projection_revision=receipt["projection_revision"],
-        retrieval_contract_id="retrieval-v2",
-        semantic_encoder_id="semantic-v2",
-        vision_encoder_id="vision-v2",
     )
+    return factory, repo, video, identity, chunk_id
+
+
+def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
+    repository,
+) -> None:
+    factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
+    task_id = identity.parse_task_id
+    scope = repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
+    assert scope.searched_video_ids == (video.video_id,)
+    assert scope.parse_tasks_by_video_id == {video.video_id: task_id}
+    assert scope.series_by_video_id == {video.video_id: video.series_id}
+    assert scope.index_generation == 2
+    assert scope.embedding_model == scope.parse_config.models.embedding.model
+    hydrated = repo.hydrate_retrieval_candidates([(chunk_id, identity)], include_context=True)
+    assert hydrated[0].facts.retrieval_identity == identity
+    assert hydrated[0].facts.result.timeline[0].text_variants[0].text == "我没事"
+    assert hydrated[0].facts.enrichments == ()
+    assert hydrated[0].contexts == ()
     evidence = repo.hydrate_retrieval_evidence([(chunk_id, identity)])
     assert evidence[0].video_chunk_id == chunk_id
     assert evidence[0].transcript[0].text == "我没事"
-    assert evidence[0].parse_provenance["contentVersion"] == 1
+    assert evidence[0].parse_provenance == {
+        "parseTaskId": task_id,
+        "contentVersion": 1,
+        "indexGeneration": 2,
+    }
 
     empty_series_id = str(uuid4())
     with factory.begin() as session:
@@ -1955,3 +1969,159 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
     with pytest.raises(VideoParseConflictError, match="latest V2 task"):
         repo.hydrate_retrieval_evidence([(chunk_id, identity)])
+
+
+@pytest.mark.parametrize("weights", [None, {"17": -1.0}, {}, {"17": 0.5}])
+def test_sparse_scope_requires_a_completed_valid_representation(repository, weights):
+    factory, repo, video, identity, _chunk_id = _seed_retrieval_chunk(repository)
+    if weights is not None:
+        with factory.begin() as session:
+            content = session.scalar(select(ChunkParseContentRecord).join(ChunkParseTaskRecord,
+                ChunkParseTaskRecord.id == ChunkParseContentRecord.chunk_parse_task_id).where(
+                ChunkParseTaskRecord.video_parse_task_id == identity.parse_task_id))
+            detail = dict(content.detail)
+            envelope = dict(detail[INDEX_EMBEDDINGS_DETAIL_KEY])
+            envelope["representations"] = {"sparse": {"channel": "sparse", "weights": weights}}
+            detail[INDEX_EMBEDDINGS_DETAIL_KEY] = envelope
+            content.detail = detail
+    if weights is None or any(value < 0 for value in weights.values()):
+        with pytest.raises(VideoParseConflictError, match="Sparse representation"):
+            repo.resolve_retrieval_scope([video.series_id], workspace_id="mine", require_sparse=True)
+    else:
+        scope = repo.resolve_retrieval_scope([video.series_id], workspace_id="mine", require_sparse=True)
+        assert scope.searched_video_ids == (video.video_id,)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("workspace_id", "other"),
+    ("series_id", str(uuid4())),
+    ("video_id", str(uuid4())),
+    ("parse_task_id", str(uuid4())),
+    ("content_version", 2),
+    ("index_generation", 3),
+])
+def test_v2_hydration_rejects_current_identity_mismatch(repository, field, value):
+    _factory, repo, _video, identity, chunk_id = _seed_retrieval_chunk(repository)
+    mismatched = identity.model_copy(update={field: value})
+    with pytest.raises(VideoParseConflictError, match="retrieval candidate"):
+        repo.hydrate_retrieval_candidates([(chunk_id, mismatched)])
+
+
+@pytest.mark.parametrize("field,value", [
+    ("content_version", True),
+    ("content_version", 2),
+    ("index_generation", True),
+    ("index_generation", 0),
+    ("video_chunk_id", str(uuid4())),
+])
+def test_v2_retrieval_requires_a_current_strict_receipt(repository, field, value):
+    factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
+    with factory.begin() as session:
+        content = session.scalar(select(ChunkParseContentRecord))
+        envelope = content.detail[INDEX_EMBEDDINGS_DETAIL_KEY]
+        content.detail = {
+            **content.detail,
+            INDEX_EMBEDDINGS_DETAIL_KEY: {
+                **envelope, "receipt": {**envelope["receipt"], field: value},
+            },
+        }
+        flag_modified(content, "detail")
+    with pytest.raises(VideoParseConflictError, match="receipt"):
+        repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
+    with pytest.raises(VideoParseConflictError, match="receipt"):
+        repo.hydrate_retrieval_candidates([(chunk_id, identity)])
+
+
+@pytest.mark.parametrize("field", ["source", "model", "dimensions", "video_fps", "max_height"])
+def test_v2_scope_rejects_mixed_index_configuration_but_allows_understanding_changes(
+    repository, field,
+):
+    factory, repo, video, _identity, _chunk_id = _seed_retrieval_chunk(repository)
+    _factory, _repo, other, other_identity, _other_chunk = _seed_retrieval_chunk(repository)
+    with factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, other_identity.parse_task_id)
+        config = dict(task.parse_config)
+        config["models"] = {
+            **config["models"],
+            "understanding": {**config["models"]["understanding"], "model": "other-understanding"},
+        }
+        task.parse_config = config
+    scope = repo.resolve_retrieval_scope([video.series_id, other.series_id], workspace_id="mine")
+    assert set(scope.searched_video_ids) == {video.video_id, other.video_id}
+    with factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, other_identity.parse_task_id)
+        config = dict(task.parse_config)
+        if field == "max_height":
+            config["visual_input"] = {**config["visual_input"], "max_height": 480}
+        else:
+            embedding = dict(config["models"]["embedding"])
+            embedding[field] = {
+                "source": "other-source", "model": "other-model", "dimensions": 768,
+                "video_fps": 2.0,
+            }[field]
+            config["models"] = {**config["models"], "embedding": embedding}
+        task.parse_config = config
+    with pytest.raises(VideoParseConflictError, match="different index contracts"):
+        repo.resolve_retrieval_scope([video.series_id, other.series_id], workspace_id="mine")
+
+
+@pytest.mark.parametrize("issue", [None, "missing", "gap", "generation", "receipt_version"])
+def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, issue):
+    factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
+    neighbors = []
+    with factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, identity.parse_task_id)
+        task.chunk_count = 3
+        session.get(VideoRecord, video.video_id).duration_seconds = 30
+        chunk = session.get(VideoChunkRecord, chunk_id)
+        chunk.sequence_no = 1
+        chunk.start_seconds = chunk.analysis_window_start_seconds = 10
+        chunk.end_seconds = chunk.analysis_window_end_seconds = 20
+        for sequence in (0, 2):
+            other_chunk_id, child_id = str(uuid4()), str(uuid4())
+            neighbors.append(other_chunk_id)
+            start, end = sequence * 10, (sequence + 1) * 10
+            receipt = {
+                "parse_task_id": task.id, "video_chunk_id": other_chunk_id,
+                "content_version": sequence + 2, "index_generation": 2,
+            }
+            if sequence == 2:
+                if issue == "gap":
+                    start += 1
+                elif issue == "generation":
+                    receipt["index_generation"] = 3
+                elif issue == "receipt_version":
+                    receipt["content_version"] = 99
+            session.add(VideoChunkRecord(
+                video_chunk_id=other_chunk_id, video_id=video.video_id, sequence_no=sequence,
+                start_seconds=start, end_seconds=end,
+                analysis_window_start_seconds=start, analysis_window_end_seconds=end,
+                chunk_media_ref=f"artifact://v2/chunk-{sequence}.mp4",
+                analysis_window_media_ref=f"artifact://v2/window-{sequence}.mp4",
+                transcript=[], baseline_visual_caption=None, keyframe_uris=[],
+            ))
+            session.add(ChunkParseTaskRecord(
+                id=child_id, video_parse_task_id=task.id, video_chunk_id=other_chunk_id,
+                status="QUEUED" if issue == "missing" and sequence == 2 else "COMPLETE",
+                next_execute_time=NOW, retry_count=0, lease_version=0,
+                detail=None, create_time=NOW, update_time=NOW,
+            ))
+            session.add(ChunkParseContentRecord(
+                id=str(uuid4()), chunk_parse_task_id=child_id, version=sequence + 2,
+                content={"persons": [], "timeline": []},
+                detail={INDEX_EMBEDDINGS_DETAIL_KEY: {
+                    "content_version": sequence + 2, "representations": {}, "receipt": receipt,
+                }},
+                create_time=NOW, update_time=NOW,
+            ))
+    # Context is loaded only when explicitly requested.
+    assert repo.hydrate_retrieval_candidates([(chunk_id, identity)])[0].contexts == ()
+    if issue is not None:
+        with pytest.raises(VideoParseConflictError, match="context|receipt"):
+            repo.hydrate_retrieval_candidates([(chunk_id, identity)], include_context=True)
+        return
+    result = repo.hydrate_retrieval_candidates([(chunk_id, identity)], include_context=True)
+    assert result[0].facts.retrieval_identity.content_version == 1
+    assert [item.video_chunk_id for item in result[0].contexts] == neighbors
+    assert [item.retrieval_identity.content_version for item in result[0].contexts] == [2, 4]
+    assert [(item.start_seconds, item.end_seconds) for item in result[0].contexts] == [(0, 10), (20, 30)]
