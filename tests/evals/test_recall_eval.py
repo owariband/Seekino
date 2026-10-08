@@ -129,33 +129,33 @@ def _parse_result(source_video: Path) -> VideoParseResult:
             source_video,
             sequence_no=0,
             start_seconds=0,
-            end_seconds=60,
+            end_seconds=60000,
             analysis_start_seconds=0,
-            analysis_end_seconds=63,
+            analysis_end_seconds=63000,
             compact="alpha compact",
         ),
         _chunk(
             source_video,
             sequence_no=1,
-            start_seconds=60,
-            end_seconds=120,
-            analysis_start_seconds=57,
-            analysis_end_seconds=123,
+            start_seconds=60000,
+            end_seconds=120000,
+            analysis_start_seconds=57000,
+            analysis_end_seconds=123000,
             compact="beta compact",
         ),
         _chunk(
             source_video,
             sequence_no=2,
-            start_seconds=120,
-            end_seconds=180,
-            analysis_start_seconds=117,
-            analysis_end_seconds=180,
+            start_seconds=120000,
+            end_seconds=180000,
+            analysis_start_seconds=117000,
+            analysis_end_seconds=180000,
             compact="gamma compact",
         ),
     ]
     return VideoParseResult(
         source_video=source_video,
-        duration_seconds=180,
+        duration_seconds=180000,
         chunk_duration_seconds=60,
         context_overlap_seconds=3,
         chunks=chunks,
@@ -174,8 +174,8 @@ def _chunk(
     compact: str,
 ) -> VideoChunkParseResult:
     event = OwnedTimelineEvent(
-        start_seconds=start_seconds + 1,
-        end_seconds=start_seconds + 2,
+        start_seconds=start_seconds + 1000,
+        end_seconds=start_seconds + 2000,
         event_type="DIALOGUE",
         description=f"{compact} owned event",
         text=f"{compact} owned dialogue",
@@ -251,7 +251,7 @@ def test_evaluator_caches_both_channels_and_scores_time_range_fixture(
                 query_id="q-beta",
                 query="find beta",
                 relevant_time_ranges_seconds=[
-                    RelevantTimeRange(start_seconds=60, end_seconds=120)
+                    RelevantTimeRange(start_seconds=60000, end_seconds=120000)
                 ],
             )
         ]
@@ -288,8 +288,8 @@ def test_evaluator_caches_both_channels_and_scores_time_range_fixture(
     assert cache_payload["source"]["size_bytes"] == len(b"source-video")
     assert cache_payload["chunk"] == {
         "sequence_no": 1,
-        "start_seconds": 60,
-        "end_seconds": 120,
+        "start_seconds": 60000,
+        "end_seconds": 120000,
         "max_height": 720,
     }
     assert not list((tmp_path / "cache").rglob("*.tmp"))

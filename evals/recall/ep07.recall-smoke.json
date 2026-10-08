@@ -8,8 +8,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 36,
-          "end_seconds": 48
+          "start_seconds": 36000,
+          "end_seconds": 48000
         }
       ]
     },
@@ -21,8 +21,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 303,
-          "end_seconds": 309
+          "start_seconds": 303000,
+          "end_seconds": 309000
         }
       ]
     },
@@ -35,8 +35,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 353,
-          "end_seconds": 361
+          "start_seconds": 353000,
+          "end_seconds": 361000
         }
       ]
     },
@@ -48,8 +48,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 492,
-          "end_seconds": 501
+          "start_seconds": 492000,
+          "end_seconds": 501000
         }
       ]
     },
@@ -62,8 +62,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 558,
-          "end_seconds": 606
+          "start_seconds": 558000,
+          "end_seconds": 606000
         }
       ]
     },
@@ -75,8 +75,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 612,
-          "end_seconds": 621
+          "start_seconds": 612000,
+          "end_seconds": 621000
         }
       ]
     },
@@ -88,8 +88,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 858,
-          "end_seconds": 872
+          "start_seconds": 858000,
+          "end_seconds": 872000
         }
       ]
     },
@@ -102,8 +102,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 886,
-          "end_seconds": 939
+          "start_seconds": 886000,
+          "end_seconds": 939000
         }
       ]
     },
@@ -115,8 +115,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 1180,
-          "end_seconds": 1189
+          "start_seconds": 1180000,
+          "end_seconds": 1189000
         }
       ]
     },
@@ -128,8 +128,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 1252,
-          "end_seconds": 1259
+          "start_seconds": 1252000,
+          "end_seconds": 1259000
         }
       ]
     },
@@ -141,8 +141,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 1380,
-          "end_seconds": 1394
+          "start_seconds": 1380000,
+          "end_seconds": 1394000
         }
       ]
     },
@@ -154,8 +154,8 @@
       ],
       "relevant_time_ranges_seconds": [
         {
-          "start_seconds": 1410,
-          "end_seconds": 1417
+          "start_seconds": 1410000,
+          "end_seconds": 1417000
         }
       ]
     }

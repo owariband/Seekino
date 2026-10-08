@@ -1550,7 +1550,8 @@ def _planned_chunk_count(duration_seconds: int, parse_config: dict) -> int:
         raise UploadConflictError(
             "VideoParseTask parse_config has invalid chunk_duration"
         )
-    return math.ceil(duration_seconds / chunk_duration)
+    # The stored media duration is milliseconds; task configuration stays seconds.
+    return math.ceil(duration_seconds / (chunk_duration * 1000))
 
 
 def _require_compatible_video_topology(
@@ -1561,7 +1562,7 @@ def _require_compatible_video_topology(
     allow_incomplete: bool = False,
 ) -> int:
     chunk_count = _planned_chunk_count(video.duration_seconds, parse_config)
-    chunk_duration = parse_config["chunk_duration"]
+    chunk_duration = parse_config["chunk_duration"] * 1000
     topology = session.execute(
         select(
             VideoChunkRecord.sequence_no,

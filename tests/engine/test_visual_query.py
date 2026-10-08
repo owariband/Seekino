@@ -72,9 +72,9 @@ def _image(**updates):
 
 def _gif(**updates):
     values = dict(frames=(
-        VisualQueryFrame(input_sha256="a" * 64, at_seconds=0.0),
-        VisualQueryFrame(input_sha256="b" * 64, at_seconds=0.25),
-        VisualQueryFrame(input_sha256="c" * 64, at_seconds=0.5),
+        VisualQueryFrame(input_sha256="a" * 64, at_seconds=0),
+        VisualQueryFrame(input_sha256="b" * 64, at_seconds=250),
+        VisualQueryFrame(input_sha256="c" * 64, at_seconds=500),
     ), mime_type="image/png", preprocess_revision="v1")
     values.update(updates)
     return GifQueryInput(**values)
@@ -136,9 +136,9 @@ def test_gif_preserves_all_frame_order_and_rejects_old_encoding_after_sequence_c
     artifact = accept_visual_query_vector(request, model="visual-query", vector=[1, 0])
     # The new sequence has legal increasing times but different frame content order.
     reordered = _gif(frames=(
-        VisualQueryFrame(input_sha256="c" * 64, at_seconds=0.0),
-        VisualQueryFrame(input_sha256="b" * 64, at_seconds=0.25),
-        VisualQueryFrame(input_sha256="a" * 64, at_seconds=0.5),
+        VisualQueryFrame(input_sha256="c" * 64, at_seconds=0),
+        VisualQueryFrame(input_sha256="b" * 64, at_seconds=250),
+        VisualQueryFrame(input_sha256="a" * 64, at_seconds=500),
     ))
     changed = _plan(reordered)
     with pytest.raises(ValueError):
@@ -241,13 +241,13 @@ def test_visual_dense_result_proves_chunk_range_without_inventing_frame_time(que
     )
     hit = RawChunkHit(
         channel="vision", video_chunk_id="chunk", retrieval_identity=identity,
-        rank=1, score=0.8, start_seconds=0, end_seconds=10,
+        rank=1, score=0.8, start_seconds=0, end_seconds=10000,
     )
     fact = ChunkRetrievalFacts(
         video_chunk_id="chunk", retrieval_identity=identity, sequence_no=0,
-        start_seconds=0, end_seconds=10,
+        start_seconds=0, end_seconds=10000,
         result=VideoParseResult.model_validate({"persons": [], "timeline": [{
-            "event_type": "SCENE", "start_seconds": 0, "end_seconds": 10,
+            "event_type": "SCENE", "start_seconds": 0, "end_seconds": 10000,
             "description": "室内画面", "participants": [], "visible_persons": [],
         }]}),
     )
@@ -256,7 +256,7 @@ def test_visual_dense_result_proves_chunk_range_without_inventing_frame_time(que
     assert len(output.accepted) == 1
     proof, = output.accepted[0].evidence
     assert proof.granularity == "chunk" and proof.source is None
-    assert (proof.start_seconds, proof.end_seconds) == (0, 10)
+    assert (proof.start_seconds, proof.end_seconds) == (0, 10000)
 
 
 @pytest.mark.parametrize("channel", ["lexical", "semantic", "sparse"])
@@ -266,7 +266,7 @@ def test_visual_query_rejects_hits_from_text_channels_even_if_policy_weight_is_p
         channel=channel, video_chunk_id="chunk", retrieval_identity=VideoChunkRetrievalIdentity(
             workspace_id="workspace", series_id="series", video_id="video", parse_task_id="task",
             content_version=2, index_generation=3,
-        ), rank=1, score=0.8, start_seconds=0, end_seconds=10,
+        ), rank=1, score=0.8, start_seconds=0, end_seconds=10000,
     )
     with pytest.raises(RetrievalConsistencyError):
         fuse_retrieval_candidates(plan, [hit])
@@ -282,7 +282,7 @@ def test_image_query_rejects_invalid_prepared_media(updates):
         _image(**updates)
 
 
-@pytest.mark.parametrize("times", [(0.25, 0.0), (0.0, 0.0)])
+@pytest.mark.parametrize("times", [(250, 0), (0, 0)])
 def test_gif_query_requires_strictly_increasing_relative_times(times):
     frames = tuple(VisualQueryFrame(input_sha256=letter * 64, at_seconds=time)
                    for letter, time in zip(("a", "b"), times))
@@ -292,7 +292,7 @@ def test_gif_query_requires_strictly_increasing_relative_times(times):
 
 def test_gif_query_requires_multiple_frames():
     with pytest.raises(ValidationError):
-        _gif(frames=(VisualQueryFrame(input_sha256="a" * 64, at_seconds=0.0),))
+        _gif(frames=(VisualQueryFrame(input_sha256="a" * 64, at_seconds=0),))
 
 
 def test_prepared_gif_frames_cannot_use_source_container_mime_type():
@@ -300,7 +300,7 @@ def test_prepared_gif_frames_cannot_use_source_container_mime_type():
         _gif(mime_type="image/gif")
 
 
-@pytest.mark.parametrize("time", [-0.1, float("nan"), float("inf"), True, "0.0"])
+@pytest.mark.parametrize("time", [-1, 0.0, 0.25, float("nan"), float("inf"), True, "0.0"])
 def test_visual_query_frame_rejects_invalid_relative_time(time):
     with pytest.raises(ValidationError):
         VisualQueryFrame(input_sha256="a" * 64, at_seconds=time)

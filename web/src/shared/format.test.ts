@@ -20,8 +20,20 @@ describe("format helpers", () => {
   });
 
   it("formats evidence time ranges consistently", () => {
-    expect(formatTimecode(1_252)).toBe("20:52");
-    expect(formatTimeRange(1_252, 1_259)).toBe("20:52–20:59");
+    expect(formatTimecode(1_252_000)).toBe("20:52");
+    expect(formatTimeRange(1_252_000, 1_259_000)).toBe("20:52–20:59");
+  });
+
+  it("rounds media milliseconds to at most two display decimals without trailing zeros", () => {
+    expect(formatTimecode(8_008)).toBe("00:08.01");
+    expect(formatTimecode(8_250)).toBe("00:08.25");
+    expect(formatTimecode(8_100)).toBe("00:08.1");
+    expect(formatTimecode(8_000)).toBe("00:08");
+    expect(formatTimecode(59_999)).toBe("01:00");
+    expect(formatTimecode(3_599_999)).toBe("01:00:00");
+    expect(formatTimecode(100)).toBe("00:00.1");
+    expect(formatTimecode(0)).toBe("00:00");
+    expect(formatTimeRange(8_008, 8_250)).toBe("00:08.01–00:08.25");
   });
 
   it("extracts episode order while retaining a safe fallback", () => {

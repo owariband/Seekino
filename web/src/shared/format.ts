@@ -20,17 +20,22 @@ export function formatMoneyUsd(value: string | null): string {
   return `$${integer!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction.padEnd(2, "0")}`;
 }
 
+/** Media time is integer milliseconds; display seconds with at most two decimal places. */
 export function formatTimecode(seconds: number): string {
-  seconds = Math.max(0, Math.floor(seconds));
+  const hundredths = Math.max(0, Math.round(seconds / 10));
+  seconds = Math.floor(hundredths / 100);
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainder = seconds % 60;
-  return [hours, minutes, remainder]
+  const timecode = [hours, minutes, remainder]
     .filter((_, index) => hours > 0 || index > 0)
     .map((value) => String(value).padStart(2, "0"))
     .join(":");
+  const fraction = hundredths % 100;
+  return fraction ? `${timecode}.${String(fraction).padStart(2, "0").replace(/0+$/, "")}` : timecode;
 }
 
+/** The retained Seconds parameter names carry integer milliseconds. */
 export function formatTimeRange(startSeconds: number, endSeconds: number): string {
   return `${formatTimecode(startSeconds)}–${formatTimecode(endSeconds)}`;
 }

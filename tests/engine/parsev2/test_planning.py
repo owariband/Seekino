@@ -13,13 +13,18 @@ from engine.parsev2.planning import (
 
 
 def test_chunk_plan_uses_fixed_half_open_bounds_and_short_final_chunk() -> None:
-    assert plan_chunks(duration_seconds=61, chunk_duration=20) == (
-        ChunkPlan(0, 0, 20),
-        ChunkPlan(1, 20, 40),
-        ChunkPlan(2, 40, 60),
-        ChunkPlan(3, 60, 61),
+    assert plan_chunks(duration_seconds=61000, chunk_duration=20) == (
+        ChunkPlan(0, 0, 20000),
+        ChunkPlan(1, 20000, 40000),
+        ChunkPlan(2, 40000, 60000),
+        ChunkPlan(3, 60000, 61000),
     )
-    assert plan_chunks(duration_seconds=40, chunk_duration=20)[-1].end_seconds == 40
+    assert plan_chunks(duration_seconds=40000, chunk_duration=20)[-1].end_seconds == 40000
+
+
+def test_chunk_plan_retains_fractional_final_duration_with_second_configuration() -> None:
+    assert plan_chunks(duration_seconds=61008, chunk_duration=20)[-1] == ChunkPlan(3, 60000, 61008)
+    assert plan_chunks(duration_seconds=250, chunk_duration=20) == (ChunkPlan(0, 0, 250),)
 
 
 def test_interval_plan_uses_ceil_and_only_complete_windows_for_long_video() -> None:
@@ -51,18 +56,18 @@ def test_containing_intervals_matches_edge_and_overlap_release_example() -> None
 
 
 def test_existing_topology_must_match_the_fixed_config() -> None:
-    chunks = plan_chunks(duration_seconds=41, chunk_duration=20)
+    chunks = plan_chunks(duration_seconds=41000, chunk_duration=20)
     assert validate_chunk_topology(
         chunks,
-        duration_seconds=41,
+        duration_seconds=41000,
         chunk_duration=20,
     ) == chunks
 
-    incompatible = (*chunks[:-1], ChunkPlan(2, 40, 42))
+    incompatible = (*chunks[:-1], ChunkPlan(2, 40000, 42000))
     with pytest.raises(ValueError, match="incompatible"):
         validate_chunk_topology(
             incompatible,
-            duration_seconds=41,
+            duration_seconds=41000,
             chunk_duration=20,
         )
 

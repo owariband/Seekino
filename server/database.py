@@ -235,6 +235,17 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 def create_schema(engine: Engine) -> None:
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
+    if engine.dialect.name == "mysql" and "video" in existing_tables:
+        duration = next(
+            (column for column in inspector.get_columns("video")
+             if column["name"] == "duration_seconds"),
+            None,
+        )
+        if duration is not None and duration.get("comment") != "media_time_milliseconds":
+            raise SchemaUpgradeRequiredError(
+                "media timeline requires 20261008_video_timeline_milliseconds.sql "
+                "before init-db; video.duration_seconds is not marked as milliseconds"
+            )
     legacy_schema = existing_tables.intersection(
         {
             "video_segment",

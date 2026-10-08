@@ -412,8 +412,9 @@ def _render_event_line(
 
 
 def _format_seconds(value: int) -> str:
-    minutes, seconds = divmod(value, 60)
-    return f"{minutes:02d}:{seconds:02d}"
+    whole_seconds, milliseconds = divmod(value, 1000)
+    minutes, seconds = divmod(whole_seconds, 60)
+    return f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
 
 def _is_duplicate(
@@ -426,7 +427,7 @@ def _is_duplicate(
         if _event_key(existing) != candidate_key:
             continue
         existing_midpoint = existing.start_seconds + existing.end_seconds
-        if abs(candidate_midpoint - existing_midpoint) <= 2:
+        if abs(candidate_midpoint - existing_midpoint) <= 2000:
             return True
     return False
 

@@ -97,7 +97,7 @@ def _visual_query(kind):
         return ImageQueryInput(input_sha256="a" * 64, mime_type="image/png", preprocess_revision="v1")
     return GifQueryInput(
         frames=tuple(VisualQueryFrame(input_sha256=digest * 64, at_seconds=at_seconds)
-                     for digest, at_seconds in (("a", 0.0), ("b", 0.2), ("c", 0.4))),
+                     for digest, at_seconds in (("a", 0), ("b", 200), ("c", 400))),
         mime_type="image/png", preprocess_revision="v1",
     )
 
@@ -113,13 +113,13 @@ def _visual_plan(kind, *, policy=None, scope=None):
     )
 
 
-def _event(text="我没事", start=1, end=3, speaker="千早爱音", role="ORIGINAL"):
+def _event(text="我没事", start=1000, end=3000, speaker="千早爱音", role="ORIGINAL"):
     return dict(event_type="DIALOGUE", start_seconds=start, end_seconds=end,
                 description=f"{speaker}回答", participants=[speaker], visible_persons=[speaker],
                 speaker=speaker, text_variants=[dict(language="zh-Hans", role=role, text=text)])
 
 
-def _fact(plan, *, chunk="chunk", sequence=0, bounds=(0, 10), version=2,
+def _fact(plan, *, chunk="chunk", sequence=0, bounds=(0, 10000), version=2,
           events=None, enrichments=()):
     result = VideoParseResult.model_validate({
         "persons": ["千早爱音", "高松灯"], "timeline": events or [_event()],
@@ -171,7 +171,7 @@ def test_text_pipeline_shares_compatible_encoding_and_preserves_formal_event():
     proof = output.accepted[0].evidence[0]
     assert proof.source.speaker == "千早爱音"
     assert proof.retrieval_identity == fact.retrieval_identity
-    assert (proof.start_seconds, proof.end_seconds) == (1, 3)
+    assert (proof.start_seconds, proof.end_seconds) == (1000, 3000)
 
 
 @pytest.mark.parametrize("kind", ["image", "gif"])
@@ -186,7 +186,7 @@ def test_visual_query_reuses_recall_fusion_and_formal_facts_without_frame_locali
     assert request.channels == ("vision",)
     assert request.visual_input == plan.query
     if kind == "gif":
-        assert tuple(frame.at_seconds for frame in request.visual_input.frames) == (0.0, 0.2, 0.4)
+        assert tuple(frame.at_seconds for frame in request.visual_input.frames) == (0, 200, 400)
     vector = accept_visual_query_vector(request, model="embedding", vector=[1, 0])
     recalls = build_recall_requests(plan, vectors=[vector])
     assert len(recalls) == 1
@@ -365,7 +365,7 @@ def test_candidate_evidence_returns_full_qualified_pool_and_old_entry_keeps_top_
 
 def test_neighbor_also_used_as_candidate_cannot_change_its_content_version():
     plan = _plan()
-    fact = _fact(plan, sequence=1, bounds=(10, 20), events=[_event(start=11, end=13)])
+    fact = _fact(plan, sequence=1, bounds=(10000, 20000), events=[_event(start=11000, end=13000)])
     before = _fact(plan, chunk="before", sequence=0)
     candidates = fuse_retrieval_candidates(plan, [_hit(fact), _hit(before, rank=2)])
     changed = before.model_copy(update={
@@ -414,14 +414,14 @@ def test_questions_are_recall_only_and_dense_proves_chunk_range():
     assert output.accepted[0].evidence[0].granularity == "chunk"
     assert output.accepted[0].evidence[0].source is None
     dense = _verify(plan, fact).accepted[0].evidence[0]
-    assert (dense.start_seconds, dense.end_seconds) == (0, 10)
+    assert (dense.start_seconds, dense.end_seconds) == (0, 10000)
     strict = replace(plan, constraints=(EventConstraint(key="quote", field="dialogue", text="只有问题有的原话"),))
     assert _verify(strict, fact).rejected_chunk_ids == ("chunk",)
 
 
 def test_verbatim_speaker_must_match_same_event_and_translation_requires_opt_in():
     plan = _plan(constraints=[EventConstraint(key="quote", field="dialogue", text="我没事", speaker="千早爱音")])
-    fact = _fact(plan, events=[_event(speaker="高松灯"), _event("另一句话", start=4, end=6)])
+    fact = _fact(plan, events=[_event(speaker="高松灯"), _event("另一句话", start=4000, end=6000)])
     assert _verify(plan, fact).rejected_chunk_ids == ("chunk",)
     translated = _fact(plan, events=[_event(role="TRANSLATION")])
     assert _verify(plan, translated).rejected_chunk_ids == ("chunk",)
@@ -431,13 +431,13 @@ def test_verbatim_speaker_must_match_same_event_and_translation_requires_opt_in(
 
 def test_adjacent_context_retains_own_version_and_full_event_times():
     plan = _plan(constraints=[EventConstraint(key="quote", field="dialogue", text="先前原话", include_context=True)])
-    fact = _fact(plan, sequence=1, bounds=(10, 20), events=[_event(start=11, end=13)])
-    before = _fact(plan, chunk="before", sequence=0, version=9, events=[_event("先前原话", start=9, end=11)])
+    fact = _fact(plan, sequence=1, bounds=(10000, 20000), events=[_event(start=11000, end=13000)])
+    before = _fact(plan, chunk="before", sequence=0, version=9, events=[_event("先前原话", start=9000, end=11000)])
     output = _verify(plan, fact, contexts={"chunk": [before]})
     proof = output.accepted[0].evidence[0]
     assert proof.context == "before" and proof.video_chunk_id == "before"
     assert proof.retrieval_identity.content_version == 9
-    assert (proof.start_seconds, proof.end_seconds) == (9, 11)
+    assert (proof.start_seconds, proof.end_seconds) == (9000, 11000)
     denied = replace(plan, constraints=(plan.constraints[0].model_copy(update={"include_context": False}),))
     assert _verify(denied, fact, contexts={"chunk": [before]}).rejected_chunk_ids == ("chunk",)
     bad = before.model_copy(update={"sequence_no": 4})
@@ -462,7 +462,7 @@ def test_temporal_constraints_cannot_mix_distinct_occurrences_of_one_condition()
     plan = _plan(constraints=[EventConstraint(key=key, field="dialogue", text=key) for key in ("a", "b", "c")],
                  temporal=[TemporalConstraint(left="a", right="b", relation="before"),
                            TemporalConstraint(left="b", right="c", relation="before")])
-    fact = _fact(plan, events=[_event("b", 1, 2), _event("a", 3, 4), _event("c", 5, 6), _event("b", 7, 8)])
+    fact = _fact(plan, events=[_event("b", 1000, 2000), _event("a", 3000, 4000), _event("c", 5000, 6000), _event("b", 7000, 8000)])
     output = _verify(plan, fact)
     assert output.rejected_chunk_ids == ("chunk",)
     assert "temporal" in output.rejected[0].message
@@ -482,9 +482,9 @@ def test_evidence_read_requests_feed_existing_formal_and_adjacent_verification(i
     plan = _plan(constraints=[EventConstraint(
         key="quote", field="dialogue", text=quote, include_context=include_context,
     )])
-    fact = _fact(plan, sequence=1, bounds=(10, 20), events=[_event("本块原话", 11, 13)])
+    fact = _fact(plan, sequence=1, bounds=(10000, 20000), events=[_event("本块原话", 11000, 13000)])
     before = _fact(plan, chunk="before", sequence=0, version=9,
-                   events=[_event("先前原话", 9, 11)])
+                   events=[_event("先前原话", 9000, 11000)])
     candidates = fuse_retrieval_candidates(plan, [_hit(fact)])
     requests = build_evidence_requests(plan, candidates)
     request, = requests
@@ -499,11 +499,11 @@ def test_evidence_read_requests_feed_existing_formal_and_adjacent_verification(i
     if include_context:
         assert proof.video_chunk_id == "before" and proof.context == "before"
         assert proof.retrieval_identity.content_version == 9
-        assert (proof.start_seconds, proof.end_seconds) == (9, 11)
+        assert (proof.start_seconds, proof.end_seconds) == (9000, 11000)
     else:
         assert contexts == {}
         assert proof.video_chunk_id == "chunk" and proof.context == "self"
-        assert (proof.start_seconds, proof.end_seconds) == (11, 13)
+        assert (proof.start_seconds, proof.end_seconds) == (11000, 13000)
 
 
 def test_evidence_requests_do_not_drop_candidates_before_hard_validation_and_top_k():
@@ -527,9 +527,9 @@ def test_evidence_requests_support_cross_chunk_time_conditions_and_each_source_v
         EventConstraint(key="a", field="dialogue", text="先说", include_context=False),
         EventConstraint(key="b", field="dialogue", text="后说", include_context=True),
     ], temporal=[TemporalConstraint(left="a", right="b", relation="before")])
-    fact = _fact(plan, sequence=1, bounds=(10, 20), events=[_event("先说", 11, 13)])
-    after = _fact(plan, chunk="after", sequence=2, bounds=(20, 30), version=7,
-                  events=[_event("后说", 21, 23)])
+    fact = _fact(plan, sequence=1, bounds=(10000, 20000), events=[_event("先说", 11000, 13000)])
+    after = _fact(plan, chunk="after", sequence=2, bounds=(20000, 30000), version=7,
+                  events=[_event("后说", 21000, 23000)])
     candidates = fuse_retrieval_candidates(plan, [_hit(fact)])
     requests = build_evidence_requests(plan, candidates)
     assert requests[0].include_context is True
@@ -540,7 +540,7 @@ def test_evidence_requests_support_cross_chunk_time_conditions_and_each_source_v
     assert [(proof.video_chunk_id, proof.retrieval_identity.content_version) for proof in proofs] == [
         ("chunk", 2), ("after", 7),
     ]
-    assert [(proof.start_seconds, proof.end_seconds) for proof in proofs] == [(11, 13), (21, 23)]
+    assert [(proof.start_seconds, proof.end_seconds) for proof in proofs] == [(11000, 13000), (21000, 23000)]
 
 
 def test_evidence_requests_allow_empty_candidates_and_no_neighbor_at_video_boundary():
@@ -591,7 +591,7 @@ def test_evidence_requests_reject_duplicate_or_over_budget_candidates(failure):
         build_evidence_requests(plan, candidates)
 
 
-@pytest.mark.parametrize("bounds", [{"end_seconds": 0}, {"start_seconds": -1}, {"start_seconds": 10}])
+@pytest.mark.parametrize("bounds", [{"end_seconds": 0}, {"start_seconds": -1000}, {"start_seconds": 10000}])
 def test_evidence_requests_reject_invalid_candidate_time_bounds(bounds):
     plan = _plan()
     candidate, = fuse_retrieval_candidates(plan, [_hit(_fact(plan))])
@@ -609,7 +609,7 @@ def test_visual_candidates_keep_chunk_evidence_through_read_requests(kind):
     output = verify_retrieval_evidence(plan, [item.candidate for item in requests], [fact])
     proof, = output.accepted[0].evidence
     assert proof.granularity == "chunk" and proof.source is None
-    assert (proof.start_seconds, proof.end_seconds) == (0, 10)
+    assert (proof.start_seconds, proof.end_seconds) == (0, 10000)
 
 
 def test_deep_event_assignment_warns_without_leaking_text_or_stopping_verification(caplog):

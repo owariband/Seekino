@@ -31,7 +31,7 @@ def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
     source.write_bytes(b"video fixture")
     window = plan_analysis_windows(
         source,
-        duration_seconds=1,
+        duration_seconds=1000,
         output_dir=tmp_path / "windows",
         chunk_duration_seconds=1,
         context_overlap_seconds=0,
@@ -140,7 +140,7 @@ def test_runtime_resumes_a_fully_parsed_video_without_model_credentials(
     output = tmp_path / "job"
     windows = plan_analysis_windows(
         source,
-        duration_seconds=10,
+        duration_seconds=10000,
         output_dir=output / "windows",
         chunk_duration_seconds=60,
         context_overlap_seconds=0,
@@ -215,7 +215,7 @@ def test_runtime_resumes_a_fully_parsed_video_without_model_credentials(
         )
     ).run(
         source,
-        duration_seconds=10,
+        duration_seconds=10000,
         output_dir=output,
     )
 
@@ -268,7 +268,7 @@ def test_runtime_passes_background_images_to_each_video_model_call(
         )
     ).run(
         source,
-        duration_seconds=2,
+        duration_seconds=2000,
         output_dir=tmp_path / "job",
         series_bible="完整背景正文 asset://tomori_01",
         background_images=images,
@@ -341,7 +341,7 @@ def test_runtime_pipelines_candidate_asr_ahead_of_serial_parse(
         )
     ).run(
         source,
-        duration_seconds=3,
+        duration_seconds=3000,
         output_dir=output,
     )
 
@@ -403,7 +403,7 @@ def test_runtime_resumes_each_stage_after_later_asr_failure(
     )
 
     with pytest.raises(RuntimeError, match="candidate ASR failed for chunk 1"):
-        runtime.run(source, duration_seconds=2, output_dir=output)
+        runtime.run(source, duration_seconds=2000, output_dir=output)
 
     assert (output / "transcripts" / "chunk-0000.json").is_file()
     assert not (output / "transcripts" / "chunk-0001.json").exists()
@@ -415,7 +415,7 @@ def test_runtime_resumes_each_stage_after_later_asr_failure(
     assert calls.count(("video_timeline", 1)) == 0
 
     fail_second_asr = False
-    result = runtime.run(source, duration_seconds=2, output_dir=output)
+    result = runtime.run(source, duration_seconds=2000, output_dir=output)
 
     assert len(result.chunks) == 2
     assert calls.count(("candidate_transcript", 0)) == 1

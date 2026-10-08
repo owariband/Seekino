@@ -30,19 +30,19 @@ class DialogueTextVariant(_ParseV2Model):
 class TimelineEventBase(_ParseV2Model):
     """Fields shared by every sparse event on the source-video timeline.
 
-    Times are absolute integer seconds and use a half-open interval:
-    ``[start_seconds, end_seconds)``.
+    Times are absolute integer milliseconds and use a half-open interval:
+    ``[start_seconds, end_seconds)``. Existing field names remain unchanged.
     """
 
     start_seconds: int = Field(
         ge=0,
         strict=True,
-        description="Inclusive absolute start in integer source-video seconds",
+        description="Inclusive absolute start in integer source-video milliseconds",
     )
     end_seconds: int = Field(
         gt=0,
         strict=True,
-        description="Exclusive absolute end in integer source-video seconds",
+        description="Exclusive absolute end in integer source-video milliseconds",
     )
     description: _NonBlankString
     participants: list[_NonBlankString] = Field(

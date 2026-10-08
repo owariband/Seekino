@@ -9,6 +9,7 @@ import styles from "./watch.module.css";
 
 interface VideoPlayerProps {
   video: VideoSummary;
+  /** Integer milliseconds; the public field name is retained. */
   atSeconds?: number;
   fullscreen?: boolean;
   onToggleFullscreen?: () => void | Promise<void>;
@@ -16,6 +17,7 @@ interface VideoPlayerProps {
 }
 
 export interface VideoPlayerHandle {
+  /** positionSeconds is integer milliseconds, including subsecond playback position. */
   pauseAndGetSnapshot(): { positionSeconds: number; wasPlaying: boolean } | null;
   focus(): void;
   resume(): void;
@@ -96,7 +98,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const syncPosition = () => {
     const media = mediaRef.current;
     if (!media) return;
-    const next = Math.max(0, Math.floor(media.currentTime));
+    const next = Math.max(0, Math.round(media.currentTime * 1000));
     updatePosition(next);
     if (Date.now() - lastWriteAtRef.current >= PROGRESS_WRITE_INTERVAL_MS) persist();
   };
@@ -106,7 +108,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     if (!media || !progressReadyRef.current) return null;
     const wasPlaying = !media.paused && !media.ended;
     media.pause();
-    const positionSeconds = Math.max(0, Math.floor(media.currentTime));
+    const positionSeconds = Math.max(0, Math.round(media.currentTime * 1000));
     updatePosition(positionSeconds);
     persist();
     return { positionSeconds, wasPlaying };
@@ -130,15 +132,15 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const onLoadedMetadata = () => {
     const media = mediaRef.current;
     if (!media || initializedKeyRef.current === mediaKey) return;
-    const knownDuration = Number.isFinite(media.duration) && media.duration > 0 ? Math.ceil(media.duration) : video.durationSeconds;
+    const knownDuration = Number.isFinite(media.duration) && media.duration > 0 ? Math.round(media.duration * 1000) : video.durationSeconds;
     durationRef.current = knownDuration;
     setDurationSeconds(knownDuration);
     const saved = readVideoProgress(video.videoId);
     const resume = saved?.seriesId === video.seriesId ? saved.positionSeconds : 0;
-    const nearEnd = knownDuration > 0 && resume >= knownDuration - Math.min(15, knownDuration * 0.05);
+    const nearEnd = knownDuration > 0 && resume >= knownDuration - Math.min(15_000, knownDuration * 0.05);
     const requested = atSeconds !== undefined && Number.isSafeInteger(atSeconds) && atSeconds >= 0 ? atSeconds : nearEnd ? 0 : resume;
     const startSeconds = Math.min(knownDuration, Math.max(0, requested));
-    media.currentTime = startSeconds;
+    media.currentTime = startSeconds / 1000;
     updatePosition(startSeconds);
     progressReadyRef.current = true;
     initializedKeyRef.current = mediaKey;
@@ -149,7 +151,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     const media = mediaRef.current;
     if (!media || !progressReadyRef.current) return;
     const bounded = Math.min(durationRef.current, Math.max(0, nextSeconds));
-    media.currentTime = bounded;
+    media.currentTime = bounded / 1000;
     updatePosition(bounded);
     persist();
   };
@@ -174,8 +176,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     if (event.target instanceof HTMLElement && event.target.closest("button, input, select")) return;
     const key = event.key.toLowerCase();
     if (key === " " || key === "k") togglePlay();
-    else if (key === "arrowleft") seekTo(positionRef.current - 10);
-    else if (key === "arrowright") seekTo(positionRef.current + 10);
+    else if (key === "arrowleft") seekTo(positionRef.current - 10_000);
+    else if (key === "arrowright") seekTo(positionRef.current + 10_000);
     else if (key === "m") { const media = mediaRef.current; if (media) { media.muted = !media.muted; setMuted(media.muted); } }
     else if (key === "f") toggleFullscreen();
     else return;
@@ -229,8 +231,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
         />
         <div className={styles.videoPlayerControlRow}>
           <button type="button" onClick={togglePlay} aria-label={playing ? "暂停" : "播放"}>{playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}</button>
-          <button className={styles.videoPlayerSkip} type="button" disabled={!mediaReady} onClick={() => seekTo(positionRef.current - 10)} aria-label="后退 10 秒"><RotateCcw size={18} /><small>10s</small></button>
-          <button className={styles.videoPlayerSkip} type="button" disabled={!mediaReady} onClick={() => seekTo(positionRef.current + 10)} aria-label="前进 10 秒"><RotateCw size={18} /><small>10s</small></button>
+          <button className={styles.videoPlayerSkip} type="button" disabled={!mediaReady} onClick={() => seekTo(positionRef.current - 10_000)} aria-label="后退 10 秒"><RotateCcw size={18} /><small>10s</small></button>
+          <button className={styles.videoPlayerSkip} type="button" disabled={!mediaReady} onClick={() => seekTo(positionRef.current + 10_000)} aria-label="前进 10 秒"><RotateCw size={18} /><small>10s</small></button>
           <time>{formatTimecode(currentSeconds)} / {formatTimecode(durationSeconds)}</time>
           <div className={styles.videoPlayerControlSpacer} />
           <button type="button" onClick={() => { const media = mediaRef.current; if (media) { media.muted = !media.muted; if (!media.muted && media.volume === 0) media.volume = 0.5; setMuted(media.muted); setVolume(media.volume); } }} aria-label={muted || volume === 0 ? "取消静音" : "静音"}>

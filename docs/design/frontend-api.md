@@ -40,7 +40,7 @@ ID 统一通过 camelCase Query 参数传递，不放在 URL Path 中。检索�
 - 普通请求与响应使用 JSON，字段统一为 `camelCase`。
 - ID 为规范 UUID 字符串。
 - 公开绝对时间是 Unix epoch 毫秒整数，数据库默认按 signed INT64 / `BIGINT` 存储；`model_usage.started_at/created_at` 按已确认设计使用 UTC `TIMESTAMP(3)`，HTTP 输出仍为毫秒整数；前端只在显示边界转换时区。
-- 媒体 `startSeconds` / `endSeconds` / `atSeconds` / `durationSeconds` 是相对于原视频起点的整数秒，不是 Unix 时间戳。
+- 媒体 `startSeconds` / `endSeconds` / `atSeconds` / `durationSeconds` / `positionSeconds` 保留现有名称，值统一为相对于原视频起点的整数毫秒，不是 Unix 时间戳。解析进度中的 `completedDurationSeconds` / `completedThroughSeconds` / `videoDurationSeconds` / `totalDurationSeconds` 和 Checkpoint 范围也使用毫秒。解析配置中的 Chunk／Interval 时长仍用秒，FPS 仍为每秒帧数。浏览器 `currentTime` 接口使用秒，读写时转换；前端显示秒，四舍五入后最多保留两位小数并省略末尾零，例如 `8008` 显示为 `8.01 s` 或 `00:08.01`。
 - `processingDurationMs`、Agent 阶段耗时、HTTP/Tool 耗时等运行 duration 继续使用毫秒，也不是 Unix 时间戳。
 - `workspaceId` 当前默认是 `local-default`。
 - 上传分片的 Body 是原始二进制，不是 `multipart/form-data`。
@@ -222,7 +222,7 @@ GET /api/series/get?seriesId={seriesId}&workspaceId=local-default
       "inferenceProxyUri": null,
       "contentHash": "64-character-sha256",
       "totalBytes": 2147483648,
-      "durationSeconds": 1436,
+      "durationSeconds": 1436000,
       "uploadStatus": "COMPLETED",
       "parseStatus": "RUNNING",
       "uploadProgress": 100,
@@ -591,15 +591,15 @@ GET /api/jobs/get?jobId={jobId}&workspaceId=local-default
   "progress": 37,
   "overallProgress": 37,
   "stageProgress": 55,
-  "completedDurationSeconds": 532,
-  "completedThroughSeconds": 472,
-  "videoDurationSeconds": 1440,
-  "totalDurationSeconds": 1440,
+  "completedDurationSeconds": 532000,
+  "completedThroughSeconds": 472000,
+  "videoDurationSeconds": 1440000,
+  "totalDurationSeconds": 1440000,
   "processingDurationMs": 182000,
   "processingTimingComplete": false,
   "completedChunkCount": 9,
   "totalChunkCount": 24,
-  "currentChunk": {"sequenceNo": 9, "startSeconds": 540, "endSeconds": 600},
+  "currentChunk": {"sequenceNo": 9, "startSeconds": 540000, "endSeconds": 600000},
   "attemptCount": 1,
   "maxAttempts": 3,
   "availableAt": 1789381200000,
@@ -613,15 +613,15 @@ GET /api/jobs/get?jobId={jobId}&workspaceId=local-default
       "videoChunkId": "75f5...",
       "stage": "INDEXED",
       "chunkStartSeconds": 0,
-      "chunkEndSeconds": 60,
+      "chunkEndSeconds": 60000,
       "lastError": null
     },
     {
       "sequenceNo": 1,
       "videoChunkId": "d9a2...",
       "stage": "PARSED",
-      "chunkStartSeconds": 60,
-      "chunkEndSeconds": 120,
+      "chunkStartSeconds": 60000,
+      "chunkEndSeconds": 120000,
       "lastError": null
     }
   ],
@@ -753,7 +753,7 @@ Range: bytes=<start>-<end>
 从检索结果跳转到命中时间：
 
 ```ts
-videoElement.currentTime = evidence.startSeconds;
+videoElement.currentTime = evidence.startSeconds / 1000;
 await videoElement.play();
 ```
 
@@ -827,14 +827,14 @@ Content-Type: application/json
           {
             "kind": "TRANSCRIPT",
             "text": "为什么要弹《春日影》？",
-            "startSeconds": 1252,
-            "endSeconds": 1259
+            "startSeconds": 1252000,
+            "endSeconds": 1259000
           },
           {
             "kind": "VISUAL_EVENT",
             "text": "爽世眼含泪水冲向成员并质问。",
-            "startSeconds": 1252,
-            "endSeconds": 1259
+            "startSeconds": 1252000,
+            "endSeconds": 1259000
           }
         ],
         "limitations": []
@@ -847,13 +847,13 @@ Content-Type: application/json
         "videoId": "2a150753-57ae-58c3-a996-d552734bc640",
         "episodeOrder": 7,
         "originalFilename": "episode-07.mp4",
-        "durationSeconds": 1436,
+        "durationSeconds": 1436000,
         "videoChunkId": "75f5...",
         "sequenceNo": 20,
-        "startSeconds": 1200,
-        "endSeconds": 1260,
-        "analysisWindowStartSeconds": 1197,
-        "analysisWindowEndSeconds": 1263,
+        "startSeconds": 1200000,
+        "endSeconds": 1260000,
+        "analysisWindowStartSeconds": 1197000,
+        "analysisWindowEndSeconds": 1263000,
         "playbackStatus": "READY",
         "playbackUrl": "/api/videos/content?videoId=2a150753-57ae-58c3-a996-d552734bc640&workspaceId=local-default",
         "playbackUrlExpiresAt": null,
@@ -861,7 +861,7 @@ Content-Type: application/json
           "imageId": "WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
           "url": "/api/media/images/content?workspaceId=local-default&imageId=WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
           "expiresAt": null,
-          "atSeconds": 1200,
+          "atSeconds": 1200000,
           "alt": "爽世眼含泪水冲向成员并质问。"
         },
         "keyframes": [
@@ -869,7 +869,7 @@ Content-Type: application/json
             "imageId": "WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
             "url": "/api/media/images/content?workspaceId=local-default&imageId=WyJ2aWRlb19jaHVuayIsIjc1ZjVjY2Q4LWFiY2QtNDMyMS04NzY1LTEyMzQ1Njc4OWFiYyIsMF0",
             "expiresAt": null,
-            "atSeconds": 1200,
+            "atSeconds": 1200000,
             "alt": "爽世眼含泪水冲向成员并质问。"
           }
         ],
@@ -877,16 +877,16 @@ Content-Type: application/json
           {
             "speaker": null,
             "text": "为什么要弹《春日影》？",
-            "startSeconds": 1252,
-            "endSeconds": 1259
+            "startSeconds": 1252000,
+            "endSeconds": 1259000
           }
         ],
         "baselineVisualCaption": null,
         "allTimeEvents": [
           {
             "description": "爽世眼含泪水冲向成员并质问。",
-            "startSeconds": 1252,
-            "endSeconds": 1259
+            "startSeconds": 1252000,
+            "endSeconds": 1259000
           }
         ],
         "allTimeEventText": "该 VideoChunk 自有事件文本",
@@ -914,7 +914,7 @@ Content-Type: application/json
 - Vision vector 绑定的是无重叠 canonical VideoChunk MP4，不是 caption。
 - 响应不返回原始 Text/Vision 浮点向量。
 - 新解析的 canonical VideoChunk 会生成首帧 keyframe；`thumbnail` 是第一张有效关键帧，`keyframes[].atSeconds` 是相对于原视频起点的媒体偏移。`imageId` 是服务端生成的 opaque URL-safe base64 标识，前端只能透传，不能按 `videoChunkId:index` 拼接。旧数据缺失有效关键帧时可返回 `thumbnail: null` 并在 `warnings` 中说明。
-- 候选列表只加载 `thumbnail.url` 的懒加载图片；用户点击候选后再挂载 `playbackUrl` 对应的 `<video preload="metadata">`。播放定位仍使用 `startSeconds/endSeconds`，不要从模型正文反解析时间。
+- 候选列表只加载 `thumbnail.url` 的懒加载图片；用户点击候选后再挂载 `playbackUrl` 对应的 `<video preload="metadata">`。播放定位仍使用 `startSeconds/endSeconds`；传给浏览器 `currentTime` 时除以 1000，不要从模型正文反解析时间。
 
 ## 8. 建议前端类型
 
@@ -1458,7 +1458,7 @@ ASSISTANT：PROCESSING → COMPLETED / FAILED
 
 候选卡优先显示 `evidence.thumbnail`，图片可使用原生 lazy loading；不要在卡片列表中预先挂载
 所有视频。用户点击某个候选后，再创建使用 `evidence.playbackUrl` 的 video 元素，并以
-`preload="metadata"` 加载。自定义进度条的总长为 `endSeconds - startSeconds`，用户的相对 seek 映射回原视频媒体坐标，到达 `endSeconds` 时停止。
+`preload="metadata"` 加载。自定义进度条的总长为 `endSeconds - startSeconds`，用户的相对 seek 映射回原视频毫秒坐标；浏览器播放到 `endSeconds / 1000` 秒时停止。
 
 ### 12.5 POST 正文 SSE、GET 快照与页面恢复
 

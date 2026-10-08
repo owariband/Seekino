@@ -272,7 +272,7 @@ def _create_task(factory, source: Path) -> str:
             original_source_uri=str(source),
             content_hash="a" * 64,
             total_bytes=source.stat().st_size,
-            duration_seconds=10,
+            duration_seconds=10_000,
             upload_status="COMPLETED",
             parse_status="QUEUED",
             upload_progress=100,
@@ -319,6 +319,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
     media = VideoParseMediaService(
         tmp_path / "media-work",
         command_runner=_write_media,
+        probe_duration=lambda _path: 10_000,
     )
     store = _ElasticsearchBoundary()
     class ObservedEmbedding(_EmbeddingClient):
@@ -358,8 +359,8 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
             persons=[],
             timeline=[ActionEvent(
                 event_type="ACTION",
-                start_seconds=1,
-                end_seconds=4,
+                start_seconds=1000,
+                end_seconds=4000,
                 description="A hand waves in the frame.",
                 participants=[],
                 visible_persons=[],
@@ -520,7 +521,10 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
     repository = VideoParseRepository(factory)
     queue = MySqlVideoParseQueue(factory)
     store = _RecoveringElasticsearchBoundary()
-    media = VideoParseMediaService(tmp_path / "media", command_runner=_write_media)
+    media = VideoParseMediaService(
+        tmp_path / "media", command_runner=_write_media,
+        probe_duration=lambda _path: 10_000,
+    )
     parse_config = _parse_config()
     parse_config["interval_duration"] = interval_duration_seconds
     parse_config["execution"]["max_retry_count"] = 0
@@ -534,7 +538,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
         config=UploadServiceConfig(
             preferred_segment_size_bytes=1024, maximum_upload_size_bytes=1024,
         ),
-        probe_duration=lambda _path: 20,
+        probe_duration=lambda _path: 20_000,
         execution_mode="v2", video_parse_index_store=store,
         video_parse_query_encoder=encoder,
         video_parse_query_encoder_source=parse_config["models"]["embedding"]["source"],
@@ -575,8 +579,8 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
         state = _self._require_chunk_binding().state
         assert state is not None
         return VideoParseResult(persons=[], timeline=[ActionEvent(
-            event_type="ACTION", start_seconds=state.start_seconds + 1,
-            end_seconds=state.start_seconds + 4,
+            event_type="ACTION", start_seconds=state.start_seconds + 1000,
+            end_seconds=state.start_seconds + 4000,
             description="A hand waves in the frame.", participants=[], visible_persons=[],
         )])
 

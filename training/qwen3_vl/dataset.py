@@ -50,7 +50,7 @@ def build_swift_record(
     video_reference: str,
     series_bible: str | None,
 ) -> dict[str, Any]:
-    """Build one portable ms-swift SFT row from a committed parse checkpoint."""
+    """Build one ms-swift SFT row whose media time fields are integer milliseconds."""
 
     if not video_reference.strip():
         raise ValueError("video_reference must not be empty")

@@ -84,8 +84,8 @@ class FakeElasticsearch:
 def _chunk(sequence_no: int, *, compact: str = "chunk") -> VideoChunkRetrievalDocument:
     return VideoChunkRetrievalDocument(
         sequence_no=sequence_no,
-        start_seconds=sequence_no * 60,
-        end_seconds=(sequence_no + 1) * 60,
+        start_seconds=sequence_no * 60_000,
+        end_seconds=(sequence_no + 1) * 60_000,
         video_compact=compact,
         text=compact,
         is_fallback=False,
@@ -129,6 +129,7 @@ def test_index_mapping_and_ownership_are_checked() -> None:
     )
     index.ensure_index(text_dimensions=2, vision_dimensions=2)
     mapping = client.indices.mappings[index.index_name]["mappings"]
+    assert mapping["_meta"]["media_time_unit"] == "milliseconds"
     assert mapping["properties"]["dataset_id"] == {"type": "keyword"}
     assert mapping["properties"]["text_vector"]["dims"] == 2
     mapping["properties"]["text_vector"]["index_options"]["m"] = 16
@@ -138,6 +139,21 @@ def test_index_mapping_and_ownership_are_checked() -> None:
     mapping["_meta"] = {}
     with pytest.raises(ElasticsearchIndexSchemaError, match="marker"):
         index.ensure_index(text_dimensions=2, vision_dimensions=2)
+
+
+def test_old_seconds_index_is_rejected_without_rewriting_it() -> None:
+    client = FakeElasticsearch()
+    index = ElasticsearchVideoChunkIndex(
+        client, index_name="anivag_recall_eval_test", dataset_id="first"
+    )
+    index.ensure_index(text_dimensions=2, vision_dimensions=2)
+    mapping = client.indices.mappings[index.index_name]["mappings"]
+    mapping["_meta"] = {"anivag_recall_eval": 1}
+
+    with pytest.raises(ElasticsearchIndexSchemaError, match="marker"):
+        index.ensure_index(text_dimensions=2, vision_dimensions=2)
+
+    assert mapping["_meta"] == {"anivag_recall_eval": 1}
 
 
 def test_vectors_are_dataset_filtered_and_exact_and_approximate_are_distinct() -> None:

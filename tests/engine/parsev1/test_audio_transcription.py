@@ -8,7 +8,7 @@ from engine.parsev1.audio_transcription import (
 )
 
 
-def test_asr_segments_are_sorted_clamped_and_converted_to_integer_seconds():
+def test_asr_segments_are_sorted_clamped_and_converted_to_integer_milliseconds():
     result = normalize_transcription(
         {
             "segments": [
@@ -17,21 +17,21 @@ def test_asr_segments_are_sorted_clamped_and_converted_to_integer_seconds():
                 {"start": 5, "end": 6, "text": "outside"},
             ]
         },
-        duration_seconds=3,
+        duration_seconds=3000,
     )
     assert [cue.model_dump() for cue in result.transcript] == [
-        {"start_seconds": 0, "end_seconds": 2, "text": "first"},
-        {"start_seconds": 1, "end_seconds": 3, "text": "second"},
+        {"start_seconds": 0, "end_seconds": 1200, "text": "first"},
+        {"start_seconds": 1500, "end_seconds": 3000, "text": "second"},
     ]
 
 
 def test_json_only_asr_retains_honest_window_level_timing():
-    result = normalize_transcription({"text": "hello"}, duration_seconds=2)
-    assert result.transcript[0].end_seconds == 2
-    assert normalize_transcription({"text": " "}, duration_seconds=2).transcript == []
+    result = normalize_transcription({"text": "hello"}, duration_seconds=2000)
+    assert result.transcript[0].end_seconds == 2000
+    assert normalize_transcription({"text": " "}, duration_seconds=2000).transcript == []
     assert (
         normalize_transcription(
-            {"text": "hello", "segments": []}, duration_seconds=2
+            {"text": "hello", "segments": []}, duration_seconds=2000
         ).transcript
         == result.transcript
     )
@@ -47,7 +47,7 @@ def test_json_only_asr_retains_honest_window_level_timing():
 )
 def test_asr_rejects_malformed_responses(payload):
     with pytest.raises(ValueError):
-        normalize_transcription(payload, duration_seconds=2)
+        normalize_transcription(payload, duration_seconds=2000)
 
 
 def test_asr_extracts_audio_and_cleans_temporary_files(monkeypatch, tmp_path):
@@ -76,5 +76,5 @@ def test_asr_extracts_audio_and_cleans_temporary_files(monkeypatch, tmp_path):
         api_key="fake-key",
         request_timeout_seconds=10,
     )
-    assert agent.transcribe(video, duration_seconds=1).transcript[0].text == "hello"
+    assert agent.transcribe(video, duration_seconds=1000).transcript[0].text == "hello"
     assert audio_paths and not audio_paths[0].exists()

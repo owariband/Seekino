@@ -101,8 +101,8 @@ def _result(description: str = "爱音走进房间") -> VideoParseResult:
         "persons": ["爱音"],
         "timeline": [{
             "event_type": "ACTION",
-            "start_seconds": 1,
-            "end_seconds": 3,
+            "start_seconds": 1000,
+            "end_seconds": 3000,
             "description": description,
             "participants": ["爱音"],
             "visible_persons": ["爱音"],
@@ -118,15 +118,15 @@ def test_default_entry_stops_at_unconfigured_runtime_boundary() -> None:
 def test_main_graph_prepares_fixed_topology_then_completes() -> None:
     calls: list[object] = []
     chunks = (
-        VideoChunk("chunk-0", 0, 0, 20),
-        VideoChunk("chunk-1", 1, 20, 35),
+        VideoChunk("chunk-0", 0, 0, 20_000),
+        VideoChunk("chunk-1", 1, 20_000, 35_000),
     )
 
     class Runtime:
         async def load_video_run(self, task_id):
             calls.append("load")
             return VideoRunSnapshot(
-                task_id, VideoTaskStatus.PREPARING, _inputs(), 35, _lease(), ()
+                task_id, VideoTaskStatus.PREPARING, _inputs(), 35_000, _lease(), ()
             )
 
         async def ensure_video_chunks(self, task_id, lease, plans):
@@ -168,8 +168,8 @@ def test_main_graph_prepares_fixed_topology_then_completes() -> None:
 def test_index_only_resume_never_prepares_or_schedules_chunks() -> None:
     runtime = SimpleNamespace(
         load_video_run=AsyncMock(return_value=VideoRunSnapshot(
-            "video-task-1", VideoTaskStatus.INDEXING, _inputs(), 20, _lease(),
-            (VideoChunk("chunk-0", 0, 0, 20),),
+            "video-task-1", VideoTaskStatus.INDEXING, _inputs(), 20_000, _lease(),
+            (VideoChunk("chunk-0", 0, 0, 20_000),),
         )),
         advance_video_task=AsyncMock(return_value=VideoTaskStatus.COMPLETE),
         ensure_video_chunks=AsyncMock(side_effect=AssertionError("must not prepare")),
@@ -229,7 +229,7 @@ def test_scheduler_opens_next_batch_only_at_ninety_percent() -> None:
 
 def test_chunk_workflow_commits_mask_in_transaction_and_cleans_media() -> None:
     execution = ChunkExecution(
-        "chunk-task-0", "video-task-1", 0, 0, 20, 0, 20, _inputs(ocr_enabled=True), _lease()
+        "chunk-task-0", "video-task-1", 0, 0, 20_000, 0, 20_000, _inputs(ocr_enabled=True), _lease()
     )
     calls: list[str] = []
 
@@ -250,7 +250,8 @@ def test_chunk_workflow_commits_mask_in_transaction_and_cleans_media() -> None:
 
         async def understand_chunk(self, loaded, **kwargs):
             assert kwargs["ocr_result"] == ["screen text"]
-            assert "[0, 20)" in kwargs["prompt"]
+            assert "[0, 20000)" in kwargs["prompt"]
+            assert "integer source-video milliseconds" in kwargs["prompt"]
             calls.append("understand")
             return _result()
 
@@ -307,7 +308,7 @@ def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields() ->
         "start_sequence_no": 0,
         "chunk_count": 1,
         "member_sequence_nos": {"chunk-task-0": 0},
-        "member_bounds": {"chunk-task-0": (0, 20)},
+        "member_bounds": {"chunk-task-0": (0, 20_000)},
         "member_contents": {"chunk-task-0": _result()},
         "member_versions": {"chunk-task-0": 2},
         "member_scopes": {"chunk-task-0": [0, 1]},
@@ -343,7 +344,7 @@ def test_prefix_is_optional_and_validates_bound_target_before_commit() -> None:
         "lease": _lease(),
         "sequence_no": 0,
         "allowed_start_seconds": 0,
-        "allowed_end_seconds": 20,
+        "allowed_end_seconds": 20_000,
         "scope": [0],
         "content": _result(),
         "content_version": 3,

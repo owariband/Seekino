@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# Media positions/durations use integer milliseconds; existing names stay fixed.
+# Chunk/overlap/group configuration values and request timeouts remain seconds.
 
 def _rename_legacy_fields(data: Any, fields: dict[str, str]) -> Any:
     """Consume old persisted field names without exposing them in new output."""
@@ -89,7 +91,7 @@ class VideoParseProvenance(BaseModel):
     model: str = Field(min_length=1)
     input_mode: Literal["video", "ordered_frames"]
     frame_fps: float | None = Field(default=None, gt=0)
-    frame_timestamps_seconds: list[float] = Field(default_factory=list)
+    frame_timestamps_seconds: list[Annotated[int, Field(ge=0, strict=True)]] = Field(default_factory=list)
     group_frame_counts: list[int] = Field(default_factory=list)
     group_duration_seconds: int | None = Field(default=None, gt=0)
     max_frames_per_group: int | None = Field(default=None, gt=0)

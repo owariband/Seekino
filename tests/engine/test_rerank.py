@@ -46,7 +46,7 @@ def _query(kind):
         return ImageQueryInput(input_sha256="a" * 64, mime_type="image/png", preprocess_revision="v1")
     return GifQueryInput(
         frames=tuple(VisualQueryFrame(input_sha256=digest * 64, at_seconds=at)
-                     for digest, at in (("a", 0.0), ("b", 0.25), ("c", 0.75))),
+                     for digest, at in (("a", 0), ("b", 250), ("c", 750))),
         mime_type="image/png", preprocess_revision="v1",
     )
 
@@ -81,10 +81,10 @@ def _pool(plan, texts=("原话", "原话", "原话")):
         retrieval_identity=VideoChunkRetrievalIdentity(
             workspace_id="workspace", series_id="series", video_id="video", parse_task_id="task",
             content_version=rank, index_generation=plan.index_contract.index_generation,
-        ), start_seconds=(rank - 1) * 10, end_seconds=rank * 10,
+        ), start_seconds=((rank - 1) * 10) * 1000, end_seconds=(rank * 10) * 1000,
         result=VideoParseResult.model_validate({"persons": ["人物"], "timeline": [{
-            "event_type": "DIALOGUE", "start_seconds": (rank - 1) * 10 + 1,
-            "end_seconds": (rank - 1) * 10 + 3, "description": f"片段{rank}的对白",
+            "event_type": "DIALOGUE", "start_seconds": ((rank - 1) * 10 + 1) * 1000,
+            "end_seconds": ((rank - 1) * 10 + 3) * 1000, "description": f"片段{rank}的对白",
             "participants": ["人物"], "visible_persons": ["人物"], "speaker": "人物",
             "text_variants": [{"language": "zh-Hans", "role": "ORIGINAL", "text": text}],
         }]}), description_language="zh-Hans",
@@ -117,8 +117,8 @@ def _clip(fact):
 
 def _frames(fact):
     return OrderedFramesManifest(
-        frames=(OrderedFrame(ordinal=0, at_seconds=fact.start_seconds + 2.0, input_sha256="d" * 64),
-                OrderedFrame(ordinal=1, at_seconds=fact.start_seconds + 7.0, input_sha256="e" * 64)),
+        frames=(OrderedFrame(ordinal=0, at_seconds=fact.start_seconds + 2000, input_sha256="d" * 64),
+                OrderedFrame(ordinal=1, at_seconds=fact.start_seconds + 7000, input_sha256="e" * 64)),
         sampling_contract_id="rerank-sampling", mime_type="image/png", preprocess_revision="rerank-v1",
     )
 
@@ -186,7 +186,7 @@ def test_rerank_keeps_adjacent_hard_condition_proof_and_its_own_version():
     proof, = output.accepted[0].evidence
     assert proof.context == "after" and proof.video_chunk_id == "chunk-2"
     assert proof.retrieval_identity.content_version == 2
-    assert (proof.start_seconds, proof.end_seconds) == (11, 13)
+    assert (proof.start_seconds, proof.end_seconds) == (11000, 13000)
 
 
 @pytest.mark.parametrize("scores", [
@@ -290,14 +290,14 @@ def test_visual_rerank_keeps_original_query_and_complete_candidate_media(kind, c
                                  visual_inputs=media)
     assert plan.request.query == query_plan.query
     if kind == "gif":
-        assert tuple(frame.at_seconds for frame in plan.request.query.frames) == (0.0, 0.25, 0.75)
+        assert tuple(frame.at_seconds for frame in plan.request.query.frames) == (0, 250, 750)
         assert tuple(frame.input_sha256 for frame in plan.request.query.frames) == ("a" * 64, "b" * 64, "c" * 64)
     for item, fact in zip(plan.request.items, facts):
         assert item.text is None
         assert item.visual_input == media[fact.video_chunk_id]
         if candidate_input == "ordered_frames":
             assert tuple(frame.at_seconds for frame in item.visual_input.frames) == (
-                fact.start_seconds + 2.0, fact.start_seconds + 7.0,
+                fact.start_seconds + 2000, fact.start_seconds + 7000,
             )
             assert tuple(frame.input_sha256 for frame in item.visual_input.frames) == ("d" * 64, "e" * 64)
 
@@ -312,7 +312,7 @@ def test_visual_scorer_requires_complete_correctly_bounded_candidate_inputs(fail
     elif failure == "wrong-kind":
         media["chunk-1"] = _frames(facts[0])
     else:
-        media["chunk-1"] = replace(media["chunk-1"], end_seconds=11)
+        media["chunk-1"] = replace(media["chunk-1"], end_seconds=11000)
     with pytest.raises(ValueError):
         plan_candidate_rerank(query_plan, candidates, facts,
                               scorer=_scorer(query_modalities=("image",), candidate_input="video_clip"),
@@ -345,10 +345,10 @@ def test_ordered_frames_obey_their_own_sampling_and_half_open_candidate_range(fa
     fact = facts[0]
     sampling = OrderedFrameSamplingContract(fps=0.2, max_frames_per_chunk=2)
     frames = (
-        OrderedFrame(ordinal=0, at_seconds=2.0, input_sha256="d" * 64,
-                     requested_at_seconds=3.0 if failure == "requested-time" else 2.5),
-        OrderedFrame(ordinal=1, at_seconds=10.0 if failure == "actual-end" else 7.0,
-                     input_sha256="e" * 64, requested_at_seconds=7.5),
+        OrderedFrame(ordinal=0, at_seconds=2000, input_sha256="d" * 64,
+                     requested_at_seconds=3000 if failure == "requested-time" else 2500),
+        OrderedFrame(ordinal=1, at_seconds=10000 if failure == "actual-end" else 7000,
+                     input_sha256="e" * 64, requested_at_seconds=7500),
     )
     manifest = OrderedFramesManifest(
         frames=frames, sampling_contract_id=sampling.sampling_contract_id,
@@ -369,13 +369,13 @@ def test_rerank_preserves_equal_realized_frame_times_allowed_by_existing_manifes
     query_plan = _plan(kind="image")
     candidates, facts = _pool(query_plan, texts=("原话",))
     manifest = replace(_frames(facts[0]), frames=(
-        OrderedFrame(ordinal=0, at_seconds=2.0, input_sha256="d" * 64),
-        OrderedFrame(ordinal=1, at_seconds=2.0, input_sha256="e" * 64),
+        OrderedFrame(ordinal=0, at_seconds=2000, input_sha256="d" * 64),
+        OrderedFrame(ordinal=1, at_seconds=2000, input_sha256="e" * 64),
     ))
     plan = plan_candidate_rerank(query_plan, candidates, facts,
                                  scorer=_scorer(query_modalities=("image",), candidate_input="ordered_frames"),
                                  visual_inputs={facts[0].video_chunk_id: manifest})
-    assert tuple(frame.at_seconds for frame in plan.request.items[0].visual_input.frames) == (2.0, 2.0)
+    assert tuple(frame.at_seconds for frame in plan.request.items[0].visual_input.frames) == (2000, 2000)
 
 
 def test_no_eligible_candidates_require_no_scorer_request_or_fallback_warning(caplog):

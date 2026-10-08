@@ -818,9 +818,10 @@ class VideoParseRepository:
                 raise VideoParseConflictError("VideoParseTask Video no longer exists")
             if len(normalized) != task.chunk_count:
                 raise VideoParseConflictError("Chunk plan count changed after task creation")
+            chunk_duration = _positive_int(task.parse_config.get("chunk_duration"), "chunk_duration") * 1000
             expected = [
-                (index, index * _positive_int(task.parse_config.get("chunk_duration"), "chunk_duration"),
-                 min(video.duration_seconds, (index + 1) * task.parse_config["chunk_duration"]))
+                (index, index * chunk_duration,
+                 min(video.duration_seconds, (index + 1) * chunk_duration))
                 for index in range(task.chunk_count)
             ]
             if list(normalized) != expected:
@@ -2400,7 +2401,7 @@ def _validate_chunk_boundaries(
     parse_config: Mapping[str, Any],
     chunks: Sequence[VideoChunkRecord],
 ) -> None:
-    duration = _positive_int(parse_config.get("chunk_duration"), "chunk_duration")
+    duration = _positive_int(parse_config.get("chunk_duration"), "chunk_duration") * 1000
     expected = [
         (sequence, sequence * duration, min(video.duration_seconds, (sequence + 1) * duration))
         for sequence in range(len(chunks))

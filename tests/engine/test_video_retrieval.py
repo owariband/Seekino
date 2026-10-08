@@ -51,8 +51,8 @@ def _parse_result() -> VideoParseResult:
         recent_events=[],
     )
     event = OwnedTimelineEvent(
-        start_seconds=1,
-        end_seconds=2,
+        start_seconds=1000,
+        end_seconds=2000,
         event_type="DIALOGUE",
         description="当前片段发生的事件",
         text="当前片段的台词",
@@ -64,9 +64,9 @@ def _parse_result() -> VideoParseResult:
             source_video=source_video,
             media_path=Path("chunk-0000.mp4"),
             chunk_start_seconds=0,
-            chunk_end_seconds=60,
+            chunk_end_seconds=60000,
             analysis_start_seconds=0,
-            analysis_end_seconds=60,
+            analysis_end_seconds=60000,
         ),
         context_before=before,
         candidate_transcript=[],
@@ -81,7 +81,7 @@ def _parse_result() -> VideoParseResult:
     )
     return VideoParseResult(
         source_video=source_video,
-        duration_seconds=60,
+        duration_seconds=60000,
         chunk_duration_seconds=60,
         context_overlap_seconds=0,
         chunks=[chunk],
@@ -544,7 +544,7 @@ def test_lexical_match_preserves_dialogue_and_question_sources_on_wire() -> None
     }).lexical_matches == []
     assert LexicalMatch.model_validate(LexicalField(
         field="questions", raw_text="谁在门口等待？", language="zh",
-        start_seconds=10, end_seconds=20, enrichment_index=0,
+        start_seconds=10000, end_seconds=20000, enrichment_index=0,
     )).model_dump(by_alias=True)["rawText"] == "谁在门口等待？"
 
 
@@ -572,7 +572,7 @@ def test_lexical_match_requires_lexical_rank_on_hit() -> None:
                 summary="只有问题命中", matched_evidence=[], limitations=[],
                 lexical_matches=[LexicalMatch(
                     field="questions", raw_text="谁在门口等待？", language="zh",
-                    start_seconds=10, end_seconds=20, enrichment_index=0,
+                    start_seconds=10000, end_seconds=20000, enrichment_index=0,
                 )],
             ),
             evidence=VideoChunkEvidence.model_construct(),
@@ -702,8 +702,8 @@ def test_transcript_ranking_matches_normalized_phrase_across_adjacent_cues() -> 
         TranscriptChunkDocument(
             video_chunk_id="chunk-a",
             cues=[
-                TranscriptCueDocument(text="别把责任", start_seconds=1, end_seconds=2),
-                TranscriptCueDocument(text="推给别人。", start_seconds=2, end_seconds=3),
+                TranscriptCueDocument(text="别把责任", start_seconds=1000, end_seconds=2000),
+                TranscriptCueDocument(text="推给别人。", start_seconds=2000, end_seconds=3000),
             ],
         ),
         TranscriptChunkDocument(
@@ -711,8 +711,8 @@ def test_transcript_ranking_matches_normalized_phrase_across_adjacent_cues() -> 
             cues=[
                 TranscriptCueDocument(
                     text="她说：别把责任推给别人。",
-                    start_seconds=4,
-                    end_seconds=5,
+                    start_seconds=4000,
+                    end_seconds=5000,
                 )
             ],
         ),
@@ -723,7 +723,7 @@ def test_transcript_ranking_matches_normalized_phrase_across_adjacent_cues() -> 
     assert [item.video_chunk_id for item in ranked] == ["chunk-a", "chunk-b"]
     assert ranked[0].score == 1.0
     assert ranked[0].matched_text == "别把责任 推给别人。"
-    assert (ranked[0].start_seconds, ranked[0].end_seconds) == (1, 3)
+    assert (ranked[0].start_seconds, ranked[0].end_seconds) == (1000, 3000)
     assert ranked[1].score < ranked[0].score
 
 
@@ -734,8 +734,8 @@ def test_transcript_ranking_does_not_turn_semantic_similarity_into_a_match() -> 
             cues=[
                 TranscriptCueDocument(
                     text="别把责任推给别人。",
-                    start_seconds=1,
-                    end_seconds=2,
+                    start_seconds=1000,
+                    end_seconds=2000,
                 )
             ],
         )

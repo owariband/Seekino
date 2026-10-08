@@ -86,7 +86,7 @@ class _ASRAgent:
             transcript=[
                 TranscriptCue(
                     start_seconds=0,
-                    end_seconds=1,
+                    end_seconds=1000,
                     text=f"asr-{sequence_no}",
                 )
             ]
@@ -113,7 +113,7 @@ class _UnderstandingAgent:
         del background_images
         assert self._asr.all_completed(), "understand started before the ASR stage ended"
         sequence_no = int(Path(video_path).stem.rsplit("-", 1)[-1])
-        assert duration_seconds == 1
+        assert duration_seconds == 1000
         self._trace.add(f"understand:{sequence_no}")
         self.sequences.append(sequence_no)
         self.transcripts.append(transcript.transcript[0].text)
@@ -125,7 +125,7 @@ class _UnderstandingAgent:
             events=[
                 TimelineEvent(
                     start_seconds=0,
-                    end_seconds=1,
+                    end_seconds=1000,
                     event_type="ACTION",
                     description=f"event-{sequence_no}",
                     text=None,
@@ -260,10 +260,10 @@ def _request(tmp_path: Path) -> ParsePipelineInput:
             sequence_no=sequence_no,
             source_video=source,
             media_path=analysis_media,
-            chunk_start_seconds=sequence_no * 1,
-            chunk_end_seconds=(sequence_no + 1) * 1,
-            analysis_start_seconds=sequence_no * 1,
-            analysis_end_seconds=(sequence_no + 1) * 1,
+            chunk_start_seconds=(sequence_no * 1) * 1000,
+            chunk_end_seconds=((sequence_no + 1) * 1) * 1000,
+            analysis_start_seconds=(sequence_no * 1) * 1000,
+            analysis_end_seconds=((sequence_no + 1) * 1) * 1000,
         )
         chunks.append(
             ParseChunkInput(
@@ -274,7 +274,7 @@ def _request(tmp_path: Path) -> ParsePipelineInput:
         )
     return ParsePipelineInput(
         source_video=source,
-        duration_seconds=2,
+        duration_seconds=2000,
         chunk_duration_seconds=1,
         context_overlap_seconds=0,
         chunks=tuple(chunks),

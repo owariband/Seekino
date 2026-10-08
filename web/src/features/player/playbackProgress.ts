@@ -1,6 +1,7 @@
 export interface WatchProgress {
   seriesId: string;
   videoId: string;
+  /** Integer milliseconds; historical field names are retained. */
   positionSeconds: number;
   durationSeconds: number;
   updatedAt: number;
@@ -14,7 +15,8 @@ interface LegacyWatchProgress {
   updatedAt: number;
 }
 
-const STORAGE_KEY = "anivag-watch-progress:v2";
+const STORAGE_KEY = "anivag-watch-progress:v3";
+const SECONDS_STORAGE_KEY = "anivag-watch-progress:v2";
 const LEGACY_STORAGE_KEY = "anivag-watch-progress:v1";
 const MAX_HISTORY = 100;
 
@@ -52,19 +54,24 @@ function normalizeHistory(items: unknown[]): WatchProgress[] {
 }
 
 function migrateLegacyHistory(): WatchProgress[] {
-  const stored: unknown = JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY) ?? "[]");
+  const secondsEncoded = localStorage.getItem(SECONDS_STORAGE_KEY);
+  const stored: unknown = JSON.parse(secondsEncoded ?? localStorage.getItem(LEGACY_STORAGE_KEY) ?? "[]");
   if (!Array.isArray(stored)) return [];
-  const migrated = normalizeHistory(stored.filter(isLegacyWatchProgress).map((item) => {
-    const durationSeconds = Math.ceil(item.durationMs / 1000);
-    return {
+  const migrated = normalizeHistory(secondsEncoded !== null
+    ? stored.filter(isWatchProgress).map((item) => ({
+      ...item,
+      positionSeconds: item.positionSeconds * 1000,
+      durationSeconds: item.durationSeconds * 1000,
+    }))
+    : stored.filter(isLegacyWatchProgress).map((item) => ({
       seriesId: item.seriesId,
       videoId: item.videoId,
-      positionSeconds: Math.min(Math.floor(item.positionMs / 1000), durationSeconds),
-      durationSeconds,
+      positionSeconds: item.positionMs,
+      durationSeconds: item.durationMs,
       updatedAt: item.updatedAt,
-    };
-  }));
+    })));
   localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+  localStorage.removeItem(SECONDS_STORAGE_KEY);
   localStorage.removeItem(LEGACY_STORAGE_KEY);
   return migrated;
 }

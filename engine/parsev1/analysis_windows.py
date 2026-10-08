@@ -7,8 +7,10 @@ units persisted for playback and vision embeddings.
 
 from __future__ import annotations
 
+import json
 import math
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 
 from .schemas import AnalysisWindow
@@ -17,6 +19,7 @@ _MIN_TAIL_SECONDS = 1
 
 
 def probe_video_duration_seconds(video_path: str | Path) -> int:
+    """Return actual video-stream duration in integer milliseconds; keep the name."""
     path = Path(video_path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"video file does not exist: {path}")
@@ -27,10 +30,12 @@ def probe_video_duration_seconds(video_path: str | Path) -> int:
                 "ffprobe",
                 "-v",
                 "error",
+                "-select_streams",
+                "v:0",
                 "-show_entries",
-                "format=duration",
+                "stream=duration,duration_ts,time_base,avg_frame_rate",
                 "-of",
-                "default=noprint_wrappers=1:nokey=1",
+                "json",
                 str(path),
             ],
             check=True,
@@ -45,12 +50,47 @@ def probe_video_duration_seconds(video_path: str | Path) -> int:
         raise RuntimeError(f"ffprobe could not read video duration: {path}") from exc
 
     try:
-        duration_seconds = float(result.stdout.strip())
-    except ValueError as exc:
+        metadata = json.loads(result.stdout)
+        if not isinstance(metadata, dict):
+            raise ValueError("video metadata must be an object")
+        streams = metadata.get("streams", [])
+        if not streams:
+            raise ValueError("video stream is missing")
+        stream = streams[0]
+        if stream.get("duration") not in (None, "N/A"):
+            duration_seconds = float(stream["duration"])
+        elif stream.get("duration_ts") not in (None, "N/A"):
+            duration_seconds = float(
+                int(stream["duration_ts"]) * Fraction(stream["time_base"])
+            )
+        else:
+            # WebM and other containers may omit stream duration metadata.
+            # Read video frame times only; a longer audio tail is not video.
+            frames_result = subprocess.run(
+                [
+                    "ffprobe", "-v", "error", "-select_streams", "v:0",
+                    "-show_frames", "-show_entries",
+                    "frame=best_effort_timestamp_time,duration_time,pkt_duration_time",
+                    "-of", "json", str(path),
+                ],
+                check=True, capture_output=True, text=True,
+            )
+            frames = json.loads(frames_result.stdout).get("frames", [])
+            frame_starts = []
+            frame_ends = []
+            for frame in frames:
+                start = float(frame["best_effort_timestamp_time"])
+                frame_duration = frame.get("duration_time", frame.get("pkt_duration_time"))
+                if frame_duration in (None, "N/A"):
+                    frame_duration = 1 / Fraction(stream["avg_frame_rate"])
+                frame_starts.append(start)
+                frame_ends.append(start + float(frame_duration))
+            duration_seconds = max(frame_ends) - min(frame_starts)
+    except (ValueError, TypeError, KeyError, ZeroDivisionError, subprocess.CalledProcessError) as exc:
         raise RuntimeError(f"ffprobe returned an invalid duration: {path}") from exc
     if not math.isfinite(duration_seconds) or duration_seconds <= 0:
         raise RuntimeError(f"ffprobe returned an invalid duration: {path}")
-    return math.ceil(duration_seconds)
+    return max(1, round(duration_seconds * 1000))
 
 
 def plan_analysis_windows(
@@ -61,12 +101,16 @@ def plan_analysis_windows(
     chunk_duration_seconds: int = 60,
     context_overlap_seconds: int = 3,
 ) -> list[AnalysisWindow]:
+    """Plan millisecond bounds; chunk/overlap configuration remains in seconds."""
     if duration_seconds <= 0:
         raise ValueError("duration_seconds must be greater than zero")
     if chunk_duration_seconds <= 0:
         raise ValueError("chunk_duration_seconds must be greater than zero")
     if context_overlap_seconds < 0:
         raise ValueError("context_overlap_seconds cannot be negative")
+
+    chunk_duration_seconds *= 1000
+    context_overlap_seconds *= 1000
 
     source_video = Path(video_path).expanduser().resolve()
     target_dir = Path(output_dir).expanduser().resolve()
@@ -79,7 +123,7 @@ def plan_analysis_windows(
             duration_seconds,
         )
         min_tail_seconds = min(
-            float(_MIN_TAIL_SECONDS),
+            _MIN_TAIL_SECONDS * 1000,
             chunk_duration_seconds / 4,
         )
         if 0 < duration_seconds - chunk_end_seconds <= min_tail_seconds:
@@ -150,8 +194,8 @@ def materialize_analysis_window(
             f"analysis window path exists but is not a usable file: {window.media_path}"
         )
 
-    start_seconds = f"{window.analysis_start_seconds:.3f}"
-    duration_seconds = f"{window.analysis_duration_seconds:.3f}"
+    start_seconds = f"{window.analysis_start_seconds / 1000:.3f}"
+    duration_seconds = f"{window.analysis_duration_seconds / 1000:.3f}"
     command = [
         ffmpeg_bin,
         "-nostdin",
@@ -265,11 +309,11 @@ def materialize_canonical_chunk(
         "-v",
         "error",
         "-ss",
-        f"{window.chunk_start_seconds:.3f}",
+        f"{window.chunk_start_seconds / 1000:.3f}",
         "-i",
         str(window.source_video),
         "-t",
-        f"{window.chunk_end_seconds - window.chunk_start_seconds:.3f}",
+        f"{(window.chunk_end_seconds - window.chunk_start_seconds) / 1000:.3f}",
         "-map",
         "0:v:0",
         "-map",

@@ -79,6 +79,7 @@ class AudioTranscriptionAgent:
 def normalize_transcription(
     payload: dict, *, duration_seconds: int
 ) -> TranscriptAnalysis:
+    """Convert provider seconds to integer milliseconds, retaining existing names."""
     segments = payload.get("segments")
     if segments is not None and not isinstance(segments, list):
         raise ValueError("ASR segments must be a list")
@@ -89,8 +90,8 @@ def normalize_transcription(
             if not math.isfinite(start) or not math.isfinite(end) or end < start:
                 raise ValueError("ASR returned invalid segment timestamps")
             start_seconds, end_seconds = (
-                max(0, math.floor(start)),
-                min(duration_seconds, math.ceil(end)),
+                max(0, round(start * 1000)),
+                min(duration_seconds, round(end * 1000)),
             )
             text = segment.get("text", "")
             if not isinstance(text, str):

@@ -27,7 +27,7 @@ def build_understanding_prompt(
             "Only report events inside the authorized half-open source-video range "
             f"[{execution.allowed_start_seconds}, {execution.allowed_end_seconds})."
         ),
-        "Use absolute integer source-video seconds and preserve uncertain attribution as null.",
+        "Use absolute integer source-video milliseconds and preserve uncertain attribution as null.",
         "Return only the injected VideoParseResult schema; do not invent task IDs or versions.",
         "ASR input: " + _json(asr_result),
         "OCR input: " + _json(ocr_result),

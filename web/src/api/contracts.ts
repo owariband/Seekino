@@ -3,11 +3,14 @@ export type ThemeMode = "light" | "dark";
 
 export type SeriesStatus = "EMPTY" | "INDEXING" | "PARTIAL" | "READY" | "FAILED";
 export type UnixTimeMs = number;
+// Media positions and durations named *Seconds are safe integer milliseconds.
+// ParseConfig window/fallback durations and request timeouts remain configuration seconds.
 export type PlaybackStatus = "PREPARING" | "READY" | "FAILED" | "MISSING";
 export type IndexStatus = "NOT_READY" | "SYNCING" | "READY" | "FAILED";
 export interface Failure { code: string; message: string }
 export interface Page<T> { items: T[]; total: number; hasMore: boolean; nextCursor: string | null }
 export interface ImageAsset { imageId: string; url: string; expiresAt: UnixTimeMs | null }
+/** atSeconds is a media position in integer milliseconds. */
 export interface Keyframe extends ImageAsset { atSeconds: number; alt: string | null }
 export type UploadStatus =
   | "UPLOADING"
@@ -46,6 +49,7 @@ export interface VideoSummary {
   uploadSequence: number;
   originalFilename: string;
   totalBytes: number;
+  /** Integer milliseconds; the field name is retained for compatibility. */
   durationSeconds: number;
   uploadStatus: string;
   parseStatus: string;
@@ -217,6 +221,7 @@ export interface UploadCompleteView {
 export interface VideoChunkCheckpointView {
   sequenceNo: number;
   videoChunkId: string;
+  /** Chunk bounds in integer milliseconds. */
   chunkStartSeconds: number | null;
   chunkEndSeconds: number | null;
   stage: string;
@@ -225,6 +230,7 @@ export interface VideoChunkCheckpointView {
 
 export interface ParseJobCurrentChunkView {
   sequenceNo: number;
+  /** Chunk bounds in integer milliseconds. */
   startSeconds: number;
   endSeconds: number;
 }
@@ -245,9 +251,10 @@ export interface ParseJobView {
   progress: number;
   overallProgress: number | null;
   stageProgress: number | null;
+  /** Media progress in integer milliseconds. */
   completedDurationSeconds: number | null;
   completedThroughSeconds: number | null;
-  /** Duration of the source video; totalDurationSeconds is retained for compatibility. */
+  /** Source video duration in integer milliseconds; totalDurationSeconds is retained. */
   videoDurationSeconds: number;
   totalDurationSeconds: number;
   /** Cumulative known worker processing time, never the video duration. */
@@ -305,6 +312,7 @@ export interface VideoParseTaskView {
   episodeOrder: number | null;
   originalFilename: string | null;
   uploadSessionId: string | null;
+  /** Source video duration in integer milliseconds. */
   durationSeconds: number | null;
   canRetry: boolean;
   canReparse: boolean;
@@ -375,6 +383,7 @@ export interface VideoChunkCandidate {
 export interface TranscriptCue {
   speaker: string | null;
   text: string;
+  /** Original-video bounds in integer milliseconds. */
   startSeconds: number;
   endSeconds: number;
 }
@@ -387,6 +396,7 @@ export interface VideoChunkEvidence {
   videoId: string;
   episodeOrder: number;
   originalFilename: string;
+  /** Duration and all media bounds below use integer milliseconds. */
   durationSeconds: number;
   videoChunkId: string;
   sequenceNo: number;
@@ -419,6 +429,7 @@ export type MatchedEvidenceKind = "TRANSCRIPT" | "VISUAL_EVENT" | "CONTEXT";
 export interface MatchedEvidence {
   kind: MatchedEvidenceKind;
   text: string;
+  /** Original-video bounds in integer milliseconds. */
   startSeconds: number | null;
   endSeconds: number | null;
 }
@@ -438,6 +449,7 @@ export interface LexicalMatch {
   language: string | null;
   role: "ORIGINAL" | "TRANSLATION" | null;
   speaker: string | null;
+  /** Original-video bounds in integer milliseconds. */
   startSeconds: number;
   endSeconds: number;
   timelineIndex: number | null;
@@ -532,6 +544,7 @@ export interface AgentMessageTiming {
   totalDurationMs: number | null;
   stages: AgentStageTiming[];
 }
+/** Video block range fields use integer milliseconds. */
 export type AgentRenderBlock =
   | { type: "markdown"; markdown: string }
   | { type: "video"; videoChunkId: string; startSeconds: number; endSeconds: number };

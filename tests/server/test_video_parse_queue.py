@@ -57,7 +57,7 @@ def _task(factory, *, chunk_count: int, accepted: bool, batch_size: int = 10):
             upload_sequence=1, original_filename="episode.mp4",
             original_source_uri="artifact://test/episode.mp4",
             content_hash=(video_id.replace("-", "") * 2)[:64], total_bytes=10,
-            duration_seconds=chunk_count * 10, upload_status="COMPLETED",
+            duration_seconds=chunk_count * 10000, upload_status="COMPLETED",
             parse_status="QUEUED", upload_progress=100, parse_progress=0,
         ))
         session.add(VideoParseTaskRecord(
@@ -80,7 +80,7 @@ def _prepare(factory, queue, task_id: str, *, chunk_count: int):
     assert lease is not None and lease.video_parse_task_id == task_id
     chunks = repo.ensure_video_chunks(
         lease,
-        [(i, i * 10, (i + 1) * 10) for i in range(chunk_count)],
+        [(i, i * 10000, (i + 1) * 10000) for i in range(chunk_count)],
         now=NOW,
     )
     specs = ((0, chunk_count),) if chunk_count < 3 else tuple(
@@ -809,7 +809,7 @@ def test_one_consumer_keeps_coordinator_alive_while_processing_children(tmp_path
     repo = VideoParseRepository(factory)
 
     async def prepare(lease):
-        chunks = repo.ensure_video_chunks(lease, [(0, 0, 10)])
+        chunks = repo.ensure_video_chunks(lease, [(0, 0, 10000)])
         prepared = repo.ensure_parse_tasks(
             lease,
             [chunks[0].video_chunk_id],

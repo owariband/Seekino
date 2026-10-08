@@ -78,7 +78,7 @@ def _seed(repository, *, chunk_count: int = 4, accepted: bool = True, batch_size
             original_source_uri="artifact://test/episode.mp4",
             content_hash="a" * 64,
             total_bytes=100,
-            duration_seconds=chunk_count * 10,
+            duration_seconds=chunk_count * 10_000,
             upload_status="COMPLETED",
             parse_status="QUEUED",
             upload_progress=100,
@@ -117,7 +117,7 @@ def _prepare(repository, *, chunk_count: int = 4):
     assert lease is not None
     chunks = repo.ensure_video_chunks(
         lease,
-        [(index, index * 10, (index + 1) * 10) for index in range(chunk_count)],
+        [(index, index * 10_000, (index + 1) * 10_000) for index in range(chunk_count)],
         now=NOW,
     )
     interval_specs = ((0, chunk_count),) if chunk_count < 3 else tuple(
@@ -131,6 +131,21 @@ def _prepare(repository, *, chunk_count: int = 4):
     )
     repo.activate_video_task(lease, now=NOW)
     return factory, queue, repo, task_id, lease, prepared
+
+
+def test_preparation_preserves_fractional_last_chunk_boundary(repository):
+    factory, task_id = _seed(repository, chunk_count=1)
+    with factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, task_id)
+        session.get(VideoRecord, task.video_id).duration_seconds = 8008
+    queue = MySqlVideoParseQueue(factory)
+    repo = VideoParseRepository(factory)
+    lease = queue.claim_video("prepare-ms", lease_duration=timedelta(minutes=10), now=NOW)
+    assert lease is not None
+    with pytest.raises(VideoParseConflictError, match="frozen parse config"):
+        repo.ensure_video_chunks(lease, [(0, 0, 8)], now=NOW)
+    chunks = repo.ensure_video_chunks(lease, [(0, 0, 8008)], now=NOW)
+    assert [(chunk.start_seconds, chunk.end_seconds) for chunk in chunks] == [(0, 8008)]
 
 
 def _commit_all_chunks(factory, queue, repo, video_lease, prepared, *, count: int = 4):
@@ -1417,7 +1432,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                 original_source_uri=f"artifact://test/{order}.mp4",
                 content_hash=(str(order) * 64)[:64],
                 total_bytes=100,
-                duration_seconds=10,
+                duration_seconds=10_000,
                 upload_status="COMPLETED",
                 parse_status="COMPLETE",
                 upload_progress=100,
@@ -1475,9 +1490,9 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                     video_id=video_id,
                     sequence_no=0,
                     start_seconds=0,
-                    end_seconds=10,
+                    end_seconds=10_000,
                     analysis_window_start_seconds=0,
-                    analysis_window_end_seconds=10,
+                    analysis_window_end_seconds=10_000,
                     chunk_media_ref="artifact://test/chunk-3.mp4",
                     analysis_window_media_ref="artifact://test/window-3.mp4",
                     transcript=[],
@@ -1817,8 +1832,8 @@ def _seed_retrieval_chunk(repository):
         "persons": ["千早爱音"],
         "timeline": [{
             "event_type": "DIALOGUE",
-            "start_seconds": 1,
-            "end_seconds": 3,
+            "start_seconds": 1000,
+            "end_seconds": 3000,
             "description": "千早爱音回答",
             "participants": ["千早爱音"],
             "visible_persons": ["千早爱音"],
@@ -1850,9 +1865,9 @@ def _seed_retrieval_chunk(repository):
             video_id=task.video_id,
             sequence_no=0,
             start_seconds=0,
-            end_seconds=10,
+            end_seconds=10_000,
             analysis_window_start_seconds=0,
-            analysis_window_end_seconds=10,
+            analysis_window_end_seconds=10_000,
             chunk_media_ref="artifact://v2/chunk.mp4",
             analysis_window_media_ref="artifact://v2/window.mp4",
             transcript=[],
@@ -2072,15 +2087,15 @@ def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, is
     with factory.begin() as session:
         task = session.get(VideoParseTaskRecord, identity.parse_task_id)
         task.chunk_count = 3
-        session.get(VideoRecord, video.video_id).duration_seconds = 30
+        session.get(VideoRecord, video.video_id).duration_seconds = 30_000
         chunk = session.get(VideoChunkRecord, chunk_id)
         chunk.sequence_no = 1
-        chunk.start_seconds = chunk.analysis_window_start_seconds = 10
-        chunk.end_seconds = chunk.analysis_window_end_seconds = 20
+        chunk.start_seconds = chunk.analysis_window_start_seconds = 10_000
+        chunk.end_seconds = chunk.analysis_window_end_seconds = 20_000
         for sequence in (0, 2):
             other_chunk_id, child_id = str(uuid4()), str(uuid4())
             neighbors.append(other_chunk_id)
-            start, end = sequence * 10, (sequence + 1) * 10
+            start, end = sequence * 10_000, (sequence + 1) * 10_000
             receipt = {
                 "parse_task_id": task.id, "video_chunk_id": other_chunk_id,
                 "content_version": sequence + 2, "index_generation": 2,
@@ -2124,4 +2139,4 @@ def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, is
     assert result[0].facts.retrieval_identity.content_version == 1
     assert [item.video_chunk_id for item in result[0].contexts] == neighbors
     assert [item.retrieval_identity.content_version for item in result[0].contexts] == [2, 4]
-    assert [(item.start_seconds, item.end_seconds) for item in result[0].contexts] == [(0, 10), (20, 30)]
+    assert [(item.start_seconds, item.end_seconds) for item in result[0].contexts] == [(0, 10_000), (20_000, 30_000)]

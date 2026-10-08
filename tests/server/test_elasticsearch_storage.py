@@ -159,6 +159,7 @@ def test_mapping_contract_and_version_gate(store, client):
     store.ensure_index()
     assert client.indices.created == 1
     mapping = client.indices.mapping
+    assert mapping["_meta"]["media_time_unit"] == "milliseconds"
     assert mapping["properties"]["lexical_fields"]["type"] == "nested"
     assert mapping["properties"]["lexical_fields"]["properties"]["raw_text"]["analyzer"] == "cjk"
     assert mapping["properties"]["semantic_vector"]["similarity"] == "cosine"
@@ -173,6 +174,20 @@ def test_mapping_contract_and_version_gate(store, client):
     client.version = "8.18.9"
     with pytest.raises(ElasticsearchIndexSchemaError, match="8.19"):
         store.ensure_index()
+
+
+@pytest.mark.parametrize("old_unit", [None, "seconds"])
+def test_mapping_rejects_old_media_time_units_without_rewriting_index(store, client, old_unit):
+    store.ensure_index()
+    if old_unit is None:
+        client.indices.mapping["_meta"].pop("media_time_unit")
+    else:
+        client.indices.mapping["_meta"]["media_time_unit"] = old_unit
+    before = deepcopy(client.indices.mapping)
+    with pytest.raises(ElasticsearchIndexSchemaError, match="metadata"):
+        store.ensure_index()
+    assert client.indices.mapping == before
+    assert client.indices.created == 1
 
 
 @pytest.mark.parametrize("explicit_search_analyzer", [False, True])
@@ -663,11 +678,11 @@ def test_old_physical_contract_is_rejected_without_mutating_the_index(store, cli
 
 def test_prepared_ordered_frames_retain_absolute_times_and_actual_manifest(store, IDs):
     manifest = OrderedFramesManifest(
-        frames=(OrderedFrame(ordinal=0, at_seconds=12.0, input_sha256="a" * 64),
-                OrderedFrame(ordinal=1, at_seconds=18.0, input_sha256="b" * 64)),
+        frames=(OrderedFrame(ordinal=0, at_seconds=12, input_sha256="a" * 64),
+                OrderedFrame(ordinal=1, at_seconds=18, input_sha256="b" * 64)),
         sampling_contract_id="prepared-sampling", mime_type="image/png", preprocess_revision="v1",
     )
     source = store._document_source(replace(_document(IDs), ordered_frames_manifest=manifest))
     assert source["ordered_frames_manifest"] == manifest.as_dict()
-    assert [frame["at_seconds"] for frame in source["ordered_frames_manifest"]["frames"]] == [12.0, 18.0]
+    assert [frame["at_seconds"] for frame in source["ordered_frames_manifest"]["frames"]] == [12, 18]
     assert store._mapping()["properties"]["ordered_frames_manifest"] == {"type": "object", "enabled": False}

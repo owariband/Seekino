@@ -22,8 +22,8 @@ def _result(*, person: str = "爱音", description: str = "爱音走进房间") 
         "persons": [person],
         "timeline": [{
             "event_type": "ACTION",
-            "start_seconds": 1,
-            "end_seconds": 3,
+            "start_seconds": 1000,
+            "end_seconds": 3000,
             "description": description,
             "participants": [person],
             "visible_persons": [person],
@@ -33,9 +33,9 @@ def _result(*, person: str = "爱音", description: str = "爱音走进房间") 
 
 def test_result_time_validation_uses_the_host_authorized_media_range() -> None:
     result = _result()
-    assert validate_result_time_range(result, start_seconds=0, end_seconds=4) == result
+    assert validate_result_time_range(result, start_seconds=0, end_seconds=4000) == result
     with pytest.raises(ValueError, match="outside the authorized"):
-        validate_result_time_range(result, start_seconds=2, end_seconds=4)
+        validate_result_time_range(result, start_seconds=2000, end_seconds=4000)
 
 
 def test_refine_keeps_only_actual_explicit_changes() -> None:
@@ -45,8 +45,8 @@ def test_refine_keeps_only_actual_explicit_changes() -> None:
         persons=["爱音"],
         timeline=[{
             "event_type": "ACTION",
-            "start_seconds": 1,
-            "end_seconds": 3,
+            "start_seconds": 1000,
+            "end_seconds": 3000,
             "description": "爱音推门走进房间",
             "participants": ["爱音"],
             "visible_persons": ["爱音"],
@@ -54,7 +54,7 @@ def test_refine_keeps_only_actual_explicit_changes() -> None:
     )])
     validated = validate_interval_refinement(
         proposal,
-        members=[RefinementMember(0, 0, 20, original)],
+        members=[RefinementMember(0, 0, 20000, original)],
     )
 
     assert len(validated.updates) == 1
@@ -69,7 +69,7 @@ def test_explicit_fields_apply_to_current_content_without_snapshot_overwrite() -
     )])
     validated = validate_interval_refinement(
         proposal,
-        members=[RefinementMember(0, 0, 20, snapshot)],
+        members=[RefinementMember(0, 0, 20000, snapshot)],
     )
 
     concurrently_updated = _result(description="另一窗口已经修正动作描述")
@@ -79,7 +79,7 @@ def test_explicit_fields_apply_to_current_content_without_snapshot_overwrite() -
 
 
 def test_refine_rejects_targets_and_events_outside_the_interval_authority() -> None:
-    member = RefinementMember(2, 40, 60, _result())
+    member = RefinementMember(2, 40000, 60000, _result())
     with pytest.raises(ValueError, match="outside its members"):
         validate_interval_refinement(
             IntervalRefinementProposal(
@@ -89,8 +89,8 @@ def test_refine_rejects_targets_and_events_outside_the_interval_authority() -> N
         )
 
     outside = _result().model_dump(mode="python")
-    outside["timeline"][0]["start_seconds"] = 39
-    outside["timeline"][0]["end_seconds"] = 41
+    outside["timeline"][0]["start_seconds"] = 39000
+    outside["timeline"][0]["end_seconds"] = 41000
     with pytest.raises(ValueError, match="outside the authorized"):
         validate_interval_refinement(
             IntervalRefinementProposal(updates=[ChunkResultUpdate(
@@ -115,7 +115,7 @@ def test_scope_validation_and_union_are_ordered_deduplicated_and_monotonic() -> 
 
 
 def test_prefix_is_bound_to_one_target_and_compact_budgets() -> None:
-    member = RefinementMember(3, 0, 20, _result())
+    member = RefinementMember(3, 0, 20000, _result())
     proposal = PrefixRefinementProposal(
         series_compact="series",
         video_compact="video",

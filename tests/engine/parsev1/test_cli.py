@@ -20,9 +20,9 @@ def _window() -> AnalysisWindow:
             "windows/chunk-0000.analysis-0000000000-0000000063.mp4"
         ),
         chunk_start_seconds=0,
-        chunk_end_seconds=60,
+        chunk_end_seconds=60000,
         analysis_start_seconds=0,
-        analysis_end_seconds=63,
+        analysis_end_seconds=63000,
     )
 
 
@@ -45,7 +45,7 @@ def _write_fallback_checkpoint(
         "model": "deepseek-flash",
         "input_mode": "ordered_frames",
         "frame_fps": 0.5,
-        "frame_timestamps_seconds": [1, 3],
+        "frame_timestamps_seconds": [1000, 3000],
         "group_frame_counts": [15, 15, 2],
         "group_duration_seconds": 30,
         "max_frames_per_group": 15,

@@ -21,7 +21,10 @@ projection before encoding and Elasticsearch writes.
 ## Planning contract
 
 `plan_chunks(duration_seconds, chunk_duration)` produces consecutive half-open
-integer-second ranges. The final Chunk may be shorter. An existing topology must
+integer-millisecond ranges; the existing `*_seconds` field names remain fixed.
+`duration_seconds` is actual media duration in milliseconds, while
+`chunk_duration` and `interval_duration` configuration remains in seconds.
+The planner converts chunk duration to milliseconds. The final Chunk may be shorter. An existing topology must
 exactly match the same plan; retries reuse it.
 
 `interval_size` uses `ceil(interval_duration / chunk_duration)` and is limited

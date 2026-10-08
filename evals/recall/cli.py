@@ -105,10 +105,12 @@ def main() -> None:
         override=args.video,
     )
     probed_duration_seconds = probe_video_duration_seconds(source_video)
-    if abs(probed_duration_seconds - parse_result.duration_seconds) > 1:
+    # Media values retain their historical names but use integer milliseconds.
+    if abs(probed_duration_seconds - parse_result.duration_seconds) > 1000:
         raise RuntimeError(
             "source video duration does not match parse result: "
-            f"source={probed_duration_seconds} seconds, parsed={parse_result.duration_seconds} seconds"
+            f"source={probed_duration_seconds} milliseconds, "
+            f"parsed={parse_result.duration_seconds} milliseconds"
         )
 
     config = load_config(args.config)

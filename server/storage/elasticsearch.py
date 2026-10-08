@@ -903,6 +903,7 @@ class ElasticsearchVideoChunkStore:
                 "index_contract_version": INDEX_CONTRACT_VERSION,
                 "projection_version": INDEX_PROJECTION_VERSION,
                 "analysis_contract_version": ANALYSIS_CONTRACT_VERSION,
+                "media_time_unit": "milliseconds",
             },
             "properties": {
                 **{name: {"type": "keyword"} for name in (

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from uuid import uuid4
 
 import pytest
+
+from engine.parsev1.analysis_windows import probe_video_duration_seconds
 
 from server.service.video_parse_media import (
     MediaLeaseIdentity,
@@ -31,15 +35,16 @@ def test_media_is_isolated_by_task_and_lease_and_always_cleaned(tmp_path):
     source.write_bytes(b"source")
     commands = []
     service = VideoParseMediaService(
-        tmp_path / "work", command_runner=_fake_runner(commands)
+        tmp_path / "work", command_runner=_fake_runner(commands),
+        probe_duration=lambda _path: 10_000,
     )
     identity = _identity(lease_version=7)
 
     with service.prepare_chunk(
         identity,
         source_video=source,
-        start_seconds=10,
-        end_seconds=20,
+        start_seconds=10_000,
+        end_seconds=20_000,
         visual_mode="ordered_frames",
         frame_fps=0.2,
         max_frames=3,
@@ -55,11 +60,16 @@ def test_media_is_isolated_by_task_and_lease_and_always_cleaned(tmp_path):
         assert media.video_path.parent == expected
         assert media.audio_path.parent == expected
         assert len(media.frames) == 2
-        assert all(10 <= timestamp < 20 for timestamp, _ in media.frames)
+        assert all(10_000 <= timestamp < 20_000 for timestamp, _ in media.frames)
         assert json.loads((expected / ".lease.json").read_text())["lease_version"] == 7
 
     assert not expected.exists()
     assert len(commands) == 4  # clip, audio and two uniformly sampled frames
+    assert commands[0][commands[0].index("-ss") + 1] == "10.000"
+    assert commands[0][commands[0].index("-t") + 1] == "10.000"
+    assert [command[command.index("-ss") + 1] for command in commands[2:]] == [
+        "2.500000", "7.500000",
+    ]
 
 
 def test_execution_kind_separates_chunk_and_prefix_lease_namespaces(tmp_path):
@@ -85,12 +95,13 @@ def test_video_mode_only_extracts_frames_when_ocr_needs_them(tmp_path):
     source.write_bytes(b"source")
     commands = []
     service = VideoParseMediaService(
-        tmp_path / "work", command_runner=_fake_runner(commands)
+        tmp_path / "work", command_runner=_fake_runner(commands),
+        probe_duration=lambda _path: 5000,
     )
 
     with service.prepare_chunk(
         _identity(), source_video=source,
-        start_seconds=0, end_seconds=5, visual_mode="video",
+        start_seconds=0, end_seconds=5000, visual_mode="video",
         frame_fps=1, max_frames=2, max_height=360, ocr_enabled=False,
     ) as media:
         assert media.frames == ()
@@ -98,7 +109,7 @@ def test_video_mode_only_extracts_frames_when_ocr_needs_them(tmp_path):
 
     with service.prepare_chunk(
         _identity(), source_video=source,
-        start_seconds=0, end_seconds=5, visual_mode="video",
+        start_seconds=0, end_seconds=5000, visual_mode="video",
         frame_fps=1, max_frames=2, max_height=360, ocr_enabled=True,
     ) as media:
         assert len(media.frames) == 2
@@ -116,8 +127,8 @@ def test_indexing_segment_uses_the_same_lease_isolation_without_extra_media(tmp_
     with service.prepare_video_segment(
         identity,
         source_video=source,
-        start_seconds=5,
-        end_seconds=9,
+        start_seconds=5000,
+        end_seconds=9000,
         max_height=480,
     ) as video:
         assert video.read_bytes() == b"media"
@@ -225,3 +236,32 @@ def test_workspace_marker_is_published_atomically(tmp_path):
         "created_at": pytest.approx(service._clock()),
     }
     assert list(directory.glob("*.tmp")) == []
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="real media regression requires FFmpeg and FFprobe",
+)
+def test_fractional_video_duration_limits_frames_even_when_audio_is_longer(tmp_path):
+    source = tmp_path / "fractional.mp4"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+        "color=c=blue:s=64x32:r=125:d=8.008",
+        "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono:d=9",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+        "-y", str(source),
+    ], check=True, capture_output=True)
+    assert probe_video_duration_seconds(source) == 8008
+    service = VideoParseMediaService(tmp_path / "real-work")
+
+    with service.prepare_chunk(
+        _identity(), source_video=source, start_seconds=0, end_seconds=9000,
+        visual_mode="ordered_frames", frame_fps=1, max_frames=9,
+        max_height=64, ocr_enabled=False,
+    ) as media:
+        assert len(media.frames) == 9
+        assert all(isinstance(timestamp, int) and 0 <= timestamp < 8008
+                   for timestamp, _path in media.frames)
+        assert all(path.is_file() and path.stat().st_size > 0
+                   for _timestamp, path in media.frames)
+    assert not media.video_path.exists()

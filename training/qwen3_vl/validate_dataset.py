@@ -69,7 +69,7 @@ def validate_dataset(
                         if event.end_seconds > expected_duration_seconds:
                             errors.append(
                                 f"{prefix}: event {event_index} exceeds "
-                                f"analysis duration {expected_duration_seconds} seconds"
+                                f"analysis duration {expected_duration_seconds} milliseconds"
                             )
             video_path = root / video_reference
             if not video_path.is_file() or video_path.stat().st_size == 0:
@@ -88,11 +88,11 @@ def validate_dataset(
                     )
                     if (
                         isinstance(expected_duration_seconds, int)
-                        and abs(actual_duration_seconds - expected_duration_seconds) > 1
+                        and abs(actual_duration_seconds - expected_duration_seconds) > 1000
                     ):
                         errors.append(
-                            f"{prefix}: video duration {actual_duration_seconds} seconds "
-                            f"differs from manifest {expected_duration_seconds} seconds"
+                            f"{prefix}: video duration {actual_duration_seconds} milliseconds "
+                            f"differs from manifest {expected_duration_seconds} milliseconds"
                         )
 
     if len(all_video_references) != len(set(all_video_references)):

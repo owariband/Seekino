@@ -21,6 +21,7 @@ type PlaybackExtraContext = {
     seriesId: string;
     videoId: string;
     episodeOrder: number;
+    /** Integer milliseconds; matches the retained API field name. */
     positionSeconds: number;
   };
 };
@@ -69,7 +70,7 @@ export function WatchPage() {
   const explicitAtSeconds = parsedAtSeconds !== undefined && Number.isSafeInteger(parsedAtSeconds) ? parsedAtSeconds : undefined;
   const rawAtMs = searchParams.get("atMs");
   const parsedAtMs = rawAtMs !== null && /^\d+$/.test(rawAtMs) ? Number(rawAtMs) : undefined;
-  const legacyAtSeconds = parsedAtMs !== undefined && Number.isSafeInteger(parsedAtMs) ? Math.floor(parsedAtMs / 1000) : undefined;
+  const legacyAtSeconds = parsedAtMs !== undefined && Number.isSafeInteger(parsedAtMs) ? parsedAtMs : undefined;
   const atSeconds = explicitAtSeconds ?? legacyAtSeconds;
 
   const updatePlaybackContext = useCallback((positionSeconds: number) => {

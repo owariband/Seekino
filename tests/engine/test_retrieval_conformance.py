@@ -36,11 +36,11 @@ def source_to_recall():
     for sequence, (chunk_id, quote) in enumerate((
         ("first", "我没事"), ("wrong-quote", "我不知道"), ("last", "我没事"),
     )):
-        start, end, version = sequence * 10, (sequence + 1) * 10, sequence + 2
+        start, end, version = sequence * 10000, (sequence + 1) * 10000, sequence + 2
         result = VideoParseResult.model_validate({
             "persons": ["千早爱音"], "timeline": [{
-                "event_type": "DIALOGUE", "start_seconds": start + 1,
-                "end_seconds": start + 3, "description": "千早爱音回答",
+                "event_type": "DIALOGUE", "start_seconds": start + 1000,
+                "end_seconds": start + 3000, "description": "千早爱音回答",
                 "participants": ["千早爱音"], "visible_persons": ["千早爱音"],
                 "speaker": "千早爱音", "text_variants": [{
                     "language": "zh-Hans", "role": "ORIGINAL", "text": quote,
@@ -135,7 +135,7 @@ def test_source_index_recall_and_rerank_preserve_identity_and_formal_conditions(
     assert selected.candidate.ranking.retrieval_identity == documents[2].retrieval_identity
     assert output.rejected_chunk_ids == ("wrong-quote",)
     assert selected.evidence[0].source.raw_text == "我没事"
-    assert (selected.evidence[0].start_seconds, selected.evidence[0].end_seconds) == (21, 23)
+    assert (selected.evidence[0].start_seconds, selected.evidence[0].end_seconds) == (21000, 23000)
 
 
 @pytest.mark.parametrize("field,value", [("content_version", 99), ("parse_task_id", "old-task"), ("index_generation", 2)])

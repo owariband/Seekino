@@ -168,7 +168,7 @@ def main() -> None:
     )
     materialize_analysis_windows(windows, max_height=args.max_height)
     print(
-        f"prepared {len(windows)} temporary analysis windows for {duration_seconds} seconds; "
+        f"prepared {len(windows)} temporary analysis windows for {duration_seconds / 1000:g} seconds; "
         f"ASR runs with up to {args.asr_concurrency} workers while semantic "
         "parsing runs serially",
         flush=True,

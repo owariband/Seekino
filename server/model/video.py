@@ -150,7 +150,10 @@ class VideoRecord(TimestampedRecord, Base):
     inference_proxy_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    duration_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Media durations and coordinates are integer milliseconds; legacy names remain.
+    duration_seconds: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, comment="media_time_milliseconds",
+    )
     upload_status: Mapped[str] = mapped_column(String(32), nullable=False)
     parse_status: Mapped[str] = mapped_column(String(32), nullable=False)
     upload_progress: Mapped[int] = mapped_column(Integer, nullable=False)

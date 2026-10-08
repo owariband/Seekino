@@ -14,6 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from engine.parsev1.frame_sampler import plan_frame_timestamps
+from engine.parsev1.analysis_windows import probe_video_duration_seconds
 
 from ..identity import canonical_uuid
 
@@ -46,7 +47,7 @@ class PreparedVideoParseMedia:
 
     video_path: Path
     audio_path: Path
-    frames: tuple[tuple[float, Path], ...]
+    frames: tuple[tuple[int, Path], ...]
 
 
 class VideoParseMediaService:
@@ -60,6 +61,7 @@ class VideoParseMediaService:
         *,
         ffmpeg_bin: str = "ffmpeg",
         command_runner: Callable[[Sequence[str]], None] | None = None,
+        probe_duration: Callable[[Path], int] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         base = Path(base_directory).expanduser().resolve()
@@ -69,6 +71,7 @@ class VideoParseMediaService:
         self.base_directory = base
         self._ffmpeg_bin = ffmpeg_bin
         self._command_runner = command_runner or self._run_subprocess
+        self._probe_duration = probe_duration or probe_video_duration_seconds
         self._clock = clock
 
     @contextmanager
@@ -157,12 +160,15 @@ class VideoParseMediaService:
             audio = directory / "audio.wav"
             self._materialize_audio(video, audio)
 
-            frames: list[tuple[float, Path]] = []
+            frames: list[tuple[int, Path]] = []
             if visual_mode == "ordered_frames" or ocr_enabled:
                 frame_directory = directory / "frames"
                 frame_directory.mkdir()
+                # Media bounds are milliseconds. Audio can extend beyond the last
+                # video frame, so sample only inside the prepared video stream.
+                duration = min(end_seconds - start_seconds, self._probe_duration(video))
                 timestamps = plan_frame_timestamps(
-                    end_seconds - start_seconds,
+                    duration,
                     frame_fps=frame_fps,
                     max_frames=max_frames,
                 )
@@ -282,9 +288,9 @@ class VideoParseMediaService:
             [
                 self._ffmpeg_bin,
                 "-v", "error",
-                "-ss", str(start_seconds),
+                "-ss", f"{start_seconds / 1000:.3f}",
                 "-i", str(source),
-                "-t", str(end_seconds - start_seconds),
+                "-t", f"{(end_seconds - start_seconds) / 1000:.3f}",
                 "-map", "0:v:0",
                 "-map", "0:a:0?",
                 "-vf", f"scale=-2:min({max_height}\\,ih)",
@@ -318,14 +324,14 @@ class VideoParseMediaService:
         video: Path,
         output: Path,
         *,
-        at_seconds: float,
+        at_seconds: int,
         max_height: int,
     ) -> None:
         self._execute(
             [
                 self._ffmpeg_bin,
                 "-v", "error",
-                "-ss", f"{at_seconds:.6f}",
+                "-ss", f"{at_seconds / 1000:.6f}",
                 "-i", str(video),
                 "-frames:v", "1",
                 "-vf", f"scale=-2:min({max_height}\\,ih)",
@@ -375,7 +381,7 @@ class VideoParseMediaService:
             or not isinstance(end_seconds, int)
             or not 0 <= start_seconds < end_seconds
         ):
-            raise ValueError("Chunk bounds must be increasing integer seconds")
+            raise ValueError("Chunk bounds must be increasing integer milliseconds")
         if visual_mode not in {"ordered_frames", "video"}:
             raise ValueError("visual_mode must be ordered_frames or video")
         if (

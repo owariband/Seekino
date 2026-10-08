@@ -510,7 +510,7 @@ class VideoParseRuntimeService:
         timestamps = [timestamp for timestamp, _path in media.frames]
         prompt = (
             "Read only visible non-dialogue on-screen text from the ordered frames. "
-            "Use absolute integer source-video seconds inside the authorized range. "
+            "Use absolute integer source-video milliseconds inside the authorized range. "
             f"Frame timestamps: {timestamps}."
         )
         result = await self._generate_multimodal(
@@ -670,7 +670,7 @@ class VideoParseRuntimeService:
             task_id: item.sequence_no for task_id, item in by_id.items()
         }
         duration = task_input.duration_seconds
-        chunk_duration = inputs.parse_config.chunk_duration
+        chunk_duration = inputs.parse_config.chunk_duration * 1000
         return {
             "interval_parse_task_id": snapshot.interval_parse_task_id,
             "video_parse_task_id": snapshot.video_parse_task_id,
@@ -773,10 +773,10 @@ class VideoParseRuntimeService:
             self._repository.load_task_input, lease.video_parse_task_id
         )
         inputs = self._parse_input(task_input)
-        start = lease.sequence_no * inputs.parse_config.chunk_duration
+        start = lease.sequence_no * inputs.parse_config.chunk_duration * 1000
         end = min(
             task_input.duration_seconds,
-            (lease.sequence_no + 1) * inputs.parse_config.chunk_duration,
+            (lease.sequence_no + 1) * inputs.parse_config.chunk_duration * 1000,
         )
         return {
             "chunk_parse_task_id": lease.chunk_parse_task_id,

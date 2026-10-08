@@ -19,16 +19,16 @@ def _valid_result_payload() -> dict[str, Any]:
         "timeline": [
             {
                 "event_type": "EMOTION",
-                "start_seconds": 11,
-                "end_seconds": 17,
+                "start_seconds": 11000,
+                "end_seconds": 17000,
                 "description": "爱音强忍眼泪，显得十分难过",
                 "participants": ["爱音"],
                 "visible_persons": ["爱音"],
             },
             {
                 "event_type": "DIALOGUE",
-                "start_seconds": 12,
-                "end_seconds": 16,
+                "start_seconds": 12000,
+                "end_seconds": 16000,
                 "description": "爱音否认自己在难过",
                 "participants": ["爱音", "乐奈"],
                 "visible_persons": ["爱音", "乐奈"],
@@ -236,10 +236,10 @@ def test_event_rejects_duplicate_person_references(reference_field: str) -> None
 
 def test_result_rejects_unsorted_timeline_but_allows_equal_starts() -> None:
     payload = _valid_result_payload()
-    payload["timeline"][1]["start_seconds"] = 11
+    payload["timeline"][1]["start_seconds"] = 11000
     VideoParseResult.model_validate(payload)
 
-    payload["timeline"][1]["start_seconds"] = 10
+    payload["timeline"][1]["start_seconds"] = 10000
     with pytest.raises(ValidationError, match="ordered by start_seconds"):
         VideoParseResult.model_validate(payload)
 

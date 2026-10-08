@@ -26,7 +26,7 @@ def _validate_bounds(start_seconds: int, end_seconds: int) -> None:
         or not isinstance(end_seconds, int)
         or end_seconds <= start_seconds
     ):
-        raise ValueError("Chunk bounds must be increasing nonnegative integer seconds")
+        raise ValueError("Chunk bounds must be increasing nonnegative integer milliseconds")
 
 
 def _nonblank(value: object) -> bool:

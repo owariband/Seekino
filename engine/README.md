@@ -9,6 +9,14 @@ Engine 不拥有生产 Job、Lease、Checkpoint、Artifact、MySQL 或 Qdrant；
 持久化生命周期仍由 Server 负责。外部模型请求由根目录下的 `gateway/` 实现。
 `parsev1` 与 `parsev2` 不互相导入，也不通过兼容模块转发实现。
 
+## 媒体时间单位
+
+视频时长、Chunk／事件边界、ASR 和采样帧位置统一使用整数毫秒，保留已有
+`*_seconds`／`*Seconds` 字段名。例如 `8.008` 秒视频记录为 `8008`。配置中的
+Chunk／Interval／重叠／分组时长仍为秒，FPS 仍为帧／秒；超时与租约单位不变。
+FFprobe、ASR、FFmpeg 和播放器在接入边界完成秒与毫秒转换；页面展示小数秒。
+历史整数秒数据须由 Server 迁移并标识单位，不能直接按新语义读取。
+
 ## V1 生产契约
 
 生产 Parse 通过一个显式 Pipeline 进入 Engine：

@@ -15,11 +15,11 @@ VO 按 `commonVO.py`、`libraryVO.py`、`uploadVO.py`、`jobVO.py`、`agentVO.py
 | upload | UploadSessionCreateRequest、UploadSessionView、UploadSegmentView、UploadCompleteView | 完整上传确认点、缺失分段、真实合并阶段、源 SHA、后续 Job、资源 version |
 | job | ParseJobView、VideoChunkCheckpointView、JobCounts、JobSummary | 实际阶段 / 进度 / 检查点、结构化错误、单调 version、全范围权威统计 |
 | parseUsage | UsageOverviewVO、UsageTotalsVO、UsageModelRowVO、UsageRunRowVO | 本地已记录 Token、按模型和任务/Chat 汇总、已知小计与未知/截断状态 |
-| agent | Conversation / Message 请求与 View、EvidenceReference、各类回答事件 | 历史 preview、Unix 毫秒绝对时间、媒体秒范围、消息 phase / version、候选引用、Evaluator 审核后的精确视频范围、恢复同一轮消息对 |
+| agent | Conversation / Message 请求与 View、EvidenceReference、各类回答事件 | 历史 preview、Unix 毫秒绝对时间、媒体毫秒范围、消息 phase / version、候选引用、Evaluator 审核后的精确视频范围、恢复同一轮消息对 |
 | search | VideoChunkEvidenceView、VideoChunkCandidateView、SearchHitView、SearchResultView、Keyframe | 正文与证据、视频定位、完整检索范围、最终 rank、partial / warnings、可读取媒体 |
 | system | HealthView | API 存活与真实 serverTime |
 
-所有业务请求显式传 `workspaceId`：有 JSON Body 时放 Body，否则放 Query。公开绝对时间用 Unix epoch 毫秒整数，未知时间为 null；数据库默认使用 signed `BIGINT`，`model_usage.started_at/created_at` 按已确认设计使用 UTC `TIMESTAMP(3)`，在 HTTP 边界转换为毫秒整数。视频 `startSeconds` / `endSeconds` / `atSeconds` 是相对于原视频起点的整数秒，视频时长使用 `durationSeconds`；它们不是日期或 Unix 时间戳。Worker、HTTP、Tool 和 Agent 阶段等运行耗时继续使用显式的 `*DurationMs`。所有列表使用 `Page<T>`，参数默认 limit=50，范围 1–100；cursor 绑定 Workspace、筛选与固定排序。
+所有业务请求显式传 `workspaceId`：有 JSON Body 时放 Body，否则放 Query。公开绝对时间用 Unix epoch 毫秒整数，未知时间为 null；数据库默认使用 signed `BIGINT`，`model_usage.started_at/created_at` 按已确认设计使用 UTC `TIMESTAMP(3)`，在 HTTP 边界转换为毫秒整数。视频 `startSeconds` / `endSeconds` / `atSeconds` / `positionSeconds` 与时长 `durationSeconds` 保留现有字段名，值统一为相对于原视频起点的整数毫秒；它们不是日期或 Unix 时间戳。解析配置时长继续使用秒。前端显示小数秒，四舍五入后最多保留两位小数并省略末尾零；浏览器播放接口处进行秒与毫秒转换。Worker、HTTP、Tool 和 Agent 阶段等运行耗时继续使用显式的 `*DurationMs`。所有列表使用 `Page<T>`，参数默认 limit=50，范围 1–100；cursor 绑定 Workspace、筛选与固定排序。
 
 ```ts
 interface Page<T> {
@@ -159,6 +159,6 @@ Agent 每条消息的预算快照迁移见
 
 request_fingerprint 只保存原始规范化创建请求的摘要，不包含服务端分段配置、后续分配的顺序或计算出的实际 SHA；因此同键不同可选参数会冲突。历史上传无法从结果反推原始可选参数意图时保留 null，继续按旧字段校验；不填伪造指纹。新增上传均固定真实请求指纹。
 
-video_chunk_checkpoint 的 chunk_start_seconds / chunk_end_seconds 保存 canonical VideoChunk 相对于原视频起点的整数秒范围，用于按真实视频时长计算解析进度。AnalysisWindow 允许重叠，不能用于累计完成时长。两列必须同时为空或同时有值；已有值不可改写。旧毫秒 Checkpoint 不跨 Pipeline version 恢复；秒制迁移见 `docs/migrations/20260923_video_timeline_seconds.sql`。
+video_chunk_checkpoint 的 chunk_start_seconds / chunk_end_seconds 保存 canonical VideoChunk 相对于原视频起点的整数毫秒范围，用于按真实视频时长计算解析进度。AnalysisWindow 允许重叠，不能用于累计完成时长。两列必须同时为空或同时有值；已有值不可改写。字段名保留。MySQL 使用 `video.duration_seconds` 的 `media_time_milliseconds` 列注释识别整个媒体时间合同，ES 使用现有 mapping `_meta.media_time_unit=milliseconds`；无标记的旧秒制数据不能直接加载。受控迁移见 `docs/migrations/20261008_video_timeline_milliseconds.sql`，其中整秒记录乘 1000 只转换单位，不能恢复此前已丢失的小数精度。旧产物与正式内容必须按其合同转换或重新解析后再恢复。
 
 Series 的 `transcript_language_hint` 由用户确认并用于 Query Agent 的 Transcript 检索改写；已有行保持 null，不从作品名或文件名猜测。对应受控 SQL 见 `docs/migrations/20260917_series_transcript_language_hint.sql`。

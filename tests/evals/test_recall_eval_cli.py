@@ -1,4 +1,7 @@
 import pytest
+from types import SimpleNamespace
+
+from evals.recall import cli
 
 from evals.recall.cli import (
     _build_parser,
@@ -68,3 +71,22 @@ def test_local_backend_rejects_elasticsearch_mode() -> None:
 def test_qdrant_backend_is_not_an_execution_choice() -> None:
     with pytest.raises(SystemExit):
         _args("--retrieval-backend", "qdrant")
+
+
+@pytest.mark.parametrize("duration_delta", [500, 1000, 1001])
+def test_cli_video_duration_tolerance_remains_one_second(monkeypatch, duration_delta):
+    args = _args()
+    monkeypatch.setattr(cli, "_build_parser", lambda: SimpleNamespace(parse_args=lambda: args))
+    monkeypatch.setattr(cli, "load_parse_result", lambda path: SimpleNamespace(
+        source_video=path.parent / "episode.mp4", duration_seconds=8008
+    ))
+    monkeypatch.setattr(cli, "load_recall_fixture", lambda path: object())
+    monkeypatch.setattr(cli, "probe_video_duration_seconds", lambda path: 8008 + duration_delta)
+
+    def stop_before_model_configuration(path):
+        raise RuntimeError("duration check passed")
+
+    monkeypatch.setattr(cli, "load_config", stop_before_model_configuration)
+    message = "duration check passed" if duration_delta <= 1000 else "duration does not match"
+    with pytest.raises(RuntimeError, match=message):
+        cli.main()

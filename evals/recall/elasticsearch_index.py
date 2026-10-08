@@ -14,7 +14,7 @@ from engine.rag.retrieval.fusion import RankedVideoChunk
 from engine.parsev1.retrieval import VideoChunkRetrievalDocument
 
 _EVAL_INDEX_PATTERN = re.compile(r"^anivag_recall_eval_[a-z0-9][a-z0-9_-]*$")
-_INDEX_PURPOSE = {"anivag_recall_eval": 1}
+_INDEX_PURPOSE = {"anivag_recall_eval": 1, "media_time_unit": "milliseconds"}
 _TEXT_VECTOR_FIELD = "text_vector"
 _VISION_VECTOR_FIELD = "vision_vector"
 

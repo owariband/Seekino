@@ -11,6 +11,7 @@ type EvidenceTab = "reason" | "evidence" | "context";
 
 interface EvidencePlayerProps {
   hit: VideoChunkSearchHit | null;
+  /** Integer milliseconds; range field names remain unchanged. */
   playbackRange: { startSeconds: number; endSeconds: number };
 }
 
@@ -44,8 +45,9 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
     playingRef.current = false;
     const video = videoRef.current;
     if (!video || !evidence || !playbackUrl) return;
-    const start = playbackRange.startSeconds;
-    const end = playbackRange.endSeconds;
+    // HTML media APIs use seconds; all stored and API ranges use integer milliseconds.
+    const start = playbackRange.startSeconds / 1000;
+    const end = playbackRange.endSeconds / 1000;
     let active = true;
     let requested = false;
     video.pause();
@@ -77,7 +79,7 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
         setPlaying(false);
         return;
       }
-      setRelativePositionSeconds(Math.min(clipDurationSeconds, Math.max(0, Math.floor(video.currentTime - playbackRange.startSeconds))));
+      setRelativePositionSeconds(Math.min(clipDurationSeconds, Math.max(0, Math.round(video.currentTime * 1000) - playbackRange.startSeconds)));
     };
     const keepInRange = () => {
       if (video.currentTime < start || video.currentTime >= end) positionAtStart();
@@ -129,7 +131,7 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
     const video = videoRef.current;
     if (!video || !mediaReady) return;
     const nextPositionSeconds = Math.min(clipDurationSeconds, Math.max(0, relativeSeconds));
-    video.currentTime = playbackRange.startSeconds + nextPositionSeconds;
+    video.currentTime = (playbackRange.startSeconds + nextPositionSeconds) / 1000;
     setRelativePositionSeconds(nextPositionSeconds);
     if (nextPositionSeconds >= clipDurationSeconds) video.pause();
   };
@@ -137,11 +139,11 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
     let nextPositionSeconds: number;
     switch (event.key) {
       case "ArrowLeft":
-      case "ArrowDown": nextPositionSeconds = relativePositionSeconds - 1; break;
+      case "ArrowDown": nextPositionSeconds = relativePositionSeconds - 1000; break;
       case "ArrowRight":
-      case "ArrowUp": nextPositionSeconds = relativePositionSeconds + 1; break;
-      case "PageDown": nextPositionSeconds = relativePositionSeconds - 5; break;
-      case "PageUp": nextPositionSeconds = relativePositionSeconds + 5; break;
+      case "ArrowUp": nextPositionSeconds = relativePositionSeconds + 1000; break;
+      case "PageDown": nextPositionSeconds = relativePositionSeconds - 5000; break;
+      case "PageUp": nextPositionSeconds = relativePositionSeconds + 5000; break;
       case "Home": nextPositionSeconds = 0; break;
       case "End": nextPositionSeconds = clipDurationSeconds; break;
       default: return;

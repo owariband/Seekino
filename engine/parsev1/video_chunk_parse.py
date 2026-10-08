@@ -144,7 +144,7 @@ class VideoUnderstandingAgent:
 
     def analyze_frames(
         self,
-        frames: Sequence[tuple[float, str | Path]],
+        frames: Sequence[tuple[int, str | Path]],
         *,
         duration_seconds: int,
         transcript: TranscriptAnalysis,
@@ -217,7 +217,7 @@ class OrderedFrameVideoUnderstandingAgent:
 
     def analyze_frames(
         self,
-        frames: Sequence[tuple[float, str | Path]],
+        frames: Sequence[tuple[int, str | Path]],
         *,
         duration_seconds: int,
         transcript: TranscriptAnalysis,
@@ -283,9 +283,9 @@ class FrameFallbackVideoUnderstandingAgent:
         transcript = _clamp_transcript(transcript, resolved_duration_seconds)
 
         mapped_observations: list[dict[str, Any]] = []
-        all_timestamps_seconds: list[float] = []
+        all_timestamps_seconds: list[int] = []
         group_frame_counts: list[int] = []
-        frame_interval_seconds = 1 / self.frame_fps
+        frame_interval_seconds = 1000 / self.frame_fps
         with tempfile.TemporaryDirectory(
             prefix="anivag-deepseek-frames-"
         ) as directory:
@@ -332,7 +332,7 @@ class FrameFallbackVideoUnderstandingAgent:
 
         observations = _deduplicate_visual_observations(
             mapped_observations,
-            max_gap_seconds=frame_interval_seconds + 0.5,
+            max_gap_seconds=frame_interval_seconds + 500,
         )
         timeline = self._refiner_model.generate(
             [
@@ -441,7 +441,7 @@ class ContentFilterVideoUnderstandingAgent:
 
 def _analyze_ordered_frames(
     model: MultimodalModel,
-    frames: Sequence[tuple[float, str | Path]],
+    frames: Sequence[tuple[int, str | Path]],
     *,
     duration_seconds: int,
     transcript: TranscriptAnalysis,
@@ -487,22 +487,22 @@ def _analyze_ordered_frames(
 
 
 def _ordered_frame_inputs(
-    frames: Sequence[tuple[float, str | Path]],
+    frames: Sequence[tuple[int, str | Path]],
     *,
     duration_seconds: int,
     sequence_intro: str,
-) -> tuple[list[TextInput | ImageInput], list[float]]:
+) -> tuple[list[TextInput | ImageInput], list[int]]:
     if duration_seconds <= 0:
         raise ValueError("duration_seconds must be greater than zero")
     if not frames:
         raise ValueError("at least one sampled frame is required")
 
     inputs: list[TextInput | ImageInput] = [TextInput(text=sequence_intro)]
-    timestamps_seconds: list[float] = []
-    previous_timestamp_seconds = -1.0
+    timestamps_seconds: list[int] = []
+    previous_timestamp_seconds = -1
     for index, (timestamp_seconds, frame_path) in enumerate(frames, start=1):
-        if not math.isfinite(timestamp_seconds):
-            raise ValueError("frame timestamp must be finite")
+        if isinstance(timestamp_seconds, bool) or not isinstance(timestamp_seconds, int):
+            raise ValueError("frame timestamp must be integer milliseconds")
         if timestamp_seconds <= previous_timestamp_seconds:
             raise ValueError("frame timestamps must be strictly increasing")
         if timestamp_seconds < 0 or timestamp_seconds >= duration_seconds:
@@ -512,7 +512,7 @@ def _ordered_frame_inputs(
                 TextInput(
                     text=(
                         f"Frame {index}/{len(frames)}: "
-                        f"t={timestamp_seconds:g} seconds"
+                        f"t={timestamp_seconds} milliseconds"
                     )
                 ),
                 ImageInput(path=Path(frame_path), detail="high"),
@@ -524,7 +524,7 @@ def _ordered_frame_inputs(
 
 
 def _neutral_visual_inputs(
-    frames: Sequence[tuple[float, str | Path]],
+    frames: Sequence[tuple[int, str | Path]],
 ) -> list[TextInput | ImageInput]:
     if not frames:
         raise ValueError("at least one sampled frame is required")
@@ -556,6 +556,7 @@ def _analysis_groups(
         raise ValueError("duration_seconds must be greater than zero")
     if group_duration_seconds <= 0:
         raise ValueError("group_duration_seconds must be greater than zero")
+    group_duration_seconds *= 1000
     return [
         (
             start_seconds,
@@ -584,7 +585,7 @@ def _map_visual_observations(
     group_index: int,
     group_start_seconds: int,
     group_end_seconds: int,
-    timestamps_seconds: Sequence[float],
+    timestamps_seconds: Sequence[int],
     frame_interval_seconds: float,
 ) -> list[dict[str, Any]]:
     mapped: list[dict[str, Any]] = []
@@ -608,11 +609,11 @@ def _map_visual_observations(
                     [
                         max(
                             group_start_seconds,
-                            timestamp_seconds - half_interval_seconds,
+                            math.floor(timestamp_seconds - half_interval_seconds),
                         ),
                         min(
                             group_end_seconds,
-                            timestamp_seconds + half_interval_seconds,
+                            math.ceil(timestamp_seconds + half_interval_seconds),
                         ),
                     ]
                     for timestamp_seconds in evidence_timestamps_seconds

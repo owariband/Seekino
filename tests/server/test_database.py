@@ -175,7 +175,7 @@ def test_existing_model_usage_rejects_case_insensitive_mysql_collation(monkeypat
         create_schema(engine)
 
 
-def test_mysql_schema_uses_innodb_json_and_integer_media_seconds() -> None:
+def test_mysql_schema_uses_innodb_json_and_integer_media_milliseconds() -> None:
     video_ddl = str(
         CreateTable(VideoRecord.__table__).compile(dialect=mysql.dialect())
     )
@@ -196,6 +196,7 @@ def test_mysql_schema_uses_innodb_json_and_integer_media_seconds() -> None:
     assert "ENGINE=InnoDB" in chunk_ddl
     assert "CHARSET=utf8mb4" in chunk_ddl
     assert "duration_seconds BIGINT" in video_ddl
+    assert "COMMENT 'media_time_milliseconds'" in video_ddl
     assert "duration_ms" not in video_ddl
     assert "start_seconds BIGINT" in chunk_ddl
     assert "all_time_events JSON" in info_ddl
@@ -203,6 +204,42 @@ def test_mysql_schema_uses_innodb_json_and_integer_media_seconds() -> None:
     assert "chunk_start_seconds BIGINT" in checkpoint_ddl
     assert "chunk_end_seconds BIGINT" in checkpoint_ddl
     assert "ck_video_chunk_checkpoint_range" in checkpoint_ddl
+
+
+@pytest.mark.parametrize("old_rows", [0, 1])
+def test_mysql_media_unit_guard_rejects_old_integer_schema_even_when_empty(monkeypatch, old_rows):
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE video (duration_seconds BIGINT NOT NULL)"))
+        if old_rows:
+            connection.execute(text("INSERT INTO video VALUES (9)"))
+    monkeypatch.setattr(engine.dialect, "name", "mysql")
+    with pytest.raises(SchemaUpgradeRequiredError, match="20261008_video_timeline_milliseconds.sql"):
+        create_schema(engine)
+    assert inspect(engine).get_table_names() == ["video"]
+
+
+def test_mysql_media_unit_guard_accepts_marked_column_before_other_schema_checks(monkeypatch):
+    import server.database as database
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE video (duration_seconds BIGINT NOT NULL)"))
+        connection.execute(text("CREATE TABLE video_segment (id BIGINT)"))
+    inspector = inspect(engine)
+    original = inspector.get_columns
+
+    def columns(table_name):
+        result = original(table_name)
+        if table_name == "video":
+            result[0]["comment"] = "media_time_milliseconds"
+        return result
+
+    monkeypatch.setattr(inspector, "get_columns", columns)
+    monkeypatch.setattr(database, "inspect", lambda _engine: inspector)
+    monkeypatch.setattr(engine.dialect, "name", "mysql")
+    with pytest.raises(SchemaUpgradeRequiredError, match="legacy VideoSegment"):
+        create_schema(engine)
 
 
 def test_mysql_video_parse_v2_schema_uses_timestamp_leases_and_task_scoped_content() -> None:

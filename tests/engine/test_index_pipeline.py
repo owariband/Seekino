@@ -44,8 +44,8 @@ def _result(text: str = "我没事") -> VideoParseResult:
         "persons": ["千早爱音"],
         "timeline": [{
             "event_type": "DIALOGUE",
-            "start_seconds": 1,
-            "end_seconds": 3,
+            "start_seconds": 1000,
+            "end_seconds": 3000,
             "description": "千早爱音回答",
             "participants": ["千早爱音"],
             "visible_persons": ["千早爱音"],
@@ -101,7 +101,7 @@ def _clip(**updates: object) -> VideoClipManifest:
     values = {
         "input_sha256": "a" * 64,
         "start_seconds": 0,
-        "end_seconds": 10,
+        "end_seconds": 10000,
         "fps": 1.0,
         "max_height": 720,
         "mime_type": "video/mp4",
@@ -130,10 +130,10 @@ def _frames_contract(
 
 def _frames_manifest(
     contract: OrderedFramesInputContract,
-    actual_times: tuple[float, ...] | None = None,
+    actual_times: tuple[int, ...] | None = None,
 ) -> OrderedFramesManifest:
     assert contract.sampling is not None
-    requested = plan_ordered_frame_timestamps(0, 10, contract.sampling)
+    requested = plan_ordered_frame_timestamps(0, 10000, contract.sampling)
     actual_times = requested if actual_times is None else actual_times
     assert len(requested) == len(actual_times)
     return OrderedFramesManifest(
@@ -199,7 +199,7 @@ def _source(
         parse_task_id="task-1",
         content_version=content_version,
         chunk_start_seconds=0,
-        chunk_end_seconds=10,
+        chunk_end_seconds=10000,
         result=result or _result(),
         visual_input=visual_input or _clip(),
         enrichments=enrichments,
@@ -319,8 +319,8 @@ def test_ordered_frame_input_revision_covers_frame_order_time_and_content() -> N
         preprocess_revision="rgb-resize-v1",
     )
     frames = (
-        OrderedFrame(ordinal=0, at_seconds=1.0, input_sha256="a" * 64),
-        OrderedFrame(ordinal=1, at_seconds=2.0, input_sha256="b" * 64),
+        OrderedFrame(ordinal=0, at_seconds=1000, input_sha256="a" * 64),
+        OrderedFrame(ordinal=1, at_seconds=2000, input_sha256="b" * 64),
     )
     manifest = OrderedFramesManifest(
         frames=frames,
@@ -330,7 +330,7 @@ def test_ordered_frame_input_revision_covers_frame_order_time_and_content() -> N
     )
     changed_time = replace(
         manifest,
-        frames=(frames[0], replace(frames[1], at_seconds=2.5)),
+        frames=(frames[0], replace(frames[1], at_seconds=2500)),
     )
     changed_order = replace(
         manifest,
@@ -358,7 +358,7 @@ def test_ordered_frames_must_stay_inside_the_chunk() -> None:
         preprocess_revision="rgb-v1",
     )
     manifest = OrderedFramesManifest(
-        frames=(OrderedFrame(ordinal=0, at_seconds=10, input_sha256="a" * 64),),
+        frames=(OrderedFrame(ordinal=0, at_seconds=10000, input_sha256="a" * 64),),
         sampling_contract_id=contract.sampling_contract_id,
         mime_type=contract.mime_type,
         preprocess_revision=contract.preprocess_revision,
@@ -389,7 +389,7 @@ def test_ordered_frame_contract_change_updates_the_actual_visual_input(
         preprocess_revision="rgb-resize-v1",
     )
     manifest = OrderedFramesManifest(
-        frames=(OrderedFrame(ordinal=0, at_seconds=1, input_sha256="a" * 64),),
+        frames=(OrderedFrame(ordinal=0, at_seconds=1000, input_sha256="a" * 64),),
         sampling_contract_id=contract.sampling_contract_id,
         mime_type=contract.mime_type,
         preprocess_revision=contract.preprocess_revision,
@@ -413,20 +413,32 @@ def test_ordered_frame_contract_change_updates_the_actual_visual_input(
 @pytest.mark.parametrize(
     ("fps", "cap", "expected"),
     [
-        (0.2, 10, (12.5, 17.5)),
-        (2.0, 3, (35 / 3, 15.0, 55 / 3)),
-        (0.01, 10, (15.0,)),
+        (0.2, 10, (12500, 17500)),
+        (2.0, 3, (11666, 15000, 18333)),
+        (0.01, 10, (15000,)),
     ],
 )
 def test_uniform_midpoint_sampling_uses_absolute_times_and_frame_limits(
-    fps: float, cap: int, expected: tuple[float, ...],
+    fps: float, cap: int, expected: tuple[int, ...],
 ) -> None:
     sampling = OrderedFrameSamplingContract(
         fps=fps,
         max_frames_per_chunk=cap,
         strategy="uniform_midpoint_v1",
     )
-    assert plan_ordered_frame_timestamps(10, 20, sampling) == pytest.approx(expected)
+    assert plan_ordered_frame_timestamps(10000, 20000, sampling) == expected
+
+
+def test_dense_sampling_cannot_duplicate_integer_millisecond_positions() -> None:
+    sampling = OrderedFrameSamplingContract(fps=10000, max_frames_per_chunk=10)
+    timestamps = plan_ordered_frame_timestamps(100, 101, sampling)
+    assert timestamps == (100,)
+    manifest = OrderedFramesManifest(
+        frames=(OrderedFrame(0, timestamps[0], "a" * 64, timestamps[0]),),
+        sampling_contract_id=sampling.sampling_contract_id,
+        mime_type="image/jpeg", preprocess_revision="v1", sampling=sampling, max_height=720,
+    )
+    assert manifest.frames[0].at_seconds < 101
 
 
 @pytest.mark.parametrize(
@@ -445,7 +457,7 @@ def test_ordered_frame_sampling_rejects_invalid_parameters(field: str, value: ob
 def test_structured_frame_manifest_persists_rules_and_realized_evidence() -> None:
     sampling = _sampling()
     contract = _frames_contract(sampling)
-    manifest = _frames_manifest(contract, (2.4, 7.6))
+    manifest = _frames_manifest(contract, (2400, 7600))
     persisted = manifest.as_dict()
     assert contract.sampling_contract_id == sampling.sampling_contract_id
     assert contract.claims()["sampling"] == sampling.claims()
@@ -453,7 +465,7 @@ def test_structured_frame_manifest_persists_rules_and_realized_evidence() -> Non
     assert manifest.input_contract == contract
     assert json.loads(json.dumps(persisted)) == persisted
     frame = persisted["frames"][0]
-    assert (frame["at_seconds"], frame["requested_at_seconds"]) == (2.4, 2.5)
+    assert (frame["at_seconds"], frame["requested_at_seconds"]) == (2400, 2500)
     assert frame["input_sha256"] == "a" * 64
     plan = _frames_plan(contract, manifest)
     document = finalize_chunk_index(plan, _dense_artifacts(plan))
@@ -465,7 +477,7 @@ def test_structured_manifest_validates_requested_plan_and_actual_times() -> None
     manifest = _frames_manifest(contract)
     requested_failures = (
         manifest.frames[:-1],
-        (replace(manifest.frames[0], requested_at_seconds=2.6), manifest.frames[1]),
+        (replace(manifest.frames[0], requested_at_seconds=2600), manifest.frames[1]),
     )
     for frames in requested_failures:
         with pytest.raises(ValueError, match="sampling time plan"):
@@ -475,13 +487,13 @@ def test_structured_manifest_validates_requested_plan_and_actual_times() -> None
         replace(
             manifest,
             frames=(
-                replace(manifest.frames[0], at_seconds=8),
-                replace(manifest.frames[1], at_seconds=2),
+                replace(manifest.frames[0], at_seconds=8000),
+                replace(manifest.frames[1], at_seconds=2000),
             ),
         )
     outside = replace(
         manifest,
-        frames=(manifest.frames[0], replace(manifest.frames[1], at_seconds=10)),
+        frames=(manifest.frames[0], replace(manifest.frames[1], at_seconds=10000)),
     )
     with pytest.raises(ValueError, match="half-open Chunk"):
         _frames_plan(contract, outside)
@@ -523,7 +535,7 @@ def test_realized_frame_change_retains_actual_media_and_requires_its_own_result(
     original = _frames_manifest(contract)
     first = replace(
         original.frames[0],
-        **({"at_seconds": 2.4} if change == "actual_time" else {"input_sha256": "f" * 64}),
+        **({"at_seconds": 2400} if change == "actual_time" else {"input_sha256": "f" * 64}),
     )
     changed = replace(original, frames=(first, original.frames[1]))
     old = _frames_plan(contract, original)

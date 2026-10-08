@@ -51,10 +51,12 @@ class TextVideoEmbedder(Protocol):
 
 
 class RelevantTimeRange(BaseModel):
+    """Source-video offsets in integer milliseconds; field names are retained."""
+
     model_config = ConfigDict(extra="forbid")
 
-    start_seconds: int = Field(ge=0)
-    end_seconds: int = Field(gt=0)
+    start_seconds: int = Field(ge=0, description="Source-video offset in milliseconds")
+    end_seconds: int = Field(gt=0, description="Source-video offset in milliseconds")
 
     @model_validator(mode="after")
     def validate_range(self) -> "RelevantTimeRange":

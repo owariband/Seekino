@@ -89,6 +89,7 @@ def _upload_service(
     parse_defaults=None,
     execution_mode="v1",
     video_parse_index_store=None,
+    probe_duration=None,
 ):
     engine, _video_repository = repository
     with engine.begin() as connection:
@@ -128,7 +129,7 @@ def _upload_service(
             upload_repository,
             store,
             config=_config(),
-            probe_duration=lambda _path: 12,
+            probe_duration=probe_duration or (lambda _path: 12_000),
             clock=clock,
             parse_defaults=parse_defaults,
             execution_mode=execution_mode,
@@ -153,6 +154,32 @@ class _VideoParseIndexStore:
     def __init__(self, semantic_dimensions: int, vision_dimensions: int) -> None:
         self.semantic_dimensions = semantic_dimensions
         self.vision_dimensions = vision_dimensions
+
+
+@pytest.mark.parametrize(("chunk_duration", "expected_count"), [(8, 2), (60, 1)])
+def test_v2_upload_preserves_fractional_media_duration_with_seconds_configuration(
+    repository, tmp_path, chunk_duration, expected_count,
+):
+    engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, execution_mode="v2", probe_duration=lambda _path: 8008,
+    )
+    upload = service.create_session(
+        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=1, original_filename="fractional.mp4", media_type="video/mp4",
+        total_size_bytes=10, idempotency_key="fractional-duration",
+        video_parse_config=default_video_parse_v2_config().model_copy(update={
+            "chunk_duration": chunk_duration, "interval_duration": chunk_duration * 3,
+        }),
+    )
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    with create_session_factory(engine)() as session:
+        video = session.get(VideoRecord, completed.video_id)
+        task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        assert video.duration_seconds == 8008
+        assert task.chunk_count == expected_count
+        assert task.parse_config["chunk_duration"] == chunk_duration
 
 
 def _video_parse_config_with_dimensions(dimensions: int) -> VideoParseV2Config:
@@ -607,7 +634,7 @@ def test_selected_parse_config_survives_upload_completion_and_job_claim(
     assert task.task.parse_config == completed.session.video_parse_config
     assert task.task.video_id == completed.video_id
     assert task.original_filename == upload.original_filename
-    assert task.duration_seconds == 12
+    assert task.duration_seconds == 12_000
     lease = MySqlParseJobQueue(create_session_factory(engine)).claim_next(
         "configured-worker", lease_duration=timedelta(minutes=5),
     )
@@ -1098,9 +1125,9 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
             video_id=completed.video_id,
             sequence_no=0,
             start_seconds=0,
-            end_seconds=12,
+            end_seconds=12_000,
             analysis_window_start_seconds=0,
-            analysis_window_end_seconds=12,
+            analysis_window_end_seconds=12_000,
             chunk_media_ref="artifact://test/old-chunk.mp4",
             analysis_window_media_ref="artifact://test/old-window.mp4",
             transcript=[],
@@ -1268,9 +1295,9 @@ def prepared_v2_retry(repository, tmp_path):
             chunk_id = str(uuid4())
             session.add(VideoChunkRecord(
                 video_chunk_id=chunk_id, video_id=completed.video_id,
-                sequence_no=sequence, start_seconds=sequence * 3, end_seconds=(sequence + 1) * 3,
-                analysis_window_start_seconds=sequence * 3,
-                analysis_window_end_seconds=(sequence + 1) * 3,
+                sequence_no=sequence, start_seconds=sequence * 3000, end_seconds=(sequence + 1) * 3000,
+                analysis_window_start_seconds=sequence * 3000,
+                analysis_window_end_seconds=(sequence + 1) * 3000,
                 chunk_media_ref="artifact://test/chunk.mp4",
                 analysis_window_media_ref="artifact://test/window.mp4",
             ))
@@ -1761,9 +1788,9 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
             video_id=completed.video_id,
             sequence_no=0,
             start_seconds=0,
-            end_seconds=12,
+            end_seconds=12_000,
             analysis_window_start_seconds=0,
-            analysis_window_end_seconds=12,
+            analysis_window_end_seconds=12_000,
             chunk_media_ref="artifact://test/old-chunk.mp4",
             analysis_window_media_ref="artifact://test/old-window.mp4",
             transcript=[],
@@ -1811,7 +1838,7 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
             video_chunk_id=video_chunk_id,
             stage=VideoChunkCheckpointStage.INDEXED.value,
             chunk_start_seconds=0,
-            chunk_end_seconds=12,
+            chunk_end_seconds=12_000,
         ))
         session.add(ParseUsageAttemptRecord(
             job_id=completed.job_id,
@@ -1962,9 +1989,9 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             video_id=completed.video_id,
             sequence_no=0,
             start_seconds=0,
-            end_seconds=1,
+            end_seconds=1000,
             analysis_window_start_seconds=0,
-            analysis_window_end_seconds=1,
+            analysis_window_end_seconds=1000,
             chunk_media_ref="artifact://test/chunk.mp4",
             analysis_window_media_ref="artifact://test/window.mp4",
             transcript=[],
@@ -2306,7 +2333,7 @@ def test_complete_creates_video_and_durable_parse_job_once(
     assert video.original_filename == "episode-07.mp4"
     assert video.episode_order == video.upload_sequence == 7
     assert video.content_hash == hashlib.sha256(b"abcdefghij").hexdigest()
-    assert video.duration_seconds == 12
+    assert video.duration_seconds == 12_000
     assert video.parse_status == ParseJobStatus.QUEUED.value
     assert store.resolve(video.original_source_uri).read_bytes() == b"abcdefghij"
     assert job.video_id == video.video_id
@@ -2332,7 +2359,7 @@ def test_expired_session_rejects_new_segments(repository, tmp_path) -> None:
         upload_repository,
         store,
         config=_config(),
-        probe_duration=lambda _path: 12,
+        probe_duration=lambda _path: 12_000,
         clock=lambda: now + timedelta_to_ms(timedelta(hours=2)),
     )
 
@@ -2521,7 +2548,7 @@ def test_episode_order_conflicts_with_existing_video_in_the_same_series(
             upload_sequence=9,
             original_filename="existing.mp4",
             original_source_uri="artifact://test/existing.mp4",
-            content_hash="0" * 64, total_bytes=4, duration_seconds=1,
+            content_hash="0" * 64, total_bytes=4, duration_seconds=1000,
             upload_status="COMPLETED", parse_status="SUCCEEDED", upload_progress=100, parse_progress=100,
         ))
     with pytest.raises(UploadConflictError, match="episode"):

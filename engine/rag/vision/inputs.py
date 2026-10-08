@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 from engine.rag._validation import (
-    _nonblank, _nonnegative_finite, _positive_finite, _sha256_json, _validate_bounds, is_sha256,
+    _nonblank, _positive_finite, _sha256_json, _validate_bounds, is_sha256,
 )
 
 VIDEO_CLIP_PREPROCESS_REVISION = "ffmpeg-h264-crf23-scale-cap-v1"
@@ -84,19 +84,20 @@ def plan_ordered_frame_timestamps(
     start_seconds: int,
     end_seconds: int,
     sampling: OrderedFrameSamplingContract,
-) -> tuple[float, ...]:
-    """Plan absolute midpoint times in the half-open Chunk range, without I/O."""
+) -> tuple[int, ...]:
+    """Plan absolute integer-millisecond midpoints; existing field names stay fixed."""
 
     _validate_bounds(start_seconds, end_seconds)
     duration = end_seconds - start_seconds
-    requested_count = duration * sampling.fps
+    requested_count = duration / 1000 * sampling.fps
     count = (
         sampling.max_frames_per_chunk
         if requested_count >= sampling.max_frames_per_chunk
         else max(1, math.ceil(requested_count))
     )
+    count = min(count, duration)
     return tuple(
-        start_seconds + (2 * index + 1) * duration / (2 * count)
+        start_seconds + (2 * index + 1) * duration // (2 * count)
         for index in range(count)
     )
 
@@ -207,12 +208,12 @@ class VideoClipManifest:
 
 @dataclass(frozen=True, slots=True)
 class OrderedFrame:
-    """One prepared frame with its absolute source-video time."""
+    """One prepared frame at an absolute integer-millisecond source-video time."""
 
     ordinal: int
-    at_seconds: float
+    at_seconds: int
     input_sha256: str
-    requested_at_seconds: float | None = None
+    requested_at_seconds: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -221,15 +222,21 @@ class OrderedFrame:
             or self.ordinal < 0
         ):
             raise ValueError("frame ordinal must be a nonnegative integer")
-        if not _nonnegative_finite(self.at_seconds):
-            raise ValueError("frame at_seconds must be nonnegative and finite")
-        object.__setattr__(self, "at_seconds", float(self.at_seconds))
+        if (
+            isinstance(self.at_seconds, bool)
+            or not isinstance(self.at_seconds, int)
+            or self.at_seconds < 0
+        ):
+            raise ValueError("frame at_seconds must be nonnegative integer milliseconds")
         if not is_sha256(self.input_sha256):
             raise ValueError("frame input_sha256 must be lowercase SHA-256")
         if self.requested_at_seconds is not None:
-            if not _nonnegative_finite(self.requested_at_seconds):
-                raise ValueError("requested frame time must be nonnegative and finite")
-            object.__setattr__(self, "requested_at_seconds", float(self.requested_at_seconds))
+            if (
+                isinstance(self.requested_at_seconds, bool)
+                or not isinstance(self.requested_at_seconds, int)
+                or self.requested_at_seconds < 0
+            ):
+                raise ValueError("requested frame time must be nonnegative integer milliseconds")
 
 
 @dataclass(frozen=True, slots=True)

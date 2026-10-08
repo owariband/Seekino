@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.parsev1.schemas import VideoParseResult
+from engine.parsev1.analysis_windows import probe_video_duration_seconds
 from engine.parsev1.retrieval import (
     VideoChunkRetrievalDocument,
     build_video_chunk_retrieval_documents,
@@ -190,6 +191,10 @@ def prepare_video_parse_import(
     source_video = source_video.resolve(strict=True)
     if not source_video.is_file():
         raise FileNotFoundError(source_video)
+    # File imports have no database unit marker. Verify their millisecond
+    # duration against the source instead of guessing a historical unit.
+    if parse_result.duration_seconds != probe_video_duration_seconds(source_video):
+        raise ValueError("parse_result duration_seconds must match the source video duration in milliseconds")
 
     content_hash = _sha256_file(source_video)
     resolved_series_id = (

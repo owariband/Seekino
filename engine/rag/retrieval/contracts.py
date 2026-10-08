@@ -138,10 +138,10 @@ class QueryEncoderBinding(_QueryModel):
 
 
 class VisualQueryFrame(_QueryModel):
-    """Prepared frame at a relative GIF time, never a source-video location."""
+    """Prepared frame at a relative integer-millisecond GIF time; name stays fixed."""
 
     input_sha256: _Sha256
-    at_seconds: Annotated[float, Field(ge=0, allow_inf_nan=False, strict=True)]
+    at_seconds: Annotated[int, Field(ge=0, strict=True)]
 
 
 class ImageQueryInput(_QueryModel):

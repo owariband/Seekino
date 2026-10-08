@@ -113,7 +113,7 @@ def test_import_preserves_complete_fallback_provenance(
         model="test-visual-model",
         input_mode="ordered_frames",
         frame_fps=0.5,
-        frame_timestamps_seconds=[1.25, 3.75],
+        frame_timestamps_seconds=[1, 4],
         group_frame_counts=[2],
         group_duration_seconds=30,
         max_frames_per_group=15,
@@ -275,6 +275,47 @@ def test_video_chunk_id_keeps_the_published_uuid_seed(prepared_import) -> None:
     )
 
     assert prepared_import.chunks[0].video_chunk_id == str(expected)
+
+
+@pytest.mark.parametrize(("declared_duration", "source_duration", "accepted"), [
+    (20, 20, True),
+    (20, 20_000, False),
+    (1, 1000, False),
+    (20, 21, False),
+])
+def test_file_import_checks_exact_source_duration_in_milliseconds(
+    prepared_import, tmp_path, monkeypatch, declared_duration, source_duration, accepted,
+):
+    payload = prepared_import.parse_result.model_dump(mode="json")
+    payload["source_video"] = "episode.mp4"
+    payload["duration_seconds"] = declared_duration
+    if declared_duration == 1:
+        payload["chunks"] = []
+        payload["events"] = []
+    parse_path = tmp_path / "checked.parse.json"
+    parse_path.write_text(json.dumps(payload), encoding="utf-8")
+    canonical_directory = Path(urlparse(prepared_import.chunks[0].chunk_media_ref).path).parent
+    probed_paths = []
+
+    def probe(source):
+        probed_paths.append(source)
+        return source_duration
+
+    monkeypatch.setattr("server.service.parsev1.parse_import.probe_video_duration_seconds", probe)
+    arguments = {
+        "series_name": prepared_import.series_name,
+        "episode_order": prepared_import.episode_order,
+        "pipeline_version": prepared_import.pipeline_version,
+        "workspace_id": prepared_import.workspace_id,
+    }
+    if accepted:
+        reloaded = prepare_video_parse_import(parse_path, canonical_directory, **arguments)
+        assert reloaded.parse_result.duration_seconds == source_duration
+        assert reloaded.video_id == prepared_import.video_id
+    else:
+        with pytest.raises(ValueError, match="source video duration in milliseconds"):
+            prepare_video_parse_import(parse_path, canonical_directory, **arguments)
+    assert probed_paths == [(tmp_path / "episode.mp4").resolve()]
 
 
 def test_parse_import_accepts_legacy_segment_media_names(

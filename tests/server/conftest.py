@@ -25,7 +25,7 @@ from server.repository.video import VideoRepository
 
 
 @pytest.fixture
-def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
+def prepared_import(tmp_path: Path, monkeypatch) -> PreparedVideoParseImport:
     source_video = tmp_path / "episode.mp4"
     source_video.write_bytes(b"source-video")
     canonical_directory = tmp_path / "canonical"
@@ -127,6 +127,11 @@ def prepared_import(tmp_path: Path) -> PreparedVideoParseImport:
     )
     parse_path = tmp_path / "pipeline.parse.json"
     parse_path.write_text(parse_result.model_dump_json(), encoding="utf-8")
+    # Fake source bytes test contracts; the declared duration and coordinates are milliseconds.
+    monkeypatch.setattr(
+        "server.service.parsev1.parse_import.probe_video_duration_seconds",
+        lambda _path: parse_result.duration_seconds,
+    )
     return prepare_video_parse_import(
         parse_path,
         canonical_directory,

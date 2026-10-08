@@ -18,7 +18,7 @@ def _positive_integer(value: int, *, name: str) -> int:
 
 @dataclass(frozen=True, slots=True)
 class ChunkPlan:
-    """One immutable source-video Chunk using half-open integer-second bounds."""
+    """One immutable Chunk with integer-millisecond bounds; field names stay fixed."""
 
     sequence_no: int
     start_seconds: int
@@ -82,17 +82,18 @@ class IntervalPlan:
 
 
 def plan_chunks(*, duration_seconds: int, chunk_duration: int) -> tuple[ChunkPlan, ...]:
-    """Split a positive integer duration into stable half-open Chunk boundaries."""
+    """Split a millisecond duration; ``chunk_duration`` configuration remains seconds."""
 
     duration_seconds = _positive_integer(duration_seconds, name="duration_seconds")
     chunk_duration = _positive_integer(chunk_duration, name="chunk_duration")
+    chunk_duration *= 1000
     return tuple(
         ChunkPlan(
             sequence_no=sequence_no,
             start_seconds=sequence_no * chunk_duration,
             end_seconds=min((sequence_no + 1) * chunk_duration, duration_seconds),
         )
-        for sequence_no in range(ceil(duration_seconds / chunk_duration))
+        for sequence_no in range((duration_seconds + chunk_duration - 1) // chunk_duration)
     )
 
 
