@@ -20,6 +20,7 @@ from server.model.agent import (
     AgentMessageRecord,
 )
 from server.model.parse_usage import (
+    ModelUsageRecord,
     ParseModelCallRecord,
     ParseUsageAttemptRecord,
     VideoParseUsageAttemptRecord,
@@ -81,6 +82,97 @@ def test_database_environment_requires_physically_separate_databases() -> None:
             "?charset=utf8mb4&charset=latin1",
             environment=DatabaseEnvironment.TEST,
         )
+
+
+def test_model_usage_mysql_ddl_has_only_the_approved_eight_columns() -> None:
+    from sqlalchemy.schema import CreateIndex
+
+    table = ModelUsageRecord.__table__
+    ddl = str(CreateTable(table).compile(dialect=mysql.dialect()))
+    assert tuple(table.columns.keys()) == (
+        "call_id", "workspace_id", "task_type", "run_id", "started_at",
+        "usage", "metadata", "created_at",
+    )
+    assert all(not column.nullable for column in table.columns)
+    assert not table.foreign_keys
+    assert "started_at TIMESTAMP(3) NOT NULL" in ddl
+    assert "created_at TIMESTAMP(3) NOT NULL" in ddl
+    assert "`usage` JSON NOT NULL" in ddl and "metadata JSON NOT NULL" in ddl
+    assert "COLLATE utf8mb4_bin" in ddl and "ENGINE=InnoDB" in ddl
+    assert "ck_model_usage_task_type" in ddl
+    indexes = {str(CreateIndex(index).compile(dialect=mysql.dialect())) for index in table.indexes}
+    assert indexes == {
+        "CREATE INDEX ix_model_usage_workspace_started ON model_usage (workspace_id, started_at, call_id)",
+        "CREATE INDEX ix_model_usage_workspace_run_started ON model_usage (workspace_id, run_id, started_at)",
+    }
+
+
+def test_create_schema_adds_model_usage_to_existing_current_schema() -> None:
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    ModelUsageRecord.__table__.drop(engine)
+    create_schema(engine)
+    assert "model_usage" in inspect(engine).get_table_names()
+    create_schema(engine)
+
+
+@pytest.mark.parametrize("column_name", ["started_at", "created_at", "usage", "run_id"])
+def test_create_schema_rejects_model_usage_type_drift(monkeypatch, column_name) -> None:
+    import server.database as database
+    from sqlalchemy import String
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    inspector = inspect(engine)
+    original = inspector.get_columns
+
+    def columns(table_name):
+        result = [dict(column) for column in original(table_name)]
+        if table_name == "model_usage":
+            next(column for column in result if column["name"] == column_name)["type"] = String(8)
+        return result
+
+    monkeypatch.setattr(inspector, "get_columns", columns)
+    monkeypatch.setattr(database, "inspect", lambda _engine: inspector)
+    with pytest.raises(SchemaUpgradeRequiredError, match=f"model_usage.{column_name}"):
+        create_schema(engine)
+
+
+def test_model_usage_database_rejects_unsupported_task_type() -> None:
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    ModelUsageRecord.__table__.create(engine)
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            connection.execute(ModelUsageRecord.__table__.insert().values(
+                call_id="00000000-0000-0000-0000-000000000001", workspace_id="w",
+                task_type="retrieval", run_id="r", started_at=datetime.now(UTC),
+                usage={}, metadata={}, created_at=datetime.now(UTC),
+            ))
+
+
+@pytest.mark.parametrize("column_override", [False, True])
+def test_existing_model_usage_rejects_case_insensitive_mysql_collation(monkeypatch, column_override):
+    import server.database as database
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    ModelUsageRecord.__table__.create(engine)
+    inspector = inspect(engine)
+    original = inspector.get_columns
+
+    def columns(table_name):
+        result = [dict(column) for column in original(table_name)]
+        if table_name == "model_usage" and column_override:
+            next(column for column in result if column["name"] == "workspace_id")["type"] = mysql.VARCHAR(64, collation="utf8mb4_general_ci")
+        return result
+
+    monkeypatch.setattr(engine.dialect, "name", "mysql")
+    monkeypatch.setattr(inspector, "get_columns", columns)
+    monkeypatch.setattr(inspector, "get_table_options", lambda _table: {
+        "mysql_collate": "utf8mb4_bin" if column_override else "utf8mb4_general_ci",
+    })
+    monkeypatch.setattr(database, "inspect", lambda _engine: inspector)
+    with pytest.raises(SchemaUpgradeRequiredError, match="model_usage.*collation"):
+        create_schema(engine)
 
 
 def test_mysql_schema_uses_innodb_json_and_integer_media_seconds() -> None:

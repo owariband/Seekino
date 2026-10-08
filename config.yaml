@@ -2,10 +2,9 @@
 # Legacy config files remain supported. See docs/model-config.md.
 config_version: 2
 
-# Usage/cost records only; no prompt, response, or tool payload capture.
-# Configure LANGFUSE_BASE_URL/PUBLIC_KEY/SECRET_KEY in .env.local.
+# Server records Token usage locally; optional tracing stays disabled.
 tracing:
-  enabled: true
+  enabled: false
   environment: development
 
 model_sources:

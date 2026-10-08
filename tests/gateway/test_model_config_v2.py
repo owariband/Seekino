@@ -19,12 +19,11 @@ def test_migrated_default_preserves_every_existing_setting():
     old = load_config(LEGACY)
     new = load_config(ROOT / "config.yaml")
     old_data, new_data = old.model_dump(), new.model_dump()
-    # Version/source links and the repository's enabled tracing differ from the legacy fixture.
+    # Version/source links differ from the legacy fixture; optional tracing stays disabled.
     old_data["config_version"] = 2
     old_data["video_parser"]["transcription_source"] = "ark_default"
     old_data["video_parser"]["vision_source"] = "ark_default"
-    assert not old_data["tracing"]["enabled"] and new_data["tracing"]["enabled"]
-    old_data["tracing"]["enabled"] = True
+    assert not old_data["tracing"]["enabled"] and not new_data["tracing"]["enabled"]
     assert new_data == old_data
     assert required_api_key_env_names(new) == required_api_key_env_names(old)
     for stage in ("transcription", "vision"):

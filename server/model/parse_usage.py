@@ -24,6 +24,28 @@ from .video import (
 )
 
 
+class ModelUsageRecord(Base):
+    __tablename__ = "model_usage"
+    __table_args__ = (
+        CheckConstraint(
+            "task_type IN ('video_parse', 'chat_retrieval')",
+            name="ck_model_usage_task_type",
+        ),
+        Index("ix_model_usage_workspace_started", "workspace_id", "started_at", "call_id"),
+        Index("ix_model_usage_workspace_run_started", "workspace_id", "run_id", "started_at"),
+        {**MYSQL_TABLE_OPTIONS, "mysql_collate": "utf8mb4_bin"},
+    )
+
+    call_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, nullable=False)
+    usage: Mapped[dict] = mapped_column(JSON, nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, nullable=False)
+
+
 class ParseUsageAttemptRecord(Base):
     __tablename__ = "parse_usage_attempt"
     __table_args__ = MYSQL_TABLE_OPTIONS

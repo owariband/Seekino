@@ -68,6 +68,7 @@ class _Embeddings:
     def create(self, **request):
         self.calls += 1
         return SimpleNamespace(
+            model=request["model"],
             data=SimpleNamespace(embedding=[1.0, 0.0]),
             usage=SimpleNamespace(prompt_tokens=1, total_tokens=1),
         )

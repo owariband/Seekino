@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 from fastapi import Query, Request
 
-from ..model.dto.parseUsageDTO import UsageOverviewState, UsageTotals
+from ..model.dto.parseUsageDTO import UsageOverviewState
 from ..model.vo.parseUsageVO import UsageOverviewVO
 from ..utils.time import MAX_UNIX_TIME_MS
 from .context import get_services
@@ -27,21 +27,12 @@ def get_usage_overview(
     ))
 
 
-def _usage_values(state: UsageTotals) -> dict:
-    values = asdict(state)
-    values["estimated_cost_usd"] = (
-        format(state.estimated_cost_usd, "f") if state.estimated_cost_usd is not None else None
-    )
-    values["known_cost_usd"] = format(state.known_cost_usd, "f")
-    return values
-
-
 def project_usage_overview(state: UsageOverviewState) -> UsageOverviewVO:
     return UsageOverviewVO(
         status=state.status, message=state.message,
         from_start_time=state.from_start_time, to_start_time=state.to_start_time,
         fetched_at=state.fetched_at, truncated=state.truncated,
-        totals=_usage_values(state.totals),
-        models=[_usage_values(row) for row in state.models],
-        runs=[_usage_values(row) for row in state.runs],
+        totals=asdict(state.totals),
+        models=[asdict(row) for row in state.models],
+        runs=[asdict(row) for row in state.runs],
     )

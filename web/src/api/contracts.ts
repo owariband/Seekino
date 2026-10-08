@@ -320,10 +320,7 @@ export interface UsageTotals {
   reasoningTokens: number | null;
   totalTokens: number | null;
   knownTokens: number;
-  estimatedCostUsd: string | null;
-  knownCostUsd: string;
   missingUsageCount: number;
-  unpricedCallCount: number;
 }
 
 export interface UsageModelRow extends UsageTotals {
@@ -335,7 +332,7 @@ export interface UsageModelRow extends UsageTotals {
 
 export interface UsageRunRow extends UsageTotals {
   runId: string;
-  kind: "parse" | "chat" | "other";
+  taskType: "video_parse" | "chat_retrieval";
   seriesId: string | null;
   videoId: string | null;
 }
@@ -348,9 +345,8 @@ export interface UsageOverviewOptions {
 }
 
 export interface UsageOverviewVO {
-  source: "langfuse";
-  currency: "USD";
-  status: "available" | "disabled" | "not_configured" | "unavailable";
+  source: "local";
+  status: "available" | "unavailable";
   message: string | null;
   fromStartTime: UnixTimeMs;
   toStartTime: UnixTimeMs;

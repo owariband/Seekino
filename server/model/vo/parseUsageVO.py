@@ -17,10 +17,7 @@ class UsageTotalsVO(ContractModel):
     reasoning_tokens: int | None = Field(ge=0)
     total_tokens: int | None = Field(ge=0)
     known_tokens: int = Field(ge=0)
-    estimated_cost_usd: str | None
-    known_cost_usd: str
     missing_usage_count: int = Field(ge=0)
-    unpriced_call_count: int = Field(ge=0)
 
 
 class UsageModelRowVO(UsageTotalsVO):
@@ -32,15 +29,14 @@ class UsageModelRowVO(UsageTotalsVO):
 
 class UsageRunRowVO(UsageTotalsVO):
     run_id: str
-    kind: Literal["parse", "chat", "other"]
+    task_type: Literal["video_parse", "chat_retrieval"]
     series_id: str | None
     video_id: str | None
 
 
 class UsageOverviewVO(ContractModel):
-    source: Literal["langfuse"] = "langfuse"
-    currency: Literal["USD"] = "USD"
-    status: Literal["available", "disabled", "not_configured", "unavailable"]
+    source: Literal["local"] = "local"
+    status: Literal["available", "unavailable"]
     message: str | None
     from_start_time: UnixTimeMs
     to_start_time: UnixTimeMs

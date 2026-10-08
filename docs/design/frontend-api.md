@@ -12,13 +12,14 @@
 解析任务进度、视频播放、正式检索及 Workspace 下的 Agent Conversation / Message。
 运行中的 FastAPI OpenAPI 是字段级最终事实源；接口已实现不等于真实模型效果已验收。
 
-2026-10-08 模型用量接口改为 `GET /api/usage/overview`，固定 `source=langfuse`、
-`currency=USD`；旧 `/api/jobs/usage/get` 已退出公开路由。请求显式传 `workspaceId`，
-可选 Unix 毫秒时间窗、`seriesId`、`runId`，默认查询最近30天。响应直接提供模型与
-运行汇总，页面不再列举 V1 Job 并逐个查询费用；未配置、读取失败、缺用量、未计价与
-分页截断均有明确状态，未知金额保持 null。详细字段和配置见
-[模型用量与预估成本](../parse-model-usage.md)。Server 和 CLI 默认执行模式为 V2，
-需要 ES；仍可显式选择 V1。
+2026-10-08 模型用量接口沿用 `GET /api/usage/overview`，固定 `source=local`，仅返回 Token。
+旧 `/api/jobs/usage/get` 已退出公开路由。请求显式传 `workspaceId`，可选 Unix 毫秒时间窗、
+`seriesId`、`runId`，默认最近 30 天、最大 31 天；本批没有 taskType 请求筛选。
+响应提供模型与任务/Chat 汇总，run 的 `taskType` 为 `video_parse|chat_retrieval`；
+`status=available|unavailable`。核心未知、main_loop 或截断时完整 Token 合计为 null，
+`knownTokens` 保留已确认小计，未知 subset 只使对应细项未知；读取失败不显示零。
+不返回费用、货币、计价缺失或 Langfuse 配置状态。详细字段见 [模型 Token 用量](../parse-model-usage.md)。
+Server 和 CLI 默认执行模式为 V2，需要 ES；仍可显式选择 V1，旧统计历史保留。
 
 创建、列表和详情接口在路径中
 显式使用 `create`、`list`、`get`，不依靠 HTTP Method 隐含操作名称；用于定位路由资源的
@@ -38,7 +39,7 @@ ID 统一通过 camelCase Query 参数传递，不放在 URL Path 中。检索�
 
 - 普通请求与响应使用 JSON，字段统一为 `camelCase`。
 - ID 为规范 UUID 字符串。
-- 绝对时间是 Unix epoch 毫秒整数，后端和数据库按 signed INT64 / `BIGINT` 存储；前端只在显示边界转换时区。
+- 公开绝对时间是 Unix epoch 毫秒整数，数据库默认按 signed INT64 / `BIGINT` 存储；`model_usage.started_at/created_at` 按已确认设计使用 UTC `TIMESTAMP(3)`，HTTP 输出仍为毫秒整数；前端只在显示边界转换时区。
 - 媒体 `startSeconds` / `endSeconds` / `atSeconds` / `durationSeconds` 是相对于原视频起点的整数秒，不是 Unix 时间戳。
 - `processingDurationMs`、Agent 阶段耗时、HTTP/Tool 耗时等运行 duration 继续使用毫秒，也不是 Unix 时间戳。
 - `workspaceId` 当前默认是 `local-default`。

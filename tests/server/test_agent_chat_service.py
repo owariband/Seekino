@@ -349,6 +349,48 @@ def test_chat_tracing_binds_message_identity_in_the_actual_executor(build_servic
     assert "content" not in context
 
 
+@pytest.mark.parametrize("failed", [False, True])
+def test_chat_sql_capture_runs_in_executor_and_preserves_terminal_result(build_service, failed):
+    from threading import get_ident
+    from gateway.usage import TokenUsage
+    from server.model.parse_usage import ModelUsageRecord
+    from server.repository.model_usage import ModelUsageRepository
+    from server.service.parse_usage import ParseUsageService
+
+    threads = []
+    main_thread = get_ident()
+
+    class QueryModel(_QueryModel):
+        def run_structured(self, *args, **kwargs):
+            threads.append(get_ident())
+            with track_model_call(provider="fixture", model=self.model_name, operation="query") as tracker:
+                tracker.usage = TokenUsage(10, 2, 12, None, None)
+                if failed:
+                    raise RuntimeError("injected query failure")
+                return super().run_structured(*args, **kwargs)
+
+    service, conversation, _, repository, *_ = build_service(query=QueryModel())
+    service._parse_usage = ParseUsageService(ModelUsageRepository(repository._session_factory))
+    if failed:
+        with pytest.raises(AgentModelInvocationError, match="Query Agent model"):
+            _send(service, conversation)
+        first = _send(service, conversation)
+    else:
+        first = _send(service, conversation)
+        assert _send(service, conversation) == first
+    assert len(threads) == 1 and threads[0] != main_thread
+    assert first.assistant_message.status == ("FAILED" if failed else "COMPLETED")
+    with repository._session_factory() as session:
+        rows = session.scalars(select(ModelUsageRecord)).all()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.workspace_id == "local-default" and row.task_type == "chat_retrieval"
+        assert row.run_id == first.assistant_message.message_id
+        assert row.metadata_["status"] == ("failed" if failed else "completed")
+        assert row.metadata_["context"]["conversation_id"] == conversation.conversation_id
+        assert row.usage["tokens"]["total_tokens"] == 12
+
+
 class _DirectSupervisorModel:
     model_name = "supervisor-test"
     provider_name = "fake"

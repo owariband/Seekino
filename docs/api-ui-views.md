@@ -14,12 +14,12 @@ VO 按 `commonVO.py`、`libraryVO.py`、`uploadVO.py`、`jobVO.py`、`agentVO.py
 | library | Character、SeriesSummary、SeriesDetail、VideoSummary、LastSearchView | 视频 ready / failed 数量、待完成上传、最近检索、ASR 原文语言提示、视频索引与播放状态、实际 latestJobId |
 | upload | UploadSessionCreateRequest、UploadSessionView、UploadSegmentView、UploadCompleteView | 完整上传确认点、缺失分段、真实合并阶段、源 SHA、后续 Job、资源 version |
 | job | ParseJobView、VideoChunkCheckpointView、JobCounts、JobSummary | 实际阶段 / 进度 / 检查点、结构化错误、单调 version、全范围权威统计 |
-| parseUsage | UsageOverviewVO、UsageTotalsVO、UsageModelRowVO、UsageRunRowVO | Langfuse 已同步用量、USD 预估成本、按模型和运行汇总、缺失与截断状态 |
+| parseUsage | UsageOverviewVO、UsageTotalsVO、UsageModelRowVO、UsageRunRowVO | 本地已记录 Token、按模型和任务/Chat 汇总、已知小计与未知/截断状态 |
 | agent | Conversation / Message 请求与 View、EvidenceReference、各类回答事件 | 历史 preview、Unix 毫秒绝对时间、媒体秒范围、消息 phase / version、候选引用、Evaluator 审核后的精确视频范围、恢复同一轮消息对 |
 | search | VideoChunkEvidenceView、VideoChunkCandidateView、SearchHitView、SearchResultView、Keyframe | 正文与证据、视频定位、完整检索范围、最终 rank、partial / warnings、可读取媒体 |
 | system | HealthView | API 存活与真实 serverTime |
 
-所有业务请求显式传 `workspaceId`：有 JSON Body 时放 Body，否则放 Query。所有公开和持久化的绝对时间用 Unix epoch 毫秒整数，数据库使用 signed `BIGINT`，Python / JSON 使用整数，未知时间为 null。视频 `startSeconds` / `endSeconds` / `atSeconds` 是相对于原视频起点的整数秒，视频时长使用 `durationSeconds`；它们不是日期或 Unix 时间戳。Worker、HTTP、Tool 和 Agent 阶段等运行耗时继续使用显式的 `*DurationMs`。所有列表使用 `Page<T>`，参数默认 limit=50，范围 1–100；cursor 绑定 Workspace、筛选与固定排序。
+所有业务请求显式传 `workspaceId`：有 JSON Body 时放 Body，否则放 Query。公开绝对时间用 Unix epoch 毫秒整数，未知时间为 null；数据库默认使用 signed `BIGINT`，`model_usage.started_at/created_at` 按已确认设计使用 UTC `TIMESTAMP(3)`，在 HTTP 边界转换为毫秒整数。视频 `startSeconds` / `endSeconds` / `atSeconds` 是相对于原视频起点的整数秒，视频时长使用 `durationSeconds`；它们不是日期或 Unix 时间戳。Worker、HTTP、Tool 和 Agent 阶段等运行耗时继续使用显式的 `*DurationMs`。所有列表使用 `Page<T>`，参数默认 limit=50，范围 1–100；cursor 绑定 Workspace、筛选与固定排序。
 
 ```ts
 interface Page<T> {
@@ -49,11 +49,11 @@ ParseJob 另返回 `videoDurationSeconds`（原视频时长）和兼容别名 `t
 | 路由 | 参数 | 返回 |
 | --- | --- | --- |
 | GET /api/uploads/list | workspaceId；可选 seriesId、status、limit、cursor；默认非终态，status=all 或逗号分隔状态 | Page&lt;UploadSessionView&gt; |
-| POST /api/uploads/delete | workspaceId、uploadSessionId；删除整个 UploadSessionTask，包括上传分片及已产生的 Video、全部 ParseJob/Checkpoint/VideoChunk、模型用量、媒体文件和向量点；COMPLETING / RUNNING 返回 409 | UploadSessionView（EXPIRED 墓碑） |
+| POST /api/uploads/delete | workspaceId、uploadSessionId；删除整个 UploadSessionTask，包括上传分片及已产生的 Video、全部 ParseJob/Checkpoint/VideoChunk、旧解析模型用量、媒体文件和向量点；追加型 model_usage 历史保留；COMPLETING / RUNNING 返回 409 | UploadSessionView（EXPIRED 墓碑） |
 | POST /api/uploads/retry-parse | workspaceId、uploadSessionId、expectedJobVersion；仅重排 UploadSession.job_id 指向的 FAILED 主任务，保留 Checkpoint / attempt / 用量，版本冲突或删除中返回 409 | ParseJobView |
 | POST /api/uploads/reparse | workspaceId、uploadSessionId、expectedJobVersion；对 SUCCEEDED / FAILED 主任务清空 Checkpoint 后整集从头解析，保留 attempt / 用量历史及已成功的可检索快照，版本冲突或活动任务返回 409 | ParseJobView |
 | GET /api/jobs/summary | workspaceId；可选 seriesId | JobSummary |
-| GET /api/usage/overview | workspaceId；可选 fromStartTime、toStartTime、seriesId、runId | UsageOverviewVO：最近30天或指定有界时间窗内的 Langfuse 模型与运行用量、USD 预估成本；详见 [模型用量统计](parse-model-usage.md) |
+| GET /api/usage/overview | workspaceId；可选 fromStartTime、toStartTime、seriesId、runId | UsageOverviewVO：最近30天或指定有界时间窗内的本地模型与任务/Chat Token；详见 [模型用量统计](parse-model-usage.md) |
 | POST /api/agent/conversations/delete | workspaceId、conversationId；存在 PROCESSING 回答时返回 409 | 删除前的 AgentConversationView；终态对话及 Message / Timing 级联删除 |
 | GET /api/agent/messages/get | workspaceId、conversationId；messageId 与 idempotencyKey 恰好一个 | 同一 USER / ASSISTANT 消息对 |
 | GET /api/video-chunks/get | workspaceId、videoChunkId | 可刷新媒体状态的事实 Evidence |
@@ -61,7 +61,7 @@ ParseJob 另返回 `videoDurationSeconds`（原视频时长）和兼容别名 `t
 
 已有 series / jobs / conversations / messages 列表同步改为 Page。series/list 支持 status、query；jobs/list 支持 seriesId、status（逗号分隔）；conversations/list 支持 query、历史消息实际 seriesId；messages/list 保留 afterSequenceNo，并增加 cursor / limit。
 
-模型消耗由前端 `getUsageOverview()` 一次读取。后端以 workspace、环境和有界时间窗查询 Langfuse，返回 `totals`、`models`、`runs`；页面复用模型与任务/聊天两种视图。金额 `estimatedCostUsd` 是 USD 十进制字符串，前端仅格式化并保留小额精度；未配置和读取失败不显示零，缺少用量/价格的完整合计保持 null，已知小计单独展示。响应 `truncated=true` 表示有界查询未读完，不能当作完整累计。旧 SQL 用量和价格快照保留为历史数据，不混入新的 Langfuse 统计；V2 任务预算、租约和取消控制仍由原执行管理器负责。
+模型消耗由前端 `getUsageOverview()` 一次读取。后端先在 SQL 按 workspace、UTC 窗口、精确系列/run 筛选，再有界读取 `model_usage`，返回 `totals`、`models`、`runs`。固定 `source=local`、`status=available|unavailable`；run 使用 `taskType=video_parse|chat_retrieval`，无 taskType 请求筛选。SDK 明细替代父用量，按不同 call_id 计数；缓存读写和推理子集不重复加入总 Token。核心未知、main_loop 或截断时完整合计保持 null，已知小计通过 knownTokens 展示；未知 subset 只影响相应细项。数据库读取失败不显示零，空窗口只表示没有已记录调用。旧 SQL 用量和价格快照保留，不混入、不回填；新表无业务外键，删除业务对象不级联删除已记录用量。V2 预算、租约和取消控制仍由原执行管理器负责。
 
 创建与发送示例：
 

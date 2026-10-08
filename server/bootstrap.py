@@ -49,6 +49,7 @@ from .repository.agent import AgentRepository
 from .repository.index_sync import IndexSyncRepository
 from .repository.job import ParseJobRepository
 from .repository.library import LibraryRepository
+from .repository.model_usage import ModelUsageRepository
 from .repository.upload import UploadRepository
 from .repository.video import VideoRepository
 from .repository.video_parse import VideoParseRepository
@@ -58,7 +59,6 @@ from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
 from .service.parse_usage import ParseUsageService
-from .storage.langfuse import LangfuseObservationStore
 from .service.qdrant_mutation_lock import QdrantMutationLock
 from .service.upload import UploadService
 from .service.video_parse import VideoParseRuntimeService
@@ -183,11 +183,8 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         library,
         execution_mode=settings.parse_execution_mode,
     )
-    tracing = LangfuseTracing(gateway_config.tracing)
-    parse_usage = ParseUsageService(
-        LangfuseObservationStore(gateway_config.tracing),
-        tracing=tracing,
-    )
+    tracing = None
+    parse_usage = ParseUsageService(ModelUsageRepository(session_factory))
     video_repository = VideoRepository(session_factory)
     video_parse_repository = VideoParseRepository(session_factory)
     media = MediaService(library, artifact_store, video_repository, config=settings.images)
@@ -454,6 +451,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
         supervisor_factory=build_supervisor_runtime,
         config_revision=config_revision,
         tracing=tracing,
+        parse_usage=parse_usage,
     )
     index_sync = IndexSyncService(
         IndexSyncRepository(session_factory),
@@ -521,7 +519,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
                 embedding_agent,
                 selected.embedding.dimensions,
             ),
-            parse_usage=parse_usage,
+            parse_usage=None,
             config=VideoProcessingConfig(
                 embedding_dimensions=selected.embedding.dimensions,
                 chunk_duration_seconds=selected.window.chunk_duration_seconds,
@@ -555,7 +553,7 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
                 processing_embedder,
                 settings.text_vector_dimensions,
             ),
-            parse_usage=parse_usage,
+            parse_usage=None,
             config=VideoProcessingConfig(
                 embedding_dimensions=settings.text_vector_dimensions,
                 chunk_duration_seconds=settings.parse.chunk_duration_seconds,

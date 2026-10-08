@@ -253,6 +253,48 @@ def test_retrieval_tracing_keeps_the_chat_run_and_records_embedding_failure(mode
     assert "query" not in call.context
 
 
+@pytest.mark.parametrize("mode", ["v1", "v2"])
+def test_retrieval_sql_capture_inherits_chat_owner_without_an_independent_run(mode):
+    from server.service.parse_usage import ParseUsageService
+
+    scope, _, evidence = _v2_retrieval_fixture()
+    recorded = []
+    usage = ParseUsageService(SimpleNamespace(record_call=recorded.append))
+
+    class Embedder:
+        @staticmethod
+        def embed_query(_query):
+            with track_model_call(provider="fixture", model="embed", operation="text_embedding"):
+                raise RuntimeError("embedding failed")
+
+    if mode == "v1":
+        repository = SimpleNamespace(
+            require_ready_series=lambda *_args, **_kwargs: scope.series_ids,
+            list_indexed_video_ids=lambda *_args, **_kwargs: list(scope.searched_video_ids),
+        )
+        retrieval = VideoRetrievalService(repository, SimpleNamespace(text_dimensions=2, vision_dimensions=2), Embedder())
+    else:
+        retrieval = VideoParseRetrievalService(
+            _V2Repository(scope, evidence), _V2Store([], [], []), Embedder(),
+            semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
+        )
+    context = {"workspace_id": evidence.workspace_id, "assistant_message_id": "chat-message",
+               "conversation_id": "conversation"}
+    with usage.capture_chat(context), pytest.raises(RuntimeError, match="embedding failed"):
+        retrieval.search("private query", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+    assert len(recorded) == 1
+    row = recorded[0]
+    assert row.task_type == "chat_retrieval" and row.run_id == "chat-message"
+    assert row.metadata["status"] == "failed" and row.usage["tokens"] is None
+    assert row.metadata["context"]["series_ids"] == scope.series_ids
+    assert row.metadata["context"]["video_ids"] == scope.searched_video_ids
+    if mode == "v2":
+        assert row.metadata["context"]["video_parse_task_ids"] == tuple(scope.parse_tasks_by_video_id.values())
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        retrieval.search("private query", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+    assert len(recorded) == 1
+
+
 def test_v2_retrieval_fuses_es_channels_and_hydrates_exact_identity() -> None:
     scope, match, evidence = _v2_retrieval_fixture()
     lexical_match = replace(

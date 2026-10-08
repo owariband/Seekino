@@ -8,6 +8,8 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Engine,
+    JSON,
+    String,
     Table,
     UniqueConstraint,
     create_engine,
@@ -68,6 +70,7 @@ _UTC_TIMESTAMP_COLUMNS = {
     "parse_usage_attempt": {"started_at"},
     "video_parse_usage_attempt": {"started_at"},
     "parse_model_call": {"started_at", "created_at", "updated_at"},
+    "model_usage": {"started_at", "created_at"},
     "video_parse_task": {
         "next_execute_time",
         "lease_expire_time",
@@ -405,6 +408,7 @@ def create_schema(engine: Engine) -> None:
 
     from .model.job import IntervalParseTaskRecord, VideoParseTaskRecord
     from .model.parse_usage import (
+        ModelUsageRecord,
         ParseModelCallRecord,
         VideoParseUsageAttemptRecord,
     )
@@ -426,6 +430,33 @@ def create_schema(engine: Engine) -> None:
                 "Video Parse V2 worker runtime schema requires "
                 "20260928_v2_worker_runtime.sql before init-db; incompatible: "
                 + ", ".join(sorted(incompatible_worker_runtime))
+            )
+
+    if ModelUsageRecord.__tablename__ in existing_tables:
+        table = ModelUsageRecord.__table__
+        incompatible_usage = _schema_structure_differences(
+            inspector, existing_tables, (table,),
+        )
+        if engine.dialect.name == "mysql":
+            options = inspector.get_table_options(table.name)
+            if options.get("mysql_collate") != "utf8mb4_bin":
+                incompatible_usage.add(f"{table.name}.collation")
+        for column in inspector.get_columns(table.name):
+            name, column_type = column["name"], column["type"]
+            if name in {"call_id", "workspace_id", "task_type", "run_id"}:
+                expected = table.c[name].type
+                if not isinstance(column_type, String) or column_type.length != expected.length:
+                    incompatible_usage.add(f"{table.name}.{name}.type")
+                if engine.dialect.name == "mysql" and getattr(
+                    column_type, "collation", None,
+                ) not in {None, "utf8mb4_bin"}:
+                    incompatible_usage.add(f"{table.name}.{name}.collation")
+            elif name in {"usage", "metadata"} and not isinstance(column_type, JSON):
+                incompatible_usage.add(f"{table.name}.{name}.type")
+        if incompatible_usage:
+            raise SchemaUpgradeRequiredError(
+                "model_usage schema requires a controlled upgrade before init-db; incompatible: "
+                + ", ".join(sorted(incompatible_usage))
             )
 
     incompatible_task_checks: set[str] = set()

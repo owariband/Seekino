@@ -24,10 +24,10 @@ anivag 是一个面向事件级视频检索与时间证据定位的多模态视�
 需要配置 Elasticsearch。冻结在 `engine/parsev1/` 的旧链可显式设置
 `ANIVAG_PARSE_EXECUTION_MODE=v1` 使用。
 
-模型消耗页面从 Langfuse 查询已同步的解析、向量化与聊天用量，预估成本统一为 USD。
-在 `.env.local` 配置 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`；
-仓库的 `config.yaml` 已启用用量记录通道。未配置项目时页面明确提示，模型执行仍可继续。
-配置和统计边界见 [模型用量与预估成本](docs/parse-model-usage.md)。
+模型消耗页面从现有 MySQL 的 `model_usage` 查询已记录 Token，覆盖 V2 解析/index 与助手问答。
+Server 在实际模型调用完成后追加记录；数据库写入失败保留业务结果，页面只声明已记录范围。
+`config.yaml` 默认关闭可选 tracing，统计无需 Langfuse 地址或凭据。新表由现有 init-db 入口登记，
+实际建表和服务运行由运行负责人核实操作授权。合同和统计边界见 [模型 Token 用量](docs/parse-model-usage.md)。
 
 ## M1 边界
 
@@ -192,4 +192,4 @@ uv run python -m tests.manual.server_mq_once --once
 
 前端请求与公开返回模型见 [UI DTO / VO 契约](docs/api-ui-views.md)，包含逐消息 Series 范围、分页 / SSE、媒体读取与旧数据库迁移说明。
 
-解析任务的模型 Token、视频与职责归属、人民币预估费用及查询接口见 [Parse 模型消耗统计](docs/parse-model-usage.md)。任务页展开“模型消耗”查看；价格配置变更只影响后续调用。
+模型消耗页面按模型或任务/Chat 展示已记录 Token、已知小计与未知/截断状态，详见 [模型 Token 用量](docs/parse-model-usage.md)。历史价格和金额保留在旧表，不参与本地统计。

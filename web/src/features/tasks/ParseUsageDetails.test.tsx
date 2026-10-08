@@ -15,11 +15,10 @@ vi.mock("../../api/client", async (importOriginal) => ({
 
 function totals(overrides: Partial<UsageTotals> = {}): UsageTotals {
   return { callCount: 1, inputTokens: 1_000, outputTokens: 200, cachedInputTokens: 80, cacheWriteInputTokens: 20,
-    reasoningTokens: 60, totalTokens: 1_200, knownTokens: 1_200, estimatedCostUsd: "0.00000004", knownCostUsd: "0.00000004",
-    missingUsageCount: 0, unpricedCallCount: 0, ...overrides };
+    reasoningTokens: 60, totalTokens: 1_200, knownTokens: 1_200, missingUsageCount: 0, ...overrides };
 }
 function overview(overrides: Partial<UsageOverviewVO> = {}): UsageOverviewVO {
-  return { source: "langfuse", currency: "USD", status: "available", message: null,
+  return { source: "local", status: "available", message: null,
     fromStartTime: 1, toStartTime: 2, fetchedAt: 2, truncated: false, totals: totals(),
     models: [{ ...totals(), provider: "provider-A", model: "model-A", category: "parse", operation: "video_timeline" }],
     runs: [], ...overrides };
@@ -34,8 +33,8 @@ function wrapper() {
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(getUsageOverview).mockResolvedValue(overview()); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
-describe("Langfuse parse usage details", () => {
-  it("loads the exact run only when expanded and preserves tiny USD costs and token subsets", async () => {
+describe("local Token parse usage details", () => {
+  it("loads the exact run only when expanded and preserves token subsets", async () => {
     render(<ParseUsageDetails jobId="job-A" status="SUCCEEDED" />, { wrapper: wrapper() });
     expect(getUsageOverview).not.toHaveBeenCalled();
     await userEvent.click(screen.getByText("模型消耗"));
@@ -45,18 +44,15 @@ describe("Langfuse parse usage details", () => {
     expect(screen.getByText("解析 · 视频时间线解析")).toBeInTheDocument();
     expect(screen.getByText("1,000")).toBeInTheDocument();
     expect(screen.getByText("80")).toBeInTheDocument();
-    expect(screen.getAllByText("$0.00000004")).toHaveLength(2);
     expect(screen.queryByText(/人民币/)).not.toBeInTheDocument();
   });
 
-  it("keeps missing usage, unknown prices and truncation explicit", async () => {
-    vi.mocked(getUsageOverview).mockResolvedValue(overview({ truncated: true, totals: totals({ totalTokens: null, estimatedCostUsd: null, missingUsageCount: 1, unpricedCallCount: 1 }) }));
+  it("keeps missing usage and truncation explicit", async () => {
+    vi.mocked(getUsageOverview).mockResolvedValue(overview({ truncated: true, totals: totals({ totalTokens: null, missingUsageCount: 1 }) }));
     render(<ParseUsageDetails jobId="job-A" status="SUCCEEDED" />, { wrapper: wrapper() });
     await userEvent.click(screen.getByText("模型消耗"));
     expect(await screen.findByText(/1 条调用记录缺少完整 Token 用量/)).toBeInTheDocument();
-    expect(screen.getByText(/1 条调用记录尚未计价/)).toBeInTheDocument();
     expect(screen.getByText("已知 Token 小计")).toBeInTheDocument();
-    expect(screen.getByText("已计价费用小计（USD）")).toBeInTheDocument();
     expect(screen.getByText(/当前读取结果被截断/)).toBeInTheDocument();
   });
 
@@ -71,7 +67,7 @@ describe("Langfuse parse usage details", () => {
   });
 
   it("does not reuse another run's statistics when the selected task changes", async () => {
-    vi.mocked(getUsageOverview).mockImplementation(async (options) => overview(options?.runId === "job-B" ? { models: [], totals: totals({ callCount: 0, totalTokens: 0, estimatedCostUsd: "0", knownTokens: 0, knownCostUsd: "0" }) } : {}));
+    vi.mocked(getUsageOverview).mockImplementation(async (options) => overview(options?.runId === "job-B" ? { models: [], totals: totals({ callCount: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, knownTokens: 0 }) } : {}));
     const view = render(<ParseUsageDetails jobId="job-A" status="SUCCEEDED" />, { wrapper: wrapper() });
     await userEvent.click(screen.getByText("模型消耗"));
     expect(await screen.findByText("model-A")).toBeInTheDocument();
@@ -79,16 +75,14 @@ describe("Langfuse parse usage details", () => {
     expect(await screen.findByText(/job-B · 最近 30 天/)).toBeInTheDocument();
     expect(getUsageOverview).toHaveBeenLastCalledWith({ runId: "job-B" }, expect.any(AbortSignal));
     expect(screen.queryByText("model-A")).not.toBeInTheDocument();
-    expect(screen.getByText("$0.00")).toBeInTheDocument();
   });
 
-  it("does not display fabricated zero totals when Langfuse is unconfigured", async () => {
-    vi.mocked(getUsageOverview).mockResolvedValue(overview({ status: "not_configured", totals: totals({ callCount: null }), models: [] }));
+  it("does not display fabricated zero totals when local usage is unavailable", async () => {
+    vi.mocked(getUsageOverview).mockResolvedValue(overview({ status: "unavailable", totals: totals({ callCount: null }), models: [] }));
     render(<ParseUsageDetails jobId="job-A" status="FAILED" />, { wrapper: wrapper() });
     await userEvent.click(screen.getByText("模型消耗"));
-    expect(await screen.findByText(/Langfuse 尚未配置/)).toBeInTheDocument();
+    expect(await screen.findByText(/模型消耗暂时无法读取/)).toBeInTheDocument();
     expect(screen.queryByLabelText("本次任务模型消耗合计")).not.toBeInTheDocument();
-    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
   });
 
   it("allows retrying a failed read for the same run", async () => {
@@ -102,13 +96,12 @@ describe("Langfuse parse usage details", () => {
   });
 
   it("refreshes after an expanded running task becomes terminal", async () => {
-    vi.mocked(getUsageOverview).mockResolvedValueOnce(overview()).mockResolvedValueOnce(overview({ totals: totals({ totalTokens: 2_500, estimatedCostUsd: "1.2500" }) }));
+    vi.mocked(getUsageOverview).mockResolvedValueOnce(overview()).mockResolvedValueOnce(overview({ totals: totals({ totalTokens: 2_500 }) }));
     const view = render(<ParseUsageDetails jobId="job-A" status="RUNNING" />, { wrapper: wrapper() });
     await userEvent.click(screen.getByText("模型消耗"));
     await screen.findByText("model-A");
     view.rerender(<ParseUsageDetails jobId="job-A" status="SUCCEEDED" />);
     await waitFor(() => expect(screen.getByText("2,500")).toBeInTheDocument());
-    expect(screen.getByText("$1.2500")).toBeInTheDocument();
     expect(getUsageOverview).toHaveBeenCalledTimes(2);
   });
 

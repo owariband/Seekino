@@ -27,22 +27,25 @@ Qdrant 与 Elasticsearch 的连接、写入和恢复都属于产品持久化适�
 `server/storage/`；业务正文与任务版本的 durable source 始终是 MySQL，外部索引均是
 可按当前合同重建的派生数据。
 
-## 模型用量与预估成本
+## 模型 Token 用量
 
-`GET /api/usage/overview?workspaceId=...` 从 Langfuse 查询最近30天的已同步用量，
-包括解析、向量化与聊天，金额统一为 USD。可用 `fromStartTime`/`toStartTime`
-（Unix 毫秒）、`seriesId`、`runId` 缩小范围。Server 只做范围过滤和汇总，不自行定价；
-价格在 Langfuse Project Settings > Models 管理，SDK 已报告且范围明确的 USD 预估优先。
+`GET /api/usage/overview?workspaceId=...` 从 `model_usage` 查询最近 30 天已记录调用。
+可用 `fromStartTime`/`toStartTime`（Unix 毫秒）、`seriesId`、`runId` 缩小范围；最大窗口 31 天。
+SQL 先按 workspace、半开 UTC 窗口、精确 run/系列筛选，再稳定排序读取最多 20,000 条。
+响应固定 `source=local`，状态为 `available` 或 `unavailable`；只包含 Token，不返回费用或货币。
 
-`config.yaml` 的 `tracing.enabled=true` 开启现有模型用量记录，在 `.env.local` 配置
-`LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`。密钥只用于后端，
-前端访问 AniVAG API。Cloud 或自托管 Langfuse v4+ 支持此查询合同。
-缺配置和读取失败返回明确状态；未知用量/价格保持 null，分页上限会标记截断。
+V2 解析/index 使用真实视频解析任务 ID；助手 direct、Web 和检索共用真实助手消息 ID。
+Chat 在实际执行线程绑定 owner，内部 embedding/rerank 继承它，不创建独立 retrieval run。
+Gateway 最终事件触发一次短事务，写入失败记录 warning 并保留业务结果。
+SDK 明细替代父用量，缓存和推理子集不重复加入总量；未知、main_loop 或截断保持完整总量 null，
+已知数字通过 `knownTokens` 单独报告。读取失败不会返回 available 的全零结果。
 
-运行时不再装配旧统计 Repository 或读取旧 CNY 价格表，原 `capture` 入口仅传递
-调用身份并订阅 Langfuse。历史 SQL 表不删除或回填，预算/租约/取消控制保持原实现。
-本批只记录模型用量和成本，没有扩展工具轨迹或模型正文采集。
-详细合同见 [模型用量与预估成本](../docs/parse-model-usage.md)。
+新表沿用现有模型登记和 init-db，真实建表须先核实操作授权。默认 `tracing.enabled=false`，
+bootstrap 不装配 Langfuse writer/reader；可选模块和空凭据字段保留。
+显式 V1 旧链不注入新统计；旧表、价格历史不删除、不回填、不与新统计合并。
+`model_usage` 没有业务对象外键，删除视频/消息不级联删除已记录用量。
+预算、租约、heartbeat、取消和模型控制仍由原执行管理器负责。
+详细合同见 [模型 Token 用量](../docs/parse-model-usage.md)。
 
 ## HTTP 分层
 
@@ -228,7 +231,7 @@ GET  /api/agent/messages/events?conversationId={conversationId}
 
 删除分两阶段执行。第一个 MySQL 事务锁定 UploadSession 及其 Video 的全部 ParseJob，
 阻止新的分片和 Consumer claim，并写入 `DELETION_PENDING` 墓碑；随后幂等清理上传暂存、
-所有 Job 目录、Video 媒体目录和 Qdrant point；第二个事务删除模型调用/用量、Job、
+所有 Job 目录、Video 媒体目录和 Qdrant point；第二个事务删除旧解析模型调用/用量、Job、
 Checkpoint、VideoChunk/Info/Embedding/Context/IndexIntent 和 Video。成功后保留
 `EXPIRED` UploadSession 及原序号/幂等键，以拦截迟到请求和保证重复 DELETE 返回同一
 结果。进程在中途退出时，API 启动会扫描持久删除标记继续清理。重新上传须使用新幂等键。

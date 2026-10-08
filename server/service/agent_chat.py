@@ -42,6 +42,7 @@ from ..utils.time import now_unix_time_ms
 from ..utils.validation import require_nonempty_text
 from .library import LibraryService
 from .pagination import decode_cursor, encode_cursor
+from .parse_usage import ParseUsageService
 
 _logger = logging.getLogger(__name__)
 
@@ -209,6 +210,7 @@ class AgentChatService:
         supervisor_factory: Callable[[AgentRuntime, AgentServiceConfig], SupervisorRuntime] | None = None,
         config_revision: str | None = None,
         tracing: LangfuseTracing | None = None,
+        parse_usage: ParseUsageService | None = None,
         clock: Callable[[], int] = now_unix_time_ms,
         monotonic_clock: Callable[[], int] = monotonic_ns,
     ) -> None:
@@ -217,6 +219,7 @@ class AgentChatService:
         self._runtime = runtime
         self._supervisor_runtime = supervisor_runtime
         self._tracing = tracing
+        self._parse_usage = parse_usage
         self._config = config or AgentServiceConfig()
         self._config_loader = config_loader
         self._runtime_factory = runtime_factory
@@ -760,8 +763,9 @@ class AgentChatService:
                     self._tracing.scope(context)
                     if self._tracing is not None else nullcontext()
                 )
+                usage = self._parse_usage.capture_chat(context) if self._parse_usage is not None else nullcontext()
                 # This scope belongs to the executor thread that invokes the models.
-                with model_call_context(context), tracing:
+                with model_call_context(context), tracing, usage:
                     final = (
                         runtime.kick(
                             inputs, load_video_context=load_video_context,

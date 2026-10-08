@@ -1,59 +1,39 @@
-# 模型用量与 USD 预估成本
+# 模型 Token 用量
 
-模型用量和预估成本由 Langfuse 保存与计价，AniVAG 的模型消耗页面通过 Server
-查询这些已同步记录。覆盖解析、向量化、检索查询编码与聊天；记录来自实际 Gateway
-调用完成边界，包含已返回用量的失败调用。页面显示 USD，后端没有人民币价格引擎或汇率转换。
+AniVAG 使用现有 MySQL 的 `model_usage` 记录 Gateway 最终调用事件，模型消耗页面查询这些本地记录。
+统计范围包括 V2 视频解析/index 和整个助手问答；失败调用若有 provider 已确认用量，也会保留。
+本批只统计 Token，没有费用、货币或汇率合同。
 
-## 配置
+## 配置与归属
 
-仓库 `config.yaml` 已开启现有记录通道：
+Server 复用现有 `ANIVAG_DATABASE_URL`，无需新的存储服务或 Langfuse 凭据。
+新表已登记在现有 init-db 模型集合；真实建表、服务启动/重启和模型运行应由运行负责人核实具体操作授权。
+仓库 `config.yaml` 的 `tracing.enabled=false`；bootstrap 停止装配 Langfuse writer/reader，保留可选模块和配置字段。
 
-```yaml
-tracing:
-  enabled: true
-  environment: development
-```
+- `video_parse`：V2 解析及 index/embedding，`runId` 是真实 `video_parse_task_id`。
+- `chat_retrieval`：助手 direct、Web 和视频检索，`runId` 是真实 `assistant_message_id`。
 
-在 `.env.local` 配置项目连接信息，不把密钥放进前端：
+Chat scope 在执行模型的线程绑定，内部 query embedding/rerank 继承助手消息，不创建独立 retrieval run。
+独立检索没有受支持 owner 时不写入本表。默认解析模式为 V2，需要原有 ES 和模型配置；显式 V1 opt-in 保留，
+但旧 `job_id` 不冒充 V2 任务 ID，V1 processing 不注入新统计。
 
-```dotenv
-LANGFUSE_BASE_URL=https://your-langfuse-host
-LANGFUSE_PUBLIC_KEY=your-project-public-key
-LANGFUSE_SECRET_KEY=your-project-secret-key
-```
+## 追加记录与 Token 口径
 
-可以使用 Langfuse Cloud 或自托管 v4+。显式 `tracing.base_url` 优先于环境地址；
-`public_key_env`、`secret_key_env` 可沿用已有配置指定变量名。没有连接配置时，
-业务模型仍可执行，消耗页面显示“尚未配置”，不会把未记录用量显示为零。
-配置生效需要由运行负责人重启进程；本次代码修改不自动重启服务。
+每个 Gateway UUID `call_id` 只追加一行，`usage` 与 `metadata` 分别保存固定 JSON 对象。
+重复 call_id 仅在 workspace/taskType/run 全部相同时幂等返回，不覆盖原 JSON 或写入时间；归属冲突拒绝。
+写入在调用结束后使用短事务，不在模型执行期间持有数据库事务。
+metadata 仅投影实际模型、provider、操作、状态、用量来源/范围和身份/阶段白名单；src 无明确来源时为 null。
+不存 prompt、回答、工具参数、原始 response、SDK cost_usd 或凭据。
 
-本批仅复用现有模型调用记录，不采集 prompt/response 正文或工具完整轨迹。
-默认解析执行模式改为 V2，需配置 ES；显式 `ANIVAG_PARSE_EXECUTION_MODE=v1`
-仍能运行旧链，新统计入口同样使用 Langfuse。
+Token 使用 Gateway 的 inclusive input/output/total 合同。缓存读写、文字/图片/音频是 input 的子集，
+reasoning 是 output 的子集，不再次加到总量。可空 subset 独立传播未知，不显示为零，
+也不因为缓存或推理未知而否定已确认的核心总量。
 
-## 用量与价格
-
-Token 总量保留 Provider/SDK 返回的 inclusive 输入与输出合同。写入 Langfuse 的
-计价桶拆成普通输入、缓存读取、缓存写入和输出，避免缓存被重复计入普通输入。
-只有返回了完整 TTL 细分时才分别记录缓存写入5分钟/1小时；推理量仍属于输出子集。
-已知且可拆开的模态使用互斥文字/图片/音频桶，缓存与模态交集未知时不猜交集。
-
-当前字段键为 `input`、`input_cached_tokens`、`input_cache_creation_tokens`、
-`input_cache_creation_5m_tokens`、`input_cache_creation_1h_tokens`、
-`input_text_tokens`、`input_image_tokens`、`input_audio_tokens`、`output` 和 `total`。
-缓存写入总桶与 TTL 子桶二选一；普通输入只保留未被缓存或已知模态桶覆盖的剩余量，
-与这些细分桶互不重叠。
-模型价格必须与实际写入的用量键对应；在 Langfuse **Project Settings > Models**
-配置 USD 单价与模型匹配，不在 AniVAG 维护第二套价格配置。
-[Langfuse 用量与成本合同](https://langfuse.com/docs/observability/features/token-and-cost-tracking)
-
-Claude SDK 提供实际模型汇总时，按模型记录该轮 SDK 用量和 USD 预估成本，
-外层 run 不重复记录总量和成本。它们是 SDK 聚合，不能解释为每个内部 Provider 请求。
-仅有主循环 usage 时保留这个粒度，不拿范围不同的子 Agent 总费用冒充同一模型成本。
-调用数按 Gateway call ID 去重，Token/成本按独立 Langfuse observation ID 汇总。
-
-没有 SDK 成本时使用 Langfuse 推算；缺价格、细分不完整或价格仅覆盖部分用量时，
-完整成本为 null，保留可证明的已知小计。费用是模型预估成本，不是供应商账单金额。
+SDK 提供实际模型明细时，用明细替代父总数及配置 alias。整体调用数按不同 call_id 计一次；
+每个实际模型分组也按不同 call_id 计数。SDK 未提供明细时只使用主用量，不猜隐藏的 provider 请求。
+任一参与项核心用量未知时，受影响整体/模型/run 的完整 input/output/total 为 null，
+`knownTokens` 保留可确认项小计，`missingUsageCount` 按不同 call_id 计一次。
+Claude `main_loop` 数字只证明主循环小计，相应完整核心总量为 null，已知数字仍保留。
 
 ## 查询接口
 
@@ -61,42 +41,40 @@ Claude SDK 提供实际模型汇总时，按模型记录该轮 SDK 用量和 USD
 GET /api/usage/overview?workspaceId=local-default
 ```
 
-可选 `fromStartTime`、`toStartTime` 为 Unix 毫秒，默认最近30天；时间窗必须有界，
-也可用 `seriesId`、`runId` 筛选。Server 查询固定 Langfuse 环境和 workspace，
-同时精确核验返回的 workspace，系列多选按 metadata 中的真实 ID 匹配。
-目前 workspace 仍是数据范围，登录与成员授权尚未实现。
+可选 `fromStartTime`、`toStartTime` 为 Unix 毫秒，默认最近 30 天、最大 31 天，默认截止时间对齐下一整分钟。
+SQL 使用 `started_at >= from AND started_at < to` 的 UTC 半开窗口；先精确筛选 workspace、run 和系列，
+系列匹配 metadata.context.series_id 或 series_ids 数组成员，避免 series-A 错配 series-AA。
+没有新增 taskType 请求筛选。workspace 仍是数据范围，登录与成员授权尚未实现。
 
-查询使用 `/api/public/v2/observations`，选择 usage/model/metadata 字段并分页读取。
-单次最多20页、每页1000条，总读取预算15秒；未读完时 `truncated=true`，
-完整 Token/成本合计保持未知。缓存以 workspace 和时间窗隔离，最长30秒、最多32个条目，
-用于合并页面查询；没有新增 SQL 聚合表。
-[Langfuse Public API](https://langfuse.com/docs/api-and-data-platform/features/public-api)
+按 started_at ASC、call_id ASC 排序，读取 20,000 + 1 行；多出的一行只用于截断标记，不计小计。
+`truncated=true` 时整体/模型/run 的完整 Token 合计为 null，已读调用数和 knownTokens 保留；
+不凭未读记录增加 missingUsageCount，不能把已读小计解释为窗口全部消耗。
 
 | 字段 | 含义 |
 | --- | --- |
-| source / currency | 固定 `langfuse` / `USD` |
-| status | `available`、`disabled`、`not_configured`、`unavailable` |
-| fromStartTime / toStartTime / fetchedAt | 查询时间窗与本次结果返回时间，Unix 毫秒 |
-| truncated | 是否受有界分页限制；不能把截断小计当完整合计 |
-| totals | 已同步调用、输入/输出/缓存/推理/总量与预估成本汇总 |
-| models | 按服务商、实际模型、分类与操作分组 |
-| runs | 按解析任务、聊天运行或其他运行分组 |
-| totalTokens / estimatedCostUsd | 完整已同步记录合计；缺失或截断时 null |
-| knownTokens / knownCostUsd | 仅已知记录的小计；金额为十进制字符串 |
-| missingUsageCount / unpricedCallCount | 缺少用量或完整计价的调用数量 |
+| source | 固定 `local` |
+| status / message | `available` 或 `unavailable`；读取失败的用户提示 |
+| fromStartTime / toStartTime / fetchedAt | 查询窗口和读取时刻，Unix 毫秒 |
+| truncated | 匹配记录超过 20,000 条，当前数据只是已读部分 |
+| totals | 已记录调用数、输入/输出、缓存读写、推理、总量、已知小计和缺失数 |
+| models | 按实际 provider/model/category/operation 分组 |
+| runs | 真实 runId、两类 taskType、可确定的系列/视频身份及 Token 汇总 |
+| totalTokens / knownTokens | 可确认的完整已记录合计或 null，以及已知 Token 小计 |
+| missingUsageCount | 缺少可确认完整用量的不同调用数，包含 main_loop |
 
-页面一次查询并使用服务端汇总，前端仅格式化 USD 字符串，不重复计算价格。
-页面明确说明“已同步记录”；写入队列、网络失败和 Langfuse 处理延迟仍可能使最新
-调用暂未出现在查询中，`available` 不代表所有业务调用都已成功上传。
+页面一次查询并复用按模型、任务/Chat 两个视图，保留系列筛选和刷新。
+数据库读取失败返回 unavailable 和未知调用数，不返回 available 的全零结果。
+空窗口表示没有已记录调用，无法证明历史消费为零。
 
-## 旧统计退出与验收边界
+## 历史与验收限制
 
-旧 `/api/jobs/usage/get` 已退出公开路由，运行时不再装配 ParseUsageRepository 或
-加载旧价格表。`capture`/`capture_video` 保留签名与身份上下文，仅订阅 Langfuse。
-V2 的调用次数预算、租约、取消和模型控制仍使用原执行管理器，与统计来源分离。
-历史 SQL 表、金额和价格快照保留，不换币种、不混入新统计、不回填历史。
-旧 `ANIVAG_MODEL_PRICING_CONFIG` 不再影响模型消耗页面。
+旧 `/api/jobs/usage/get` 已退出公开路由。旧统计表、价格与金额历史保留，不读取、回填或混入本地统计。
+新表没有业务对象外键，删除任务/视频/消息不级联删除已记录用量。
+`ANIVAG_MODEL_PRICING_CONFIG` 不影响当前模型消耗页。
+V2 预算、并发、heartbeat、lease、取消和 reserve/release 仍由原 manager 控制。
 
-离线测试验证字段映射、范围过滤、分页、未知值、资源关闭和前端查询。
-真实验收需连接项目，执行一次真实解析或聊天，在 Langfuse 和 AniVAG 页面
-核对相同模型、用量、USD 及运行身份；没有项目凭据时不能宣称该在线验收完成。
+没有持久化队列、outbox 或采集完成标记；写入失败和进程终止可能丢记录，业务完成状态不能证明全部消耗已采集。
+写入失败保留模型原结果并记录不含原始载荷的 warning；available 仅表示本次记录查询成功。
+离线 SQLite、MySQL dialect 和页面测试分别提供局部证据，不能代替真实 TEST MySQL 或模型语义验收。
+真实 U06 至少执行一条 V2 解析/index 和一次 Chat，对实际触发调用的 run/call_id、SQL、API 和页面逐层对账。
+源码与离线回归不等于真实环境验收；真实模型、MySQL 和页面仍需按上述步骤对账。

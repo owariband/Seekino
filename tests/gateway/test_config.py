@@ -17,7 +17,7 @@ from gateway.config import (
 
 def test_tracing_is_disabled_by_default_and_accepts_local_backend() -> None:
     assert not TracingConfig().enabled
-    assert load_config().tracing.enabled
+    assert not load_config().tracing.enabled
     settings = TracingConfig(enabled=True, base_url="http://127.0.0.1:3000/")
     assert settings.base_url == "http://127.0.0.1:3000"
     assert settings.public_key_env == "LANGFUSE_PUBLIC_KEY"

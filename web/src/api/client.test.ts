@@ -109,16 +109,17 @@ describe("Video episode route", () => {
   });
 });
 
-describe("Langfuse usage overview route", () => {
-  it("requests one overview with encoded filters and preserves USD decimals and missing usage", async () => {
-    const payload = { source: "langfuse", currency: "USD", totals: { totalTokens: null, estimatedCostUsd: "0.00000004" }, models: [], runs: [] };
+describe("local Token usage overview route", () => {
+  it("requests one overview with encoded filters and preserves known subtotals and missing usage", async () => {
+    const payload = { source: "local", status: "available", totals: { totalTokens: null, knownTokens: 42 }, models: [], runs: [] };
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(payload)));
     vi.stubGlobal("fetch", fetchMock);
     const signal = new AbortController().signal;
     const usage = await getUsageOverview({ fromStartTime: 1, toStartTime: 2, seriesId: "series/id", runId: "run/id" }, signal);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/usage/overview?workspaceId=local-default&fromStartTime=1&toStartTime=2&seriesId=series%2Fid&runId=run%2Fid");
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(signal);
-    expect(usage.totals.estimatedCostUsd).toBe("0.00000004");
+    expect(usage.source).toBe("local");
+    expect(usage.totals.knownTokens).toBe(42);
     expect(usage.totals.totalTokens).toBeNull();
     expect(fetchMock).toHaveBeenCalledOnce();
   });

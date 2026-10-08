@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event
+from sqlalchemy import event, select
 
 from agent.video_parse_v2.input import GenerativeModelConfig
 from engine.parsev2.schemas import ActionEvent, VideoParseResult
@@ -26,7 +26,7 @@ from engine.rag import (
 from gateway.config import load_config
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
-from gateway.usage import capture_model_usage, model_call_context, track_model_call
+from gateway.usage import TokenUsage, capture_model_usage, model_call_context, track_model_call
 
 from server.api.app import create_app
 from server.bootstrap import ApplicationServices
@@ -45,19 +45,22 @@ from server.model.job import (
     VideoParseTaskRecord,
 )
 from server.model.upload import UPLOAD_DELETION_PENDING_ERROR_CODE, UploadSessionRecord
+from server.model.parse_usage import ModelUsageRecord
 from server.model.video import SeriesRecord, VideoRecord
 from server.mq.video_parse_consumer import (
     VideoParseConsumer,
     VideoParseConsumerHandlers,
 )
 from server.mq.video_parse_queue import MySqlVideoParseQueue
-from server.repository.video_parse import VideoParseRepository
+from server.repository.video_parse import RUNTIME_DETAIL_KEY, VideoParseRepository
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
+from server.repository.model_usage import ModelUsageRepository
 from server.repository.upload import UploadRepository
 from server.service.job import ParseJobService
 from server.service.library import LibraryService
 from server.service.media import MediaService
+from server.service.parse_usage import ParseUsageService
 from server.service.upload import UploadService, UploadServiceConfig
 from server.service.video_retrieval import VideoParseRetrievalService
 from server.service.video_parse import VideoParseRuntimeService
@@ -65,6 +68,7 @@ from server.service.video_parse_index_coordinator import VideoParseIndexCoordina
 from server.service.video_parse_media import MediaLeaseIdentity, VideoParseMediaService
 from server.storage.artifact import LocalArtifactStore
 from server.storage.elasticsearch import (
+    ElasticsearchVideoChunkStore,
     StoredDocumentState,
     VideoChunkIndexMatch,
     document_id,
@@ -186,13 +190,16 @@ class _RecoveringElasticsearchBoundary(_ElasticsearchBoundary):
             for item in documents
         }
 
+    def recall(self, request, *, exact=False):
+        return ElasticsearchVideoChunkStore.recall(self, request, exact=exact)
+
     def search_lexical(self, query, *, limit, **scope):
         documents = [
             item for item in self.documents.values()
             if item.workspace_id == scope["workspace_id"]
             and item.series_id in scope["series_ids"]
             and scope["parse_tasks_by_video_id"].get(item.video_id) == item.parse_task_id
-            and item.retrieval_contract_id == scope["retrieval_contract_id"]
+            and item.index_generation == scope["index_generation"]
             and any(query in field.raw_text for field in item.projection.lexical_fields)
         ]
         return [
@@ -314,7 +321,18 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         command_runner=_write_media,
     )
     store = _ElasticsearchBoundary()
-    embedding = _EmbeddingClient("doubao-embedding-vision-250615")
+    class ObservedEmbedding(_EmbeddingClient):
+        def embed_text(self, text):
+            with track_model_call(provider="fixture", model=self.model, operation="text_embedding") as tracker:
+                tracker.usage = TokenUsage(3, 0, 3, None, None)
+                return super().embed_text(text)
+
+        def embed_video(self, video):
+            with track_model_call(provider="fixture", model=self.model, operation="video_embedding") as tracker:
+                tracker.usage = TokenUsage(4, 0, 4, None, None)
+                return super().embed_video(video)
+
+    embedding = ObservedEmbedding("doubao-embedding-vision-250615")
     runtime = VideoParseRuntimeService(
         repository,
         queue,
@@ -325,6 +343,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         worker_id="component-worker",
         lease_duration=timedelta(seconds=5),
         heartbeat_interval=timedelta(seconds=1),
+        parse_usage=ParseUsageService(ModelUsageRepository(factory)),
     )
 
     async def generate_multimodal(
@@ -333,6 +352,8 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         _inputs,
         **_options,
     ) -> VideoParseResult:
+        with track_model_call(provider="fixture", model="vision", operation="video_parse") as tracker:
+            tracker.usage = TokenUsage(10, 2, 12, None, None)
         return VideoParseResult(
             persons=[],
             timeline=[ActionEvent(
@@ -351,6 +372,8 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         _prompt,
         **_options,
     ) -> IntervalRefinementProposal:
+        with track_model_call(provider="fixture", model="refine", operation="chat") as tracker:
+            tracker.usage = TokenUsage(10, 2, 12, None, None)
         return IntervalRefinementProposal(updates=[])
 
     def build_index_coordinator(_self, inputs, *, check_active):
@@ -456,6 +479,14 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         assert index_detail["receipt"]["content_version"] == 1
         assert index_detail["receipt"]["index_generation"] == 1
         assert index_detail["receipt"]["parse_task_id"] == task_id
+        rows = session.scalars(select(ModelUsageRecord)).all()
+        assert len(rows) == 4 and len({row.call_id for row in rows}) == 4
+        assert all(row.task_type == "video_parse" and row.run_id == task_id for row in rows)
+        assert sum(row.usage["tokens"]["total_tokens"] for row in rows) == 31
+        assert {row.metadata_["context"]["stage"] for row in rows} == {"understand", "refine", "index"}
+        model_calls = task.detail[RUNTIME_DETAIL_KEY]["model_calls"]
+        assert set(model_calls["used_call_ids"]) == {row.call_id for row in rows}
+        assert model_calls["active"] == {}
     assert embedding.text_calls == 1
     assert embedding.video_calls == 1
     assert store.bulk_calls == 1
@@ -522,7 +553,12 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
         library=library, uploads=uploads,
         jobs=ParseJobService(ParseJobRepository(factory), library, execution_mode="v2"),
         media=MediaService(library, artifacts), retrieval=retrieval,
-        agent=SimpleNamespace(close=lambda: None), index_sync=None,
+        agent=SimpleNamespace(
+            close=lambda: None,
+            message_options=lambda: SimpleNamespace(
+                top_k=SimpleNamespace(default_value=3, minimum=1, maximum=20),
+            ),
+        ), index_sync=None,
     )
     runtime = VideoParseRuntimeService(
         repository, queue, artifacts, media, load_config(), store,
@@ -688,9 +724,6 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
                 assert provenance == {
                     "parseTaskId": receipt["parse_task_id"],
                     "contentVersion": receipt["content_version"],
-                    "sourceRevision": receipt["source_revision"],
-                    "projectionRevision": receipt["projection_revision"],
-                    "retrievalContractId": receipt["retrieval_contract_id"],
                     "indexGeneration": receipt["index_generation"],
                 }
             searched = client.post("/api/search", json=search_body)

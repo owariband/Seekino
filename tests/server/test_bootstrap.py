@@ -198,6 +198,9 @@ def test_process_assembly_receives_runtime_configuration(
         assert services.tracing is services.agent._tracing
         assert services.tracing is services.parse_usage._tracing
         assert services.tracing is services.retrieval._tracing
+        assert services.tracing is None
+        assert services.agent._parse_usage is services.parse_usage
+        assert received["processor"]._parse_usage is None
         embedder = received["query_embedder"]
         assert embedder._model == settings.video_embedding_model
         assert embedder._fps == settings.video_embedding_fps
@@ -414,7 +417,9 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert isinstance(consumer, VideoParseConsumer)
         runtime = consumer._handlers.prepare.__self__
         assert isinstance(runtime, VideoParseRuntimeService)
-        assert services.tracing is not None
+        assert services.tracing is None
+        assert runtime._parse_usage is services.parse_usage
+        assert services.agent._parse_usage is services.parse_usage
         assert runtime._tracing is services.tracing
         assert services.parse_usage._tracing is services.tracing
         assert services.agent._tracing is services.tracing

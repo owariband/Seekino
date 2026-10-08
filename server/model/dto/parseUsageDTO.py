@@ -1,13 +1,52 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from types import MappingProxyType
+from typing import Any, Literal
 
 from gateway.usage import TokenUsage
 
 from .jobDTO import ParseJobState
+
+
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("JSON object keys must be strings")
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    raise ValueError("usage and metadata must contain JSON values")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelUsageState:
+    call_id: str
+    workspace_id: str
+    task_type: Literal["video_parse", "chat_retrieval"]
+    run_id: str
+    started_at: datetime
+    usage: Mapping[str, Any]
+    metadata: Mapping[str, Any]
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        for name in ("usage", "metadata"):
+            value = getattr(self, name)
+            if not isinstance(value, Mapping):
+                raise ValueError(f"{name} must be a JSON object")
+            object.__setattr__(self, name, _freeze_json(value))
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCallUsageBatch:
+    records: tuple[ModelUsageState, ...]
+    truncated: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,10 +128,7 @@ class UsageTotals:
     reasoning_tokens: int | None
     total_tokens: int | None
     known_tokens: int
-    estimated_cost_usd: Decimal | None
-    known_cost_usd: Decimal
     missing_usage_count: int
-    unpriced_call_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,14 +142,14 @@ class UsageModelRow(UsageTotals):
 @dataclass(frozen=True, slots=True)
 class UsageRunRow(UsageTotals):
     run_id: str
-    kind: Literal["parse", "chat", "other"]
+    task_type: Literal["video_parse", "chat_retrieval"]
     series_id: str | None
     video_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class UsageOverviewState:
-    status: Literal["available", "disabled", "not_configured", "unavailable"]
+    status: Literal["available", "unavailable"]
     message: str | None
     from_start_time: int
     to_start_time: int
