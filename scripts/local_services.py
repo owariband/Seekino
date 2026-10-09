@@ -19,7 +19,6 @@ from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener
 
 from elasticsearch import Elasticsearch
-from qdrant_client import QdrantClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
@@ -32,7 +31,6 @@ from gateway.config import required_api_key_env_names, load_config
 from server.config import ServerSettings
 from server.database import create_database_engine, create_schema
 from server.storage.elasticsearch import ElasticsearchVideoChunkStore
-from server.storage.qdrant import QdrantVideoChunkStore
 
 STATE = ROOT / "outputs/local-services"
 HTTP = build_opener(ProxyHandler({}))
@@ -89,8 +87,6 @@ def configure() -> ServerSettings:
     defaults = {
         "ANIVAG_ENVIRONMENT": "development",
         "ANIVAG_DATABASE_URL": "mysql+pymysql://root@127.0.0.1:3306/anivag_development?charset=utf8mb4",
-        "ANIVAG_QDRANT_URL": "http://127.0.0.1:6333",
-        "ANIVAG_QDRANT_COLLECTION": "anivag_video_chunks_development",
         "ANIVAG_HTTP_HOST": "127.0.0.1",
         "ANIVAG_HTTP_PORT": "9621",
         "ANIVAG_WEB_PORT": "5173",
@@ -105,29 +101,23 @@ def configure() -> ServerSettings:
         f"http://127.0.0.1:{web_port},http://localhost:{web_port}",
     )
     settings = ServerSettings.from_environment()
+    if settings.elasticsearch is None:
+        raise RuntimeError("本地启动需要 ANIVAG_ELASTICSEARCH_URL 和 ANIVAG_ELASTICSEARCH_INDEX。")
     database = make_url(settings.database_url)
-    qdrant = urlsplit(settings.qdrant_url)
     if settings.environment.value != "development":
         raise RuntimeError("本地启动脚本只支持 ANIVAG_ENVIRONMENT=development。")
     if database.drivername != "mysql+pymysql":
         raise RuntimeError("本地启动脚本需要 mysql+pymysql 数据库 URL。")
-    hosts = [database.host, qdrant.hostname, os.environ["ANIVAG_HTTP_HOST"]]
+    hosts = [database.host, os.environ["ANIVAG_HTTP_HOST"]]
     if settings.elasticsearch is not None:
         hosts.append(urlsplit(settings.elasticsearch.url).hostname)
     for host in hosts:
         if host not in ("127.0.0.1", "localhost"):
             raise RuntimeError("本地启动脚本只支持 127.0.0.1 / localhost。")
-    if qdrant.scheme not in ("http", "https") or qdrant.path.rstrip("/"):
-        raise RuntimeError("ANIVAG_QDRANT_URL 需要本地 HTTP(S) 地址，不带路径。")
     port("ANIVAG_HTTP_PORT")
     # Validate the development database name before starting or creating anything.
     engine = create_database_engine(settings.database_url, environment=settings.environment)
     engine.dispose()
-    QdrantVideoChunkStore(
-        None, collection_name=settings.qdrant_collection, environment=settings.environment,
-        text_dimensions=settings.text_vector_dimensions,
-        vision_dimensions=settings.vision_vector_dimensions,
-    )
     if settings.elasticsearch is not None:
         ElasticsearchVideoChunkStore(
             None, index_name=settings.elasticsearch.index_name,
@@ -280,51 +270,10 @@ def start_mysql(settings: ServerSettings) -> None:
     print(f"[就绪] MySQL / {url.database}，Schema 已校验", flush=True)
 
 
-def start_qdrant(settings: ServerSettings) -> None:
-    url = urlsplit(settings.qdrant_url)
-    http_port = url.port or (443 if url.scheme == "https" else 80)
-    if listening(http_port):
-        print(f"[复用] Qdrant :{http_port}", flush=True)
-        if get(settings.qdrant_url.rstrip("/") + "/readyz") is None:
-            raise RuntimeError("Qdrant 端口已占用但 /readyz 未就绪。")
-    else:
-        if owned_pid("qdrant"):
-            raise RuntimeError("已有脚本启动的 Qdrant 尚未就绪，请查看 qdrant.log。")
-        if url.scheme != "http" or settings.qdrant_api_key:
-            raise RuntimeError("自建 Qdrant 使用 HTTP / 无 API Key，请先启动配置的已有实例。")
-        grpc_port = port("ANIVAG_QDRANT_GRPC_PORT", 6334)
-        if listening(grpc_port):
-            raise RuntimeError(f"Qdrant gRPC 端口 {grpc_port} 已占用。")
-        qdrant = binary("qdrant", Path.home() / ".local/bin/qdrant")
-        directory = STATE / "qdrant"
-        directory.mkdir(exist_ok=True)
-        env = os.environ.copy()
-        env.update({
-            "QDRANT__STORAGE__STORAGE_PATH": str(directory / "storage"),
-            "QDRANT__STORAGE__SNAPSHOTS_PATH": str(directory / "snapshots"),
-            "QDRANT__SERVICE__HOST": "127.0.0.1",
-            "QDRANT__SERVICE__HTTP_PORT": str(http_port),
-            "QDRANT__SERVICE__GRPC_PORT": str(grpc_port),
-            "QDRANT__TELEMETRY_DISABLED": "true",
-        })
-        launch("qdrant", [qdrant, "--disable-telemetry"], cwd=directory, env=env)
-        wait_ready("qdrant", lambda: get(settings.qdrant_url.rstrip("/") + "/readyz") is not None)
-    client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key, timeout=5)
-    try:
-        QdrantVideoChunkStore(
-            client, collection_name=settings.qdrant_collection, environment=settings.environment,
-            text_dimensions=settings.text_vector_dimensions,
-            vision_dimensions=settings.vision_vector_dimensions,
-        ).ensure_collection()
-    finally:
-        client.close()
-    print(f"[就绪] Qdrant / {settings.qdrant_collection}，向量 Schema 已校验", flush=True)
-
-
 def start_elasticsearch(settings: ServerSettings) -> None:
     config = settings.elasticsearch
     if config is None:
-        return
+        raise RuntimeError("本地启动需要显式配置 Elasticsearch。")
     client = Elasticsearch(config.url, api_key=config.api_key, request_timeout=5)
     try:
         health = client.cluster.health(wait_for_status="yellow", timeout="2s")
@@ -337,7 +286,7 @@ def start_elasticsearch(settings: ServerSettings) -> None:
         ).ensure_index()
     except Exception as exc:
         raise RuntimeError(
-            "Elasticsearch 未就绪或索引合同不匹配；请检查 Compose 的 elasticsearch profile。"
+            "Elasticsearch 未就绪或索引合同不匹配；请检查 Compose 的 elasticsearch 服务。"
         ) from exc
     finally:
         client.close()
@@ -421,7 +370,6 @@ def status(settings: ServerSettings) -> bool:
     database_port = make_url(settings.database_url).port or 3306
     checks = {
         "MySQL TCP": listening(database_port),
-        "Qdrant readyz": get(settings.qdrant_url.rstrip("/") + "/readyz") is not None,
         "API / Parse Consumer": api_ready(f"http://127.0.0.1:{port('ANIVAG_HTTP_PORT')}"),
         "Web": get(f"http://127.0.0.1:{port('ANIVAG_WEB_PORT')}/@vite/client") is not None,
     }
@@ -443,7 +391,7 @@ def status(settings: ServerSettings) -> bool:
 
 
 def stop() -> None:
-    for name in ("web", "api", "qdrant", "mysql"):
+    for name in ("web", "api", "mysql"):
         pid = owned_pid(name)
         if not pid:
             print(f"[跳过] {name}：没有本脚本管理的存活进程")
@@ -495,7 +443,6 @@ def main() -> int:
                 if record.get("config") != config_digest():
                     raise RuntimeError(f"{name} 的启动配置已变化，请先 ./start.sh stop 再启动。")
         start_mysql(settings)
-        start_qdrant(settings)
         start_elasticsearch(settings)
         start_applications()
         for name, child in CHILDREN.items():

@@ -13,7 +13,6 @@ from engine.rag.nlp.transcript import (
     TranscriptCueDocument,
 )
 
-from ..identity import canonical_uuid
 from ..model.dto.keyframeDTO import KeyframeBackfillCandidate
 from ..model.dto.jobDTO import ParseJobLease
 from ..model.dto.parseDTO import ParseImportReport, PreparedVideoParseImport
@@ -32,7 +31,7 @@ from ..mq.contracts import ParseJobLeaseLostError
 from ..schema import TranscriptCueView, VideoChunkEvidence, VideoChunkKeyframeReference
 from ..utils.media import merge_keyframe_uri_values
 from ..utils.time import now_unix_time_ms
-from ..utils.validation import require_nonempty_text
+from ..utils.validation import canonical_uuid, require_nonempty_text
 from .index_sync import list_ready_video_ids, materialize_index_sync_intents
 
 

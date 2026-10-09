@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from .listener import ChunkIntervalListener
 from .scheduler import ChunkScheduler
 from .understanding import ChunkUnderstandingWorkflow
 from .errors import ParseError
@@ -24,28 +23,20 @@ class ParseAgent:
         self,
         *,
         runtime: VideoParseRuntime | None = None,
-        listener: ChunkIntervalListener | None = None,
     ) -> None:
         self.runtime = runtime or MissingVideoParseRuntime()  # type: ignore[assignment]
-        if listener is not None and listener.runtime is not self.runtime:
-            raise ValueError("listener and ParseAgent must share the same runtime")
-        self.listener = listener or ChunkIntervalListener(runtime=self.runtime)
         self.prefix_context_agent = PrefixContextAgent(
             runtime=self.runtime,
-            listener=self.listener,
         )
         self.interval_refine = IntervalRefine(
             runtime=self.runtime,
-            listener=self.listener,
         )
         self.chunk_workflow = ChunkUnderstandingWorkflow(
             runtime=self.runtime,
-            listener=self.listener,
         )
         self.scheduler = ChunkScheduler(runtime=self.runtime)
         self.prepare = VideoParsePrepare(
             runtime=self.runtime,
-            listener=self.listener,
         )
 
         builder = StateGraph(RunState)

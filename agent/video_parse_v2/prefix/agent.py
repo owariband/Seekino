@@ -7,7 +7,6 @@ from engine.parsev2.validation import (
     validate_prefix_refinement,
 )
 
-from ..listener import ChunkIntervalListener
 from ..prompts import build_prefix_prompt
 from ..host import VideoParseRuntime
 from .context import PrefixContext
@@ -21,10 +20,8 @@ class PrefixContextAgent:
         self,
         *,
         runtime: VideoParseRuntime,
-        listener: ChunkIntervalListener,
     ) -> None:
         self._runtime = runtime
-        self._listener = listener
 
     async def run(self, chunk_parse_task_id: str) -> None:
         context = await self._runtime.load_prefix_context(chunk_parse_task_id)
@@ -49,7 +46,6 @@ class PrefixContextAgent:
         result = self._validate_result(context, proposal)
         await self._runtime.commit_prefix_refinement(context, result)
         await self._runtime.notify_prefix_committed(context)
-        await self._listener.run_prefix_context_if_ready(context["inputs"].series_id)
 
     @staticmethod
     def _validate_result(

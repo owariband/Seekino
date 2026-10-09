@@ -28,11 +28,31 @@ class TranscriptAnalysis(BaseModel):
     transcript: list[TranscriptCue]
 
 
+class _SecondsTranscriptCue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_seconds: float = Field(
+        ge=0, strict=True, allow_inf_nan=False,
+        description="Start time in seconds relative to the current video clip",
+    )
+    end_seconds: float = Field(
+        ge=0, strict=True, allow_inf_nan=False,
+        description="End time in seconds relative to the current video clip",
+    )
+    text: str = Field(min_length=1)
+
+
+class _SecondsTranscriptAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transcript: list[_SecondsTranscriptCue]
+
+
 TRANSCRIPT_PROMPT = """
 你只负责从这段视频的音轨中转写可听见的人声，不负责理解画面。
 
 要求：
-1. 所有 start_seconds 和 end_seconds 都是相对于当前视频片段起点的整数毫秒。
+1. 所有 start_seconds 和 end_seconds 都是相对于当前视频片段起点的秒数，可使用小数秒；例如第 4.2 秒写 4.2。
 2. transcript 只保留能听清的原语言台词，不翻译，不补全听不清的内容。
 3. 不要根据画面、字幕、角色外观或背景知识猜测或修正台词。
 4. 不要识别说话者身份，不要输出画面描述、动作、情绪或剧情推断。
@@ -148,9 +168,15 @@ class VideoASRAgent:
                 TextInput(text=TRANSCRIPT_PROMPT),
             ],
             schema_name="candidate_transcript",
-            result_type=TranscriptAnalysis,
+            result_type=_SecondsTranscriptAnalysis,
         )
-        return clamp_transcript(transcript, duration_seconds)
+        return normalize_transcription(
+            {"segments": [
+                {"start": cue.start_seconds, "end": cue.end_seconds, "text": cue.text}
+                for cue in transcript.transcript
+            ]},
+            duration_seconds=duration_seconds,
+        )
 
 
 def normalize_transcription(

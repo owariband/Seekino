@@ -21,8 +21,8 @@ anivag 是一个面向事件级视频检索与时间证据定位的多模态视�
 四层职责固定为：Gateway 统一模型调用，Engine 定义领域算法与检索策略，Agent
 运行 Agent／LangGraph 程序，Server 负责可靠执行、持久化和对外协议。默认解析模式
 为 V2，新上传任务由 `engine/parsev2/`、`agent/video_parse_v2/` 和 Server V2 Worker 执行，
-需要配置 Elasticsearch。冻结在 `engine/parsev1/` 的旧链可显式设置
-`ANIVAG_PARSE_EXECUTION_MODE=v1` 使用。
+需要配置 Elasticsearch。正式 Server 只接受 `ANIVAG_PARSE_EXECUTION_MODE=v2`，
+冻结在 `engine/parsev1/` 的旧链仅供历史参考和离线诊断。
 
 模型消耗页面从现有 MySQL 的 `model_usage` 查询已记录 Token，覆盖 V2 解析/index 与助手问答。
 Server 在实际模型调用完成后追加记录；数据库写入失败保留业务结果，页面只声明已记录范围。
@@ -33,14 +33,15 @@ Server 在实际模型调用完成后追加记录；数据库写入失败保留�
 
 - Anime-first：课程视频只作为未来迁移验证，不改变产品定位。
 - Video-only：用户不需要上传外挂字幕文件。
-- 语音、镜头与关键帧进入查询前的异步建库链路；Server 根据显式执行模式驱动
-  `engine.parsev1.ParsePipeline` 或 V2 LangGraph。烧录字幕 OCR 暂不阻塞第一版。
+- 语音、镜头与关键帧进入查询前的异步建库链路；Server 驱动 V2 LangGraph，
+  Engine 构造 ASR/OCR 事件，Agent 决定理解与 Refine 流程。
 - 在线查询融合语音文本、视觉与角色事件候选，返回时间证据。
-- V1 使用 MySQL 持久化 Queue + anivag Server 进程内 Consumer；RocketMQ 不是单用户 MVP 的前置依赖。
+- V2 使用 MySQL 持久化 Queue + anivag Server 进程内 Consumer；RocketMQ 不是单用户 MVP 的前置依赖。
 
-## 保留的 Parse V1
+## 冻结的 Parse V1
 
-显式选择 V1 时，业务数据按 V1 Pipeline 推进；ASR 阶段内部可以按配置并发处理多个待解析窗口：
+历史 V1 Pipeline 和适配代码保留用于参考，不接入正式 Server 的启动、上传、删除或检索。
+旧链的算法顺序为：
 
 ```text
 准备窗口与媒体 → ASR Agent → VideoUnderstandingAgent → EmbeddingAgent → MySQL 业务事实 → Qdrant 索引
@@ -52,8 +53,9 @@ Transcript，不会补跑 ASR。
 
 V1 不是 LangGraph。失败重试由 ParseJobConsumer 与 MySQL Queue 管理，MySQL
 Checkpoint、Artifact 和 Lease/Fencing 才是恢复真相；Pipeline 内存状态只覆盖当前
-一次执行。Video Parse V2 由 `agent/video_parse_v2/` 定义 LangGraph 程序，调用
-`engine/parsev2/` 的领域算法，并继续把持久任务、恢复和版本选择留给 Server。
+一次执行。当前 Video Parse V2 由 `agent/video_parse_v2/` 定义 LangGraph 程序，调用
+`engine/parsev2/` 的领域算法，并把持久任务、恢复和版本选择留给 Server。
+历史 V1/V2 混合数据库记录仍由任务删除事务清理，正式流程无需连接 Qdrant。
 
 ## 快速开始
 
@@ -82,7 +84,7 @@ uv run --env-file .env.local python -m tests.manual.gateway_embedding --help
 冒烟见 [`gateway/README.md`](gateway/README.md)，业务事实与索引同步命令见
 [`server/README.md`](server/README.md)。所有命令都从仓库根目录运行。
 
-本地验证时，可直接懒启动 MySQL、原生 Qdrant、anivag Server（API + 当前执行模式的
+本地验证时，先准备 Elasticsearch，再懒启动 MySQL、anivag Server（API + V2
 进程内 Parse Consumer）和 Web：
 
 ```bash
@@ -93,23 +95,24 @@ uv run --env-file .env.local python -m tests.manual.gateway_embedding --help
 
 默认 Web 为 `http://127.0.0.1:5173`，API 文档为 `http://127.0.0.1:9621/docs`。
 脚本读取根目录 `.env.local`；模型 API Key 以该文件为准，其它显式环境配置会保留。缺少数据库配置时，默认连接
-`root` / 空密码的 `127.0.0.1:3306/anivag_development` 和
-`http://127.0.0.1:6333` 的 `anivag_video_chunks_development` 集合。
+`root` / 空密码的 `127.0.0.1:3306/anivag_development`。
+ES 的 URL 和索引名必须通过 `ANIVAG_ELASTICSEARCH_URL` / `ANIVAG_ELASTICSEARCH_INDEX` 显式配置，
+示例文件使用本机 9200 端口和开发索引。
 首次自建 MySQL 使用该 root 账号；复用已有认证实例时，在 `.env.local` 配置其数据库账号。
 
-需要本机已有 `uv`、Node、npm、MySQL 8、Qdrant 和 ffmpeg / ffprobe。
+需要本机已有 `uv`、Node、npm、MySQL 8、ffmpeg / ffprobe，以及可访问的 Elasticsearch。
 脚本会在缺少 `.venv` / Web 依赖时执行 `uv sync` / `npm ci`。
-可通过 `ANIVAG_MYSQLD_BIN` / `ANIVAG_QDRANT_BIN` 指定二进制；也会查找 Homebrew
-MySQL 8.4 和 `~/.local/bin/qdrant`。Gateway / Engine 由 anivag Server 进程内调用，
+可通过 `ANIVAG_MYSQLD_BIN` 指定二进制；也会查找 Homebrew
+MySQL 8.4。Gateway / Engine 由 anivag Server 进程内调用，
 无需额外进程。
 
 自建数据、PID 与日志保存在 `outputs/local-services/`，媒体仍使用
 `ANIVAG_ARTIFACT_ROOT`（默认 `outputs/server/artifacts`）。启动会创建缺失的开发库 / 表 /
-Qdrant 集合，并校验现有 Schema；旧 Schema 会报错，需要按迁移说明处理。
+ES 索引，并校验现有 Schema；旧 Schema 会报错，需要按迁移说明处理。
 不清空数据、不自动 ALTER 旧表。启动失败后已启动的进程会保留，可查看日志、重试或运行 stop。
 
 可在 `.env.local` 修改 `ANIVAG_HTTP_PORT`、`ANIVAG_WEB_PORT`、数据库 URL 端口和
-Qdrant URL 端口；自建 Qdrant 的 gRPC 端口由 `ANIVAG_QDRANT_GRPC_PORT` 指定（默认 6334）。
+ES URL 端口；ES 进程由运行环境准备，脚本只验证和复用。
 Vite 代理会跟随 API 端口。此脚本仅用于 localhost development 环境。
 修改 `config.yaml` 中可即时生效的 `agent_runtime` 参数后，新消息直接使用新值；
 `maximum_concurrent_kicks`、模型/解析配置及其他启动配置修改后，先运行
@@ -117,7 +120,7 @@ Vite 代理会跟随 API 端口。此脚本仅用于 localhost development 环�
 
 ### 可选：用 Docker 运行数据库
 
-原有 `./start.sh` 启动方式保持不变，无需 Docker。若希望省去本机安装 MySQL / Qdrant，
+`./start.sh` 可以复用自行准备的数据库。若希望省去本机安装 MySQL / Elasticsearch，
 可以先用根目录 [`compose.yaml`](compose.yaml) 启动数据库，再由原脚本复用它们：
 
 ```bash
@@ -129,10 +132,9 @@ docker compose up -d --wait && ./start.sh
 每次选择 Docker 模式都先运行上述命令，避免数据库未运行时原脚本启动本机实例。
 自定义端口、已有数据和视频测试说明见 [Docker 开发说明](deploy/README.md)。
 
-ES 接入可在本地单独准备：`docker compose --profile elasticsearch up -d --wait elasticsearch`，
-再在 `.env.local` 显式配置 `ANIVAG_ELASTICSEARCH_URL` 和
-`ANIVAG_ELASTICSEARCH_INDEX`。此时 `./start.sh` 会校验 ES 集群及索引映射；
-V2 模式要求显式配置 ES；Interval 在 Refine 成果提交后由 V2 Worker 写入并核验 ES，
+Compose 默认启动 MySQL + ES。在 `.env.local` 显式配置 `ANIVAG_ELASTICSEARCH_URL` 和
+`ANIVAG_ELASTICSEARCH_INDEX` 后，`./start.sh` 会校验 ES 集群及索引映射。
+Interval 在 Refine 成果提交后由 V2 Worker 写入并核验 ES，
 再完成任务。API、Agent Chat 与 CLI search 会同时选择 V2 ES 检索且不会回退到
 V1/Qdrant；Web 已接入 V2 Task 列表、单任务事件和 retry/reparse/delete 操作门禁。
 启用前需应用 Server 说明列出的受控迁移。状态迁移及能力边界见
@@ -160,7 +162,7 @@ anivag/
 ```
 
 这里列的是当前已经存在的目录，不代表最终系统只有这些文件。Server 已包含 HTTP API、
-MySQL DB Queue、V1/V2 进程内 Consumer 和环境隔离的本地 Artifact Store；Web 层独立推进。
+MySQL DB Queue、V2 进程内 Consumer 和环境隔离的本地 Artifact Store；Web 层独立推进。
 Artifact Store
 只负责媒体与其他二进制产物，Embedding 的 durable source 仍是 MySQL，不因引入
 Artifact Store 自动外置。完整目标结构与阶段记录维护在

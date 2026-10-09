@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
+from engine.parsev2.observations import build_chunk_without_understanding
 from engine.parsev2.validation import validate_result_time_range
 
-from ..listener import ChunkIntervalListener
 from ..prompts import build_understanding_prompt
 from ..host import VideoParseRuntime
 from .state import ChunkState
@@ -19,10 +19,8 @@ class ChunkUnderstandingWorkflow:
         self,
         *,
         runtime: VideoParseRuntime,
-        listener: ChunkIntervalListener,
     ) -> None:
         self._runtime = runtime
-        self._listener = listener
 
         builder = StateGraph(ChunkState)
         builder.add_node("visual_input", self._visual_input)
@@ -91,8 +89,7 @@ class ChunkUnderstandingWorkflow:
                 prompt=prompt,
             )
         else:
-            result = self._runtime.build_chunk_without_understanding(
-                execution,
+            result = build_chunk_without_understanding(
                 asr_result=asr_result,
                 ocr_result=ocr_result,
             )
@@ -112,7 +109,6 @@ class ChunkUnderstandingWorkflow:
         await self._runtime.commit_chunk_result(
             state["execution"],
             state["result"],
-            self._listener.update_interval_mask,
         )
         return {}
 

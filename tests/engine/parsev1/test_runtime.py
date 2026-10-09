@@ -50,8 +50,7 @@ def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
 
         def generate(self, _inputs, *, schema_name, result_type):
             if schema_name == "candidate_transcript":
-                assert result_type is TranscriptAnalysis
-                return TranscriptAnalysis(transcript=[])
+                return result_type.model_validate({"transcript": []})
             assert schema_name == "video_timeline"
             assert result_type is VideoTimeline
             return VideoTimeline(summary="片段完成", events=[])
@@ -305,11 +304,10 @@ def test_runtime_pipelines_candidate_asr_ahead_of_serial_parse(
             video = next(item for item in inputs if isinstance(item, VideoInput))
             sequence_no = int(Path(video.path).name.split("-", 2)[1].split(".")[0])
             if schema_name == "candidate_transcript":
-                assert result_type is TranscriptAnalysis
                 asr_started[sequence_no].set()
                 if sequence_no == 1:
                     assert pro_started.wait(timeout=5)
-                return TranscriptAnalysis(transcript=[])
+                return result_type.model_validate({"transcript": []})
 
             assert schema_name == "video_timeline"
             assert result_type is VideoTimeline
@@ -378,7 +376,7 @@ def test_runtime_resumes_each_stage_after_later_asr_failure(
             if schema_name == "candidate_transcript":
                 if sequence_no == 1 and fail_second_asr:
                     raise RuntimeError("transient ASR failure")
-                return TranscriptAnalysis(transcript=[])
+                return result_type.model_validate({"transcript": []})
             return VideoTimeline(summary=f"chunk {sequence_no}", events=[])
 
     def materialize(windows, **_kwargs):

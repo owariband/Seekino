@@ -17,7 +17,8 @@ from sqlalchemy import event, select
 from agent.video_parse_v2.input import GenerativeModelConfig, ParseInput
 from agent.video_parse_v2.host import ChunkExecution, LeaseToken
 from engine.common.model_factory import build_asr_agent
-from engine.common.transcription import TranscriptAnalysis, TranscriptCue
+from engine.common.transcription import TranscriptAnalysis
+from engine.parsev2.observations import OCRResult
 from engine.parsev2.schemas import ActionEvent, VideoParseResult
 from engine.parsev2.validation import IntervalRefinementProposal
 from engine.rag import (
@@ -26,6 +27,7 @@ from engine.rag import (
     VideoClipInputContract,
     VIDEO_CLIP_PREPROCESS_REVISION,
 )
+from engine.rag.encoding import EmbeddingRequest, SparseEmbeddingRequest, accept_sparse_result
 from gateway.config import ArkModelSourceConfig, OpenAIAudioSourceConfig, load_config
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
@@ -67,7 +69,11 @@ from server.service.parse_usage import ParseUsageService
 from server.service.upload import UploadService, UploadServiceConfig
 from server.service.video_retrieval import VideoParseRetrievalService
 from server.service.video_parse import VideoParseRuntimeService
-from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator
+from server.service.video_parse_index_coordinator import (
+    VideoParseIndexCoordinator,
+    VideoParseIndexCoordinationError,
+    _accept_result,
+)
 from server.service.video_parse_media import (
     MediaLeaseIdentity,
     PreparedVideoParseMedia,
@@ -384,11 +390,11 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
             assert request_inputs[0].path == media.video_path
             assert request_inputs[0].fps == 0.5
             assert schema_name == "candidate_transcript"
-            assert result_type is TranscriptAnalysis
-            return TranscriptAnalysis(transcript=[
-                TranscriptCue(start_seconds=1500, end_seconds=4000, text="hello"),
-                TranscriptCue(start_seconds=3000, end_seconds=4000, text="outside"),
-            ])
+            assert result_type is not TranscriptAnalysis
+            return result_type.model_validate({"transcript": [
+                {"start_seconds": 1.5, "end_seconds": 4, "text": "hello"},
+                {"start_seconds": 3, "end_seconds": 4, "text": "outside"},
+            ]})
 
         return SimpleNamespace(model_name=model, generate=generate)
 
@@ -418,6 +424,141 @@ def test_transcription_uses_frozen_source_prepared_media_and_absolute_millisecon
     else:
         assert calls == []
 
+
+def test_ocr_host_uses_agent_prompt_and_shared_engine_result(monkeypatch, tmp_path):
+    config = _parse_config()
+    config["ocr_enabled"] = True
+    config["models"]["ocr"] = dict(config["models"]["understanding"])
+    inputs = ParseInput.model_validate({
+        "series_id": "series", "video_id": "video", "parse_config": config,
+    })
+    execution = ChunkExecution(
+        "chunk-task", "video-task", 0, 0, 20_000, 0, 20_000, inputs,
+        LeaseToken("worker", 1, datetime.now(UTC) + timedelta(seconds=30)),
+    )
+    media = PreparedVideoParseMedia(
+        tmp_path / "prepared.mp4", tmp_path / "prepared.wav",
+        ((1000, tmp_path / "frame-1.jpg"), (2000, tmp_path / "frame-2.jpg")),
+    )
+    runtime = VideoParseRuntimeService(
+        object(), object(), _ArtifactResolver(),
+        VideoParseMediaService(tmp_path / "media"), load_config(), _ElasticsearchBoundary(),
+        worker_id="worker", lease_duration=timedelta(seconds=30),
+        heartbeat_interval=timedelta(seconds=5),
+    )
+    expected = OCRResult.model_validate({"lines": [{
+        "start_seconds": 1000, "end_seconds": 2000, "text": "営業中", "language": "ja",
+    }]})
+
+    async def prepared_media(_self, loaded):
+        assert loaded is execution
+        return media
+
+    async def generate(_self, binding, request_inputs, *, schema_name, result_type):
+        assert binding is inputs.parse_config.models.ocr
+        assert schema_name == "video_parse_v2_ocr"
+        assert result_type is OCRResult
+        assert [item.path for item in request_inputs[:-1]] == [
+            tmp_path / "frame-1.jpg", tmp_path / "frame-2.jpg",
+        ]
+        assert request_inputs[-1].text == (
+            "Read only visible non-dialogue on-screen text from the ordered frames. "
+            "Use absolute integer source-video milliseconds inside the authorized range. "
+            "Frame timestamps: [1000, 2000]."
+        )
+        return expected
+
+    monkeypatch.setattr(runtime, "_ensure_chunk_media", MethodType(prepared_media, runtime))
+    monkeypatch.setattr(runtime, "_generate_multimodal", MethodType(generate, runtime))
+    assert asyncio.run(runtime.read_chunk_text(execution)) is expected
+
+
+@pytest.mark.parametrize(
+    ("route", "encoder_model", "expected_model"),
+    [
+        ("doubao-embedding-vision-250615", None, "doubao-embedding-vision-250615"),
+        ("ep-A", None, "doubao-embedding-vision-250615"),
+        ("ep-A", "doubao-embedding-vision-251215", "doubao-embedding-vision-251215"),
+    ],
+)
+def test_index_builder_binds_frozen_encoder_and_preserves_embedding_route(
+    monkeypatch,
+    tmp_path,
+    route,
+    encoder_model,
+    expected_model,
+):
+    monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
+    config = _parse_config()
+    embedding = config["models"]["embedding"]
+    embedding["model"] = route
+    embedding.pop("encoder_model", None)
+    if encoder_model is not None:
+        embedding["encoder_model"] = encoder_model
+    inputs = ParseInput.model_validate({
+        "series_id": "series", "video_id": "video", "parse_config": config,
+    })
+    inputs = ParseInput.model_validate_json(inputs.model_dump_json())
+    assert inputs.parse_config.models.embedding.model == route
+    assert inputs.parse_config.models.embedding.encoder_model == encoder_model
+    requests = []
+
+    class Client:
+        model = expected_model
+        closed = False
+
+        def __init__(self):
+            self.multimodal_embeddings = SimpleNamespace(create=self.create)
+
+        def create(self, **kwargs):
+            requests.append(kwargs)
+            return SimpleNamespace(model=self.model, data=SimpleNamespace(
+                embedding=[1.0, 0.0],
+                sparse_embedding=[SimpleNamespace(index=7, value=0.5)],
+            ))
+
+        def close(self):
+            self.closed = True
+
+    client = Client()
+    monkeypatch.setattr("server.service.video_parse.Ark", SimpleNamespace(volc=lambda **_kwargs: client))
+    runtime = VideoParseRuntimeService(
+        object(), object(), _ArtifactResolver(),
+        VideoParseMediaService(tmp_path / "media"),
+        load_config(), _ElasticsearchBoundary(),
+        worker_id="endpoint-worker", lease_duration=timedelta(seconds=30),
+        heartbeat_interval=timedelta(seconds=5), sparse_enabled=True,
+    )
+    coordinator, selected_client = runtime._build_index_coordinator(inputs, check_active=lambda: None)
+    try:
+        assert selected_client is client
+        assert coordinator._embedder.model_name == route
+        assert coordinator.contract.semantic_encoder.model == expected_model
+        assert coordinator.contract.vision_encoder.model == expected_model
+        assert coordinator.contract.sparse_encoder.model == expected_model
+        request = EmbeddingRequest(
+            channel="semantic", encoder=coordinator.contract.semantic_encoder,
+            semantic_text="index text",
+        )
+        result = coordinator._embedder.embed_text(request.semantic_text)
+        assert result.model == expected_model
+        assert _accept_result(request, result).vector == (1.0, 0.0)
+        video = tmp_path / "video.mp4"
+        video.write_bytes(b"prepared-video")
+        assert coordinator._embedder.embed_video(video).model == expected_model
+        sparse = coordinator._embedder.embed_sparse("sparse text")
+        sparse_request = SparseEmbeddingRequest(encoder=coordinator.contract.sparse_encoder, text="sparse text")
+        assert accept_sparse_result(sparse_request, model=sparse.model, weights=sparse.weights).token_weights == (("7", 0.5),)
+        client.model = "wrong-encoder"
+        wrong = coordinator._embedder.embed_text(request.semantic_text)
+        assert wrong.model == "wrong-encoder"
+        with pytest.raises(VideoParseIndexCoordinationError, match="response contract differs"):
+            _accept_result(request, wrong)
+        assert [item["model"] for item in requests] == [route] * 4
+        assert requests[1]["input"][0]["video_url"]["fps"] == inputs.parse_config.models.embedding.video_fps
+    finally:
+        selected_client.close()
+    assert client.closed
 
 
 def test_worker_runs_real_agent_repository_and_stage_commits(
@@ -661,9 +802,6 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
         execution_mode="v2", video_parse_index_store=store,
         video_parse_query_encoder=encoder,
         video_parse_query_encoder_source=parse_config["models"]["embedding"]["source"],
-        # Local legacy cleanup boundary, not a Qdrant client or retrieval fallback.
-        video_chunk_store=SimpleNamespace(delete=lambda _chunk_id: None),
-        qdrant_mutation_lock=SimpleNamespace(hold=nullcontext),
     )
     library = LibraryService(LibraryRepository(factory, execution_mode="v2"), artifacts)
     retrieval = VideoParseRetrievalService(
@@ -681,7 +819,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             message_options=lambda: SimpleNamespace(
                 top_k=SimpleNamespace(default_value=3, minimum=1, maximum=20),
             ),
-        ), index_sync=None,
+        ),
     )
     runtime = VideoParseRuntimeService(
         repository, queue, artifacts, media, load_config(), store,

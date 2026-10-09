@@ -9,6 +9,7 @@ The current public pieces are:
 parsev2/
 ├── schemas.py       formal persons + timeline result schema
 ├── planning.py      fixed Chunk topology and complete/short Interval windows
+├── observations.py  normalized ASR/OCR contracts and pure event construction
 └── validation.py    time/member authority, explicit updates, and scope union
 ```
 
@@ -41,6 +42,14 @@ Chunk. `IntervalPlan.full_ready_mask` uses the actual member count.
 `VideoParseResult` owns the formal persons and timeline schema. The host supplies
 trusted media bounds; `validate_result_time_range` rejects an event outside that
 authority.
+
+`ASRResult` describes normalized transcript cues with absolute source-video
+milliseconds; `OCRResult` owns the structured OCR model output. When
+Understanding is disabled, `build_chunk_without_understanding` maps those
+observations directly to the same formal result without media, models or task
+state. It keeps unknown speakers as null, ASR language as `und` with role
+`ORIGINAL`, optional OCR language, and stable start/end ordering. The Agent still
+validates that result against the host's authorized time range before commit.
 
 Interval and Prefix models do not return a generic patch or a stored snapshot.
 They may propose only the current business fields:
@@ -88,7 +97,8 @@ identity and version. It must not be confused with this sequence list.
 
 ## Ownership boundary
 
-Engine validates deterministic domain data. The Agent decides when to call it.
+Engine constructs and validates deterministic domain data. The Agent owns model
+prompts and decides when to call Engine or the injected model execution host.
 The Server owns leases, fixed-row locking, transactions, current-content
 application, status aggregation, indexing readiness, and recovery. Gateway owns
 actual model/embedding requests and cancellation.

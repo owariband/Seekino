@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import NotRequired, TypedDict
 
+from engine.parsev2.observations import ASRResult, OCRResult
 from engine.parsev2.schemas import VideoParseResult
 
 from ..input import ParseInput
@@ -15,7 +16,7 @@ class ChunkState(TypedDict):
     inputs: NotRequired[ParseInput]
     execution: NotRequired[ChunkExecution]
     visual_ready: NotRequired[bool]
-    asr_result: NotRequired[object]
-    ocr_result: NotRequired[object]
+    asr_result: NotRequired[ASRResult]
+    ocr_result: NotRequired[OCRResult]
     result: NotRequired[VideoParseResult]
     # 临时音视频、帧路径及调用器由 Task/Lease 的运行时上下文管理。

@@ -38,7 +38,6 @@ from ..repository.video import (
     VideoChunkNotFoundError,
 )
 from ..service.media import MediaMissingError, MediaNotReadyError
-from ..service.qdrant_mutation_lock import QdrantMutationLockBusyError
 from ..service.upload import UploadChecksumMismatchError
 from ..service.video_retrieval import RetrievalIndexConsistencyError
 from ..storage.artifact import ArtifactIntegrityError
@@ -69,7 +68,6 @@ def register_exception_handlers(app: FastAPI) -> None:
         SeriesNotReadyError,
         UploadCompletionInProgressError,
         UploadConflictError,
-        QdrantMutationLockBusyError,
         UploadStateError,
     )
 

@@ -24,7 +24,7 @@ from gateway.embedding import EmbeddingResult
 
 from ...config.parse_profile import ParseConfig
 from ...config.video_processing import VideoProcessingConfig
-from ...identity import derive_video_chunk_id
+from ...model.identifiers import derive_video_chunk_id
 from ...model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
 from ...model.dto.parseDTO import PreparedEmbedding
 from ...model.job import ParseJobStage, VideoChunkCheckpointStage

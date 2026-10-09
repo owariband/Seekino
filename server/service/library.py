@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from engine.common.background import extract_background_image_ids, prepare_background_text
 
-from ..identity import canonical_uuid, derive_series_id
+from ..model.identifiers import derive_series_id
 from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
 from ..repository.library import LibraryRepository
 from ..storage.artifact import ArtifactStore
-from ..utils.validation import normalize_language_tag_hint, require_nonempty_text
+from ..utils.validation import canonical_uuid, normalize_language_tag_hint, require_nonempty_text
 
 
 class LibraryService:

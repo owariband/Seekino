@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
+from engine.parsev2.observations import ASRResult, OCRResult
 from engine.parsev2.schemas import VideoParseResult
 
 from .host import ChunkExecution
@@ -13,11 +15,19 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True)
 
 
+def build_ocr_prompt(frame_timestamps: Sequence[int]) -> str:
+    return (
+        "Read only visible non-dialogue on-screen text from the ordered frames. "
+        "Use absolute integer source-video milliseconds inside the authorized range. "
+        f"Frame timestamps: {list(frame_timestamps)}."
+    )
+
+
 def build_understanding_prompt(
     execution: ChunkExecution,
     *,
-    asr_result: object,
-    ocr_result: object | None,
+    asr_result: ASRResult,
+    ocr_result: OCRResult | None,
 ) -> str:
     """Describe trusted media bounds while leaving the formal Schema to Engine."""
 
@@ -28,9 +38,14 @@ def build_understanding_prompt(
             f"[{execution.allowed_start_seconds}, {execution.allowed_end_seconds})."
         ),
         "Use absolute integer source-video milliseconds and preserve uncertain attribution as null.",
+        "ASR/OCR timestamps are already normalized to absolute integer source-video milliseconds.",
+        "The legacy start_seconds/end_seconds fields contain milliseconds.",
+        "Use these global timestamps directly; do not multiply or divide by 1000 or add a Chunk/window offset again.",
         "Return only the injected VideoParseResult schema; do not invent task IDs or versions.",
         "ASR input: " + _json(asr_result),
-        "OCR input: " + _json(ocr_result),
+        "OCR input: " + _json(
+            ocr_result.model_dump(mode="json") if ocr_result is not None else None
+        ),
     ))
 
 
@@ -52,6 +67,9 @@ def build_refine_prompt(
             "never return scope, IDs, or versions."
         ),
         "Resolve names, references, and cross-boundary events only from the supplied evidence.",
+        "All member timeline timestamps are already absolute integer source-video milliseconds; the legacy start_seconds/end_seconds fields contain milliseconds.",
+        "Preserve existing timestamps and durations unless the supplied evidence establishes a timing correction; person or reference corrections must retain their time bounds.",
+        "Do not multiply or divide timestamps by 1000, apply a Chunk/window offset again, or reset later Chunk timestamps to zero.",
         "Members: " + _json(members),
     ))
 

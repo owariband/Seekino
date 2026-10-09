@@ -11,9 +11,8 @@ from engine.common.config import VideoParseRuntimeConfig
 
 from ..database import DatabaseEnvironment
 from .agent import AgentServiceConfig
-from .elasticsearch import ElasticsearchConfig
+from .elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
 from .global_agent_settings import read_global_agent_settings
-from .index_sync import IndexSyncConfig
 from .media import ImageUploadConfig
 from .logging import LoggingConfig
 from .mq import MQConsumerConfig
@@ -27,9 +26,6 @@ class ServerSettings:
     environment: DatabaseEnvironment
     database_url: str
     artifact_root: Path
-    qdrant_url: str
-    qdrant_collection: str
-    qdrant_api_key: str | None
     text_vector_dimensions: int
     vision_vector_dimensions: int
     upload: UploadServiceConfig
@@ -40,7 +36,6 @@ class ServerSettings:
     agent_evaluator_model: str | None
     agent_request_timeout_seconds: float
     mq: MQConsumerConfig
-    index_sync: IndexSyncConfig
     allowed_origins: tuple[str, ...]
     model_config_path: Path | None
     sse: SSEConfig = field(default_factory=SSEConfig)
@@ -53,26 +48,18 @@ class ServerSettings:
     images: ImageUploadConfig = field(default_factory=ImageUploadConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     elasticsearch: ElasticsearchConfig | None = None
-    parse_execution_mode: Literal["v1", "v2"] = "v2"
+    parse_execution_mode: Literal["v2"] = "v2"
 
     @classmethod
     def from_environment(cls) -> "ServerSettings":
         upload_defaults = UploadServiceConfig()
         parse_defaults = VideoParseRuntimeConfig()
         sse_defaults = SSEConfig()
-        retrieval_defaults = RetrievalConfig()
-        index_sync_defaults = IndexSyncConfig()
         image_defaults = ImageUploadConfig()
         logging_defaults = LoggingConfig()
-        environment = DatabaseEnvironment(
-            os.getenv("ANIVAG_ENVIRONMENT", DatabaseEnvironment.DEVELOPMENT.value)
-        )
-        database_url = _required_environment("ANIVAG_DATABASE_URL")
-        qdrant_url = _required_environment("ANIVAG_QDRANT_URL")
-        qdrant_collection = _required_environment("ANIVAG_QDRANT_COLLECTION")
-        artifact_root = Path(
-            os.getenv("ANIVAG_ARTIFACT_ROOT", "outputs/server/artifacts")
-        ).expanduser()
+        environment = resolve_environment()
+        database_url = resolve_database_url()
+        artifact_root = resolve_artifact_root()
         segment_size = _environment_int(
             "ANIVAG_UPLOAD_SEGMENT_SIZE_BYTES",
             upload_defaults.preferred_segment_size_bytes,
@@ -101,26 +88,11 @@ class ServerSettings:
             900,
             legacy_name="ANIVAG_WORKER_RETRY_MAX_SECONDS",
         )
-        text_dimensions = _environment_int(
-            "ANIVAG_TEXT_VECTOR_DIMENSIONS",
-            1024,
-        )
-        vision_dimensions = _environment_int(
-            "ANIVAG_VISION_VECTOR_DIMENSIONS",
-            1024,
-        )
-        if text_dimensions != vision_dimensions:
-            raise ValueError(
-                "text and vision vector dimensions must match for shared query vectors"
-            )
+        text_dimensions, vision_dimensions = resolve_vector_dimensions(require_matching=True)
         asr_mode = os.getenv("ANIVAG_ASR_MODE", parse_defaults.asr_mode).strip().casefold()
         if asr_mode not in {"lite", "none"}:
             raise ValueError("ANIVAG_ASR_MODE must be 'lite' or 'none'")
-        parse_execution_mode = os.getenv(
-            "ANIVAG_PARSE_EXECUTION_MODE", "v2"
-        ).strip().casefold()
-        if parse_execution_mode not in {"v1", "v2"}:
-            raise ValueError("ANIVAG_PARSE_EXECUTION_MODE must be 'v1' or 'v2'")
+        parse_execution_mode = resolve_execution_mode()
         origins = tuple(
             item.strip()
             for item in os.getenv(
@@ -153,13 +125,8 @@ class ServerSettings:
                     "ANIVAG_BACKGROUND_IMAGE_MAX_EDGE", image_defaults.model_max_edge,
                 ),
             ),
-            qdrant_url=qdrant_url,
-            qdrant_collection=qdrant_collection,
-            qdrant_api_key=os.getenv("ANIVAG_QDRANT_API_KEY") or None,
             elasticsearch=ElasticsearchConfig.from_environment(environment),
-            parse_execution_mode=cast(
-                Literal["v1", "v2"], parse_execution_mode
-            ),
+            parse_execution_mode=parse_execution_mode,
             text_vector_dimensions=text_dimensions,
             vision_vector_dimensions=vision_dimensions,
             upload=UploadServiceConfig(
@@ -195,9 +162,7 @@ class ServerSettings:
                     "ANIVAG_CONTEXT_OVERLAP_SECONDS",
                     parse_defaults.context_overlap_seconds,
                 ),
-                max_height=_environment_int(
-                    "ANIVAG_PARSE_MAX_HEIGHT", parse_defaults.max_height
-                ),
+                max_height=resolve_parse_max_height(),
                 asr_concurrency=_environment_int(
                     "ANIVAG_ASR_CONCURRENCY", parse_defaults.asr_concurrency
                 ),
@@ -227,10 +192,7 @@ class ServerSettings:
             agent_evaluator_model=_optional_environment(
                 "ANIVAG_AGENT_EVALUATOR_MODEL"
             ),
-            agent_request_timeout_seconds=_environment_float(
-                "ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS",
-                180,
-            ),
+            agent_request_timeout_seconds=resolve_agent_request_timeout_seconds(),
             mq=MQConsumerConfig(
                 consumer_id=(
                     _optional_environment("ANIVAG_MQ_CONSUMER_ID")
@@ -247,18 +209,6 @@ class ServerSettings:
                 retry_base=timedelta(seconds=retry_base_seconds),
                 retry_max=timedelta(seconds=retry_max_seconds),
             ),
-            index_sync=IndexSyncConfig(
-                retry_base_seconds=_environment_int(
-                    "ANIVAG_INDEX_SYNC_RETRY_BASE_SECONDS",
-                    index_sync_defaults.retry_base_seconds,
-                    legacy_name="ANIVAG_WORKER_RETRY_BASE_SECONDS",
-                ),
-                retry_max_seconds=_environment_int(
-                    "ANIVAG_INDEX_SYNC_RETRY_MAX_SECONDS",
-                    index_sync_defaults.retry_max_seconds,
-                    legacy_name="ANIVAG_WORKER_RETRY_MAX_SECONDS",
-                ),
-            ),
             allowed_origins=origins,
             model_config_path=(
                 Path(model_config).expanduser() if model_config else None
@@ -274,44 +224,8 @@ class ServerSettings:
                     "ANIVAG_SSE_KEEPALIVE_SECONDS", sse_defaults.keepalive_interval_seconds
                 ),
             ),
-            retrieval=RetrievalConfig(
-                channel_top_k=_environment_int(
-                    "ANIVAG_RETRIEVAL_CHANNEL_TOP_K", retrieval_defaults.channel_top_k
-                ),
-                rrf_k=_environment_int(
-                    "ANIVAG_RETRIEVAL_RRF_K", retrieval_defaults.rrf_k
-                ),
-                lexical_weight=float(
-                    os.getenv(
-                        "ANIVAG_RETRIEVAL_LEXICAL_WEIGHT",
-                        str(retrieval_defaults.lexical_weight),
-                    )
-                ),
-                text_weight=float(
-                    os.getenv(
-                        "ANIVAG_RETRIEVAL_TEXT_WEIGHT", str(retrieval_defaults.text_weight)
-                    )
-                ),
-                vision_weight=float(
-                    os.getenv(
-                        "ANIVAG_RETRIEVAL_VISION_WEIGHT", str(retrieval_defaults.vision_weight)
-                    )
-                ),
-                candidate_budget=_environment_int(
-                    "ANIVAG_RETRIEVAL_CANDIDATE_BUDGET", retrieval_defaults.candidate_budget
-                ),
-                sparse_weight=float(
-                    os.getenv(
-                        "ANIVAG_RETRIEVAL_SPARSE_WEIGHT", str(retrieval_defaults.sparse_weight)
-                    )
-                ),
-                rerank_enabled=_environment_bool(
-                    "ANIVAG_RETRIEVAL_RERANK_ENABLED", retrieval_defaults.rerank_enabled
-                ),
-            ),
-            database_pool_recycle_seconds=_environment_int(
-                "ANIVAG_DATABASE_POOL_RECYCLE_SECONDS", 3600
-            ),
+            retrieval=RetrievalConfig.from_environment(),
+            database_pool_recycle_seconds=resolve_database_pool_recycle_seconds(),
             video_embedding_model=_optional_environment("ANIVAG_VIDEO_EMBEDDING_MODEL"),
             video_embedding_fps=(
                 _environment_float("ANIVAG_VIDEO_EMBEDDING_FPS", 1.0)
@@ -321,8 +235,44 @@ class ServerSettings:
         )
 
 
-def _required_environment(name: str) -> str:
-    value = os.getenv(name)
+def resolve_environment(value: DatabaseEnvironment | str | None = None) -> DatabaseEnvironment:
+    return DatabaseEnvironment(
+        value if value is not None
+        else os.getenv("ANIVAG_ENVIRONMENT", DatabaseEnvironment.DEVELOPMENT.value)
+    )
+
+
+def resolve_database_url(value: str | None = None) -> str:
+    return _required_environment("ANIVAG_DATABASE_URL", value=value)
+
+
+def resolve_database_pool_recycle_seconds(value: int | str | None = None) -> int:
+    return _environment_int("ANIVAG_DATABASE_POOL_RECYCLE_SECONDS", 3600, value=value)
+
+
+def resolve_artifact_root(value: Path | str | None = None) -> Path:
+    return Path(
+        value if value is not None else os.getenv("ANIVAG_ARTIFACT_ROOT", "outputs/server/artifacts")
+    ).expanduser()
+
+
+def resolve_parse_max_height(value: int | str | None = None) -> int:
+    return _environment_int("ANIVAG_PARSE_MAX_HEIGHT", VideoParseRuntimeConfig().max_height, value=value)
+
+
+def resolve_execution_mode(value: str | None = None) -> Literal["v2"]:
+    resolved = (value if value is not None else os.getenv("ANIVAG_PARSE_EXECUTION_MODE", "v2"))
+    if resolved.strip().casefold() != "v2":
+        raise ValueError("ANIVAG_PARSE_EXECUTION_MODE must be 'v2'; V1 execution is retired")
+    return "v2"
+
+
+def resolve_agent_request_timeout_seconds(value: float | str | None = None) -> float:
+    return _environment_float("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", 180, value=value)
+
+
+def _required_environment(name: str, *, value: str | None = None) -> str:
+    value = value if value is not None else os.getenv(name)
     if value is None or not value.strip():
         raise RuntimeError(f"missing required environment variable {name}")
     return value.strip()
@@ -344,8 +294,9 @@ def _environment_int(
     default: int,
     *,
     legacy_name: str | None = None,
+    value: int | str | None = None,
 ) -> int:
-    raw = os.getenv(name)
+    raw = value if value is not None else os.getenv(name)
     if raw is None and legacy_name is not None:
         raw = os.getenv(legacy_name)
     value = int(raw if raw is not None else default)
@@ -359,8 +310,9 @@ def _environment_float(
     default: float,
     *,
     legacy_name: str | None = None,
+    value: float | str | None = None,
 ) -> float:
-    raw = os.getenv(name)
+    raw = value if value is not None else os.getenv(name)
     if raw is None and legacy_name is not None:
         raw = os.getenv(legacy_name)
     value = float(raw if raw is not None else default)
@@ -374,15 +326,3 @@ def _environment_nonnegative_int(name: str, default: int) -> int:
     if value < 0:
         raise ValueError(f"{name} must be nonnegative")
     return value
-
-
-def _environment_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    normalized = value.strip().casefold()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"{name} must be a boolean value")

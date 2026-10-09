@@ -1,38 +1,41 @@
 from __future__ import annotations
 
-import logging
+import subprocess
+import sys
 from dataclasses import replace
 from contextlib import contextmanager
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from engine.parsev1.schemas import TranscriptCue
 from engine.rag import EncoderContract, LexicalField, SourceEnrichment
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
 from gateway.usage import capture_model_usage, model_call_context, track_model_call
-from qdrant_client import QdrantClient
 
-from server.database import DatabaseEnvironment, create_session_factory
-from server.repository.index_sync import IndexSyncRepository
-from server.repository.video import SeriesScopeNotFoundError
 from server.repository.video_parse import VideoParseRetrievalScope, HydratedRetrievalCandidate
 from server.config.parse_profile import default_video_parse_v2_config
 from engine.parsev2.schemas import VideoParseResult
 from engine.rag.contracts import VideoChunkRetrievalIdentity
 from engine.rag.retrieval.contracts import ChunkRetrievalFacts, RawChunkHit
 from server.schema import VideoChunkEvidence
-from server.service.parsev1.index_sync import IndexSyncService
-from server.service.qdrant_mutation_lock import QdrantMutationLock
-from server.model.dto.parseDTO import PreparedEmbedding
 from server.service.video_retrieval import (
     RetrievalIndexConsistencyError,
     VideoParseRetrievalService,
-    VideoRetrievalService,
 )
 from server.storage.elasticsearch import VideoChunkIndexMatch
-from server.storage.qdrant import QdrantVideoChunkStore, VideoChunkIndexPoint
+
+
+def test_formal_retrieval_import_does_not_load_qdrant_or_agent_runtime():
+    subprocess.run([sys.executable, "-B", "-c", """
+import sys
+from server.service.video_retrieval import VideoParseRetrievalService
+assert 'server.storage.qdrant' not in sys.modules
+assert not any(name == 'qdrant_client' or name.startswith('qdrant_client.') for name in sys.modules)
+assert 'agent.video_parse_v2.runtime' not in sys.modules
+assert 'agent.chat.video_search.runtime' not in sys.modules
+assert not any(name == 'langgraph' or name.startswith('langgraph.') for name in sys.modules)
+"""], check=True)
 
 
 class FakeQueryEmbedder:
@@ -203,8 +206,7 @@ def _v2_retrieval_fixture():
     return scope, match, evidence
 
 
-@pytest.mark.parametrize("mode", ["v1", "v2"])
-def test_retrieval_tracing_keeps_the_chat_run_and_records_embedding_failure(mode):
+def test_retrieval_tracing_keeps_the_chat_run_and_records_embedding_failure():
     scope, _, evidence = _v2_retrieval_fixture()
     observed = []
     observer = observed.append
@@ -221,22 +223,12 @@ def test_retrieval_tracing_keeps_the_chat_run_and_records_embedding_failure(mode
             with track_model_call(provider="fixture", model="embed", operation="text_embedding"):
                 raise RuntimeError("embedding failed")
 
-    if mode == "v1":
-        repository = SimpleNamespace(
-            require_ready_series=lambda *_args, **_kwargs: scope.series_ids,
-            list_indexed_video_ids=lambda *_args, **_kwargs: list(scope.searched_video_ids),
-        )
-        service = VideoRetrievalService(
-            repository, SimpleNamespace(text_dimensions=2, vision_dimensions=2),
-            Embedder(), tracing=Tracing(),
-        )
-    else:
-        service = VideoParseRetrievalService(
-            _V2Repository(scope, evidence), _V2Store([], [], []), Embedder(),
-            semantic_encoder=_v2_semantic_encoder(),
-            expected_index_generation=scope.index_generation,
-            tracing=Tracing(),
-        )
+    service = VideoParseRetrievalService(
+        _V2Repository(scope, evidence), _V2Store([], [], []), Embedder(),
+        semantic_encoder=_v2_semantic_encoder(),
+        expected_index_generation=scope.index_generation,
+        tracing=Tracing(),
+    )
     with model_call_context({"run_id": "chat-run", "conversation_id": "conversation"}):
         with pytest.raises(RuntimeError, match="embedding failed"):
             service.search("private query", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
@@ -248,13 +240,11 @@ def test_retrieval_tracing_keeps_the_chat_run_and_records_embedding_failure(mode
     assert call.context["workspace_id"] == evidence.workspace_id
     assert call.context["series_ids"] == scope.series_ids
     assert call.context["video_ids"] == scope.searched_video_ids
-    if mode == "v2":
-        assert call.context["video_parse_task_ids"] == tuple(scope.parse_tasks_by_video_id.values())
+    assert call.context["video_parse_task_ids"] == tuple(scope.parse_tasks_by_video_id.values())
     assert "query" not in call.context
 
 
-@pytest.mark.parametrize("mode", ["v1", "v2"])
-def test_retrieval_sql_capture_inherits_chat_owner_without_an_independent_run(mode):
+def test_retrieval_sql_capture_inherits_chat_owner_without_an_independent_run():
     from server.service.parse_usage import ParseUsageService
 
     scope, _, evidence = _v2_retrieval_fixture()
@@ -267,17 +257,10 @@ def test_retrieval_sql_capture_inherits_chat_owner_without_an_independent_run(mo
             with track_model_call(provider="fixture", model="embed", operation="text_embedding"):
                 raise RuntimeError("embedding failed")
 
-    if mode == "v1":
-        repository = SimpleNamespace(
-            require_ready_series=lambda *_args, **_kwargs: scope.series_ids,
-            list_indexed_video_ids=lambda *_args, **_kwargs: list(scope.searched_video_ids),
-        )
-        retrieval = VideoRetrievalService(repository, SimpleNamespace(text_dimensions=2, vision_dimensions=2), Embedder())
-    else:
-        retrieval = VideoParseRetrievalService(
-            _V2Repository(scope, evidence), _V2Store([], [], []), Embedder(),
-            semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
-        )
+    retrieval = VideoParseRetrievalService(
+        _V2Repository(scope, evidence), _V2Store([], [], []), Embedder(),
+        semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
+    )
     context = {"workspace_id": evidence.workspace_id, "assistant_message_id": "chat-message",
                "conversation_id": "conversation"}
     with usage.capture_chat(context), pytest.raises(RuntimeError, match="embedding failed"):
@@ -288,8 +271,7 @@ def test_retrieval_sql_capture_inherits_chat_owner_without_an_independent_run(mo
     assert row.metadata["status"] == "failed" and row.usage["tokens"] is None
     assert row.metadata["context"]["series_ids"] == scope.series_ids
     assert row.metadata["context"]["video_ids"] == scope.searched_video_ids
-    if mode == "v2":
-        assert row.metadata["context"]["video_parse_task_ids"] == tuple(scope.parse_tasks_by_video_id.values())
+    assert row.metadata["context"]["video_parse_task_ids"] == tuple(scope.parse_tasks_by_video_id.values())
     with pytest.raises(RuntimeError, match="embedding failed"):
         retrieval.search("private query", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
     assert len(recorded) == 1
@@ -384,6 +366,68 @@ def test_v2_retrieval_rejects_task_embedding_config_drift_before_es(field, value
     )
     with pytest.raises(RetrievalIndexConsistencyError, match="model or dimensions"):
         service.search("角色离开", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+    assert store.calls == []
+    assert embedder.calls == []
+
+
+@pytest.mark.parametrize("encoder_model", [None, "fake-shared-embedding"])
+def test_v2_endpoint_retrieval_uses_the_same_encoder_identity_as_indexing(encoder_model):
+    scope, match, evidence = _v2_retrieval_fixture()
+    config = scope.parse_config.model_copy(update={"models": scope.parse_config.models.model_copy(update={
+        "embedding": scope.parse_config.models.embedding.model_copy(update={
+            "model": "ep-custom", "encoder_model": encoder_model,
+        }),
+    })})
+    scope = replace(scope, parse_config=config)
+    store = _V2Store([match], [match], [match])
+    embedder = FakeQueryEmbedder([1.0, 0.0])
+    service = VideoParseRetrievalService(
+        _V2Repository(scope, evidence), store, embedder,
+        semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
+    )
+    result = service.search("蓝色杯子", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+    assert len(result.hits) == 1
+    assert embedder.calls == ["蓝色杯子"]
+    assert [call[0] for call in store.calls] == ["lexical", "semantic", "vision"]
+
+
+@pytest.mark.parametrize("returned_model", ["another-model", "ep-custom"])
+def test_v2_endpoint_retrieval_still_rejects_a_wrong_actual_model(returned_model):
+    scope, match, evidence = _v2_retrieval_fixture()
+    config = scope.parse_config.model_copy(update={"models": scope.parse_config.models.model_copy(update={
+        "embedding": scope.parse_config.models.embedding.model_copy(update={
+            "model": "ep-custom", "encoder_model": "fake-shared-embedding",
+        }),
+    })})
+    scope = replace(scope, parse_config=config)
+    store = _V2Store([match], [match], [match])
+    embedder = FakeQueryEmbedder([1.0, 0.0], model=returned_model)
+    service = VideoParseRetrievalService(
+        _V2Repository(scope, evidence), store, embedder,
+        semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
+    )
+    with pytest.raises(RetrievalIndexConsistencyError, match="query encoding response model"):
+        service.search("蓝色杯子", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+    assert store.calls == []
+    assert embedder.calls == ["蓝色杯子"]
+
+
+def test_v2_endpoint_retrieval_rejects_encoder_drift_before_model_calls():
+    scope, match, evidence = _v2_retrieval_fixture()
+    config = scope.parse_config.model_copy(update={"models": scope.parse_config.models.model_copy(update={
+        "embedding": scope.parse_config.models.embedding.model_copy(update={
+            "model": "ep-custom", "encoder_model": "different-encoder",
+        }),
+    })})
+    scope = replace(scope, parse_config=config)
+    store = _V2Store([match], [match], [match])
+    embedder = FakeQueryEmbedder([1.0, 0.0])
+    service = VideoParseRetrievalService(
+        _V2Repository(scope, evidence), store, embedder,
+        semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
+    )
+    with pytest.raises(RetrievalIndexConsistencyError, match="model or dimensions"):
+        service.search("蓝色杯子", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
     assert store.calls == []
     assert embedder.calls == []
 
@@ -538,6 +582,73 @@ def test_v2_retrieval_marks_a_complete_subset_as_partial() -> None:
     assert result.hits == []
 
 
+@pytest.mark.parametrize("top_k", [61, 80, 100])
+@pytest.mark.parametrize("candidate_budget", [None, 1])
+def test_v2_legal_top_k_is_not_rejected_by_a_smaller_candidate_budget(top_k, candidate_budget):
+    scope, match, evidence = _v2_retrieval_fixture()
+    repository = _V2Repository(scope, evidence)
+    service = VideoParseRetrievalService(
+        repository, _V2Store([], [match], []), FakeQueryEmbedder([1.0, 0.0]),
+        semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
+        candidate_budget=candidate_budget,
+    )
+
+    result = service.search("蓝色杯子", workspace_id=evidence.workspace_id,
+                            series_ids=scope.series_ids, top_k=top_k)
+
+    assert [hit.candidate.video_chunk_id for hit in result.hits] == [match.video_chunk_id]
+    assert len(repository.hydrate_calls) == 1
+
+
+@pytest.mark.parametrize("top_k", [0, -1, True, 1.5, "2"])
+def test_v2_invalid_top_k_is_rejected_before_scope_encoding_or_recall(top_k):
+    scope, match, evidence = _v2_retrieval_fixture()
+    repository = _V2Repository(scope, evidence)
+    store = _V2Store([], [match], [])
+    embedder = FakeQueryEmbedder([1.0, 0.0])
+    service = VideoParseRetrievalService(
+        repository, store, embedder, semantic_encoder=_v2_semantic_encoder(),
+        expected_index_generation=scope.index_generation,
+    )
+
+    with pytest.raises(ValueError, match="top_k must be a positive integer"):
+        service.search("蓝色杯子", workspace_id=evidence.workspace_id,
+                       series_ids=scope.series_ids, top_k=top_k)
+
+    assert repository.scope_calls == store.calls == embedder.calls == []
+
+
+@pytest.mark.parametrize("candidate_budget,top_k,pool_size", [(None, 1, 4), (2, 1, 2), (2, 3, 3)])
+def test_v2_candidate_pool_follows_recall_config_and_covers_requested_top_k(
+    candidate_budget, top_k, pool_size,
+):
+    scope, first, evidence = _v2_retrieval_fixture()
+    matches = [replace(first, video_chunk_id=str(uuid4()), rank=rank)
+               for rank in (1, 2, 1, 2)]
+
+    class Repository(_V2Repository):
+        def hydrate_retrieval_candidates(self, identities):
+            self.hydrate_calls.append(tuple(identities))
+            return tuple(_V2Repository(scope, evidence.model_copy(update={"video_chunk_id": chunk_id}))
+                         .hydrate_retrieval_candidates([(chunk_id, identity)])[0]
+                         for chunk_id, identity in identities)
+
+    repository = Repository(scope, evidence)
+    store = _V2Store([], matches[:2], matches[2:])
+    service = VideoParseRetrievalService(
+        repository, store, FakeQueryEmbedder([1.0, 0.0]),
+        semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
+        channel_top_k=2, lexical_weight=0.0, candidate_budget=candidate_budget,
+    )
+
+    result = service.search("蓝色杯子", workspace_id=evidence.workspace_id,
+                            series_ids=scope.series_ids, top_k=top_k)
+
+    assert len(repository.hydrate_calls[0]) == pool_size
+    assert len(result.hits) == top_k
+    assert all(request.limit == 2 for _, request, _ in store.calls)
+
+
 def test_v2_rerank_can_select_a_candidate_outside_the_original_top_k():
     from engine.rag.retrieval.rerank import RerankScorerContract, accept_rerank_result
 
@@ -642,643 +753,3 @@ def test_v2_retrieval_rejects_index_event_text_not_in_current_formal_content():
         text_weight=0.0, vision_weight=0.0)
     with pytest.raises(RetrievalIndexConsistencyError, match="formal projection source"):
         service.search("不存在的事件", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
-
-
-def _ready_retrieval(
-    repository,
-    prepared_import,
-    *,
-    vectors=None,
-    channel_top_k: int = 2,
-):
-    engine, video_repository = repository
-    vectors = vectors or (
-        ([0.8, 0.6], [0.8, 0.6]),
-        ([0.0, 1.0], [0.0, 1.0]),
-    )
-    prepared = replace(
-        prepared_import,
-        chunks=tuple(
-            replace(
-                chunk,
-                text_embedding=PreparedEmbedding(
-                    vector=vectors[index][0],
-                    metadata={"model": "fake-shared-embedding"},
-                ),
-                vision_embedding=PreparedEmbedding(
-                    vector=vectors[index][1],
-                    metadata={"model": "fake-shared-embedding"},
-                ),
-            )
-            for index, chunk in enumerate(prepared_import.chunks)
-        ),
-    )
-    report = video_repository.import_video_parse(prepared)
-    client = QdrantClient(":memory:")
-    store = QdrantVideoChunkStore(
-        client,
-        collection_name="video_retrieval_test",
-        environment=DatabaseEnvironment.TEST,
-        text_dimensions=2,
-        vision_dimensions=2,
-    )
-    sync_report = IndexSyncService(
-        IndexSyncRepository(create_session_factory(engine)),
-        store,
-        mutation_lock=QdrantMutationLock(
-            engine,
-            environment=DatabaseEnvironment.TEST,
-            collection_name=store.collection_name,
-        ),
-    ).sync_due()
-    assert sync_report.synced_count == 2
-    embedder = FakeQueryEmbedder([1.0, 0.0])
-    service = VideoRetrievalService(
-        video_repository,
-        store,
-        embedder,
-        channel_top_k=channel_top_k,
-        exact=True,
-    )
-    return service, store, client, embedder, prepared, report
-
-
-def test_formal_retrieval_closes_qdrant_rrf_and_joined_hydrate(
-    repository,
-    prepared_import,
-) -> None:
-    service, _store, client, embedder, prepared, report = _ready_retrieval(
-        repository,
-        prepared_import,
-    )
-
-    result = service.search(
-        "  find the first action  ",
-        workspace_id=prepared.workspace_id,
-        series_ids=[prepared.series_id],
-        top_k=2,
-    )
-
-    assert embedder.calls == ["find the first action"]
-    assert result.query == "find the first action"
-    assert result.series_ids == [prepared.series_id]
-    assert result.searched_video_ids == [prepared.video_id]
-    assert result.agent_reply.result_count == len(result.hits)
-    assert "2 段备选" in result.agent_reply.message
-    assert [hit.candidate.video_chunk_id for hit in result.hits] == (
-        report.video_chunk_ids
-    )
-    assert [hit.evidence.video_chunk_id for hit in result.hits] == (
-        report.video_chunk_ids
-    )
-    assert all(hit.evidence.series_id == prepared.series_id for hit in result.hits)
-    first = result.hits[0]
-    assert first.candidate.fused_rank == 1
-    assert first.candidate.text_rank == 1
-    assert first.candidate.vision_rank == 1
-    assert first.candidate.text_score == pytest.approx(0.8)
-    assert first.candidate.vision_score == pytest.approx(0.8)
-    assert first.selection_reason.summary
-    assert first.selection_reason.matched_evidence
-    assert first.selection_reason.matched_evidence[0].text in {
-        first.evidence.video_compact,
-        first.evidence.all_time_events[0]["description"],
-    }
-    assert first.evidence.series_name == "Test Series"
-    assert first.evidence.episode_order == 7
-    assert first.evidence.sequence_no == 0
-    assert first.evidence.start_seconds == 0
-    assert first.evidence.end_seconds == 10
-    assert first.evidence.retrieval_text == (
-        prepared.chunks[0].retrieval_document.text
-    )
-
-    payload = result.model_dump(mode="json", by_alias=True)
-    assert all(hit["evidence"]["seriesId"] == prepared.series_id for hit in payload["hits"])
-    assert payload["hits"][0]["candidate"]["videoChunkId"] == (
-        report.video_chunk_ids[0]
-    )
-    assert payload["hits"][0]["candidate"]["fusedRank"] == 1
-    assert payload["agentReply"]["resultCount"] == len(payload["hits"])
-    assert payload["hits"][0]["selectionReason"]["matchedEvidence"]
-    assert payload["hits"][0]["evidence"]["videoCompact"]
-    assert payload["hits"][0]["evidence"]["retrievalText"] == (
-        prepared.chunks[0].retrieval_document.text
-    )
-    assert "textVector" not in payload["hits"][0]["evidence"]
-    client.close()
-
-
-def test_per_call_weights_change_fused_order_without_mutating_service_defaults(
-    repository,
-    prepared_import,
-) -> None:
-    service, _store, client, _embedder, prepared, report = _ready_retrieval(
-        repository,
-        prepared_import,
-        vectors=(
-            ([1.0, 0.0], [0.0, 1.0]),
-            ([0.0, 1.0], [1.0, 0.0]),
-        ),
-    )
-    try:
-        defaults_before = service.search(
-            "find the strongest channel",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=2,
-        )
-        semantic = service.search(
-            "find the strongest channel",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=2,
-            text_weight=0.8,
-            vision_weight=0.2,
-        )
-        visual = service.search(
-            "find the strongest channel",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=2,
-            text_weight=0.2,
-            vision_weight=0.8,
-        )
-        defaults_after = service.search(
-            "find the strongest channel",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=2,
-        )
-
-        assert semantic.hits[0].candidate.video_chunk_id == report.video_chunk_ids[0]
-        assert visual.hits[0].candidate.video_chunk_id == report.video_chunk_ids[1]
-        assert [hit.candidate.video_chunk_id for hit in defaults_after.hits] == [
-            hit.candidate.video_chunk_id for hit in defaults_before.hits
-        ]
-    finally:
-        client.close()
-
-
-def test_zero_weight_skips_the_disabled_channel(
-    repository,
-    prepared_import,
-    monkeypatch,
-) -> None:
-    service, store, client, _embedder, prepared, _report = _ready_retrieval(
-        repository,
-        prepared_import,
-    )
-    vision_calls = 0
-    original_search_vision = store.search_vision
-
-    def count_vision_calls(*args, **kwargs):
-        nonlocal vision_calls
-        vision_calls += 1
-        return original_search_vision(*args, **kwargs)
-
-    monkeypatch.setattr(store, "search_vision", count_vision_calls)
-    try:
-        result = service.search(
-            "semantic only",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=2,
-            text_weight=1.0,
-            vision_weight=0.0,
-        )
-
-        assert vision_calls == 0
-        assert all(hit.candidate.vision_rank is None for hit in result.hits)
-        assert all(
-            any(
-                limitation == "本次检索策略未启用视觉通道。"
-                for limitation in hit.selection_reason.limitations
-            )
-            for hit in result.hits
-        )
-        assert all(
-            not any(
-                "视觉通道已启用" in limitation
-                for limitation in hit.selection_reason.limitations
-            )
-            for hit in result.hits
-        )
-    finally:
-        client.close()
-
-
-def test_enabled_channel_miss_is_distinct_from_disabled_channel(
-    repository,
-    prepared_import,
-) -> None:
-    service, _store, client, _embedder, prepared, _report = _ready_retrieval(
-        repository,
-        prepared_import,
-        vectors=(
-            ([1.0, 0.0], [0.0, 1.0]),
-            ([0.0, 1.0], [1.0, 0.0]),
-        ),
-        channel_top_k=1,
-    )
-    try:
-        result = service.search(
-            "find both modalities",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=2,
-            text_weight=0.5,
-            vision_weight=0.5,
-        )
-
-        assert len(result.hits) == 2
-        assert any(
-            "视觉通道已启用，但该片段未进入该通道候选"
-            in limitation
-            for hit in result.hits
-            for limitation in hit.selection_reason.limitations
-        )
-        assert any(
-            "文本语义通道已启用，但该片段未进入该通道候选"
-            in limitation
-            for hit in result.hits
-            for limitation in hit.selection_reason.limitations
-        )
-        assert all(
-            "未启用文本语义通道" not in limitation
-            and "未启用视觉通道" not in limitation
-            for hit in result.hits
-            for limitation in hit.selection_reason.limitations
-        )
-    finally:
-        client.close()
-
-
-def test_retrieval_reports_a_qdrant_orphan_instead_of_dropping_it(
-    repository,
-    prepared_import,
-) -> None:
-    service, store, client, _embedder, prepared, _report = _ready_retrieval(
-        repository,
-        prepared_import,
-    )
-    store.upsert(
-        VideoChunkIndexPoint(
-            series_id=prepared.series_id,
-            video_id=prepared.video_id,
-            video_chunk_id=str(uuid4()),
-            source_revision="orphan-revision",
-            is_fallback=False,
-            text_vector=[1.0, 0.0],
-            vision_vector=[1.0, 0.0],
-        )
-    )
-
-    with pytest.raises(
-        RetrievalIndexConsistencyError,
-        match="missing from MySQL",
-    ):
-        service.search(
-            "find orphan",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=1,
-        )
-    client.close()
-
-
-def test_retrieval_excludes_unavailable_video_points_before_channel_top_k(
-    repository,
-    prepared_import,
-) -> None:
-    service, store, client, _embedder, prepared, report = _ready_retrieval(
-        repository,
-        prepared_import,
-        channel_top_k=1,
-    )
-    unavailable_video_id = str(uuid4())
-    store.upsert(
-        VideoChunkIndexPoint(
-            series_id=prepared.series_id,
-            video_id=unavailable_video_id,
-            video_chunk_id=str(uuid4()),
-            source_revision="stale-revision",
-            is_fallback=False,
-            text_vector=[1.0, 0.0],
-            vision_vector=[1.0, 0.0],
-        )
-    )
-
-    try:
-        result = service.search(
-            "find available video",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=1,
-        )
-
-        assert result.searched_video_ids == [prepared.video_id]
-        assert [hit.candidate.video_chunk_id for hit in result.hits] == [
-            report.video_chunk_ids[0]
-        ]
-    finally:
-        client.close()
-
-
-def test_retrieval_detects_a_stale_qdrant_source_revision(
-    repository,
-    prepared_import,
-) -> None:
-    service, store, client, _embedder, prepared, report = _ready_retrieval(
-        repository,
-        prepared_import,
-    )
-    client.set_payload(
-        collection_name=store.collection_name,
-        payload={"sourceRevision": "stale-revision"},
-        points=[report.video_chunk_ids[0]],
-        wait=True,
-    )
-
-    with pytest.raises(
-        RetrievalIndexConsistencyError,
-        match="sourceRevision",
-    ):
-        service.search(
-            "find stale",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=1,
-        )
-    client.close()
-
-
-def test_retrieval_checks_ready_scope_before_calling_the_embedder(
-    repository,
-    prepared_import,
-) -> None:
-    _engine, video_repository = repository
-    video_repository.import_video_parse(prepared_import)
-    embedder = FakeQueryEmbedder([1.0, 0.0])
-    service = VideoRetrievalService(
-        video_repository,
-        QdrantVideoChunkStore(
-            QdrantClient(":memory:"),
-            collection_name="not_ready_test",
-            environment=DatabaseEnvironment.TEST,
-            text_dimensions=2,
-            vision_dimensions=2,
-        ),
-        embedder,
-    )
-
-    with pytest.raises(RuntimeError, match="not READY"):
-        service.search(
-            "must not embed",
-            workspace_id=prepared_import.workspace_id,
-            series_ids=[prepared_import.series_id],
-        )
-    assert embedder.calls == []
-
-
-def test_transcript_only_retrieval_matches_real_asr_without_embedding(
-    repository,
-    prepared_import,
-) -> None:
-    transcript_chunks = []
-    for index, chunk in enumerate(prepared_import.chunks):
-        cues = (
-            [
-                TranscriptCue(start_seconds=1, end_seconds=2, text="别把责任"),
-                TranscriptCue(start_seconds=2, end_seconds=3, text="推给别人。"),
-            ]
-            if index == 0
-            else [TranscriptCue(start_seconds=1, end_seconds=2, text="其他对白")]
-        )
-        transcript_chunks.append(
-            replace(
-                chunk,
-                parse_result=chunk.parse_result.model_copy(
-                    update={"candidate_transcript": cues}
-                ),
-            )
-        )
-    prepared_import = replace(
-        prepared_import,
-        chunks=tuple(transcript_chunks),
-    )
-    service, _store, client, embedder, prepared, report = _ready_retrieval(
-        repository,
-        prepared_import,
-    )
-    try:
-        result = service.search(
-            "『别把责任，推给别人！』",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=2,
-            transcript_weight=1.0,
-            text_weight=0.0,
-            vision_weight=0.0,
-        )
-
-        assert embedder.calls == []
-        assert [hit.candidate.video_chunk_id for hit in result.hits] == [
-            report.video_chunk_ids[0]
-        ]
-        hit = result.hits[0]
-        assert hit.candidate.transcript_rank == 1
-        assert hit.candidate.transcript_score == 1.0
-        assert hit.candidate.text_rank is None
-        assert hit.candidate.vision_rank is None
-        assert hit.selection_reason.matched_evidence[0].model_dump() == {
-            "kind": "TRANSCRIPT",
-            "text": "别把责任 推给别人。",
-            "start_seconds": 1,
-            "end_seconds": 3,
-        }
-    finally:
-        client.close()
-
-
-def test_transcript_retrieval_soft_validates_persisted_time_ranges(
-    repository,
-    prepared_import,
-    caplog,
-) -> None:
-    first, second = prepared_import.chunks
-    prepared_import = replace(
-        prepared_import,
-        chunks=(
-            replace(
-                first,
-                parse_result=first.parse_result.model_copy(
-                    update={
-                        "candidate_transcript": [
-                            TranscriptCue(
-                                start_seconds=1,
-                                end_seconds=1,
-                                text="瞬间回应",
-                            ),
-                            TranscriptCue(
-                                start_seconds=3,
-                                end_seconds=2,
-                                text="反向坏数据",
-                            ),
-                        ]
-                    }
-                ),
-            ),
-            second,
-        ),
-    )
-    service, _store, client, embedder, prepared, report = _ready_retrieval(
-        repository,
-        prepared_import,
-    )
-    try:
-        with caplog.at_level(logging.WARNING, logger="server.repository.video"):
-            result = service.search(
-                "瞬间回应",
-                workspace_id=prepared.workspace_id,
-                series_ids=[prepared.series_id],
-                top_k=2,
-                transcript_weight=1.0,
-                text_weight=0.0,
-                vision_weight=0.0,
-            )
-
-        assert embedder.calls == []
-        assert [hit.candidate.video_chunk_id for hit in result.hits] == [
-            report.video_chunk_ids[0]
-        ]
-        assert result.hits[0].selection_reason.matched_evidence[0].model_dump() == {
-            "kind": "TRANSCRIPT",
-            "text": "瞬间回应",
-            "start_seconds": 1,
-            "end_seconds": 1,
-        }
-        assert "retained_point_cue_count=1" in caplog.text
-        assert "skipped_invalid_cue_count=1" in caplog.text
-    finally:
-        client.close()
-
-
-def test_transcript_only_miss_is_a_normal_empty_result(
-    repository,
-    prepared_import,
-) -> None:
-    service, _store, client, embedder, prepared, _report = _ready_retrieval(
-        repository,
-        prepared_import,
-    )
-    try:
-        result = service.search(
-            "不存在的原话",
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=2,
-            transcript_weight=1.0,
-            text_weight=0.0,
-            vision_weight=0.0,
-        )
-
-        assert embedder.calls == []
-        assert result.hits == []
-        assert result.agent_reply.result_count == 0
-    finally:
-        client.close()
-
-
-def test_transcript_retrieval_assigns_overlap_cue_to_canonical_owner(
-    repository,
-    prepared_import,
-) -> None:
-    first, second = prepared_import.chunks
-    first_window = first.parse_result.window.model_copy(
-        update={"analysis_end_seconds": 13, "analysis_duration_seconds": 13}
-    )
-    second_window = second.parse_result.window.model_copy(
-        update={
-            "analysis_start_seconds": 7,
-            "analysis_duration_seconds": 13,
-            "relative_chunk_start_seconds": 3,
-        }
-    )
-    phrase = "边界处的同一句台词"
-    prepared_import = replace(
-        prepared_import,
-        chunks=(
-            replace(
-                first,
-                parse_result=first.parse_result.model_copy(
-                    update={
-                        "window": first_window,
-                        "candidate_transcript": [
-                            TranscriptCue(
-                                start_seconds=10,
-                                end_seconds=12,
-                                text=phrase,
-                            )
-                        ],
-                    }
-                ),
-            ),
-            replace(
-                second,
-                parse_result=second.parse_result.model_copy(
-                    update={
-                        "window": second_window,
-                        "candidate_transcript": [
-                            TranscriptCue(
-                                start_seconds=3,
-                                end_seconds=5,
-                                text=phrase,
-                            )
-                        ],
-                    }
-                ),
-            ),
-        ),
-    )
-    service, _store, client, _embedder, prepared, report = _ready_retrieval(
-        repository,
-        prepared_import,
-    )
-    try:
-        result = service.search(
-            phrase,
-            workspace_id=prepared.workspace_id,
-            series_ids=[prepared.series_id],
-            top_k=2,
-            transcript_weight=1.0,
-            text_weight=0.0,
-            vision_weight=0.0,
-        )
-
-        assert [hit.candidate.video_chunk_id for hit in result.hits] == [
-            report.video_chunk_ids[1]
-        ]
-        assert result.hits[0].selection_reason.matched_evidence[0].start_seconds == 10
-    finally:
-        client.close()
-
-
-def test_retrieval_checks_workspace_before_calling_the_embedder(
-    repository,
-    prepared_import,
-) -> None:
-    service, _store, client, embedder, prepared, _report = _ready_retrieval(
-        repository,
-        prepared_import,
-    )
-    try:
-        with pytest.raises(SeriesScopeNotFoundError, match="workspace"):
-            service.search(
-                "must not embed",
-                workspace_id="another-workspace",
-                series_ids=[prepared.series_id],
-            )
-        assert embedder.calls == []
-    finally:
-        client.close()

@@ -11,7 +11,7 @@ from typing import BinaryIO, Protocol
 from urllib.parse import quote, unquote, urlparse
 
 from ..database import DatabaseEnvironment
-from ..identity import canonical_uuid
+from ..utils.validation import canonical_uuid
 from ..utils.media import decode_series_image_id, encode_series_image_id
 
 _COPY_BUFFER_BYTES = 1024 * 1024

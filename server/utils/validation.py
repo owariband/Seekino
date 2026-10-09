@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import re
+from uuid import UUID
 
 
 _LANGUAGE_TAG_PATTERN = re.compile(
     r"(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|x(?:-[A-Za-z0-9]{1,8})+)"
 )
+
+
+def canonical_uuid(value: str, field_name: str) -> str:
+    try:
+        return str(UUID(value))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a UUID") from exc
 
 
 def require_nonempty_text(

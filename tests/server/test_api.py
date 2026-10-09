@@ -371,7 +371,6 @@ def _client(tmp_path: Path):
         media=MediaService(library, artifact_store),
         retrieval=retrieval,  # type: ignore[arg-type]
         agent=agent,
-        index_sync=object(),  # type: ignore[arg-type]
         parse_consumer=_ParseConsumerStub(),  # type: ignore[arg-type]
     )
     return TestClient(create_app(services)), retrieval, job_repository
@@ -1150,6 +1149,47 @@ def test_series_and_search_contract(tmp_path: Path) -> None:
         "hits": [],
     }
     assert retrieval.calls == [("她为什么哭", [series_id], 5, "local-default")]
+
+
+def test_search_top_k_defaults_and_bounds_follow_current_configuration(tmp_path: Path) -> None:
+    client, retrieval, _jobs = _client(tmp_path)
+    service = client.app.state.services.agent
+    series_id = _create_series(client)
+    body = {"workspaceId": "local-default", "query": "空走廊", "seriesIds": [series_id]}
+    try:
+        service._config = replace(service._config, default_top_k=3, maximum_top_k=5)
+        response = client.post("/api/search", json=body)
+        assert response.status_code == 200
+        assert retrieval.calls[-1][2] == 3
+
+        for top_k in (1, 5):
+            response = client.post("/api/search", json={**body, "topK": top_k})
+            assert response.status_code == 200
+            assert retrieval.calls[-1][2] == top_k
+
+        before = len(retrieval.calls)
+        response = client.post("/api/search", json={**body, "topK": 6})
+        assert response.status_code == 400
+        assert "between 1 and 5" in response.json()["message"]
+        assert len(retrieval.calls) == before
+
+        service._config = replace(service._config, default_top_k=4, maximum_top_k=100)
+        response = client.post("/api/search", json={**body, "topK": 100})
+        assert response.status_code == 200
+        assert retrieval.calls[-1][2] == 100
+        response = client.post("/api/search", json={**body, "topK": None})
+        assert response.status_code == 200
+        assert retrieval.calls[-1][2] == 4
+
+        before = len(retrieval.calls)
+        for top_k in (0, -1, True, 1.5, "2"):
+            response = client.post("/api/search", json={**body, "topK": top_k})
+            assert response.status_code == 422
+        response = client.post("/api/search", json={**body, "topK": 101})
+        assert response.status_code == 400
+        assert len(retrieval.calls) == before
+    finally:
+        service.close()
 
 
 def test_video_episode_update_contract_and_conflict(tmp_path: Path) -> None:

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Literal
 
-from ..identity import canonical_uuid
 from ..model.dto.jobDTO import (
     ParseJobDetail,
     ParseJobSummaryState,
@@ -12,7 +11,7 @@ from ..model.dto.jobDTO import (
 from ..model.job import ParseJobStatus, VideoParseTaskStatus
 from ..repository.job import ParseJobRepository
 from .library import LibraryService
-from ..utils.validation import require_nonempty_text
+from ..utils.validation import canonical_uuid, require_nonempty_text
 
 
 class ParseJobService:

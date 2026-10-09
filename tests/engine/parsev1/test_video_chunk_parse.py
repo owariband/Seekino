@@ -52,6 +52,8 @@ class FakeModel:
                 "result_type": result_type,
             }
         )
+        if schema_name == "candidate_transcript":
+            return result_type.model_validate(self.results[schema_name])
         return self.results[schema_name]
 
 
@@ -223,7 +225,11 @@ def _run_deepseek_fallback(
 def test_asr_and_understanding_agents_exchange_an_explicit_transcript(tmp_path) -> None:
     transcript_model = FakeModel(
         "test-lite",
-        {"candidate_transcript": _transcript()},
+        {"candidate_transcript": {"transcript": [{
+            "start_seconds": 0.0,
+            "end_seconds": 2.0,
+            "text": "真是高高在上呢",
+        }]}},
     )
     video_model = FakeModel("test-pro", {"video_timeline": _timeline()})
     video_path = tmp_path / "chunk.mp4"
@@ -244,6 +250,7 @@ def test_asr_and_understanding_agents_exchange_an_explicit_transcript(tmp_path) 
     )
 
     assert result.duration_seconds == 8000
+    assert result.candidate_transcript == _transcript().transcript
     assert result.candidate_transcript[0].text == "真是高高在上呢"
     assert [event.event_type for event in result.events] == ["DIALOGUE", "ACTION"]
     assert result.events[1].end_seconds == 8000

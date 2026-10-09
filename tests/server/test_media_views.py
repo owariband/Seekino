@@ -14,6 +14,7 @@ from server.api.errors import register_exception_handlers
 from server.api.search import evidence_view, search_result_view
 from server.config.media import ImageUploadConfig
 from server.repository.library import SeriesNotFoundError
+from server.repository.video_parse import VideoParseConflictError
 from server.router.media import router as media_router
 from server.router.search import router as search_router
 from server.schema import (
@@ -222,11 +223,44 @@ def test_chunk_keyframe_projection_uses_absolute_time_and_scoped_image_id(
     assert refreshed[0].at_seconds == evidence.start_seconds
 
 
+def test_v2_media_reader_takes_priority_and_refreshes_historical_keyframes(
+    repository, prepared_import, tmp_path,
+):
+    evidence = domain_result(repository, prepared_import).hits[0].evidence
+    fixture, _client, _source, frame, _state, _probe = media_fixture(tmp_path)
+    evidence = evidence.model_copy(update={"keyframe_uris": [
+        VideoChunkKeyframeReference(
+            uri=fixture._artifact_store.uri_for_path(frame), at_seconds=evidence.start_seconds,
+        ),
+    ]})
+    legacy = Mock()
+    v2 = Mock(get_chunk_evidence=Mock(return_value=evidence))
+    service = MediaService(
+        fixture._library, fixture._artifact_store, legacy, video_parse_repository=v2,
+    )
+    assert service.get_chunk_evidence(
+        evidence.video_chunk_id, workspace_id=evidence.workspace_id,
+    ) == evidence
+    legacy.hydrate_video_chunk_states.assert_not_called()
+    service._video_repository = None
+    historical = evidence.model_copy(update={"keyframe_uris": []})
+    frames = service.keyframe_views(historical, workspace_id=evidence.workspace_id)
+    assert len(frames) == 1
+    assert frames[0].at_seconds == evidence.start_seconds
+    v2.get_chunk_evidence.side_effect = VideoParseConflictError("newer task is not COMPLETE")
+    assert service.keyframe_views(historical, workspace_id=evidence.workspace_id) == ()
+
+
 def test_nonempty_search_route_returns_public_projection(repository, prepared_import, tmp_path):
     raw = domain_result(repository, prepared_import)
     service, _client, _source, _frame, _state, _probe = media_fixture(tmp_path)
     app = FastAPI()
-    app.state.services = SimpleNamespace(media=service, retrieval=Mock(search=Mock(return_value=raw)))
+    app.state.services = SimpleNamespace(
+        media=service, retrieval=Mock(search=Mock(return_value=raw)),
+        agent=Mock(message_options=Mock(return_value=SimpleNamespace(
+            top_k=SimpleNamespace(default_value=10, minimum=1, maximum=100),
+        ))),
+    )
     app.include_router(search_router)
     client = TestClient(app)
     response = client.post("/api/search", json={"workspaceId": prepared_import.workspace_id, "seriesIds": raw.series_ids, "query": "action"})

@@ -21,7 +21,6 @@ from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
 from ..config.agent import AgentServiceConfig
-from ..identity import canonical_uuid
 from ..model.dto.agentDTO import (
     AgentConversationState,
     AgentIntegerOptionState,
@@ -39,7 +38,7 @@ from ..repository.agent import (
 )
 from ..repository.video import SeriesNotReadyError
 from ..utils.time import now_unix_time_ms
-from ..utils.validation import require_nonempty_text
+from ..utils.validation import canonical_uuid, require_nonempty_text
 from .library import LibraryService
 from .pagination import decode_cursor, encode_cursor
 from .parse_usage import ParseUsageService

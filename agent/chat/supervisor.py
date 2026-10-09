@@ -214,7 +214,6 @@ class SupervisorRuntime:
             reused = video_result is not None
             if video_result is None:
                 scoped_inputs = deepcopy(inputs)
-                scoped_inputs["user_message"] = query
                 try:
                     scoped_inputs["series_context"] = load_video_context()
                     control.check()
@@ -250,8 +249,8 @@ class SupervisorRuntime:
                         "reused": reused,
                         "answer_preview": preview,
                         "message": (
-                            "The video graph already ran for an earlier question; "
-                            "this call did not run another search."
+                            "The full original video request already ran; "
+                            "this call reuses its approved answer."
                             if reused and video_query != query else
                             "The approved video answer is ready; do not rewrite its claims."
                         ),
@@ -282,8 +281,9 @@ class SupervisorRuntime:
                 func=search_video_graph, name="search_video_graph",
                 description=(
                     "Search the selected anivag videos through the full Query, "
-                    "Evaluator and Chat review process. Pass a self-contained video "
-                    "question. The returned answer is already approved."
+                    "Evaluator and Chat review process. Include every local-video "
+                    "subrequest in one complete question. The graph retains the full "
+                    "original user request; repeated calls reuse that same approved answer."
                 ),
                 args_schema=SearchArguments,
                 maximum_result_bytes=self._max_tool_result_bytes,
@@ -318,6 +318,9 @@ class SupervisorRuntime:
             "你是 anivag 对话 Supervisor。根据用户问题自行决定直接回答、调用 "
             "search_web、调用 search_video_graph，或两个工具都调用。问题涉及所选"
             "视频中的人物、情节、讲解内容，或引用了视频片段时，应调用视频工具核验。"
+            "一次视频任务必须包含原始问题中的全部本地视频子需求，包括不同时间段的"
+            "概括、比较和片段展示，不能拆成仅覆盖其中一项的任务。视频图保留完整原始"
+            "用户问题作为审核锚点；重复调用只复用同一完整请求的已批准答案。"
             "先读 video_scope_description，确认本次可检索的视频范围。没有可检索"
             "系列时仍可直接聊天或搜索网页；若问题指向本地视频，必须先说明无法"
             "核验该视频，不得用网页信息冒充视频证据。search_video_graph "

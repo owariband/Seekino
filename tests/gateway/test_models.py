@@ -6,13 +6,15 @@ import httpx
 import pytest
 from openai import APIConnectionError
 from PIL import Image
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from engine.parsev2.schemas import VideoParseResult
 from gateway.ark.multimodal import ArkMultimodalModel
 from gateway.local.llama_cpp import LlamaCppModelError, LlamaCppMultimodalModel
 from gateway.local.ollama import OllamaModelError, OllamaMultimodalModel
 from gateway.multimodal import ImageInput, TextInput, VideoInput
 from gateway.openai.multimodal import DeepSeekModelError, DeepSeekMultimodalModel
+from gateway.schema_normalization import inline_schema_refs
 
 
 class Scene(BaseModel):
@@ -405,6 +407,106 @@ def test_deepseek_rejects_video_without_sending_a_request(tmp_path) -> None:
             result_type=StructuredResult,
         )
     assert responses.calls == []
+
+
+def test_deepseek_projects_real_parse_v2_union_without_mutating_schema(monkeypatch) -> None:
+    original_schema = VideoParseResult.model_json_schema()
+    original_snapshot = json.dumps(original_schema, sort_keys=True)
+    canonical = inline_schema_refs(original_schema)
+    monkeypatch.setattr(VideoParseResult, "model_json_schema", lambda: original_schema)
+    output = {"persons": [], "timeline": [{
+        "event_type": "SCENE", "start_seconds": 0, "end_seconds": 1000,
+        "description": "An empty room", "participants": [], "visible_persons": [],
+    }]}
+    responses = FakeDeepSeekResponses(json.dumps(output))
+    model = DeepSeekMultimodalModel(
+        "deepseek-flash", base_url="https://api.deepseek.com", api_key="test-key",
+        max_output_tokens=1000, request_timeout_seconds=10,
+        client=SimpleNamespace(responses=responses),
+    )
+
+    result = model.generate(
+        [TextInput("Describe the video timeline")],
+        schema_name="video_parse_v2_chunk", result_type=VideoParseResult,
+    )
+
+    assert result.model_dump(mode="json") == output
+    assert len(responses.calls) == 1
+    response_format = responses.calls[0]["text"]["format"]
+    assert response_format["strict"] is True
+    actual = response_format["schema"]
+    timeline = actual["properties"]["timeline"]["items"]
+    assert "oneOf" not in timeline and "discriminator" not in timeline
+    assert timeline["anyOf"] == canonical["properties"]["timeline"]["items"]["oneOf"]
+    assert len(timeline["anyOf"]) == 7
+    assert timeline["anyOf"][2]["properties"]["event_type"]["const"] == "DIALOGUE"
+    assert timeline["anyOf"][2]["properties"]["text_variants"]["minItems"] == 1
+    assert timeline["anyOf"][0]["properties"]["description"]["minLength"] == 1
+    assert actual["properties"]["persons"] == canonical["properties"]["persons"]
+    assert json.dumps(original_schema, sort_keys=True) == original_snapshot
+
+
+@pytest.mark.parametrize("invalid_event", [
+    {"event_type": "INVALID", "start_seconds": 0, "end_seconds": 1000},
+    {"event_type": "SCENE", "start_seconds": 1000, "end_seconds": 500},
+])
+def test_deepseek_projected_parse_v2_output_still_uses_domain_validation(invalid_event) -> None:
+    output = {"persons": [], "timeline": [{
+        "description": "An empty room", "participants": [], "visible_persons": [],
+        **invalid_event,
+    }]}
+    responses = FakeDeepSeekResponses(json.dumps(output))
+    model = DeepSeekMultimodalModel(
+        "deepseek-flash", base_url="https://api.deepseek.com", api_key="test-key",
+        max_output_tokens=1000, request_timeout_seconds=10,
+        client=SimpleNamespace(responses=responses),
+    )
+
+    with pytest.raises(DeepSeekModelError, match="does not match schema video_parse_v2_chunk"):
+        model.generate(
+            [TextInput("Describe the video timeline")],
+            schema_name="video_parse_v2_chunk", result_type=VideoParseResult,
+        )
+    assert len(responses.calls) == 1
+
+
+def test_deepseek_schema_preserves_business_property_names_and_literal_data() -> None:
+    literal = {"oneOf": ["business data"], "discriminator": {"propertyName": "label"}}
+
+    class NamedPropertyResult(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        oneOf: str
+        discriminator: str
+        payload: dict = Field(
+            default=literal,
+            json_schema_extra={"const": literal, "enum": [literal], "examples": [literal]},
+        )
+        parsed: VideoParseResult
+
+    output = {"oneOf": "field value", "discriminator": "label", "payload": literal,
+              "parsed": {"persons": [], "timeline": []}}
+    responses = FakeDeepSeekResponses(json.dumps(output))
+    model = DeepSeekMultimodalModel(
+        "deepseek-flash", base_url="https://api.deepseek.com", api_key="test-key",
+        max_output_tokens=1000, request_timeout_seconds=10,
+        client=SimpleNamespace(responses=responses),
+    )
+
+    result = model.generate(
+        [TextInput("Return the named fields")],
+        schema_name="named_properties", result_type=NamedPropertyResult,
+    )
+
+    assert result.model_dump(mode="json") == output
+    properties = responses.calls[0]["text"]["format"]["schema"]["properties"]
+    assert set(properties) == {"oneOf", "discriminator", "payload", "parsed"}
+    assert properties["payload"]["default"] == properties["payload"]["const"] == literal
+    assert properties["payload"]["enum"] == properties["payload"]["examples"] == [literal]
+    timeline = properties["parsed"]["properties"]["timeline"]["items"]
+    assert "oneOf" not in timeline and "discriminator" not in timeline
+    assert len(timeline["anyOf"]) == 7
+    assert NamedPropertyResult.model_json_schema()["properties"]["payload"]["default"] == literal
 
 
 @pytest.mark.parametrize(

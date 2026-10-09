@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from engine.common.usage import ParseModelCall
 from gateway.usage import TokenUsage
 
-from ..identity import derive_video_chunk_id
+from ..model.identifiers import derive_video_chunk_id
 from ..model.dto.jobDTO import (
     ChunkParseLease,
     IntervalParseLease,

@@ -2,40 +2,33 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
-from typing import Any
 
-from elasticsearch import Elasticsearch
-from engine.rag import EncoderContract
-from gateway.constants import ARK_PROVIDER
 from gateway.config import load_config
-from gateway.ark.embedding import (
-    DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
-    DoubaoMultimodalEmbedder,
-)
-from qdrant_client import QdrantClient
 
-from .constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
-from .config.elasticsearch import ElasticsearchConfig
-from .database import (
-    DatabaseEnvironment,
-    create_database_engine,
-    create_schema,
-    create_session_factory,
+from .common.retrieval import build_retrieval_service
+from .common.storage import (
+    build_artifact_storage,
+    open_database_storage,
+    open_elasticsearch_storage,
 )
-from .repository.index_sync import IndexSyncRepository
+from .constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
+from .config.elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
+from .config.parse_profile import resolve_embedding_config
+from .config.retrieval import RetrievalConfig, resolve_retrieval_model_limits
+from .config.settings import (
+    resolve_agent_request_timeout_seconds,
+    resolve_artifact_root,
+    resolve_database_pool_recycle_seconds,
+    resolve_database_url,
+    resolve_environment,
+    resolve_execution_mode,
+    resolve_parse_max_height,
+)
+from .database import DatabaseEnvironment, create_schema
 from .repository.video import VideoRepository
 from .repository.video_parse import VideoParseRepository
 from .service.keyframe_backfill import KeyframeBackfillService
-from .service.qdrant_mutation_lock import QdrantMutationLock
-from .service.video_retrieval import (
-    VideoParseRetrievalService,
-    VideoRetrievalService,
-)
-from .storage.artifact import LocalArtifactStore
-from .storage.elasticsearch import ElasticsearchVideoChunkStore
-from .storage.qdrant import QdrantVideoChunkStore
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -121,9 +114,6 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill_keyframes.add_argument(
         "--artifact-root",
         type=Path,
-        default=Path(
-            os.getenv("ANIVAG_ARTIFACT_ROOT", "outputs/server/artifacts")
-        ),
         help="Managed Artifact Store root; defaults to ANIVAG_ARTIFACT_ROOT.",
     )
     backfill_keyframes.add_argument(
@@ -151,7 +141,6 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill_keyframes.add_argument(
         "--max-height",
         type=_positive_int,
-        default=os.getenv("ANIVAG_PARSE_MAX_HEIGHT", "720"),
         help="Maximum generated JPEG height; defaults to ANIVAG_PARSE_MAX_HEIGHT.",
     )
     backfill_mode = backfill_keyframes.add_mutually_exclusive_group(
@@ -168,33 +157,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Explicitly publish first-frame images and conditionally update MySQL.",
     )
 
-    sync_index = subparsers.add_parser(
-        "sync-index",
-        help="Synchronize due MySQL Index Sync intents to Qdrant.",
-    )
-    _add_database_arguments(sync_index)
-    _add_qdrant_arguments(sync_index)
-    sync_index.add_argument("--limit", type=_positive_int, default=100)
-
-    reconcile_index = subparsers.add_parser(
-        "reconcile-index",
-        help="Inspect and repair missing or stale Qdrant points.",
-    )
-    _add_database_arguments(reconcile_index)
-    _add_qdrant_arguments(reconcile_index)
-    reconcile_index.add_argument(
-        "--inspection-batch-size",
-        type=_positive_int,
-        default=256,
-    )
-
     rebuild_index = subparsers.add_parser(
         "rebuild-index",
-        help="Request an execution-mode-specific index rebuild.",
+        help="Request an Elasticsearch index rebuild for a Video Parse V2 task.",
     )
     _add_database_arguments(rebuild_index)
     _add_execution_mode_argument(rebuild_index)
-    _add_qdrant_arguments(rebuild_index)
     rebuild_index.add_argument(
         "--video-parse-task-id",
         help="Required in V2 mode; the current VideoParseTask to rebuild.",
@@ -202,12 +170,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     search = subparsers.add_parser(
         "search",
-        help="Run scoped retrieval using the selected parse execution mode.",
+        help="Run scoped Video Parse V2 retrieval through Elasticsearch.",
     )
     _add_database_arguments(search)
     _add_execution_mode_argument(search)
-    _add_qdrant_arguments(search)
-    _add_elasticsearch_arguments(search, include_vector_dimensions=False)
+    _add_elasticsearch_arguments(search)
     search.add_argument("--query", required=True)
     search.add_argument("--workspace-id", default=DEFAULT_LOCAL_WORKSPACE_ID)
     search.add_argument(
@@ -218,10 +185,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Formal Series UUID; repeat to search more than one Series.",
     )
     search.add_argument("--top-k", type=_positive_int, default=10)
-    search.add_argument("--channel-top-k", type=_positive_int, default=20)
-    search.add_argument("--rrf-k", type=_positive_int, default=60)
-    search.add_argument("--text-weight", type=float, default=1.0)
-    search.add_argument("--vision-weight", type=float, default=1.0)
+    search.add_argument("--channel-top-k", type=_positive_int)
+    search.add_argument("--rrf-k", type=_positive_int)
+    search.add_argument("--text-weight", type=float)
+    search.add_argument("--vision-weight", type=float)
     search.add_argument(
         "--exact",
         action="store_true",
@@ -242,7 +209,6 @@ def _build_parser() -> argparse.ArgumentParser:
 def _add_database_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--database-url",
-        default=os.getenv("ANIVAG_DATABASE_URL"),
         help="SQLAlchemy MySQL URL; defaults to ANIVAG_DATABASE_URL.",
     )
     _add_environment_argument(parser)
@@ -252,20 +218,15 @@ def _add_environment_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--environment",
         choices=tuple(item.value for item in DatabaseEnvironment),
-        default=os.getenv(
-            "ANIVAG_ENVIRONMENT",
-            DatabaseEnvironment.DEVELOPMENT.value,
-        ),
     )
 
 
 def _add_execution_mode_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--execution-mode",
-        choices=("v1", "v2"),
+        choices=("v2",),
         type=_execution_mode,
-        default=_execution_mode(os.getenv("ANIVAG_PARSE_EXECUTION_MODE", "v2")),
-        help="Parse/retrieval backend; defaults to ANIVAG_PARSE_EXECUTION_MODE.",
+        help="Formal execution supports only v2; defaults to ANIVAG_PARSE_EXECUTION_MODE.",
     )
 
 
@@ -275,346 +236,162 @@ def _add_elasticsearch_arguments(
     include_vector_dimensions: bool = True,
 ) -> None:
     parser.add_argument(
-        "--elasticsearch-url", default=os.getenv("ANIVAG_ELASTICSEARCH_URL"),
+        "--elasticsearch-url",
     )
     parser.add_argument(
-        "--elasticsearch-index", default=os.getenv("ANIVAG_ELASTICSEARCH_INDEX"),
+        "--elasticsearch-index",
     )
     parser.add_argument(
-        "--elasticsearch-api-key", default=os.getenv("ANIVAG_ELASTICSEARCH_API_KEY"),
+        "--elasticsearch-api-key",
     )
     parser.add_argument(
         "--elasticsearch-index-generation",
         type=_positive_int,
-        default=os.getenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "1"),
     )
     if include_vector_dimensions:
         parser.add_argument(
             "--text-vector-dimensions", type=_positive_int,
-            default=os.getenv("ANIVAG_TEXT_VECTOR_DIMENSIONS", "1024"),
         )
         parser.add_argument(
             "--vision-vector-dimensions", type=_positive_int,
-            default=os.getenv("ANIVAG_VISION_VECTOR_DIMENSIONS", "1024"),
         )
-
-
-def _add_qdrant_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--qdrant-url",
-        default=os.getenv("ANIVAG_QDRANT_URL"),
-        help="Qdrant HTTP URL; defaults to ANIVAG_QDRANT_URL.",
-    )
-    parser.add_argument(
-        "--qdrant-api-key",
-        default=os.getenv("ANIVAG_QDRANT_API_KEY"),
-        help="Optional Qdrant API key; defaults to ANIVAG_QDRANT_API_KEY.",
-    )
-    parser.add_argument(
-        "--qdrant-collection",
-        default=os.getenv("ANIVAG_QDRANT_COLLECTION"),
-        help="Environment-isolated collection; defaults to ANIVAG_QDRANT_COLLECTION.",
-    )
-    parser.add_argument(
-        "--text-vector-dimensions",
-        type=_positive_int,
-        default=os.getenv(
-            "ANIVAG_TEXT_VECTOR_DIMENSIONS",
-            os.getenv("ANIVAG_EMBEDDING_DIMENSIONS", "1024"),
-        ),
-        help="Formal text-vector schema; defaults to 1024.",
-    )
-    parser.add_argument(
-        "--vision-vector-dimensions",
-        type=_positive_int,
-        default=os.getenv(
-            "ANIVAG_VISION_VECTOR_DIMENSIONS",
-            os.getenv("ANIVAG_EMBEDDING_DIMENSIONS", "1024"),
-        ),
-        help="Formal vision-vector schema; defaults to 1024.",
-    )
 
 
 def main() -> None:
     args = _build_parser().parse_args()
-    if args.command == "init-es-index":
-        config = ElasticsearchConfig(
-            url=args.elasticsearch_url or "",
-            index_name=args.elasticsearch_index or "",
-            api_key=args.elasticsearch_api_key or None,
-            index_generation=args.elasticsearch_index_generation,
-        )
-        environment = DatabaseEnvironment(args.environment)
-        config.validate_environment(environment)
-        client = Elasticsearch(config.url, api_key=config.api_key)
-        try:
-            ElasticsearchVideoChunkStore(
-                client,
-                index_name=config.index_name,
-                environment=environment,
-                semantic_dimensions=args.text_vector_dimensions,
-                vision_dimensions=args.vision_vector_dimensions,
-            ).ensure_index()
-        finally:
-            client.close()
-        print(
-            json.dumps(
-                {
-                    "schemaReady": True,
-                    "index": config.index_name,
-                    "indexGeneration": config.index_generation,
-                }
-            )
-        )
-        return
-    if not args.database_url:
-        raise ValueError(
-            "database URL is required via --database-url or ANIVAG_DATABASE_URL"
-        )
-    environment = DatabaseEnvironment(args.environment)
-    engine = create_database_engine(args.database_url, environment=environment)
-
-    if args.command == "init-db":
-        create_schema(engine)
-        print(json.dumps({"schemaCreated": True, "environment": environment.value}))
-        return
-
-    if args.command == "request-es-index-rebuild" or (
-        args.command == "rebuild-index" and args.execution_mode == "v2"
-    ):
+    environment = resolve_environment(args.environment)
+    if args.command in {"search", "rebuild-index"}:
+        resolve_execution_mode(args.execution_mode)
+    if args.command in {"request-es-index-rebuild", "rebuild-index"}:
         if not args.video_parse_task_id:
             raise ValueError("--video-parse-task-id is required in V2 mode")
-        interval_ids = VideoParseRepository(
-            create_session_factory(engine)
-        ).request_index_rebuild(args.video_parse_task_id)
-        print(json.dumps({
-            "videoParseTaskId": args.video_parse_task_id,
-            "scheduledIntervalParseTaskIds": list(interval_ids),
-        }))
-        return
 
-    if args.command == "import-parse":
-        from .service.parsev1.parse_import import prepare_video_parse_import
-
-        if args.create_schema:
-            create_schema(engine)
-        important_extra_data = _load_series_bible(args.series_bible_file)
-        prepared = prepare_video_parse_import(
-            args.parse_result,
-            args.canonical_chunk_dir,
-            series_name=args.series_name,
-            series_description=args.series_description,
-            series_id=args.series_id,
-            video_id=args.video_id,
-            workspace_id=args.workspace_id,
-            episode_order=args.episode_order,
-            upload_sequence=args.upload_sequence,
-            pipeline_version=args.pipeline_version,
-            important_extra_data=important_extra_data,
-            embedding_cache_directory=args.embedding_cache_dir,
-        )
-        repository = VideoRepository(create_session_factory(engine))
-        report = repository.import_video_parse(prepared)
-        print(
-            json.dumps(
-                report.model_dump(mode="json", by_alias=True),
-                ensure_ascii=False,
-            )
-        )
-        return
-
-    if args.command == "backfill-keyframes":
-        report = KeyframeBackfillService(
-            VideoRepository(create_session_factory(engine)),
-            LocalArtifactStore(
-                args.artifact_root,
-                environment=environment,
-                create_base_directory=args.apply,
-            ),
-            max_height=args.max_height,
-        ).backfill(
-            limit=args.limit,
-            dry_run=not args.apply,
-            workspace_id=args.workspace_id,
-            series_id=args.series_id,
-            video_id=args.video_id,
-        )
-        print(json.dumps(
-            report.model_dump(mode="json", by_alias=True),
-            ensure_ascii=False,
-        ))
-        return
-
-    if args.command == "search" and args.execution_mode == "v2":
-        if not args.elasticsearch_url:
-            raise ValueError(
-                "Elasticsearch URL is required via --elasticsearch-url or "
-                "ANIVAG_ELASTICSEARCH_URL"
-            )
-        if not args.elasticsearch_index:
-            raise ValueError(
-                "Elasticsearch index is required via --elasticsearch-index or "
-                "ANIVAG_ELASTICSEARCH_INDEX"
-            )
-        config = ElasticsearchConfig(
+    if args.command in {"init-es-index", "search"}:
+        elasticsearch = ElasticsearchConfig.from_environment(
+            environment,
             url=args.elasticsearch_url,
             index_name=args.elasticsearch_index,
-            api_key=args.elasticsearch_api_key or None,
+            api_key=args.elasticsearch_api_key,
             index_generation=args.elasticsearch_index_generation,
         )
-        config.validate_environment(environment)
-        client = Elasticsearch(config.url, api_key=config.api_key)
-        try:
-            store = ElasticsearchVideoChunkStore(
-                client,
-                index_name=config.index_name,
-                environment=environment,
-                semantic_dimensions=args.text_vector_dimensions,
-                vision_dimensions=args.vision_vector_dimensions,
+        if elasticsearch is None:
+            raise ValueError(
+                "Elasticsearch URL and index are required via command options or "
+                "ANIVAG_ELASTICSEARCH_URL and ANIVAG_ELASTICSEARCH_INDEX"
             )
-            embedding_config = load_config(args.config).multimodal_embedding
-            embedding_model = (
-                args.embedding_model
-                or os.getenv("ANIVAG_VIDEO_EMBEDDING_MODEL")
-                or embedding_config.model
+        text_dimensions, vision_dimensions = resolve_vector_dimensions(
+            text_dimensions=args.text_vector_dimensions,
+            vision_dimensions=args.vision_vector_dimensions,
+            require_matching=args.command == "search",
+        )
+
+    if args.command == "init-es-index":
+        with open_elasticsearch_storage(
+            elasticsearch, environment=environment,
+            semantic_dimensions=text_dimensions, vision_dimensions=vision_dimensions,
+        ) as (_client, store):
+            store.ensure_index()
+        result = {
+            "schemaReady": True,
+            "index": elasticsearch.index_name,
+            "indexGeneration": elasticsearch.index_generation,
+        }
+        print(json.dumps(result))
+        return
+
+    if args.command == "search":
+        gateway = load_config(args.config)
+        embedding = resolve_embedding_config(
+            gateway, model=args.embedding_model, dimensions=text_dimensions,
+        )
+        retrieval = RetrievalConfig.from_environment(
+            channel_top_k=args.channel_top_k, rrf_k=args.rrf_k,
+            text_weight=args.text_weight, vision_weight=args.vision_weight,
+        )
+        request_timeout, max_output_tokens = resolve_retrieval_model_limits(
+            args.config,
+            request_timeout_seconds=resolve_agent_request_timeout_seconds(),
+        )
+
+    with open_database_storage(
+        resolve_database_url(args.database_url),
+        environment=environment,
+        pool_recycle_seconds=resolve_database_pool_recycle_seconds(),
+    ) as (engine, sessions):
+        if args.command == "init-db":
+            create_schema(engine)
+            result = {"schemaCreated": True, "environment": environment.value}
+        elif args.command in {"request-es-index-rebuild", "rebuild-index"}:
+            interval_ids = VideoParseRepository(sessions).request_index_rebuild(
+                args.video_parse_task_id
             )
-            embedder = DoubaoMultimodalEmbedder(
-                embedding_model,
-                output_dimensionality=args.text_vector_dimensions,
-                fps=embedding_config.fps,
-            )
-            result = VideoParseRetrievalService(
-                VideoParseRepository(create_session_factory(engine)),
-                store,
-                embedder,
-                semantic_encoder=EncoderContract(
-                    provider=ARK_PROVIDER,
-                    model=embedding_model,
-                    encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
-                    dimensions=args.text_vector_dimensions,
-                ),
-                expected_index_generation=config.index_generation,
-                channel_top_k=args.channel_top_k,
-                rrf_k=args.rrf_k,
-                text_weight=args.text_weight,
-                vision_weight=args.vision_weight,
-                exact=args.exact,
-            ).search(
-                args.query,
+            result = {
+                "videoParseTaskId": args.video_parse_task_id,
+                "scheduledIntervalParseTaskIds": list(interval_ids),
+            }
+        elif args.command == "import-parse":
+            from .service.parsev1.parse_import import prepare_video_parse_import
+
+            if args.create_schema:
+                create_schema(engine)
+            prepared = prepare_video_parse_import(
+                args.parse_result,
+                args.canonical_chunk_dir,
+                series_name=args.series_name,
+                series_description=args.series_description,
+                series_id=args.series_id,
+                video_id=args.video_id,
                 workspace_id=args.workspace_id,
-                series_ids=args.series_ids,
-                top_k=args.top_k,
+                episode_order=args.episode_order,
+                upload_sequence=args.upload_sequence,
+                pipeline_version=args.pipeline_version,
+                series_bible_file=args.series_bible_file,
+                embedding_cache_directory=args.embedding_cache_dir,
             )
-        finally:
-            client.close()
-        print(
-            json.dumps(
-                result.model_dump(mode="json", by_alias=True),
-                ensure_ascii=False,
+            result = VideoRepository(sessions).import_video_parse(
+                prepared
+            ).model_dump(mode="json", by_alias=True)
+        elif args.command == "backfill-keyframes":
+            report = KeyframeBackfillService(
+                VideoRepository(sessions),
+                build_artifact_storage(
+                    resolve_artifact_root(args.artifact_root),
+                    environment=environment,
+                    create_base_directory=args.apply,
+                ),
+                max_height=resolve_parse_max_height(args.max_height),
+            ).backfill(
+                limit=args.limit, dry_run=not args.apply,
+                workspace_id=args.workspace_id, series_id=args.series_id,
+                video_id=args.video_id,
             )
-        )
-        return
-
-    if args.command in {
-        "sync-index",
-        "reconcile-index",
-        "rebuild-index",
-        "search",
-    }:
-        if not args.qdrant_url:
-            raise ValueError(
-                "Qdrant URL is required via --qdrant-url or ANIVAG_QDRANT_URL"
-            )
-        if not args.qdrant_collection:
-            raise ValueError(
-                "Qdrant collection is required via --qdrant-collection or "
-                "ANIVAG_QDRANT_COLLECTION"
-            )
-        client = QdrantClient(
-            url=args.qdrant_url,
-            api_key=args.qdrant_api_key,
-        )
-        try:
-            store = QdrantVideoChunkStore(
-                client,
-                collection_name=args.qdrant_collection,
-                environment=environment,
-                text_dimensions=args.text_vector_dimensions,
-                vision_dimensions=args.vision_vector_dimensions,
-            )
-            session_factory = create_session_factory(engine)
-            if args.command == "search":
-                embedding_config = load_config(args.config).multimodal_embedding
-                embedder = DoubaoMultimodalEmbedder(
-                    args.embedding_model
-                    or os.getenv("ANIVAG_VIDEO_EMBEDDING_MODEL")
-                    or embedding_config.model,
-                    output_dimensionality=args.text_vector_dimensions,
-                    fps=embedding_config.fps,
-                )
-                result = VideoRetrievalService(
-                    VideoRepository(session_factory),
-                    store,
-                    embedder,
-                    channel_top_k=args.channel_top_k,
-                    rrf_k=args.rrf_k,
-                    text_weight=args.text_weight,
-                    vision_weight=args.vision_weight,
+            result = report.model_dump(mode="json", by_alias=True)
+        elif args.command == "search":
+            with open_elasticsearch_storage(
+                elasticsearch, environment=environment,
+                semantic_dimensions=text_dimensions, vision_dimensions=vision_dimensions,
+            ) as (_client, store):
+                service, _encoder = build_retrieval_service(
+                    VideoParseRepository(sessions), store,
+                    gateway_config=gateway, embedding_config=embedding,
+                    retrieval_config=retrieval,
+                    index_generation=elasticsearch.index_generation,
+                    request_timeout_seconds=request_timeout,
+                    max_output_tokens=max_output_tokens,
                     exact=args.exact,
-                ).search(
-                    args.query,
-                    workspace_id=args.workspace_id,
-                    series_ids=args.series_ids,
-                    top_k=args.top_k,
                 )
-            else:
-                from .service.parsev1.index_sync import IndexSyncService
-
-                service = IndexSyncService(
-                    IndexSyncRepository(session_factory),
-                    store,
-                    mutation_lock=QdrantMutationLock(
-                        engine,
-                        environment=environment,
-                        collection_name=args.qdrant_collection,
-                    ),
+                result = service.search(
+                    args.query, workspace_id=args.workspace_id,
+                    series_ids=args.series_ids, top_k=args.top_k,
+                ).model_dump(mode="json", by_alias=True)
+        elif args.command == "hydrate":
+            result = [
+                item.model_dump(mode="json", by_alias=True)
+                for item in VideoRepository(sessions).hydrate_video_chunks(
+                    args.video_chunk_ids
                 )
-                if args.command == "sync-index":
-                    result = service.sync_due(limit=args.limit)
-                elif args.command == "reconcile-index":
-                    result = service.reconcile(
-                        inspection_batch_size=args.inspection_batch_size
-                    )
-                else:
-                    result = service.rebuild()
-        finally:
-            client.close()
-        print(
-            json.dumps(
-                result.model_dump(mode="json", by_alias=True),
-                ensure_ascii=False,
-            )
-        )
-        return
-
-    repository = VideoRepository(create_session_factory(engine))
-    evidence = repository.hydrate_video_chunks(args.video_chunk_ids)
-    print(
-        json.dumps(
-            [item.model_dump(mode="json", by_alias=True) for item in evidence],
-            ensure_ascii=False,
-        )
-    )
-
-
-def _load_series_bible(path: Path | None) -> dict[str, Any] | None:
-    if path is None:
-        return None
-    resolved = path.expanduser().resolve(strict=True)
-    return {
-        "seriesBible": resolved.read_text(encoding="utf-8"),
-        "sourceUri": resolved.as_uri(),
-    }
+            ]
+    print(json.dumps(result, ensure_ascii=False))
 
 
 def _positive_int(value: str) -> int:
@@ -625,10 +402,10 @@ def _positive_int(value: str) -> int:
 
 
 def _execution_mode(value: str) -> str:
-    normalized = value.strip().lower()
-    if normalized not in {"v1", "v2"}:
-        raise argparse.ArgumentTypeError("execution mode must be 'v1' or 'v2'")
-    return normalized
+    try:
+        return resolve_execution_mode(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 if __name__ == "__main__":

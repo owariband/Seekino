@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -14,7 +14,7 @@ from typing import Literal, TypeVar
 
 from arkruntime import Ark
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.input import (
@@ -24,6 +24,7 @@ from agent.video_parse_v2.input import (
 )
 from agent.video_parse_v2.prefix.context import PrefixContext
 from agent.video_parse_v2.refine.input import RefineInput
+from agent.video_parse_v2.prompts import build_ocr_prompt
 from agent.video_parse_v2.host import (
     ChunkExecution,
     ChunkScheduleEntry,
@@ -36,13 +37,9 @@ from agent.video_parse_v2.host import (
 )
 from engine.common.model_factory import build_asr_agent, build_openai_vision
 from engine.common.transcription import TranscriptAnalysis, normalize_transcription
+from engine.parsev2.observations import ASRResult, OCRResult
 from engine.parsev2.planning import ChunkPlan, IntervalPlan
-from engine.parsev2.schemas import (
-    DialogueEvent,
-    DialogueTextVariant,
-    OnScreenTextEvent,
-    VideoParseResult,
-)
+from engine.parsev2.schemas import VideoParseResult
 from engine.parsev2.validation import (
     IntervalRefinementProposal,
     PrefixRefinementProposal,
@@ -73,7 +70,7 @@ from gateway.config import (
     OpenAIVisionSourceConfig,
 )
 from gateway.errors import ContentFilterError
-from gateway.model_sources import ark_options, source_key
+from gateway.model_sources import ModelReference, ark_options, source_key
 from gateway.multimodal import ImageInput, TextInput, VideoInput
 from gateway.openai.audio import transcribe_audio
 from gateway.openai.multimodal import DeepSeekMultimodalModel
@@ -113,21 +110,6 @@ _RETRIEVAL_CONTRACT = "parse-v2-retrieval-v1"
 _logger = logging.getLogger(__name__)
 
 
-class _OCRLine(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    start_seconds: int = Field(ge=0, strict=True)
-    end_seconds: int = Field(gt=0, strict=True)
-    text: str = Field(min_length=1)
-    language: str | None = None
-
-
-class _OCRResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    lines: list[_OCRLine] = Field(default_factory=list)
-
-
 @dataclass(slots=True)
 class _ChunkBinding:
     lease: ChunkParseLease
@@ -135,7 +117,6 @@ class _ChunkBinding:
     state: ChunkExecutionState | None = None
     media_context: object | None = None
     media: PreparedVideoParseMedia | None = None
-    touched_interval_ids: tuple[str, ...] = ()
 
 
 class VideoParseRuntimeService:
@@ -462,7 +443,7 @@ class VideoParseRuntimeService:
     async def prepare_chunk_visual(self, execution: ChunkExecution) -> None:
         await self._ensure_chunk_media(execution)
 
-    async def transcribe_chunk(self, execution: ChunkExecution) -> object:
+    async def transcribe_chunk(self, execution: ChunkExecution) -> ASRResult:
         media = await self._ensure_chunk_media(execution)
         model = execution.inputs.parse_config.models.asr
         if model.mode == "none":
@@ -501,34 +482,29 @@ class VideoParseRuntimeService:
             ]
         }
 
-    async def read_chunk_text(self, execution: ChunkExecution) -> object:
+    async def read_chunk_text(self, execution: ChunkExecution) -> OCRResult:
         media = await self._ensure_chunk_media(execution)
         binding = execution.inputs.parse_config.models.ocr
         if binding is None:
             raise ValueError("OCR is enabled without a fixed OCR model")
         timestamps = [timestamp for timestamp, _path in media.frames]
-        prompt = (
-            "Read only visible non-dialogue on-screen text from the ordered frames. "
-            "Use absolute integer source-video milliseconds inside the authorized range. "
-            f"Frame timestamps: {timestamps}."
-        )
-        result = await self._generate_multimodal(
+        prompt = build_ocr_prompt(timestamps)
+        return await self._generate_multimodal(
             binding,
             [
                 *(ImageInput(path=path) for _timestamp, path in media.frames),
                 TextInput(text=prompt),
             ],
             schema_name="video_parse_v2_ocr",
-            result_type=_OCRResult,
+            result_type=OCRResult,
         )
-        return result.model_dump(mode="json")
 
     async def understand_chunk(
         self,
         execution: ChunkExecution,
         *,
-        asr_result: object,
-        ocr_result: object | None,
+        asr_result: ASRResult,
+        ocr_result: OCRResult | None,
         prompt: str,
     ) -> VideoParseResult:
         del asr_result, ocr_result
@@ -565,62 +541,13 @@ class VideoParseRuntimeService:
             result_type=VideoParseResult,
         )
 
-    def build_chunk_without_understanding(
-        self,
-        execution: ChunkExecution,
-        *,
-        asr_result: object,
-        ocr_result: object | None,
-    ) -> VideoParseResult:
-        transcript = (
-            asr_result.get("transcript", [])
-            if isinstance(asr_result, Mapping)
-            else []
-        )
-        timeline: list[DialogueEvent | OnScreenTextEvent] = []
-        for cue in transcript if isinstance(transcript, list) else []:
-            if not isinstance(cue, Mapping) or not str(cue.get("text", "")).strip():
-                continue
-            text = str(cue["text"]).strip()
-            timeline.append(DialogueEvent(
-                event_type="DIALOGUE",
-                start_seconds=int(cue["start_seconds"]),
-                end_seconds=int(cue["end_seconds"]),
-                description=text,
-                participants=[],
-                visible_persons=[],
-                speaker=None,
-                text_variants=[DialogueTextVariant(
-                    language="und", role="ORIGINAL", text=text
-                )],
-            ))
-        lines = ocr_result.get("lines", []) if isinstance(ocr_result, Mapping) else []
-        for line in lines if isinstance(lines, list) else []:
-            if not isinstance(line, Mapping) or not str(line.get("text", "")).strip():
-                continue
-            text = str(line["text"]).strip()
-            timeline.append(OnScreenTextEvent(
-                event_type="ON_SCREEN_TEXT",
-                start_seconds=int(line["start_seconds"]),
-                end_seconds=int(line["end_seconds"]),
-                description=text,
-                participants=[],
-                visible_persons=[],
-                language=(str(line["language"]) if line.get("language") else None),
-                text=text,
-            ))
-        timeline.sort(key=lambda item: (item.start_seconds, item.end_seconds))
-        return VideoParseResult(persons=[], timeline=timeline)
-
     async def commit_chunk_result(
         self,
         execution: ChunkExecution,
         result: VideoParseResult,
-        update_interval_mask: Callable[[str], None],
     ) -> None:
-        del update_interval_mask  # Repository updates every mask in the same transaction.
         binding = self._require_chunk_execution(execution)
-        binding.touched_interval_ids = await asyncio.to_thread(
+        await asyncio.to_thread(
             self._repository.commit_chunk_result,
             binding.lease,
             content=result.model_dump(mode="json"),
@@ -638,18 +565,6 @@ class VideoParseRuntimeService:
             binding.media = None
             if context is not None:
                 await asyncio.to_thread(context.__exit__, None, None, None)
-
-    def update_interval_mask(self, chunk_parse_task_id: str) -> None:
-        binding = self._require_chunk_binding()
-        if binding.lease.chunk_parse_task_id != chunk_parse_task_id:
-            raise VideoParseLeaseLostError("Chunk callback targets another task")
-
-    async def interval_is_ready(self, interval_parse_task_id: str) -> bool:
-        del interval_parse_task_id
-        return True
-
-    async def enqueue_interval_refine(self, interval_parse_task_id: str) -> None:
-        del interval_parse_task_id
 
     # Agent runtime: Refine -------------------------------------------------
 
@@ -751,16 +666,6 @@ class VideoParseRuntimeService:
         self._notify_change(snapshot["video_parse_task_id"])
 
     # Agent runtime: Prefix -------------------------------------------------
-
-    async def next_prefix_chunk(self, series_id: str) -> str | None:
-        # Prefix execution is owned exclusively by the consumer's bounded
-        # durable scan. Listener notifications are hints; returning no task
-        # avoids creating an untracked background owner or leaking a claim.
-        del series_id
-        return None
-
-    async def enqueue_prefix_context(self, chunk_parse_task_id: str) -> None:
-        del chunk_parse_task_id
 
     async def load_prefix_context(
         self, chunk_parse_task_id: str
@@ -1224,6 +1129,11 @@ class VideoParseRuntimeService:
         check_active: Callable[[], None],
     ) -> tuple[VideoParseIndexCoordinator, Ark]:
         embedding = inputs.parse_config.models.embedding
+        reference = ModelReference.resolve(
+            embedding.model,
+            encoder_model=embedding.encoder_model,
+            default_encoder_model=self._gateway_config.multimodal_embedding.model,
+        )
         source = self._source(embedding.source)
         if not isinstance(source, ArkModelSourceConfig):
             raise TypeError("Parse V2 multimodal embedding requires an Ark source")
@@ -1233,7 +1143,7 @@ class VideoParseRuntimeService:
             **ark_options(source),
         )
         embedder = DoubaoMultimodalEmbedder(
-            embedding.model,
+            reference.request_model,
             output_dimensionality=embedding.dimensions,
             fps=embedding.video_fps,
             request_timeout_seconds=embedding.request_timeout_seconds,
@@ -1252,13 +1162,13 @@ class VideoParseRuntimeService:
                 retrieval_contract_id=_RETRIEVAL_CONTRACT,
                 semantic_encoder=EncoderContract(
                     provider=provider,
-                    model=embedding.model,
+                    model=reference.model,
                     encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
                     dimensions=dimensions,
                 ),
                 vision_encoder=EncoderContract(
                     provider=provider,
-                    model=embedding.model,
+                    model=reference.model,
                     encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
                     dimensions=dimensions,
                 ),
@@ -1272,7 +1182,7 @@ class VideoParseRuntimeService:
                 sparse_encoder=(
                     SparseEncoderContract(
                         provider=provider,
-                        model=embedding.model,
+                        model=reference.model,
                         encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
                     )
                     if self._sparse_enabled else None

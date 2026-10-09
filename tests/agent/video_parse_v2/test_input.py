@@ -1,9 +1,36 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 from pydantic import ValidationError
 
 from agent.video_parse_v2.input import ParseInput
+
+
+@pytest.mark.parametrize("statement", [
+    "from agent.video_parse_v2.input import ParseConfig",
+    "from server.config.parse_profile import ParseConfig",
+])
+def test_configuration_import_does_not_load_runtime(statement):
+    subprocess.run([sys.executable, "-B", "-c", statement + "\n" + """
+import sys
+assert 'agent.video_parse_v2.runtime' not in sys.modules
+assert not any(name == 'langgraph' or name.startswith('langgraph.') for name in sys.modules)
+"""], check=True)
+
+
+def test_public_parse_agent_remains_available_on_demand():
+    subprocess.run([sys.executable, "-B", "-c", """
+import sys
+import agent.video_parse_v2 as package
+assert 'agent.video_parse_v2.runtime' not in sys.modules
+from agent.video_parse_v2 import ParseAgent
+from agent.video_parse_v2.runtime import ParseAgent as RuntimeParseAgent
+assert ParseAgent is RuntimeParseAgent
+assert package.ParseAgent is ParseAgent
+"""], check=True)
 
 
 def _input_payload() -> dict:

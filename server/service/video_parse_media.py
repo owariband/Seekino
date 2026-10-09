@@ -16,7 +16,7 @@ from uuid import uuid4
 from engine.common.frame_sampler import plan_frame_timestamps
 from engine.common.media_probe import probe_video_duration_seconds
 
-from ..identity import canonical_uuid
+from ..utils.validation import canonical_uuid
 
 
 @dataclass(frozen=True, slots=True)

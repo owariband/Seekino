@@ -22,7 +22,7 @@ from engine.rag.indexing.projection import project_chunk_index
 from engine.rag.retrieval.contracts import ChunkRetrievalFacts
 from engine.rag.encoding import validate_sparse_weights
 
-from ..identity import canonical_uuid, derive_video_chunk_id
+from ..model.identifiers import derive_video_chunk_id
 from ..model.dto.jobDTO import (
     ChunkParseContentState,
     ChunkExecutionState,
@@ -58,8 +58,8 @@ from ..utils.time import (
     now_utc,
     unix_time_ms_to_datetime,
 )
-from ..utils.validation import require_nonempty_text
-from .video import SeriesNotReadyError, SeriesScopeNotFoundError
+from ..utils.validation import canonical_uuid, require_nonempty_text
+from .video import SeriesNotReadyError, SeriesScopeNotFoundError, VideoChunkNotFoundError
 
 
 RUNTIME_DETAIL_KEY = "_worker_runtime_v2"
@@ -245,6 +245,59 @@ class VideoParseRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 
+    def get_chunk_evidence(
+        self, video_chunk_id: str, *, workspace_id: str,
+    ) -> VideoChunkEvidence:
+        """Read media evidence through the latest complete V2 receipt."""
+
+        chunk_id = canonical_uuid(video_chunk_id, "video_chunk_id")
+        workspace = require_nonempty_text(workspace_id, "workspace_id")
+        with self._session_factory() as session:
+            row = session.execute(
+                select(SeriesRecord, VideoRecord)
+                .join(VideoRecord, VideoRecord.series_id == SeriesRecord.series_id)
+                .join(VideoChunkRecord, VideoChunkRecord.video_id == VideoRecord.video_id)
+                .where(
+                    VideoChunkRecord.video_chunk_id == chunk_id,
+                    SeriesRecord.workspace_id == workspace,
+                )
+            ).one_or_none()
+            if row is None:
+                raise VideoChunkNotFoundError("videoChunkId does not exist in this workspace")
+            series, video = row
+            task_id = _latest_video_task_id(session, video.video_id)
+            if task_id is None:
+                raise VideoChunkNotFoundError("videoChunkId has no current V2 task")
+            task = session.get(VideoParseTaskRecord, task_id)
+            if task is None or task.is_deleted:
+                raise VideoChunkNotFoundError("videoChunkId has no current V2 task")
+            if task.status != VideoParseTaskStatus.COMPLETE.value:
+                raise VideoParseConflictError("videoChunkId latest V2 task is not COMPLETE")
+            content = session.scalar(
+                select(ChunkParseContentRecord)
+                .join(
+                    ChunkParseTaskRecord,
+                    ChunkParseTaskRecord.id == ChunkParseContentRecord.chunk_parse_task_id,
+                )
+                .where(
+                    ChunkParseTaskRecord.video_parse_task_id == task_id,
+                    ChunkParseTaskRecord.video_chunk_id == chunk_id,
+                    ChunkParseTaskRecord.status == ChunkParseTaskStatus.COMPLETE.value,
+                )
+            )
+            if content is None:
+                raise VideoParseConflictError("videoChunkId has no COMPLETE V2 content")
+            receipt = _index_receipt(content, task_id, chunk_id)
+            identity = VideoChunkRetrievalIdentity(
+                workspace_id=workspace,
+                series_id=series.series_id,
+                video_id=video.video_id,
+                parse_task_id=task_id,
+                content_version=content.version,
+                index_generation=receipt["index_generation"],
+            )
+        return self.hydrate_retrieval_evidence([(chunk_id, identity)])[0]
+
     def resolve_retrieval_scope(
         self,
         series_ids: Sequence[str],
@@ -398,7 +451,7 @@ class VideoParseRepository:
                     contract = (
                         receipt["index_generation"],
                         embedding.source,
-                        embedding.model,
+                        embedding.encoder_model or embedding.model,
                         embedding.dimensions,
                         embedding.video_fps,
                         config.visual_input.max_height,

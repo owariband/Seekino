@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, uuid5
 
 # This seed predates the VideoSegment -> VideoChunk terminology migration.
-# Changing it would re-key already published MySQL rows and Qdrant points.
+# Keep it stable so the same VideoChunk continues to receive the same ID.
 _VIDEO_CHUNK_ID_SEED = "anivag:video-segment"
-
-
-def canonical_uuid(value: str, field_name: str) -> str:
-    try:
-        return str(UUID(value))
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be a UUID") from exc
 
 
 def derive_series_id(workspace_id: str, series_name: str) -> str:

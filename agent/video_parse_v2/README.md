@@ -21,8 +21,7 @@ video_parse_v2/
 ├── errors.py               # parse errors
 ├── prepare.py              # topology and child-task initialization
 ├── scheduler.py            # ordered batches and Chunk dispatch
-├── listener.py             # readiness checks and post-commit notifications
-├── prompts.py              # Understanding, Refine and Prefix prompt builders
+├── prompts.py              # OCR, Understanding, Refine and Prefix prompt builders
 ├── understanding/
 │   ├── __init__.py          # ChunkUnderstandingWorkflow export
 │   ├── workflow.py          # Chunk subgraph and execution cleanup
@@ -41,6 +40,11 @@ video_parse_v2/
 The public entry point remains `ParseAgent`. The host enters claimed Chunk,
 Refine, indexing and Prefix work independently; they are not serialized into
 the Video coordinator Graph.
+
+Configuration callers import `ParseInput` directly from
+`agent.video_parse_v2.input`. That import stays lightweight and does not load
+the Agent runtime or LangGraph. The package keeps `ParseAgent` as its single
+public entry point; loading that entry initializes the executable stages.
 
 ```python
 from agent.video_parse_v2 import ParseAgent
@@ -103,7 +107,7 @@ ChunkScheduler
   ordered batches; next batch opens at 90% base COMPLETE
         ↓
 ChunkUnderstandingWorkflow workers
-  ASR || visual/OCR → Understanding → Engine validation
+  ASR || visual/OCR → Understanding or Engine observation conversion → validation
   → content + initial scope + ready masks + Chunk COMPLETE in one transaction
         ↓
 IntervalRefine workers
@@ -125,10 +129,18 @@ Refine and indexing.
 Synchronous repositories/queues may be adapted by an async service, but model
 and media calls run outside row-locking transactions.
 
-Chunk commit receives `listener.update_interval_mask` and must invoke it inside
-the same transaction as content and `COMPLETE`. Notifications occur after
-commit and can be duplicated or lost; durable scans use the same readiness
-checks as compensation.
+Chunk commit gives the host the validated result. The Server repository saves
+content, initial scope, every containing Interval's ready mask, and Chunk
+`COMPLETE` in one lease-fenced transaction. The DB Queue scans persisted ready
+Intervals and rechecks readiness while claiming them; no Agent callback writes
+masks or enqueues Refine. Post-commit notifications wake the Video coordinator,
+and durable scans continue work even when notifications are lost.
+
+ASR returns the Engine-owned normalized transcript contract, with absolute
+integer-millisecond timestamps. OCR uses Engine's `OCRResult` and Agent's OCR
+prompt; the host prepares media and executes the model. With Understanding
+disabled, the workflow directly calls Engine's pure observation-to-event
+conversion and applies the same time-range validation before committing.
 
 Refine input includes each member's content, version, bounds, sequence, and
 ordered scope. Engine returns only fields actually changed relative to that
@@ -141,6 +153,8 @@ Prefix tools are bound to the one current Chunk and only produce a proposal.
 The host validates its independent lease and target content version before
 commit. A factual update increments content version and returns already-refined
 containing Intervals to `INDEXING`; compact-only and scope-only writes do not.
+The Server consumer's bounded background scan claims Prefix work through its
+repository. It advances the persisted cursor without Agent readiness callbacks.
 
 Temporary media is owned by the Task/Lease workspace and never enters Graph
 state. `ChunkUnderstandingWorkflow.run` always calls runtime cleanup with the

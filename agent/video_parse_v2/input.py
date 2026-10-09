@@ -57,6 +57,7 @@ class ASRModelConfig(GenerativeModelConfig):
 class EmbeddingModelConfig(_InputModel):
     source: str = Field(min_length=1)
     model: str = Field(min_length=1)
+    encoder_model: str | None = Field(default=None, min_length=1)
     dimensions: int = Field(gt=0)
     video_fps: float = Field(gt=0)
     request_timeout_seconds: float = Field(gt=0)

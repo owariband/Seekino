@@ -26,11 +26,17 @@ def search_video_chunks(
     request: Request,
 ) -> SearchResultView:
     services = get_services(request)
+    top_k_options = services.agent.message_options().top_k
+    top_k = top_k_options.default_value if body.top_k is None else body.top_k
+    if not top_k_options.minimum <= top_k <= top_k_options.maximum:
+        raise ValueError(
+            f"top_k must be between {top_k_options.minimum} and {top_k_options.maximum}"
+        )
     result = services.retrieval.search(
         body.query,
         workspace_id=body.workspace_id,
         series_ids=body.series_ids,
-        top_k=body.top_k,
+        top_k=top_k,
     )
     return search_result_view(result, services.media, workspace_id=body.workspace_id)
 

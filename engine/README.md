@@ -194,7 +194,11 @@ Server 已改为按任务／Chunk／`content_version`／`index_generation` 恢�
 第一条视觉事件当作命中证据。文字评分失败或整批评分无效时 warning 并回到 RRF；
 宿主预算、租约或取消控制仍向上交付。
 
-`candidate_budget` 默认 60；`sparse_weight` 默认 0，`rerank_enabled` 默认 false。
+`candidate_budget` 默认按本次启用通道数 × `channel_top_k` 计算，并至少覆盖请求
+`top_k`；显式配置预算时也至少覆盖请求 `top_k`。`sparse_weight` 默认 0，
+`rerank_enabled` 默认 false。
+HTTP 搜索与聊天共用当前 `agent_runtime` 的 topK 配置：下限为 1，上限为
+`maximum_top_k`；HTTP 未传 topK 时使用 `default_top_k`。
 开启 Sparse 时，当前任务每个 Chunk 必须已有合法 Sparse 结果；空权重有效，缺失
 结果会在模型调用前拒绝。启用评分使用已有 DeepSeek Agent 模型，不自动换模型。
 普通 Server 文字搜索不会自动把自然语言转换为严格事件／时间条件；Engine 已有的

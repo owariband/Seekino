@@ -106,8 +106,6 @@ class VideoParseIndexCoordinator:
         if contract.sparse_encoder is not None and not callable(getattr(embedder, "embed_sparse", None)):
             raise ValueError("the configured sparse encoder requires a Gateway sparse adapter")
         visual_contract = contract.visual_input_contract
-        if getattr(embedder, "supports_video_fps", None) is False:
-            raise ValueError("the configured Gateway model cannot execute the visual sampling contract")
         if (
             visual_contract.mime_type != "video/mp4"
             or visual_contract.preprocess_revision

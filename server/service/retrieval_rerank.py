@@ -1,4 +1,4 @@
-"""Execute the explicit text scoring protocol through an existing model adapter."""
+"""Bridge verified retrieval candidates to an existing structured text model."""
 
 from __future__ import annotations
 

@@ -7,7 +7,7 @@ models, indexing wakeups, leases, and transactional commits.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from langchain_core.tools import BaseTool
 
+from engine.parsev2.observations import ASRResult, OCRResult
 from engine.parsev2.planning import ChunkPlan, IntervalPlan
 from engine.parsev2.schemas import VideoParseResult
 from engine.parsev2.validation import (
@@ -177,47 +178,35 @@ class VideoParseRuntime(Protocol):
 
     async def prepare_chunk_visual(self, execution: ChunkExecution) -> None: ...
 
-    async def transcribe_chunk(self, execution: ChunkExecution) -> object: ...
+    async def transcribe_chunk(self, execution: ChunkExecution) -> ASRResult: ...
 
-    async def read_chunk_text(self, execution: ChunkExecution) -> object: ...
+    async def read_chunk_text(self, execution: ChunkExecution) -> OCRResult: ...
 
     async def understand_chunk(
         self,
         execution: ChunkExecution,
         *,
-        asr_result: object,
-        ocr_result: object | None,
+        asr_result: ASRResult,
+        ocr_result: OCRResult | None,
         prompt: str,
-    ) -> VideoParseResult: ...
-
-    def build_chunk_without_understanding(
-        self,
-        execution: ChunkExecution,
-        *,
-        asr_result: object,
-        ocr_result: object | None,
     ) -> VideoParseResult: ...
 
     async def commit_chunk_result(
         self,
         execution: ChunkExecution,
         result: VideoParseResult,
-        update_interval_mask: Callable[[str], None],
-    ) -> None: ...
+    ) -> None:
+        """Atomically save content, initial scope, masks and Chunk COMPLETE.
+
+        The host fences the execution lease within that same transaction.
+        Durable workers claim ready Intervals independently after commit.
+        """
+
+        ...
 
     async def notify_chunk_committed(self, execution: ChunkExecution) -> None: ...
 
     async def cleanup_chunk_execution(self, execution: ChunkExecution) -> None: ...
-
-    def update_interval_mask(self, chunk_parse_task_id: str) -> None: ...
-
-    async def interval_is_ready(self, interval_parse_task_id: str) -> bool: ...
-
-    async def enqueue_interval_refine(self, interval_parse_task_id: str) -> None: ...
-
-    async def next_prefix_chunk(self, series_id: str) -> str | None: ...
-
-    async def enqueue_prefix_context(self, chunk_parse_task_id: str) -> None: ...
 
     async def load_refine_input(self, interval_parse_task_id: str) -> RefineInput: ...
 

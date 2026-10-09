@@ -1,12 +1,11 @@
 # anivag Server
 
-Server 当前同时保留 V1 与 V2 的 Upload-to-Search 纵向闭环：两者共用分片上传、环境隔离的
-Artifact Store 和 MySQL 业务事实；V1 使用 DB Queue、VideoChunk checkpoint、Index Sync
-Intent 与 Qdrant，V2 使用可恢复的 VideoParseTask/Chunk/Interval/Prefix 状态机并将同版本
-投影写入 Elasticsearch。正式检索由 `ANIVAG_PARSE_EXECUTION_MODE` 一次选择对应后端，
-API、Agent Chat 和 CLI 共用同一个检索 Service；默认模式为 V2，显式设置 `v1` 可使用旧链。
-V2 不会回退到 V1/Qdrant。模型协议仍由
-Gateway 实现，anivag Server 进程内复用 Engine 的解析、索引投影和确定性融合能力。
+Server 的正式 Upload-to-Search 链路只使用 V2、MySQL 和 Elasticsearch：分片上传与
+环境隔离的 Artifact Store 提供媒体，VideoParseTask/Chunk/Interval/Prefix 状态机保存恢复事实，
+ES 保存同版本的检索投影。API、Agent Chat 和 CLI 共用 V2 检索 Service；
+`ANIVAG_PARSE_EXECUTION_MODE` 只接受 `v2`，启动必须显式配置 ES。
+模型协议由 Gateway 实现，Server 进程内复用 Engine 的领域转换、索引投影和融合能力。
+历史 V1 模块、数据库表与离线导入工具保留，正式入口不装配 Qdrant 或旧 Consumer。
 
 Multi-Agent 对话作为独立领域建立在正式检索之上：Workspace 直接拥有
 AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存每次发送的 Series Scope，
@@ -16,16 +15,17 @@ AgentConversation，每个 Conversation 保存聊天历史，AgentMessage 保存
 及 Conversation 固定 Scope 数据库结构会被 init-db / create_schema 拒绝；[迁移步骤](../docs/design/agent-api.md#8-已有数据库升级)
 保留 Conversation ID 与消息，本次未对真实开发 / 生产库执行 DDL。
 
-V1 中 Engine 拥有 `transcribe → understand → embed → persist` 的完整算法 Pipeline；
-Pipeline 的 `persist` 只调用中立 `ParsePersistence` 端口，Server 在当前 Lease 下提交
-Checkpoint、Artifact 和 MySQL，再由 Job Adapter 同步 Qdrant。V2 中 Engine 提供纯索引
-投影、embedding 复用和带版本身份的融合函数，Server 的 Index Coordinator 负责租约、
-MySQL/ES I/O 与恢复。查询渠道选择的后续 Engine 抽象尚未发布，Server 只保留显式 TODO，
-不在本层新增另一套策略。
+Engine 构造不依赖媒体、数据库或模型的 ASR/OCR 正式事件，并提供索引投影、embedding
+复用和带版本身份的融合函数。Agent 定义 OCR Prompt、理解与 Refine 流程；Server Host
+准备媒体、执行模型并持久化结果。Repository 在一个事务中提交 Chunk 成果和 Interval mask，
+DB Queue 按持久状态领取可执行任务；提交后的通知用于唤醒 Video 主协调器；DB Queue/Consumer 独立扫描并推进后续领取。
 
-Qdrant 与 Elasticsearch 的连接、写入和恢复都属于产品持久化适配，因此位于
-`server/storage/`；业务正文与任务版本的 durable source 始终是 MySQL，外部索引均是
-可按当前合同重建的派生数据。
+检索评分桥接位于 `server/service/retrieval_rerank.py`：它把候选转换成领域评分 Prompt，
+调用 Gateway 的通用模型接口，并交由 Engine 校验计划和结果。Gateway 不依赖 Engine RAG
+合同，也不读取嵌套的视频候选结构。
+
+Elasticsearch 的连接、写入和恢复位于 `server/storage/`；业务正文与任务版本的 durable
+source 始终是 MySQL，ES 是可按当前合同重建的派生数据。
 
 ## 模型 Token 用量
 
@@ -42,7 +42,7 @@ SDK 明细替代父用量，缓存和推理子集不重复加入总量；未知�
 
 新表沿用现有模型登记和 init-db，真实建表须先核实操作授权。默认 `tracing.enabled=false`，
 bootstrap 不装配 Langfuse writer/reader；可选模块和空凭据字段保留。
-显式 V1 旧链不注入新统计；旧表、价格历史不删除、不回填、不与新统计合并。
+冻结的 V1 旧链不注入新统计；旧表、价格历史不删除、不回填、不与新统计合并。
 `model_usage` 没有业务对象外键，删除视频/消息不级联删除已记录用量。
 预算、租约、heartbeat、取消和模型控制仍由原执行管理器负责。
 详细合同见 [模型 Token 用量](../docs/parse-model-usage.md)。
@@ -52,8 +52,10 @@ bootstrap 不装配 Langfuse writer/reader；可选模块和空凭据字段保�
 ```text
 server/router/      URL、Method、Response Model 和 API Handler 的绑定
 server/api/         参数/Header/Body 校验、HTTP 响应映射、SSE、异常转 HTTP
+server/cli.py       终端命令参数、命令分发和 JSON 输出
 server/service/     业务用例、资源归属与状态校验、跨资源编排
-server/bootstrap.py anivag Server 的数据库、Storage、Gateway、Queue 和 Service 装配
+server/bootstrap.py 完整应用装配、Queue 和应用生命周期
+server/common/      CLI 与完整应用共用的 Storage、检索依赖装配
 ```
 
 调用方向为 `router → api → service → repository/storage`。Router 不实现 Handler；
@@ -61,36 +63,45 @@ API 不查询业务事实后自行判断归属或状态。Content-Range 语法�
 workspace 归属、会话总大小、分片范围、缺片计算、Job 归属和 READY 检索 Scope 由
 Service 负责；Repository 保留事务内的状态与并发约束。
 
-HTTP 专用 Request/View 位于 `server/api/schema.py`；API、CLI、Agent 共用的检索证据和
+HTTP 专用 Request/View 定义于 `server/model/dto/` 和 `server/model/vo/`，
+`server/api/schema.py` 保留兼容聚合；API、CLI、Agent 共用的检索证据和
 应用报告留在 `server/schema.py`。`server/api/app.py` 只创建应用、配置生命周期与中间件、
 注册异常处理和 Router。
 
 ## 后台任务与共享代码
 
 `server/mq/` 是消息基础设施边界，当前使用 MySQL DB Queue，不依赖外部消息中间件。
-anivag Server 启动进程内 ParseJobConsumer 领取任务，再调用业务处理服务；Event 仍只
-表达已经发生的事实。API 保存完整视频并提交 ParseJob 后，Consumer 在同一 Server 进程
-继续处理，浏览器关闭不影响已经入队的任务。
+anivag Server 启动进程内 V2 Consumer 领取任务，再调用业务处理服务；Event 仍只
+表达已经发生的事实。API 保存完整视频并提交 VideoParseTask 后，Consumer 在同一 Server
+进程继续处理，浏览器关闭不影响已经入队的任务。
 
 ```text
 server/config/                   配置类型、环境变量读取与校验
 server/constants/workspace.py    本地默认 Workspace；不承担身份认证
 server/utils/                    时间、文本校验、异常摘要等无业务取数的纯函数
-server/bootstrap.py              唯一 Composition Root 和应用生命周期资源装配
-server/service/parsev1/video_processing.py
-                                 Parse Job 适配：源文件、背景、媒体物化、Pipeline 调用与索引同步
-server/service/parsev1/parse_persistence.py
-                                 生产 ParsePersistence：恢复、Lease、Parse Artifact／Checkpoint 与 MySQL
-server/mq/contracts.py            Queue / Handler 的最小内部协议
-server/mq/mysql_queue.py          MySQL Claim、Lease、Retry、Ack 和 Reaper adapter
-server/mq/consumer.py             进程内消费循环与 Lease Heartbeat
+server/model/identifiers.py       集中维护业务实体的稳定 UUID5 生成规则
+server/common/storage.py         DB、ES、Artifact 依赖构建与短期资源关闭
+server/common/retrieval.py       Encoder、查询模型、评分模型与检索 Service 装配
+server/bootstrap.py              完整应用的 Composition Root 和生命周期资源装配
+server/service/video_parse.py    V2 Host：媒体、模型执行与成果提交
+server/repository/video_parse.py V2 事务、Lease/Fencing、成果与 Interval mask 原子提交
+server/mq/video_parse_queue.py   基于持久状态的 Claim、Retry 和恢复扫描
+server/mq/video_parse_consumer.py 进程内 V2 消费循环与 Lease Heartbeat
 tests/manual/server_mq_once.py    --once 单任务手动诊断入口
 ```
 
 配置入口为 `ServerSettings.from_environment()`，`from server.config import
-ServerSettings` 保持可用。Upload、Agent、VideoProcessing、Retrieval 和 SSE 的配置类型
-分别放在对应配置模块；配置模块不依赖 Service。任务状态等领域枚举继续放在
-`server/model/`，不集中进无边界的 constants 文件，也不新增空的 common 目录。
+ServerSettings` 保持可用。CLI 在选中命令后按需调用对应配置模块：`init-db` 只读取
+数据库配置，`init-es-index` 只读取 ES 配置与维度，`search` 再读取模型与检索配置。
+显式命令参数优先于对应环境变量，未指定时使用配置默认值。Upload、Agent、VideoParse、
+Retrieval 和 SSE 的配置类型分别放在对应配置模块；配置模块不依赖 Service。
+任务状态和业务 ID 生成规则留在 `server/model/`；通用 UUID 校验位于
+`server/utils/validation.py`。所有包初始化保持轻量，调用方直接导入具体模块。
+
+CLI 与 HTTP 是并列的调用入口，CLI 直接调用既有 Service/Repository。
+它复用 `common` 的 Storage 和检索构建，不启动完整聊天运行图或 Consumer。
+CLI 自建 DB/ES 在命令成功或失败后关闭，查询与评分 SDK 按每次调用创建并关闭；
+完整应用继续由 `ApplicationServices` 持有资源并按既有顺序释放。
 
 部署调优项已补到 `.env.example`：`ANIVAG_SSE_POLL_SECONDS`、
 `ANIVAG_SSE_KEEPALIVE_SECONDS`、`ANIVAG_DATABASE_POOL_RECYCLE_SECONDS`、
@@ -98,9 +109,7 @@ ServerSettings` 保持可用。Upload、Agent、VideoProcessing、Retrieval 和 
 `ANIVAG_RETRIEVAL_TEXT_WEIGHT` / `ANIVAG_RETRIEVAL_VISION_WEIGHT`。
 Embedding 模型与 FPS 覆盖值由 Settings 读取，API 与进程内 Consumer 使用同一套配置。
 Consumer 的 Lease、Heartbeat、Poll 和 Retry 分别使用 `ANIVAG_MQ_*` 配置；旧的
-`ANIVAG_WORKER_*` 名称暂时作为兼容回退。Index Sync 的重试间隔已独立为
-`ANIVAG_INDEX_SYNC_RETRY_BASE_SECONDS` / `ANIVAG_INDEX_SYNC_RETRY_MAX_SECONDS`，不再
-与 Queue delivery retry 共用配置。
+`ANIVAG_WORKER_*` 名称暂时作为兼容回退。冻结 Index Sync 的配置不再由正式 Settings 暴露。
 
 V1 Job 与 V2 Task SSE 都忽略纯心跳变化，并在发送终态快照后关闭。快照中的
 `canRetry` / `canReparse` / `canDelete` 只代表该次读取时的精确租约门禁；终态后租约变化
@@ -119,7 +128,7 @@ V1 Job 与 V2 Task SSE 都忽略纯心跳变化，并在发送终态快照后关
 - `production`：拒绝上述非正式环境后缀；
 - SQLite 只允许用于隔离测试。
 
-Qdrant Collection 使用相同的物理隔离规则：测试以 `_test` 结尾，开发以 `_dev` 或
+Elasticsearch 索引使用相同的物理隔离规则：测试以 `_test` 结尾，开发以 `_dev` 或
 `_development` 结尾，正式环境拒绝这两类后缀。
 
 创建开发库后初始化表结构：
@@ -133,8 +142,8 @@ CREATE DATABASE anivag_development
 ```bash
 export ANIVAG_ENVIRONMENT=development
 export ANIVAG_DATABASE_URL='mysql+pymysql://anivag:password@127.0.0.1:3306/anivag_development?charset=utf8mb4'
-export ANIVAG_QDRANT_URL='http://127.0.0.1:6333'
-export ANIVAG_QDRANT_COLLECTION='anivag_video_chunks_development'
+export ANIVAG_ELASTICSEARCH_URL='http://127.0.0.1:9200'
+export ANIVAG_ELASTICSEARCH_INDEX='anivag_video_chunks_development'
 export ANIVAG_TEXT_VECTOR_DIMENSIONS=1024
 export ANIVAG_VISION_VECTOR_DIMENSIONS=1024
 
@@ -148,11 +157,13 @@ uv run python -m server.cli init-db
 术语重构没有自动修改现有 MySQL；旧开发库必须先受控重命名表、列、外键和约束并核对
 原有 24 行数据，再运行新代码。
 
-当前 Schema 包含六个视频领域模型：`Series`、`Video`、
+历史 Schema 保留六个视频领域模型：`Series`、`Video`、
 `VideoChunk`、`VideoChunkInfo`、`ContextSnapshot`、
 `VideoChunkEmbedding`；另有 `UploadSession/UploadSegment`、
 `SeriesParseJob/VideoChunkCheckpoint` 和 `IndexSyncIntent`，没有 `Episode` 表。所有
-MySQL 表使用 InnoDB。
+MySQL 表使用 InnoDB。正式 V2 状态由 VideoParseTask、ChunkParseTask、IntervalParseTask
+及对应成果表承载；Prefix 的 lease/cursor 保存在 VideoParseTask.detail，
+索引缓存与 receipt 保存在 Chunk 成果 detail。
 
 ## Upload-to-Search API 与进程内 Consumer
 
@@ -167,7 +178,7 @@ uv run python -m server.api
 ```
 
 Server 默认监听 `127.0.0.1:9621`，OpenAPI 位于 `/docs`。HTTP API 写入 MySQL 中的事实
-和任务，进程内 ParseJobConsumer 从 MySQL Claim；任务的持久性来自数据库中的 Job、
+和任务，进程内 V2 Consumer 从 MySQL Claim；任务的持久性来自数据库中的 Task、
 Lease 和 Fencing，不依赖进程内内存队列。
 `GET /healthz` 会在 `components.parseConsumer.status` 返回 `running`、`stopped` 或
 `failed`；只有 Consumer 正常运行时顶层状态才是 `ok`，否则为 `degraded`。本地启动脚本
@@ -187,9 +198,9 @@ uv run python -m tests.manual.server_mq_once --once
 客户端指定的序号。`uploads/create` 的两个旧序号参数仅保留兼容接收，现已可省略。
 幂等重放返回原序号；已分配序号不复用，既有视频不重新编号。
 
-ParseJobConsumer 按固定上传序号领取任务，更早的未过期上传、未成功解析的视频（含重试等待和
-失败）会阻塞后续任务；传输完成先后不会改变 Parse 顺序。已过期且未生成 Video 的
-上传不再占用解析队列。这一门禁负责视频的执行顺序，跨视频 Context 传递仍未实现。
+V2 DB Queue 按到期时间和持久任务状态扫描并领取，每次执行受 Lease/Fencing 保护。
+同系列跨集 Prefix 根据 `episode_order` 和已提交 frontier 推进；上传序号保留为业务顺序，
+调度不使用旧 V1 的整集失败阻塞规则。
 
 主要接口：
 
@@ -206,9 +217,9 @@ POST /api/uploads/complete?uploadSessionId={uploadSessionId}
 POST /api/uploads/delete?uploadSessionId={uploadSessionId}&workspaceId={workspaceId}
 POST /api/uploads/retry-parse?uploadSessionId={uploadSessionId}&workspaceId={workspaceId}&expectedJobVersion={version}
 POST /api/uploads/reparse?uploadSessionId={uploadSessionId}&workspaceId={workspaceId}&expectedJobVersion={version}
-GET  /api/jobs/list?workspaceId=local-default
-GET  /api/jobs/get?jobId={jobId}
-GET  /api/jobs/events?jobId={jobId}             text/event-stream
+GET  /api/jobs/video-parse/list?workspaceId=local-default
+GET  /api/jobs/video-parse/get?videoParseTaskId={taskId}&workspaceId={workspaceId}
+GET  /api/jobs/video-parse/events?videoParseTaskId={taskId}&workspaceId={workspaceId}  text/event-stream
 GET  /api/videos/content?videoId={videoId}      支持 Range
 POST /api/search
 POST /api/agent/conversations/create
@@ -219,33 +230,25 @@ POST /api/agent/messages/send?conversationId={conversationId}
 GET  /api/agent/messages/events?conversationId={conversationId}
 ```
 
-`UploadSession` 是用户任务的聚合根；`Video`、一个或多个 Pipeline 版本的
-`SeriesParseJob`、Checkpoint 和 `VideoChunk` 都是同一任务产生的内部记录。上传面板
-可删除未完成任务，解析任务页可用同一个 `uploadSessionId` 删除等待解析、解析失败或
-已完成的整项任务，不另设 Job 删除接口。
+`UploadSession` 是上传任务的聚合根；`Video`、V2 VideoParseTask、Chunk/Interval 成果
+以及保留的历史 V1 记录都是关联数据。上传面板和解析任务页使用同一个
+`uploadSessionId` 删除等待解析、解析失败或已完成的整项任务。
 
-解析失败后的 `retry-parse` 从现有 Checkpoint 继续；`reparse` 则仅允许已完成上传的
-终态主任务，清空该 Job 的 Checkpoint 并从整集开头重跑。二者都复用原 Job 并以
-`expectedJobVersion` 防止重复提交，attempt 和模型用量历史不会清零。已有成功结果在
-新解析完成 MySQL 导入前保持可检索，旧媒体与向量不会在重跑前被删除。
+V2 `retry-parse` 复用失败的当前任务，从已提交成果和失败阶段恢复；`reparse` 创建新的
+Task 和内容版本。请求仍使用 `expectedJobVersion` 这个参数名，V2 下它承载当前 Task 的
+`version`，在事务内防止重复或过期操作。检索只选择当前最新、未删除且 `COMPLETE` 的
+Task；新版本重解析期间不会静默回退到旧 Task。
 
-删除分两阶段执行。第一个 MySQL 事务锁定 UploadSession 及其 Video 的全部 ParseJob，
-阻止新的分片和 Consumer claim，并写入 `DELETION_PENDING` 墓碑；随后幂等清理上传暂存、
-所有 Job 目录、Video 媒体目录和 Qdrant point；第二个事务删除旧解析模型调用/用量、Job、
-Checkpoint、VideoChunk/Info/Embedding/Context/IndexIntent 和 Video。成功后保留
-`EXPIRED` UploadSession 及原序号/幂等键，以拦截迟到请求和保证重复 DELETE 返回同一
-结果。进程在中途退出时，API 启动会扫描持久删除标记继续清理。重新上传须使用新幂等键。
-`COMPLETING` 或存在 `RUNNING` ParseJob 时返回 409，等当前受租约保护的写入结束后再删。
-删除与 IndexSync 对同一环境和 Qdrant Collection 使用跨进程互斥锁；所有索引同步、巡检
-和重建查询也会排除 `DELETION_PENDING` 对应的视频。因此即使进程在删完 point、提交
-最终 MySQL 清理前退出，旧 UPSERT Intent 也不会把待删 point 写回来。
+删除分两阶段执行。第一个 MySQL 事务锁定 UploadSession 和关联任务，校验正在执行的
+Lease，将 UploadSession 标记为 `EXPIRED`，以 `last_error_code=DELETION_PENDING` 保存墓碑，
+阻止新的写入和 claim。先清理上传暂存，再按索引事实删除 V2
+ES Document，使用 `refresh="wait_for"` 并核验文档不可见，再清理媒体目录。
+ES 删除失败、删除验证失败或有文档待删但未配置 ES 时，保留墓碑和数据库记录，供重试恢复。
+第二个事务清理 Video、V2 任务/成果及历史 V1 Chunk/Checkpoint/IndexIntent 等关联记录。
+数据库待删 Chunk 与 ES 待删 Document 各自保留用途，不再向 Qdrant 发出请求。
+成功后保留 `EXPIRED` UploadSession 及原序号/幂等键；重复 `POST /api/uploads/delete` 返回同一结果。
+API 启动扫描持久墓碑继续清理，重新上传须使用新幂等键。
 
-解析主任务最终 `FAILED` 后，可按同一个 `uploadSessionId` 手动重试。请求必须携带当前
-`expectedJobVersion`；服务端按 UploadSession → ParseJob 的锁顺序校验并只把
-`UploadSession.job_id` 指向的主 Job 重新排队。重试保留 attempt 历史、Checkpoint、阶段、
-进度、用量记录和工作目录；若旧额度已用尽，只把 `maxAttempts` 扩展一个名额，Consumer
-实际领取时才增加 `attemptCount`。版本不匹配、删除中或任务已不再 FAILED 均返回 409，
-因此并发点击和响应丢失后的同版本重放不会多投递一次解析尝试。
 
 Agent 对话中的既有回答和证据快照属于聊天历史，不在任务级删除范围内；删除后不能再用
 其中的 VideoChunk ID 加载实时媒体证据。
@@ -262,12 +265,13 @@ Agent 对话中的既有回答和证据快照属于聊天历史，不在任务�
 started / evidence / delta / completed / failed；`messages/events` 单独恢复数据库消息快照。
 
 `Complete` 会在校验所有分片后流式合并、计算整文件 SHA-256、发布 Original Video、探测
-时长，并在同一个 MySQL 事务中创建 `Video + SeriesParseJob`。重复请求复用相同结果。
+时长，并在同一个 MySQL 事务中创建 `Video + VideoParseTask`。重复请求复用相同结果。
 Artifact URI 形如 `artifact://development/...`，test/development/production 使用独立目录；
 Server 内的 API/Consumer 依赖同一个 `ArtifactStore` 边界，当前 M1 adapter 是
 `LocalArtifactStore`。
 
-ParseJobConsumer 领取任务后，由 `VideoProcessingService` 加载 Job 和已提交恢复状态，再调用
+以下 V1 Pipeline、Checkpoint 和导入说明仅描述保留的历史实现，正式 Server 不装配它们。
+旧 ParseJobConsumer 领取任务后，由 `VideoProcessingService` 加载 Job 和已提交恢复状态，再调用
 Engine 的显式 Parse Pipeline：
 
 ```text
@@ -312,7 +316,7 @@ test / production 使用各自目录。`ANIVAG_LOG_DIRECTORY` 可覆盖日志根
 `ANIVAG_LOG_MAX_BYTES` 默认 10485760（10 MB），`ANIVAG_LOG_BACKUP_COUNT` 默认 5。
 文件满后轮转为 `api.log.1` 到 `api.log.5`，`.1` 为最新历史文件。
 通过 `./start.sh` 启动时，`outputs/local-services/api.log`、`web.log`、
-`mysql.log` 和 `qdrant.log` 另存进程输出，包含启动信息；这组脚本输出文件不轮转。
+`mysql.log` 保存脚本启动的原生数据库输出，包含启动信息；这组脚本输出文件不轮转。
 
 Server 业务日志包含时间、级别、模块和 `request_id`。HTTP 请求记录 method、
 path、status 与响应头返回前的 `duration_ms`；上传业务日志记录 `upload_session_id`、
@@ -388,39 +392,10 @@ uv run python -m server.cli backfill-keyframes \
 `UPSERT`；向量不完整或新事实要求清除旧索引时为 `DELETE`。导入不直接访问 Qdrant，
 因此 Qdrant 故障不会回滚已经提交的业务事实。
 
-## 索引同步与恢复
+## V2 索引与恢复
 
-启动本地 Qdrant 后消费当前到期的 Intent：
-
-```bash
-docker compose -f deploy/qdrant/compose.yaml up -d
-uv run python -m server.cli sync-index --limit 100
-```
-
-正式 point ID 直接使用稳定的 `videoChunkId` UUID；Collection 只包含 `text`、
-`vision` 两个 named vector，payload 只包含 `seriesId`、`videoId`、
-`videoChunkId`、`sourceRevision`、`isFallback`。相同意图重复执行是覆盖写，不会增加
-point。两个向量维度是启动时明确给定的 Collection Schema；任意首条异常向量都不能
-反向决定或污染正式 Collection 的维度。
-
-写入失败时 Intent 进入 `RETRY_WAIT`，保存错误、尝试次数和指数退避后的下次执行时间；
-再次运行 `sync-index` 会继续消费已到期任务。校准命令检查每个当前 revision，发现缺失、
-过期或应删除但仍存在的 point 后立即走同一幂等路径修复：
-
-```bash
-uv run python -m server.cli reconcile-index
-```
-
-如果 Collection 被清空或丢失，使用全量重放恢复。该命令不会主动删除 Collection，
-只以 MySQL `VideoChunkEmbedding` 中的当前向量事实为准重放全部期望状态：
-
-```bash
-uv run python -m server.cli rebuild-index
-```
-
-只有一个 Series 下的全部 Video 都解析成功且产生 VideoChunk，并且所有 VideoChunk 都
-具备 text/vision 向量、最新 UPSERT Intent 均已确认同步，Series 才进入 `READY`；其他
-情况保持 `INDEXING`。
+索引写入由 V2 Worker 推进。`sync-index`、`reconcile-index` 以及 V1 `rebuild-index`
+入口已退役；历史 IndexSyncIntent 表保留用于兼容旧数据，正式流程不消费它。
 
 ### ES 初始化与 V2 接入进度
 
@@ -433,10 +408,10 @@ ES 写入与就绪检查成功后才进入 `COMPLETE`；索引失败保留成果
 uv run python -m server.cli init-es-index --help
 ```
 
-初始化要求显式配置隔离环境的 ES URL、索引名及向量维度。设置
-`ANIVAG_PARSE_EXECUTION_MODE=v2` 后，上传只建立带接纳标记的 V2 任务，DB Queue
+初始化要求显式配置隔离环境的 ES URL、索引名及向量维度。正式模式为
+`ANIVAG_PARSE_EXECUTION_MODE=v2`，上传只建立带接纳标记的 V2 任务，DB Queue
 Consumer 会执行 Prepare、Chunk Understanding、Interval Refine、逐 Chunk 索引放行、
-ES 写入与恢复扫描。V2 为默认模式，缺少 ES 配置时 Server 会拒绝启动；旧链须显式选择 `v1`。
+ES 写入与恢复扫描。缺少 ES 配置或选择 `v1` 时 Server 会拒绝启动。
 `sync-es-index`、`repair-es-published`、`cleanup-es-deleted` 和
 `search-es-published` 已随独立索引发布实现移除。
 
@@ -449,23 +424,15 @@ ES 写入与恢复扫描。V2 为默认模式，缺少 ES 配置时 Server 会�
 迁移不会由应用启动自动执行；新库直接使用当前 ORM 建表。
 
 ES mapping 合同升级为 `anivag-video-chunk-es-4`，旧物理索引无法通过合同检查，
-需另行重建。当前初始化命令不执行数据迁移。`sync-index` 与 `reconcile-index` 仍是
-V1/Qdrant 专用命令；`search` 和 `rebuild-index` 接受 `--execution-mode v1|v2`。V2
-`rebuild-index` 必须指定当前 `--video-parse-task-id`，只重置该任务的索引阶段，不直接创建
-ES/Qdrant 客户端。API/Chat 在 V2 模式使用 ES 三路候选和同版本 MySQL 回源；Web 已接入
-V2 Task 列表、单任务事件及 retry/reparse/delete 门禁。
+需另行重建。当前初始化命令不执行数据迁移。`search` 和 `rebuild-index` 的
+`--execution-mode` 只接受 `v2`。`rebuild-index` 必须指定当前 `--video-parse-task-id`，
+只重置该任务的索引阶段，再由 Worker 从已提交成果恢复写入，不直接创建外部索引客户端。
+API/Chat 使用 ES 三路候选和同版本 MySQL 回源；Web 已接入 V2 Task 列表、单任务事件及
+retry/reparse/delete 门禁。
 
 ## 正式检索闭环
 
-Composition Root 按执行模式只装配一个正式检索 Service。V1 `search` 只接受完整、已进入
-`READY` 的 Series Scope。每个 named vector 都把
-`seriesId` 的 Qdrant filter 放在 TopK 查询内执行；Transcript-enabled 调用同时从当前
-READY + SYNCED + UPSERT Scope 读取原始 ASR，通过规范化连续短语匹配形成第三份排行榜。
-随后由 Engine 做确定性 Weighted RRF，并保留 Transcript/Text/Vision 各自的 rank 与
-score。最终 `videoChunkId[]` 通过一条联表 SQL 同时 Hydrate
-Evidence 和当前 Index Sync revision，若发现 Qdrant 孤儿 Point、旧 revision、跨 Series/
-Video 或 payload 契约不一致，会明确抛出一致性错误，不会静默丢弃。
-
+Composition Root 只装配 V2 正式检索 Service。
 V2 只选择每个 Video 最新、未删除且 `COMPLETE` 的 VideoParseTask，并用 ES lexical /
 semantic / vision 三路候选调用 Engine 的 versioned fusion。MySQL 回源逐项核对 task、
 content version、index generation、source/projection revision、retrieval contract 与两个
@@ -480,9 +447,11 @@ uv run python -m server.cli search \
   --top-k 5
 ```
 
-多 Series 检索时重复传入 `--series-id`。V1 CLI 与普通 `/api/search` 默认保持 Transcript
-关闭、Text/Vision `1:1` 权重；V2 使用配置的 Lexical/Text/Vision 默认权重。Query Agent
-按执行模式获得 Transcript 或 Lexical 工具合同，并为每次 Tool Call 自主提交三路连续权重。
+多 Series 检索时重复传入 `--series-id`。CLI 和 `/api/search` 使用配置的
+Lexical/Text/Vision 默认权重以及相同的模型源、Endpoint 与实际编码模型身份解析。
+CLI 的 `--channel-top-k`、`--rrf-k`、`--text-weight`、`--vision-weight`
+只覆盖显式指定的值，其余检索策略继承配置。Query Agent 获得 Lexical 工具合同，
+并为每次 Tool Call 自主提交三路连续权重。
 每路 Top 20、`rrfK=60`；`--exact` 只用于向量检索的确定性诊断。输出的每个 `hit` 包含一个
 `VideoChunkCandidate`（融合与三路 rank/score）和一个同 ID 的 `VideoChunkEvidence`（Series、
 集数、时间范围、媒体引用、解析正文，以及生成 Text 向量时使用的完整

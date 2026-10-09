@@ -8,7 +8,6 @@ from engine.parsev2.validation import (
     validate_member_scopes,
 )
 
-from ..listener import ChunkIntervalListener
 from ..prompts import build_refine_prompt
 from ..host import VideoParseRuntime
 from .input import RefineInput
@@ -21,10 +20,8 @@ class IntervalRefine:
         self,
         *,
         runtime: VideoParseRuntime,
-        listener: ChunkIntervalListener,
     ) -> None:
         self._runtime = runtime
-        self._listener = listener
 
     async def run(self, interval_parse_task_id: str) -> None:
         snapshot = await self._runtime.load_refine_input(interval_parse_task_id)
@@ -32,7 +29,6 @@ class IntervalRefine:
         result = self._validate_refinement(snapshot, proposal)
         await self._runtime.commit_interval_refinement(snapshot, result)
         await self._runtime.notify_interval_committed(snapshot)
-        await self._listener.run_prefix_context_if_ready(snapshot["inputs"].series_id)
 
     async def _generate_refinement(
         self,

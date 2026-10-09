@@ -786,7 +786,8 @@ Content-Type: application/json
 - `query` 必填，不能只包含空白。
 - `seriesIds` 至少一个；检索只在这个 Scope 内执行，不做全库召回。
 - 所有 Series 必须属于指定 workspace 且状态为 `READY`。
-- `topK` 默认 10，范围 1～100。
+- `topK` 未传或为 null 时使用当前 `agent_runtime.default_top_k`；下限为 1，
+  上限使用当前 `agent_runtime.maximum_top_k`。搜索与聊天共用这组 topK 配置。
 - Series 未 READY 或 Qdrant/MySQL 不一致时返回 `409`，不会静默缩小 Scope。
 
 这是基础 `/api/search` 的非空 Scope 契约；Agent `messages/send` 允许省略 / 空数组，

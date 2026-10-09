@@ -7,7 +7,6 @@ from engine.parsev2.planning import (
     validate_chunk_topology,
 )
 
-from .listener import ChunkIntervalListener
 from .host import VideoParseRuntime, VideoTaskStatus
 from .state import RunState
 
@@ -19,10 +18,8 @@ class VideoParsePrepare:
         self,
         *,
         runtime: VideoParseRuntime,
-        listener: ChunkIntervalListener,
     ) -> None:
         self._runtime = runtime
-        self._listener = listener
 
     async def run(self, state: RunState) -> RunState:
         task_id = state["video_parse_task_id"]

@@ -87,21 +87,23 @@ def test_selected_model_supports_image_and_sparse_without_another_model(tmp_path
     assert all(call.usage.input_tokens == 3 and call.usage.output_tokens == 0 for call in calls)
 
 
-@pytest.mark.parametrize("model,supports", [("doubao-embedding-vision-250615", False),
-                                           ("doubao-embedding-vision-251215", True),
-                                           ("unknown-model", False)])
-def test_video_fps_is_sent_only_when_the_model_protocol_supports_it(tmp_path, model, supports):
+@pytest.mark.parametrize("model", [
+    "doubao-embedding-vision-250615",
+    "doubao-embedding-vision-251215",
+    "ep-user-configured",
+    "custom-user-model",
+])
+@pytest.mark.parametrize("fps", [0.5, 2.0])
+def test_video_embedding_sends_configured_model_and_fps(tmp_path, model, fps):
     provider = FakeMultimodalEmbeddings()
-    embedder = DoubaoMultimodalEmbedder(model, fps=2.0,
+    embedder = DoubaoMultimodalEmbedder(model, fps=fps,
                                       client=SimpleNamespace(multimodal_embeddings=provider))
     video = tmp_path / "prepared.mp4"
     video.write_bytes(b"prepared-video")
     embedder.embed_video(video)
-    assert embedder.supports_video_fps is supports
-    video_url = provider.calls[0]["input"][0]["video_url"]
-    assert ("fps" in video_url) is supports
-    if supports:
-        assert video_url["fps"] == 2.0
+    request = provider.calls[0]
+    assert request["model"] == model
+    assert request["input"][0]["video_url"]["fps"] == fps
 
 
 def test_provider_response_model_is_preserved_without_requested_model_substitution():

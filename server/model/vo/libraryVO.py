@@ -6,7 +6,7 @@ from pydantic import Field
 
 from ..dto.libraryDTO import Character
 from ..video import VideoIndexStatus
-from ..job import ParseJobStatus
+from ..job import ParseJobStatus, VideoParseTaskStatus
 from ...schema import ContractModel
 from .commonVO import Failure, ImageAsset, UnixTimeMs
 from .uploadVO import UploadSessionView
@@ -29,7 +29,7 @@ class VideoSummary(ContractModel):
     duration_seconds: int = Field(gt=0)
     upload_status: Literal["COMPLETED"]
     upload_progress: Literal[100]
-    parse_status: ParseJobStatus
+    parse_status: ParseJobStatus | VideoParseTaskStatus
     parse_progress: int | None = Field(ge=0, le=100)
     index_status: VideoIndexStatus
     playback_status: Literal["PREPARING", "READY", "FAILED", "MISSING"]

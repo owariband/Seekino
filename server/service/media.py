@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 from ..config.media import ImageUploadConfig
 from ..constants.media import SERIES_IMAGE_ID_PREFIX
-from ..identity import canonical_uuid
+from ..utils.validation import canonical_uuid
 from ..model.dto.libraryDTO import VideoSummaryState
 from ..model.dto.mediaDTO import (
     ImageReference,
@@ -19,6 +19,7 @@ from ..model.dto.mediaDTO import (
 )
 from ..repository.library import SeriesNotFoundError
 from ..repository.video import VideoRepository
+from ..repository.video_parse import VideoParseConflictError, VideoParseRepository
 from ..schema import VideoChunkEvidence
 from ..storage.artifact import ArtifactStore
 from ..utils.images import prepare_series_image
@@ -47,12 +48,14 @@ class MediaService:
         artifact_store: ArtifactStore,
         video_repository: VideoRepository | None = None,
         *,
+        video_parse_repository: VideoParseRepository | None = None,
         probe_playback: Callable[[Path], bool] | None = None,
         config: ImageUploadConfig | None = None,
     ) -> None:
         self._library = library
         self._artifact_store = artifact_store
         self._video_repository = video_repository
+        self._video_parse_repository = video_parse_repository
         self._probe_playback = probe_playback or _cached_browser_playable
         self.image_upload_config = config or ImageUploadConfig()
 
@@ -180,7 +183,7 @@ class MediaService:
                 projected
                 or refresh
                 or evidence.keyframe_uris
-                or self._video_repository is None
+                or (self._video_repository is None and self._video_parse_repository is None)
             ):
                 return tuple(projected)
 
@@ -193,7 +196,7 @@ class MediaService:
                     evidence.video_chunk_id,
                     workspace_id=workspace_id,
                 )
-            except (LookupError, ValueError):
+            except (LookupError, ValueError, MediaNotReadyError):
                 return ()
             if (
                 current.video_id != evidence.video_id
@@ -250,6 +253,13 @@ class MediaService:
         return VideoMedia(path, media_type, size)
 
     def get_chunk_evidence(self, video_chunk_id: str, *, workspace_id: str) -> VideoChunkEvidence:
+        if self._video_parse_repository is not None:
+            try:
+                return self._video_parse_repository.get_chunk_evidence(
+                    video_chunk_id, workspace_id=workspace_id,
+                )
+            except VideoParseConflictError as error:
+                raise MediaNotReadyError("片段的最新 V2 证据尚不可读取") from error
         if self._video_repository is None:
             raise MediaNotReadyError("片段证据读取尚未装配")
         chunk_id = canonical_uuid(video_chunk_id, "video_chunk_id")

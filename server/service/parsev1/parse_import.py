@@ -16,8 +16,7 @@ from engine.parsev1.retrieval import (
 )
 
 from ...constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
-from ...identity import (
-    canonical_uuid,
+from ...model.identifiers import (
     derive_context_snapshot_id,
     derive_series_id,
     derive_video_chunk_id,
@@ -30,6 +29,7 @@ from ...model.dto.parseDTO import (
 )
 from ...schema import VideoChunkKeyframeReference
 from ...utils.time import now_unix_time_ms, require_unix_time_ms
+from ...utils.validation import canonical_uuid
 
 
 def prepare_completed_video_parse_import(
@@ -160,7 +160,16 @@ def prepare_video_parse_import(
     important_extra_data: dict[str, Any] | None = None,
     character_bible: list[dict[str, Any]] | None = None,
     embedding_cache_directory: str | Path | None = None,
+    series_bible_file: str | Path | None = None,
 ) -> PreparedVideoParseImport:
+    if series_bible_file is not None:
+        if important_extra_data is not None:
+            raise ValueError("provide either series_bible_file or important_extra_data")
+        bible_path = Path(series_bible_file).expanduser().resolve(strict=True)
+        important_extra_data = {
+            "seriesBible": bible_path.read_text(encoding="utf-8"),
+            "sourceUri": bible_path.as_uri(),
+        }
     parse_path = Path(parse_result_path).expanduser().resolve(strict=True)
     canonical_directory = Path(canonical_chunk_directory).expanduser().resolve(
         strict=True

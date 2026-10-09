@@ -12,6 +12,13 @@ from engine.parsev1.schemas import VideoParseProvenance
 from engine.parsev1.retrieval import VideoChunkRetrievalDocument
 from sqlalchemy import event, func, inspect, select, update
 
+from server.model.identifiers import (
+    derive_context_snapshot_id,
+    derive_parse_job_id,
+    derive_series_id,
+    derive_video_chunk_id,
+    derive_video_id,
+)
 from server.model.index_sync import IndexSyncIntentRecord
 from server.model.video import (
     ContextSnapshotRecord,
@@ -29,6 +36,7 @@ from server.repository.video import (
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.schema import VideoChunkKeyframeReference
 from server.service.parsev1.parse_import import _load_embedding, prepare_video_parse_import
+from server.utils.validation import canonical_uuid
 
 
 def _table_counts(engine) -> dict[str, int]:
@@ -51,6 +59,22 @@ def _table_counts(engine) -> dict[str, int]:
             ).scalar_one()
             for name, model in table_by_name.items()
         }
+
+
+def test_file_import_reads_series_bible_without_changing_video_identity(
+    prepared_import, tmp_path,
+):
+    bible = tmp_path / "series-bible.md"
+    bible.write_text("系列背景与人物说明", encoding="utf-8")
+    prepared = prepare_video_parse_import(
+        tmp_path / "pipeline.parse.json", tmp_path / "canonical",
+        series_name="Test Series", episode_order=7, pipeline_version="test-pipeline-v1",
+        series_bible_file=bible,
+    )
+    assert prepared.important_extra_data == {
+        "seriesBible": "系列背景与人物说明", "sourceUri": bible.resolve().as_uri(),
+    }
+    assert prepared.video_id == prepared_import.video_id
 
 
 def test_import_is_idempotent_and_maps_video_compact(
@@ -275,6 +299,52 @@ def test_video_chunk_id_keeps_the_published_uuid_seed(prepared_import) -> None:
     )
 
     assert prepared_import.chunks[0].video_chunk_id == str(expected)
+
+
+@pytest.mark.parametrize(("derive_identifier", "arguments", "expected"), [
+    (
+        derive_series_id,
+        (" workspace ", " Straße "),
+        "72826211-4e85-5fed-b026-94e252ca6c54",
+    ),
+    (
+        derive_video_id,
+        ("00000000-0000-0000-0000-000000000001", "a" * 64),
+        "aef9baea-7840-5131-a624-f4c359ab184e",
+    ),
+    (
+        derive_video_chunk_id,
+        ("00000000-0000-0000-0000-000000000001", 0),
+        "25e3d328-e108-51ec-9620-f99a7ecdcfb8",
+    ),
+    (
+        derive_context_snapshot_id,
+        ("00000000-0000-0000-0000-000000000001", 0),
+        "d3cbb50e-6cc4-5e1b-8647-1560d172f628",
+    ),
+    (
+        derive_parse_job_id,
+        ("00000000-0000-0000-0000-000000000001", " v1 "),
+        "0dc48a79-cc04-588f-bd81-a03a10ad3fc4",
+    ),
+])
+def test_entity_identifiers_keep_published_values(derive_identifier, arguments, expected) -> None:
+    assert derive_identifier(*arguments) == expected
+
+
+@pytest.mark.parametrize("value", [
+    "ABCDEF01-2345-6789-ABCD-EF0123456789",
+    "ABCDEF0123456789ABCDEF0123456789",
+    "{ABCDEF01-2345-6789-ABCD-EF0123456789}",
+])
+def test_canonical_uuid_preserves_accepted_forms(value: str) -> None:
+    assert canonical_uuid(value, "video_id") == "abcdef01-2345-6789-abcd-ef0123456789"
+
+
+@pytest.mark.parametrize("value", ["not-a-uuid", None, 1])
+def test_canonical_uuid_preserves_field_error(value) -> None:
+    with pytest.raises(ValueError, match="^video_id must be a UUID$"):
+        canonical_uuid(value, "video_id")
 
 
 @pytest.mark.parametrize(("declared_duration", "source_duration", "accepted"), [

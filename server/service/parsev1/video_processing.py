@@ -25,7 +25,7 @@ from engine.parsev1.schemas import AnalysisWindow
 
 from ...config.video_processing import VideoProcessingConfig
 from ...config.parse_profile import ParseConfig
-from ...identity import derive_video_chunk_id
+from ...model.identifiers import derive_video_chunk_id
 from ...model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
 from ...model.job import ParseJobStage, VideoChunkCheckpointStage
 from ...mq.contracts import ParseJobLeaseLostError

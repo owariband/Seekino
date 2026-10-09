@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -77,10 +76,7 @@ class DoubaoMultimodalEmbedder:
                     input=[
                         {
                             "type": "video_url",
-                            "video_url": {
-                                "url": video_url,
-                                **({"fps": self.fps} if self.supports_video_fps else {}),
-                            },
+                            "video_url": {"url": video_url, "fps": self.fps},
                         }
                     ],
                     dimensions=self.output_dimensionality,
@@ -90,13 +86,6 @@ class DoubaoMultimodalEmbedder:
                 unregister_cancel()
             call.capture_response(response)
             return self._to_result(response, modality="video")
-
-    @property
-    def supports_video_fps(self) -> bool:
-        """Only documented model revisions advertise configurable video sampling."""
-
-        match = re.fullmatch(r"doubao-embedding-vision-(\d{6})", self.model_name)
-        return bool(match and int(match.group(1)) >= 251215)
 
     def embed_image(self, image_path: str | Path) -> EmbeddingResult:
         """Embed one prepared still image; GIF and ordered-frame timing are unsupported."""

@@ -10,7 +10,7 @@ from engine.rag.retrieval.contracts import (
 from engine.rag.retrieval.fusion import VersionedFusedVideoChunkRanking
 from engine.rag.retrieval.rerank import RerankItem, RerankRequest
 from gateway.multimodal import TextInput
-from gateway.rerank import StructuredTextReranker
+from server.service.retrieval_rerank import StructuredTextReranker
 from gateway.usage import capture_model_usage, track_model_call
 
 

@@ -32,7 +32,7 @@ from server.repository.video_parse import (
     VideoParseTaskNotFoundError,
     invalidate_series_prefixes_from,
 )
-from server.repository.video import SeriesNotReadyError
+from server.repository.video import SeriesNotReadyError, VideoChunkNotFoundError
 
 
 NOW = datetime(2026, 9, 29, 2, 0, tzinfo=UTC)
@@ -1938,6 +1938,11 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         "contentVersion": 1,
         "indexGeneration": 2,
     }
+    assert repo.get_chunk_evidence(chunk_id, workspace_id="mine") == evidence[0]
+    with pytest.raises(VideoChunkNotFoundError):
+        repo.get_chunk_evidence(chunk_id, workspace_id="other")
+    with pytest.raises(VideoChunkNotFoundError):
+        repo.get_chunk_evidence(str(uuid4()), workspace_id="mine")
 
     empty_series_id = str(uuid4())
     with factory.begin() as session:
@@ -1984,6 +1989,20 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
     with pytest.raises(VideoParseConflictError, match="latest V2 task"):
         repo.hydrate_retrieval_evidence([(chunk_id, identity)])
+    with pytest.raises(VideoParseConflictError, match="not COMPLETE"):
+        repo.get_chunk_evidence(chunk_id, workspace_id="mine")
+
+    with factory.begin() as session:
+        newer = session.scalar(select(VideoParseTaskRecord).where(
+            VideoParseTaskRecord.video_id == video.video_id,
+            VideoParseTaskRecord.version == 2,
+        ))
+        newer.is_deleted = True
+    assert repo.get_chunk_evidence(chunk_id, workspace_id="mine") == evidence[0]
+    with factory.begin() as session:
+        session.get(VideoParseTaskRecord, task_id).is_deleted = True
+    with pytest.raises(VideoChunkNotFoundError):
+        repo.get_chunk_evidence(chunk_id, workspace_id="mine")
 
 
 @pytest.mark.parametrize("weights", [None, {"17": -1.0}, {}, {"17": 0.5}])
@@ -2045,6 +2064,85 @@ def test_v2_retrieval_requires_a_current_strict_receipt(repository, field, value
         repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
     with pytest.raises(VideoParseConflictError, match="receipt"):
         repo.hydrate_retrieval_candidates([(chunk_id, identity)])
+    with pytest.raises(VideoParseConflictError, match="receipt"):
+        repo.get_chunk_evidence(chunk_id, workspace_id="mine")
+
+
+@pytest.mark.parametrize("issue", ["child_pending", "content_missing", "receipt_missing"])
+def test_v2_media_evidence_requires_complete_current_content(repository, issue):
+    factory, repo, _video, _identity, chunk_id = _seed_retrieval_chunk(repository)
+    with factory.begin() as session:
+        content = session.scalar(select(ChunkParseContentRecord))
+        if issue == "child_pending":
+            session.get(ChunkParseTaskRecord, content.chunk_parse_task_id).status = "QUEUED"
+        elif issue == "content_missing":
+            session.delete(content)
+        else:
+            content.detail = {}
+    with pytest.raises(VideoParseConflictError, match="content|receipt"):
+        repo.get_chunk_evidence(chunk_id, workspace_id="mine")
+
+
+def test_v2_chunk_media_api_reads_current_receipt_and_registered_images(tmp_path):
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from server.api.errors import register_exception_handlers
+    from server.database import create_database_engine, create_schema
+    from server.router.media import router
+    from server.service.media import MediaService
+    from server.storage.artifact import LocalArtifactStore
+
+    engine = create_database_engine(f"sqlite+pysqlite:///{tmp_path / 'media.sqlite'}", environment="test")
+    create_schema(engine)
+    factory, repo, _video, identity, chunk_id = _seed_retrieval_chunk((engine, None))
+    store = LocalArtifactStore(tmp_path / "media", environment="test")
+    frame = store.base_directory / "frame.png"
+    frame.write_bytes(b"\x89PNG\r\n\x1a\nregistered-v2-image")
+    with factory.begin() as session:
+        session.get(VideoChunkRecord, chunk_id).keyframe_uris = [{
+            "uri": store.uri_for_path(frame), "at_seconds": 1000,
+        }]
+    media = MediaService(SimpleNamespace(), store, video_parse_repository=repo)
+    app = FastAPI()
+    app.state.services = SimpleNamespace(media=media)
+    app.include_router(router)
+    register_exception_handlers(app)
+    client = TestClient(app)
+    params = {"workspaceId": "mine", "videoChunkId": chunk_id}
+
+    response = client.get("/api/video-chunks/get", params=params)
+    assert response.status_code == 200
+    evidence = response.json()
+    assert evidence["seriesStatus"] == "READY"
+    assert evidence["pipelineVersion"] == "video-parse-v2"
+    assert media.get_chunk_evidence(chunk_id, workspace_id="mine").parse_provenance == {
+        "parseTaskId": identity.parse_task_id, "contentVersion": 1, "indexGeneration": 2,
+    }
+    assert (evidence["startSeconds"], evidence["endSeconds"]) == (0, 10_000)
+    assert evidence["keyframes"][0]["atSeconds"] == 1000
+    image_url = evidence["keyframes"][0]["url"]
+    image_response = client.get(image_url)
+    assert image_response.status_code == 200
+    assert image_response.content == frame.read_bytes()
+    assert client.get(image_url.replace("workspaceId=mine", "workspaceId=other")).status_code == 404
+    assert client.get("/api/video-chunks/get", params={**params, "workspaceId": "other"}).status_code == 404
+
+    with factory.begin() as session:
+        content = session.scalar(select(ChunkParseContentRecord))
+        original_detail = content.detail
+        content.detail = {}
+    response = client.get("/api/video-chunks/get", params=params)
+    assert response.status_code == 409
+    assert response.json()["code"] == "MEDIA_NOT_READY"
+    assert client.get(image_url).status_code == 409
+    with factory.begin() as session:
+        session.scalar(select(ChunkParseContentRecord)).detail = original_detail
+        session.get(VideoParseTaskRecord, identity.parse_task_id).status = "PARSING"
+    response = client.get("/api/video-chunks/get", params=params)
+    assert response.status_code == 409
+    assert response.json()["code"] == "MEDIA_NOT_READY"
+    assert client.get(image_url).status_code == 409
 
 
 @pytest.mark.parametrize("field", ["source", "model", "dimensions", "video_fps", "max_height"])
@@ -2078,6 +2176,66 @@ def test_v2_scope_rejects_mixed_index_configuration_but_allows_understanding_cha
         task.parse_config = config
     with pytest.raises(VideoParseConflictError, match="different index contracts"):
         repo.resolve_retrieval_scope([video.series_id, other.series_id], workspace_id="mine")
+
+
+@pytest.mark.parametrize("first_model,first_encoder,other_model,other_encoder,compatible", [
+    pytest.param(
+        "ep-shared", "doubao-embedding-vision-250615",
+        "ep-shared", "doubao-embedding-vision-251215", False,
+        id="same-endpoint-different-encoders",
+    ),
+    pytest.param(
+        "ep-first", "doubao-embedding-vision-250615",
+        "ep-second", "doubao-embedding-vision-250615", True,
+        id="different-endpoints-same-encoder",
+    ),
+    pytest.param(
+        "doubao-embedding-vision-250615", None,
+        "ep-pinned", "doubao-embedding-vision-250615", True,
+        id="direct-model-and-pinned-endpoint",
+    ),
+    pytest.param(
+        "ep-shared", None,
+        "ep-shared", "doubao-embedding-vision-250615", False,
+        id="legacy-endpoint-and-pinned-encoder",
+    ),
+])
+def test_v2_scope_compares_fixed_encoder_identity_without_changing_request_model(
+    repository, first_model, first_encoder, other_model, other_encoder, compatible,
+):
+    factory, repo, video, identity, _chunk_id = _seed_retrieval_chunk(repository)
+    _factory, _repo, other, other_identity, _other_chunk = _seed_retrieval_chunk(repository)
+    with factory.begin() as session:
+        for task_id, model, encoder_model in (
+            (identity.parse_task_id, first_model, first_encoder),
+            (other_identity.parse_task_id, other_model, other_encoder),
+        ):
+            task = session.get(VideoParseTaskRecord, task_id)
+            config = dict(task.parse_config)
+            config["models"] = {
+                **config["models"],
+                "embedding": {
+                    **config["models"]["embedding"],
+                    "model": model,
+                    "encoder_model": encoder_model,
+                },
+            }
+            task.parse_config = config
+
+    if not compatible:
+        with pytest.raises(VideoParseConflictError, match="different index contracts"):
+            repo.resolve_retrieval_scope([video.series_id, other.series_id], workspace_id="mine")
+        return
+
+    scope = repo.resolve_retrieval_scope([video.series_id, other.series_id], workspace_id="mine")
+    assert set(scope.searched_video_ids) == {video.video_id, other.video_id}
+    assert scope.parse_tasks_by_video_id == {
+        video.video_id: identity.parse_task_id,
+        other.video_id: other_identity.parse_task_id,
+    }
+    assert scope.embedding_model == scope.parse_config.models.embedding.model
+    assert scope.embedding_model in {first_model, other_model}
+    assert scope.index_generation == 2
 
 
 @pytest.mark.parametrize("issue", [None, "missing", "gap", "generation", "receipt_version"])

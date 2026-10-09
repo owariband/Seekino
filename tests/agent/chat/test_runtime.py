@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
 from time import monotonic
@@ -20,8 +22,9 @@ from engine.rag.contracts import (
 from gateway.agent_model.errors import (
     ModelFailureReason, ModelInputTooLargeError, QueryModelIncompleteError,
 )
-from agent.chat import AgentModelInvocationError, AgentRuntime
+from agent.chat.common.errors import AgentModelInvocationError
 from agent.chat.common.state import RunInputs
+from agent.chat.video_search.runtime import AgentRuntime
 from agent.chat.video_search.errors import (
     VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase,
 )
@@ -30,6 +33,20 @@ from agent.chat.video_search.state import (
     RetrievalTraceEntry,
 )
 from agent.chat.video_search.tools import UpdateVideoItemArguments
+
+
+@pytest.mark.parametrize("statement", [
+    "from agent.chat.common.state import AnswerPhase",
+    "from server.repository.agent import AgentRepository",
+])
+def test_chat_primitives_and_repository_import_without_runtime(statement):
+    subprocess.run([sys.executable, "-B", "-c", statement + "\n" + """
+import sys
+assert 'agent.chat.video_search.runtime' not in sys.modules
+assert not any(name == 'langgraph' or name.startswith('langgraph.') for name in sys.modules)
+"""], check=True)
+
+
 def _inputs(name="conversation", *, workspace="workspace", series="series") -> RunInputs:
     return {
         "conversation_id": name, "assistant_message_id": f"{name}-answer",

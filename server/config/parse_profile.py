@@ -23,6 +23,7 @@ from gateway.config import (
     OpenAIModelSourceConfig,
     OpenAIVisionSourceConfig,
 )
+from gateway.model_sources import ModelReference, ModelReferenceType
 
 from ..schema import ContractModel
 from .media import ImageUploadConfig
@@ -90,6 +91,7 @@ class ParseFallbackConfig(ContractModel):
 class ParseEmbeddingConfig(ContractModel):
     source: str = Field(default="ark_default", min_length=1)
     model: str = Field(min_length=1)
+    encoder_model: str | None = Field(default=None, min_length=1)
     dimensions: int = Field(ge=1, le=2048)
     video_fps: float = Field(ge=0.2, le=5.0)
 
@@ -167,6 +169,7 @@ class ParseConfig(ContractModel):
                 embedding=VideoParseV2EmbeddingModelConfig(
                     source=self.embedding.source,
                     model=self.embedding.model,
+                    encoder_model=self.embedding.encoder_model,
                     dimensions=self.embedding.dimensions,
                     video_fps=self.embedding.video_fps,
                     request_timeout_seconds=self.execution.request_timeout_seconds,
@@ -211,9 +214,9 @@ class ParseConfig(ContractModel):
         gateway: GatewayConfig,
         upload: UploadServiceConfig,
         images: ImageUploadConfig,
-        embedding_model: str,
+        embedding_model: str | None,
         embedding_dimensions: int,
-        embedding_fps: float,
+        embedding_fps: float | None,
     ) -> "ParseConfig":
         parser = gateway.video_parser
         fallback = parser.fallback
@@ -275,17 +278,39 @@ class ParseConfig(ContractModel):
                 max_output_tokens=deepseek.max_output_tokens,
                 request_timeout_seconds=deepseek.request_timeout_seconds,
             ),
-            embedding=ParseEmbeddingConfig(
-                source=_embedding_source_name(gateway),
-                model=embedding_model,
+            embedding=resolve_embedding_config(
+                gateway,
+                model=embedding_model if embedding_model is not None else gateway.multimodal_embedding.model,
                 dimensions=embedding_dimensions,
-                video_fps=embedding_fps,
+                video_fps=embedding_fps if embedding_fps is not None else gateway.multimodal_embedding.fps,
             ),
             execution=ParseExecutionConfig(
                 request_timeout_seconds=runtime.request_timeout_seconds,
                 max_attempts=upload.max_job_attempts,
             ),
         )
+
+
+def resolve_embedding_config(
+    gateway: GatewayConfig, *, dimensions: int,
+    model: str | None = None, video_fps: float | None = None,
+) -> ParseEmbeddingConfig:
+    configured_model = (
+        model if model is not None
+        else os.getenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "").strip() or gateway.multimodal_embedding.model
+    )
+    configured_fps = video_fps
+    if configured_fps is None:
+        raw_fps = os.getenv("ANIVAG_VIDEO_EMBEDDING_FPS", "").strip()
+        configured_fps = float(raw_fps) if raw_fps else gateway.multimodal_embedding.fps
+    reference = ModelReference.resolve(
+        configured_model, default_encoder_model=gateway.multimodal_embedding.model,
+    )
+    return ParseEmbeddingConfig(
+        source=_embedding_source_name(gateway), model=reference.request_model,
+        encoder_model=reference.model if reference.type == ModelReferenceType.ENDPOINT else None,
+        dimensions=dimensions, video_fps=configured_fps,
+    )
 
 
 def _environment_bool(name: str, default: bool) -> bool:

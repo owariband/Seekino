@@ -323,6 +323,14 @@ def test_agent_skills_are_explicitly_work_agnostic() -> None:
     assert all("作品无关" in skill for skill in skills)
     assert all("不得写入或依赖任何具体动画" in skill for skill in skills)
     assert all("丰川祥子" not in skill for skill in skills)
+    for skill in (QUERY_SKILL_PROMPT, EVALUATOR_SKILL_PROMPT, CHAT_SKILL_PROMPT):
+        assert skill.startswith("媒体时间合同：")
+        assert "*_seconds / *Seconds" in skill
+        assert "整数毫秒" in skill
+        assert "保留原始毫秒值" in skill
+        assert "必须除以 1000" in skill
+        assert "必须拒绝把原始毫秒数直接标为秒" in skill
+        assert "start/end 是字符偏移" in skill
 
 
 def test_retrieve_tool_keeps_v1_transcript_and_v2_lexical_contracts_separate() -> None:

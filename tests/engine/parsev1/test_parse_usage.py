@@ -198,8 +198,8 @@ def test_runtime_single_chunk_calls_preserve_the_chunk_usage_scope(
                 model=self.model_name,
                 operation=schema_name,
             ):
-                if result_type is TranscriptAnalysis:
-                    return TranscriptAnalysis(transcript=[])
+                if schema_name == "candidate_transcript":
+                    return result_type.model_validate({"transcript": []})
                 return VideoTimeline(summary="summary", events=[])
 
     monkeypatch.setattr("engine.parsev1.runtime.ArkMultimodalModel", Model)

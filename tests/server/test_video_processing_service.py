@@ -18,7 +18,7 @@ from gateway.config import load_config
 from server.config.media import ImageUploadConfig
 from server.config.parse_profile import ParseConfig
 from server.config.video_processing import VideoProcessingConfig
-from server.identity import derive_video_chunk_id
+from server.model.identifiers import derive_video_chunk_id
 from server.model.dto.jobDTO import ParseJobLease
 from server.model.job import ParseJobStage, VideoChunkCheckpointStage
 from server.mq.contracts import ParseJobLeaseLostError

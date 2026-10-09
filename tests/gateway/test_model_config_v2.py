@@ -6,6 +6,7 @@ import yaml
 from pydantic import ValidationError
 
 from gateway.config import GatewayConfig, load_config, required_api_key_env_names
+from gateway.model_sources import ModelReference, ModelReferenceType
 
 ROOT = Path(__file__).resolve().parents[2]
 LEGACY = Path(__file__).parent / "fixtures/legacy-config.yaml"
@@ -143,3 +144,85 @@ def test_existing_agent_chat_alias_still_loads():
         GatewayConfig.model_validate(data).agent_model
         == load_config(LEGACY).agent_model
     )
+
+
+@pytest.mark.parametrize(
+    "request_model,encoder_model,reference_type,model",
+    [
+        ("doubao-embedding-vision-250615", None, ModelReferenceType.MODEL,
+         "doubao-embedding-vision-250615"),
+        ("doubao-embedding-vision-250615", "doubao-embedding-vision-250615",
+         ModelReferenceType.MODEL, "doubao-embedding-vision-250615"),
+        ("ep-configured-a", "doubao-embedding-vision-250615",
+         ModelReferenceType.ENDPOINT, "doubao-embedding-vision-250615"),
+        ("ep-configured-b", "doubao-embedding-vision-251215",
+         ModelReferenceType.ENDPOINT, "doubao-embedding-vision-251215"),
+    ],
+)
+def test_model_reference_preserves_request_route_and_declared_encoder_identity(
+    request_model, encoder_model, reference_type, model,
+):
+    reference = ModelReference.resolve(request_model, encoder_model=encoder_model)
+
+    assert reference.type is reference_type
+    assert ModelReferenceType.for_model(request_model) is reference_type
+    assert reference.request_model == request_model
+    assert reference.model == model
+
+
+@pytest.mark.parametrize(
+    "request_model,encoder_model",
+    [
+        ("ep-configured", None),
+        ("ep-configured", "ep-another-endpoint"),
+        ("doubao-embedding-vision-250615", "doubao-embedding-vision-251215"),
+    ],
+)
+def test_model_reference_rejects_unproven_or_conflicting_encoder_identity(
+    request_model, encoder_model,
+):
+    with pytest.raises(ValueError):
+        ModelReference.resolve(request_model, encoder_model=encoder_model)
+
+
+@pytest.mark.parametrize("request_model", ["", " ", "\t"])
+def test_blank_model_reference_route_is_rejected(request_model):
+    with pytest.raises(ValueError):
+        ModelReferenceType.for_model(request_model)
+    with pytest.raises(ValueError):
+        ModelReference.resolve(request_model)
+
+
+@pytest.mark.parametrize("encoder_model", ["", " ", "\t"])
+def test_endpoint_model_reference_requires_nonblank_encoder_identity(encoder_model):
+    with pytest.raises(ValueError):
+        ModelReference.resolve("ep-configured", encoder_model=encoder_model)
+
+
+@pytest.mark.parametrize(
+    "request_model,encoder_model,default_encoder_model,model",
+    [
+        ("ep-legacy", None, "doubao-embedding-vision-250615",
+         "doubao-embedding-vision-250615"),
+        ("ep-configured", "doubao-embedding-vision-250615",
+         "doubao-embedding-vision-251215", "doubao-embedding-vision-250615"),
+        ("custom-direct-model", None, "doubao-embedding-vision-251215",
+         "custom-direct-model"),
+    ],
+)
+def test_model_reference_default_preserves_explicit_and_direct_identity(
+    request_model, encoder_model, default_encoder_model, model,
+):
+    reference = ModelReference.resolve(
+        request_model, encoder_model=encoder_model,
+        default_encoder_model=default_encoder_model,
+    )
+
+    assert reference.type is ModelReferenceType.for_model(request_model)
+    assert reference.request_model == request_model
+    assert reference.model == model
+
+
+def test_endpoint_model_reference_rejects_endpoint_as_default_identity():
+    with pytest.raises(ValueError):
+        ModelReference.resolve("ep-legacy", default_encoder_model="ep-another-endpoint")

@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from agent.video_parse_v2 import ParseAgent
-from agent.video_parse_v2.listener import ChunkIntervalListener
 from agent.video_parse_v2.scheduler import ChunkScheduler
 from agent.video_parse_v2.understanding import ChunkUnderstandingWorkflow
 from agent.video_parse_v2.input import ParseInput
@@ -25,6 +24,7 @@ from agent.video_parse_v2.host import (
     VideoTaskStatus,
 )
 from engine.parsev2.schemas import VideoParseResult
+from engine.parsev2.observations import OCRResult
 from engine.parsev2.validation import (
     ChunkResultUpdate,
     IntervalRefinementProposal,
@@ -96,13 +96,15 @@ def _inputs(**switches: bool) -> ParseInput:
     })
 
 
-def _result(description: str = "爱音走进房间") -> VideoParseResult:
+def _result(
+    description: str = "爱音走进房间", *, offset_ms: int = 0
+) -> VideoParseResult:
     return VideoParseResult.model_validate({
         "persons": ["爱音"],
         "timeline": [{
             "event_type": "ACTION",
-            "start_seconds": 1000,
-            "end_seconds": 3000,
+            "start_seconds": offset_ms + 1000,
+            "end_seconds": offset_ms + 3000,
             "description": description,
             "participants": ["爱音"],
             "visible_persons": ["爱音"],
@@ -227,10 +229,19 @@ def test_scheduler_opens_next_batch_only_at_ninety_percent() -> None:
     assert "task-10" in [call.args[0] for call in runtime.dispatch_chunk.await_args_list]
 
 
-def test_chunk_workflow_commits_mask_in_transaction_and_cleans_media() -> None:
+@pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])
+def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> None:
+    sequence_no = int(offset_ms != 0)
+    task_id = f"chunk-task-{sequence_no}"
     execution = ChunkExecution(
-        "chunk-task-0", "video-task-1", 0, 0, 20_000, 0, 20_000, _inputs(ocr_enabled=True), _lease()
+        task_id, "video-task-1", sequence_no, offset_ms, offset_ms + 20_000,
+        offset_ms, offset_ms + 20_000, _inputs(ocr_enabled=True), _lease(),
     )
+    asr_result = {"transcript": [{
+        "start_seconds": offset_ms + 1000,
+        "end_seconds": offset_ms + 3000,
+        "text": "hello",
+    }]}
     calls: list[str] = []
 
     class Runtime:
@@ -242,27 +253,38 @@ def test_chunk_workflow_commits_mask_in_transaction_and_cleans_media() -> None:
 
         async def transcribe_chunk(self, loaded):
             calls.append("asr")
-            return {"text": "transcript"}
+            return asr_result
 
         async def read_chunk_text(self, loaded):
             calls.append("ocr")
-            return ["screen text"]
+            return OCRResult.model_validate({"lines": [{
+                "start_seconds": offset_ms + 1000,
+                "end_seconds": offset_ms + 3000,
+                "text": "screen text",
+            }]})
 
         async def understand_chunk(self, loaded, **kwargs):
-            assert kwargs["ocr_result"] == ["screen text"]
-            assert "[0, 20000)" in kwargs["prompt"]
+            assert kwargs["ocr_result"].lines[0].text == "screen text"
+            assert kwargs["asr_result"] is asr_result
+            assert '"text": "screen text"' in kwargs["prompt"]
+            assert f"[{offset_ms}, {offset_ms + 20_000})" in kwargs["prompt"]
             assert "integer source-video milliseconds" in kwargs["prompt"]
+            assert f'"start_seconds": {offset_ms + 1000}' in kwargs["prompt"]
+            assert f'"end_seconds": {offset_ms + 3000}' in kwargs["prompt"]
+            time_contract = kwargs["prompt"].lower()
+            assert "already normalized" in time_contract
+            assert "legacy" in time_contract
+            assert "do not multiply or divide" in time_contract
+            assert "1000" in time_contract and "offset" in time_contract
             calls.append("understand")
-            return _result()
+            return _result(offset_ms=offset_ms)
 
-        async def commit_chunk_result(self, loaded, result, update_mask):
-            calls.append("commit-start")
-            update_mask(loaded.chunk_parse_task_id)
-            calls.append("commit-end")
-
-        def update_interval_mask(self, task_id):
-            assert calls[-1] == "commit-start"
-            calls.append("mask")
+        async def commit_chunk_result(self, loaded, result):
+            assert loaded is execution
+            assert result == _result(offset_ms=offset_ms)
+            assert result.timeline[0].start_seconds == offset_ms + 1000
+            assert result.timeline[0].end_seconds == offset_ms + 3000
+            calls.append("commit")
 
         async def notify_chunk_committed(self, loaded):
             calls.append("notify")
@@ -272,67 +294,129 @@ def test_chunk_workflow_commits_mask_in_transaction_and_cleans_media() -> None:
             calls.append("cleanup")
 
     runtime = Runtime()
-    listener = ChunkIntervalListener(runtime=runtime)
-    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime, listener=listener).run(
-        "chunk-task-0"
+    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).run(
+        task_id
     ))
-    assert calls[-5:] == ["commit-start", "mask", "commit-end", "notify", "cleanup"]
+    assert calls[-3:] == ["commit", "notify", "cleanup"]
 
 
-def test_listener_rechecks_durable_readiness_before_queueing() -> None:
-    runtime = SimpleNamespace(
-        interval_is_ready=AsyncMock(side_effect=[False, True]),
-        enqueue_interval_refine=AsyncMock(),
-        next_prefix_chunk=AsyncMock(side_effect=[None, "chunk-task-0"]),
-        enqueue_prefix_context=AsyncMock(),
+@pytest.mark.parametrize("ocr_enabled", [False, True])
+@pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])
+def test_chunk_workflow_builds_engine_events_without_understanding(
+    ocr_enabled, offset_ms,
+) -> None:
+    sequence_no = int(offset_ms != 0)
+    task_id = f"chunk-task-{sequence_no}"
+    execution = ChunkExecution(
+        task_id, "video-task-1", sequence_no, offset_ms, offset_ms + 20_000,
+        offset_ms, offset_ms + 20_000,
+        _inputs(understanding_enabled=False, ocr_enabled=ocr_enabled), _lease(),
     )
-    listener = ChunkIntervalListener(runtime=runtime)
+    runtime = SimpleNamespace(
+        load_chunk_execution=AsyncMock(return_value=execution),
+        prepare_chunk_visual=AsyncMock(),
+        transcribe_chunk=AsyncMock(return_value={"transcript": [{
+            "start_seconds": offset_ms + 1000,
+            "end_seconds": offset_ms + 3000,
+            "text": " hello ",
+        }]}),
+        read_chunk_text=AsyncMock(return_value=OCRResult.model_validate({"lines": [{
+            "start_seconds": offset_ms + 500,
+            "end_seconds": offset_ms + 1500,
+            "text": " sign ",
+        }]})),
+        understand_chunk=AsyncMock(side_effect=AssertionError("must not understand")),
+        commit_chunk_result=AsyncMock(),
+        notify_chunk_committed=AsyncMock(),
+        cleanup_chunk_execution=AsyncMock(),
+    )
+    asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).run(task_id))
+    result = runtime.commit_chunk_result.await_args.args[1]
+    assert result.persons == []
+    assert [event.description for event in result.timeline] == (
+        ["sign", "hello"] if ocr_enabled else ["hello"]
+    )
+    assert [(event.start_seconds, event.end_seconds) for event in result.timeline] == (
+        [(offset_ms + 500, offset_ms + 1500), (offset_ms + 1000, offset_ms + 3000)]
+        if ocr_enabled else [(offset_ms + 1000, offset_ms + 3000)]
+    )
+    runtime.understand_chunk.assert_not_awaited()
+    assert runtime.read_chunk_text.await_count == int(ocr_enabled)
+    runtime.notify_chunk_committed.assert_awaited_once_with(execution)
+    runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
 
-    async def exercise() -> None:
-        await listener.run_interval_refine_if_ready("interval-1")
-        await listener.run_prefix_context_if_ready("series-1")
-        await listener.run_interval_refine_if_ready("interval-1")
-        await listener.run_prefix_context_if_ready("series-1")
 
-    asyncio.run(exercise())
-    runtime.enqueue_interval_refine.assert_awaited_once_with("interval-1")
-    runtime.enqueue_prefix_context.assert_awaited_once_with("chunk-task-0")
+@pytest.mark.parametrize("failure", ["validation", "commit"])
+def test_chunk_workflow_failure_never_notifies_and_always_cleans_media(failure) -> None:
+    execution = ChunkExecution(
+        "chunk-task-0", "video-task-1", 0, 0, 20_000, 0, 20_000,
+        _inputs(understanding_enabled=False), _lease(),
+    )
+    runtime = SimpleNamespace(
+        load_chunk_execution=AsyncMock(return_value=execution),
+        prepare_chunk_visual=AsyncMock(),
+        transcribe_chunk=AsyncMock(return_value={"transcript": [{
+            "start_seconds": 1000,
+            "end_seconds": 20_001 if failure == "validation" else 3000,
+            "text": "hello",
+        }]}),
+        commit_chunk_result=AsyncMock(side_effect=RuntimeError("commit failed")),
+        notify_chunk_committed=AsyncMock(),
+        cleanup_chunk_execution=AsyncMock(),
+    )
+    with pytest.raises(ValueError if failure == "validation" else RuntimeError):
+        asyncio.run(ChunkUnderstandingWorkflow(runtime=runtime).run("chunk-task-0"))
+    assert runtime.commit_chunk_result.await_count == int(failure == "commit")
+    runtime.notify_chunk_committed.assert_not_awaited()
+    runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
 
 
-def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields() -> None:
+@pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])
+def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields(offset_ms) -> None:
+    sequence_no = int(offset_ms != 0)
+    task_id = f"chunk-task-{sequence_no}"
     snapshot = {
         "interval_parse_task_id": "interval-1",
         "video_parse_task_id": "video-task-1",
         "inputs": _inputs(),
         "lease": _lease(),
-        "start_sequence_no": 0,
+        "start_sequence_no": sequence_no,
         "chunk_count": 1,
-        "member_sequence_nos": {"chunk-task-0": 0},
-        "member_bounds": {"chunk-task-0": (0, 20_000)},
-        "member_contents": {"chunk-task-0": _result()},
-        "member_versions": {"chunk-task-0": 2},
-        "member_scopes": {"chunk-task-0": [0, 1]},
+        "member_sequence_nos": {task_id: sequence_no},
+        "member_bounds": {task_id: (offset_ms, offset_ms + 20_000)},
+        "member_contents": {task_id: _result(offset_ms=offset_ms)},
+        "member_versions": {task_id: 2},
+        "member_scopes": {task_id: [0, 1]},
     }
     runtime = SimpleNamespace(
         load_refine_input=AsyncMock(return_value=snapshot),
         generate_interval_refinement=AsyncMock(return_value=IntervalRefinementProposal(
             updates=[ChunkResultUpdate(
-                sequence_no=0,
+                sequence_no=sequence_no,
                 persons=["爱音"],
-                timeline=_result("爱音推门走进房间").timeline,
+                timeline=_result("爱音推门走进房间", offset_ms=offset_ms).timeline,
             )]
         )),
         commit_interval_refinement=AsyncMock(),
         notify_interval_committed=AsyncMock(),
-        next_prefix_chunk=AsyncMock(return_value=None),
     )
-    listener = ChunkIntervalListener(runtime=runtime)
-    asyncio.run(IntervalRefine(runtime=runtime, listener=listener).run("interval-1"))
+    asyncio.run(IntervalRefine(runtime=runtime).run("interval-1"))
 
     prompt = runtime.generate_interval_refinement.await_args.kwargs["prompt"]
     assert '"scope": [0, 1]' in prompt
+    assert f'"start_seconds": {offset_ms + 1000}' in prompt
+    assert f'"end_seconds": {offset_ms + 3000}' in prompt
+    time_contract = prompt.lower()
+    assert "absolute integer source-video milliseconds" in time_contract
+    assert "legacy" in time_contract
+    assert "do not multiply or divide" in time_contract
+    assert "1000" in time_contract and "offset" in time_contract
+    assert "preserve" in time_contract and "timestamps" in time_contract
     validated = runtime.commit_interval_refinement.await_args.args[1]
     assert validated.updates[0].changed_fields == {"timeline"}
+    assert validated.updates[0].timeline[0].start_seconds == offset_ms + 1000
+    assert validated.updates[0].timeline[0].end_seconds == offset_ms + 3000
+    assert snapshot["member_contents"][task_id] == _result(offset_ms=offset_ms)
     runtime.notify_interval_committed.assert_awaited_once_with(snapshot)
 
 
@@ -357,7 +441,6 @@ def test_prefix_is_optional_and_validates_bound_target_before_commit() -> None:
     )
     asyncio.run(PrefixContextAgent(
         runtime=runtime,
-        listener=ChunkIntervalListener(runtime=runtime),
     ).run("chunk-task-0"))
     runtime.generate_prefix_refinement.assert_not_awaited()
 
@@ -371,11 +454,9 @@ def test_prefix_is_optional_and_validates_bound_target_before_commit() -> None:
         )),
         commit_prefix_refinement=AsyncMock(),
         notify_prefix_committed=AsyncMock(),
-        next_prefix_chunk=AsyncMock(return_value=None),
     )
     asyncio.run(PrefixContextAgent(
         runtime=runtime,
-        listener=ChunkIntervalListener(runtime=runtime),
     ).run("chunk-task-0"))
     committed = runtime.commit_prefix_refinement.await_args.args[1]
     assert committed.update is not None

@@ -23,8 +23,7 @@ from engine.rag.contracts import VideoChunkRetrievalIdentity
 from engine.rag.encoding import validate_sparse_weights
 
 from ..database import DatabaseEnvironment
-from ..identity import canonical_uuid
-from ..utils.validation import require_nonempty_text
+from ..utils.validation import canonical_uuid, require_nonempty_text
 
 INDEX_CONTRACT_VERSION = "anivag-video-chunk-es-5"
 ANALYSIS_CONTRACT_VERSION = "cjk-1"

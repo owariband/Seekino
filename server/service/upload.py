@@ -5,7 +5,6 @@ import math
 import re
 import time
 from collections.abc import Callable
-from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -13,10 +12,11 @@ from typing import Literal
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
 from engine.common.media_probe import probe_video_duration_seconds
 from engine.rag import EncoderContract
+from gateway.model_sources import ModelReference, ModelReferenceType
 
 from ..config.parse_profile import ParseConfig, default_video_parse_v2_config
 from ..config.upload import UploadServiceConfig
-from ..identity import canonical_uuid, derive_video_id
+from ..model.identifiers import derive_video_id
 from ..model.upload import UploadSessionStatus, UploadCompletionStage
 from ..model.dto.uploadDTO import (
     CompletedUploadState, UploadCompletionClaim, UploadSegmentState, UploadSessionDetail,
@@ -34,11 +34,9 @@ from ..storage.artifact import (
     UploadSegmentArtifact,
 )
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
-from ..storage.qdrant import QdrantVideoChunkStore
 from ..utils.errors import exception_summary
 from ..utils.time import now_utc, require_utc_datetime, unix_time_ms_to_datetime
-from ..utils.validation import require_nonempty_text
-from .qdrant_mutation_lock import QdrantMutationLock
+from ..utils.validation import canonical_uuid, require_nonempty_text
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _logger = logging.getLogger(__name__)
@@ -64,9 +62,7 @@ class UploadService:
         config: UploadServiceConfig | None = None,
         probe_duration: Callable[[str | Path], int] = probe_video_duration_seconds,
         clock: Callable[[], datetime | int] | None = None,
-        video_chunk_store: QdrantVideoChunkStore | None = None,
         video_parse_index_store: ElasticsearchVideoChunkStore | None = None,
-        qdrant_mutation_lock: QdrantMutationLock | None = None,
         parse_defaults: ParseConfig | None = None,
         execution_mode: Literal["v1", "v2"] = "v1",
         video_parse_query_encoder: EncoderContract | None = None,
@@ -74,10 +70,6 @@ class UploadService:
     ) -> None:
         if execution_mode not in {"v1", "v2"}:
             raise ValueError("execution_mode must be 'v1' or 'v2'")
-        if video_chunk_store is not None and qdrant_mutation_lock is None:
-            raise ValueError(
-                "qdrant_mutation_lock is required when video_chunk_store is configured"
-            )
         if (video_parse_query_encoder is None) != (
             video_parse_query_encoder_source is None
         ):
@@ -98,9 +90,7 @@ class UploadService:
         self._config = config or UploadServiceConfig()
         self._probe_duration = probe_duration
         self._clock = clock or now_utc
-        self._video_chunk_store = video_chunk_store
         self._video_parse_index_store = video_parse_index_store
-        self._qdrant_mutation_lock = qdrant_mutation_lock
         self._parse_defaults = parse_defaults
         self._execution_mode = execution_mode
         self._video_parse_query_encoder = video_parse_query_encoder
@@ -179,9 +169,19 @@ class UploadService:
                 "video_parse_config.chunk_duration must match "
                 "the upload parse configuration's fixed chunk duration"
             )
-        self._require_video_parse_index_compatibility(
+        selected_video_parse_config = self._require_video_parse_index_compatibility(
             selected_video_parse_config
         )
+        # Preserve older request hashes while keeping all existing nullable fields.
+        requested_parse_config = parse_config.model_dump(mode="json") if parse_config else None
+        if requested_parse_config is not None and parse_config.embedding.encoder_model is None:
+            requested_parse_config["embedding"].pop("encoder_model", None)
+        requested_video_parse_config = (
+            video_parse_config.model_dump(mode="json")
+            if video_parse_config is not None else None
+        )
+        if requested_video_parse_config is not None and video_parse_config.models.embedding.encoder_model is None:
+            requested_video_parse_config["models"]["embedding"].pop("encoder_model", None)
 
         segment_size = self._config.preferred_segment_size_bytes
         total_segments = math.ceil(total_size_bytes / segment_size)
@@ -200,12 +200,9 @@ class UploadService:
             now=now,
             content_sha256=content_sha256,
             parse_config=(selected_config.model_dump(mode="json") if selected_config else None),
-            requested_parse_config=(parse_config.model_dump(mode="json") if parse_config else None),
+            requested_parse_config=requested_parse_config,
             video_parse_config=selected_video_parse_config.model_dump(mode="json"),
-            requested_video_parse_config=(
-                video_parse_config.model_dump(mode="json")
-                if video_parse_config is not None else None
-            ),
+            requested_video_parse_config=requested_video_parse_config,
         )
         _logger.info(
             "upload_session_created upload_session_id=%s series_id=%s episode_order=%s size_bytes=%s segments=%s status=%s",
@@ -296,23 +293,12 @@ class UploadService:
         normalized_workspace = require_nonempty_text(
             workspace_id, "workspace_id"
         )
-        if self._video_parse_index_store is not None:
-            session = self._repository.get_session(
-                session_id,
-                now=self._now(),
-            )
-            if session.workspace_id != normalized_workspace:
-                raise UploadSessionNotFoundError(
-                    "upload session does not exist in this workspace"
-                )
-            selected_video_parse_config = (
-                video_parse_config
-                if video_parse_config is not None
-                else _completion_video_parse_config(session)
-            )
-            self._require_video_parse_index_compatibility(
-                selected_video_parse_config
-            )
+
+        def resolve_snapshot(snapshot: dict) -> dict:
+            return self._require_video_parse_index_compatibility(
+                VideoParseV2Config.model_validate(snapshot)
+            ).model_dump(mode="json")
+
         task = self._repository.reparse(
             session_id,
             workspace_id=normalized_workspace,
@@ -321,6 +307,9 @@ class UploadService:
             video_parse_config=(
                 video_parse_config.model_dump(mode="json")
                 if video_parse_config is not None else None
+            ),
+            snapshot_resolver=(
+                resolve_snapshot if self._video_parse_index_store is not None else None
             ),
             now=self._now(),
         )
@@ -334,65 +323,54 @@ class UploadService:
 
     def delete_session(self, upload_session_id: str, *, workspace_id: str) -> UploadSessionState:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
-        mutation_scope = (
-            self._qdrant_mutation_lock.hold()
-            if self._qdrant_mutation_lock is not None
-            else nullcontext()
+        deletion = self._repository.begin_delete_session(
+            session_id,
+            workspace_id=require_nonempty_text(workspace_id, "workspace_id"),
+            now=self._now(),
         )
-        with mutation_scope:
-            deletion = self._repository.begin_delete_session(
-                session_id,
-                workspace_id=require_nonempty_text(workspace_id, "workspace_id"),
-                now=self._now(),
-            )
-            try:
-                self._artifact_store.delete_upload_staging(session_id)
-                if deletion.video_chunk_ids and self._video_chunk_store is None:
-                    raise RuntimeError("video chunk cleanup store is unavailable")
-                if self._video_chunk_store is not None:
-                    for video_chunk_id in deletion.video_chunk_ids:
-                        self._video_chunk_store.delete(video_chunk_id)
-                if (
-                    deletion.video_parse_document_keys
-                    and self._video_parse_index_store is None
-                ):
-                    raise RuntimeError(
-                        "Video Parse V2 index cleanup store is unavailable"
-                    )
-                if self._video_parse_index_store is not None:
-                    keys = deletion.video_parse_document_keys
-                    if keys:
-                        self._video_parse_index_store.bulk_delete(
-                            keys,
-                            refresh="wait_for",
-                        )
-                        if not self._video_parse_index_store.verify_absent(keys):
-                            raise RuntimeError(
-                                "Video Parse V2 index cleanup was not visible"
-                            )
-                for job_id in deletion.job_ids:
-                    self._artifact_store.delete_job_artifacts(job_id)
-                if deletion.video_id is not None:
-                    self._artifact_store.delete_video_artifacts(
-                        deletion.session.series_id,
-                        deletion.video_id,
-                    )
-            except Exception:
-                _logger.exception(
-                    "upload_cleanup_failed upload_session_id=%s video_id=%s job_id=%s",
-                    session_id, deletion.video_id, deletion.job_id,
+        try:
+            self._artifact_store.delete_upload_staging(session_id)
+            if (
+                deletion.video_parse_document_keys
+                and self._video_parse_index_store is None
+            ):
+                raise RuntimeError(
+                    "Video Parse V2 index cleanup store is unavailable"
                 )
-                raise
-            state = self._repository.finish_delete_session(
-                deletion,
-                now=self._now(),
+            if self._video_parse_index_store is not None:
+                keys = deletion.video_parse_document_keys
+                if keys:
+                    self._video_parse_index_store.bulk_delete(
+                        keys,
+                        refresh="wait_for",
+                    )
+                    if not self._video_parse_index_store.verify_absent(keys):
+                        raise RuntimeError(
+                            "Video Parse V2 index cleanup was not visible"
+                        )
+            for job_id in deletion.job_ids:
+                self._artifact_store.delete_job_artifacts(job_id)
+            if deletion.video_id is not None:
+                self._artifact_store.delete_video_artifacts(
+                    deletion.session.series_id,
+                    deletion.video_id,
+                )
+        except Exception:
+            _logger.exception(
+                "upload_cleanup_failed upload_session_id=%s video_id=%s job_id=%s",
+                session_id, deletion.video_id, deletion.job_id,
             )
-            _logger.info(
-                "upload_deleted upload_session_id=%s series_id=%s",
-                session_id,
-                state.series_id,
-            )
-            return state
+            raise
+        state = self._repository.finish_delete_session(
+            deletion,
+            now=self._now(),
+        )
+        _logger.info(
+            "upload_deleted upload_session_id=%s series_id=%s",
+            session_id,
+            state.series_id,
+        )
+        return state
 
     def reconcile_deletions(self, *, limit: int = 100) -> tuple[int, int]:
         try:
@@ -638,10 +616,10 @@ class UploadService:
     def _require_video_parse_index_compatibility(
         self,
         config: VideoParseV2Config,
-    ) -> None:
+    ) -> VideoParseV2Config:
         store = self._video_parse_index_store
         if store is None:
-            return
+            return config
         embedding = config.models.embedding
         dimensions = embedding.dimensions
         if (
@@ -662,15 +640,26 @@ class UploadService:
         # binding. Requiring that same source plus the public EncoderContract
         # fields prevents an accepted task from producing vectors that the
         # active query encoder can never search.
+        reference = ModelReference.resolve(
+            embedding.model, encoder_model=embedding.encoder_model,
+            default_encoder_model=active_encoder.model,
+        )
         if (
             embedding.source != active_source
-            or embedding.model != active_encoder.model
+            or reference.model != active_encoder.model
             or embedding.dimensions != active_encoder.dimensions
         ):
             raise ValueError(
                 "video_parse_config.models.embedding must match the exact active "
                 "V2 query encoder source, model, and dimensions"
             )
+        if reference.type == ModelReferenceType.ENDPOINT and embedding.encoder_model is None:
+            return config.model_copy(update={
+                "models": config.models.model_copy(update={
+                    "embedding": embedding.model_copy(update={"encoder_model": reference.model}),
+                }),
+            })
+        return config
 
 
 def _artifact_segment(segment: UploadSegmentState) -> UploadSegmentArtifact:

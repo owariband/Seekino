@@ -132,7 +132,9 @@ class DeepSeekMultimodalModel:
                 }
             )
 
-        schema = inline_schema_refs(result_type.model_json_schema())
+        schema = _deepseek_response_schema(
+            inline_schema_refs(result_type.model_json_schema())
+        )
         request_started_at = monotonic()
         try:
             with track_model_call(
@@ -209,3 +211,28 @@ class DeepSeekMultimodalModel:
         if self._owns_client and not self._closed:
             self._client.close()
             self._closed = True
+
+
+def _deepseek_response_schema(value: Any) -> Any:
+    """Project union nodes to the DeepSeek Responses schema format."""
+    if isinstance(value, list):
+        return [_deepseek_response_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    schema = dict(value)
+    for key, item in value.items():
+        if key in {"properties", "$defs", "definitions", "patternProperties", "dependentSchemas"}:
+            if isinstance(item, dict):
+                schema[key] = {
+                    name: _deepseek_response_schema(child) for name, child in item.items()
+                }
+        elif key in {
+            "items", "prefixItems", "additionalProperties", "unevaluatedProperties",
+            "contains", "not", "if", "then", "else", "propertyNames",
+            "oneOf", "anyOf", "allOf",
+        }:
+            schema[key] = _deepseek_response_schema(item)
+    if "oneOf" in schema:
+        schema["anyOf"] = schema.pop("oneOf")
+        schema.pop("discriminator", None)
+    return schema

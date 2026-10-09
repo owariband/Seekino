@@ -179,6 +179,37 @@ def test_v2_library_status_uses_latest_video_parse_task(repository, prepared_imp
     assert reparsing.videos[0].parse_status == "PENDING"
 
 
+@pytest.mark.parametrize("parse_status", [
+    "PENDING", "PREPARING", "PARSING", "INDEXING", "COMPLETE",
+    "PARSING_FAILED", "INDEXING_FAILED",
+])
+def test_v2_library_detail_projects_parse_task_status(
+    repository, prepared_import, tmp_path, parse_status,
+):
+    engine, videos = repository
+    report = videos.import_video_parse(prepared_import)
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        _add_prefix_task(session, video_id=report.video_id, status=parse_status)
+    library = LibraryService(LibraryRepository(factory, execution_mode="v2"))
+    media = MediaService(
+        library,
+        LocalArtifactStore(tmp_path / "artifacts", environment=DatabaseEnvironment.TEST),
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        services=SimpleNamespace(library=library, media=media),
+    )))
+
+    detail = library_api.get_series(
+        request, series_id=report.series_id, workspace_id="local-default",
+    ).model_dump(mode="json", by_alias=True)
+
+    assert detail["videos"][0]["parseStatus"] == parse_status
+    if parse_status == "COMPLETE":
+        assert detail["videos"][0]["parseProgress"] == 100
+    assert detail["readyVideoCount"] == int(parse_status == "COMPLETE")
+
+
 def test_latest_job_failure_and_index_error_are_actual_and_workspace_scoped(repository, prepared_import):
     factory, videos, library = _library(repository)
     report = videos.import_video_parse(prepared_import)

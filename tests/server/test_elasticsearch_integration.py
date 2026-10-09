@@ -619,8 +619,6 @@ def test_real_es_delete_reconcile_fences_an_immediately_late_writer(indexing_cas
         video_parse_query_encoder=case.encoder,
         video_parse_query_encoder_source=case.config["models"]["embedding"]["source"],
         # Legacy cleanup is a local boundary, never a Qdrant client or query fallback.
-        video_chunk_store=SimpleNamespace(delete=lambda _chunk_id: None),
-        qdrant_mutation_lock=SimpleNamespace(hold=nullcontext),
     )
     monkeypatch.setattr(store, "bulk_delete", deleted_but_response_lost)
     with pytest.raises(TimeoutError, match="delete response was lost"):

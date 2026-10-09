@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import hashlib
-from concurrent.futures import ThreadPoolExecutor
+import json
 from dataclasses import replace
 from datetime import timedelta
-from threading import Event
 from uuid import uuid4
 
 import pytest
@@ -17,7 +16,7 @@ from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.config import load_config
 from server.config.media import ImageUploadConfig
 from server.config.parse_profile import ParseConfig, default_video_parse_v2_config
-from server.database import DatabaseEnvironment, create_session_factory
+from server.database import create_session_factory
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.model.index_sync import IndexSyncIntentRecord, IndexSyncOperation, IndexSyncStatus
 from server.model.job import (
@@ -44,6 +43,7 @@ from server.model.video import (
     VideoRecord,
 )
 from server.mq.mysql_queue import MySqlParseJobQueue
+from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.upload import (
     UploadCompletionInProgressError,
     UploadConflictError,
@@ -53,14 +53,11 @@ from server.repository.upload import (
 )
 from server.repository.job import ParseJobRepository
 from server.repository.index_sync import IndexSyncRepository
+from server.repository.video_parse import VideoParseRepository
 from server.service.upload import (
     UploadChecksumMismatchError,
     UploadService,
     UploadServiceConfig,
-)
-from server.service.qdrant_mutation_lock import (
-    QdrantMutationLock,
-    QdrantMutationLockBusyError,
 )
 from server.storage.artifact import LocalArtifactStore
 from server.utils.time import (
@@ -141,11 +138,6 @@ def _upload_service(
                 dimensions=active_embedding.dimensions,
             ),
             video_parse_query_encoder_source=active_embedding.source,
-            qdrant_mutation_lock=QdrantMutationLock(
-                engine,
-                environment=DatabaseEnvironment.TEST,
-                collection_name="video_chunks_test",
-            ),
         ),
     )
 
@@ -201,6 +193,50 @@ def _video_parse_config_with_model(
     return config.model_copy(update={
         "models": config.models.model_copy(update={"embedding": embedding})
     })
+
+
+@pytest.mark.parametrize("encoder_model", [None, "doubao-embedding-vision-250615"])
+def test_upload_freezes_endpoint_encoder_identity_without_changing_its_route(
+    repository, tmp_path, encoder_model,
+):
+    _engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, execution_mode="v2",
+        video_parse_index_store=_VideoParseIndexStore(2, 2),
+    )
+    config = _video_parse_config_with_model("ep-custom", dimensions=2)
+    config = config.model_copy(update={"models": config.models.model_copy(update={
+        "embedding": config.models.embedding.model_copy(update={"encoder_model": encoder_model}),
+    })})
+    session = service.create_session(
+        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
+        total_size_bytes=10, idempotency_key="endpoint-identity", video_parse_config=config,
+    )
+    frozen = session.video_parse_config["models"]["embedding"]
+    assert frozen["model"] == "ep-custom"
+    assert frozen["encoder_model"] == "doubao-embedding-vision-250615"
+    assert config.models.embedding.encoder_model == encoder_model
+    assert service.get_session(session.upload_session_id, workspace_id="local-default").video_parse_config == session.video_parse_config
+
+
+def test_upload_rejects_endpoint_bound_to_a_different_encoder(repository, tmp_path):
+    _engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, execution_mode="v2",
+        video_parse_index_store=_VideoParseIndexStore(2, 2),
+    )
+    config = _video_parse_config_with_model("ep-custom", dimensions=2)
+    config = config.model_copy(update={"models": config.models.model_copy(update={
+        "embedding": config.models.embedding.model_copy(update={
+            "encoder_model": "doubao-embedding-vision-251215",
+        }),
+    })})
+    with pytest.raises(ValueError, match="exact active V2 query encoder"):
+        service.create_session(
+            workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+            episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
+            total_size_bytes=10, idempotency_key="wrong-endpoint-identity", video_parse_config=config,
+        )
+    assert service.list_sessions(workspace_id="local-default") == []
 
 
 @pytest.mark.parametrize(
@@ -378,6 +414,109 @@ def test_reparse_rejects_v2_encoder_before_creating_a_new_task(
             )
         ))
         assert [task.id for task in tasks] == [completed.video_parse_task_id]
+
+
+def test_reparse_without_config_inherits_the_latest_task_and_freezes_endpoint_identity(
+    repository, tmp_path,
+):
+    engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, execution_mode="v2",
+        video_parse_index_store=_VideoParseIndexStore(2, 2),
+    )
+    upload = service.create_session(
+        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
+        total_size_bytes=10, idempotency_key="inherit-latest-config",
+        video_parse_config=_video_parse_config_with_dimensions(2),
+    )
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        session.get(VideoParseTaskRecord, completed.video_parse_task_id).status = "COMPLETE"
+
+    replacement = _video_parse_config_with_model("ep-replacement", dimensions=2)
+    replacement = replacement.model_copy(update={
+        "understanding_enabled": False,
+        "batch_max_size": replacement.batch_max_size + 1,
+        "execution": replacement.execution.model_copy(update={
+            "max_retry_count": 4, "max_model_calls": 17,
+        }),
+    })
+    second = service.reparse(
+        upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+        video_parse_config=replacement,
+    )
+    expected = replacement.model_dump(mode="json")
+    expected["models"]["embedding"]["encoder_model"] = "doubao-embedding-vision-250615"
+    assert second.version == 2
+    assert second.parse_config == expected
+    assert replacement.models.embedding.encoder_model is None
+    with factory.begin() as session:
+        session.get(VideoParseTaskRecord, second.video_parse_task_id).status = "COMPLETE"
+
+    third = service.reparse(
+        upload.upload_session_id, workspace_id="local-default", expected_job_version=2,
+    )
+    assert third.version == 3
+    assert third.parse_config == second.parse_config
+    assert third.max_attempts == 5
+    with factory() as session:
+        tasks = list(session.scalars(select(VideoParseTaskRecord).where(
+            VideoParseTaskRecord.video_id == completed.video_id,
+        ).order_by(VideoParseTaskRecord.version)))
+        assert [task.version for task in tasks] == [1, 2, 3]
+        assert tasks[0].parse_config == upload.video_parse_config
+        assert tasks[1].parse_config == expected
+        assert tasks[2].parse_config == expected
+        assert session.get(UploadSessionRecord, upload.upload_session_id).video_parse_config == upload.video_parse_config
+
+
+@pytest.mark.parametrize("status", ["INDEXING_FAILED", "PENDING"])
+def test_reparse_freezes_a_legacy_endpoint_snapshot_after_selecting_the_latest_task(
+    repository, tmp_path, status,
+):
+    engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, execution_mode="v1",
+        video_parse_index_store=_VideoParseIndexStore(2, 2),
+    )
+    upload = service.create_session(
+        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
+        total_size_bytes=10, idempotency_key="legacy-reparse-config",
+        video_parse_config=_video_parse_config_with_dimensions(2),
+    )
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        legacy = json.loads(json.dumps(task.parse_config))
+        legacy["models"]["embedding"]["model"] = "ep-legacy"
+        legacy["models"]["embedding"].pop("encoder_model")
+        legacy["understanding_enabled"] = False
+        task.parse_config = legacy
+        task.status = status
+    service._execution_mode = "v2"
+
+    reparsed = service.reparse(
+        upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+    )
+    expected = json.loads(json.dumps(legacy))
+    expected["models"]["embedding"]["encoder_model"] = "doubao-embedding-vision-250615"
+    assert reparsed.parse_config == expected
+    assert reparsed.detail["_worker_runtime_v2"]["accepted"] is True
+    assert reparsed.version == (1 if status == "PENDING" else 2)
+    with factory() as session:
+        original = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        assert original.parse_config == (expected if status == "PENDING" else legacy)
+        assert session.get(UploadSessionRecord, upload.upload_session_id).video_parse_config == upload.video_parse_config
+        tasks = list(session.scalars(select(VideoParseTaskRecord).where(
+            VideoParseTaskRecord.video_id == completed.video_id,
+        )))
+        assert len(tasks) == (1 if status == "PENDING" else 2)
 
 
 def test_v2_execution_mode_creates_only_an_accepted_v2_task(
@@ -641,6 +780,52 @@ def test_selected_parse_config_survives_upload_completion_and_job_claim(
     assert lease is not None and lease.job_id == completed.job_id
     assert ParseConfig.model_validate(lease.parse_config) == selected
     assert ParseJobRepository(create_session_factory(engine)).get(completed.job_id).parse_config == upload.parse_config
+
+
+@pytest.mark.parametrize("config_kind", ["parse_config", "video_parse_config"])
+def test_upload_replays_explicit_config_with_a_pre_encoder_identity_fingerprint(
+    repository, tmp_path, config_kind,
+):
+    defaults = ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(), gateway=load_config(),
+        upload=_config(), images=ImageUploadConfig(),
+        embedding_model="test-embedding", embedding_dimensions=1024,
+        embedding_fps=1.0,
+    )
+    engine, _store, _repository, service = _upload_service(
+        repository, tmp_path, parse_defaults=defaults,
+    )
+    config = defaults if config_kind == "parse_config" else defaults.to_video_parse_v2()
+    request = dict(
+        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
+        total_size_bytes=10, idempotency_key="legacy-explicit-fingerprint",
+    )
+    upload = service.create_session(**request, **{config_kind: config})
+    legacy_config = config.model_dump(mode="json")
+    embedding = (
+        legacy_config["embedding"] if config_kind == "parse_config"
+        else legacy_config["models"]["embedding"]
+    )
+    assert embedding.pop("encoder_model") is None
+    legacy_requested = {**request, "content_sha256": None, config_kind: legacy_config}
+    fingerprint = hashlib.sha256(json.dumps(
+        legacy_requested, sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    with create_session_factory(engine).begin() as session:
+        session.get(UploadSessionRecord, upload.upload_session_id).request_fingerprint = fingerprint
+
+    replay = service.create_session(**request, **{config_kind: config})
+    assert replay.upload_session_id == upload.upload_session_id
+    assert replay.parse_config == upload.parse_config
+    assert replay.video_parse_config == upload.video_parse_config
+    changed = (
+        config.model_copy(update={"vision": config.vision.model_copy(update={"fps": 0.5})})
+        if config_kind == "parse_config"
+        else config.model_copy(update={"batch_max_size": config.batch_max_size + 1})
+    )
+    with pytest.raises(UploadConflictError, match="idempotency"):
+        service.create_session(**request, **{config_kind: changed})
 
 
 def test_completion_rejects_a_missing_fixed_v2_config_snapshot(
@@ -1947,6 +2132,111 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
         )
     assert len(jobs.list_video_parse_tasks(completed.video_id)) == 2
 
+
+@pytest.mark.parametrize(
+    "cleanup_state",
+    ["prepare_interrupted", "success", "bulk_failure", "not_visible", "unavailable"],
+)
+def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path, cleanup_state):
+    class ParseIndexStore(_VideoParseIndexStore):
+        def __init__(self):
+            super().__init__(1024, 1024)
+            self.documents = set()
+            self.deleted = []
+            self.verified = []
+
+        def bulk_delete(self, keys, *, refresh=False):
+            self.deleted.append((tuple(keys), refresh))
+            if cleanup_state == "bulk_failure":
+                raise RuntimeError("index cleanup failed")
+            self.documents.difference_update(keys)
+
+        def verify_absent(self, keys):
+            self.verified.append(tuple(keys))
+            return cleanup_state != "not_visible" and not self.documents.intersection(keys)
+
+    parse_index = ParseIndexStore()
+    now = unix_time_ms_to_datetime(1_789_560_000_000)
+    clock = [now]
+    engine, store, upload_repository, service = _upload_service(
+        repository, tmp_path, execution_mode="v2", clock=lambda: clock[0],
+        video_parse_index_store=parse_index,
+    )
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+    upload = _create(service)
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    assert completed.job_id is None
+    factory = create_session_factory(engine)
+    lease = MySqlVideoParseQueue(factory).claim_video(
+        "prepare", lease_duration=timedelta(minutes=1), now=now,
+    )
+    assert lease is not None
+    parse_repository = VideoParseRepository(factory)
+    chunks = parse_repository.ensure_video_chunks(lease, [(0, 0, 12_000)], now=now)
+    chunk_id = chunks[0].video_chunk_id
+    prepared = None
+    if cleanup_state != "prepare_interrupted":
+        prepared = parse_repository.ensure_parse_tasks(lease, [chunk_id], [(0, 1)], now=now)
+        with factory.begin() as session:
+            task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+            task.status = "COMPLETE"
+            task.lease_owner = None
+            task.lease_expire_time = None
+            task.heartbeat_time = None
+            session.get(ChunkParseTaskRecord, prepared.chunk_parse_task_ids[0]).status = "COMPLETE"
+            interval = session.get(IntervalParseTaskRecord, prepared.interval_parse_task_ids[0])
+            interval.status = "COMPLETE"
+            interval.ready_mask = 1
+        parse_index.documents.add((completed.video_parse_task_id, chunk_id))
+    expected_keys = tuple(sorted(parse_index.documents))
+    # A crashed Prepare lease must expire before task-level deletion can fence it.
+    clock[0] += timedelta(minutes=2)
+    if cleanup_state == "unavailable":
+        service._video_parse_index_store = None
+    failed = cleanup_state in {"bulk_failure", "not_visible", "unavailable"}
+    if failed:
+        with pytest.raises(RuntimeError, match="cleanup"):
+            service.delete_session(upload.upload_session_id, workspace_id="local-default")
+        with factory() as session:
+            tombstone = session.get(UploadSessionRecord, upload.upload_session_id)
+            assert tombstone.last_error_code == "DELETION_PENDING"
+            assert tombstone.video_id == completed.video_id
+            assert session.get(VideoRecord, completed.video_id) is not None
+            assert session.get(VideoChunkRecord, chunk_id) is not None
+            assert session.get(VideoParseTaskRecord, completed.video_parse_task_id).is_deleted
+            assert session.get(ChunkParseTaskRecord, prepared.chunk_parse_task_ids[0]) is not None
+        cleanup_state = "success"
+        service._video_parse_index_store = parse_index
+        assert service.reconcile_deletions() == (1, 0)
+    else:
+        service.delete_session(upload.upload_session_id, workspace_id="local-default")
+
+    deleted = upload_repository.get_session(upload.upload_session_id)
+    cleanup_calls = (list(parse_index.deleted), list(parse_index.verified))
+    repeated = service.delete_session(upload.upload_session_id, workspace_id="local-default")
+    assert deleted.status == repeated.status == "EXPIRED"
+    assert deleted.version == repeated.version
+    assert deleted.video_id is None and deleted.last_error_code is None
+    assert (parse_index.deleted, parse_index.verified) == cleanup_calls
+    assert not parse_index.documents
+    assert all(keys == expected_keys and refresh == "wait_for" for keys, refresh in parse_index.deleted)
+    assert all(keys == expected_keys for keys in parse_index.verified)
+    assert bool(parse_index.deleted) == bool(expected_keys)
+    assert bool(parse_index.verified) == bool(expected_keys)
+    assert not (
+        store.base_directory / "media" / "series" / upload.series_id / "videos" / completed.video_id
+    ).exists()
+    with factory() as session:
+        assert session.get(VideoRecord, completed.video_id) is None
+        assert session.get(VideoChunkRecord, chunk_id) is None
+        assert session.get(VideoParseTaskRecord, completed.video_parse_task_id) is None
+        assert list(session.scalars(select(ChunkParseTaskRecord))) == []
+        assert list(session.scalars(select(IntervalParseTaskRecord))) == []
+
+
 def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_path):
     engine, store, upload_repository, service = _upload_service(repository, tmp_path)
     upload = _create(service)
@@ -2086,14 +2376,6 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
         second_job_id
     ).upload_session_id == upload.upload_session_id
 
-    class VectorStore:
-        def __init__(self):
-            self.deleted: list[str] = []
-
-        def delete(self, video_chunk_id: str) -> None:
-            self.deleted.append(video_chunk_id)
-
-    vectors = VectorStore()
     class ParseIndexStore:
         def __init__(self):
             self.deleted = []
@@ -2107,8 +2389,9 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             return True
 
     parse_index = ParseIndexStore()
-    service._video_chunk_store = vectors
     service._video_parse_index_store = parse_index
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
     deleted = service.delete_session(
         upload.upload_session_id,
         workspace_id="local-default",
@@ -2121,7 +2404,6 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
     assert deleted.status == repeated.status == UploadSessionStatus.EXPIRED.value
     assert repeated.version == deleted.version
     assert deleted.video_id is None and deleted.job_id is None
-    assert vectors.deleted == [video_chunk_id]
     expected_parse_key = ((completed.video_parse_task_id, video_chunk_id),)
     assert parse_index.deleted == [(expected_parse_key, "wait_for")]
     assert parse_index.verified == [expected_parse_key]
@@ -2134,6 +2416,8 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
         assert tombstone.video_id is None and tombstone.job_id is None
         for model, key in (
             (VideoRecord, completed.video_id),
+            (VideoParseTaskRecord, completed.video_parse_task_id),
+            (ChunkParseTaskRecord, chunk_parse_task_id),
             (SeriesParseJobRecord, completed.job_id),
             (SeriesParseJobRecord, second_job_id),
             (VideoChunkRecord, video_chunk_id),
@@ -2490,49 +2774,6 @@ def test_episode_order_must_be_a_positive_signed_32_bit_integer(
             total_size_bytes=4,
             idempotency_key=f"invalid-order-{episode_order!r}",
         )
-
-
-def test_delete_lock_contention_does_not_start_task_cleanup(repository, tmp_path):
-    engine, store, upload_repository, service = _upload_service(repository, tmp_path)
-    upload = _create(service)
-    _put(service, upload.upload_session_id, 0, b"abcd")
-    staging = store.base_directory / "staging" / "uploads" / upload.upload_session_id
-    holder = QdrantMutationLock(
-        engine,
-        environment=DatabaseEnvironment.TEST,
-        collection_name="video_chunks_test",
-    )
-    service._qdrant_mutation_lock = QdrantMutationLock(
-        engine,
-        environment=DatabaseEnvironment.TEST,
-        collection_name="video_chunks_test",
-        acquire_timeout_seconds=0,
-    )
-    lock_acquired = Event()
-    release_lock = Event()
-
-    def hold_lock() -> None:
-        with holder.hold():
-            lock_acquired.set()
-            assert release_lock.wait(2)
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(hold_lock)
-        assert lock_acquired.wait(1)
-        try:
-            with pytest.raises(QdrantMutationLockBusyError, match="retry"):
-                service.delete_session(
-                    upload.upload_session_id,
-                    workspace_id="local-default",
-                )
-        finally:
-            release_lock.set()
-        future.result(timeout=1)
-
-    current = upload_repository.get_session(upload.upload_session_id)
-    assert current.status == UploadSessionStatus.UPLOADING.value
-    assert current.uploaded_segment_count == 1
-    assert staging.exists()
 
 
 def test_episode_order_conflicts_with_existing_video_in_the_same_series(

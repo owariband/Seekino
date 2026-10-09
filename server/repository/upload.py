@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from engine.parsev2.planning import plan_intervals
 
-from ..identity import derive_parse_job_id
+from ..model.identifiers import derive_parse_job_id
 from ..model.dto.jobDTO import VideoParseTaskState
 from ..model.dto.uploadDTO import (
     CompletedUploadState, UploadCompletionClaim, UploadSegmentState,
@@ -425,6 +426,7 @@ class UploadRepository:
         now: datetime,
         execution_mode: Literal["v1", "v2"] = "v1",
         video_parse_config: dict | None = None,
+        snapshot_resolver: Callable[[dict], dict] | None = None,
     ) -> VideoParseTaskState:
         """Create a new V2 task while retaining every prior task and result."""
 
@@ -470,6 +472,9 @@ class UploadRepository:
                 raise UploadStateError(
                     "the VideoParseTask Prefix worker is active and cannot be reparsed"
                 )
+            snapshot = latest.parse_config if video_parse_config is None else video_parse_config
+            if snapshot_resolver is not None:
+                snapshot = snapshot_resolver(deepcopy(snapshot))
             runtime = latest.detail.get("_worker_runtime_v2", {})
             accepted = isinstance(runtime, dict) and runtime.get("accepted") is True
             if (
@@ -482,11 +487,6 @@ class UploadRepository:
                     raise UploadConflictError(
                         "upload session Video no longer exists"
                     )
-                snapshot = (
-                    latest.parse_config
-                    if video_parse_config is None
-                    else video_parse_config
-                )
                 latest.chunk_count = _require_compatible_video_topology(
                     session,
                     video,
@@ -542,11 +542,6 @@ class UploadRepository:
             video = session.get(VideoRecord, upload.video_id)
             if video is None:
                 raise UploadConflictError("upload session Video no longer exists")
-            snapshot = (
-                latest.parse_config
-                if video_parse_config is None
-                else video_parse_config
-            )
             chunk_count = _require_compatible_video_topology(
                 session,
                 video,

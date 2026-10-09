@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from ..constants.media import SERIES_IMAGE_EXTENSIONS, SERIES_IMAGE_ID_PREFIX
-from ..identity import canonical_uuid
+from .validation import canonical_uuid
 
 
 KeyframeImageScope = Literal["video", "video_chunk"]

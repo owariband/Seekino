@@ -713,16 +713,24 @@ def test_lost_execution_lease_stops_before_external_write_or_complete(tmp_path):
     assert store.bulk_calls == repository.completed == []
 
 
-def test_coordinator_rejects_a_model_without_required_video_fps_support(tmp_path):
-    _, media, snapshot = _fixture(tmp_path)
+def test_coordinator_calls_configured_model_without_a_local_fps_capability_gate(tmp_path):
+    ids, media, snapshot = _fixture(tmp_path)
+    repository = _Repository(snapshot)
+    store = _Store()
     embedder = _Embedder()
+    # A local capability flag must not reject the user-configured model.
     embedder.supports_video_fps = False
-    with pytest.raises(ValueError, match="cannot execute the visual sampling contract"):
-        VideoParseIndexCoordinator(
-            _Repository(snapshot), _Store(), embedder, media_resolver=lambda _: media,
-            media_service=_media_service(tmp_path), contract=_contract(),
-        )
-    assert embedder.text_calls == embedder.video_calls == 0
+    service = VideoParseIndexCoordinator(
+        repository, store, embedder, media_resolver=lambda _: media,
+        media_service=_media_service(tmp_path), contract=_contract(),
+    )
+
+    assert service.index_interval(
+        _lease(ids["video_task"], ids["interval"], ids["chunk_task"])
+    ) == "complete"
+    assert embedder.text_calls == embedder.video_calls == 1
+    assert repository.completed == [{ids["chunk_task"]: 2}]
+    assert len(store.bulk_calls) == 1
 
 
 @pytest.mark.parametrize("field,value", [

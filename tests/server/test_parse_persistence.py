@@ -17,7 +17,7 @@ from engine.parsev1.retrieval import (
 from gateway.embedding import EmbeddingResult
 
 from server.config.video_processing import VideoProcessingConfig
-from server.identity import derive_video_chunk_id
+from server.model.identifiers import derive_video_chunk_id
 from server.model.dto.jobDTO import ParseJobLease, VideoChunkCheckpointState
 from server.model.job import ParseJobStage, VideoChunkCheckpointStage
 from server.mq.contracts import ParseJobLeaseLostError

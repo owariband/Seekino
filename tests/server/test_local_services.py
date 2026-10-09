@@ -396,13 +396,14 @@ def test_local_start_rejects_unready_elasticsearch_without_schema_write(monkeypa
     assert closed == [True]
 
 
-def test_local_start_skips_elasticsearch_without_explicit_configuration(monkeypatch) -> None:
+def test_local_start_rejects_missing_elasticsearch_configuration(monkeypatch) -> None:
     monkeypatch.setattr(
         local_services, "Elasticsearch",
         lambda *_args, **_kwargs: pytest.fail("ES client must not be opened"),
     )
 
-    local_services.start_elasticsearch(SimpleNamespace(elasticsearch=None))
+    with pytest.raises(RuntimeError, match="显式配置 Elasticsearch"):
+        local_services.start_elasticsearch(SimpleNamespace(elasticsearch=None))
 
 
 @pytest.mark.parametrize(("health", "expected"), [
@@ -414,7 +415,6 @@ def test_local_status_includes_explicit_elasticsearch_health(
 ) -> None:
     settings = SimpleNamespace(
         database_url="mysql+pymysql://root@127.0.0.1:3306/anivag_development",
-        qdrant_url="http://127.0.0.1:6333",
         elasticsearch=SimpleNamespace(url="http://127.0.0.1:9200", api_key=None),
     )
 
