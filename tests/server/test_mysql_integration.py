@@ -20,26 +20,26 @@ from server.database import (
     create_session_factory,
 )
 from server.model.video import (
-    ContextSnapshotRecord,
-    SeriesRecord,
-    VideoRecord,
-    VideoChunkInfoRecord,
-    VideoChunkEmbeddingRecord,
-    VideoChunkRecord,
+    ContextSnapshot,
+    Series,
+    Video,
+    VideoChunkInfo,
+    VideoChunkEmbedding,
+    VideoChunk,
 )
 from server.model.job import (
-    ChunkParseContentRecord,
-    ChunkParseTaskRecord,
-    IntervalParseContentRecord,
-    IntervalParseTaskRecord,
-    SeriesParseJobRecord,
-    VideoParseTaskRecord,
+    ChunkParseContent,
+    ChunkParseTask,
+    IntervalParseContent,
+    IntervalParseTask,
+    SeriesParseJob,
+    VideoParseTask,
 )
-from server.model.agent import AgentConversationRecord, AgentMessageRecord
-from server.model.parse_usage import ParseModelCallRecord, ParseUsageAttemptRecord
+from server.model.agent import AgentConversation, AgentMessage
+from server.model.parse_usage import ParseModelCall, ParseUsageAttempt
 from server.model.upload import (
     UPLOAD_DELETION_PENDING_ERROR_CODE,
-    UploadSessionRecord,
+    UploadSession,
     UploadSessionStatus,
 )
 from server.mq.mysql_queue import MySqlParseJobQueue
@@ -122,13 +122,13 @@ def test_mysql_agent_message_detail_request_idempotency_and_pairing():
         ).user_message.message_id == started.user_message.message_id
 
         with session_factory() as session:
-            user = session.get(AgentMessageRecord, started.user_message.message_id)
+            user = session.get(AgentMessage, started.user_message.message_id)
             assert user is not None
             assert user.detail == {"request": {"idempotencyKey": "request-key"}}
 
         with pytest.raises(IntegrityError):
             with session_factory.begin() as session:
-                session.add(AgentMessageRecord(
+                session.add(AgentMessage(
                     message_id=str(uuid4()),
                     conversation_id=conversation_id,
                     sequence_no=2,
@@ -140,11 +140,11 @@ def test_mysql_agent_message_detail_request_idempotency_and_pairing():
                 ))
     finally:
         with session_factory.begin() as session:
-            session.execute(delete(AgentMessageRecord).where(
-                AgentMessageRecord.conversation_id == conversation_id,
+            session.execute(delete(AgentMessage).where(
+                AgentMessage.conversation_id == conversation_id,
             ))
-            session.execute(delete(AgentConversationRecord).where(
-                AgentConversationRecord.conversation_id == conversation_id,
+            session.execute(delete(AgentConversation).where(
+                AgentConversation.conversation_id == conversation_id,
             ))
         engine.dispose()
 
@@ -195,9 +195,9 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
     )
     assert completed.video_parse_task_id is not None
     with session_factory.begin() as session:
-        job = session.get(SeriesParseJobRecord, completed.job_id)
+        job = session.get(SeriesParseJob, completed.job_id)
         legacy_job_before = (job.status, job.attempt_count, job.version)
-        task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+        task = session.get(VideoParseTask, completed.video_parse_task_id)
         original_config = task.parse_config
         task.status = "PARSING_FAILED"
         task.attempt_count = 3
@@ -234,17 +234,17 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
             for result in results
         ) == 1
         with session_factory() as session:
-            task = session.get(VideoParseTaskRecord, completed.video_parse_task_id)
+            task = session.get(VideoParseTask, completed.video_parse_task_id)
             assert (task.status, task.attempt_count, task.max_attempts) == (
                 "PREPARING", 3, 4,
             )
             assert task.version == 1
             assert task.parse_config == original_config
-            job = session.get(SeriesParseJobRecord, completed.job_id)
+            job = session.get(SeriesParseJob, completed.job_id)
             assert (job.status, job.attempt_count, job.version) == legacy_job_before
     finally:
         with session_factory.begin() as session:
-            session.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id))
+            session.execute(delete(Series).where(Series.series_id == series.series_id))
         engine.dispose()
 
 
@@ -298,12 +298,12 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
     assert completed.video_parse_task_id is not None
     with session_factory.begin() as session:
         initial = session.get(
-            VideoParseTaskRecord,
+            VideoParseTask,
             completed.video_parse_task_id,
         )
         original_config = initial.parse_config
         initial.status = "COMPLETE"
-        job = session.get(SeriesParseJobRecord, completed.job_id)
+        job = session.get(SeriesParseJob, completed.job_id)
         legacy_job_before = (job.status, job.version, job.attempt_count)
 
     barrier = Barrier(2)
@@ -337,9 +337,9 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
         assert created[0].parse_config == original_config
         with session_factory() as session:
             tasks = list(session.scalars(
-                select(VideoParseTaskRecord)
-                .where(VideoParseTaskRecord.video_id == completed.video_id)
-                .order_by(VideoParseTaskRecord.version)
+                select(VideoParseTask)
+                .where(VideoParseTask.video_id == completed.video_id)
+                .order_by(VideoParseTask.version)
             ))
             assert [task.id for task in tasks] == [
                 completed.video_parse_task_id,
@@ -347,12 +347,12 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
             ]
             assert [task.version for task in tasks] == [1, 2]
             assert tasks[0].parse_config == tasks[1].parse_config == original_config
-            job = session.get(SeriesParseJobRecord, completed.job_id)
+            job = session.get(SeriesParseJob, completed.job_id)
             assert (job.status, job.version, job.attempt_count) == legacy_job_before
     finally:
         with session_factory.begin() as session:
             session.execute(
-                delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id)
+                delete(Series).where(Series.series_id == series.series_id)
             )
         engine.dispose()
 
@@ -391,7 +391,7 @@ def mysql_v2_series():
     episodes = []
     try:
         with factory.begin() as session:
-            session.add(SeriesRecord(
+            session.add(Series(
                 series_id=series_id, workspace_id=workspace_id,
                 name=f"V2 lock test {series_id}", status="READY",
                 character_bible=[],
@@ -403,7 +403,7 @@ def mysql_v2_series():
                     "chunk_task_id", "interval_id",
                 )}
                 episodes.append(ids)
-                session.add(VideoRecord(
+                session.add(Video(
                     video_id=ids["video_id"], series_id=series_id,
                     episode_order=order, upload_sequence=order,
                     original_filename=f"episode-{order}.mp4",
@@ -413,7 +413,7 @@ def mysql_v2_series():
                     upload_progress=100, parse_progress=100,
                 ))
                 session.flush()
-                session.add(VideoParseTaskRecord(
+                session.add(VideoParseTask(
                     id=ids["task_id"], video_id=ids["video_id"],
                     pipeline_version="video-parse-v2", status="COMPLETE",
                     parse_config=deepcopy(config), chunk_count=1, version=1,
@@ -434,7 +434,7 @@ def mysql_v2_series():
                     create_time=now, update_time=now,
                 ))
                 session.flush()
-                session.add(VideoChunkRecord(
+                session.add(VideoChunk(
                     video_chunk_id=ids["chunk_id"], video_id=ids["video_id"],
                     sequence_no=0, start_seconds=0, end_seconds=10,
                     analysis_window_start_seconds=0, analysis_window_end_seconds=10,
@@ -443,18 +443,18 @@ def mysql_v2_series():
                     transcript=[], keyframe_uris=[],
                 ))
                 session.flush()
-                session.add(ChunkParseTaskRecord(
+                session.add(ChunkParseTask(
                     id=ids["chunk_task_id"], video_parse_task_id=ids["task_id"],
                     video_chunk_id=ids["chunk_id"], status="COMPLETE",
                     next_execute_time=now, lease_version=1,
                 ))
                 session.flush()
-                session.add(ChunkParseContentRecord(
+                session.add(ChunkParseContent(
                     id=str(uuid4()), chunk_parse_task_id=ids["chunk_task_id"],
                     content={"persons": ["retained"], "timeline": []}, version=1,
                     detail={"scope": [0], "compact": "retained child"},
                 ))
-                session.add(IntervalParseTaskRecord(
+                session.add(IntervalParseTask(
                     id=ids["interval_id"], chunk_parse_task_id=ids["chunk_task_id"],
                     video_parse_task_id=ids["task_id"],
                     chunk_parse_task_ids=[ids["chunk_task_id"]],
@@ -462,10 +462,10 @@ def mysql_v2_series():
                     status="INDEXING", next_execute_time=now, lease_version=1,
                 ))
                 session.flush()
-                session.add(IntervalParseContentRecord(
+                session.add(IntervalParseContent(
                     interval_parse_task_id=ids["interval_id"], content={"retained": True},
                 ))
-                session.add(UploadSessionRecord(
+                session.add(UploadSession(
                     upload_session_id=ids["upload_id"], workspace_id=workspace_id,
                     series_id=series_id, episode_order=order, upload_sequence=order,
                     original_filename=f"episode-{order}.mp4", media_type="video/mp4",
@@ -479,7 +479,7 @@ def mysql_v2_series():
     finally:
         event.remove(engine, "checkout", bounded_lock_wait)
         with factory.begin() as session:
-            session.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series_id))
+            session.execute(delete(Series).where(Series.series_id == series_id))
         engine.dispose()
 
 
@@ -492,13 +492,13 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
     first, second, third = episodes
     expires = now + (timedelta(minutes=5) if active else -timedelta(seconds=1))
     with factory.begin() as session:
-        parent = session.get(VideoParseTaskRecord, first["task_id"])
+        parent = session.get(VideoParseTask, first["task_id"])
         if takeover:
             parent.status = "PENDING"
             detail = deepcopy(parent.detail)
             detail["_worker_runtime_v2"]["accepted"] = False
             parent.detail = detail
-        later = session.get(VideoParseTaskRecord, second["task_id"])
+        later = session.get(VideoParseTask, second["task_id"])
         detail = deepcopy(later.detail)
         detail["_worker_runtime_v2"]["prefix"].update({
             "next_chunk_sequence_no": 0, "lease_owner": "old-prefix",
@@ -508,7 +508,7 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
         later.detail = detail
         session.flush()
         before = {
-            item["task_id"]: deepcopy(session.get(VideoParseTaskRecord, item["task_id"]).detail)
+            item["task_id"]: deepcopy(session.get(VideoParseTask, item["task_id"]).detail)
             for item in episodes
         }
 
@@ -528,14 +528,14 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
 
     def hold_later_parent():
         with factory.begin() as session:
-            session.scalar(select(VideoParseTaskRecord).where(
-                VideoParseTaskRecord.id == second["task_id"],
+            session.scalar(select(VideoParseTask).where(
+                VideoParseTask.id == second["task_id"],
             ).with_for_update())
             connections["holder"] = id(session.connection().connection.driver_connection)
             locked.set()
             assert requested.wait(5), "reparse never requested the locked suffix parent"
-            visible = list(session.scalars(select(VideoParseTaskRecord).where(
-                VideoParseTaskRecord.video_id == first["video_id"],
+            visible = list(session.scalars(select(VideoParseTask).where(
+                VideoParseTask.video_id == first["video_id"],
             )))
             assert [(task.id, task.version) for task in visible] == [(first["task_id"], 1)]
             assert visible[0].detail == before[first["task_id"]]
@@ -569,20 +569,20 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
         event.remove(engine, "before_cursor_execute", watch_reparse)
 
     with factory() as session:
-        all_tasks = list(session.scalars(select(VideoParseTaskRecord).where(
-            VideoParseTaskRecord.video_id.in_([item["video_id"] for item in episodes]),
+        all_tasks = list(session.scalars(select(VideoParseTask).where(
+            VideoParseTask.video_id.in_([item["video_id"] for item in episodes]),
         )))
         assert len(all_tasks) == (3 if active or takeover else 4)
         if active:
             assert {task.id: task.detail for task in all_tasks} == before
-            assert session.get(VideoParseTaskRecord, first["task_id"]).status == (
+            assert session.get(VideoParseTask, first["task_id"]).status == (
                 "PENDING" if takeover else "COMPLETE"
             )
         else:
             assert result.version == (1 if takeover else 2)
             invalidated_ids = [result.video_parse_task_id, second["task_id"], third["task_id"]]
             for task_id in invalidated_ids:
-                runtime = session.get(VideoParseTaskRecord, task_id).detail["_worker_runtime_v2"]
+                runtime = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]
                 prefix = runtime["prefix"]
                 assert prefix["next_chunk_sequence_no"] == 0
                 assert prefix["series_prefix_compact"] == prefix["video_prefix_compact"] == ""
@@ -592,15 +592,15 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
                 ).get("prefix", {}).get("lease_version", 0)
             if takeover:
                 assert result.video_parse_task_id == first["task_id"]
-                runtime = session.get(VideoParseTaskRecord, first["task_id"]).detail["_worker_runtime_v2"]
+                runtime = session.get(VideoParseTask, first["task_id"]).detail["_worker_runtime_v2"]
                 assert runtime["accepted"] is True
                 assert runtime["unrelated"] == {"preserved": True}
             else:
                 assert result.video_parse_task_id != first["task_id"]
-                assert session.get(VideoParseTaskRecord, first["task_id"]).detail == before[first["task_id"]]
+                assert session.get(VideoParseTask, first["task_id"]).detail == before[first["task_id"]]
         for item in episodes:
-            content = session.scalar(select(ChunkParseContentRecord).where(
-                ChunkParseContentRecord.chunk_parse_task_id == item["chunk_task_id"],
+            content = session.scalar(select(ChunkParseContent).where(
+                ChunkParseContent.chunk_parse_task_id == item["chunk_task_id"],
             ))
             assert content.content == {"persons": ["retained"], "timeline": []}
             assert content.detail == {"scope": [0], "compact": "retained child"}
@@ -631,10 +631,10 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
     queue = MySqlVideoParseQueue(factory)
     table = "chunk_parse_task" if kind == "chunk" else "interval_parse_task"
     with factory.begin() as session:
-        parent = session.get(VideoParseTaskRecord, target["task_id"])
+        parent = session.get(VideoParseTask, target["task_id"])
         parent.status = "INDEXING" if kind == "index" else "PARSING"
-        chunk = session.get(ChunkParseTaskRecord, target["chunk_task_id"])
-        interval = session.get(IntervalParseTaskRecord, target["interval_id"])
+        chunk = session.get(ChunkParseTask, target["chunk_task_id"])
+        interval = session.get(IntervalParseTask, target["interval_id"])
         if kind == "chunk":
             chunk.status = "QUEUED"
             chunk.detail = {"dispatch_requested": True}
@@ -643,8 +643,8 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
         elif kind == "refine":
             interval.status = "WAITING"
         if kind != "index":
-            session.execute(delete(IntervalParseContentRecord).where(
-                IntervalParseContentRecord.interval_parse_task_id == target["interval_id"],
+            session.execute(delete(IntervalParseContent).where(
+                IntervalParseContent.interval_parse_task_id == target["interval_id"],
             ))
 
     candidates_read, resume_claim = Event(), Event()
@@ -694,7 +694,7 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
                 # Fail the parent after the advisory read. Keep the child runnable
                 # so rejection below requires the actual held child lock.
                 with factory.begin() as session:
-                    parent = session.get(VideoParseTaskRecord, target["task_id"])
+                    parent = session.get(VideoParseTask, target["task_id"])
                     parent.status = "INDEXING_FAILED" if kind == "index" else "PARSING_FAILED"
                 retry = retries.submit(
                     UploadRepository(factory).retry_parse, target["upload_id"],
@@ -730,9 +730,9 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
     target = episodes[0]
     expires = now + timedelta(minutes=5)
     with factory.begin() as session:
-        session.get(VideoParseTaskRecord, target["task_id"]).status = "PARSING_FAILED"
-        chunk = session.get(ChunkParseTaskRecord, target["chunk_task_id"])
-        interval = session.get(IntervalParseTaskRecord, target["interval_id"])
+        session.get(VideoParseTask, target["task_id"]).status = "PARSING_FAILED"
+        chunk = session.get(ChunkParseTask, target["chunk_task_id"])
+        interval = session.get(IntervalParseTask, target["interval_id"])
         active = chunk if kind == "chunk" else interval
         active.status = "UNDERSTANDING" if kind == "chunk" else "REFINING"
         active.lease_owner = "commit-worker"
@@ -740,8 +740,8 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
         if kind == "chunk":
             interval.status = "WAITING"
             interval.ready_mask = 0
-        session.execute(delete(IntervalParseContentRecord).where(
-            IntervalParseContentRecord.interval_parse_task_id == target["interval_id"],
+        session.execute(delete(IntervalParseContent).where(
+            IntervalParseContent.interval_parse_task_id == target["interval_id"],
         ))
 
     repository = VideoParseRepository(factory)
@@ -818,12 +818,12 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
         assert restored.video_parse_task_id == target["task_id"]
         assert restored.status == ("PARSING" if kind == "chunk" else "INDEXING")
         with factory() as session:
-            content = session.scalar(select(ChunkParseContentRecord).where(
-                ChunkParseContentRecord.chunk_parse_task_id == target["chunk_task_id"],
+            content = session.scalar(select(ChunkParseContent).where(
+                ChunkParseContent.chunk_parse_task_id == target["chunk_task_id"],
             ))
             assert content.content["persons"] == ["worker"]
             assert content.version == (1 if kind == "chunk" else 2)
-            assert session.get(ChunkParseTaskRecord, target["chunk_task_id"]).status == "COMPLETE"
+            assert session.get(ChunkParseTask, target["chunk_task_id"]).status == "COMPLETE"
     finally:
         resume_worker.set()
         event.remove(engine, "before_cursor_execute", before_query)
@@ -842,13 +842,13 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
     failure = "INDEXING_FAILED" if kind == "index" else "PARSING_FAILED"
     running = "INDEXING" if kind == "index" else "PARSING"
     with factory.begin() as session:
-        parent = session.get(VideoParseTaskRecord, target["task_id"])
+        parent = session.get(VideoParseTask, target["task_id"])
         parent.status = running
         detail = deepcopy(parent.detail)
         detail["_worker_runtime_v2"]["failure_status"] = failure
         parent.detail = detail
-        chunk = session.get(ChunkParseTaskRecord, target["chunk_task_id"])
-        interval = session.get(IntervalParseTaskRecord, target["interval_id"])
+        chunk = session.get(ChunkParseTask, target["chunk_task_id"])
+        interval = session.get(IntervalParseTask, target["interval_id"])
         active = chunk if kind == "chunk" else interval
         active.status = {
             "chunk": "UNDERSTANDING", "refine": "REFINING", "index": "INDEXING",
@@ -859,8 +859,8 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
             interval.status = "WAITING"
             interval.ready_mask = 0
         if kind != "index":
-            session.execute(delete(IntervalParseContentRecord).where(
-                IntervalParseContentRecord.interval_parse_task_id == target["interval_id"],
+            session.execute(delete(IntervalParseContent).where(
+                IntervalParseContent.interval_parse_task_id == target["interval_id"],
             ))
 
     queue, repository = MySqlVideoParseQueue(factory), VideoParseRepository(factory)
@@ -928,11 +928,11 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                 assert connections["worker"] != connections["publisher"]
                 assert not worker.done(), "result commit was not held during the drain scan"
                 with factory() as session:
-                    parent = session.get(VideoParseTaskRecord, target["task_id"])
+                    parent = session.get(VideoParseTask, target["task_id"])
                     assert parent.status == running and parent.finish_time is None
                     assert parent.detail["_worker_runtime_v2"]["failure_status"] == failure
                     active = session.get(
-                        ChunkParseTaskRecord if kind == "chunk" else IntervalParseTaskRecord,
+                        ChunkParseTask if kind == "chunk" else IntervalParseTask,
                         target["chunk_task_id"] if kind == "chunk" else target["interval_id"],
                     )
                     assert active.lease_owner == "draining-worker"
@@ -946,25 +946,25 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
             ).result(timeout=5)
 
         with factory() as session:
-            parent = session.get(VideoParseTaskRecord, target["task_id"])
+            parent = session.get(VideoParseTask, target["task_id"])
             assert parent.status == failure and parent.finish_time == checked_at
-            chunk = session.get(ChunkParseTaskRecord, target["chunk_task_id"])
-            interval = session.get(IntervalParseTaskRecord, target["interval_id"])
+            chunk = session.get(ChunkParseTask, target["chunk_task_id"])
+            interval = session.get(IntervalParseTask, target["interval_id"])
             assert chunk.status == "COMPLETE" and chunk.lease_owner is None
             assert interval.lease_owner is None
-            content = session.scalar(select(ChunkParseContentRecord).where(
-                ChunkParseContentRecord.chunk_parse_task_id == target["chunk_task_id"],
+            content = session.scalar(select(ChunkParseContent).where(
+                ChunkParseContent.chunk_parse_task_id == target["chunk_task_id"],
             ))
             if kind != "index":
                 assert content.content["persons"] == ["drained"]
             if kind == "refine":
                 assert content.version == 2
-                assert session.get(IntervalParseContentRecord, target["interval_id"]).content == {
+                assert session.get(IntervalParseContent, target["interval_id"]).content == {
                     "refined": "drained",
                 }
             elif kind == "index":
                 assert interval.status == "COMPLETE"
-                detail = session.get(IntervalParseContentRecord, target["interval_id"]).detail
+                detail = session.get(IntervalParseContent, target["interval_id"]).detail
                 assert detail["indexed_versions"] == {target["chunk_task_id"]: 1}
     finally:
         release_commit.set()
@@ -1033,15 +1033,15 @@ def test_mysql_index_sync_hides_video_while_upload_deletion_is_pending(
         ),
     )
     with engine.begin() as connection:
-        connection.execute(delete(SeriesRecord).where(
-            SeriesRecord.series_id == prepared.series_id
+        connection.execute(delete(Series).where(
+            Series.series_id == prepared.series_id
         ))
 
     try:
         VideoRepository(session_factory).import_video_parse(prepared)
         now = unix_time_ms_to_datetime(now_unix_time_ms())
         with session_factory.begin() as session:
-            session.add(UploadSessionRecord(
+            session.add(UploadSession(
                 upload_session_id=str(uuid4()),
                 workspace_id=prepared.workspace_id,
                 series_id=prepared.series_id,
@@ -1067,8 +1067,8 @@ def test_mysql_index_sync_hides_video_while_upload_deletion_is_pending(
         assert index_repository.list_all() == []
     finally:
         with engine.begin() as connection:
-            connection.execute(delete(SeriesRecord).where(
-                SeriesRecord.series_id == prepared.series_id
+            connection.execute(delete(Series).where(
+                Series.series_id == prepared.series_id
             ))
         engine.dispose()
 
@@ -1125,7 +1125,7 @@ def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monk
     finally:
         release.set()
         with session_factory.begin() as session:
-            session.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id))
+            session.execute(delete(Series).where(Series.series_id == series.series_id))
         engine.dispose()
 
 
@@ -1175,14 +1175,14 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
     now = now_unix_time_ms()
     call_id = str(uuid4())
     with session_factory.begin() as session:
-        session.add(ParseUsageAttemptRecord(
+        session.add(ParseUsageAttempt(
             job_id=completed.job_id,
             attempt_count=1,
             lease_version=1,
             started_at=unix_time_ms_to_datetime(now),
             recording_complete=True,
         ))
-        session.add(ParseModelCallRecord(
+        session.add(ParseModelCall(
             call_id=call_id,
             job_id=completed.job_id,
             attempt_count=1,
@@ -1210,16 +1210,16 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
         assert deleted.status == UploadSessionStatus.EXPIRED.value
         assert repeated.version == deleted.version
         with session_factory() as session:
-            tombstone = session.get(UploadSessionRecord, upload.upload_session_id)
+            tombstone = session.get(UploadSession, upload.upload_session_id)
             assert tombstone.video_id is None and tombstone.job_id is None
             assert tombstone.last_error_code is None
-            assert session.get(VideoRecord, completed.video_id) is None
-            assert session.get(SeriesParseJobRecord, completed.job_id) is None
-            assert session.get(ParseUsageAttemptRecord, (completed.job_id, 1, 1)) is None
-            assert session.get(ParseModelCallRecord, call_id) is None
+            assert session.get(Video, completed.video_id) is None
+            assert session.get(SeriesParseJob, completed.job_id) is None
+            assert session.get(ParseUsageAttempt, (completed.job_id, 1, 1)) is None
+            assert session.get(ParseModelCall, call_id) is None
     finally:
         with session_factory.begin() as session:
-            session.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id))
+            session.execute(delete(Series).where(Series.series_id == series.series_id))
         engine.dispose()
 
 
@@ -1272,7 +1272,7 @@ def test_mysql_enforces_episode_order_under_concurrent_requests(tmp_path) -> Non
         assert replay.episode_order == created.episode_order
     finally:
         with engine.begin() as connection:
-            connection.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series.series_id))
+            connection.execute(delete(Series).where(Series.series_id == series.series_id))
         engine.dispose()
 
 
@@ -1324,8 +1324,8 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
 
     with engine.begin() as connection:
         connection.execute(
-            delete(SeriesRecord).where(
-                SeriesRecord.series_id.in_(
+            delete(Series).where(
+                Series.series_id.in_(
                     [prepared_import.series_id, failed_series_id]
                 )
             )
@@ -1350,37 +1350,37 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
         with engine.connect() as connection:
             counts = (
                 connection.execute(
-                    select(func.count()).select_from(SeriesRecord).where(
-                        SeriesRecord.series_id == prepared_import.series_id
+                    select(func.count()).select_from(Series).where(
+                        Series.series_id == prepared_import.series_id
                     )
                 ).scalar_one(),
                 connection.execute(
-                    select(func.count()).select_from(VideoRecord).where(
-                        VideoRecord.video_id == prepared_import.video_id
+                    select(func.count()).select_from(Video).where(
+                        Video.video_id == prepared_import.video_id
                     )
                 ).scalar_one(),
                 connection.execute(
-                    select(func.count()).select_from(VideoChunkRecord).where(
-                        VideoChunkRecord.video_id == prepared_import.video_id
-                    )
-                ).scalar_one(),
-                connection.execute(
-                    select(func.count())
-                    .select_from(VideoChunkInfoRecord)
-                    .where(
-                        VideoChunkInfoRecord.video_chunk_id.in_(chunk_ids)
-                    )
-                ).scalar_one(),
-                connection.execute(
-                    select(func.count()).select_from(ContextSnapshotRecord).where(
-                        ContextSnapshotRecord.video_id == prepared_import.video_id
+                    select(func.count()).select_from(VideoChunk).where(
+                        VideoChunk.video_id == prepared_import.video_id
                     )
                 ).scalar_one(),
                 connection.execute(
                     select(func.count())
-                    .select_from(VideoChunkEmbeddingRecord)
+                    .select_from(VideoChunkInfo)
                     .where(
-                        VideoChunkEmbeddingRecord.video_chunk_id.in_(
+                        VideoChunkInfo.video_chunk_id.in_(chunk_ids)
+                    )
+                ).scalar_one(),
+                connection.execute(
+                    select(func.count()).select_from(ContextSnapshot).where(
+                        ContextSnapshot.video_id == prepared_import.video_id
+                    )
+                ).scalar_one(),
+                connection.execute(
+                    select(func.count())
+                    .select_from(VideoChunkEmbedding)
+                    .where(
+                        VideoChunkEmbedding.video_chunk_id.in_(
                             chunk_ids
                         )
                     )
@@ -1388,16 +1388,16 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
             )
             compact, text_input, text_vector, vision_vector = connection.execute(
                 select(
-                    VideoChunkInfoRecord.video_compact,
-                    VideoChunkEmbeddingRecord.text_input,
-                    VideoChunkEmbeddingRecord.text_vector,
-                    VideoChunkEmbeddingRecord.vision_vector,
+                    VideoChunkInfo.video_compact,
+                    VideoChunkEmbedding.text_input,
+                    VideoChunkEmbedding.text_vector,
+                    VideoChunkEmbedding.vision_vector,
                 ).join(
-                    VideoChunkEmbeddingRecord,
-                    VideoChunkEmbeddingRecord.video_chunk_id
-                    == VideoChunkInfoRecord.video_chunk_id,
+                    VideoChunkEmbedding,
+                    VideoChunkEmbedding.video_chunk_id
+                    == VideoChunkInfo.video_chunk_id,
                 ).where(
-                    VideoChunkInfoRecord.video_chunk_id == chunk_ids[0]
+                    VideoChunkInfo.video_chunk_id == chunk_ids[0]
                 )
             ).one()
         assert counts == (1, 1, 2, 2, 2, 2)
@@ -1432,7 +1432,7 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
             if target.after_chunk_sequence_no == 1:
                 raise RuntimeError("injected MySQL persistence failure")
 
-        event.listen(ContextSnapshotRecord, "before_insert", fail_second_snapshot)
+        event.listen(ContextSnapshot, "before_insert", fail_second_snapshot)
         try:
             with pytest.raises(
                 RuntimeError,
@@ -1441,7 +1441,7 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
                 repository.import_video_parse(failed_import)
         finally:
             event.remove(
-                ContextSnapshotRecord,
+                ContextSnapshot,
                 "before_insert",
                 fail_second_snapshot,
             )
@@ -1449,39 +1449,39 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
         with engine.connect() as connection:
             failed_counts = (
                 connection.execute(
-                    select(func.count()).select_from(SeriesRecord).where(
-                        SeriesRecord.series_id == failed_series_id
+                    select(func.count()).select_from(Series).where(
+                        Series.series_id == failed_series_id
                     )
                 ).scalar_one(),
                 connection.execute(
-                    select(func.count()).select_from(VideoRecord).where(
-                        VideoRecord.video_id == failed_video_id
+                    select(func.count()).select_from(Video).where(
+                        Video.video_id == failed_video_id
                     )
                 ).scalar_one(),
                 connection.execute(
-                    select(func.count()).select_from(VideoChunkRecord).where(
-                        VideoChunkRecord.video_id == failed_video_id
+                    select(func.count()).select_from(VideoChunk).where(
+                        VideoChunk.video_id == failed_video_id
                     )
                 ).scalar_one(),
                 connection.execute(
                     select(func.count())
-                    .select_from(VideoChunkInfoRecord)
+                    .select_from(VideoChunkInfo)
                     .where(
-                        VideoChunkInfoRecord.video_chunk_id.in_(
+                        VideoChunkInfo.video_chunk_id.in_(
                             [item.video_chunk_id for item in failed_chunks]
                         )
                     )
                 ).scalar_one(),
                 connection.execute(
-                    select(func.count()).select_from(ContextSnapshotRecord).where(
-                        ContextSnapshotRecord.video_id == failed_video_id
+                    select(func.count()).select_from(ContextSnapshot).where(
+                        ContextSnapshot.video_id == failed_video_id
                     )
                 ).scalar_one(),
                 connection.execute(
                     select(func.count())
-                    .select_from(VideoChunkEmbeddingRecord)
+                    .select_from(VideoChunkEmbedding)
                     .where(
-                        VideoChunkEmbeddingRecord.video_chunk_id.in_(
+                        VideoChunkEmbedding.video_chunk_id.in_(
                             [item.video_chunk_id for item in failed_chunks]
                         )
                     )
@@ -1491,8 +1491,8 @@ def test_mysql_import_hydrate_and_late_failure_rollback(prepared_import) -> None
     finally:
         with engine.begin() as connection:
             connection.execute(
-                delete(SeriesRecord).where(
-                    SeriesRecord.series_id.in_(
+                delete(Series).where(
+                    Series.series_id.in_(
                         [prepared_import.series_id, failed_series_id]
                     )
                 )
@@ -1645,8 +1645,8 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
     finally:
         with engine.begin() as connection:
             connection.execute(
-                delete(SeriesRecord).where(
-                    SeriesRecord.series_id == series.series_id
+                delete(Series).where(
+                    Series.series_id == series.series_id
                 )
             )
         engine.dispose()

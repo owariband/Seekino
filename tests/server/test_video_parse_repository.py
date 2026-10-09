@@ -14,13 +14,13 @@ from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
 from server.model.dto.jobDTO import PrefixParseLease
 from server.model.job import (
-    ChunkParseContentRecord,
-    ChunkParseTaskRecord,
-    IntervalParseContentRecord,
-    IntervalParseTaskRecord,
-    VideoParseTaskRecord,
+    ChunkParseContent,
+    ChunkParseTask,
+    IntervalParseContent,
+    IntervalParseTask,
+    VideoParseTask,
 )
-from server.model.video import SeriesRecord, VideoChunkRecord, VideoRecord
+from server.model.video import Series, VideoChunk, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.video_parse import (
     INDEX_EMBEDDINGS_DETAIL_KEY,
@@ -60,7 +60,7 @@ def _seed(repository, *, chunk_count: int = 4, accepted: bool = True, batch_size
     series_id, video_id, task_id = str(uuid4()), str(uuid4()), str(uuid4())
     config = _config(chunk_count=chunk_count, batch_size=batch_size)
     with factory.begin() as session:
-        session.add(SeriesRecord(
+        session.add(Series(
             series_id=series_id,
             workspace_id="mine",
             name=f"Series {series_id}",
@@ -69,7 +69,7 @@ def _seed(repository, *, chunk_count: int = 4, accepted: bool = True, batch_size
             important_extra_data=None,
             character_bible=[],
         ))
-        session.add(VideoRecord(
+        session.add(Video(
             video_id=video_id,
             series_id=series_id,
             episode_order=1,
@@ -84,7 +84,7 @@ def _seed(repository, *, chunk_count: int = 4, accepted: bool = True, batch_size
             upload_progress=100,
             parse_progress=0,
         ))
-        session.add(VideoParseTaskRecord(
+        session.add(VideoParseTask(
             id=task_id,
             video_id=video_id,
             pipeline_version="video-parse-v2",
@@ -136,8 +136,8 @@ def _prepare(repository, *, chunk_count: int = 4):
 def test_preparation_preserves_fractional_last_chunk_boundary(repository):
     factory, task_id = _seed(repository, chunk_count=1)
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
-        session.get(VideoRecord, task.video_id).duration_seconds = 8008
+        task = session.get(VideoParseTask, task_id)
+        session.get(Video, task.video_id).duration_seconds = 8008
     queue = MySqlVideoParseQueue(factory)
     repo = VideoParseRepository(factory)
     lease = queue.claim_video("prepare-ms", lease_duration=timedelta(minutes=10), now=NOW)
@@ -173,7 +173,7 @@ def _prepare_two_chunk_prefix_chain(repository):
         repository, chunk_count=2
     )
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         config = dict(task.parse_config)
         config["compact_enabled"] = True
         config["prefix_context"] = {
@@ -222,7 +222,7 @@ def test_prepare_is_idempotent_and_short_video_gets_one_interval(repository):
     assert len(prepared.chunk_parse_task_ids) == 2
     assert len(prepared.interval_parse_task_ids) == 1
     with factory() as session:
-        interval = session.get(IntervalParseTaskRecord, prepared.interval_parse_task_ids[0])
+        interval = session.get(IntervalParseTask, prepared.interval_parse_task_ids[0])
         assert (interval.start_sequence_no, interval.chunk_count) == (0, 2)
         assert interval.chunk_parse_task_ids == list(prepared.chunk_parse_task_ids)
     assert queue.claim_video(
@@ -279,8 +279,8 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
     )
     with factory() as session:
         cached = session.scalar(
-            select(ChunkParseContentRecord).where(
-                ChunkParseContentRecord.chunk_parse_task_id
+            select(ChunkParseContent).where(
+                ChunkParseContent.chunk_parse_task_id
                 == indexed_chunk.chunk_parse_task_id
             )
         ).detail["_index_embeddings_v2"]
@@ -308,8 +308,8 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
         now=NOW + timedelta(minutes=1, seconds=2),
     )
     with factory() as session:
-        current = session.scalar(select(ChunkParseContentRecord).where(
-            ChunkParseContentRecord.chunk_parse_task_id == indexed_chunk.chunk_parse_task_id
+        current = session.scalar(select(ChunkParseContent).where(
+            ChunkParseContent.chunk_parse_task_id == indexed_chunk.chunk_parse_task_id
         ))
         assert current.detail[INDEX_EMBEDDINGS_DETAIL_KEY]["representations"] == {
             "semantic": {"vector": [3.0]},
@@ -321,7 +321,7 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
     )
     assert state.status == "PARSING"
     with factory() as session:
-        interval = session.get(IntervalParseTaskRecord, first.interval_parse_task_id)
+        interval = session.get(IntervalParseTask, first.interval_parse_task_id)
         assert interval.status == "INDEXING" and interval.lease_owner is None
         assert interval.retry_count == 0
         assert interval.next_execute_time > NOW + timedelta(minutes=1, seconds=3)
@@ -339,8 +339,8 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
     )
     with factory() as session:
         contents = list(session.scalars(
-            select(ChunkParseContentRecord).order_by(
-                ChunkParseContentRecord.chunk_parse_task_id
+            select(ChunkParseContent).order_by(
+                ChunkParseContent.chunk_parse_task_id
             )
         ))
         by_id = {item.chunk_parse_task_id: item for item in contents}
@@ -438,7 +438,7 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
     assert inflight is not None
     failure_status = "INDEXING_FAILED" if phase == "index" else "PARSING_FAILED"
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         prefix = {
             **task.detail["_worker_runtime_v2"]["prefix"],
             "lease_owner": "independent-prefix",
@@ -454,22 +454,22 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
             },
         }
         if phase == "chunk":
-            session.get(ChunkParseTaskRecord, prepared.chunk_parse_task_ids[0]).status = "FAILED"
+            session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).status = "FAILED"
         else:
             failed_id = next(
                 child_id for child_id in prepared.interval_parse_task_ids
                 if child_id != inflight.interval_parse_task_id
             )
-            session.get(IntervalParseTaskRecord, failed_id).status = failure_status
+            session.get(IntervalParseTask, failed_id).status = failure_status
 
     draining = repo.aggregate_task(video_lease, now=claimed_at)
     assert draining.status == ("INDEXING" if phase == "index" else "PARSING")
     with factory() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         assert parent.finish_time is None
         assert parent.lease_owner == video_lease.worker_id
         assert parent.detail["_worker_runtime_v2"]["failure_status"] == failure_status
-        assert session.get(VideoRecord, parent.video_id).parse_status == draining.status
+        assert session.get(Video, parent.video_id).parse_status == draining.status
 
     committed_at = claimed_at + timedelta(seconds=1)
     if phase == "chunk":
@@ -504,7 +504,7 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
 
     assert repo.aggregate_task(video_lease, now=committed_at).status == failure_status
     with factory() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         assert parent.finish_time is not None
         assert parent.lease_owner is None
         runtime = parent.detail["_worker_runtime_v2"]
@@ -512,36 +512,36 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
         assert runtime["prefix"] == prefix
         assert runtime["model_calls"] == {"used_call_ids": ["call-1", "call-2"], "active": {}}
         if phase == "chunk":
-            content = session.scalar(select(ChunkParseContentRecord).where(
-                ChunkParseContentRecord.chunk_parse_task_id == inflight.chunk_parse_task_id
+            content = session.scalar(select(ChunkParseContent).where(
+                ChunkParseContent.chunk_parse_task_id == inflight.chunk_parse_task_id
             ))
             assert content.content["timeline"] == [{"value": "retained-inflight"}]
         elif phase == "refine":
-            content = session.get(IntervalParseContentRecord, inflight.interval_parse_task_id)
+            content = session.get(IntervalParseContent, inflight.interval_parse_task_id)
             assert content.content == {"summary": "retained-inflight"}
         else:
             assert session.get(
-                IntervalParseTaskRecord, inflight.interval_parse_task_id
+                IntervalParseTask, inflight.interval_parse_task_id
             ).status == "COMPLETE"
 
 
 def test_failure_does_not_treat_expired_but_unreleased_child_as_drained(repository):
     factory, _queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=2)
     with factory.begin() as session:
-        session.get(ChunkParseTaskRecord, prepared.chunk_parse_task_ids[0]).status = "FAILED"
-        unfinished = session.get(ChunkParseTaskRecord, prepared.chunk_parse_task_ids[1])
+        session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).status = "FAILED"
+        unfinished = session.get(ChunkParseTask, prepared.chunk_parse_task_ids[1])
         unfinished.status = "UNDERSTANDING"
         unfinished.lease_owner = "expired-worker"
         unfinished.lease_expire_time = NOW
 
     assert repo.aggregate_task(video_lease, now=NOW + timedelta(seconds=1)).status == "PARSING"
     with factory() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         assert parent.finish_time is None
         assert parent.detail["_worker_runtime_v2"]["failure_status"] == "PARSING_FAILED"
 
     with factory.begin() as session:
-        unfinished = session.get(ChunkParseTaskRecord, prepared.chunk_parse_task_ids[1])
+        unfinished = session.get(ChunkParseTask, prepared.chunk_parse_task_ids[1])
         unfinished.status = "QUEUED"
         unfinished.lease_owner = None
         unfinished.lease_expire_time = None
@@ -715,21 +715,21 @@ def test_index_rebuild_preserves_results_and_fences_the_old_index_lease(reposito
         task_id, now=first_rebuild_at
     ) == (initial_index.interval_parse_task_id,)
     with factory() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         interval = session.get(
-            IntervalParseTaskRecord, initial_index.interval_parse_task_id
+            IntervalParseTask, initial_index.interval_parse_task_id
         )
         interval_content = session.get(
-            IntervalParseContentRecord, initial_index.interval_parse_task_id
+            IntervalParseContent, initial_index.interval_parse_task_id
         )
         chunk_tasks = list(session.scalars(
-            select(ChunkParseTaskRecord).where(
-                ChunkParseTaskRecord.video_parse_task_id == task_id
+            select(ChunkParseTask).where(
+                ChunkParseTask.video_parse_task_id == task_id
             )
         ))
         chunk_content = session.scalar(
-            select(ChunkParseContentRecord).where(
-                ChunkParseContentRecord.chunk_parse_task_id
+            select(ChunkParseContent).where(
+                ChunkParseContent.chunk_parse_task_id
                 == first_chunk.chunk_parse_task_id
             )
         )
@@ -790,8 +790,8 @@ def test_index_rebuild_rejects_nonlatest_and_deleted_tasks(repository):
     )
     newer_id = str(uuid4())
     with factory.begin() as session:
-        current = session.get(VideoParseTaskRecord, task_id)
-        session.add(VideoParseTaskRecord(
+        current = session.get(VideoParseTask, task_id)
+        session.add(VideoParseTask(
             id=newer_id,
             video_id=current.video_id,
             pipeline_version=current.pipeline_version,
@@ -816,7 +816,7 @@ def test_index_rebuild_rejects_nonlatest_and_deleted_tasks(repository):
         repo.request_index_rebuild(task_id, now=NOW + timedelta(minutes=1))
 
     with factory.begin() as session:
-        session.get(VideoParseTaskRecord, newer_id).is_deleted = True
+        session.get(VideoParseTask, newer_id).is_deleted = True
     with pytest.raises(VideoParseTaskNotFoundError):
         repo.request_index_rebuild(newer_id, now=NOW + timedelta(minutes=1))
 
@@ -825,7 +825,7 @@ def test_index_rebuild_rejects_nonlatest_and_deleted_tasks(repository):
 def test_index_rebuild_clears_only_settled_index_failure_intent(repository, has_failure_intent):
     factory, _queue, repo, task_id = _prepare_two_chunk_prefix_chain(repository)
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         task.status = "INDEXING_FAILED"
         runtime = {
             **task.detail["_worker_runtime_v2"],
@@ -835,24 +835,24 @@ def test_index_rebuild_clears_only_settled_index_failure_intent(repository, has_
         if has_failure_intent:
             runtime["failure_status"] = "INDEXING_FAILED"
         task.detail = {**task.detail, "_worker_runtime_v2": runtime}
-        interval = session.scalar(select(IntervalParseTaskRecord).where(
-            IntervalParseTaskRecord.video_parse_task_id == task_id
+        interval = session.scalar(select(IntervalParseTask).where(
+            IntervalParseTask.video_parse_task_id == task_id
         ))
         interval.status = "INDEXING_FAILED"
         interval_id = interval.id
-        content = session.get(IntervalParseContentRecord, interval_id).content
+        content = session.get(IntervalParseContent, interval_id).content
 
     assert repo.request_index_rebuild(
         task_id, now=NOW + timedelta(minutes=2)
     ) == (interval_id,)
     with factory() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         assert parent.status == "INDEXING"
         assert parent.finish_time is None
         assert parent.detail["_worker_runtime_v2"] == {
             key: value for key, value in runtime.items() if key != "failure_status"
         }
-        assert session.get(IntervalParseContentRecord, interval_id).content == content
+        assert session.get(IntervalParseContent, interval_id).content == content
 
 
 @pytest.mark.parametrize(
@@ -868,7 +868,7 @@ def test_index_rebuild_rejects_parsing_failure_and_unfinished_failure_drain(
 ):
     factory, _queue, repo, task_id = _prepare_two_chunk_prefix_chain(repository)
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         task.status = "INDEXING" if owner is not None else failure_status
         task.detail = {
             **task.detail,
@@ -877,8 +877,8 @@ def test_index_rebuild_rejects_parsing_failure_and_unfinished_failure_drain(
                 "failure_status": failure_status,
             },
         }
-        interval = session.scalar(select(IntervalParseTaskRecord).where(
-            IntervalParseTaskRecord.video_parse_task_id == task_id
+        interval = session.scalar(select(IntervalParseTask).where(
+            IntervalParseTask.video_parse_task_id == task_id
         ))
         interval.status = "INDEXING" if owner is not None else "INDEXING_FAILED"
         interval.lease_owner = owner
@@ -892,8 +892,8 @@ def test_index_rebuild_rejects_parsing_failure_and_unfinished_failure_drain(
     with pytest.raises(VideoParseConflictError):
         repo.request_index_rebuild(task_id, now=NOW + timedelta(minutes=2))
     with factory() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
-        interval = session.get(IntervalParseTaskRecord, interval_id)
+        task = session.get(VideoParseTask, task_id)
+        interval = session.get(IntervalParseTask, interval_id)
         assert (
             task.status, task.detail, interval.status,
             interval.lease_owner, interval.lease_version,
@@ -1091,12 +1091,12 @@ def test_v2_snapshots_always_expose_the_whole_video_media_source(repository):
     )
     proxy_ref = "artifact://test/whole-video-proxy.mp4"
     with factory.begin() as session:
-        video = session.get(VideoRecord, video_lease.video_id)
+        video = session.get(Video, video_lease.video_id)
         video.inference_proxy_uri = proxy_ref
         chunks = list(session.scalars(
-            select(VideoChunkRecord)
-            .where(VideoChunkRecord.video_id == video_lease.video_id)
-            .order_by(VideoChunkRecord.sequence_no)
+            select(VideoChunk)
+            .where(VideoChunk.video_id == video_lease.video_id)
+            .order_by(VideoChunk.sequence_no)
         ))
         for index, chunk in enumerate(chunks):
             # These are valid V1 local artifacts, but their time origin is 0.
@@ -1168,7 +1168,7 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
     # A deleted parent invalidates every Prefix fence immediately, including
     # the repository heartbeat/commit path and media-reaper predicate.
     with factory.begin() as session:
-        session.get(VideoParseTaskRecord, task_id).is_deleted = True
+        session.get(VideoParseTask, task_id).is_deleted = True
     assert not repo.heartbeat_prefix(
         first,
         lease_duration=timedelta(minutes=5),
@@ -1189,7 +1189,7 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
             now=NOW + timedelta(minutes=2, milliseconds=200),
         )
     with factory.begin() as session:
-        session.get(VideoParseTaskRecord, task_id).is_deleted = False
+        session.get(VideoParseTask, task_id).is_deleted = False
     assert repo.retry_prefix(
         first,
         error="previous failure",
@@ -1215,7 +1215,7 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
         now=NOW + timedelta(minutes=2, seconds=1, milliseconds=200),
     )
     with factory() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         prefix = task.detail["_worker_runtime_v2"]["prefix"]
         assert prefix["lease_owner"] is None
         assert prefix["lease_expire_time_ms"] is None
@@ -1258,12 +1258,12 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
     assert queue.is_execution_lease_committed(second)
     with factory() as session:
         content = session.scalar(
-            select(ChunkParseContentRecord).where(
-                ChunkParseContentRecord.chunk_parse_task_id
+            select(ChunkParseContent).where(
+                ChunkParseContent.chunk_parse_task_id
                 == second.chunk_parse_task_id
             )
         )
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         prefix = task.detail["_worker_runtime_v2"]["prefix"]
         assert content.detail["scope"] == [0, 1]
         assert content.version == second.content_version + 1
@@ -1284,7 +1284,7 @@ def test_inflight_prefix_commit_preserves_published_failure_and_finish_time(repo
     assert prefix_lease is not None
     failed_at = NOW + timedelta(minutes=2, seconds=1)
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         task.status = failure_status
         task.finish_time = failed_at
         task.detail = {
@@ -1303,7 +1303,7 @@ def test_inflight_prefix_commit_preserves_published_failure_and_finish_time(repo
     )
     assert reset and queue.is_execution_lease_committed(prefix_lease)
     with factory() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         assert task.status == failure_status
         assert task.finish_time == failed_at
         assert task.detail["_worker_runtime_v2"]["failure_status"] == failure_status
@@ -1311,8 +1311,8 @@ def test_inflight_prefix_commit_preserves_published_failure_and_finish_time(repo
         assert prefix["next_chunk_sequence_no"] == 1
         assert prefix["video_prefix_compact"] == "retained-prefix"
         assert prefix["lease_owner"] is None
-        content = session.scalar(select(ChunkParseContentRecord).where(
-            ChunkParseContentRecord.chunk_parse_task_id == prefix_lease.chunk_parse_task_id
+        content = session.scalar(select(ChunkParseContent).where(
+            ChunkParseContent.chunk_parse_task_id == prefix_lease.chunk_parse_task_id
         ))
         assert content.content["persons"] == ["retained-prefix-update"]
         assert content.version == prefix_lease.content_version + 1
@@ -1324,7 +1324,7 @@ def test_prefix_frontier_never_falls_back_to_an_older_parse_version(repository):
     )
     with factory.begin() as session:
         current = session.get(
-            VideoParseTaskRecord, video_lease.video_parse_task_id
+            VideoParseTask, video_lease.video_parse_task_id
         )
         config = dict(current.parse_config)
         config["compact_enabled"] = True
@@ -1365,11 +1365,11 @@ def test_prefix_frontier_never_falls_back_to_an_older_parse_version(repository):
 
     with factory.begin() as session:
         old = session.get(
-            VideoParseTaskRecord, video_lease.video_parse_task_id
+            VideoParseTask, video_lease.video_parse_task_id
         )
-        video = session.get(VideoRecord, old.video_id)
+        video = session.get(Video, old.video_id)
         newer_id = str(uuid4())
-        session.add(VideoParseTaskRecord(
+        session.add(VideoParseTask(
             id=newer_id,
             video_id=old.video_id,
             pipeline_version=old.pipeline_version,
@@ -1410,7 +1410,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
     stale_video_chunk_id = str(uuid4())
     retained_content_id = str(uuid4())
     with factory.begin() as session:
-        session.add(SeriesRecord(
+        session.add(Series(
             series_id=series_id,
             workspace_id="mine",
             name="Prefix chain",
@@ -1423,7 +1423,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
             video_id = str(uuid4())
             task_id = str(uuid4())
             task_ids.append(task_id)
-            session.add(VideoRecord(
+            session.add(Video(
                 video_id=video_id,
                 series_id=series_id,
                 episode_order=order,
@@ -1458,7 +1458,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                 "series_prefix_compact": f"series-{order}",
                 "last_error": {"message": "old"},
             }
-            session.add(VideoParseTaskRecord(
+            session.add(VideoParseTask(
                 id=task_id,
                 video_id=video_id,
                 pipeline_version="video-parse-v2",
@@ -1485,7 +1485,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                 update_time=NOW,
             ))
             if order == 3:
-                session.add(VideoChunkRecord(
+                session.add(VideoChunk(
                     video_chunk_id=stale_video_chunk_id,
                     video_id=video_id,
                     sequence_no=0,
@@ -1499,7 +1499,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                     baseline_visual_caption=None,
                     keyframe_uris=[],
                 ))
-                session.add(ChunkParseTaskRecord(
+                session.add(ChunkParseTask(
                     id=stale_chunk_task_id,
                     video_parse_task_id=task_id,
                     video_chunk_id=stale_video_chunk_id,
@@ -1509,7 +1509,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                     lease_version=1,
                     finish_time=NOW,
                 ))
-                session.add(ChunkParseContentRecord(
+                session.add(ChunkParseContent(
                     id=retained_content_id,
                     chunk_parse_task_id=stale_chunk_task_id,
                     content={"persons": ["retained"], "timeline": []},
@@ -1545,7 +1545,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
     with pytest.raises(VideoParseConflictError, match="active lease"):
         with factory.begin() as session:
             first_video = session.get(
-                VideoParseTaskRecord, task_ids[0]
+                VideoParseTask, task_ids[0]
             ).video_id
             invalidate_series_prefixes_from(
                 session,
@@ -1555,7 +1555,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                 now=NOW + timedelta(minutes=1),
             )
     with factory.begin() as session:
-        third = session.get(VideoParseTaskRecord, task_ids[2])
+        third = session.get(VideoParseTask, task_ids[2])
         detail = dict(third.detail)
         runtime = dict(detail["_worker_runtime_v2"])
         prefix = dict(runtime["prefix"])
@@ -1566,7 +1566,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
         detail["_worker_runtime_v2"] = runtime
         third.detail = detail
         first_video = session.get(
-            VideoParseTaskRecord, task_ids[0]
+            VideoParseTask, task_ids[0]
         ).video_id
         invalidated = invalidate_series_prefixes_from(
             session,
@@ -1579,7 +1579,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
 
     with factory() as session:
         first, disabled, third = (
-            session.get(VideoParseTaskRecord, task_id)
+            session.get(VideoParseTask, task_id)
             for task_id in task_ids
         )
         for task, old_version in ((first, 1), (third, 3)):
@@ -1596,7 +1596,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
         assert disabled.detail["_worker_runtime_v2"]["prefix"][
             "series_prefix_compact"
         ] == "series-2"
-        retained = session.get(ChunkParseContentRecord, retained_content_id)
+        retained = session.get(ChunkParseContent, retained_content_id)
         assert retained.content == {"persons": ["retained"], "timeline": []}
         assert retained.detail == {"scope": [0], "compact": "retained child"}
 
@@ -1625,8 +1625,8 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
 ) -> None:
     factory, queue, repo, task_id = _prepare_two_chunk_prefix_chain(repository)
     with factory() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
-        video = session.get(VideoRecord, task.video_id)
+        task = session.get(VideoParseTask, task_id)
+        video = session.get(Video, task.video_id)
         series_id = video.series_id
         video_id = video.video_id
         episode_order = video.episode_order
@@ -1658,7 +1658,7 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
             now=invalidated_at,
         ) == (task_id,)
     with factory() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         prefix = task.detail["_worker_runtime_v2"]["prefix"]
         old_marker = prefix["committed_leases"][str(old_lease.lease_version)]
         assert prefix["next_chunk_sequence_no"] == 0
@@ -1707,13 +1707,13 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
 
     def persisted_chain_state():
         with factory() as session:
-            task = session.get(VideoParseTaskRecord, task_id)
+            task = session.get(VideoParseTask, task_id)
             contents = session.scalars(
-                select(ChunkParseContentRecord)
-                .where(ChunkParseContentRecord.chunk_parse_task_id.in_(
+                select(ChunkParseContent)
+                .where(ChunkParseContent.chunk_parse_task_id.in_(
                     [new_zero.chunk_parse_task_id, new_one.chunk_parse_task_id]
                 ))
-                .order_by(ChunkParseContentRecord.id)
+                .order_by(ChunkParseContent.id)
             )
             return task.detail, task.update_time, [
                 (row.id, row.content, row.version, row.detail, row.update_time)
@@ -1755,17 +1755,17 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
         now=stale_attempt_at,
     )
     with factory() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         prefix = task.detail["_worker_runtime_v2"]["prefix"]
         zero_content = session.scalar(
-            select(ChunkParseContentRecord).where(
-                ChunkParseContentRecord.chunk_parse_task_id
+            select(ChunkParseContent).where(
+                ChunkParseContent.chunk_parse_task_id
                 == new_zero.chunk_parse_task_id
             )
         )
         one_content = session.scalar(
-            select(ChunkParseContentRecord).where(
-                ChunkParseContentRecord.chunk_parse_task_id
+            select(ChunkParseContent).where(
+                ChunkParseContent.chunk_parse_task_id
                 == new_one.chunk_parse_task_id
             )
         )
@@ -1793,12 +1793,12 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
     assert queue.is_execution_lease_committed(new_zero)
     assert queue.is_execution_lease_committed(new_one)
     with factory() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         prefix = task.detail["_worker_runtime_v2"]["prefix"]
         committed = prefix["committed_leases"]
         one_content = session.scalar(
-            select(ChunkParseContentRecord).where(
-                ChunkParseContentRecord.chunk_parse_task_id
+            select(ChunkParseContent).where(
+                ChunkParseContent.chunk_parse_task_id
                 == new_one.chunk_parse_task_id
             )
         )
@@ -1852,15 +1852,15 @@ def _seed_retrieval_chunk(repository):
         "index_generation": 2,
     }
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         assert task is not None
         task.status = "COMPLETE"
         task.finish_time = NOW
-        video = session.get(VideoRecord, task.video_id)
+        video = session.get(Video, task.video_id)
         assert video is not None
         video.parse_status = "COMPLETE"
         video.parse_progress = 100
-        session.add(VideoChunkRecord(
+        session.add(VideoChunk(
             video_chunk_id=chunk_id,
             video_id=task.video_id,
             sequence_no=0,
@@ -1874,7 +1874,7 @@ def _seed_retrieval_chunk(repository):
             baseline_visual_caption=None,
             keyframe_uris=[],
         ))
-        session.add(ChunkParseTaskRecord(
+        session.add(ChunkParseTask(
             id=child_id,
             video_parse_task_id=task_id,
             video_chunk_id=chunk_id,
@@ -1886,7 +1886,7 @@ def _seed_retrieval_chunk(repository):
             create_time=NOW,
             update_time=NOW,
         ))
-        session.add(ChunkParseContentRecord(
+        session.add(ChunkParseContent(
             id=str(uuid4()),
             chunk_parse_task_id=child_id,
             content=content.model_dump(mode="json"),
@@ -1946,7 +1946,7 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
 
     empty_series_id = str(uuid4())
     with factory.begin() as session:
-        session.add(SeriesRecord(
+        session.add(Series(
             series_id=empty_series_id,
             workspace_id="mine",
             name="Empty Series",
@@ -1964,7 +1964,7 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
     assert "没有视频" in partial_scope.warnings[0]
 
     with factory.begin() as session:
-        session.add(VideoParseTaskRecord(
+        session.add(VideoParseTask(
             id=str(uuid4()),
             video_id=video.video_id,
             pipeline_version="video-parse-v2",
@@ -1993,14 +1993,14 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         repo.get_chunk_evidence(chunk_id, workspace_id="mine")
 
     with factory.begin() as session:
-        newer = session.scalar(select(VideoParseTaskRecord).where(
-            VideoParseTaskRecord.video_id == video.video_id,
-            VideoParseTaskRecord.version == 2,
+        newer = session.scalar(select(VideoParseTask).where(
+            VideoParseTask.video_id == video.video_id,
+            VideoParseTask.version == 2,
         ))
         newer.is_deleted = True
     assert repo.get_chunk_evidence(chunk_id, workspace_id="mine") == evidence[0]
     with factory.begin() as session:
-        session.get(VideoParseTaskRecord, task_id).is_deleted = True
+        session.get(VideoParseTask, task_id).is_deleted = True
     with pytest.raises(VideoChunkNotFoundError):
         repo.get_chunk_evidence(chunk_id, workspace_id="mine")
 
@@ -2010,9 +2010,9 @@ def test_sparse_scope_requires_a_completed_valid_representation(repository, weig
     factory, repo, video, identity, _chunk_id = _seed_retrieval_chunk(repository)
     if weights is not None:
         with factory.begin() as session:
-            content = session.scalar(select(ChunkParseContentRecord).join(ChunkParseTaskRecord,
-                ChunkParseTaskRecord.id == ChunkParseContentRecord.chunk_parse_task_id).where(
-                ChunkParseTaskRecord.video_parse_task_id == identity.parse_task_id))
+            content = session.scalar(select(ChunkParseContent).join(ChunkParseTask,
+                ChunkParseTask.id == ChunkParseContent.chunk_parse_task_id).where(
+                ChunkParseTask.video_parse_task_id == identity.parse_task_id))
             detail = dict(content.detail)
             envelope = dict(detail[INDEX_EMBEDDINGS_DETAIL_KEY])
             envelope["representations"] = {"sparse": {"channel": "sparse", "weights": weights}}
@@ -2051,7 +2051,7 @@ def test_v2_hydration_rejects_current_identity_mismatch(repository, field, value
 def test_v2_retrieval_requires_a_current_strict_receipt(repository, field, value):
     factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
     with factory.begin() as session:
-        content = session.scalar(select(ChunkParseContentRecord))
+        content = session.scalar(select(ChunkParseContent))
         envelope = content.detail[INDEX_EMBEDDINGS_DETAIL_KEY]
         content.detail = {
             **content.detail,
@@ -2072,9 +2072,9 @@ def test_v2_retrieval_requires_a_current_strict_receipt(repository, field, value
 def test_v2_media_evidence_requires_complete_current_content(repository, issue):
     factory, repo, _video, _identity, chunk_id = _seed_retrieval_chunk(repository)
     with factory.begin() as session:
-        content = session.scalar(select(ChunkParseContentRecord))
+        content = session.scalar(select(ChunkParseContent))
         if issue == "child_pending":
-            session.get(ChunkParseTaskRecord, content.chunk_parse_task_id).status = "QUEUED"
+            session.get(ChunkParseTask, content.chunk_parse_task_id).status = "QUEUED"
         elif issue == "content_missing":
             session.delete(content)
         else:
@@ -2100,7 +2100,7 @@ def test_v2_chunk_media_api_reads_current_receipt_and_registered_images(tmp_path
     frame = store.base_directory / "frame.png"
     frame.write_bytes(b"\x89PNG\r\n\x1a\nregistered-v2-image")
     with factory.begin() as session:
-        session.get(VideoChunkRecord, chunk_id).keyframe_uris = [{
+        session.get(VideoChunk, chunk_id).keyframe_uris = [{
             "uri": store.uri_for_path(frame), "at_seconds": 1000,
         }]
     media = MediaService(SimpleNamespace(), store, video_parse_repository=repo)
@@ -2129,7 +2129,7 @@ def test_v2_chunk_media_api_reads_current_receipt_and_registered_images(tmp_path
     assert client.get("/api/video-chunks/get", params={**params, "workspaceId": "other"}).status_code == 404
 
     with factory.begin() as session:
-        content = session.scalar(select(ChunkParseContentRecord))
+        content = session.scalar(select(ChunkParseContent))
         original_detail = content.detail
         content.detail = {}
     response = client.get("/api/video-chunks/get", params=params)
@@ -2137,8 +2137,8 @@ def test_v2_chunk_media_api_reads_current_receipt_and_registered_images(tmp_path
     assert response.json()["code"] == "MEDIA_NOT_READY"
     assert client.get(image_url).status_code == 409
     with factory.begin() as session:
-        session.scalar(select(ChunkParseContentRecord)).detail = original_detail
-        session.get(VideoParseTaskRecord, identity.parse_task_id).status = "PARSING"
+        session.scalar(select(ChunkParseContent)).detail = original_detail
+        session.get(VideoParseTask, identity.parse_task_id).status = "PARSING"
     response = client.get("/api/video-chunks/get", params=params)
     assert response.status_code == 409
     assert response.json()["code"] == "MEDIA_NOT_READY"
@@ -2152,7 +2152,7 @@ def test_v2_scope_rejects_mixed_index_configuration_but_allows_understanding_cha
     factory, repo, video, _identity, _chunk_id = _seed_retrieval_chunk(repository)
     _factory, _repo, other, other_identity, _other_chunk = _seed_retrieval_chunk(repository)
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, other_identity.parse_task_id)
+        task = session.get(VideoParseTask, other_identity.parse_task_id)
         config = dict(task.parse_config)
         config["models"] = {
             **config["models"],
@@ -2162,7 +2162,7 @@ def test_v2_scope_rejects_mixed_index_configuration_but_allows_understanding_cha
     scope = repo.resolve_retrieval_scope([video.series_id, other.series_id], workspace_id="mine")
     assert set(scope.searched_video_ids) == {video.video_id, other.video_id}
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, other_identity.parse_task_id)
+        task = session.get(VideoParseTask, other_identity.parse_task_id)
         config = dict(task.parse_config)
         if field == "max_height":
             config["visual_input"] = {**config["visual_input"], "max_height": 480}
@@ -2210,7 +2210,7 @@ def test_v2_scope_compares_fixed_encoder_identity_without_changing_request_model
             (identity.parse_task_id, first_model, first_encoder),
             (other_identity.parse_task_id, other_model, other_encoder),
         ):
-            task = session.get(VideoParseTaskRecord, task_id)
+            task = session.get(VideoParseTask, task_id)
             config = dict(task.parse_config)
             config["models"] = {
                 **config["models"],
@@ -2243,10 +2243,10 @@ def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, is
     factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
     neighbors = []
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, identity.parse_task_id)
+        task = session.get(VideoParseTask, identity.parse_task_id)
         task.chunk_count = 3
-        session.get(VideoRecord, video.video_id).duration_seconds = 30_000
-        chunk = session.get(VideoChunkRecord, chunk_id)
+        session.get(Video, video.video_id).duration_seconds = 30_000
+        chunk = session.get(VideoChunk, chunk_id)
         chunk.sequence_no = 1
         chunk.start_seconds = chunk.analysis_window_start_seconds = 10_000
         chunk.end_seconds = chunk.analysis_window_end_seconds = 20_000
@@ -2265,7 +2265,7 @@ def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, is
                     receipt["index_generation"] = 3
                 elif issue == "receipt_version":
                     receipt["content_version"] = 99
-            session.add(VideoChunkRecord(
+            session.add(VideoChunk(
                 video_chunk_id=other_chunk_id, video_id=video.video_id, sequence_no=sequence,
                 start_seconds=start, end_seconds=end,
                 analysis_window_start_seconds=start, analysis_window_end_seconds=end,
@@ -2273,13 +2273,13 @@ def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, is
                 analysis_window_media_ref=f"artifact://v2/window-{sequence}.mp4",
                 transcript=[], baseline_visual_caption=None, keyframe_uris=[],
             ))
-            session.add(ChunkParseTaskRecord(
+            session.add(ChunkParseTask(
                 id=child_id, video_parse_task_id=task.id, video_chunk_id=other_chunk_id,
                 status="QUEUED" if issue == "missing" and sequence == 2 else "COMPLETE",
                 next_execute_time=NOW, retry_count=0, lease_version=0,
                 detail=None, create_time=NOW, update_time=NOW,
             ))
-            session.add(ChunkParseContentRecord(
+            session.add(ChunkParseContent(
                 id=str(uuid4()), chunk_parse_task_id=child_id, version=sequence + 2,
                 content={"persons": [], "timeline": []},
                 detail={INDEX_EMBEDDINGS_DETAIL_KEY: {

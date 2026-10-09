@@ -25,7 +25,7 @@ from .video import (
     LONG_TEXT,
     MYSQL_TABLE_OPTIONS,
     UTC_TIMESTAMP,
-    TimestampedRecord,
+    TimestampMixin,
 )
 
 
@@ -84,7 +84,7 @@ class IntervalParseTaskStatus(StrEnum):
     INDEXING_FAILED = "INDEXING_FAILED"
 
 
-class SeriesParseJobRecord(TimestampedRecord, Base):
+class SeriesParseJob(TimestampMixin, Base):
     __tablename__ = "series_parse_job"
     __table_args__ = (
         UniqueConstraint(
@@ -171,7 +171,7 @@ class SeriesParseJobRecord(TimestampedRecord, Base):
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
 
 
-class VideoChunkCheckpointRecord(Base):
+class VideoChunkCheckpoint(Base):
     __tablename__ = "video_chunk_checkpoint"
     __table_args__ = (
         CheckConstraint(
@@ -216,7 +216,7 @@ class VideoChunkCheckpointRecord(Base):
     )
 
 
-class VideoParseTaskRecord(Base):
+class VideoParseTask(Base):
     __tablename__ = "video_parse_task"
     __table_args__ = (
         UniqueConstraint(
@@ -326,7 +326,7 @@ class VideoParseTaskRecord(Base):
     )
 
 
-class ChunkParseTaskRecord(Base):
+class ChunkParseTask(Base):
     __tablename__ = "chunk_parse_task"
     __table_args__ = (
         UniqueConstraint(
@@ -416,7 +416,7 @@ class ChunkParseTaskRecord(Base):
     )
 
 
-class ChunkParseContentRecord(Base):
+class ChunkParseContent(Base):
     __tablename__ = "chunk_parse_content"
     __table_args__ = (
         UniqueConstraint(
@@ -448,7 +448,7 @@ class ChunkParseContentRecord(Base):
     )
 
 
-class IntervalParseTaskRecord(Base):
+class IntervalParseTask(Base):
     __tablename__ = "interval_parse_task"
     __table_args__ = (
         ForeignKeyConstraint(
@@ -555,7 +555,7 @@ class IntervalParseTaskRecord(Base):
     )
 
 
-class IntervalParseContentRecord(Base):
+class IntervalParseContent(Base):
     __tablename__ = "interval_parse_content"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
@@ -617,7 +617,7 @@ def validate_interval_parse_task_members(
     start_sequence_no: int,
     chunk_count: int,
     chunk_parse_task_ids: Sequence[str],
-    members: Sequence[tuple[ChunkParseTaskRecord, int]],
+    members: Sequence[tuple[ChunkParseTask, int]],
 ) -> None:
     """Validate the immutable ordered Interval membership before insertion."""
 

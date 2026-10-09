@@ -9,7 +9,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from engine.common.usage import ParseModelCall
+from engine.common.usage import ParseModelCall as ParseModelCallEvent
 from gateway.usage import TokenUsage
 
 from ..model.identifiers import derive_video_chunk_id
@@ -21,13 +21,13 @@ from ..model.dto.jobDTO import (
     VideoParseLease,
 )
 from ..model.dto.parseUsageDTO import ParseModelCallState, ParseUsageLedgerState
-from ..model.job import SeriesParseJobRecord
+from ..model.job import SeriesParseJob
 from ..model.parse_usage import (
-    ParseModelCallRecord,
-    ParseUsageAttemptRecord,
-    VideoParseUsageAttemptRecord,
+    ParseModelCall,
+    ParseUsageAttempt,
+    VideoParseUsageAttempt,
 )
-from ..model.video import SeriesRecord
+from ..model.video import Series
 from ..utils.time import unix_time_ms_to_datetime
 from .job import ParseJobNotFoundError
 
@@ -42,10 +42,10 @@ class ParseUsageRepository:
         identity = (lease.job_id, lease.attempt_count, lease.lease_version)
         try:
             with self._session_factory.begin() as session:
-                record = session.get(ParseUsageAttemptRecord, identity, with_for_update=True)
+                record = session.get(ParseUsageAttempt, identity, with_for_update=True)
                 previously_complete = record is None or record.recording_complete
                 if record is None:
-                    session.add(ParseUsageAttemptRecord(
+                    session.add(ParseUsageAttempt(
                         job_id=lease.job_id, attempt_count=lease.attempt_count,
                         lease_version=lease.lease_version, started_at=now, recording_complete=False,
                     ))
@@ -54,7 +54,7 @@ class ParseUsageRepository:
                 return previously_complete
         except IntegrityError:
             with self._session_factory.begin() as session:
-                record = session.get(ParseUsageAttemptRecord, identity, with_for_update=True)
+                record = session.get(ParseUsageAttempt, identity, with_for_update=True)
                 if record is None:
                     raise
                 record.recording_complete = False
@@ -63,7 +63,7 @@ class ParseUsageRepository:
     def finish_attempt(self, lease: ParseJobLease, *, recording_complete: bool) -> None:
         with self._session_factory.begin() as session:
             record = session.get(
-                ParseUsageAttemptRecord,
+                ParseUsageAttempt,
                 (lease.job_id, lease.attempt_count, lease.lease_version),
                 with_for_update=True,
             )
@@ -71,14 +71,14 @@ class ParseUsageRepository:
                 raise LookupError("Parse usage attempt was not started")
             record.recording_complete = recording_complete
 
-    def record_call(self, lease: ParseJobLease, event: ParseModelCall, *, estimated_cost_cny: Decimal | None, price_snapshot: dict | None) -> ParseModelCallState:
+    def record_call(self, lease: ParseJobLease, event: ParseModelCallEvent, *, estimated_cost_cny: Decimal | None, price_snapshot: dict | None) -> ParseModelCallState:
         call = event.call
         try:
             with self._session_factory.begin() as session:
-                existing = session.get(ParseModelCallRecord, call.call_id)
+                existing = session.get(ParseModelCall, call.call_id)
                 if existing is not None:
                     return self._state(existing)
-                record = ParseModelCallRecord(
+                record = ParseModelCall(
                     call_id=call.call_id, job_id=lease.job_id,
                     video_parse_task_id=None,
                     execution_kind=None,
@@ -100,7 +100,7 @@ class ParseUsageRepository:
                 return self._state(record)
         except IntegrityError:
             with self._session_factory() as session:
-                existing = session.get(ParseModelCallRecord, call.call_id)
+                existing = session.get(ParseModelCall, call.call_id)
                 if existing is None:
                     raise
                 return self._state(existing)
@@ -128,11 +128,11 @@ class ParseUsageRepository:
         try:
             with self._session_factory.begin() as session:
                 record = session.get(
-                    VideoParseUsageAttemptRecord, attempt_id, with_for_update=True
+                    VideoParseUsageAttempt, attempt_id, with_for_update=True
                 )
                 previously_complete = record is None or record.recording_complete
                 if record is None:
-                    session.add(VideoParseUsageAttemptRecord(
+                    session.add(VideoParseUsageAttempt(
                         attempt_id=attempt_id,
                         video_parse_task_id=task_id,
                         execution_kind=execution_kind,
@@ -148,7 +148,7 @@ class ParseUsageRepository:
         except IntegrityError:
             with self._session_factory.begin() as session:
                 record = session.get(
-                    VideoParseUsageAttemptRecord, attempt_id, with_for_update=True
+                    VideoParseUsageAttempt, attempt_id, with_for_update=True
                 )
                 if record is None:
                     raise
@@ -170,7 +170,7 @@ class ParseUsageRepository:
         ) = _video_lease_identity(lease)
         with self._session_factory.begin() as session:
             record = session.get(
-                VideoParseUsageAttemptRecord,
+                VideoParseUsageAttempt,
                 _attempt_id(
                     task_id,
                     execution_kind,
@@ -187,7 +187,7 @@ class ParseUsageRepository:
     def record_video_call(
         self,
         lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease,
-        event: ParseModelCall,
+        event: ParseModelCallEvent,
         *,
         workspace_id: str,
         series_id: str,
@@ -201,10 +201,10 @@ class ParseUsageRepository:
         call = event.call
         try:
             with self._session_factory.begin() as session:
-                existing = session.get(ParseModelCallRecord, call.call_id)
+                existing = session.get(ParseModelCall, call.call_id)
                 if existing is not None:
                     return self._state(existing)
-                record = ParseModelCallRecord(
+                record = ParseModelCall(
                     call_id=call.call_id,
                     job_id=None,
                     video_parse_task_id=task_id,
@@ -239,7 +239,7 @@ class ParseUsageRepository:
                 return self._state(record)
         except IntegrityError:
             with self._session_factory() as session:
-                existing = session.get(ParseModelCallRecord, call.call_id)
+                existing = session.get(ParseModelCall, call.call_id)
                 if existing is None:
                     raise
                 return self._state(existing)
@@ -252,20 +252,20 @@ class ParseUsageRepository:
     ) -> list[ParseModelCallState]:
         with self._session_factory() as session:
             records = session.scalars(
-                select(ParseModelCallRecord)
+                select(ParseModelCall)
                 .where(
-                    ParseModelCallRecord.video_parse_task_id == video_parse_task_id,
-                    ParseModelCallRecord.workspace_id == workspace_id,
+                    ParseModelCall.video_parse_task_id == video_parse_task_id,
+                    ParseModelCall.workspace_id == workspace_id,
                 )
-                .order_by(ParseModelCallRecord.started_at, ParseModelCallRecord.call_id)
+                .order_by(ParseModelCall.started_at, ParseModelCall.call_id)
             ).all()
             return [self._state(record) for record in records]
 
     def list_calls(self, job_id: str, *, workspace_id: str) -> list[ParseModelCallState]:
         with self._session_factory() as session:
-            records = session.scalars(select(ParseModelCallRecord).where(
-                ParseModelCallRecord.job_id == job_id, ParseModelCallRecord.workspace_id == workspace_id,
-            ).order_by(ParseModelCallRecord.started_at, ParseModelCallRecord.call_id)).all()
+            records = session.scalars(select(ParseModelCall).where(
+                ParseModelCall.job_id == job_id, ParseModelCall.workspace_id == workspace_id,
+            ).order_by(ParseModelCall.started_at, ParseModelCall.call_id)).all()
             return [self._state(record) for record in records]
 
     def snapshot(self, job_id: str, *, workspace_id: str) -> ParseUsageLedgerState:
@@ -273,17 +273,17 @@ class ParseUsageRepository:
         # consistent even when the Worker finishes or claims another attempt.
         with self._session_factory() as session:
             rows = session.execute(
-                select(SeriesParseJobRecord.attempt_count, SeriesParseJobRecord.status,
-                       ParseModelCallRecord, ParseUsageAttemptRecord)
-                .select_from(SeriesParseJobRecord)
-                .join(SeriesRecord, SeriesRecord.series_id == SeriesParseJobRecord.series_id)
-                .outerjoin(ParseModelCallRecord, and_(
-                    ParseModelCallRecord.job_id == SeriesParseJobRecord.job_id,
-                    ParseModelCallRecord.workspace_id == workspace_id,
+                select(SeriesParseJob.attempt_count, SeriesParseJob.status,
+                       ParseModelCall, ParseUsageAttempt)
+                .select_from(SeriesParseJob)
+                .join(Series, Series.series_id == SeriesParseJob.series_id)
+                .outerjoin(ParseModelCall, and_(
+                    ParseModelCall.job_id == SeriesParseJob.job_id,
+                    ParseModelCall.workspace_id == workspace_id,
                 ))
-                .outerjoin(ParseUsageAttemptRecord, ParseUsageAttemptRecord.job_id == SeriesParseJobRecord.job_id)
-                .where(SeriesParseJobRecord.job_id == job_id, SeriesRecord.workspace_id == workspace_id)
-                .order_by(ParseModelCallRecord.started_at, ParseModelCallRecord.call_id)
+                .outerjoin(ParseUsageAttempt, ParseUsageAttempt.job_id == SeriesParseJob.job_id)
+                .where(SeriesParseJob.job_id == job_id, Series.workspace_id == workspace_id)
+                .order_by(ParseModelCall.started_at, ParseModelCall.call_id)
             ).all()
             if not rows:
                 raise ParseJobNotFoundError(f"jobId {job_id!r} does not exist")
@@ -297,7 +297,7 @@ class ParseUsageRepository:
             return ParseUsageLedgerState(rows[0][0], rows[0][1], tuple(calls.values()), attempts)
 
     @staticmethod
-    def _state(record: ParseModelCallRecord) -> ParseModelCallState:
+    def _state(record: ParseModelCall) -> ParseModelCallState:
         return ParseModelCallState(
             call_id=record.call_id, job_id=record.job_id,
             video_parse_task_id=record.video_parse_task_id,

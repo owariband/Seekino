@@ -13,18 +13,18 @@ from ..model.dto.jobDTO import (
     VideoChunkCheckpointState,
 )
 from ..model.job import (
-    ChunkParseTaskRecord,
-    IntervalParseTaskRecord,
+    ChunkParseTask,
+    IntervalParseTask,
     ParseJobStage,
     ParseJobStatus,
-    SeriesParseJobRecord,
-    VideoParseTaskRecord,
-    VideoChunkCheckpointRecord,
+    SeriesParseJob,
+    VideoParseTask,
+    VideoChunkCheckpoint,
     VideoChunkCheckpointStage,
 )
 from ..model.job_progress import calculate_checkpoint_progress
-from ..model.upload import UploadSessionRecord, UploadSessionStatus
-from ..model.video import SeriesRecord, VideoRecord
+from ..model.upload import UploadSession, UploadSessionStatus
+from ..model.video import Series, Video
 from ..mq.contracts import ParseJobLeaseLostError
 from ..utils.time import now_unix_time_ms, unix_time_ms_to_datetime
 from ..utils.validation import require_nonempty_text
@@ -51,11 +51,11 @@ def current_lease_predicate(
     """Match writes owned by one still-current ParseJob lease."""
 
     return (
-        SeriesParseJobRecord.job_id == lease.job_id,
-        SeriesParseJobRecord.status == ParseJobStatus.RUNNING.value,
-        SeriesParseJobRecord.lease_owner == lease.worker_id,
-        SeriesParseJobRecord.lease_version == lease.lease_version,
-        SeriesParseJobRecord.lease_expires_at > now,
+        SeriesParseJob.job_id == lease.job_id,
+        SeriesParseJob.status == ParseJobStatus.RUNNING.value,
+        SeriesParseJob.lease_owner == lease.worker_id,
+        SeriesParseJob.lease_version == lease.lease_version,
+        SeriesParseJob.lease_expires_at > now,
     )
 
 
@@ -66,39 +66,39 @@ class ParseJobRepository:
     def get(self, job_id: str) -> ParseJobState:
         with self._session_factory() as session:
             upload_session_id = (
-                select(UploadSessionRecord.upload_session_id)
-                .where(UploadSessionRecord.video_id == SeriesParseJobRecord.video_id)
-                .order_by(UploadSessionRecord.created_at)
+                select(UploadSession.upload_session_id)
+                .where(UploadSession.video_id == SeriesParseJob.video_id)
+                .order_by(UploadSession.created_at)
                 .limit(1)
-                .correlate(SeriesParseJobRecord)
+                .correlate(SeriesParseJob)
                 .scalar_subquery()
             )
             is_primary_upload_job = exists(
-                select(UploadSessionRecord.upload_session_id).where(
-                    UploadSessionRecord.job_id == SeriesParseJobRecord.job_id,
-                    UploadSessionRecord.status == UploadSessionStatus.COMPLETED.value,
+                select(UploadSession.upload_session_id).where(
+                    UploadSession.job_id == SeriesParseJob.job_id,
+                    UploadSession.status == UploadSessionStatus.COMPLETED.value,
                 )
-            ).correlate(SeriesParseJobRecord)
+            ).correlate(SeriesParseJob)
             row = session.execute(
                 select(
-                    SeriesParseJobRecord,
+                    SeriesParseJob,
                     upload_session_id,
                     is_primary_upload_job,
-                    SeriesRecord.workspace_id,
-                    SeriesRecord.name,
-                    VideoRecord.episode_order,
-                    VideoRecord.original_filename,
-                    VideoRecord.duration_seconds,
+                    Series.workspace_id,
+                    Series.name,
+                    Video.episode_order,
+                    Video.original_filename,
+                    Video.duration_seconds,
                 )
                 .join(
-                    SeriesRecord,
-                    SeriesRecord.series_id == SeriesParseJobRecord.series_id,
+                    Series,
+                    Series.series_id == SeriesParseJob.series_id,
                 )
                 .join(
-                    VideoRecord,
-                    VideoRecord.video_id == SeriesParseJobRecord.video_id,
+                    Video,
+                    Video.video_id == SeriesParseJob.video_id,
                 )
-                .where(SeriesParseJobRecord.job_id == job_id)
+                .where(SeriesParseJob.job_id == job_id)
             ).one_or_none()
             if row is None:
                 raise ParseJobNotFoundError(f"jobId {job_id!r} does not exist")
@@ -131,9 +131,9 @@ class ParseJobRepository:
 
         with self._session_factory() as session:
             record = session.scalar(
-                select(VideoParseTaskRecord).where(
-                    VideoParseTaskRecord.id == video_parse_task_id,
-                    VideoParseTaskRecord.is_deleted.is_(False),
+                select(VideoParseTask).where(
+                    VideoParseTask.id == video_parse_task_id,
+                    VideoParseTask.is_deleted.is_(False),
                 )
             )
             if record is None:
@@ -150,14 +150,14 @@ class ParseJobRepository:
 
         with self._session_factory() as session:
             row = session.execute(
-                select(VideoParseTaskRecord, VideoRecord)
+                select(VideoParseTask, Video)
                 .join(
-                    VideoRecord,
-                    VideoRecord.video_id == VideoParseTaskRecord.video_id,
+                    Video,
+                    Video.video_id == VideoParseTask.video_id,
                 )
                 .where(
-                    VideoParseTaskRecord.id == video_parse_task_id,
-                    VideoParseTaskRecord.is_deleted.is_(False),
+                    VideoParseTask.id == video_parse_task_id,
+                    VideoParseTask.is_deleted.is_(False),
                 )
             ).one_or_none()
             if row is None:
@@ -185,14 +185,14 @@ class ParseJobRepository:
 
         with self._session_factory() as session:
             record = session.scalar(
-                select(VideoParseTaskRecord)
+                select(VideoParseTask)
                 .where(
-                    VideoParseTaskRecord.video_id == video_id,
-                    VideoParseTaskRecord.is_deleted.is_(False),
+                    VideoParseTask.video_id == video_id,
+                    VideoParseTask.is_deleted.is_(False),
                 )
                 .order_by(
-                    VideoParseTaskRecord.version.desc(),
-                    VideoParseTaskRecord.id.desc(),
+                    VideoParseTask.version.desc(),
+                    VideoParseTask.id.desc(),
                 )
                 .limit(1)
             )
@@ -210,14 +210,14 @@ class ParseJobRepository:
 
         with self._session_factory() as session:
             records = session.scalars(
-                select(VideoParseTaskRecord)
+                select(VideoParseTask)
                 .where(
-                    VideoParseTaskRecord.video_id == video_id,
-                    VideoParseTaskRecord.is_deleted.is_(False),
+                    VideoParseTask.video_id == video_id,
+                    VideoParseTask.is_deleted.is_(False),
                 )
                 .order_by(
-                    VideoParseTaskRecord.version,
-                    VideoParseTaskRecord.id,
+                    VideoParseTask.version,
+                    VideoParseTask.id,
                 )
             ).all()
             return [self._video_parse_task_state(record) for record in records]
@@ -236,25 +236,25 @@ class ParseJobRepository:
             is_latest = self._video_parse_task_is_latest()
             row = session.execute(
                 select(
-                    VideoParseTaskRecord,
-                    SeriesRecord.workspace_id,
-                    SeriesRecord.series_id,
-                    SeriesRecord.name,
-                    VideoRecord.episode_order,
-                    VideoRecord.original_filename,
-                    VideoRecord.duration_seconds,
+                    VideoParseTask,
+                    Series.workspace_id,
+                    Series.series_id,
+                    Series.name,
+                    Video.episode_order,
+                    Video.original_filename,
+                    Video.duration_seconds,
                     upload_session_id,
                     is_latest,
                 )
                 .join(
-                    VideoRecord,
-                    VideoRecord.video_id == VideoParseTaskRecord.video_id,
+                    Video,
+                    Video.video_id == VideoParseTask.video_id,
                 )
-                .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
+                .join(Series, Series.series_id == Video.series_id)
                 .where(
-                    VideoParseTaskRecord.id == video_parse_task_id,
-                    VideoParseTaskRecord.is_deleted.is_(False),
-                    SeriesRecord.workspace_id == normalized_workspace,
+                    VideoParseTask.id == video_parse_task_id,
+                    VideoParseTask.is_deleted.is_(False),
+                    Series.workspace_id == normalized_workspace,
                 )
             ).one_or_none()
             if row is None:
@@ -306,21 +306,21 @@ class ParseJobRepository:
             is_latest = self._video_parse_task_is_latest()
             rows = session.execute(
                 select(
-                    VideoParseTaskRecord,
-                    SeriesRecord.workspace_id,
-                    SeriesRecord.series_id,
-                    SeriesRecord.name,
-                    VideoRecord.episode_order,
-                    VideoRecord.original_filename,
-                    VideoRecord.duration_seconds,
+                    VideoParseTask,
+                    Series.workspace_id,
+                    Series.series_id,
+                    Series.name,
+                    Video.episode_order,
+                    Video.original_filename,
+                    Video.duration_seconds,
                     upload_session_id,
                     is_latest,
                 )
                 .join(
-                    VideoRecord,
-                    VideoRecord.video_id == VideoParseTaskRecord.video_id,
+                    Video,
+                    Video.video_id == VideoParseTask.video_id,
                 )
-                .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
+                .join(Series, Series.series_id == Video.series_id)
                 .where(
                     *self._video_parse_task_workspace_filters(
                         normalized_workspace,
@@ -329,8 +329,8 @@ class ParseJobRepository:
                     )
                 )
                 .order_by(
-                    VideoParseTaskRecord.create_time.desc(),
-                    VideoParseTaskRecord.id.desc(),
+                    VideoParseTask.create_time.desc(),
+                    VideoParseTask.id.desc(),
                 )
                 .limit(limit)
                 .offset(offset)
@@ -377,14 +377,14 @@ class ParseJobRepository:
         with self._session_factory() as session:
             return int(
                 session.scalar(
-                    select(func.count(VideoParseTaskRecord.id))
+                    select(func.count(VideoParseTask.id))
                     .join(
-                        VideoRecord,
-                        VideoRecord.video_id == VideoParseTaskRecord.video_id,
+                        Video,
+                        Video.video_id == VideoParseTask.video_id,
                     )
                     .join(
-                        SeriesRecord,
-                        SeriesRecord.series_id == VideoRecord.series_id,
+                        Series,
+                        Series.series_id == Video.series_id,
                     )
                     .where(
                         *self._video_parse_task_workspace_filters(
@@ -411,42 +411,42 @@ class ParseJobRepository:
             raise ValueError("limit must be a positive integer")
         with self._session_factory() as session:
             upload_session_id = (
-                select(UploadSessionRecord.upload_session_id)
-                .where(UploadSessionRecord.video_id == SeriesParseJobRecord.video_id)
-                .order_by(UploadSessionRecord.created_at)
+                select(UploadSession.upload_session_id)
+                .where(UploadSession.video_id == SeriesParseJob.video_id)
+                .order_by(UploadSession.created_at)
                 .limit(1)
-                .correlate(SeriesParseJobRecord)
+                .correlate(SeriesParseJob)
                 .scalar_subquery()
             )
             is_primary_upload_job = exists(
-                select(UploadSessionRecord.upload_session_id).where(
-                    UploadSessionRecord.job_id == SeriesParseJobRecord.job_id,
-                    UploadSessionRecord.status == UploadSessionStatus.COMPLETED.value,
+                select(UploadSession.upload_session_id).where(
+                    UploadSession.job_id == SeriesParseJob.job_id,
+                    UploadSession.status == UploadSessionStatus.COMPLETED.value,
                 )
-            ).correlate(SeriesParseJobRecord)
+            ).correlate(SeriesParseJob)
             rows = session.execute(
                 select(
-                    SeriesParseJobRecord,
+                    SeriesParseJob,
                     upload_session_id,
                     is_primary_upload_job,
-                    SeriesRecord.workspace_id,
-                    SeriesRecord.name,
-                    VideoRecord.episode_order,
-                    VideoRecord.original_filename,
-                    VideoRecord.duration_seconds,
+                    Series.workspace_id,
+                    Series.name,
+                    Video.episode_order,
+                    Video.original_filename,
+                    Video.duration_seconds,
                 )
                 .join(
-                    SeriesRecord,
-                    SeriesRecord.series_id == SeriesParseJobRecord.series_id,
+                    Series,
+                    Series.series_id == SeriesParseJob.series_id,
                 )
                 .join(
-                    VideoRecord,
-                    VideoRecord.video_id == SeriesParseJobRecord.video_id,
+                    Video,
+                    Video.video_id == SeriesParseJob.video_id,
                 )
                 .where(*self._workspace_filters(normalized_workspace, series_id=series_id, statuses=statuses))
                 .order_by(
-                    SeriesParseJobRecord.created_at.desc(),
-                    SeriesParseJobRecord.job_id.desc(),
+                    SeriesParseJob.created_at.desc(),
+                    SeriesParseJob.job_id.desc(),
                 )
                 .limit(limit)
                 .offset(offset)
@@ -483,8 +483,8 @@ class ParseJobRepository:
     ) -> int:
         with self._session_factory() as session:
             return int(session.scalar(
-                select(func.count(SeriesParseJobRecord.job_id))
-                .join(SeriesRecord)
+                select(func.count(SeriesParseJob.job_id))
+                .join(Series)
                 .where(*self._workspace_filters(workspace_id, series_id=series_id, statuses=statuses))
             ) or 0)
 
@@ -492,19 +492,19 @@ class ParseJobRepository:
         with self._session_factory() as session:
             rows = session.execute(
                 select(
-                    SeriesParseJobRecord.status,
-                    func.count(SeriesParseJobRecord.job_id),
-                    func.sum(SeriesParseJobRecord.version),
-                    func.max(SeriesParseJobRecord.updated_at),
+                    SeriesParseJob.status,
+                    func.count(SeriesParseJob.job_id),
+                    func.sum(SeriesParseJob.version),
+                    func.max(SeriesParseJob.updated_at),
                 )
-                .join(SeriesRecord)
+                .join(Series)
                 .where(*self._workspace_filters(workspace_id, series_id=series_id, statuses=None))
-                .group_by(SeriesParseJobRecord.status)
+                .group_by(SeriesParseJob.status)
             ).all()
             checkpoint_count = session.scalar(
-                select(func.count(VideoChunkCheckpointRecord.video_chunk_id))
-                .join(SeriesParseJobRecord)
-                .join(SeriesRecord)
+                select(func.count(VideoChunkCheckpoint.video_chunk_id))
+                .join(SeriesParseJob)
+                .join(Series)
                 .where(*self._workspace_filters(workspace_id, series_id=series_id, statuses=None))
             )
             return ParseJobSummaryState(
@@ -520,11 +520,11 @@ class ParseJobRepository:
 
     @staticmethod
     def _workspace_filters(workspace_id: str, *, series_id: str | None, statuses: tuple[str, ...] | None):
-        filters = [SeriesRecord.workspace_id == workspace_id]
+        filters = [Series.workspace_id == workspace_id]
         if series_id is not None:
-            filters.append(SeriesParseJobRecord.series_id == series_id)
+            filters.append(SeriesParseJob.series_id == series_id)
         if statuses is not None:
-            filters.append(SeriesParseJobRecord.status.in_(statuses))
+            filters.append(SeriesParseJob.status.in_(statuses))
         return filters
 
     @staticmethod
@@ -535,42 +535,42 @@ class ParseJobRepository:
         statuses: tuple[str, ...] | None,
     ) -> list:
         filters = [
-            SeriesRecord.workspace_id == workspace_id,
-            VideoParseTaskRecord.is_deleted.is_(False),
+            Series.workspace_id == workspace_id,
+            VideoParseTask.is_deleted.is_(False),
         ]
         if series_id is not None:
-            filters.append(VideoRecord.series_id == series_id)
+            filters.append(Video.series_id == series_id)
         if statuses is not None:
-            filters.append(VideoParseTaskRecord.status.in_(statuses))
+            filters.append(VideoParseTask.status.in_(statuses))
         return filters
 
     @staticmethod
     def _video_parse_upload_session_id():
         return (
-            select(UploadSessionRecord.upload_session_id)
+            select(UploadSession.upload_session_id)
             .where(
-                UploadSessionRecord.video_id == VideoParseTaskRecord.video_id,
-                UploadSessionRecord.status == UploadSessionStatus.COMPLETED.value,
+                UploadSession.video_id == VideoParseTask.video_id,
+                UploadSession.status == UploadSessionStatus.COMPLETED.value,
             )
             .order_by(
-                UploadSessionRecord.created_at,
-                UploadSessionRecord.upload_session_id,
+                UploadSession.created_at,
+                UploadSession.upload_session_id,
             )
             .limit(1)
-            .correlate(VideoParseTaskRecord)
+            .correlate(VideoParseTask)
             .scalar_subquery()
         )
 
     @staticmethod
     def _video_parse_task_is_latest():
-        newer_task = aliased(VideoParseTaskRecord)
+        newer_task = aliased(VideoParseTask)
         return ~exists(
             select(newer_task.id).where(
-                newer_task.video_id == VideoParseTaskRecord.video_id,
+                newer_task.video_id == VideoParseTask.video_id,
                 newer_task.is_deleted.is_(False),
-                newer_task.version > VideoParseTaskRecord.version,
+                newer_task.version > VideoParseTask.version,
             )
-        ).correlate(VideoParseTaskRecord)
+        ).correlate(VideoParseTask)
 
     def update_progress(
         self,
@@ -596,7 +596,7 @@ class ParseJobRepository:
         updated_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             job = session.scalar(
-                select(SeriesParseJobRecord)
+                select(SeriesParseJob)
                 .where(*current_lease_predicate(lease, updated_at))
                 .with_for_update()
             )
@@ -608,7 +608,7 @@ class ParseJobRepository:
                 changed = True
             if changed:
                 job.version += 1
-            video = session.get(VideoRecord, lease.video_id)
+            video = session.get(Video, lease.video_id)
             if video is not None and not lease.preserve_existing_result:
                 video.parse_status = ParseJobStatus.RUNNING.value
             return True
@@ -637,12 +637,12 @@ class ParseJobRepository:
         with self._session_factory.begin() as session:
             job = self._require_current_lease(session, lease, checked_at)
             current = session.get(
-                VideoChunkCheckpointRecord,
+                VideoChunkCheckpoint,
                 (checkpoint.job_id, checkpoint.sequence_no),
             )
             changed = current is None
             if current is None:
-                current = VideoChunkCheckpointRecord(
+                current = VideoChunkCheckpoint(
                     job_id=checkpoint.job_id,
                     sequence_no=checkpoint.sequence_no,
                     video_chunk_id=checkpoint.video_chunk_id,
@@ -692,9 +692,9 @@ class ParseJobRepository:
                     changed = True
             session.flush()
             records = session.scalars(
-                select(VideoChunkCheckpointRecord)
-                .where(VideoChunkCheckpointRecord.job_id == checkpoint.job_id)
-                .order_by(VideoChunkCheckpointRecord.sequence_no)
+                select(VideoChunkCheckpoint)
+                .where(VideoChunkCheckpoint.job_id == checkpoint.job_id)
+                .order_by(VideoChunkCheckpoint.sequence_no)
             ).all()
             _validate_checkpoint_topology(records, lease.duration_seconds)
             progress = calculate_checkpoint_progress(
@@ -705,7 +705,7 @@ class ParseJobRepository:
                 progress.overall_progress if progress is not None else None
             )
             if derived_progress is not None:
-                video = session.get(VideoRecord, lease.video_id)
+                video = session.get(Video, lease.video_id)
                 if video is not None and not lease.preserve_existing_result:
                     video.parse_progress = derived_progress
                     video.parse_status = ParseJobStatus.RUNNING.value
@@ -725,12 +725,12 @@ class ParseJobRepository:
 
     def list_checkpoints(self, job_id: str) -> list[VideoChunkCheckpointState]:
         with self._session_factory() as session:
-            if session.get(SeriesParseJobRecord, job_id) is None:
+            if session.get(SeriesParseJob, job_id) is None:
                 raise ParseJobNotFoundError(f"jobId {job_id!r} does not exist")
             records = session.scalars(
-                select(VideoChunkCheckpointRecord)
-                .where(VideoChunkCheckpointRecord.job_id == job_id)
-                .order_by(VideoChunkCheckpointRecord.sequence_no)
+                select(VideoChunkCheckpoint)
+                .where(VideoChunkCheckpoint.job_id == job_id)
+                .order_by(VideoChunkCheckpoint.sequence_no)
             ).all()
             return [self._checkpoint_state(item) for item in records]
 
@@ -744,11 +744,11 @@ class ParseJobRepository:
             return grouped
         with self._session_factory() as session:
             records = session.scalars(
-                select(VideoChunkCheckpointRecord)
-                .where(VideoChunkCheckpointRecord.job_id.in_(ordered_ids))
+                select(VideoChunkCheckpoint)
+                .where(VideoChunkCheckpoint.job_id.in_(ordered_ids))
                 .order_by(
-                    VideoChunkCheckpointRecord.job_id,
-                    VideoChunkCheckpointRecord.sequence_no,
+                    VideoChunkCheckpoint.job_id,
+                    VideoChunkCheckpoint.sequence_no,
                 )
             ).all()
         for record in records:
@@ -774,9 +774,9 @@ class ParseJobRepository:
         session: Session,
         lease: ParseJobLease,
         now: int,
-    ) -> SeriesParseJobRecord:
+    ) -> SeriesParseJob:
         job = session.scalar(
-            select(SeriesParseJobRecord)
+            select(SeriesParseJob)
             .where(*current_lease_predicate(lease, now))
             .with_for_update()
         )
@@ -786,7 +786,7 @@ class ParseJobRepository:
 
     @staticmethod
     def _state(
-        record: SeriesParseJobRecord,
+        record: SeriesParseJob,
         *,
         upload_session_id: str | None,
         is_primary_upload_job: bool,
@@ -831,7 +831,7 @@ class ParseJobRepository:
 
     @staticmethod
     def _video_parse_task_state(
-        record: VideoParseTaskRecord,
+        record: VideoParseTask,
     ) -> VideoParseTaskState:
         return VideoParseTaskState(
             video_parse_task_id=record.id,
@@ -870,25 +870,25 @@ class ParseJobRepository:
             return {}
         rows = session.execute(
             select(
-                VideoParseTaskRecord,
-                VideoRecord.series_id,
-                VideoRecord.episode_order,
+                VideoParseTask,
+                Video.series_id,
+                Video.episode_order,
             )
             .join(
-                VideoRecord,
-                VideoRecord.video_id == VideoParseTaskRecord.video_id,
+                Video,
+                Video.video_id == VideoParseTask.video_id,
             )
             .where(
-                VideoRecord.series_id.in_(series_ids),
-                VideoParseTaskRecord.is_deleted.is_(False),
+                Video.series_id.in_(series_ids),
+                VideoParseTask.is_deleted.is_(False),
             )
             .order_by(
-                VideoParseTaskRecord.video_id,
-                VideoParseTaskRecord.version.desc(),
-                VideoParseTaskRecord.id.desc(),
+                VideoParseTask.video_id,
+                VideoParseTask.version.desc(),
+                VideoParseTask.id.desc(),
             )
         ).all()
-        latest_by_video: dict[str, tuple[VideoParseTaskRecord, str, int]] = {}
+        latest_by_video: dict[str, tuple[VideoParseTask, str, int]] = {}
         for task, series_id, episode_order in rows:
             latest_by_video.setdefault(
                 task.video_id,
@@ -912,17 +912,17 @@ class ParseJobRepository:
             return set()
         observed_at = unix_time_ms_to_datetime(observed_at_ms)
         active_chunks = session.scalars(
-            select(ChunkParseTaskRecord.video_parse_task_id).where(
-                ChunkParseTaskRecord.video_parse_task_id.in_(task_ids),
-                ChunkParseTaskRecord.lease_owner.is_not(None),
-                ChunkParseTaskRecord.lease_expire_time > observed_at,
+            select(ChunkParseTask.video_parse_task_id).where(
+                ChunkParseTask.video_parse_task_id.in_(task_ids),
+                ChunkParseTask.lease_owner.is_not(None),
+                ChunkParseTask.lease_expire_time > observed_at,
             )
         )
         active_intervals = session.scalars(
-            select(IntervalParseTaskRecord.video_parse_task_id).where(
-                IntervalParseTaskRecord.video_parse_task_id.in_(task_ids),
-                IntervalParseTaskRecord.lease_owner.is_not(None),
-                IntervalParseTaskRecord.lease_expire_time > observed_at,
+            select(IntervalParseTask.video_parse_task_id).where(
+                IntervalParseTask.video_parse_task_id.in_(task_ids),
+                IntervalParseTask.lease_owner.is_not(None),
+                IntervalParseTask.lease_expire_time > observed_at,
             )
         )
         return {*active_chunks, *active_intervals}
@@ -938,14 +938,14 @@ class ParseJobRepository:
         if not video_ids:
             return set()
         result = set(session.scalars(
-            select(SeriesParseJobRecord.video_id).where(
-                SeriesParseJobRecord.video_id.in_(video_ids),
-                SeriesParseJobRecord.status == ParseJobStatus.RUNNING.value,
+            select(SeriesParseJob.video_id).where(
+                SeriesParseJob.video_id.in_(video_ids),
+                SeriesParseJob.status == ParseJobStatus.RUNNING.value,
             )
         ))
         tasks = list(session.scalars(
-            select(VideoParseTaskRecord).where(
-                VideoParseTaskRecord.video_id.in_(video_ids),
+            select(VideoParseTask).where(
+                VideoParseTask.video_id.in_(video_ids),
             )
         ))
         observed_at = unix_time_ms_to_datetime(observed_at_ms)
@@ -1010,7 +1010,7 @@ class ParseJobRepository:
 
     @staticmethod
     def _checkpoint_state(
-        record: VideoChunkCheckpointRecord,
+        record: VideoChunkCheckpoint,
     ) -> VideoChunkCheckpointState:
         return VideoChunkCheckpointState(
             job_id=record.job_id,
@@ -1029,7 +1029,7 @@ class ParseJobRepository:
 
 
 def _has_active_prefix_lease(
-    record: VideoParseTaskRecord,
+    record: VideoParseTask,
     *,
     now_ms: int | None = None,
 ) -> bool:
@@ -1074,7 +1074,7 @@ def _validate_checkpoint_bounds(
 
 
 def _validate_checkpoint_topology(
-    records: list[VideoChunkCheckpointRecord],
+    records: list[VideoChunkCheckpoint],
     duration_seconds: int,
 ) -> None:
     ranged = [

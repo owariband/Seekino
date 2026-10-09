@@ -35,14 +35,14 @@ from server.database import (
     create_session_factory,
 )
 from server.model.job import (
-    ChunkParseContentRecord,
-    ChunkParseTaskRecord,
-    IntervalParseContentRecord,
-    IntervalParseTaskRecord,
-    VideoParseTaskRecord,
+    ChunkParseContent,
+    ChunkParseTask,
+    IntervalParseContent,
+    IntervalParseTask,
+    VideoParseTask,
 )
-from server.model.upload import UPLOAD_DELETION_PENDING_ERROR_CODE, UploadSessionRecord
-from server.model.video import SeriesRecord, VideoRecord
+from server.model.upload import UPLOAD_DELETION_PENDING_ERROR_CODE, UploadSession
+from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.upload import UploadRepository
 from server.repository.video import SeriesNotReadyError
@@ -170,12 +170,12 @@ def _indexing_case(tmp_path, store):
         config.update(chunk_duration=10, interval_duration=30, batch_max_size=2)
         config["models"]["embedding"]["dimensions"] = 2
         with factory.begin() as session:
-            session.add(SeriesRecord(
+            session.add(Series(
                 series_id=series_id, workspace_id="es-test-workspace",
                 name="ES recovery", status="INDEXING", character_bible=[],
             ))
             session.flush()
-            session.add(VideoRecord(
+            session.add(Video(
                 video_id=video_id, series_id=series_id, episode_order=1,
                 upload_sequence=1, original_filename="episode.mp4",
                 original_source_uri=str(source), content_hash="a" * 64,
@@ -184,7 +184,7 @@ def _indexing_case(tmp_path, store):
                 upload_progress=100, parse_progress=0,
             ))
             session.flush()
-            session.add(VideoParseTaskRecord(
+            session.add(VideoParseTask(
                 id=task_id, video_id=video_id, pipeline_version="video-parse-v2",
                 status="PENDING", parse_config=config, chunk_count=2, version=1,
                 next_execute_time=now, attempt_count=0, max_attempts=3,
@@ -194,7 +194,7 @@ def _indexing_case(tmp_path, store):
                 create_time=now, update_time=now,
             ))
             session.flush()
-            session.add(UploadSessionRecord(
+            session.add(UploadSession(
                 upload_session_id=upload_id, workspace_id="es-test-workspace",
                 series_id=series_id, episode_order=1, upload_sequence=1,
                 original_filename="episode.mp4", media_type="video/mp4",
@@ -528,20 +528,20 @@ def test_real_es_coordinator_recovers_partial_bulk_without_reparsing(indexing_ca
     state = store.inspect(keys)
     assert state[keys[0]].present and not state[keys[1]].present
     with case.factory() as session:
-        assert session.get(VideoParseTaskRecord, case.task_id).status != "COMPLETE"
+        assert session.get(VideoParseTask, case.task_id).status != "COMPLETE"
         interval_id = case.index_lease.interval_parse_task_id
-        assert session.get(IntervalParseTaskRecord, interval_id).status == "INDEXING"
+        assert session.get(IntervalParseTask, interval_id).status == "INDEXING"
         assert all(
-            session.get(ChunkParseTaskRecord, child).status == "COMPLETE"
+            session.get(ChunkParseTask, child).status == "COMPLETE"
             for child in case.prepared.chunk_parse_task_ids
         )
         before = [
             (item.id, item.version, item.content, item.detail["scope"])
             for item in session.scalars(
-                select(ChunkParseContentRecord).order_by(ChunkParseContentRecord.id)
+                select(ChunkParseContent).order_by(ChunkParseContent.id)
             )
         ]
-        refinement = session.get(IntervalParseContentRecord, interval_id).content
+        refinement = session.get(IntervalParseContent, interval_id).content
     with pytest.raises(SeriesNotReadyError):
         case.retrieval.search(
             "松饼行动", workspace_id="es-test-workspace", series_ids=[case.series_id],
@@ -562,14 +562,14 @@ def test_real_es_coordinator_recovers_partial_bulk_without_reparsing(indexing_ca
     assert store.verify_ready(bulk_calls[0])
     assert case.repository.aggregate_task(case.video_lease).status == "COMPLETE"
     with case.factory() as session:
-        assert session.get(IntervalParseTaskRecord, recovered.interval_parse_task_id).status == "COMPLETE"
+        assert session.get(IntervalParseTask, recovered.interval_parse_task_id).status == "COMPLETE"
         after = [
             (item.id, item.version, item.content, item.detail["scope"])
             for item in session.scalars(
-                select(ChunkParseContentRecord).order_by(ChunkParseContentRecord.id)
+                select(ChunkParseContent).order_by(ChunkParseContent.id)
             )
         ]
-        assert session.get(IntervalParseContentRecord, interval_id).content == refinement
+        assert session.get(IntervalParseContent, interval_id).content == refinement
     assert after == before
     result = case.retrieval.search(
         "松饼行动", workspace_id="es-test-workspace", series_ids=[case.series_id],
@@ -624,10 +624,10 @@ def test_real_es_delete_reconcile_fences_an_immediately_late_writer(indexing_cas
     with pytest.raises(TimeoutError, match="delete response was lost"):
         uploads.delete_session(case.upload_id, workspace_id="es-test-workspace")
     with case.factory() as session:
-        tombstone = session.get(UploadSessionRecord, case.upload_id)
+        tombstone = session.get(UploadSession, case.upload_id)
         assert tombstone.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
         assert tombstone.video_id == case.video_id
-        assert session.get(VideoParseTaskRecord, case.task_id).is_deleted
+        assert session.get(VideoParseTask, case.task_id).is_deleted
     with pytest.raises(SeriesNotReadyError):
         case.retrieval.search(
             "松饼行动", workspace_id="es-test-workspace", series_ids=[case.series_id],
@@ -640,7 +640,7 @@ def test_real_es_delete_reconcile_fences_an_immediately_late_writer(indexing_cas
     other_key = (other.parse_task_id, other.video_chunk_id)
     assert store.inspect([other_key])[other_key].present
     with case.factory() as session:
-        tombstone = session.get(UploadSessionRecord, case.upload_id)
+        tombstone = session.get(UploadSession, case.upload_id)
         assert tombstone.last_error_code is None and tombstone.video_id is None
-        assert session.get(VideoRecord, case.video_id) is None
-        assert session.get(VideoParseTaskRecord, case.task_id) is None
+        assert session.get(Video, case.video_id) is None
+        assert session.get(VideoParseTask, case.task_id) is None

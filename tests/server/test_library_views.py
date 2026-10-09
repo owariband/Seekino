@@ -13,15 +13,15 @@ from server.api import library as library_api
 from server.api.library import project_series_detail
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import DatabaseEnvironment, create_session_factory
-from server.model.agent import AgentConversationRecord, AgentMessageRecord
-from server.model.index_sync import IndexSyncIntentRecord
+from server.model.agent import AgentConversation, AgentMessage
+from server.model.index_sync import IndexSyncIntent
 from server.model.job import (
-    SeriesParseJobRecord,
-    VideoChunkCheckpointRecord,
-    VideoParseTaskRecord,
+    SeriesParseJob,
+    VideoChunkCheckpoint,
+    VideoParseTask,
 )
-from server.model.upload import UploadSessionRecord
-from server.model.video import SeriesRecord, VideoChunkEmbeddingRecord, VideoRecord
+from server.model.upload import UploadSession
+from server.model.video import Series, VideoChunkEmbedding, Video
 from server.repository.library import (
     LibraryRepository,
     SeriesNotFoundError,
@@ -53,7 +53,7 @@ def _add_prefix_task(
 ) -> str:
     task_id = str(uuid4())
     now = now_utc()
-    session.add(VideoParseTaskRecord(
+    session.add(VideoParseTask(
         id=task_id,
         video_id=video_id,
         pipeline_version="video-parse-v2",
@@ -106,7 +106,7 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
         original_filename="episode.mp4",
     )
     with factory.begin() as session:
-        session.get(VideoRecord, report.video_id).original_source_uri = original.uri
+        session.get(Video, report.video_id).original_source_uri = original.uri
     media = MediaService(library, store, probe_playback=lambda _path: True)
 
     initial = library.get_series(report.series_id, workspace_id="local-default")
@@ -116,12 +116,12 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
     assert initial.videos[0].latest_job_id is None
 
     with factory.begin() as session:
-        for chunk in session.scalars(select(VideoChunkEmbeddingRecord)):
+        for chunk in session.scalars(select(VideoChunkEmbedding)):
             chunk.text_vector = [0.1, 0.2]
             chunk.vision_vector = [0.2, 0.3]
     assert library.get_video(report.video_id, workspace_id="local-default").index_status == VideoIndexStatus.SYNCING
     with factory.begin() as session:
-        for intent in session.scalars(select(IndexSyncIntentRecord)):
+        for intent in session.scalars(select(IndexSyncIntent)):
             intent.operation = "UPSERT"
             intent.status = "SYNCED"
     ready = library.get_series(report.series_id, workspace_id="local-default")
@@ -216,13 +216,13 @@ def test_latest_job_failure_and_index_error_are_actual_and_workspace_scoped(repo
     now = now_unix_time_ms()
     job_id = str(uuid4())
     with factory.begin() as session:
-        session.add(SeriesParseJobRecord(
+        session.add(SeriesParseJob(
             job_id=job_id, series_id=report.series_id, video_id=report.video_id,
             pipeline_version="failure-pipeline", status="FAILED", stage="PARSING",
             progress=42, attempt_count=3, max_attempts=3, available_at=now,
             completed_at=now, last_error="private provider endpoint failure",
         ))
-        for intent in session.scalars(select(IndexSyncIntentRecord)):
+        for intent in session.scalars(select(IndexSyncIntent)):
             intent.status = "RETRY_WAIT"
             intent.last_error = "private index endpoint failure"
     state = library.get_series(report.series_id, workspace_id="local-default")
@@ -244,13 +244,13 @@ def test_ready_video_count_keeps_an_indexed_video_during_failed_reparse(
     report = videos.import_video_parse(prepared_import)
     now = now_unix_time_ms()
     with factory.begin() as session:
-        for chunk in session.scalars(select(VideoChunkEmbeddingRecord)):
+        for chunk in session.scalars(select(VideoChunkEmbedding)):
             chunk.text_vector = [0.1, 0.2]
             chunk.vision_vector = [0.2, 0.3]
-        for intent in session.scalars(select(IndexSyncIntentRecord)):
+        for intent in session.scalars(select(IndexSyncIntent)):
             intent.operation = "UPSERT"
             intent.status = "SYNCED"
-        session.add(SeriesParseJobRecord(
+        session.add(SeriesParseJob(
             job_id=str(uuid4()),
             series_id=report.series_id,
             video_id=report.video_id,
@@ -280,7 +280,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
     now = now_unix_time_ms()
     job_id = str(uuid4())
     with factory.begin() as session:
-        session.add(SeriesParseJobRecord(
+        session.add(SeriesParseJob(
             job_id=job_id,
             series_id=report.series_id,
             video_id=report.video_id,
@@ -293,7 +293,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
             available_at=now,
         ))
         session.add_all([
-            VideoChunkCheckpointRecord(
+            VideoChunkCheckpoint(
                 job_id=job_id,
                 sequence_no=0,
                 video_chunk_id=str(uuid4()),
@@ -301,7 +301,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
                 chunk_start_seconds=0,
                 chunk_end_seconds=15,
             ),
-            VideoChunkCheckpointRecord(
+            VideoChunkCheckpoint(
                 job_id=job_id,
                 sequence_no=1,
                 video_chunk_id=str(uuid4()),
@@ -317,7 +317,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
     assert video.parse_progress == 74
 
     with factory.begin() as session:
-        checkpoint = session.get(VideoChunkCheckpointRecord, (job_id, 1))
+        checkpoint = session.get(VideoChunkCheckpoint, (job_id, 1))
         checkpoint.chunk_start_seconds = 16
 
     assert (
@@ -370,7 +370,7 @@ def test_last_search_uses_each_message_scope_and_workspace(repository):
     local_conversation, foreign_conversation = str(uuid4()), str(uuid4())
     with factory.begin() as session:
         for conversation_id, workspace in ((local_conversation, "local-default"), (foreign_conversation, "other")):
-            session.add(AgentConversationRecord(
+            session.add(AgentConversation(
                 conversation_id=conversation_id, workspace_id=workspace,
                 title="Scope history", idempotency_key=conversation_id,
             ))
@@ -380,7 +380,7 @@ def test_last_search_uses_each_message_scope_and_workspace(repository):
             (1, local_conversation, [second.series_id], "second question", now - timedelta_to_ms(timedelta(minutes=1))),
             (0, foreign_conversation, [first.series_id, second.series_id], "foreign secret", now),
         ):
-            session.add(AgentMessageRecord(
+            session.add(AgentMessage(
                 message_id=str(uuid4()), conversation_id=conversation, sequence_no=sequence,
                 role="USER", status="COMPLETED", content=content, series_ids=scope,
                 requested_series_ids=scope, created_at=created_at,
@@ -441,7 +441,7 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
     now = now_utc()
     with factory.begin() as session:
         session.add_all([
-            UploadSessionRecord(
+            UploadSession(
                 upload_session_id=upload_session_id,
                 workspace_id=prepared_import.workspace_id,
                 series_id=report.series_id,
@@ -459,7 +459,7 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
                 completed_at=now,
                 video_id=report.video_id,
             ),
-            UploadSessionRecord(
+            UploadSession(
                 upload_session_id=inactive_upload_session_id,
                 workspace_id=prepared_import.workspace_id,
                 series_id=report.series_id,
@@ -493,10 +493,10 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
     assert edited.episode_order == replay.episode_order == 9
     assert edited.upload_sequence == replay.upload_sequence == 9
     with factory() as session:
-        video = session.get(VideoRecord, report.video_id)
-        upload = session.get(UploadSessionRecord, upload_session_id)
+        video = session.get(Video, report.video_id)
+        upload = session.get(UploadSession, upload_session_id)
         inactive_upload = session.get(
-            UploadSessionRecord,
+            UploadSession,
             inactive_upload_session_id,
         )
         assert video.episode_order == 9
@@ -530,7 +530,7 @@ def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
     video_ids = [str(uuid4()) for _ in range(3)]
     task_ids: list[str] = []
     with factory.begin() as session:
-        session.add(SeriesRecord(
+        session.add(Series(
             series_id=series_id,
             workspace_id="local-default",
             name=f"Episode move {target_index}-{episode_order}",
@@ -540,7 +540,7 @@ def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
             character_bible=[],
         ))
         for index, (video_id, order) in enumerate(zip(video_ids, (1, 3, 5))):
-            session.add(VideoRecord(
+            session.add(Video(
                 video_id=video_id,
                 series_id=series_id,
                 episode_order=order,
@@ -572,11 +572,11 @@ def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
     )
     with factory() as session:
         first_details = {
-            task_id: session.get(VideoParseTaskRecord, task_id).detail
+            task_id: session.get(VideoParseTask, task_id).detail
             for task_id in task_ids
         }
         assert session.get(
-            VideoRecord, video_ids[target_index]
+            Video, video_ids[target_index]
         ).episode_order == episode_order
         for index, task_id in enumerate(task_ids):
             runtime = first_details[task_id]["_worker_runtime_v2"]
@@ -603,7 +603,7 @@ def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
     )
     with factory() as session:
         assert {
-            task_id: session.get(VideoParseTaskRecord, task_id).detail
+            task_id: session.get(VideoParseTask, task_id).detail
             for task_id in task_ids
         } == first_details
 
@@ -619,7 +619,7 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
     upload_session_id = str(uuid4())
     now = now_utc()
     with factory.begin() as session:
-        session.add(SeriesRecord(
+        session.add(Series(
             series_id=series_id,
             workspace_id="local-default",
             name="Active Prefix episode move",
@@ -632,7 +632,7 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
             (target_video_id, 1, "a" * 64),
             (downstream_video_id, 3, "b" * 64),
         ):
-            session.add(VideoRecord(
+            session.add(Video(
                 video_id=video_id,
                 series_id=series_id,
                 episode_order=order,
@@ -648,7 +648,7 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
                 upload_progress=100,
                 parse_progress=100,
             ))
-        session.add(UploadSessionRecord(
+        session.add(UploadSession(
             upload_session_id=upload_session_id,
             workspace_id="local-default",
             series_id=series_id,
@@ -677,7 +677,7 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
 
     with factory() as session:
         original_details = {
-            task_id: session.get(VideoParseTaskRecord, task_id).detail
+            task_id: session.get(VideoParseTask, task_id).detail
             for task_id in (target_task_id, downstream_task_id)
         }
 
@@ -689,14 +689,14 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
         )
 
     with factory() as session:
-        video = session.get(VideoRecord, target_video_id)
-        upload = session.get(UploadSessionRecord, upload_session_id)
+        video = session.get(Video, target_video_id)
+        upload = session.get(UploadSession, upload_session_id)
         assert video.episode_order == video.upload_sequence == 1
         assert upload.episode_order == upload.upload_sequence == 1
         assert upload.active_slot_key == f"{series_id}:1"
         assert upload.version == 1
         assert {
-            task_id: session.get(VideoParseTaskRecord, task_id).detail
+            task_id: session.get(VideoParseTask, task_id).detail
             for task_id in (target_task_id, downstream_task_id)
         } == original_details
 
@@ -713,7 +713,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
     occupied_video_id = str(uuid4())
     with factory.begin() as session:
         session.add_all([
-            UploadSessionRecord(
+            UploadSession(
                 upload_session_id=linked_upload_id,
                 workspace_id=prepared_import.workspace_id,
                 series_id=report.series_id,
@@ -731,7 +731,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
                 completed_at=now,
                 video_id=report.video_id,
             ),
-            UploadSessionRecord(
+            UploadSession(
                 upload_session_id=reserved_upload_id,
                 workspace_id=prepared_import.workspace_id,
                 series_id=report.series_id,
@@ -747,7 +747,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
                 active_slot_key=f"{report.series_id}:10",
                 expires_at=now + timedelta(days=1),
             ),
-            VideoRecord(
+            Video(
                 video_id=occupied_video_id,
                 series_id=report.series_id,
                 episode_order=11,
@@ -777,8 +777,8 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
             )
 
     with factory() as session:
-        video = session.get(VideoRecord, report.video_id)
-        upload = session.get(UploadSessionRecord, linked_upload_id)
+        video = session.get(Video, report.video_id)
+        upload = session.get(UploadSession, linked_upload_id)
         assert video.episode_order == prepared_import.episode_order
         assert video.upload_sequence == prepared_import.upload_sequence
         assert upload.episode_order == prepared_import.episode_order

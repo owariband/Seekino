@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 
 from server.cli import _build_parser
 from server.model.dto.keyframeDTO import KeyframeBackfillCandidate
-from server.model.video import VideoChunkRecord
+from server.model.video import VideoChunk
 from server.schema import VideoChunkKeyframeReference
 from server.service.keyframe_backfill import KeyframeBackfillService
 from server.storage.artifact import LocalArtifactStore
@@ -68,15 +68,15 @@ def test_repository_pages_snapshots_and_does_not_overwrite_concurrent_parse(
     second_id = report.video_chunk_ids[1]
     with engine.begin() as connection:
         connection.execute(
-            update(VideoChunkRecord)
+            update(VideoChunk)
             .where(
-                VideoChunkRecord.video_chunk_id == report.video_chunk_ids[0]
+                VideoChunk.video_chunk_id == report.video_chunk_ids[0]
             )
             .values(keyframe_uris=["artifact://test/legacy-untimed.jpg"])
         )
         connection.execute(
-            update(VideoChunkRecord)
-            .where(VideoChunkRecord.video_chunk_id == second_id)
+            update(VideoChunk)
+            .where(VideoChunk.video_chunk_id == second_id)
             .values(keyframe_uris=[{
                 "uri": "artifact://test/current.jpg",
                 "at_seconds": 10,
@@ -107,8 +107,8 @@ def test_repository_pages_snapshots_and_does_not_overwrite_concurrent_parse(
     )
     with engine.begin() as connection:
         connection.execute(
-            update(VideoChunkRecord)
-            .where(VideoChunkRecord.video_chunk_id == candidate.video_chunk_id)
+            update(VideoChunk)
+            .where(VideoChunk.video_chunk_id == candidate.video_chunk_id)
             .values(keyframe_uris=[{
                 "uri": "artifact://test/concurrent.jpg",
                 "at_seconds": 0,
@@ -126,8 +126,8 @@ def test_repository_pages_snapshots_and_does_not_overwrite_concurrent_parse(
     assert changed is False
     with engine.connect() as connection:
         stored = connection.execute(
-            select(VideoChunkRecord.keyframe_uris).where(
-                VideoChunkRecord.video_chunk_id == candidate.video_chunk_id
+            select(VideoChunk.keyframe_uris).where(
+                VideoChunk.video_chunk_id == candidate.video_chunk_id
             )
         ).scalar_one()
     assert stored == [{
@@ -156,8 +156,8 @@ def test_repository_backfill_prepends_frame_and_preserves_historical_uris(
     }
     with engine.begin() as connection:
         connection.execute(
-            update(VideoChunkRecord)
-            .where(VideoChunkRecord.video_chunk_id == video_chunk_id)
+            update(VideoChunk)
+            .where(VideoChunk.video_chunk_id == video_chunk_id)
             .values(keyframe_uris=[legacy, historical])
         )
 
@@ -173,8 +173,8 @@ def test_repository_backfill_prepends_frame_and_preserves_historical_uris(
     ) is True
     with engine.connect() as connection:
         stored = connection.execute(
-            select(VideoChunkRecord.keyframe_uris).where(
-                VideoChunkRecord.video_chunk_id == video_chunk_id
+            select(VideoChunk.keyframe_uris).where(
+                VideoChunk.video_chunk_id == video_chunk_id
             )
         ).scalar_one()
 
@@ -196,9 +196,9 @@ def test_backfill_is_dry_run_bounded_resumable_and_uses_absolute_time(
     with engine.begin() as connection:
         chunks = connection.execute(
             select(
-                VideoChunkRecord.video_chunk_id,
-                VideoChunkRecord.sequence_no,
-            ).order_by(VideoChunkRecord.sequence_no)
+                VideoChunk.video_chunk_id,
+                VideoChunk.sequence_no,
+            ).order_by(VideoChunk.sequence_no)
         ).all()
         for video_chunk_id, sequence_no in chunks:
             canonical = (
@@ -209,8 +209,8 @@ def test_backfill_is_dry_run_bounded_resumable_and_uses_absolute_time(
             canonical.parent.mkdir(parents=True, exist_ok=True)
             canonical.write_bytes(f"canonical-{sequence_no}".encode())
             connection.execute(
-                update(VideoChunkRecord)
-                .where(VideoChunkRecord.video_chunk_id == video_chunk_id)
+                update(VideoChunk)
+                .where(VideoChunk.video_chunk_id == video_chunk_id)
                 .values(chunk_media_ref=artifacts.uri_for_path(canonical))
             )
 
@@ -262,9 +262,9 @@ def test_backfill_is_dry_run_bounded_resumable_and_uses_absolute_time(
     with engine.connect() as connection:
         stored = connection.execute(
             select(
-                VideoChunkRecord.start_seconds,
-                VideoChunkRecord.keyframe_uris,
-            ).order_by(VideoChunkRecord.sequence_no)
+                VideoChunk.start_seconds,
+                VideoChunk.keyframe_uris,
+            ).order_by(VideoChunk.sequence_no)
         ).all()
     assert [values[0]["at_seconds"] for _, values in stored] == [0, 10]
     for _start_seconds, values in stored:
@@ -291,9 +291,9 @@ def test_backfill_failure_does_not_consume_apply_limit_or_starve_later_chunk(
     canonical.write_bytes(b"canonical-1")
     with engine.begin() as connection:
         connection.execute(
-            update(VideoChunkRecord)
+            update(VideoChunk)
             .where(
-                VideoChunkRecord.video_chunk_id == report.video_chunk_ids[1]
+                VideoChunk.video_chunk_id == report.video_chunk_ids[1]
             )
             .values(chunk_media_ref=artifacts.uri_for_path(canonical))
         )
@@ -346,9 +346,9 @@ def test_backfill_replaces_broken_timed_frame_and_skips_serviceable_frame(
     broken_uri = "artifact://test/keyframes/deleted.jpg"
     with engine.begin() as connection:
         connection.execute(
-            update(VideoChunkRecord)
+            update(VideoChunk)
             .where(
-                VideoChunkRecord.video_chunk_id == report.video_chunk_ids[0]
+                VideoChunk.video_chunk_id == report.video_chunk_ids[0]
             )
             .values(keyframe_uris=[{
                 "uri": artifacts.uri_for_path(existing_frame),
@@ -356,9 +356,9 @@ def test_backfill_replaces_broken_timed_frame_and_skips_serviceable_frame(
             }])
         )
         connection.execute(
-            update(VideoChunkRecord)
+            update(VideoChunk)
             .where(
-                VideoChunkRecord.video_chunk_id == report.video_chunk_ids[1]
+                VideoChunk.video_chunk_id == report.video_chunk_ids[1]
             )
             .values(
                 chunk_media_ref=artifacts.uri_for_path(canonical),
@@ -385,8 +385,8 @@ def test_backfill_replaces_broken_timed_frame_and_skips_serviceable_frame(
     assert result.backfilled_count == 1
     with engine.connect() as connection:
         stored = connection.execute(
-            select(VideoChunkRecord.keyframe_uris).where(
-                VideoChunkRecord.video_chunk_id == report.video_chunk_ids[1]
+            select(VideoChunk.keyframe_uris).where(
+                VideoChunk.video_chunk_id == report.video_chunk_ids[1]
             )
         ).scalar_one()
     assert len(stored) == 1

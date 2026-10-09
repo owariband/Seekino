@@ -16,31 +16,31 @@ from server.database import (
     create_schema,
 )
 from server.model.agent import (
-    AgentConversationRecord,
-    AgentMessageRecord,
+    AgentConversation,
+    AgentMessage,
 )
 from server.model.parse_usage import (
-    ModelUsageRecord,
-    ParseModelCallRecord,
-    ParseUsageAttemptRecord,
-    VideoParseUsageAttemptRecord,
+    ModelUsage,
+    ParseModelCall,
+    ParseUsageAttempt,
+    VideoParseUsageAttempt,
 )
-from server.model.upload import UploadSegmentRecord, UploadSessionRecord
+from server.model.upload import UploadSegment, UploadSession
 from server.model.video import (
-    SeriesRecord,
+    Series,
     UTC_TIMESTAMP,
-    VideoChunkInfoRecord,
-    VideoChunkRecord,
-    VideoRecord,
+    VideoChunkInfo,
+    VideoChunk,
+    Video,
 )
 from server.model.job import (
-    ChunkParseContentRecord,
-    ChunkParseTaskRecord,
-    IntervalParseContentRecord,
-    IntervalParseTaskRecord,
-    SeriesParseJobRecord,
-    VideoChunkCheckpointRecord,
-    VideoParseTaskRecord,
+    ChunkParseContent,
+    ChunkParseTask,
+    IntervalParseContent,
+    IntervalParseTask,
+    SeriesParseJob,
+    VideoChunkCheckpoint,
+    VideoParseTask,
     interval_full_ready_mask,
     interval_ready_mask_bit,
     interval_sequence_range,
@@ -87,7 +87,7 @@ def test_database_environment_requires_physically_separate_databases() -> None:
 def test_model_usage_mysql_ddl_has_only_the_approved_eight_columns() -> None:
     from sqlalchemy.schema import CreateIndex
 
-    table = ModelUsageRecord.__table__
+    table = ModelUsage.__table__
     ddl = str(CreateTable(table).compile(dialect=mysql.dialect()))
     assert tuple(table.columns.keys()) == (
         "call_id", "workspace_id", "task_type", "run_id", "started_at",
@@ -110,7 +110,7 @@ def test_model_usage_mysql_ddl_has_only_the_approved_eight_columns() -> None:
 def test_create_schema_adds_model_usage_to_existing_current_schema() -> None:
     engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
     create_schema(engine)
-    ModelUsageRecord.__table__.drop(engine)
+    ModelUsage.__table__.drop(engine)
     create_schema(engine)
     assert "model_usage" in inspect(engine).get_table_names()
     create_schema(engine)
@@ -140,10 +140,10 @@ def test_create_schema_rejects_model_usage_type_drift(monkeypatch, column_name) 
 
 def test_model_usage_database_rejects_unsupported_task_type() -> None:
     engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
-    ModelUsageRecord.__table__.create(engine)
+    ModelUsage.__table__.create(engine)
     with pytest.raises(IntegrityError):
         with engine.begin() as connection:
-            connection.execute(ModelUsageRecord.__table__.insert().values(
+            connection.execute(ModelUsage.__table__.insert().values(
                 call_id="00000000-0000-0000-0000-000000000001", workspace_id="w",
                 task_type="retrieval", run_id="r", started_at=datetime.now(UTC),
                 usage={}, metadata={}, created_at=datetime.now(UTC),
@@ -155,7 +155,7 @@ def test_existing_model_usage_rejects_case_insensitive_mysql_collation(monkeypat
     import server.database as database
 
     engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
-    ModelUsageRecord.__table__.create(engine)
+    ModelUsage.__table__.create(engine)
     inspector = inspect(engine)
     original = inspector.get_columns
 
@@ -177,18 +177,18 @@ def test_existing_model_usage_rejects_case_insensitive_mysql_collation(monkeypat
 
 def test_mysql_schema_uses_innodb_json_and_integer_media_milliseconds() -> None:
     video_ddl = str(
-        CreateTable(VideoRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(Video.__table__).compile(dialect=mysql.dialect())
     )
     chunk_ddl = str(
-        CreateTable(VideoChunkRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(VideoChunk.__table__).compile(dialect=mysql.dialect())
     )
     info_ddl = str(
-        CreateTable(VideoChunkInfoRecord.__table__).compile(
+        CreateTable(VideoChunkInfo.__table__).compile(
             dialect=mysql.dialect()
         )
     )
     checkpoint_ddl = str(
-        CreateTable(VideoChunkCheckpointRecord.__table__).compile(
+        CreateTable(VideoChunkCheckpoint.__table__).compile(
             dialect=mysql.dialect()
         )
     )
@@ -244,23 +244,23 @@ def test_mysql_media_unit_guard_accepts_marked_column_before_other_schema_checks
 
 def test_mysql_video_parse_v2_schema_uses_timestamp_leases_and_task_scoped_content() -> None:
     video_task_ddl = str(
-        CreateTable(VideoParseTaskRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(VideoParseTask.__table__).compile(dialect=mysql.dialect())
     )
     chunk_task_ddl = str(
-        CreateTable(ChunkParseTaskRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(ChunkParseTask.__table__).compile(dialect=mysql.dialect())
     )
     chunk_content_ddl = str(
-        CreateTable(ChunkParseContentRecord.__table__).compile(
+        CreateTable(ChunkParseContent.__table__).compile(
             dialect=mysql.dialect()
         )
     )
     interval_task_ddl = str(
-        CreateTable(IntervalParseTaskRecord.__table__).compile(
+        CreateTable(IntervalParseTask.__table__).compile(
             dialect=mysql.dialect()
         )
     )
     interval_content_ddl = str(
-        CreateTable(IntervalParseContentRecord.__table__).compile(
+        CreateTable(IntervalParseContent.__table__).compile(
             dialect=mysql.dialect()
         )
     )
@@ -307,7 +307,7 @@ def test_video_task_database_enforces_status_and_lease(status, lease, allowed) -
     engine = create_database_engine(
         "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
     )
-    VideoParseTaskRecord.__table__.create(engine)
+    VideoParseTask.__table__.create(engine)
     current = datetime(2026, 9, 28, tzinfo=UTC)
     values = dict(
         id="task", video_id="video", pipeline_version="v2", status=status,
@@ -318,10 +318,10 @@ def test_video_task_database_enforces_status_and_lease(status, lease, allowed) -
     )
     with engine.begin() as connection:
         if allowed:
-            connection.execute(VideoParseTaskRecord.__table__.insert().values(**values))
+            connection.execute(VideoParseTask.__table__.insert().values(**values))
         else:
             with pytest.raises(IntegrityError, match="CHECK constraint failed"):
-                connection.execute(VideoParseTaskRecord.__table__.insert().values(**values))
+                connection.execute(VideoParseTask.__table__.insert().values(**values))
 
 
 @pytest.mark.parametrize(
@@ -341,7 +341,7 @@ def test_interval_task_database_enforces_status_and_lease(status, lease, allowed
     engine = create_database_engine(
         "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
     )
-    IntervalParseTaskRecord.__table__.create(engine)
+    IntervalParseTask.__table__.create(engine)
     values = dict(
         id="interval", video_parse_task_id="task", chunk_parse_task_id="chunk",
         chunk_parse_task_ids=["chunk"], start_sequence_no=0, chunk_count=1,
@@ -350,10 +350,10 @@ def test_interval_task_database_enforces_status_and_lease(status, lease, allowed
     )
     with engine.begin() as connection:
         if allowed:
-            connection.execute(IntervalParseTaskRecord.__table__.insert().values(**values))
+            connection.execute(IntervalParseTask.__table__.insert().values(**values))
         else:
             with pytest.raises(IntegrityError, match="CHECK constraint failed"):
-                connection.execute(IntervalParseTaskRecord.__table__.insert().values(**values))
+                connection.execute(IntervalParseTask.__table__.insert().values(**values))
 
 
 def test_task_indexing_migration_guards_scope_and_matches_model_checks() -> None:
@@ -377,7 +377,7 @@ def test_task_indexing_migration_guards_scope_and_matches_model_checks() -> None
     assert re.findall(r"DROP TABLE IF EXISTS (\w+)", migration) == [
         "es_video_publication", "es_index_build_chunk", "es_index_build",
     ]
-    for model in (VideoParseTaskRecord, IntervalParseTaskRecord):
+    for model in (VideoParseTask, IntervalParseTask):
         for constraint in model.__table__.constraints:
             if not isinstance(constraint, CheckConstraint) or constraint.name not in {
                 f"ck_{model.__tablename__}_status", f"ck_{model.__tablename__}_lease_state",
@@ -393,35 +393,35 @@ def test_task_indexing_migration_guards_scope_and_matches_model_checks() -> None
 
 def test_mysql_timestamp_migration_scope_does_not_change_unrelated_models() -> None:
     video_ddl = str(
-        CreateTable(VideoRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(Video.__table__).compile(dialect=mysql.dialect())
     )
     chunk_ddl = str(
-        CreateTable(VideoChunkRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(VideoChunk.__table__).compile(dialect=mysql.dialect())
     )
     upload_ddl = str(
-        CreateTable(UploadSessionRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(UploadSession.__table__).compile(dialect=mysql.dialect())
     )
     segment_ddl = str(
-        CreateTable(UploadSegmentRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(UploadSegment.__table__).compile(dialect=mysql.dialect())
     )
     attempt_ddl = str(
-        CreateTable(ParseUsageAttemptRecord.__table__).compile(
+        CreateTable(ParseUsageAttempt.__table__).compile(
             dialect=mysql.dialect()
         )
     )
     video_attempt_ddl = str(
-        CreateTable(VideoParseUsageAttemptRecord.__table__).compile(
+        CreateTable(VideoParseUsageAttempt.__table__).compile(
             dialect=mysql.dialect()
         )
     )
     call_ddl = str(
-        CreateTable(ParseModelCallRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(ParseModelCall.__table__).compile(dialect=mysql.dialect())
     )
     series_ddl = str(
-        CreateTable(SeriesRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(Series.__table__).compile(dialect=mysql.dialect())
     )
     legacy_job_ddl = str(
-        CreateTable(SeriesParseJobRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(SeriesParseJob.__table__).compile(dialect=mysql.dialect())
     )
 
     assert "created_at TIMESTAMP(3) NOT NULL" in video_ddl
@@ -479,7 +479,7 @@ def test_video_parse_v2_migration_checks_full_timestamp3_range_and_precision() -
 def test_interval_members_are_ordered_half_open_and_mask_bits_follow_list_order() -> None:
     members = [
         (
-            ChunkParseTaskRecord(
+            ChunkParseTask(
                 id=f"chunk-{sequence_no}",
                 video_parse_task_id="parse-task",
             ),
@@ -517,7 +517,7 @@ def test_interval_member_validator_rejects_invalid_identity_lists(
 ) -> None:
     ordered_members = [
         (
-            ChunkParseTaskRecord(
+            ChunkParseTask(
                 id=f"chunk-{sequence_no}",
                 video_parse_task_id="parse-task",
             ),
@@ -538,9 +538,9 @@ def test_interval_member_validator_rejects_invalid_identity_lists(
 
 def test_interval_member_validator_rejects_parent_order_and_sequence_mismatch() -> None:
     wrong_parent = [
-        (ChunkParseTaskRecord(id="chunk-3", video_parse_task_id="other"), 3),
-        (ChunkParseTaskRecord(id="chunk-4", video_parse_task_id="parse-task"), 4),
-        (ChunkParseTaskRecord(id="chunk-5", video_parse_task_id="parse-task"), 5),
+        (ChunkParseTask(id="chunk-3", video_parse_task_id="other"), 3),
+        (ChunkParseTask(id="chunk-4", video_parse_task_id="parse-task"), 4),
+        (ChunkParseTask(id="chunk-5", video_parse_task_id="parse-task"), 5),
     ]
     with pytest.raises(ValueError, match="belong"):
         validate_interval_parse_task_members(
@@ -553,9 +553,9 @@ def test_interval_member_validator_rejects_parent_order_and_sequence_mismatch() 
         )
 
     wrong_sequence = [
-        (ChunkParseTaskRecord(id="chunk-3", video_parse_task_id="parse-task"), 3),
-        (ChunkParseTaskRecord(id="chunk-4", video_parse_task_id="parse-task"), 5),
-        (ChunkParseTaskRecord(id="chunk-5", video_parse_task_id="parse-task"), 6),
+        (ChunkParseTask(id="chunk-3", video_parse_task_id="parse-task"), 3),
+        (ChunkParseTask(id="chunk-4", video_parse_task_id="parse-task"), 5),
+        (ChunkParseTask(id="chunk-5", video_parse_task_id="parse-task"), 6),
     ]
     with pytest.raises(ValueError, match="contiguous"):
         validate_interval_parse_task_members(
@@ -570,12 +570,12 @@ def test_interval_member_validator_rejects_parent_order_and_sequence_mismatch() 
 
 def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> None:
     conversation_ddl = str(
-        CreateTable(AgentConversationRecord.__table__).compile(
+        CreateTable(AgentConversation.__table__).compile(
             dialect=mysql.dialect()
         )
     )
     message_ddl = str(
-        CreateTable(AgentMessageRecord.__table__).compile(dialect=mysql.dialect())
+        CreateTable(AgentMessage.__table__).compile(dialect=mysql.dialect())
     )
     assert "ENGINE=InnoDB" in conversation_ddl
     assert "workspace_id VARCHAR(64) NOT NULL" in conversation_ddl
@@ -1046,16 +1046,16 @@ def test_create_schema_checks_v2_usage_started_at_as_utc_timestamp(
 @pytest.mark.parametrize(
     ("model", "suffix", "legacy_expression"),
     [
-        (VideoParseTaskRecord, "status",
+        (VideoParseTask, "status",
          "status IN ('PENDING', 'PREPARING', 'RUNNING', 'COMPLETE', 'FAILED')"),
-        (VideoParseTaskRecord, "lease_state",
+        (VideoParseTask, "lease_state",
          "(status IN ('PREPARING', 'RUNNING') AND lease_owner IS NOT NULL "
          "AND lease_expire_time IS NOT NULL AND heartbeat_time IS NOT NULL) OR "
          "(status IN ('PENDING', 'COMPLETE', 'FAILED') AND lease_owner IS NULL "
          "AND lease_expire_time IS NULL AND heartbeat_time IS NULL)"),
-        (IntervalParseTaskRecord, "status",
+        (IntervalParseTask, "status",
          "status IN ('WAITING', 'REFINING', 'COMPLETE', 'FAILED')"),
-        (IntervalParseTaskRecord, "lease_state",
+        (IntervalParseTask, "lease_state",
          "(status = 'REFINING' AND lease_owner IS NOT NULL AND lease_expire_time IS NOT NULL) "
          "OR (status <> 'REFINING' AND lease_owner IS NULL AND lease_expire_time IS NULL)"),
     ],

@@ -9,21 +9,21 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..model.dto.indexSyncDTO import IndexSyncItem
 from ..model.index_sync import (
-    IndexSyncIntentRecord,
+    IndexSyncIntent,
     IndexSyncOperation,
     IndexSyncStatus,
 )
 from ..model.job import ParseJobStatus
 from ..model.upload import (
     UPLOAD_DELETION_PENDING_ERROR_CODE,
-    UploadSessionRecord,
+    UploadSession,
 )
 from ..model.video import (
-    SeriesRecord,
-    VideoRecord,
-    VideoChunkInfoRecord,
-    VideoChunkEmbeddingRecord,
-    VideoChunkRecord,
+    Series,
+    Video,
+    VideoChunkInfo,
+    VideoChunkEmbedding,
+    VideoChunk,
 )
 from ..utils.time import now_unix_time_ms
 
@@ -55,21 +55,21 @@ class IndexSyncRepository:
             raise ValueError("limit must be greater than zero")
         due_at = now if now is not None else now_unix_time_ms()
         statement = _item_statement().where(
-            IndexSyncIntentRecord.status.in_(
+            IndexSyncIntent.status.in_(
                 (IndexSyncStatus.PENDING.value, IndexSyncStatus.RETRY_WAIT.value)
             ),
-            IndexSyncIntentRecord.available_at <= due_at,
+            IndexSyncIntent.available_at <= due_at,
         ).order_by(
-            IndexSyncIntentRecord.available_at,
-            IndexSyncIntentRecord.updated_at,
-            IndexSyncIntentRecord.video_chunk_id,
+            IndexSyncIntent.available_at,
+            IndexSyncIntent.updated_at,
+            IndexSyncIntent.video_chunk_id,
         ).limit(limit)
         with self._session_factory() as session:
             return _items_from_rows(session.execute(statement).all())
 
     def list_all(self) -> list[IndexSyncItem]:
         statement = _item_statement().order_by(
-            IndexSyncIntentRecord.video_chunk_id
+            IndexSyncIntent.video_chunk_id
         )
         with self._session_factory() as session:
             return _items_from_rows(session.execute(statement).all())
@@ -83,8 +83,8 @@ class IndexSyncRepository:
             return []
         statement = (
             _item_statement()
-            .where(IndexSyncIntentRecord.video_chunk_id.in_(chunk_ids))
-            .order_by(IndexSyncIntentRecord.video_chunk_id)
+            .where(IndexSyncIntent.video_chunk_id.in_(chunk_ids))
+            .order_by(IndexSyncIntent.video_chunk_id)
         )
         with self._session_factory() as session:
             return _items_from_rows(session.execute(statement).all())
@@ -101,12 +101,12 @@ class IndexSyncRepository:
         now = now_unix_time_ms()
         with self._session_factory.begin() as session:
             changed = session.execute(
-                update(IndexSyncIntentRecord)
+                update(IndexSyncIntent)
                 .where(
-                    IndexSyncIntentRecord.video_chunk_id == video_chunk_id,
-                    IndexSyncIntentRecord.source_revision == source_revision,
-                    IndexSyncIntentRecord.operation == operation_value,
-                    IndexSyncIntentRecord.generation == current_generation,
+                    IndexSyncIntent.video_chunk_id == video_chunk_id,
+                    IndexSyncIntent.source_revision == source_revision,
+                    IndexSyncIntent.operation == operation_value,
+                    IndexSyncIntent.generation == current_generation,
                 )
                 .values(
                     status=IndexSyncStatus.SYNCED.value,
@@ -137,16 +137,16 @@ class IndexSyncRepository:
         now = now_unix_time_ms()
         with self._session_factory.begin() as session:
             changed = session.execute(
-                update(IndexSyncIntentRecord)
+                update(IndexSyncIntent)
                 .where(
-                    IndexSyncIntentRecord.video_chunk_id == video_chunk_id,
-                    IndexSyncIntentRecord.source_revision == source_revision,
-                    IndexSyncIntentRecord.operation == operation_value,
-                    IndexSyncIntentRecord.generation == current_generation,
+                    IndexSyncIntent.video_chunk_id == video_chunk_id,
+                    IndexSyncIntent.source_revision == source_revision,
+                    IndexSyncIntent.operation == operation_value,
+                    IndexSyncIntent.generation == current_generation,
                 )
                 .values(
                     status=IndexSyncStatus.RETRY_WAIT.value,
-                    attempt_count=IndexSyncIntentRecord.attempt_count + 1,
+                    attempt_count=IndexSyncIntent.attempt_count + 1,
                     available_at=retry_at,
                     last_error=error,
                     synced_at=None,
@@ -170,15 +170,15 @@ class IndexSyncRepository:
         now = now_unix_time_ms()
         with self._session_factory.begin() as session:
             changed = session.execute(
-                update(IndexSyncIntentRecord)
+                update(IndexSyncIntent)
                 .where(
-                    IndexSyncIntentRecord.video_chunk_id == video_chunk_id,
-                    IndexSyncIntentRecord.source_revision == source_revision,
-                    IndexSyncIntentRecord.operation == operation_value,
-                    IndexSyncIntentRecord.generation == current_generation,
+                    IndexSyncIntent.video_chunk_id == video_chunk_id,
+                    IndexSyncIntent.source_revision == source_revision,
+                    IndexSyncIntent.operation == operation_value,
+                    IndexSyncIntent.generation == current_generation,
                 )
                 .values(
-                    generation=IndexSyncIntentRecord.generation + 1,
+                    generation=IndexSyncIntent.generation + 1,
                     status=IndexSyncStatus.PENDING.value,
                     attempt_count=0,
                     available_at=now,
@@ -203,9 +203,9 @@ class IndexSyncRepository:
         now = now_unix_time_ms()
         with self._session_factory.begin() as session:
             intent = session.scalar(
-                select(IndexSyncIntentRecord)
+                select(IndexSyncIntent)
                 .where(
-                    IndexSyncIntentRecord.video_chunk_id == video_chunk_id
+                    IndexSyncIntent.video_chunk_id == video_chunk_id
                 )
                 .with_for_update()
             )
@@ -231,49 +231,49 @@ def materialize_index_sync_intents(
     """Materialize current Qdrant intent inside the caller's transaction."""
 
     statement = select(
-        VideoChunkRecord.video_chunk_id,
-        VideoRecord.series_id,
-        VideoChunkRecord.video_id,
-        VideoChunkInfoRecord.video_chunk_id.label("info_video_chunk_id"),
-        VideoChunkInfoRecord.is_fallback,
-        VideoChunkEmbeddingRecord.text_vector,
-        VideoChunkEmbeddingRecord.vision_vector,
+        VideoChunk.video_chunk_id,
+        Video.series_id,
+        VideoChunk.video_id,
+        VideoChunkInfo.video_chunk_id.label("info_video_chunk_id"),
+        VideoChunkInfo.is_fallback,
+        VideoChunkEmbedding.text_vector,
+        VideoChunkEmbedding.vision_vector,
     ).join(
-        VideoRecord,
-        VideoRecord.video_id == VideoChunkRecord.video_id,
+        Video,
+        Video.video_id == VideoChunk.video_id,
     ).outerjoin(
-        VideoChunkInfoRecord,
-        VideoChunkInfoRecord.video_chunk_id
-        == VideoChunkRecord.video_chunk_id,
+        VideoChunkInfo,
+        VideoChunkInfo.video_chunk_id
+        == VideoChunk.video_chunk_id,
     ).outerjoin(
-        VideoChunkEmbeddingRecord,
-        VideoChunkEmbeddingRecord.video_chunk_id
-        == VideoChunkRecord.video_chunk_id,
+        VideoChunkEmbedding,
+        VideoChunkEmbedding.video_chunk_id
+        == VideoChunk.video_chunk_id,
     ).where(_video_is_not_pending_deletion())
     if video_chunk_ids is not None:
         chunk_ids = list(dict.fromkeys(video_chunk_ids))
         if not chunk_ids:
             return 0
         statement = statement.where(
-            VideoChunkRecord.video_chunk_id.in_(chunk_ids)
+            VideoChunk.video_chunk_id.in_(chunk_ids)
         )
     # This must be a MySQL current/locking read. A plain consistent read under
     # REPEATABLE READ can observe older facts and then overwrite a newer intent
     # after waiting for that intent's row lock.
     statement = statement.order_by(
-        VideoChunkRecord.video_chunk_id
+        VideoChunk.video_chunk_id
     ).with_for_update()
 
     rows = session.execute(statement).all()
     row_chunk_ids = [row.video_chunk_id for row in rows]
-    intents_by_chunk_id: dict[str, IndexSyncIntentRecord] = {}
+    intents_by_chunk_id: dict[str, IndexSyncIntent] = {}
     if row_chunk_ids:
         intents_by_chunk_id = {
             intent.video_chunk_id: intent
             for intent in session.scalars(
-                select(IndexSyncIntentRecord)
-                .where(IndexSyncIntentRecord.video_chunk_id.in_(row_chunk_ids))
-                .order_by(IndexSyncIntentRecord.video_chunk_id)
+                select(IndexSyncIntent)
+                .where(IndexSyncIntent.video_chunk_id.in_(row_chunk_ids))
+                .order_by(IndexSyncIntent.video_chunk_id)
                 .with_for_update()
             ).all()
         }
@@ -309,7 +309,7 @@ def materialize_index_sync_intents(
         intent = intents_by_chunk_id.get(row.video_chunk_id)
         if intent is None:
             session.add(
-                IndexSyncIntentRecord(
+                IndexSyncIntent(
                     video_chunk_id=row.video_chunk_id,
                     operation=operation.value,
                     source_revision=source_revision,
@@ -380,42 +380,42 @@ def _compute_index_source_revision(
 
 def _item_statement() -> Select:
     return select(
-        IndexSyncIntentRecord.video_chunk_id,
-        VideoRecord.series_id,
-        VideoChunkRecord.video_id,
-        IndexSyncIntentRecord.operation,
-        IndexSyncIntentRecord.source_revision,
-        IndexSyncIntentRecord.generation,
-        IndexSyncIntentRecord.status,
-        IndexSyncIntentRecord.attempt_count,
-        IndexSyncIntentRecord.available_at,
-        IndexSyncIntentRecord.last_error,
-        IndexSyncIntentRecord.synced_at,
-        VideoChunkInfoRecord.is_fallback,
-        VideoChunkEmbeddingRecord.text_vector,
-        VideoChunkEmbeddingRecord.vision_vector,
+        IndexSyncIntent.video_chunk_id,
+        Video.series_id,
+        VideoChunk.video_id,
+        IndexSyncIntent.operation,
+        IndexSyncIntent.source_revision,
+        IndexSyncIntent.generation,
+        IndexSyncIntent.status,
+        IndexSyncIntent.attempt_count,
+        IndexSyncIntent.available_at,
+        IndexSyncIntent.last_error,
+        IndexSyncIntent.synced_at,
+        VideoChunkInfo.is_fallback,
+        VideoChunkEmbedding.text_vector,
+        VideoChunkEmbedding.vision_vector,
     ).join(
-        VideoChunkRecord,
-        VideoChunkRecord.video_chunk_id
-        == IndexSyncIntentRecord.video_chunk_id,
+        VideoChunk,
+        VideoChunk.video_chunk_id
+        == IndexSyncIntent.video_chunk_id,
     ).join(
-        VideoRecord,
-        VideoRecord.video_id == VideoChunkRecord.video_id,
+        Video,
+        Video.video_id == VideoChunk.video_id,
     ).outerjoin(
-        VideoChunkInfoRecord,
-        VideoChunkInfoRecord.video_chunk_id
-        == VideoChunkRecord.video_chunk_id,
+        VideoChunkInfo,
+        VideoChunkInfo.video_chunk_id
+        == VideoChunk.video_chunk_id,
     ).outerjoin(
-        VideoChunkEmbeddingRecord,
-        VideoChunkEmbeddingRecord.video_chunk_id
-        == VideoChunkRecord.video_chunk_id,
+        VideoChunkEmbedding,
+        VideoChunkEmbedding.video_chunk_id
+        == VideoChunk.video_chunk_id,
     ).where(_video_is_not_pending_deletion())
 
 
 def _video_is_not_pending_deletion():
     return ~exists().where(
-        UploadSessionRecord.video_id == VideoRecord.video_id,
-        UploadSessionRecord.last_error_code
+        UploadSession.video_id == Video.video_id,
+        UploadSession.last_error_code
         == UPLOAD_DELETION_PENDING_ERROR_CODE,
     )
 
@@ -447,12 +447,12 @@ def _refresh_chunk_series_status(
     video_chunk_id: str,
 ) -> None:
     series_id = session.scalar(
-        select(VideoRecord.series_id)
+        select(Video.series_id)
         .join(
-            VideoChunkRecord,
-            VideoChunkRecord.video_id == VideoRecord.video_id,
+            VideoChunk,
+            VideoChunk.video_id == Video.video_id,
         )
-        .where(VideoChunkRecord.video_chunk_id == video_chunk_id)
+        .where(VideoChunk.video_chunk_id == video_chunk_id)
     )
     if series_id is not None:
         refresh_series_statuses(session, {series_id})
@@ -466,35 +466,35 @@ def list_ready_video_ids(session: Session, series_ids: Sequence[str]) -> list[st
         return []
     rows = session.execute(
         select(
-            VideoRecord.video_id,
-            VideoChunkRecord.video_chunk_id,
-            VideoChunkEmbeddingRecord.text_vector,
-            VideoChunkEmbeddingRecord.vision_vector,
-            IndexSyncIntentRecord.operation,
-            IndexSyncIntentRecord.status,
+            Video.video_id,
+            VideoChunk.video_chunk_id,
+            VideoChunkEmbedding.text_vector,
+            VideoChunkEmbedding.vision_vector,
+            IndexSyncIntent.operation,
+            IndexSyncIntent.status,
         )
-        .select_from(VideoRecord)
+        .select_from(Video)
         .outerjoin(
-            VideoChunkRecord,
-            VideoChunkRecord.video_id == VideoRecord.video_id,
-        )
-        .outerjoin(
-            VideoChunkEmbeddingRecord,
-            VideoChunkEmbeddingRecord.video_chunk_id
-            == VideoChunkRecord.video_chunk_id,
+            VideoChunk,
+            VideoChunk.video_id == Video.video_id,
         )
         .outerjoin(
-            IndexSyncIntentRecord,
-            IndexSyncIntentRecord.video_chunk_id
-            == VideoChunkRecord.video_chunk_id,
+            VideoChunkEmbedding,
+            VideoChunkEmbedding.video_chunk_id
+            == VideoChunk.video_chunk_id,
+        )
+        .outerjoin(
+            IndexSyncIntent,
+            IndexSyncIntent.video_chunk_id
+            == VideoChunk.video_chunk_id,
         )
         .where(
-            VideoRecord.series_id.in_(ids),
-            VideoRecord.parse_status.in_(
+            Video.series_id.in_(ids),
+            Video.parse_status.in_(
                 ("COMPLETED", ParseJobStatus.SUCCEEDED.value)
             ),
         )
-        .order_by(VideoRecord.video_id)
+        .order_by(Video.video_id)
     ).all()
     ready: dict[str, bool] = {}
     for row in rows:
@@ -517,8 +517,8 @@ def refresh_series_statuses(
 
     for series_id in series_ids:
         series = session.scalar(
-            select(SeriesRecord)
-            .where(SeriesRecord.series_id == series_id)
+            select(Series)
+            .where(Series.series_id == series_id)
             .with_for_update()
         )
         if series is None:

@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from gateway.usage import TokenUsage
 from server.database import DatabaseEnvironment, create_database_engine, create_session_factory
 from server.model.dto.parseUsageDTO import ModelUsageState
-from server.model.parse_usage import ModelUsageRecord
+from server.model.parse_usage import ModelUsage
 from server.repository.model_usage import MAX_USAGE_RECORDS, ModelUsageConflictError, ModelUsageRepository
 
 TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
@@ -29,15 +29,15 @@ def storage(request):
     )
     if request.param == "mysql":
         assert engine.dialect.name == "mysql"
-    ModelUsageRecord.__table__.create(engine, checkfirst=True)
+    ModelUsage.__table__.create(engine, checkfirst=True)
     factory = create_session_factory(engine)
     workspace = f"usage-test-{uuid4()}"
     try:
         yield ModelUsageRepository(factory), factory, workspace
     finally:
         with factory.begin() as session:
-            session.execute(delete(ModelUsageRecord).where(
-                ModelUsageRecord.workspace_id.in_((workspace, workspace + "-other", workspace.upper())),
+            session.execute(delete(ModelUsage).where(
+                ModelUsage.workspace_id.in_((workspace, workspace + "-other", workspace.upper())),
             ))
         engine.dispose()
 
@@ -76,7 +76,7 @@ def test_append_is_immutable_and_replay_does_not_overwrite(storage):
     with pytest.raises(TypeError):
         stored.usage["tokens"]["input_tokens"] = 0
     with factory() as session:
-        row = session.get(ModelUsageRecord, original.call_id)
+        row = session.get(ModelUsage, original.call_id)
         assert row.usage["tokens"]["reasoning_tokens"] is None
         assert row.metadata_["src"] is None
 
@@ -149,7 +149,7 @@ def test_sql_filters_precede_the_real_20k_limit_and_extra_row_is_excluded(storag
         usage={"tokens": None, "sdk_model_usage": []}, metadata=metadata, created_at=NOW,
     ) for i in range(MAX_USAGE_RECORDS + 1)]
     with factory.begin() as session:
-        session.execute(insert(ModelUsageRecord.__table__), rows)
+        session.execute(insert(ModelUsage.__table__), rows)
     target = call(workspace, started_at=NOW + timedelta(milliseconds=1))
     repository.record_call(target)
     batch = query(repository, workspace, series_id="series-A", run_id="run-A")
@@ -218,7 +218,7 @@ def test_mysql_real_schema_and_concurrent_call_id_replay(storage, conflict):
     if engine.dialect.name != "mysql":
         pytest.skip("concurrent PK/UTC semantics require real TEST MySQL")
     columns = {column["name"]: column for column in inspect(engine).get_columns("model_usage")}
-    assert set(columns) == set(ModelUsageRecord.__table__.columns.keys())
+    assert set(columns) == set(ModelUsage.__table__.columns.keys())
     assert all(not column["nullable"] for column in columns.values())
     assert columns["started_at"]["type"].fsp == columns["created_at"]["type"].fsp == 3
     original = call(workspace)

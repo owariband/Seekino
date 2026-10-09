@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy import func, select
 
 from server.database import create_session_factory
-from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
-from server.model.video import SeriesRecord, VideoChunkRecord, VideoRecord
+from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJob
+from server.model.video import Series, VideoChunk, Video
 from server.mq.contracts import ParseJobLeaseLostError
 from server.repository.job import ParseJobRepository
 from server.repository.library import LibraryRepository
@@ -42,7 +42,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
     job_id = "d1070c86-b716-4df7-bbb6-83072c7e9aea"
     with session_factory.begin() as session:
         session.add(
-            SeriesRecord(
+            Series(
                 series_id=prepared.series_id,
                 workspace_id=prepared.workspace_id,
                 name=prepared.series_name,
@@ -53,7 +53,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
             )
         )
         session.add(
-            VideoRecord(
+            Video(
                 video_id=prepared.video_id,
                 series_id=prepared.series_id,
                 episode_order=prepared.episode_order,
@@ -71,7 +71,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
             )
         )
         session.add(
-            SeriesParseJobRecord(
+            SeriesParseJob(
                 job_id=job_id,
                 series_id=prepared.series_id,
                 video_id=prepared.video_id,
@@ -118,7 +118,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
     with pytest.raises(ParseJobLeaseLostError):
         video_repository.import_video_parse_for_job(prepared, first)
     with session_factory() as session:
-        assert session.scalar(select(func.count(VideoChunkRecord.video_chunk_id))) == 0
+        assert session.scalar(select(func.count(VideoChunk.video_chunk_id))) == 0
 
     report = VideoRepository(session_factory).import_video_parse_for_job(
         prepared,
@@ -128,7 +128,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
     assert report.chunk_count == len(prepared.chunks)
     assert jobs.get(job_id).stage == ParseJobStage.INDEXING.value
     with session_factory() as session:
-        assert session.get(VideoRecord, prepared.video_id).episode_order == (
+        assert session.get(Video, prepared.video_id).episode_order == (
             prepared.episode_order + 1
         )
     with pytest.raises(ParseImportConflictError):

@@ -11,15 +11,15 @@ from sqlalchemy.schema import CreateTable
 
 from server.database import create_session_factory
 from server.model.index_sync import (
-    IndexSyncIntentRecord,
+    IndexSyncIntent,
     IndexSyncOperation,
     IndexSyncStatus,
 )
 from server.model.video import (
-    SeriesRecord,
-    VideoRecord,
-    VideoChunkInfoRecord,
-    VideoChunkEmbeddingRecord,
+    Series,
+    Video,
+    VideoChunkInfo,
+    VideoChunkEmbedding,
 )
 from server.repository.index_sync import (
     IndexSyncRepository,
@@ -58,13 +58,13 @@ def _with_vectors(prepared_import, *, first_text: list[float] | None = None):
 def _series_status(engine, series_id: str) -> str:
     with engine.connect() as connection:
         return connection.execute(
-            select(SeriesRecord.status).where(SeriesRecord.series_id == series_id)
+            select(Series.status).where(Series.series_id == series_id)
         ).scalar_one()
 
 
 def test_index_sync_intent_schema_is_mysql_compatible() -> None:
     ddl = str(
-        CreateTable(IndexSyncIntentRecord.__table__).compile(
+        CreateTable(IndexSyncIntent.__table__).compile(
             dialect=mysql.dialect()
         )
     )
@@ -191,7 +191,7 @@ def test_unparsed_sibling_does_not_hide_ready_video(
     queued_video_id = str(uuid4())
     with session_factory.begin() as session:
         session.add(
-            VideoRecord(
+            Video(
                 video_id=queued_video_id,
                 series_id=prepared_import.series_id,
                 episode_order=prepared_import.episode_order + 1,
@@ -217,13 +217,13 @@ def test_unparsed_sibling_does_not_hide_ready_video(
         ]
 
     with session_factory.begin() as session:
-        queued_video = session.get(VideoRecord, queued_video_id)
+        queued_video = session.get(Video, queued_video_id)
         queued_video.parse_status = "FAILED"
         refresh_series_statuses(session, {prepared_import.series_id})
     assert _series_status(engine, prepared_import.series_id) == "READY"
 
     with session_factory.begin() as session:
-        queued_video = session.get(VideoRecord, queued_video_id)
+        queued_video = session.get(Video, queued_video_id)
         queued_video.parse_status = "SUCCEEDED"
         refresh_series_statuses(session, {prepared_import.series_id})
         assert list_ready_video_ids(session, []) == []
@@ -439,10 +439,10 @@ def test_materialize_all_repairs_a_historical_database_without_intents(
     video_repository.import_video_parse(_with_vectors(prepared_import))
     index_repository = IndexSyncRepository(create_session_factory(engine))
     with engine.begin() as connection:
-        connection.execute(delete(IndexSyncIntentRecord))
+        connection.execute(delete(IndexSyncIntent))
         connection.execute(
-            update(SeriesRecord)
-            .where(SeriesRecord.series_id == prepared_import.series_id)
+            update(Series)
+            .where(Series.series_id == prepared_import.series_id)
             .values(status="READY")
         )
 
@@ -470,13 +470,13 @@ def test_incomplete_chunk_materializes_a_listable_delete_intent(
     incomplete_id = original[0].video_chunk_id
     with engine.begin() as connection:
         connection.execute(
-            delete(VideoChunkInfoRecord).where(
-                VideoChunkInfoRecord.video_chunk_id == incomplete_id
+            delete(VideoChunkInfo).where(
+                VideoChunkInfo.video_chunk_id == incomplete_id
             )
         )
         connection.execute(
-            delete(VideoChunkEmbeddingRecord).where(
-                VideoChunkEmbeddingRecord.video_chunk_id == incomplete_id
+            delete(VideoChunkEmbedding).where(
+                VideoChunkEmbedding.video_chunk_id == incomplete_id
             )
         )
 
@@ -506,7 +506,7 @@ def test_late_intent_failure_rolls_back_facts_and_outbox(
             raise RuntimeError("injected intent persistence failure")
 
     event.listen(
-        IndexSyncIntentRecord,
+        IndexSyncIntent,
         "before_insert",
         fail_second_intent,
     )
@@ -515,15 +515,15 @@ def test_late_intent_failure_rolls_back_facts_and_outbox(
             video_repository.import_video_parse(_with_vectors(prepared_import))
     finally:
         event.remove(
-            IndexSyncIntentRecord,
+            IndexSyncIntent,
             "before_insert",
             fail_second_intent,
         )
 
     with engine.connect() as connection:
         assert connection.execute(
-            select(func.count()).select_from(SeriesRecord)
+            select(func.count()).select_from(Series)
         ).scalar_one() == 0
         assert connection.execute(
-            select(func.count()).select_from(IndexSyncIntentRecord)
+            select(func.count()).select_from(IndexSyncIntent)
         ).scalar_one() == 0

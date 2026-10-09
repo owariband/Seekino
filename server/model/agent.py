@@ -19,7 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.expression import Grouping
 
 from ..database import Base
-from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampedRecord
+from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampMixin
 
 
 class AgentMessageRole(StrEnum):
@@ -33,7 +33,7 @@ class AgentMessageStatus(StrEnum):
     FAILED = "FAILED"
 
 
-class AgentConversationRecord(TimestampedRecord, Base):
+class AgentConversation(TimestampMixin, Base):
     __tablename__ = "agent_conversation"
     __table_args__ = (
         UniqueConstraint(
@@ -64,7 +64,7 @@ class AgentConversationRecord(TimestampedRecord, Base):
     last_message_at: Mapped[int | None] = mapped_column(BigInteger)
 
 
-class AgentMessageRecord(TimestampedRecord, Base):
+class AgentMessage(TimestampMixin, Base):
     __tablename__ = "agent_message"
     __table_args__ = (
         UniqueConstraint(
@@ -128,12 +128,12 @@ class AgentMessageRecord(TimestampedRecord, Base):
 
 
 AGENT_MESSAGE_IDEMPOTENCY_KEY = cast(
-    AgentMessageRecord.detail[("request", "idempotencyKey")].as_string(),
+    AgentMessage.detail[("request", "idempotencyKey")].as_string(),
     String(128),
 )
 Index(
     "uq_agent_message_conversation_idempotency",
-    AgentMessageRecord.conversation_id,
+    AgentMessage.conversation_id,
     # MySQL requires parentheses around a functional key part.
     Grouping(AGENT_MESSAGE_IDEMPOTENCY_KEY),
     unique=True,

@@ -13,7 +13,7 @@ from server.api.app import create_app
 from server.api.parse_usage import project_usage_overview
 from server.database import DatabaseEnvironment, create_database_engine, create_session_factory
 from server.model.dto.parseUsageDTO import ModelCallUsageBatch, ModelUsageState
-from server.model.parse_usage import ModelUsageRecord
+from server.model.parse_usage import ModelUsage
 from server.repository.model_usage import ModelUsageRepository
 from server.service.parse_usage import ParseUsageService
 from server.utils.time import datetime_to_unix_time_ms, unix_time_ms_to_datetime
@@ -60,7 +60,7 @@ def chat_context():
 
 def test_capture_video_combines_observers_and_persists_one_explicit_snapshot(tmp_path):
     engine = create_database_engine(f"sqlite+pysqlite:///{tmp_path / 'usage.db'}", environment=DatabaseEnvironment.TEST)
-    ModelUsageRecord.__table__.create(engine)
+    ModelUsage.__table__.create(engine)
     repository = ModelUsageRepository(create_session_factory(engine))
     capture, outer = service(repository), []
     try:
@@ -109,7 +109,7 @@ def test_parallel_chat_scopes_do_not_cross_workspace_or_run(tmp_path):
     from threading import Barrier
 
     engine = create_database_engine(f"sqlite+pysqlite:///{tmp_path / 'parallel.db'}", environment=DatabaseEnvironment.TEST)
-    ModelUsageRecord.__table__.create(engine)
+    ModelUsage.__table__.create(engine)
     repository = ModelUsageRepository(create_session_factory(engine))
     capture = ParseUsageService(repository)
     barrier = Barrier(2)
@@ -346,7 +346,7 @@ def test_sql_api_preserves_get_route_and_parameter_contract(tmp_path):
     from uuid import uuid4
 
     engine = create_database_engine(f"sqlite+pysqlite:///{tmp_path / 'api.db'}", environment=DatabaseEnvironment.TEST)
-    ModelUsageRecord.__table__.create(engine)
+    ModelUsage.__table__.create(engine)
     repository = ModelUsageRepository(create_session_factory(engine))
     repository.record_call(recorded(str(uuid4())))
     application = create_app(services=SimpleNamespace(parse_usage=service(repository)))
@@ -373,7 +373,7 @@ def test_sql_api_reports_partial_sdk_usage_and_keeps_task_types_separate(tmp_pat
     from uuid import uuid4
 
     engine = create_database_engine(f"sqlite+pysqlite:///{tmp_path / 'partial-api.db'}", environment=DatabaseEnvironment.TEST)
-    ModelUsageRecord.__table__.create(engine)
+    ModelUsage.__table__.create(engine)
     repository = ModelUsageRepository(create_session_factory(engine))
     try:
         repository.record_call(recorded(str(uuid4())))

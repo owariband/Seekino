@@ -10,15 +10,15 @@ import pytest
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
 from server.model.job import (
-    ChunkParseTaskRecord,
+    ChunkParseTask,
     ParseJobStage,
     ParseJobStatus,
-    SeriesParseJobRecord,
-    VideoParseTaskRecord,
+    SeriesParseJob,
+    VideoParseTask,
     VideoChunkCheckpointStage,
 )
-from server.model.upload import UploadSessionRecord, UploadSessionStatus
-from server.model.video import SeriesRecord, VideoChunkRecord, VideoRecord
+from server.model.upload import UploadSession, UploadSessionStatus
+from server.model.video import Series, VideoChunk, Video
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.job import (
     ParseJobCheckpointConflictError,
@@ -51,7 +51,7 @@ def _seed_job(
     now = datetime_to_unix_time_ms(datetime(2026, 9, 14, 10, 0, 0, tzinfo=UTC))
     with session_factory.begin() as session:
         session.add(
-            SeriesRecord(
+            Series(
                 series_id=series_id,
                 workspace_id=workspace_id,
                 name=f"Series {series_id}",
@@ -62,7 +62,7 @@ def _seed_job(
             )
         )
         session.add(
-            VideoRecord(
+            Video(
                 video_id=video_id,
                 series_id=series_id,
                 episode_order=1,
@@ -80,7 +80,7 @@ def _seed_job(
             )
         )
         session.add(
-            SeriesParseJobRecord(
+            SeriesParseJob(
                 job_id=job_id,
                 series_id=series_id,
                 video_id=video_id,
@@ -141,7 +141,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
     frozen_config = default_video_parse_v2_config().model_dump(mode="json")
     with factory.begin() as session:
         session.add_all([
-            VideoParseTaskRecord(
+            VideoParseTask(
                 id=first_id,
                 video_id=video_id,
                 pipeline_version="video-parse-v2",
@@ -159,7 +159,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
                 create_time=first_time,
                 update_time=first_time,
             ),
-            VideoParseTaskRecord(
+            VideoParseTask(
                 id=second_id,
                 video_id=video_id,
                 pipeline_version="video-parse-v2",
@@ -176,10 +176,10 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
                 create_time=second_time,
                 update_time=second_time,
             ),
-            UploadSessionRecord(
+            UploadSession(
                 upload_session_id=upload_session_id,
                 workspace_id="local-default",
-                series_id=session.get(VideoRecord, video_id).series_id,
+                series_id=session.get(Video, video_id).series_id,
                 episode_order=1,
                 upload_sequence=1,
                 original_filename="episode.mp4",
@@ -291,10 +291,10 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
     chunk_id = str(uuid4())
     chunk_task_id = str(uuid4())
     with factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, second_id)
+        task = session.get(VideoParseTask, second_id)
         task.status = "PARSING_FAILED"
         task.detail = {"_worker_runtime_v2": {"accepted": True}}
-        session.add(VideoChunkRecord(
+        session.add(VideoChunk(
             video_chunk_id=chunk_id,
             video_id=video_id,
             sequence_no=0,
@@ -307,7 +307,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
             transcript=[],
             keyframe_uris=[],
         ))
-        session.add(ChunkParseTaskRecord(
+        session.add(ChunkParseTask(
             id=chunk_task_id,
             video_parse_task_id=second_id,
             video_chunk_id=chunk_id,
@@ -331,7 +331,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
     assert executing_view.can_delete is False
 
     with factory.begin() as session:
-        child = session.get(ChunkParseTaskRecord, chunk_task_id)
+        child = session.get(ChunkParseTask, chunk_task_id)
         child.status = "FAILED"
         child.lease_owner = None
         child.lease_expire_time = None
@@ -350,8 +350,8 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
     later_task_id = str(uuid4())
     active_prefix_until = datetime(2099, 1, 1, tzinfo=UTC)
     with factory.begin() as session:
-        series_id = session.get(VideoRecord, video_id).series_id
-        session.add(VideoRecord(
+        series_id = session.get(Video, video_id).series_id
+        session.add(Video(
             video_id=later_video_id,
             series_id=series_id,
             episode_order=2,
@@ -366,7 +366,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
             upload_progress=100,
             parse_progress=0,
         ))
-        session.add(VideoParseTaskRecord(
+        session.add(VideoParseTask(
             id=later_task_id,
             video_id=later_video_id,
             pipeline_version="video-parse-v2",
@@ -445,7 +445,7 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
     engine, _video_repository = repository
     factory = create_session_factory(engine)
     with factory.begin() as session:
-        session.get(SeriesParseJobRecord, foreign_job_id).available_at = now + timedelta_to_ms(timedelta(days=1))
+        session.get(SeriesParseJob, foreign_job_id).available_at = now + timedelta_to_ms(timedelta(days=1))
     service = ParseJobService(jobs, LibraryService(LibraryRepository(factory)))
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(services=SimpleNamespace(jobs=service))))
     first = jobs_api.list_jobs(request, "local-default", None, "QUEUED", None, 1)
@@ -839,7 +839,7 @@ def test_progress_uses_split_gate_and_duration_weighted_parse_coverage(
     jobs.save_checkpoint(lease, checkpoints[1], now=now)
     assert jobs.get(job_id).progress == 99
     with session_factory() as session:
-        assert session.get(VideoRecord, video_id).parse_progress == 99
+        assert session.get(Video, video_id).parse_progress == 99
 
     for milestone in (
         VideoChunkCheckpointStage.TEXT_EMBEDDED,

@@ -37,13 +37,13 @@ from server.database import (
 from server.model.job import (
     ParseJobStage,
     ParseJobStatus,
-    SeriesParseJobRecord,
-    VideoParseTaskRecord,
-    VideoChunkCheckpointRecord,
+    SeriesParseJob,
+    VideoParseTask,
+    VideoChunkCheckpoint,
     VideoChunkCheckpointStage,
 )
 from server.model.dto.agentDTO import AgentMessageState
-from server.model.video import SeriesRecord, VideoRecord
+from server.model.video import Series, Video
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.agent import AgentRepository
 from server.repository.job import ParseJobRepository
@@ -395,7 +395,7 @@ def _create_series(
     series_id = response.json()["seriesId"]
     if ready:
         with client.app.state.services.library._repository._session_factory.begin() as session:
-            session.get(SeriesRecord, series_id).status = "READY"
+            session.get(Series, series_id).status = "READY"
     return series_id
 
 
@@ -1202,7 +1202,7 @@ def test_video_episode_update_contract_and_conflict(tmp_path: Path) -> None:
             (first_video_id, 1, "a" * 64),
             (second_video_id, 2, "b" * 64),
         ):
-            session.add(VideoRecord(
+            session.add(Video(
                 video_id=video_id,
                 series_id=series_id,
                 episode_order=episode_order,
@@ -1399,9 +1399,9 @@ def test_upload_parse_retry_is_status_fenced_and_returns_the_same_v2_task(tmp_pa
     job_id = completed.json()["jobId"]
     video_parse_task_id = completed.json()["videoParseTaskId"]
     with jobs_repository._session_factory.begin() as session:
-        job = session.get(SeriesParseJobRecord, job_id)
+        job = session.get(SeriesParseJob, job_id)
         legacy_job_before = (job.status, job.version, job.attempt_count)
-        task = session.get(VideoParseTaskRecord, video_parse_task_id)
+        task = session.get(VideoParseTask, video_parse_task_id)
         original_config = task.parse_config
         task.status = "PARSING_FAILED"
         task.attempt_count = 3
@@ -1433,10 +1433,10 @@ def test_upload_parse_retry_is_status_fenced_and_returns_the_same_v2_task(tmp_pa
     assert duplicate.status_code == 409
     assert duplicate.json()["requestId"] == duplicate.headers["X-Request-Id"]
     with jobs_repository._session_factory() as session:
-        task = session.get(VideoParseTaskRecord, video_parse_task_id)
+        task = session.get(VideoParseTask, video_parse_task_id)
         assert (task.status, task.version) == ("PREPARING", 1)
         assert task.parse_config == original_config
-        job = session.get(SeriesParseJobRecord, job_id)
+        job = session.get(SeriesParseJob, job_id)
         assert (job.status, job.version, job.attempt_count) == legacy_job_before
 
 
@@ -1479,7 +1479,7 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
     job_id = completed["jobId"]
     old_task_id = completed["videoParseTaskId"]
     with jobs_repository._session_factory.begin() as session:
-        job = session.get(SeriesParseJobRecord, job_id)
+        job = session.get(SeriesParseJob, job_id)
         job.status = ParseJobStatus.SUCCEEDED.value
         job.stage = ParseJobStage.COMPLETED.value
         job.progress = 100
@@ -1494,14 +1494,14 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
             job.version,
             job.completed_at,
         )
-        task = session.get(VideoParseTaskRecord, old_task_id)
+        task = session.get(VideoParseTask, old_task_id)
         old_config = task.parse_config
         task.status = "COMPLETE"
-        video = session.get(VideoRecord, job.video_id)
+        video = session.get(Video, job.video_id)
         video.parse_status = ParseJobStatus.SUCCEEDED.value
         video.parse_progress = 100
-        session.get(SeriesRecord, series_id).status = "READY"
-        session.add(VideoChunkCheckpointRecord(
+        session.get(Series, series_id).status = "READY"
+        session.add(VideoChunkCheckpoint(
             job_id=job_id,
             sequence_no=0,
             video_chunk_id="reparse-checkpoint",
@@ -1538,9 +1538,9 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
     for field in ("nextExecuteTime", "createTime", "updateTime"):
         assert type(reparsed.json()[field]) is int
     with jobs_repository._session_factory() as session:
-        old_task = session.get(VideoParseTaskRecord, old_task_id)
+        old_task = session.get(VideoParseTask, old_task_id)
         new_task = session.get(
-            VideoParseTaskRecord,
+            VideoParseTask,
             reparsed.json()["videoParseTaskId"],
         )
         assert (old_task.status, old_task.version) == (
@@ -1551,10 +1551,10 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
         assert new_task.version == 2
         assert new_task.parse_config == replacement_config
         assert session.get(
-            VideoChunkCheckpointRecord,
+            VideoChunkCheckpoint,
             (job_id, 0),
         ) is not None
-        job = session.get(SeriesParseJobRecord, job_id)
+        job = session.get(SeriesParseJob, job_id)
         assert (
             job.status,
             job.stage,
@@ -1567,8 +1567,8 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
     assert duplicate.status_code == 409
     with jobs_repository._session_factory() as session:
         assert len(list(session.scalars(
-            select(VideoParseTaskRecord).where(
-                VideoParseTaskRecord.video_id == completed["videoId"]
+            select(VideoParseTask).where(
+                VideoParseTask.video_id == completed["videoId"]
             )
         ))) == 2
 
@@ -1783,7 +1783,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     assert '"status":"SUCCEEDED"' in body
 
     with jobs_repository._session_factory.begin() as session:
-        task = session.get(VideoParseTaskRecord, video_parse_task_id)
+        task = session.get(VideoParseTask, video_parse_task_id)
         task.status = "COMPLETE"
         task.finish_time = task.update_time
     with client.stream(
@@ -2125,7 +2125,7 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
     video_repository = VideoRepository(service._repository._session_factory)
     report = video_repository.import_video_parse(prepared_import)
     with service._repository._session_factory.begin() as session:
-        session.get(SeriesRecord, prepared_import.series_id).status = "READY"
+        session.get(Series, prepared_import.series_id).status = "READY"
     conversation_id = _create_agent_conversation(client)
 
     def joined_search(

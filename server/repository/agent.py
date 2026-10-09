@@ -11,8 +11,8 @@ from agent.chat.common.state import AnswerPhase
 
 from ..model.agent import (
     AGENT_MESSAGE_IDEMPOTENCY_KEY,
-    AgentConversationRecord,
-    AgentMessageRecord,
+    AgentConversation,
+    AgentMessage,
     AgentMessageRole,
     AgentMessageStatus,
 )
@@ -63,9 +63,9 @@ class AgentRepository:
             try:
                 with self._session_factory.begin() as session:
                     existing = session.scalar(
-                        select(AgentConversationRecord).where(
-                            AgentConversationRecord.workspace_id == workspace_id,
-                            AgentConversationRecord.idempotency_key == idempotency_key,
+                        select(AgentConversation).where(
+                            AgentConversation.workspace_id == workspace_id,
+                            AgentConversation.idempotency_key == idempotency_key,
                         )
                     )
                     if existing is not None:
@@ -77,8 +77,8 @@ class AgentRepository:
                                 "with different fields"
                             )
                         message_count = session.scalar(
-                            select(func.count(AgentMessageRecord.message_id)).where(
-                                AgentMessageRecord.conversation_id
+                            select(func.count(AgentMessage.message_id)).where(
+                                AgentMessage.conversation_id
                                 == existing.conversation_id
                             )
                         )
@@ -88,7 +88,7 @@ class AgentRepository:
                             last_message_preview=session.scalar(self._preview_query(existing.conversation_id)),
                         )
 
-                    record = AgentConversationRecord(
+                    record = AgentConversation(
                         conversation_id=conversation_id,
                         workspace_id=workspace_id,
                         title=title,
@@ -116,21 +116,21 @@ class AgentRepository:
         with self._session_factory() as session:
             rows = session.execute(
                 select(
-                    AgentConversationRecord,
-                    func.count(AgentMessageRecord.message_id),
-                    self._preview_query(AgentConversationRecord.conversation_id).scalar_subquery(),
+                    AgentConversation,
+                    func.count(AgentMessage.message_id),
+                    self._preview_query(AgentConversation.conversation_id).scalar_subquery(),
                 )
                 .outerjoin(
-                    AgentMessageRecord,
-                    AgentMessageRecord.conversation_id
-                    == AgentConversationRecord.conversation_id,
+                    AgentMessage,
+                    AgentMessage.conversation_id
+                    == AgentConversation.conversation_id,
                 )
-                .where(AgentConversationRecord.workspace_id == workspace_id)
-                .group_by(AgentConversationRecord.conversation_id)
+                .where(AgentConversation.workspace_id == workspace_id)
+                .group_by(AgentConversation.conversation_id)
                 .order_by(
-                    AgentConversationRecord.last_message_at.desc(),
-                    AgentConversationRecord.created_at.desc(),
-                    AgentConversationRecord.conversation_id.desc(),
+                    AgentConversation.last_message_at.desc(),
+                    AgentConversation.created_at.desc(),
+                    AgentConversation.conversation_id.desc(),
                 )
                 .limit(limit)
             ).all()
@@ -155,8 +155,8 @@ class AgentRepository:
                 workspace_id,
             )
             message_count = session.scalar(
-                select(func.count(AgentMessageRecord.message_id)).where(
-                    AgentMessageRecord.conversation_id == conversation_id
+                select(func.count(AgentMessage.message_id)).where(
+                    AgentMessage.conversation_id == conversation_id
                 )
             )
             return self._conversation_state(
@@ -180,11 +180,11 @@ class AgentRepository:
             # The Conversation row is the lifecycle mutex. Completion locks the
             # Message before this row, so deletion must not lock them in reverse.
             processing = session.scalar(
-                select(AgentMessageRecord.message_id)
+                select(AgentMessage.message_id)
                 .where(
-                    AgentMessageRecord.conversation_id == conversation_id,
-                    AgentMessageRecord.role == AgentMessageRole.ASSISTANT.value,
-                    AgentMessageRecord.status == AgentMessageStatus.PROCESSING.value,
+                    AgentMessage.conversation_id == conversation_id,
+                    AgentMessage.role == AgentMessageRole.ASSISTANT.value,
+                    AgentMessage.status == AgentMessageStatus.PROCESSING.value,
                 )
                 .limit(1)
             )
@@ -194,8 +194,8 @@ class AgentRepository:
                 )
             message_count = int(
                 session.scalar(
-                    select(func.count(AgentMessageRecord.message_id)).where(
-                        AgentMessageRecord.conversation_id == conversation_id
+                    select(func.count(AgentMessage.message_id)).where(
+                        AgentMessage.conversation_id == conversation_id
                     )
                 )
                 or 0
@@ -215,28 +215,28 @@ class AgentRepository:
         self, workspace_id: str, *, offset: int, limit: int,
         series_id: str | None = None, query: str | None = None,
     ) -> tuple[list[AgentConversationState], int]:
-        filters = [AgentConversationRecord.workspace_id == workspace_id]
+        filters = [AgentConversation.workspace_id == workspace_id]
         if query:
-            filters.append(AgentConversationRecord.title.contains(query, autoescape=True))
+            filters.append(AgentConversation.title.contains(query, autoescape=True))
         if series_id:
             if self._session_factory.kw["bind"].dialect.name == "sqlite":
-                values = func.json_each(AgentMessageRecord.series_ids).table_valued("value")
+                values = func.json_each(AgentMessage.series_ids).table_valued("value")
                 matching = select(values.c.value).where(values.c.value == series_id).exists()
             else:
-                matching = func.json_contains(AgentMessageRecord.series_ids, json.dumps(series_id)) == 1
-            filters.append(select(AgentMessageRecord.message_id).where(
-                AgentMessageRecord.conversation_id == AgentConversationRecord.conversation_id,
+                matching = func.json_contains(AgentMessage.series_ids, json.dumps(series_id)) == 1
+            filters.append(select(AgentMessage.message_id).where(
+                AgentMessage.conversation_id == AgentConversation.conversation_id,
                 matching,
-            ).correlate(AgentConversationRecord).exists())
+            ).correlate(AgentConversation).exists())
         with self._session_factory() as session:
-            total = int(session.scalar(select(func.count()).select_from(AgentConversationRecord).where(*filters)) or 0)
+            total = int(session.scalar(select(func.count()).select_from(AgentConversation).where(*filters)) or 0)
             rows = session.execute(select(
-                AgentConversationRecord, func.count(AgentMessageRecord.message_id),
-                self._preview_query(AgentConversationRecord.conversation_id).scalar_subquery(),
-            ).outerjoin(AgentMessageRecord,
-                        AgentMessageRecord.conversation_id == AgentConversationRecord.conversation_id)
-              .where(*filters).group_by(AgentConversationRecord.conversation_id)
-              .order_by(AgentConversationRecord.updated_at.desc(), AgentConversationRecord.conversation_id.desc())
+                AgentConversation, func.count(AgentMessage.message_id),
+                self._preview_query(AgentConversation.conversation_id).scalar_subquery(),
+            ).outerjoin(AgentMessage,
+                        AgentMessage.conversation_id == AgentConversation.conversation_id)
+              .where(*filters).group_by(AgentConversation.conversation_id)
+              .order_by(AgentConversation.updated_at.desc(), AgentConversation.conversation_id.desc())
               .offset(offset).limit(limit)).all()
             return [self._conversation_state(record, message_count=int(count), last_message_preview=preview)
                     for record, count, preview in rows], total
@@ -247,11 +247,11 @@ class AgentRepository:
     ) -> tuple[list[AgentMessageState], int]:
         with self._session_factory() as session:
             self._require_conversation(session, conversation_id, workspace_id)
-            filters = [AgentMessageRecord.conversation_id == conversation_id,
-                       AgentMessageRecord.sequence_no > after_sequence_no]
-            total = int(session.scalar(select(func.count()).select_from(AgentMessageRecord).where(*filters)) or 0)
-            records = session.scalars(select(AgentMessageRecord).where(*filters)
-                .order_by(AgentMessageRecord.sequence_no, AgentMessageRecord.message_id)
+            filters = [AgentMessage.conversation_id == conversation_id,
+                       AgentMessage.sequence_no > after_sequence_no]
+            total = int(session.scalar(select(func.count()).select_from(AgentMessage).where(*filters)) or 0)
+            records = session.scalars(select(AgentMessage).where(*filters)
+                .order_by(AgentMessage.sequence_no, AgentMessage.message_id)
                 .offset(offset).limit(limit)).all()
             return [self._message_state(record) for record in records], total
 
@@ -266,12 +266,12 @@ class AgentRepository:
         with self._session_factory() as session:
             self._require_conversation(session, conversation_id, workspace_id)
             records = session.scalars(
-                select(AgentMessageRecord)
+                select(AgentMessage)
                 .where(
-                    AgentMessageRecord.conversation_id == conversation_id,
-                    AgentMessageRecord.sequence_no > after_sequence_no,
+                    AgentMessage.conversation_id == conversation_id,
+                    AgentMessage.sequence_no > after_sequence_no,
                 )
-                .order_by(AgentMessageRecord.sequence_no)
+                .order_by(AgentMessage.sequence_no)
                 .limit(limit)
             ).all()
             return [self._message_state(record) for record in records]
@@ -287,13 +287,13 @@ class AgentRepository:
         with self._session_factory() as session:
             self._require_conversation(session, conversation_id, workspace_id)
             records = session.scalars(
-                select(AgentMessageRecord)
+                select(AgentMessage)
                 .where(
-                    AgentMessageRecord.conversation_id == conversation_id,
-                    AgentMessageRecord.status == AgentMessageStatus.COMPLETED.value,
-                    AgentMessageRecord.sequence_no < before_sequence_no,
+                    AgentMessage.conversation_id == conversation_id,
+                    AgentMessage.status == AgentMessageStatus.COMPLETED.value,
+                    AgentMessage.sequence_no < before_sequence_no,
                 )
-                .order_by(AgentMessageRecord.sequence_no.desc())
+                .order_by(AgentMessage.sequence_no.desc())
                 .limit(limit)
             ).all()
             return [self._message_state(record) for record in reversed(records)]
@@ -331,15 +331,15 @@ class AgentRepository:
     ) -> StartedAgentMessageState:
         with self._session_factory() as session:
             self._require_conversation(session, conversation_id, workspace_id)
-            identifier = (AgentMessageRecord.message_id == message_id if message_id is not None
+            identifier = (AgentMessage.message_id == message_id if message_id is not None
                           else AGENT_MESSAGE_IDEMPOTENCY_KEY == idempotency_key)
-            statement = select(AgentMessageRecord).where(
-                AgentMessageRecord.conversation_id == conversation_id,
+            statement = select(AgentMessage).where(
+                AgentMessage.conversation_id == conversation_id,
                 identifier,
             )
             if message_id is None:
                 statement = statement.where(
-                    AgentMessageRecord.role == AgentMessageRole.USER.value
+                    AgentMessage.role == AgentMessageRole.USER.value
                 )
             record = session.scalar(statement)
             if record is None:
@@ -348,20 +348,20 @@ class AgentRepository:
                 user = record
             elif record.role == AgentMessageRole.ASSISTANT.value:
                 user = session.scalar(
-                    select(AgentMessageRecord).where(
-                        AgentMessageRecord.conversation_id == conversation_id,
-                        AgentMessageRecord.sequence_no == record.sequence_no - 1,
-                        AgentMessageRecord.role == AgentMessageRole.USER.value,
+                    select(AgentMessage).where(
+                        AgentMessage.conversation_id == conversation_id,
+                        AgentMessage.sequence_no == record.sequence_no - 1,
+                        AgentMessage.role == AgentMessageRole.USER.value,
                     )
                 )
             else:
                 raise AgentMessageNotFoundError("this message has no user request")
             if user is None:
                 raise AgentMessageNotFoundError("this message has no user request")
-            assistant = session.scalar(select(AgentMessageRecord).where(
-                AgentMessageRecord.conversation_id == conversation_id,
-                AgentMessageRecord.sequence_no == user.sequence_no + 1,
-                AgentMessageRecord.role == AgentMessageRole.ASSISTANT.value,
+            assistant = session.scalar(select(AgentMessage).where(
+                AgentMessage.conversation_id == conversation_id,
+                AgentMessage.sequence_no == user.sequence_no + 1,
+                AgentMessage.role == AgentMessageRole.ASSISTANT.value,
             ))
             if assistant is None:
                 raise AgentMessageNotFoundError("this message has no assistant reply")
@@ -377,7 +377,7 @@ class AgentRepository:
         timing: AgentMessageTimingState | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
-            record = session.get(AgentMessageRecord, message_id, with_for_update=True)
+            record = session.get(AgentMessage, message_id, with_for_update=True)
             if record is None:
                 raise AgentMessageNotFoundError("assistant message does not exist")
             if record.role != "ASSISTANT" or record.status != "PROCESSING":
@@ -440,10 +440,10 @@ class AgentRepository:
                 return existing
 
             processing = session.scalar(
-                select(AgentMessageRecord.message_id).where(
-                    AgentMessageRecord.conversation_id == conversation_id,
-                    AgentMessageRecord.role == AgentMessageRole.ASSISTANT.value,
-                    AgentMessageRecord.status == AgentMessageStatus.PROCESSING.value,
+                select(AgentMessage.message_id).where(
+                    AgentMessage.conversation_id == conversation_id,
+                    AgentMessage.role == AgentMessageRole.ASSISTANT.value,
+                    AgentMessage.status == AgentMessageStatus.PROCESSING.value,
                 )
             )
             if processing is not None:
@@ -452,7 +452,7 @@ class AgentRepository:
                 )
 
             user_sequence = conversation.next_message_sequence
-            user = AgentMessageRecord(
+            user = AgentMessage(
                 message_id=user_message_id,
                 conversation_id=conversation_id,
                 sequence_no=user_sequence,
@@ -469,7 +469,7 @@ class AgentRepository:
                 detail={"request": {"idempotencyKey": idempotency_key}},
                 version=1,
             )
-            assistant = AgentMessageRecord(
+            assistant = AgentMessage(
                 message_id=assistant_message_id,
                 conversation_id=conversation_id,
                 sequence_no=user_sequence + 1,
@@ -512,7 +512,7 @@ class AgentRepository:
         timing: AgentMessageTimingState | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
-            record = session.get(AgentMessageRecord, message_id, with_for_update=True)
+            record = session.get(AgentMessage, message_id, with_for_update=True)
             if record is None:
                 raise AgentMessageNotFoundError(
                     f"messageId {message_id!r} does not exist"
@@ -540,7 +540,7 @@ class AgentRepository:
                 timing=timing,
             )
             conversation = session.get(
-                AgentConversationRecord,
+                AgentConversation,
                 record.conversation_id,
                 with_for_update=True,
             )
@@ -560,7 +560,7 @@ class AgentRepository:
         timing: AgentMessageTimingState | None = None,
     ) -> AgentMessageState:
         with self._session_factory.begin() as session:
-            record = session.get(AgentMessageRecord, message_id, with_for_update=True)
+            record = session.get(AgentMessage, message_id, with_for_update=True)
             if record is None:
                 raise AgentMessageNotFoundError(
                     f"messageId {message_id!r} does not exist"
@@ -580,7 +580,7 @@ class AgentRepository:
                     timing=timing,
                 )
                 conversation = session.get(
-                    AgentConversationRecord,
+                    AgentConversation,
                     record.conversation_id,
                     with_for_update=True,
                 )
@@ -603,10 +603,10 @@ class AgentRepository:
         extra_context: dict | None = None,
     ) -> StartedAgentMessageState | None:
         existing_user = session.scalar(
-            select(AgentMessageRecord).where(
-                AgentMessageRecord.conversation_id == conversation_id,
+            select(AgentMessage).where(
+                AgentMessage.conversation_id == conversation_id,
                 AGENT_MESSAGE_IDEMPOTENCY_KEY == idempotency_key,
-                AgentMessageRecord.role == AgentMessageRole.USER.value,
+                AgentMessage.role == AgentMessageRole.USER.value,
             )
         )
         if existing_user is None:
@@ -624,10 +624,10 @@ class AgentRepository:
                 "different request fields"
             )
         assistant = session.scalar(
-            select(AgentMessageRecord).where(
-                AgentMessageRecord.conversation_id == conversation_id,
-                AgentMessageRecord.sequence_no == existing_user.sequence_no + 1,
-                AgentMessageRecord.role == AgentMessageRole.ASSISTANT.value,
+            select(AgentMessage).where(
+                AgentMessage.conversation_id == conversation_id,
+                AgentMessage.sequence_no == existing_user.sequence_no + 1,
+                AgentMessage.role == AgentMessageRole.ASSISTANT.value,
             )
         )
         if assistant is None:
@@ -647,10 +647,10 @@ class AgentRepository:
         workspace_id: str,
         *,
         for_update: bool = False,
-    ) -> AgentConversationRecord:
-        statement = select(AgentConversationRecord).where(
-            AgentConversationRecord.conversation_id == conversation_id,
-            AgentConversationRecord.workspace_id == workspace_id,
+    ) -> AgentConversation:
+        statement = select(AgentConversation).where(
+            AgentConversation.conversation_id == conversation_id,
+            AgentConversation.workspace_id == workspace_id,
         )
         if for_update:
             statement = statement.with_for_update()
@@ -663,7 +663,7 @@ class AgentRepository:
 
     @staticmethod
     def _conversation_state(
-        record: AgentConversationRecord,
+        record: AgentConversation,
         *,
         message_count: int,
         last_message_preview: str | None = None,
@@ -680,7 +680,7 @@ class AgentRepository:
         )
 
     @staticmethod
-    def _message_state(record: AgentMessageRecord) -> AgentMessageState:
+    def _message_state(record: AgentMessage) -> AgentMessageState:
         return AgentMessageState(
             message_id=record.message_id,
             conversation_id=record.conversation_id,
@@ -707,7 +707,7 @@ class AgentRepository:
 
     @staticmethod
     def _apply_timing(
-        record: AgentMessageRecord,
+        record: AgentMessage,
         timing: AgentMessageTimingState,
     ) -> None:
         if (
@@ -746,7 +746,7 @@ class AgentRepository:
 
     @staticmethod
     def _finish_timing(
-        record: AgentMessageRecord,
+        record: AgentMessage,
         *,
         current_phase: str | None,
         now: int,
@@ -839,9 +839,9 @@ class AgentRepository:
     @staticmethod
     def _preview_query(conversation_id):
         return (
-            select(func.substr(AgentMessageRecord.content, 1, 120))
-            .where(AgentMessageRecord.conversation_id == conversation_id,
-                   AgentMessageRecord.content.is_not(None))
-            .order_by(AgentMessageRecord.sequence_no.desc()).limit(1)
-            .correlate(AgentConversationRecord)
+            select(func.substr(AgentMessage.content, 1, 120))
+            .where(AgentMessage.conversation_id == conversation_id,
+                   AgentMessage.content.is_not(None))
+            .order_by(AgentMessage.sequence_no.desc()).limit(1)
+            .correlate(AgentConversation)
         )

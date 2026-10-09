@@ -12,13 +12,13 @@ from qdrant_client import QdrantClient
 from sqlalchemy import func, select
 
 from server.database import DatabaseEnvironment, create_session_factory
-from server.model.index_sync import IndexSyncIntentRecord, IndexSyncStatus
+from server.model.index_sync import IndexSyncIntent, IndexSyncStatus
 from server.model.upload import (
     UPLOAD_DELETION_PENDING_ERROR_CODE,
-    UploadSessionRecord,
+    UploadSession,
     UploadSessionStatus,
 )
-from server.model.video import SeriesRecord, VideoChunkRecord
+from server.model.video import Series, VideoChunk
 from server.repository.index_sync import IndexSyncRepository
 from server.service.parsev1.index_sync import IndexSyncInvariantError, IndexSyncService
 from server.service.qdrant_mutation_lock import QdrantMutationLock
@@ -78,7 +78,7 @@ class _ImmediateLock:
 def _series_status(engine, series_id: str) -> str:
     with engine.connect() as connection:
         return connection.execute(
-            select(SeriesRecord.status).where(SeriesRecord.series_id == series_id)
+            select(Series.status).where(Series.series_id == series_id)
         ).scalar_one()
 
 
@@ -224,7 +224,7 @@ def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
     now = now_unix_time_ms()
     absolute_now = unix_time_ms_to_datetime(now)
     with create_session_factory(engine).begin() as session:
-        session.add(UploadSessionRecord(
+        session.add(UploadSession(
             upload_session_id=str(uuid4()),
             workspace_id=prepared.workspace_id,
             series_id=prepared.series_id,
@@ -244,7 +244,7 @@ def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
             video_id=prepared.video_id,
             last_error_code=UPLOAD_DELETION_PENDING_ERROR_CODE,
         ))
-        intents = list(session.scalars(select(IndexSyncIntentRecord)))
+        intents = list(session.scalars(select(IndexSyncIntent)))
         generations = {
             intent.video_chunk_id: intent.generation for intent in intents
         }
@@ -265,7 +265,7 @@ def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
     assert rebuild_report.selected_count == 0
     assert all(not state.present for state in store.inspect(chunk_ids).values())
     with create_session_factory(engine)() as session:
-        raw_intents = list(session.scalars(select(IndexSyncIntentRecord)))
+        raw_intents = list(session.scalars(select(IndexSyncIntent)))
         assert {
             intent.video_chunk_id: intent.generation for intent in raw_intents
         } == generations
@@ -306,7 +306,7 @@ def test_qdrant_outage_keeps_facts_and_retries_to_convergence(
     )
     with engine.connect() as connection:
         assert connection.execute(
-            select(func.count()).select_from(VideoChunkRecord)
+            select(func.count()).select_from(VideoChunk)
         ).scalar_one() == 2
 
     client = QdrantClient(":memory:")

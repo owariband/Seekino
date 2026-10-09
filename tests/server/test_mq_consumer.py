@@ -7,8 +7,8 @@ from uuid import uuid4
 
 from server.database import create_session_factory
 from server.model.dto.jobDTO import ParseJobLease
-from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
-from server.model.video import SeriesRecord, VideoRecord
+from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJob
+from server.model.video import Series, Video
 from server.mq.consumer import ParseJobConsumer
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.job import ParseJobRepository
@@ -45,7 +45,7 @@ def _seed(repository, *, max_attempts: int = 3):
     now = 1_789_376_400_000
     with session_factory.begin() as session:
         session.add(
-            SeriesRecord(
+            Series(
                 series_id=series_id,
                 workspace_id="local-default",
                 name=f"Consumer Series {series_id}",
@@ -56,7 +56,7 @@ def _seed(repository, *, max_attempts: int = 3):
             )
         )
         session.add(
-            VideoRecord(
+            Video(
                 video_id=video_id,
                 series_id=series_id,
                 episode_order=1,
@@ -74,7 +74,7 @@ def _seed(repository, *, max_attempts: int = 3):
             )
         )
         session.add(
-            SeriesParseJobRecord(
+            SeriesParseJob(
                 job_id=job_id,
                 series_id=series_id,
                 video_id=video_id,

@@ -6,9 +6,9 @@ from sqlalchemy import case, exists, select, update
 from sqlalchemy.orm import aliased, Session, sessionmaker
 
 from ..model.dto.jobDTO import ParseJobLease
-from ..model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
-from ..model.upload import UploadSessionRecord, UploadSessionStatus
-from ..model.video import SeriesRecord, VideoRecord
+from ..model.job import ParseJobStage, ParseJobStatus, SeriesParseJob
+from ..model.upload import UploadSession, UploadSessionStatus
+from ..model.video import Series, Video
 from ..repository.index_sync import refresh_series_statuses
 from ..repository.job import current_lease_predicate
 from ..utils.time import (
@@ -37,33 +37,33 @@ class MySqlParseJobQueue:
             raise ValueError("lease_duration must be positive")
         claimed_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
-            active_job = aliased(SeriesParseJobRecord)
-            earlier_video = aliased(VideoRecord)
-            earlier_upload = aliased(UploadSessionRecord)
+            active_job = aliased(SeriesParseJob)
+            earlier_video = aliased(Video)
+            earlier_upload = aliased(UploadSession)
             row = session.execute(
-                select(SeriesParseJobRecord, VideoRecord, SeriesRecord)
+                select(SeriesParseJob, Video, Series)
                 .join(
-                    VideoRecord,
-                    VideoRecord.video_id == SeriesParseJobRecord.video_id,
+                    Video,
+                    Video.video_id == SeriesParseJob.video_id,
                 )
                 .join(
-                    SeriesRecord,
-                    SeriesRecord.series_id == SeriesParseJobRecord.series_id,
+                    Series,
+                    Series.series_id == SeriesParseJob.series_id,
                 )
                 .where(
-                    SeriesParseJobRecord.status.in_(
+                    SeriesParseJob.status.in_(
                         [
                             ParseJobStatus.QUEUED.value,
                             ParseJobStatus.RETRY_WAIT.value,
                         ]
                     ),
-                    SeriesParseJobRecord.available_at <= claimed_at,
-                    SeriesParseJobRecord.attempt_count
-                    < SeriesParseJobRecord.max_attempts,
+                    SeriesParseJob.available_at <= claimed_at,
+                    SeriesParseJob.attempt_count
+                    < SeriesParseJob.max_attempts,
                     ~exists(
                         select(active_job.job_id).where(
                             active_job.series_id
-                            == SeriesParseJobRecord.series_id,
+                            == SeriesParseJob.series_id,
                             active_job.status == ParseJobStatus.RUNNING.value,
                             active_job.lease_expires_at > claimed_at,
                         )
@@ -73,9 +73,9 @@ class MySqlParseJobQueue:
                     ~exists(
                         select(earlier_video.video_id).where(
                             earlier_video.series_id
-                            == SeriesParseJobRecord.series_id,
+                            == SeriesParseJob.series_id,
                             earlier_video.episode_order
-                            < VideoRecord.episode_order,
+                            < Video.episode_order,
                             earlier_video.parse_status.not_in(
                                 [ParseJobStatus.SUCCEEDED.value, "COMPLETED"]
                             ),
@@ -86,9 +86,9 @@ class MySqlParseJobQueue:
                     ~exists(
                         select(earlier_upload.upload_session_id).where(
                             earlier_upload.series_id
-                            == SeriesParseJobRecord.series_id,
+                            == SeriesParseJob.series_id,
                             earlier_upload.episode_order
-                            < VideoRecord.episode_order,
+                            < Video.episode_order,
                             earlier_upload.status.in_(
                                 [
                                     UploadSessionStatus.UPLOADING.value,
@@ -101,10 +101,10 @@ class MySqlParseJobQueue:
                     ),
                 )
                 .order_by(
-                    VideoRecord.episode_order,
-                    SeriesParseJobRecord.available_at,
-                    SeriesParseJobRecord.created_at,
-                    SeriesParseJobRecord.job_id,
+                    Video.episode_order,
+                    SeriesParseJob.available_at,
+                    SeriesParseJob.created_at,
+                    SeriesParseJob.job_id,
                 )
                 .limit(1)
                 .with_for_update(skip_locked=True)
@@ -175,7 +175,7 @@ class MySqlParseJobQueue:
         heartbeat_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             result = session.execute(
-                update(SeriesParseJobRecord)
+                update(SeriesParseJob)
                 .where(*current_lease_predicate(lease, heartbeat_at))
                 .values(
                     heartbeat_at=heartbeat_at,
@@ -196,7 +196,7 @@ class MySqlParseJobQueue:
         completed_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             result = session.execute(
-                update(SeriesParseJobRecord)
+                update(SeriesParseJob)
                 .where(*current_lease_predicate(lease, completed_at))
                 .values(
                     status=ParseJobStatus.SUCCEEDED.value,
@@ -208,21 +208,21 @@ class MySqlParseJobQueue:
                     completed_at=completed_at,
                     processing_duration_ms=case(
                         (
-                            SeriesParseJobRecord.processing_duration_ms
+                            SeriesParseJob.processing_duration_ms
                             < processing_duration_ms,
                             processing_duration_ms,
                         ),
-                        else_=SeriesParseJobRecord.processing_duration_ms,
+                        else_=SeriesParseJob.processing_duration_ms,
                     ),
                     last_error=None,
-                    version=SeriesParseJobRecord.version + 1,
+                    version=SeriesParseJob.version + 1,
                 )
             )
             if result.rowcount != 1:
                 return False
             session.execute(
-                update(VideoRecord)
-                .where(VideoRecord.video_id == lease.video_id)
+                update(Video)
+                .where(Video.video_id == lease.video_id)
                 .values(
                     parse_status=ParseJobStatus.SUCCEEDED.value,
                     parse_progress=100,
@@ -245,7 +245,7 @@ class MySqlParseJobQueue:
         failed_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             job = session.scalar(
-                select(SeriesParseJobRecord)
+                select(SeriesParseJob)
                 .where(*current_lease_predicate(lease, failed_at))
                 .with_for_update()
             )
@@ -268,7 +268,7 @@ class MySqlParseJobQueue:
                 job.processing_duration_ms,
                 processing_duration_ms,
             )
-            video = session.get(VideoRecord, lease.video_id)
+            video = session.get(Video, lease.video_id)
             if video is not None and not lease.preserve_existing_result:
                 video.parse_status = job.status
             return True
@@ -287,12 +287,12 @@ class MySqlParseJobQueue:
         reaped_at = now if now is not None else now_unix_time_ms()
         with self._session_factory.begin() as session:
             jobs = session.scalars(
-                select(SeriesParseJobRecord)
+                select(SeriesParseJob)
                 .where(
-                    SeriesParseJobRecord.status == ParseJobStatus.RUNNING.value,
-                    SeriesParseJobRecord.lease_expires_at <= reaped_at,
+                    SeriesParseJob.status == ParseJobStatus.RUNNING.value,
+                    SeriesParseJob.lease_expires_at <= reaped_at,
                 )
-                .order_by(SeriesParseJobRecord.lease_expires_at)
+                .order_by(SeriesParseJob.lease_expires_at)
                 .limit(limit)
                 .with_for_update(skip_locked=True)
             ).all()
@@ -311,7 +311,7 @@ class MySqlParseJobQueue:
                 job.version += 1
                 job.completed_at = reaped_at if exhausted else None
                 job.processing_timing_complete = False
-                video = session.get(VideoRecord, job.video_id)
+                video = session.get(Video, job.video_id)
                 if video is not None and video.parse_status not in {
                     ParseJobStatus.SUCCEEDED.value,
                     "COMPLETED",

@@ -21,7 +21,7 @@ from .video import (
     LONG_TEXT,
     MYSQL_TABLE_OPTIONS,
     UTC_TIMESTAMP,
-    TimestampedRecord,
+    TimestampMixin,
 )
 
 UPLOAD_DELETION_PENDING_ERROR_CODE = "DELETION_PENDING"
@@ -41,7 +41,7 @@ class UploadCompletionStage(StrEnum):
     CREATING_JOB = "CREATING_JOB"
 
 
-class UploadSessionRecord(TimestampedRecord, Base):
+class UploadSession(TimestampMixin, Base):
     __tablename__ = "upload_session"
     __table_args__ = (
         UniqueConstraint(
@@ -145,7 +145,7 @@ class UploadSessionRecord(TimestampedRecord, Base):
     )
 
 
-class UploadSegmentRecord(Base):
+class UploadSegment(Base):
     __tablename__ = "upload_segment"
     __table_args__ = (
         CheckConstraint(

@@ -8,9 +8,9 @@ import pytest
 
 from server.database import create_session_factory
 from server.model.dto.parseDTO import PreparedEmbedding
-from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
-from server.model.upload import UploadSessionRecord, UploadSessionStatus
-from server.model.video import SeriesRecord, VideoRecord
+from server.model.job import ParseJobStage, ParseJobStatus, SeriesParseJob
+from server.model.upload import UploadSession, UploadSessionStatus
+from server.model.video import Series, Video
 from server.mq.mysql_queue import MySqlParseJobQueue
 from server.repository.index_sync import IndexSyncRepository
 from server.repository.job import ParseJobRepository
@@ -26,7 +26,7 @@ def _seed(repository, *, max_attempts: int = 3):
     now = 1_789_549_200_000
     with session_factory.begin() as session:
         session.add(
-            SeriesRecord(
+            Series(
                 series_id=series_id,
                 workspace_id="local-default",
                 name=f"Queue Series {series_id}",
@@ -37,7 +37,7 @@ def _seed(repository, *, max_attempts: int = 3):
             )
         )
         session.add(
-            VideoRecord(
+            Video(
                 video_id=video_id,
                 series_id=series_id,
                 episode_order=1,
@@ -55,7 +55,7 @@ def _seed(repository, *, max_attempts: int = 3):
             )
         )
         session.add(
-            SeriesParseJobRecord(
+            SeriesParseJob(
                 job_id=job_id,
                 series_id=series_id,
                 video_id=video_id,
@@ -119,10 +119,10 @@ def test_claiming_new_episode_keeps_indexed_sibling_searchable(
     _jobs, queue, _job_id, queued_video_id, now = _seed(repository)
     session_factory = create_session_factory(engine)
     with session_factory.begin() as session:
-        queued_video = session.get(VideoRecord, queued_video_id)
+        queued_video = session.get(Video, queued_video_id)
         queued_video.episode_order = 2
         queued_video.upload_sequence = 2
-        series = session.get(SeriesRecord, queued_video.series_id)
+        series = session.get(Series, queued_video.series_id)
         series_id, series_name = series.series_id, series.name
 
     video_repository.import_video_parse(replace(
@@ -144,12 +144,12 @@ def test_claiming_new_episode_keeps_indexed_sibling_searchable(
             item.generation,
         )
     with session_factory() as session:
-        assert session.get(SeriesRecord, series_id).status == "READY"
+        assert session.get(Series, series_id).status == "READY"
 
     lease = queue.claim_next("worker", lease_duration=timedelta(minutes=2), now=now)
     assert lease is not None and lease.video_id == queued_video_id
     with session_factory() as session:
-        assert session.get(SeriesRecord, series_id).status == "READY"
+        assert session.get(Series, series_id).status == "READY"
 
 
 def test_mysql_queue_reaps_an_expired_final_attempt(repository) -> None:
@@ -188,7 +188,7 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
     with session_factory.begin() as session:
         for series_id in (series_a, series_b):
             session.add(
-                SeriesRecord(
+                Series(
                     series_id=series_id,
                     workspace_id="local-default",
                     name=f"Series {series_id}",
@@ -204,7 +204,7 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
             (other_video, series_b, 1, "c" * 64),
         ):
             session.add(
-                VideoRecord(
+                Video(
                     video_id=video_id,
                     series_id=series_id,
                     episode_order=episode_order,
@@ -227,7 +227,7 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
             (other_job, series_b, other_video, 2),
         ):
             session.add(
-                SeriesParseJobRecord(
+                SeriesParseJob(
                     job_id=job_id,
                     series_id=series_id,
                     video_id=video_id,
@@ -271,9 +271,9 @@ def test_later_upload_waits_for_earlier_video_and_its_retry(repository) -> None:
     later_job_id = str(uuid4())
     later_video_id = str(uuid4())
     with session_factory.begin() as session:
-        first_video = session.get(VideoRecord, first_video_id)
+        first_video = session.get(Video, first_video_id)
         session.add(
-            VideoRecord(
+            Video(
                 video_id=later_video_id,
                 series_id=first_video.series_id,
                 episode_order=2,
@@ -290,7 +290,7 @@ def test_later_upload_waits_for_earlier_video_and_its_retry(repository) -> None:
             )
         )
         session.add(
-            SeriesParseJobRecord(
+            SeriesParseJob(
                 job_id=later_job_id,
                 series_id=first_video.series_id,
                 video_id=later_video_id,
@@ -338,11 +338,11 @@ def test_earlier_unfinished_video_without_due_job_blocks_later_parse(
     engine, _repository = repository
     session_factory = create_session_factory(engine)
     with session_factory.begin() as session:
-        candidate = session.get(VideoRecord, video_id)
+        candidate = session.get(Video, video_id)
         candidate.episode_order = 2
         candidate.upload_sequence = 2
         session.add(
-            VideoRecord(
+            Video(
                 video_id=str(uuid4()),
                 series_id=candidate.series_id,
                 episode_order=1,
@@ -376,11 +376,11 @@ def test_earlier_upload_without_job_blocks_later_parse_until_expired(
     engine, _repository = repository
     session_factory = create_session_factory(engine)
     with session_factory.begin() as session:
-        candidate = session.get(VideoRecord, video_id)
+        candidate = session.get(Video, video_id)
         candidate.episode_order = 2
         candidate.upload_sequence = 2
         session.add(
-            UploadSessionRecord(
+            UploadSession(
                 upload_session_id=str(uuid4()),
                 workspace_id="local-default",
                 series_id=candidate.series_id,

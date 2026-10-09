@@ -19,14 +19,14 @@ from server.model.identifiers import (
     derive_video_chunk_id,
     derive_video_id,
 )
-from server.model.index_sync import IndexSyncIntentRecord
+from server.model.index_sync import IndexSyncIntent
 from server.model.video import (
-    ContextSnapshotRecord,
-    SeriesRecord,
-    VideoRecord,
-    VideoChunkInfoRecord,
-    VideoChunkEmbeddingRecord,
-    VideoChunkRecord,
+    ContextSnapshot,
+    Series,
+    Video,
+    VideoChunkInfo,
+    VideoChunkEmbedding,
+    VideoChunk,
 )
 from server.repository.video import (
     SeriesNotReadyError,
@@ -43,13 +43,13 @@ def _table_counts(engine) -> dict[str, int]:
     table_by_name = {
         model.__tablename__: model
         for model in (
-            SeriesRecord,
-            VideoRecord,
-            VideoChunkRecord,
-            VideoChunkInfoRecord,
-            ContextSnapshotRecord,
-            VideoChunkEmbeddingRecord,
-            IndexSyncIntentRecord,
+            Series,
+            Video,
+            VideoChunk,
+            VideoChunkInfo,
+            ContextSnapshot,
+            VideoChunkEmbedding,
+            IndexSyncIntent,
         )
     }
     with engine.connect() as connection:
@@ -108,17 +108,17 @@ def test_import_is_idempotent_and_maps_video_compact(
 
     with engine.connect() as connection:
         video_compact = connection.execute(
-            select(VideoChunkInfoRecord.video_compact).where(
-                VideoChunkInfoRecord.video_chunk_id
+            select(VideoChunkInfo.video_compact).where(
+                VideoChunkInfo.video_chunk_id
                 == first.video_chunk_ids[0]
             )
         ).scalar_one()
         text_vector, vision_vector = connection.execute(
             select(
-                VideoChunkEmbeddingRecord.text_vector,
-                VideoChunkEmbeddingRecord.vision_vector,
+                VideoChunkEmbedding.text_vector,
+                VideoChunkEmbedding.vision_vector,
             ).where(
-                VideoChunkEmbeddingRecord.video_chunk_id
+                VideoChunkEmbedding.video_chunk_id
                 == first.video_chunk_ids[0]
             )
         ).one()
@@ -182,8 +182,8 @@ def test_import_preserves_complete_fallback_provenance(
     expected = provenance.model_dump(mode="json")
     with engine.connect() as connection:
         stored = connection.execute(
-            select(VideoChunkInfoRecord.parse_provenance).where(
-                VideoChunkInfoRecord.video_chunk_id == report.video_chunk_ids[0]
+            select(VideoChunkInfo.parse_provenance).where(
+                VideoChunkInfo.video_chunk_id == report.video_chunk_ids[0]
             )
         ).scalar_one()
     hydrated = video_repository.hydrate_video_chunks(
@@ -223,9 +223,9 @@ def test_import_persists_keyframes_with_original_video_offsets(
     legacy_uri = "artifact://test/keyframes/legacy-untimed.jpg"
     with engine.begin() as connection:
         connection.execute(
-            update(VideoChunkRecord)
+            update(VideoChunk)
             .where(
-                VideoChunkRecord.video_chunk_id == report.video_chunk_ids[0]
+                VideoChunk.video_chunk_id == report.video_chunk_ids[0]
             )
             .values(keyframe_uris=[legacy_uri])
         )
@@ -253,9 +253,9 @@ def test_import_persists_keyframes_with_original_video_offsets(
     with engine.connect() as connection:
         stored = connection.execute(
             select(
-                VideoChunkRecord.sequence_no,
-                VideoChunkRecord.keyframe_uris,
-            ).order_by(VideoChunkRecord.sequence_no)
+                VideoChunk.sequence_no,
+                VideoChunk.keyframe_uris,
+            ).order_by(VideoChunk.sequence_no)
         ).all()
     assert [value[0]["at_seconds"] for _, value in stored] == [0, 10]
     assert [item.keyframe_uris[0].at_seconds for item in evidence] == [0, 10]
@@ -570,8 +570,8 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
     first_chunk_id = prepared_import.chunks[0].video_chunk_id
     with engine.begin() as connection:
         connection.execute(
-            update(SeriesRecord)
-            .where(SeriesRecord.series_id == prepared_import.series_id)
+            update(Series)
+            .where(Series.series_id == prepared_import.series_id)
             .values(
                 description="curated description",
                 status="READY",
@@ -580,8 +580,8 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
             )
         )
         connection.execute(
-            update(VideoRecord)
-            .where(VideoRecord.video_id == prepared_import.video_id)
+            update(Video)
+            .where(Video.video_id == prepared_import.video_id)
             .values(
                 inference_proxy_uri="s3://artifacts/proxy.mp4",
                 upload_status="PUBLISHED",
@@ -589,8 +589,8 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
             )
         )
         connection.execute(
-            update(VideoChunkRecord)
-            .where(VideoChunkRecord.video_chunk_id == first_chunk_id)
+            update(VideoChunk)
+            .where(VideoChunk.video_chunk_id == first_chunk_id)
             .values(
                 chunk_media_ref="s3://artifacts/chunk.mp4",
                 analysis_window_media_ref="s3://artifacts/window.mp4",
@@ -604,35 +604,35 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
     with engine.connect() as connection:
         series = connection.execute(
             select(
-                SeriesRecord.description,
-                SeriesRecord.status,
-                SeriesRecord.important_extra_data,
-                SeriesRecord.character_bible,
-            ).where(SeriesRecord.series_id == prepared_import.series_id)
+                Series.description,
+                Series.status,
+                Series.important_extra_data,
+                Series.character_bible,
+            ).where(Series.series_id == prepared_import.series_id)
         ).one()
         video = connection.execute(
             select(
-                VideoRecord.inference_proxy_uri,
-                VideoRecord.upload_status,
-                VideoRecord.upload_progress,
-            ).where(VideoRecord.video_id == prepared_import.video_id)
+                Video.inference_proxy_uri,
+                Video.upload_status,
+                Video.upload_progress,
+            ).where(Video.video_id == prepared_import.video_id)
         ).one()
         chunk_record = connection.execute(
             select(
-                VideoChunkRecord.chunk_media_ref,
-                VideoChunkRecord.analysis_window_media_ref,
-                VideoChunkRecord.baseline_visual_caption,
-                VideoChunkRecord.keyframe_uris,
-            ).where(VideoChunkRecord.video_chunk_id == first_chunk_id)
+                VideoChunk.chunk_media_ref,
+                VideoChunk.analysis_window_media_ref,
+                VideoChunk.baseline_visual_caption,
+                VideoChunk.keyframe_uris,
+            ).where(VideoChunk.video_chunk_id == first_chunk_id)
         ).one()
         embedding = connection.execute(
             select(
-                VideoChunkEmbeddingRecord.text_vector,
-                VideoChunkEmbeddingRecord.vision_vector,
-                VideoChunkEmbeddingRecord.text_embedding_metadata,
-                VideoChunkEmbeddingRecord.vision_embedding_metadata,
+                VideoChunkEmbedding.text_vector,
+                VideoChunkEmbedding.vision_vector,
+                VideoChunkEmbedding.text_embedding_metadata,
+                VideoChunkEmbedding.vision_embedding_metadata,
             ).where(
-                VideoChunkEmbeddingRecord.video_chunk_id == first_chunk_id
+                VideoChunkEmbedding.video_chunk_id == first_chunk_id
             )
         ).one()
 
@@ -704,13 +704,13 @@ def test_repeat_import_clears_a_stale_text_vector(
     with engine.connect() as connection:
         embedding = connection.execute(
             select(
-                VideoChunkEmbeddingRecord.text_input,
-                VideoChunkEmbeddingRecord.text_vector,
-                VideoChunkEmbeddingRecord.text_embedding_metadata,
-                VideoChunkEmbeddingRecord.vision_vector,
-                VideoChunkEmbeddingRecord.vision_embedding_metadata,
+                VideoChunkEmbedding.text_input,
+                VideoChunkEmbedding.text_vector,
+                VideoChunkEmbedding.text_embedding_metadata,
+                VideoChunkEmbedding.vision_vector,
+                VideoChunkEmbedding.vision_embedding_metadata,
             ).where(
-                VideoChunkEmbeddingRecord.video_chunk_id
+                VideoChunkEmbedding.video_chunk_id
                 == first_chunk.video_chunk_id
             )
         ).one()
@@ -732,8 +732,8 @@ def test_hydrate_preserves_candidate_order_with_one_select(
     report = video_repository.import_video_parse(prepared_import)
     with engine.begin() as connection:
         connection.execute(
-            update(VideoChunkRecord)
-            .where(VideoChunkRecord.video_chunk_id == report.video_chunk_ids[1])
+            update(VideoChunk)
+            .where(VideoChunk.video_chunk_id == report.video_chunk_ids[1])
             .values(
                 transcript=[
                     {"text": "第二段对白", "start_seconds": 1, "end_seconds": 2}
@@ -805,8 +805,8 @@ def test_ready_series_scope_is_complete_ordered_and_deduplicated(
 
     with engine.begin() as connection:
         connection.execute(
-            update(SeriesRecord)
-            .where(SeriesRecord.series_id == prepared_import.series_id)
+            update(Series)
+            .where(Series.series_id == prepared_import.series_id)
             .values(status="READY")
         )
     assert video_repository.require_ready_series(
@@ -830,19 +830,19 @@ def test_searchable_video_requires_every_chunk_and_transcripts_follow_video_scop
     report = video_repository.import_video_parse(prepared_import)
     with engine.begin() as connection:
         connection.execute(
-            update(VideoChunkEmbeddingRecord).values(
+            update(VideoChunkEmbedding).values(
                 text_vector=[0.1, 0.2],
                 vision_vector=[0.3, 0.4],
             )
         )
         connection.execute(
-            update(VideoChunkRecord)
-            .where(VideoChunkRecord.video_chunk_id == report.video_chunk_ids[0])
+            update(VideoChunk)
+            .where(VideoChunk.video_chunk_id == report.video_chunk_ids[0])
             .values(transcript=[{"text": "企鹅", "start_seconds": 1, "end_seconds": 2}])
         )
         connection.execute(
-            update(IndexSyncIntentRecord)
-            .where(IndexSyncIntentRecord.video_chunk_id == report.video_chunk_ids[0])
+            update(IndexSyncIntent)
+            .where(IndexSyncIntent.video_chunk_id == report.video_chunk_ids[0])
             .values(operation="UPSERT", status="SYNCED")
         )
 
@@ -851,8 +851,8 @@ def test_searchable_video_requires_every_chunk_and_transcripts_follow_video_scop
     ) == []
     with engine.begin() as connection:
         connection.execute(
-            update(IndexSyncIntentRecord)
-            .where(IndexSyncIntentRecord.video_chunk_id == report.video_chunk_ids[1])
+            update(IndexSyncIntent)
+            .where(IndexSyncIntent.video_chunk_id == report.video_chunk_ids[1])
             .values(operation="UPSERT", status="SYNCED")
         )
 
@@ -907,12 +907,12 @@ def test_import_rolls_back_the_whole_video_when_a_late_write_fails(
         if target.after_chunk_sequence_no == 1:
             raise RuntimeError("injected late persistence failure")
 
-    event.listen(ContextSnapshotRecord, "before_insert", fail_second_snapshot)
+    event.listen(ContextSnapshot, "before_insert", fail_second_snapshot)
     try:
         with pytest.raises(RuntimeError, match="injected late persistence failure"):
             video_repository.import_video_parse(prepared_import)
     finally:
-        event.remove(ContextSnapshotRecord, "before_insert", fail_second_snapshot)
+        event.remove(ContextSnapshot, "before_insert", fail_second_snapshot)
 
     assert all(count == 0 for count in _table_counts(engine).values())
 

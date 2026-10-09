@@ -27,10 +27,10 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.model.agent import AgentConversationRecord
+from server.model.agent import AgentConversation
 from server.model.dto.jobDTO import VideoParseLease
-from server.model.job import VideoParseTaskRecord
-from server.model.video import SeriesRecord, VideoRecord
+from server.model.job import VideoParseTask
+from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.agent import AgentRepository
 from server.repository.library import LibraryRepository
@@ -198,12 +198,12 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
             attempt_count=1, max_attempts=3, parse_config=config,
         )
         with session_factory.begin() as session:
-            session.add(SeriesRecord(
+            session.add(Series(
                 series_id=series_id, workspace_id=workspace_id,
                 name="Agent ES integration", status="INDEXING", character_bible=[],
             ))
             session.flush()
-            session.add(VideoRecord(
+            session.add(Video(
                 video_id=video_id, series_id=series_id, episode_order=1,
                 upload_sequence=1, original_filename="episode.mp4",
                 original_source_uri=str(source), content_hash="a" * 64,
@@ -212,7 +212,7 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
                 upload_progress=100, parse_progress=0,
             ))
             session.flush()
-            session.add(VideoParseTaskRecord(
+            session.add(VideoParseTask(
                 id=task_id, video_id=video_id, pipeline_version="video-parse-v2",
                 status="PREPARING", parse_config=config, chunk_count=1, version=1,
                 next_execute_time=now, attempt_count=1, max_attempts=3,
@@ -324,10 +324,10 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
         try:
             with session_factory.begin() as session:
                 if conversation is not None:
-                    session.execute(delete(AgentConversationRecord).where(
-                        AgentConversationRecord.conversation_id == conversation.conversation_id
+                    session.execute(delete(AgentConversation).where(
+                        AgentConversation.conversation_id == conversation.conversation_id
                     ))
-                session.execute(delete(SeriesRecord).where(SeriesRecord.series_id == series_id))
+                session.execute(delete(Series).where(Series.series_id == series_id))
         finally:
             try:
                 if es_client.indices.exists(index=store.index_name):

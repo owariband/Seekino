@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from gateway.usage import TokenUsage
 
 from ..model.dto.parseUsageDTO import ModelCallUsageBatch, ModelUsageState
-from ..model.parse_usage import ModelUsageRecord
+from ..model.parse_usage import ModelUsage
 from ..utils.time import require_utc_datetime
 from ..utils.validation import require_nonempty_text
 
@@ -41,7 +41,7 @@ def _validate_tokens(value: Any) -> None:
     TokenUsage(**value)
 
 
-def _check_owner(record: ModelUsageRecord, state: ModelUsageState) -> None:
+def _check_owner(record: ModelUsage, state: ModelUsageState) -> None:
     if (record.workspace_id, record.task_type, record.run_id) != (
         state.workspace_id, state.task_type, state.run_id,
     ):
@@ -93,11 +93,11 @@ class ModelUsageRepository:
             raise ValueError("metadata must be the fixed model-call object with a context object")
         try:
             with self._session_factory.begin() as session:
-                existing = session.get(ModelUsageRecord, state.call_id)
+                existing = session.get(ModelUsage, state.call_id)
                 if existing is not None:
                     _check_owner(existing, state)
                     return self._state(existing)
-                record = ModelUsageRecord(
+                record = ModelUsage(
                     call_id=state.call_id, workspace_id=state.workspace_id,
                     task_type=state.task_type, run_id=state.run_id,
                     started_at=state.started_at, created_at=state.created_at,
@@ -112,7 +112,7 @@ class ModelUsageRepository:
             if not _duplicate_call_id(error):
                 raise
             with self._session_factory() as session:
-                existing = session.get(ModelUsageRecord, state.call_id)
+                existing = session.get(ModelUsage, state.call_id)
                 if existing is None:
                     raise
                 _check_owner(existing, state)
@@ -129,16 +129,16 @@ class ModelUsageRepository:
         if start >= end:
             raise ValueError("usage window must be positive")
         filters = [
-            ModelUsageRecord.workspace_id == workspace_id,
-            ModelUsageRecord.started_at >= start,
-            ModelUsageRecord.started_at < end,
+            ModelUsage.workspace_id == workspace_id,
+            ModelUsage.started_at >= start,
+            ModelUsage.started_at < end,
         ]
         if run_id is not None:
             require_nonempty_text(run_id, "run_id", maximum=256)
-            filters.append(ModelUsageRecord.run_id == run_id)
+            filters.append(ModelUsage.run_id == run_id)
         if series_id is not None:
             require_nonempty_text(series_id, "series_id", maximum=64)
-            context = ModelUsageRecord.metadata_["context"]
+            context = ModelUsage.metadata_["context"]
             if self._session_factory.kw["bind"].dialect.name == "sqlite":
                 values = func.json_each(context["series_ids"]).table_valued("value")
                 matching = and_(
@@ -160,8 +160,8 @@ class ModelUsageRepository:
                     func.json_contains(context["series_ids"], json.dumps(series_id)) == 1,
                 )
             filters.append(or_(scalar, matching))
-        statement = select(ModelUsageRecord).where(*filters).order_by(
-            ModelUsageRecord.started_at, ModelUsageRecord.call_id,
+        statement = select(ModelUsage).where(*filters).order_by(
+            ModelUsage.started_at, ModelUsage.call_id,
         ).limit(MAX_USAGE_RECORDS + 1)
         with self._session_factory() as session:
             records = session.scalars(statement).all()
@@ -171,7 +171,7 @@ class ModelUsageRepository:
             )
 
     @staticmethod
-    def _state(record: ModelUsageRecord) -> ModelUsageState:
+    def _state(record: ModelUsage) -> ModelUsageState:
         return ModelUsageState(
             call_id=record.call_id, workspace_id=record.workspace_id,
             task_type=record.task_type, run_id=record.run_id,

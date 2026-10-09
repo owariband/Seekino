@@ -17,15 +17,15 @@ from ..model.dto.keyframeDTO import KeyframeBackfillCandidate
 from ..model.dto.jobDTO import ParseJobLease
 from ..model.dto.parseDTO import ParseImportReport, PreparedVideoParseImport
 from ..model.dto.videoDTO import HydratedVideoChunkState
-from ..model.index_sync import IndexSyncIntentRecord, IndexSyncStatus, IndexSyncOperation
-from ..model.job import ParseJobStage, ParseJobStatus, SeriesParseJobRecord
+from ..model.index_sync import IndexSyncIntent, IndexSyncStatus, IndexSyncOperation
+from ..model.job import ParseJobStage, ParseJobStatus, SeriesParseJob
 from ..model.video import (
-    ContextSnapshotRecord,
-    SeriesRecord,
-    VideoRecord,
-    VideoChunkInfoRecord,
-    VideoChunkEmbeddingRecord,
-    VideoChunkRecord,
+    ContextSnapshot,
+    Series,
+    Video,
+    VideoChunkInfo,
+    VideoChunkEmbedding,
+    VideoChunk,
 )
 from ..mq.contracts import ParseJobLeaseLostError
 from ..schema import TranscriptCueView, VideoChunkEvidence, VideoChunkKeyframeReference
@@ -133,58 +133,58 @@ class VideoRepository:
         )
         statement = (
             select(
-                SeriesRecord.workspace_id,
-                SeriesRecord.series_id,
-                VideoRecord.video_id,
-                VideoRecord.episode_order,
-                VideoRecord.duration_seconds,
-                VideoChunkRecord.video_chunk_id,
-                VideoChunkRecord.sequence_no,
-                VideoChunkRecord.start_seconds,
-                VideoChunkRecord.end_seconds,
-                VideoChunkRecord.chunk_media_ref,
-                VideoChunkRecord.keyframe_uris,
+                Series.workspace_id,
+                Series.series_id,
+                Video.video_id,
+                Video.episode_order,
+                Video.duration_seconds,
+                VideoChunk.video_chunk_id,
+                VideoChunk.sequence_no,
+                VideoChunk.start_seconds,
+                VideoChunk.end_seconds,
+                VideoChunk.chunk_media_ref,
+                VideoChunk.keyframe_uris,
             )
-            .join(VideoRecord, VideoRecord.series_id == SeriesRecord.series_id)
+            .join(Video, Video.series_id == Series.series_id)
             .join(
-                VideoChunkRecord,
-                VideoChunkRecord.video_id == VideoRecord.video_id,
+                VideoChunk,
+                VideoChunk.video_id == Video.video_id,
             )
             .order_by(
-                SeriesRecord.series_id,
-                VideoRecord.episode_order,
-                VideoChunkRecord.sequence_no,
-                VideoChunkRecord.video_chunk_id,
+                Series.series_id,
+                Video.episode_order,
+                VideoChunk.sequence_no,
+                VideoChunk.video_chunk_id,
             )
         )
         if normalized_workspace is not None:
             statement = statement.where(
-                SeriesRecord.workspace_id == normalized_workspace
+                Series.workspace_id == normalized_workspace
             )
         if normalized_series is not None:
             statement = statement.where(
-                SeriesRecord.series_id == normalized_series
+                Series.series_id == normalized_series
             )
         if normalized_video is not None:
-            statement = statement.where(VideoRecord.video_id == normalized_video)
+            statement = statement.where(Video.video_id == normalized_video)
         if after is not None:
             statement = statement.where(
                 or_(
-                    SeriesRecord.series_id > after.series_id,
+                    Series.series_id > after.series_id,
                     and_(
-                        SeriesRecord.series_id == after.series_id,
-                        VideoRecord.episode_order > after.episode_order,
+                        Series.series_id == after.series_id,
+                        Video.episode_order > after.episode_order,
                     ),
                     and_(
-                        SeriesRecord.series_id == after.series_id,
-                        VideoRecord.episode_order == after.episode_order,
-                        VideoChunkRecord.sequence_no > after.sequence_no,
+                        Series.series_id == after.series_id,
+                        Video.episode_order == after.episode_order,
+                        VideoChunk.sequence_no > after.sequence_no,
                     ),
                     and_(
-                        SeriesRecord.series_id == after.series_id,
-                        VideoRecord.episode_order == after.episode_order,
-                        VideoChunkRecord.sequence_no == after.sequence_no,
-                        VideoChunkRecord.video_chunk_id > after.video_chunk_id,
+                        Series.series_id == after.series_id,
+                        Video.episode_order == after.episode_order,
+                        VideoChunk.sequence_no == after.sequence_no,
+                        VideoChunk.video_chunk_id > after.video_chunk_id,
                     ),
                 )
             )
@@ -222,9 +222,9 @@ class VideoRepository:
             raise ValueError("keyframe must use an absolute time inside the VideoChunk")
         with self._session_factory.begin() as session:
             chunk = session.scalar(
-                select(VideoChunkRecord)
+                select(VideoChunk)
                 .where(
-                    VideoChunkRecord.video_chunk_id == candidate.video_chunk_id
+                    VideoChunk.video_chunk_id == candidate.video_chunk_id
                 )
                 .with_for_update()
             )
@@ -325,19 +325,19 @@ class VideoRepository:
         lease: ParseJobLease | None = None,
     ) -> None:
         with self._session_factory.begin() as session:
-            job: SeriesParseJobRecord | None = None
+            job: SeriesParseJob | None = None
             if lease is not None:
                 checked_at = now_unix_time_ms()
                 job = session.scalar(
-                    select(SeriesParseJobRecord)
+                    select(SeriesParseJob)
                     .where(
-                        SeriesParseJobRecord.job_id == lease.job_id,
-                        SeriesParseJobRecord.status
+                        SeriesParseJob.job_id == lease.job_id,
+                        SeriesParseJob.status
                         == ParseJobStatus.RUNNING.value,
-                        SeriesParseJobRecord.lease_owner == lease.worker_id,
-                        SeriesParseJobRecord.lease_version
+                        SeriesParseJob.lease_owner == lease.worker_id,
+                        SeriesParseJob.lease_version
                         == lease.lease_version,
-                        SeriesParseJobRecord.lease_expires_at > checked_at,
+                        SeriesParseJob.lease_expires_at > checked_at,
                     )
                     .with_for_update()
                 )
@@ -345,7 +345,7 @@ class VideoRepository:
                     raise ParseJobLeaseLostError(
                         "parse job lease is no longer current"
                     )
-            existing_series = session.get(SeriesRecord, prepared.series_id)
+            existing_series = session.get(Series, prepared.series_id)
             if existing_series is not None and (
                 existing_series.workspace_id != prepared.workspace_id
                 or existing_series.name.casefold() != prepared.series_name.casefold()
@@ -356,9 +356,9 @@ class VideoRepository:
                 )
             if existing_series is None:
                 series_with_same_name = session.scalar(
-                    select(SeriesRecord).where(
-                        SeriesRecord.workspace_id == prepared.workspace_id,
-                        SeriesRecord.name == prepared.series_name,
+                    select(Series).where(
+                        Series.workspace_id == prepared.workspace_id,
+                        Series.name == prepared.series_name,
                     )
                 )
                 if series_with_same_name is not None:
@@ -366,7 +366,7 @@ class VideoRepository:
                         "workspace_id and Series name already use another series_id"
                     )
                 session.add(
-                    SeriesRecord(
+                    Series(
                         series_id=prepared.series_id,
                         workspace_id=prepared.workspace_id,
                         name=prepared.series_name,
@@ -377,7 +377,7 @@ class VideoRepository:
                     )
                 )
 
-            existing_video = session.get(VideoRecord, prepared.video_id)
+            existing_video = session.get(Video, prepared.video_id)
             if existing_video is not None and (
                 existing_video.series_id != prepared.series_id
                 or (
@@ -392,11 +392,11 @@ class VideoRepository:
                 )
             if existing_video is None:
                 video_with_same_business_key = session.scalar(
-                    select(VideoRecord).where(
-                        VideoRecord.series_id == prepared.series_id,
+                    select(Video).where(
+                        Video.series_id == prepared.series_id,
                         or_(
-                            VideoRecord.episode_order == prepared.episode_order,
-                            VideoRecord.content_hash == prepared.content_hash,
+                            Video.episode_order == prepared.episode_order,
+                            Video.content_hash == prepared.content_hash,
                         ),
                     )
                 )
@@ -404,7 +404,7 @@ class VideoRepository:
                     raise ParseImportConflictError(
                         "episode order or source content already uses another video_id"
                     )
-                existing_video = VideoRecord(
+                existing_video = Video(
                     video_id=prepared.video_id,
                     series_id=prepared.series_id,
                     episode_order=prepared.episode_order,
@@ -434,8 +434,8 @@ class VideoRepository:
                     existing_video.parse_progress = 100
 
             existing_chunks = session.scalars(
-                select(VideoChunkRecord).where(
-                    VideoChunkRecord.video_id == prepared.video_id
+                select(VideoChunk).where(
+                    VideoChunk.video_id == prepared.video_id
                 )
             ).all()
             if existing_chunks:
@@ -500,7 +500,7 @@ class VideoRepository:
                         )
                     continue
                 session.add(
-                    VideoChunkRecord(
+                    VideoChunk(
                         video_chunk_id=item.video_chunk_id,
                         video_id=prepared.video_id,
                         sequence_no=window.sequence_no,
@@ -527,8 +527,8 @@ class VideoRepository:
             embeddings_by_chunk_id = {
                 embedding.video_chunk_id: embedding
                 for embedding in session.scalars(
-                    select(VideoChunkEmbeddingRecord).where(
-                        VideoChunkEmbeddingRecord.video_chunk_id.in_(
+                    select(VideoChunkEmbedding).where(
+                        VideoChunkEmbedding.video_chunk_id.in_(
                             chunk_ids
                         )
                     )
@@ -551,7 +551,7 @@ class VideoRepository:
                     model_provider = None
                     model_name = None
                 session.merge(
-                    VideoChunkInfoRecord(
+                    VideoChunkInfo(
                         video_chunk_id=item.video_chunk_id,
                         all_time_events=[
                             event.model_dump(mode="json") for event in chunk.events
@@ -570,7 +570,7 @@ class VideoRepository:
                     )
                 )
                 session.merge(
-                    ContextSnapshotRecord(
+                    ContextSnapshot(
                         snapshot_id=item.snapshot_id,
                         engine_snapshot_id=chunk.context_after.snapshot_id,
                         series_id=prepared.series_id,
@@ -591,7 +591,7 @@ class VideoRepository:
                 embedding = embeddings_by_chunk_id.get(item.video_chunk_id)
                 if embedding is None:
                     session.add(
-                        VideoChunkEmbeddingRecord(
+                        VideoChunkEmbedding(
                             video_chunk_id=item.video_chunk_id,
                             text_input=item.retrieval_document.text,
                             text_vector=(
@@ -685,9 +685,9 @@ class VideoRepository:
 
         with self._session_factory() as session:
             rows = session.execute(
-                select(SeriesRecord.series_id, SeriesRecord.status).where(
-                    SeriesRecord.series_id.in_(ordered_ids),
-                    SeriesRecord.workspace_id == workspace_id,
+                select(Series.series_id, Series.status).where(
+                    Series.series_id.in_(ordered_ids),
+                    Series.workspace_id == workspace_id,
                 )
             ).all()
         statuses = {series_id: status for series_id, status in rows}
@@ -712,9 +712,9 @@ class VideoRepository:
             return []
         with self._session_factory() as session:
             scoped_series_ids = list(session.scalars(
-                select(SeriesRecord.series_id).where(
-                    SeriesRecord.workspace_id == workspace_id,
-                    SeriesRecord.series_id.in_(series_ids),
+                select(Series.series_id).where(
+                    Series.workspace_id == workspace_id,
+                    Series.series_id.in_(series_ids),
                 )
             ))
             return list_ready_video_ids(session, scoped_series_ids)
@@ -742,30 +742,30 @@ class VideoRepository:
             return []
         statement = (
             select(
-                VideoChunkRecord.video_chunk_id,
-                VideoChunkRecord.start_seconds,
-                VideoChunkRecord.end_seconds,
-                VideoChunkRecord.analysis_window_start_seconds,
-                VideoChunkRecord.transcript,
+                VideoChunk.video_chunk_id,
+                VideoChunk.start_seconds,
+                VideoChunk.end_seconds,
+                VideoChunk.analysis_window_start_seconds,
+                VideoChunk.transcript,
             )
-            .join(VideoRecord, VideoRecord.video_id == VideoChunkRecord.video_id)
-            .join(SeriesRecord, SeriesRecord.series_id == VideoRecord.series_id)
+            .join(Video, Video.video_id == VideoChunk.video_id)
+            .join(Series, Series.series_id == Video.series_id)
             .join(
-                IndexSyncIntentRecord,
-                IndexSyncIntentRecord.video_chunk_id
-                == VideoChunkRecord.video_chunk_id,
+                IndexSyncIntent,
+                IndexSyncIntent.video_chunk_id
+                == VideoChunk.video_chunk_id,
             )
             .where(
-                SeriesRecord.workspace_id == normalized_workspace,
-                SeriesRecord.series_id.in_(ordered_series_ids),
-                VideoRecord.video_id.in_(video_ids),
-                IndexSyncIntentRecord.status == IndexSyncStatus.SYNCED.value,
-                IndexSyncIntentRecord.operation == IndexSyncOperation.UPSERT.value,
+                Series.workspace_id == normalized_workspace,
+                Series.series_id.in_(ordered_series_ids),
+                Video.video_id.in_(video_ids),
+                IndexSyncIntent.status == IndexSyncStatus.SYNCED.value,
+                IndexSyncIntent.operation == IndexSyncOperation.UPSERT.value,
             )
             .order_by(
-                VideoRecord.episode_order,
-                VideoChunkRecord.sequence_no,
-                VideoChunkRecord.video_chunk_id,
+                Video.episode_order,
+                VideoChunk.sequence_no,
+                VideoChunk.video_chunk_id,
             )
         )
         with self._session_factory() as session:
@@ -844,34 +844,34 @@ class VideoRepository:
 
         statement = (
             select(
-                SeriesRecord,
-                VideoRecord,
-                VideoChunkRecord,
-                VideoChunkInfoRecord,
-                VideoChunkEmbeddingRecord,
-                IndexSyncIntentRecord,
+                Series,
+                Video,
+                VideoChunk,
+                VideoChunkInfo,
+                VideoChunkEmbedding,
+                IndexSyncIntent,
             )
-            .join(VideoRecord, VideoRecord.series_id == SeriesRecord.series_id)
+            .join(Video, Video.series_id == Series.series_id)
             .join(
-                VideoChunkRecord,
-                VideoChunkRecord.video_id == VideoRecord.video_id,
-            )
-            .join(
-                VideoChunkInfoRecord,
-                VideoChunkInfoRecord.video_chunk_id
-                == VideoChunkRecord.video_chunk_id,
+                VideoChunk,
+                VideoChunk.video_id == Video.video_id,
             )
             .join(
-                VideoChunkEmbeddingRecord,
-                VideoChunkEmbeddingRecord.video_chunk_id
-                == VideoChunkRecord.video_chunk_id,
+                VideoChunkInfo,
+                VideoChunkInfo.video_chunk_id
+                == VideoChunk.video_chunk_id,
+            )
+            .join(
+                VideoChunkEmbedding,
+                VideoChunkEmbedding.video_chunk_id
+                == VideoChunk.video_chunk_id,
             )
             .outerjoin(
-                IndexSyncIntentRecord,
-                IndexSyncIntentRecord.video_chunk_id
-                == VideoChunkRecord.video_chunk_id,
+                IndexSyncIntent,
+                IndexSyncIntent.video_chunk_id
+                == VideoChunk.video_chunk_id,
             )
-            .where(VideoChunkRecord.video_chunk_id.in_(ordered_ids))
+            .where(VideoChunk.video_chunk_id.in_(ordered_ids))
         )
         with self._session_factory() as session:
             rows = session.execute(statement).all()

@@ -20,11 +20,11 @@ from .video import (
     ID_LENGTH,
     MYSQL_TABLE_OPTIONS,
     UTC_TIMESTAMP,
-    TimestampedRecord,
+    TimestampMixin,
 )
 
 
-class ModelUsageRecord(Base):
+class ModelUsage(Base):
     __tablename__ = "model_usage"
     __table_args__ = (
         CheckConstraint(
@@ -46,7 +46,7 @@ class ModelUsageRecord(Base):
     created_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, nullable=False)
 
 
-class ParseUsageAttemptRecord(Base):
+class ParseUsageAttempt(Base):
     __tablename__ = "parse_usage_attempt"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
@@ -64,7 +64,7 @@ class ParseUsageAttemptRecord(Base):
     recording_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
-class VideoParseUsageAttemptRecord(Base):
+class VideoParseUsageAttempt(Base):
     __tablename__ = "video_parse_usage_attempt"
     __table_args__ = (
         UniqueConstraint(
@@ -100,7 +100,7 @@ class VideoParseUsageAttemptRecord(Base):
     )
 
 
-class ParseModelCallRecord(TimestampedRecord, Base):
+class ParseModelCall(TimestampMixin, Base):
     __tablename__ = "parse_model_call"
     __table_args__ = (
         CheckConstraint(

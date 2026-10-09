@@ -44,14 +44,14 @@ from server.database import (
 )
 from server.model.dto.jobDTO import PrefixParseLease, VideoParseLease
 from server.model.job import (
-    ChunkParseContentRecord,
-    ChunkParseTaskRecord,
-    IntervalParseTaskRecord,
-    VideoParseTaskRecord,
+    ChunkParseContent,
+    ChunkParseTask,
+    IntervalParseTask,
+    VideoParseTask,
 )
-from server.model.upload import UPLOAD_DELETION_PENDING_ERROR_CODE, UploadSessionRecord
-from server.model.parse_usage import ModelUsageRecord
-from server.model.video import SeriesRecord, VideoRecord
+from server.model.upload import UPLOAD_DELETION_PENDING_ERROR_CODE, UploadSession
+from server.model.parse_usage import ModelUsage
+from server.model.video import Series, Video
 from server.mq.video_parse_consumer import (
     VideoParseConsumer,
     VideoParseConsumerHandlers,
@@ -267,7 +267,7 @@ def _create_task(factory, source: Path) -> str:
     video_id = str(uuid4())
     task_id = str(uuid4())
     with factory.begin() as session:
-        session.add(SeriesRecord(
+        session.add(Series(
             series_id=series_id,
             workspace_id="workspace-1",
             name="Worker fixture",
@@ -276,7 +276,7 @@ def _create_task(factory, source: Path) -> str:
             important_extra_data=None,
             character_bible=[],
         ))
-        session.add(VideoRecord(
+        session.add(Video(
             video_id=video_id,
             series_id=series_id,
             episode_order=1,
@@ -291,7 +291,7 @@ def _create_task(factory, source: Path) -> str:
             upload_progress=100,
             parse_progress=0,
         ))
-        session.add(VideoParseTaskRecord(
+        session.add(VideoParseTask(
             id=task_id,
             video_id=video_id,
             pipeline_version="v2",
@@ -705,13 +705,13 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
     try:
         while time.monotonic() < deadline:
             with factory() as session:
-                if session.get(VideoParseTaskRecord, task_id).status == "COMPLETE":
+                if session.get(VideoParseTask, task_id).status == "COMPLETE":
                     break
             time.sleep(0.02)
         else:
             with factory() as session:
-                task = session.get(VideoParseTaskRecord, task_id)
-                intervals = session.query(IntervalParseTaskRecord).all()
+                task = session.get(VideoParseTask, task_id)
+                intervals = session.query(IntervalParseTask).all()
                 raise AssertionError(
                     "V2 Worker did not complete: "
                     f"consumer_failure={consumer.failure!r}, "
@@ -725,10 +725,10 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
 
     assert consumer.failure is None
     with factory() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
-        chunks = session.query(ChunkParseTaskRecord).all()
-        intervals = session.query(IntervalParseTaskRecord).all()
-        contents = session.query(ChunkParseContentRecord).all()
+        task = session.get(VideoParseTask, task_id)
+        chunks = session.query(ChunkParseTask).all()
+        intervals = session.query(IntervalParseTask).all()
+        contents = session.query(ChunkParseContent).all()
         assert task.status == "COMPLETE"
         assert task.lease_owner is None
         assert [item.status for item in chunks] == ["COMPLETE"]
@@ -740,7 +740,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         assert index_detail["receipt"]["content_version"] == 1
         assert index_detail["receipt"]["index_generation"] == 1
         assert index_detail["receipt"]["parse_task_id"] == task_id
-        rows = session.scalars(select(ModelUsageRecord)).all()
+        rows = session.scalars(select(ModelUsage)).all()
         assert len(rows) == 4 and len({row.call_id for row in rows}) == 4
         assert all(row.task_type == "video_parse" and row.run_id == task_id for row in rows)
         assert sum(row.usage["tokens"]["total_tokens"] for row in rows) == 31
@@ -915,7 +915,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             deadline = time.monotonic() + 8
             while time.monotonic() < deadline:
                 with factory() as session:
-                    if session.get(VideoParseTaskRecord, task_id).status == "INDEXING_FAILED":
+                    if session.get(VideoParseTask, task_id).status == "INDEXING_FAILED":
                         break
                 time.sleep(0.02)
             else:
@@ -924,12 +924,12 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             assert consumer.running
             assert consumer.failure is None
             with factory() as session:
-                task = session.get(VideoParseTaskRecord, task_id)
+                task = session.get(VideoParseTask, task_id)
                 assert task.status == "INDEXING_FAILED", task.last_error
                 frozen_config = task.parse_config
                 before_contents = [
                     (row.id, row.content, row.version, row.detail["scope"])
-                    for row in session.query(ChunkParseContentRecord).order_by(ChunkParseContentRecord.id)
+                    for row in session.query(ChunkParseContent).order_by(ChunkParseContent.id)
                 ]
             assert len(store.documents) == 1
             assert len(store.bulk_keys[0]) == 2
@@ -953,7 +953,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             deadline = time.monotonic() + 8
             while time.monotonic() < deadline:
                 with factory() as session:
-                    if session.get(VideoParseTaskRecord, task_id).status == "COMPLETE":
+                    if session.get(VideoParseTask, task_id).status == "COMPLETE":
                         break
                 time.sleep(0.02)
             else:
@@ -966,10 +966,10 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             assert len(store.bulk_keys[1]) == 1
             assert store.bulk_keys[1][0] in store.bulk_keys[0]
             with factory() as session:
-                task = session.get(VideoParseTaskRecord, task_id)
+                task = session.get(VideoParseTask, task_id)
                 assert task.status == "COMPLETE"
                 assert task.parse_config == frozen_config
-                contents = session.query(ChunkParseContentRecord).order_by(ChunkParseContentRecord.id).all()
+                contents = session.query(ChunkParseContent).order_by(ChunkParseContent.id).all()
                 assert [(row.id, row.content, row.version, row.detail["scope"]) for row in contents] == before_contents
                 receipts = {
                     row.detail["_index_embeddings_v2"]["receipt"]["video_chunk_id"]:
@@ -1003,15 +1003,15 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             assert superseded.status_code == 409, superseded.text
             assert superseded.json()["code"] == "SERIES_NOT_READY"
             with factory() as session:
-                assert session.get(VideoParseTaskRecord, task_id).status == "COMPLETE"
+                assert session.get(VideoParseTask, task_id).status == "COMPLETE"
 
             # Cleanup failure must fence query access before external I/O recovers.
             store.fail_next_delete = True
             with pytest.raises(RuntimeError, match="injected index cleanup failure"):
                 uploads.delete_session(upload_id, workspace_id="pipeline-test")
             with factory() as session:
-                assert session.get(UploadSessionRecord, upload_id).last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
-                assert session.get(VideoParseTaskRecord, task_id).is_deleted
+                assert session.get(UploadSession, upload_id).last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
+                assert session.get(VideoParseTask, task_id).is_deleted
             assert len(store.documents) == 2
             fenced = client.post("/api/search", json=search_body)
             assert fenced.status_code == 409, fenced.text

@@ -27,10 +27,10 @@ from server.database import (
     DatabaseEnvironment, create_database_engine, create_schema, create_session_factory,
 )
 from server.model.agent import (
-    AgentConversationRecord,
-    AgentMessageRecord,
+    AgentConversation,
+    AgentMessage,
 )
-from server.model.video import SeriesRecord, VideoChunkInfoRecord
+from server.model.video import Series, VideoChunkInfo
 from server.model.dto.agentDTO import AgentMessageTimingState, AgentStageTimingState
 from server.repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
@@ -261,7 +261,7 @@ def build_service(tmp_path):
         resources.append((service, engine))
         series = library.create_series(workspace_id="local-default", name="Test Series")
         with factory.begin() as session:
-            session.get(SeriesRecord, series.series_id).status = "READY"
+            session.get(Series, series.series_id).status = "READY"
         conversation = service.create_conversation(
             workspace_id="local-default", title="测试对话",
             idempotency_key="conversation",
@@ -353,7 +353,7 @@ def test_chat_tracing_binds_message_identity_in_the_actual_executor(build_servic
 def test_chat_sql_capture_runs_in_executor_and_preserves_terminal_result(build_service, failed):
     from threading import get_ident
     from gateway.usage import TokenUsage
-    from server.model.parse_usage import ModelUsageRecord
+    from server.model.parse_usage import ModelUsage
     from server.repository.model_usage import ModelUsageRepository
     from server.service.parse_usage import ParseUsageService
 
@@ -381,7 +381,7 @@ def test_chat_sql_capture_runs_in_executor_and_preserves_terminal_result(build_s
     assert len(threads) == 1 and threads[0] != main_thread
     assert first.assistant_message.status == ("FAILED" if failed else "COMPLETED")
     with repository._session_factory() as session:
-        rows = session.scalars(select(ModelUsageRecord)).all()
+        rows = session.scalars(select(ModelUsage)).all()
         assert len(rows) == 1
         row = rows[0]
         assert row.workspace_id == "local-default" and row.task_type == "chat_retrieval"
@@ -445,7 +445,7 @@ def test_supervisor_chat_without_ready_video_series(build_service):
         supervisor_model=model,
     )
     with repository._session_factory.begin() as session:
-        session.query(SeriesRecord).update({SeriesRecord.status: "EMPTY"})
+        session.query(Series).update({Series.status: "EMPTY"})
 
     completed = _send(service, conversation, content="你好")
 
@@ -508,7 +508,7 @@ def test_supervisor_preserves_approved_video_answer(
     videos = VideoRepository(repository._session_factory)
     report = videos.import_video_parse(prepared_import)
     with repository._session_factory.begin() as session:
-        session.get(SeriesRecord, report.series_id).status = "READY"
+        session.get(Series, report.series_id).status = "READY"
     chunks = videos.hydrate_video_chunks(report.video_chunk_ids)
     retrieval.hits = [VideoChunkSearchHit(
         candidate=VideoChunkCandidate(
@@ -552,7 +552,7 @@ def evidence_service(build_service, prepared_import):
     videos = VideoRepository(repository._session_factory)
     report = videos.import_video_parse(prepared_import)
     with repository._session_factory.begin() as session:
-        session.get(SeriesRecord, report.series_id).status = "READY"
+        session.get(Series, report.series_id).status = "READY"
     retrieval.hits = [VideoChunkSearchHit(
         candidate=VideoChunkCandidate(video_chunk_id=chunk.video_chunk_id, fused_rank=index + 1, fused_score=1),
         selection_reason=SelectionReason(summary=chunk.window_summary, matched_evidence=[], limitations=[]),
@@ -585,7 +585,7 @@ def test_first_question_titles_only_default_conversations_and_creation_replay_is
 def test_query_agent_receives_series_transcript_language_hint(build_service):
     service, conversation, _retrieval, repository, query, *_ = build_service()
     with repository._session_factory.begin() as session:
-        session.scalar(select(SeriesRecord)).transcript_language_hint = "ja"
+        session.scalar(select(Series)).transcript_language_hint = "ja"
 
     _send(service, conversation, content="她当时的原话是什么？")
 
@@ -621,7 +621,7 @@ def test_reference_uses_saved_same_version_evidence_with_ordered_history(evidenc
     reference = {"messageId": source.assistant_message.message_id,
                  "videoChunkId": hits[1]["candidate"]["videoChunkId"]}
     with repository._session_factory.begin() as session:
-        current = session.get(VideoChunkInfoRecord, reference["videoChunkId"])
+        current = session.get(VideoChunkInfo, reference["videoChunkId"])
         assert current is not None
         current.context_before_compact = "newer current-version context"
     followup = _send(service, conversation, key="reference", content="这段的前文呢？", reference=reference)
@@ -775,7 +775,7 @@ def test_invalid_reference_does_not_start_a_message(evidence_service, invalid):
         library = LibraryService(LibraryRepository(repository._session_factory))
         series = library.create_series(workspace_id="local-default", name="Other Series")
         with repository._session_factory.begin() as session:
-            session.get(SeriesRecord, series.series_id).status = "READY"
+            session.get(Series, series.series_id).status = "READY"
         scope = [series.series_id]
     before = service.list_all_messages(target.conversation_id, workspace_id="local-default")
     query_count = len(query.prompts)
@@ -829,11 +829,11 @@ def test_repository_deletes_terminal_conversation_and_returns_snapshot(build_ser
     with repository._session_factory() as session:
         assert session.execute(text("PRAGMA foreign_keys")).scalar_one() == 1
         assert session.scalar(
-            select(func.count()).select_from(AgentMessageRecord)
+            select(func.count()).select_from(AgentMessage)
         ) == 2
         assistant_detail = session.scalar(
-            select(AgentMessageRecord.detail).where(
-                AgentMessageRecord.role == "ASSISTANT"
+            select(AgentMessage.detail).where(
+                AgentMessage.role == "ASSISTANT"
             )
         )
         assert assistant_detail["timing"]["totalDurationMs"] is not None
@@ -856,7 +856,7 @@ def test_repository_deletes_terminal_conversation_and_returns_snapshot(build_ser
         )
     with repository._session_factory() as session:
         assert session.scalar(
-            select(func.count()).select_from(AgentMessageRecord)
+            select(func.count()).select_from(AgentMessage)
         ) == 0
 
 
@@ -891,7 +891,7 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
             assistant_message_id=assistant_id, now=started_at,
         )
         with factory() as session:
-            assistant = session.get(AgentMessageRecord, assistant_id)
+            assistant = session.get(AgentMessage, assistant_id)
             assert assistant.detail == {
                 "timing": {"startedAt": started_at, "totalDurationMs": None, "stages": []}
             }
@@ -906,7 +906,7 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
             assistant_id, now=started_at + 4, timing=partial,
         )
         with factory() as session:
-            assistant = session.get(AgentMessageRecord, assistant_id)
+            assistant = session.get(AgentMessage, assistant_id)
             assert assistant.version == initial_version
             assert assistant.updated_at == initial_updated_at
             assert assistant.detail["timing"]["stages"] == [
@@ -917,7 +917,7 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
             timing=partial,
         )
         with factory() as session:
-            assert session.get(AgentMessageRecord, assistant_id).detail["timing"]["stages"] == [
+            assert session.get(AgentMessage, assistant_id).detail["timing"]["stages"] == [
                 {"phase": "QUEUED", "durationMs": 4}
             ]
 
@@ -934,7 +934,7 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
         )
         assert result.timing == finished
         with factory() as session:
-            assert session.get(AgentMessageRecord, assistant_id).detail == {"timing": {
+            assert session.get(AgentMessage, assistant_id).detail == {"timing": {
                 "startedAt": started_at, "totalDurationMs": 12,
                 "stages": [
                     {"phase": "QUEUED", "durationMs": 4},
@@ -944,8 +944,8 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
     finally:
         if created:
             with factory.begin() as session:
-                session.execute(delete(AgentConversationRecord).where(
-                    AgentConversationRecord.conversation_id == conversation_id
+                session.execute(delete(AgentConversation).where(
+                    AgentConversation.conversation_id == conversation_id
                 ))
         engine.dispose()
 
@@ -1041,7 +1041,7 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
     )
     assert messages[0].timing is None
     with repository._session_factory() as session:
-        stored = session.get(AgentMessageRecord, messages[1].message_id)
+        stored = session.get(AgentMessage, messages[1].message_id)
         assert stored.detail == {"timing": {
             "startedAt": timing.started_at,
             "totalDurationMs": timing.total_duration_ms,
@@ -1096,7 +1096,7 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
     assert result.assistant_message.status == "COMPLETED"
     assert observed == [(9, 33, None)]
     with repository._session_factory() as session:
-        user = session.get(AgentMessageRecord, result.user_message.message_id)
+        user = session.get(AgentMessage, result.user_message.message_id)
         assert user is not None
         assert user.requested_run_options == {
             "max_model_calls_per_turn": 9,
@@ -1119,9 +1119,9 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
     )
     assert observed[-2:] == [(6, 24, 0), (6, 24, 100)]
     with repository._session_factory() as session:
-        users = session.scalars(select(AgentMessageRecord).where(
-            AgentMessageRecord.conversation_id == conversation.conversation_id,
-            AgentMessageRecord.role == "USER",
+        users = session.scalars(select(AgentMessage).where(
+            AgentMessage.conversation_id == conversation.conversation_id,
+            AgentMessage.role == "USER",
         )).all()
         snapshots = {
             user.detail["request"]["idempotencyKey"]: user.requested_run_options
@@ -1234,7 +1234,7 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
         if not added_ids:
             added = library.create_series(workspace_id="local-default", name="Added mid-loop")
             with repository._session_factory.begin() as session:
-                session.get(SeriesRecord, added.series_id).status = "READY"
+                session.get(Series, added.series_id).status = "READY"
             added_ids.append(added.series_id)
         return draft
 
@@ -1249,11 +1249,11 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
 
     # An identical "all" request returns its saved answer, even after readiness changes.
     with repository._session_factory.begin() as session:
-        session.get(SeriesRecord, original_id).status = "INDEXING"
+        session.get(Series, original_id).status = "INDEXING"
     assert _send(service, conversation) == first
     assert len(retrieval.calls) == 2
     with repository._session_factory.begin() as session:
-        session.get(SeriesRecord, original_id).status = "READY"
+        session.get(Series, original_id).status = "READY"
 
     second = _send(service, conversation, key="next-all", series_ids=[])
     assert second.user_message.series_ids == tuple(sorted([original_id, added_ids[0]]))
@@ -1268,7 +1268,7 @@ def test_next_message_can_choose_another_scope_without_reusing_old_evidence(buil
     original_id = library.list_series(workspace_id="local-default")[0].series_id
     added = library.create_series(workspace_id="local-default", name="Second animation")
     with repository._session_factory.begin() as session:
-        session.get(SeriesRecord, added.series_id).status = "READY"
+        session.get(Series, added.series_id).status = "READY"
 
     first = _send(service, conversation, series_ids=[original_id])
     second = _send(service, conversation, key="second", series_ids=[added.series_id])
@@ -1579,7 +1579,7 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
     )
     with session_factory.begin() as db_session:
         db_session.add_all(
-            AgentMessageRecord(
+            AgentMessage(
                 message_id=str(uuid4()),
                 conversation_id=conversation.conversation_id,
                 sequence_no=index,
@@ -1592,7 +1592,7 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
             )
             for index in range(500)
         )
-        record = db_session.get(AgentConversationRecord, conversation.conversation_id)
+        record = db_session.get(AgentConversation, conversation.conversation_id)
         assert record is not None
         record.next_message_sequence = 500
 

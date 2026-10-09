@@ -16,17 +16,17 @@ from ..model.dto.jobDTO import (
     VideoParseLease,
 )
 from ..model.job import (
-    ChunkParseContentRecord,
-    ChunkParseTaskRecord,
+    ChunkParseContent,
+    ChunkParseTask,
     ChunkParseTaskStatus,
-    IntervalParseContentRecord,
-    IntervalParseTaskRecord,
+    IntervalParseContent,
+    IntervalParseTask,
     IntervalParseTaskStatus,
-    VideoParseTaskRecord,
+    VideoParseTask,
     VideoParseTaskStatus,
     interval_full_ready_mask,
 )
-from ..model.video import VideoChunkRecord
+from ..model.video import VideoChunk
 from ..repository.video_parse import (
     RUNTIME_DETAIL_KEY,
     _REFINE_SUBMITTED,
@@ -64,25 +64,25 @@ class MySqlVideoParseQueue:
         while True:
             with self._session_factory() as session:
                 ordering = (
-                    VideoParseTaskRecord.next_execute_time,
-                    VideoParseTaskRecord.create_time,
-                    VideoParseTaskRecord.id,
+                    VideoParseTask.next_execute_time,
+                    VideoParseTask.create_time,
+                    VideoParseTask.id,
                 )
                 statement = (
                     select(*ordering)
                     .where(
-                        VideoParseTaskRecord.status.in_([
+                        VideoParseTask.status.in_([
                             VideoParseTaskStatus.PENDING.value,
                             VideoParseTaskStatus.PREPARING.value,
                             VideoParseTaskStatus.PARSING.value,
                             VideoParseTaskStatus.INDEXING.value,
                         ]),
-                        VideoParseTaskRecord.lease_owner.is_(None),
-                        VideoParseTaskRecord.next_execute_time <= claimed_at,
-                        VideoParseTaskRecord.attempt_count
-                        < VideoParseTaskRecord.max_attempts,
-                        VideoParseTaskRecord.is_deleted.is_(False),
-                        VideoParseTaskRecord.detail[RUNTIME_DETAIL_KEY]["accepted"]
+                        VideoParseTask.lease_owner.is_(None),
+                        VideoParseTask.next_execute_time <= claimed_at,
+                        VideoParseTask.attempt_count
+                        < VideoParseTask.max_attempts,
+                        VideoParseTask.is_deleted.is_(False),
+                        VideoParseTask.detail[RUNTIME_DETAIL_KEY]["accepted"]
                         .as_boolean()
                         .is_(True),
                     )
@@ -97,20 +97,20 @@ class MySqlVideoParseQueue:
             for _next_execute, _created, candidate_id in candidates:
                 with self._session_factory.begin() as session:
                     task = session.scalar(
-                        select(VideoParseTaskRecord)
+                        select(VideoParseTask)
                         .where(
-                            VideoParseTaskRecord.id == candidate_id,
-                            VideoParseTaskRecord.status.in_([
+                            VideoParseTask.id == candidate_id,
+                            VideoParseTask.status.in_([
                                 VideoParseTaskStatus.PENDING.value,
                                 VideoParseTaskStatus.PREPARING.value,
                                 VideoParseTaskStatus.PARSING.value,
                                 VideoParseTaskStatus.INDEXING.value,
                             ]),
-                            VideoParseTaskRecord.lease_owner.is_(None),
-                            VideoParseTaskRecord.next_execute_time <= claimed_at,
-                            VideoParseTaskRecord.attempt_count
-                            < VideoParseTaskRecord.max_attempts,
-                            VideoParseTaskRecord.is_deleted.is_(False),
+                            VideoParseTask.lease_owner.is_(None),
+                            VideoParseTask.next_execute_time <= claimed_at,
+                            VideoParseTask.attempt_count
+                            < VideoParseTask.max_attempts,
+                            VideoParseTask.is_deleted.is_(False),
                         )
                         .with_for_update(skip_locked=True)
                     )
@@ -156,33 +156,33 @@ class MySqlVideoParseQueue:
         while True:
             with self._session_factory() as session:
                 ordering = (
-                    VideoParseTaskRecord.create_time,
-                    VideoChunkRecord.sequence_no,
-                    ChunkParseTaskRecord.id,
+                    VideoParseTask.create_time,
+                    VideoChunk.sequence_no,
+                    ChunkParseTask.id,
                 )
                 statement = (
                     select(*ordering)
                     .join(
-                        VideoChunkRecord,
-                        VideoChunkRecord.video_chunk_id
-                        == ChunkParseTaskRecord.video_chunk_id,
+                        VideoChunk,
+                        VideoChunk.video_chunk_id
+                        == ChunkParseTask.video_chunk_id,
                     )
                     .join(
-                        VideoParseTaskRecord,
-                        VideoParseTaskRecord.id
-                        == ChunkParseTaskRecord.video_parse_task_id,
+                        VideoParseTask,
+                        VideoParseTask.id
+                        == ChunkParseTask.video_parse_task_id,
                     )
                     .where(
-                        ChunkParseTaskRecord.status
+                        ChunkParseTask.status
                         == ChunkParseTaskStatus.QUEUED.value,
-                        ChunkParseTaskRecord.next_execute_time <= claimed_at,
-                        VideoParseTaskRecord.status
+                        ChunkParseTask.next_execute_time <= claimed_at,
+                        VideoParseTask.status
                         == VideoParseTaskStatus.PARSING.value,
-                        VideoParseTaskRecord.is_deleted.is_(False),
-                        VideoParseTaskRecord.detail[RUNTIME_DETAIL_KEY]["accepted"]
+                        VideoParseTask.is_deleted.is_(False),
+                        VideoParseTask.detail[RUNTIME_DETAIL_KEY]["accepted"]
                         .as_boolean()
                         .is_(True),
-                        ChunkParseTaskRecord.detail["dispatch_requested"]
+                        ChunkParseTask.detail["dispatch_requested"]
                         .as_boolean()
                         .is_(True),
                     )
@@ -191,7 +191,7 @@ class MySqlVideoParseQueue:
                 )
                 if video_parse_task_id is not None:
                     statement = statement.where(
-                        ChunkParseTaskRecord.video_parse_task_id
+                        ChunkParseTask.video_parse_task_id
                         == video_parse_task_id
                     )
                 if cursor is not None:
@@ -205,26 +205,26 @@ class MySqlVideoParseQueue:
                 # fresh transaction so a JOIN cannot choose lock order.
                 with self._session_factory.begin() as session:
                     child = session.scalar(
-                        select(ChunkParseTaskRecord)
+                        select(ChunkParseTask)
                         .where(
-                            ChunkParseTaskRecord.id == candidate_id,
-                            ChunkParseTaskRecord.status
+                            ChunkParseTask.id == candidate_id,
+                            ChunkParseTask.status
                             == ChunkParseTaskStatus.QUEUED.value,
-                            ChunkParseTaskRecord.next_execute_time <= claimed_at,
+                            ChunkParseTask.next_execute_time <= claimed_at,
                         )
                         .with_for_update(skip_locked=True)
                     )
                     if child is None:
                         continue
                     parent = session.scalar(
-                        select(VideoParseTaskRecord)
+                        select(VideoParseTask)
                         .where(
-                            VideoParseTaskRecord.id
+                            VideoParseTask.id
                             == child.video_parse_task_id
                         )
                         .with_for_update()
                     )
-                    chunk = session.get(VideoChunkRecord, child.video_chunk_id)
+                    chunk = session.get(VideoChunk, child.video_chunk_id)
                     if (
                         parent is None
                         or chunk is None
@@ -272,14 +272,14 @@ class MySqlVideoParseQueue:
     ) -> ChunkScheduleState:
         loaded_at = now if now is not None else now_utc()
         with self._session_factory() as session:
-            parent = session.get(VideoParseTaskRecord, video_parse_task_id)
+            parent = session.get(VideoParseTask, video_parse_task_id)
             if parent is None or parent.is_deleted:
                 return ChunkScheduleState((), 1.0, "VideoParseTask does not exist")
             rows = list(session.execute(
-                select(ChunkParseTaskRecord, VideoChunkRecord)
-                .join(VideoChunkRecord, VideoChunkRecord.video_chunk_id == ChunkParseTaskRecord.video_chunk_id)
-                .where(ChunkParseTaskRecord.video_parse_task_id == video_parse_task_id)
-                .order_by(VideoChunkRecord.sequence_no)
+                select(ChunkParseTask, VideoChunk)
+                .join(VideoChunk, VideoChunk.video_chunk_id == ChunkParseTask.video_chunk_id)
+                .where(ChunkParseTask.video_parse_task_id == video_parse_task_id)
+                .order_by(VideoChunk.sequence_no)
             ))
             terminal = None
             if _video_failure_status(parent) is not None:
@@ -315,18 +315,18 @@ class MySqlVideoParseQueue:
         dispatched_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             child = session.scalar(
-                select(ChunkParseTaskRecord)
-                .where(ChunkParseTaskRecord.id == chunk_parse_task_id)
+                select(ChunkParseTask)
+                .where(ChunkParseTask.id == chunk_parse_task_id)
                 .with_for_update()
             )
             if child is None:
                 return False
             parent = session.scalar(
-                select(VideoParseTaskRecord)
-                .where(VideoParseTaskRecord.id == child.video_parse_task_id)
+                select(VideoParseTask)
+                .where(VideoParseTask.id == child.video_parse_task_id)
                 .with_for_update()
             )
-            chunk = session.get(VideoChunkRecord, child.video_chunk_id)
+            chunk = session.get(VideoChunk, child.video_chunk_id)
             if (
                 parent is None
                 or chunk is None
@@ -404,27 +404,27 @@ class MySqlVideoParseQueue:
         while True:
             with self._session_factory() as session:
                 ordering = (
-                    IntervalParseTaskRecord.next_execute_time,
-                    IntervalParseTaskRecord.start_sequence_no,
-                    IntervalParseTaskRecord.id,
+                    IntervalParseTask.next_execute_time,
+                    IntervalParseTask.start_sequence_no,
+                    IntervalParseTask.id,
                 )
                 statement = (
                     select(*ordering)
                     .join(
-                        VideoParseTaskRecord,
-                        VideoParseTaskRecord.id
-                        == IntervalParseTaskRecord.video_parse_task_id,
+                        VideoParseTask,
+                        VideoParseTask.id
+                        == IntervalParseTask.video_parse_task_id,
                     )
                     .where(
-                        IntervalParseTaskRecord.status == source_status,
-                        IntervalParseTaskRecord.lease_owner.is_(None),
-                        IntervalParseTaskRecord.next_execute_time <= claimed_at,
-                        VideoParseTaskRecord.status.in_([
+                        IntervalParseTask.status == source_status,
+                        IntervalParseTask.lease_owner.is_(None),
+                        IntervalParseTask.next_execute_time <= claimed_at,
+                        VideoParseTask.status.in_([
                             VideoParseTaskStatus.PARSING.value,
                             VideoParseTaskStatus.INDEXING.value,
                         ]),
-                        VideoParseTaskRecord.is_deleted.is_(False),
-                        VideoParseTaskRecord.detail[RUNTIME_DETAIL_KEY]["accepted"]
+                        VideoParseTask.is_deleted.is_(False),
+                        VideoParseTask.detail[RUNTIME_DETAIL_KEY]["accepted"]
                         .as_boolean()
                         .is_(True),
                     )
@@ -434,15 +434,15 @@ class MySqlVideoParseQueue:
                 if phase == IntervalParseTaskStatus.REFINING.value:
                     full_mask = (
                         literal(1).op("<<")(
-                            IntervalParseTaskRecord.chunk_count
+                            IntervalParseTask.chunk_count
                         ) - 1
                     )
                     statement = statement.where(
-                        IntervalParseTaskRecord.ready_mask == full_mask
+                        IntervalParseTask.ready_mask == full_mask
                     )
                 if video_parse_task_id is not None:
                     statement = statement.where(
-                        IntervalParseTaskRecord.video_parse_task_id
+                        IntervalParseTask.video_parse_task_id
                         == video_parse_task_id
                     )
                 if cursor is not None:
@@ -453,12 +453,12 @@ class MySqlVideoParseQueue:
             for _next_execute, _start, candidate_id in candidates:
                 with self._session_factory.begin() as session:
                     interval = session.scalar(
-                        select(IntervalParseTaskRecord)
+                        select(IntervalParseTask)
                         .where(
-                            IntervalParseTaskRecord.id == candidate_id,
-                            IntervalParseTaskRecord.status == source_status,
-                            IntervalParseTaskRecord.lease_owner.is_(None),
-                            IntervalParseTaskRecord.next_execute_time
+                            IntervalParseTask.id == candidate_id,
+                            IntervalParseTask.status == source_status,
+                            IntervalParseTask.lease_owner.is_(None),
+                            IntervalParseTask.next_execute_time
                             <= claimed_at,
                         )
                         .with_for_update(skip_locked=True)
@@ -466,9 +466,9 @@ class MySqlVideoParseQueue:
                     if interval is None:
                         continue
                     parent = session.scalar(
-                        select(VideoParseTaskRecord)
+                        select(VideoParseTask)
                         .where(
-                            VideoParseTaskRecord.id
+                            VideoParseTask.id
                             == interval.video_parse_task_id
                         )
                         .with_for_update()
@@ -492,7 +492,7 @@ class MySqlVideoParseQueue:
                             continue
                         if (
                             session.get(
-                                IntervalParseContentRecord, interval.id
+                                IntervalParseContent, interval.id
                             )
                             is not None
                         ):
@@ -543,12 +543,12 @@ class MySqlVideoParseQueue:
         result = None
         with self._session_factory.begin() as session:
             result = session.execute(
-                update(VideoParseTaskRecord)
+                update(VideoParseTask)
                 .where(
-                    VideoParseTaskRecord.id == lease.video_parse_task_id,
-                    VideoParseTaskRecord.lease_owner == lease.worker_id,
-                    VideoParseTaskRecord.lease_version == lease.lease_version,
-                    VideoParseTaskRecord.lease_expire_time > heartbeat_at,
+                    VideoParseTask.id == lease.video_parse_task_id,
+                    VideoParseTask.lease_owner == lease.worker_id,
+                    VideoParseTask.lease_version == lease.lease_version,
+                    VideoParseTask.lease_expire_time > heartbeat_at,
                 )
                 .values(
                     heartbeat_time=heartbeat_at,
@@ -569,13 +569,13 @@ class MySqlVideoParseQueue:
         heartbeat_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             result = session.execute(
-                update(ChunkParseTaskRecord)
+                update(ChunkParseTask)
                 .where(
-                    ChunkParseTaskRecord.id == lease.chunk_parse_task_id,
-                    ChunkParseTaskRecord.status == ChunkParseTaskStatus.UNDERSTANDING.value,
-                    ChunkParseTaskRecord.lease_owner == lease.worker_id,
-                    ChunkParseTaskRecord.lease_version == lease.lease_version,
-                    ChunkParseTaskRecord.lease_expire_time > heartbeat_at,
+                    ChunkParseTask.id == lease.chunk_parse_task_id,
+                    ChunkParseTask.status == ChunkParseTaskStatus.UNDERSTANDING.value,
+                    ChunkParseTask.lease_owner == lease.worker_id,
+                    ChunkParseTask.lease_version == lease.lease_version,
+                    ChunkParseTask.lease_expire_time > heartbeat_at,
                 )
                 .values(
                     lease_expire_time=heartbeat_at + lease_duration,
@@ -595,13 +595,13 @@ class MySqlVideoParseQueue:
         heartbeat_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             result = session.execute(
-                update(IntervalParseTaskRecord)
+                update(IntervalParseTask)
                 .where(
-                    IntervalParseTaskRecord.id == lease.interval_parse_task_id,
-                    IntervalParseTaskRecord.status == lease.phase,
-                    IntervalParseTaskRecord.lease_owner == lease.worker_id,
-                    IntervalParseTaskRecord.lease_version == lease.lease_version,
-                    IntervalParseTaskRecord.lease_expire_time > heartbeat_at,
+                    IntervalParseTask.id == lease.interval_parse_task_id,
+                    IntervalParseTask.status == lease.phase,
+                    IntervalParseTask.lease_owner == lease.worker_id,
+                    IntervalParseTask.lease_version == lease.lease_version,
+                    IntervalParseTask.lease_expire_time > heartbeat_at,
                 )
                 .values(
                     lease_expire_time=heartbeat_at + lease_duration,
@@ -643,7 +643,7 @@ class MySqlVideoParseQueue:
         checked_at = now if now is not None else now_utc()
 
         with self._session_factory() as session:
-            parent = session.get(VideoParseTaskRecord, parent_id)
+            parent = session.get(VideoParseTask, parent_id)
             if parent is None or parent.is_deleted:
                 return False
             if execution_kind == "video":
@@ -661,7 +661,7 @@ class MySqlVideoParseQueue:
                     and parent.lease_expire_time > checked_at
                 )
             if execution_kind == "chunk":
-                task = session.get(ChunkParseTaskRecord, task_id)
+                task = session.get(ChunkParseTask, task_id)
                 return bool(
                     task is not None
                     and task.video_parse_task_id == parent_id
@@ -672,7 +672,7 @@ class MySqlVideoParseQueue:
                     and task.lease_expire_time > checked_at
                 )
             if execution_kind == "interval":
-                interval = session.get(IntervalParseTaskRecord, task_id)
+                interval = session.get(IntervalParseTask, task_id)
                 return bool(
                     interval is not None
                     and interval.video_parse_task_id == parent_id
@@ -711,7 +711,7 @@ class MySqlVideoParseQueue:
         with self._session_factory() as session:
             if isinstance(lease, VideoParseLease):
                 task = session.get(
-                    VideoParseTaskRecord, lease.video_parse_task_id
+                    VideoParseTask, lease.video_parse_task_id
                 )
                 return bool(
                     task is not None
@@ -722,15 +722,15 @@ class MySqlVideoParseQueue:
                 )
 
             parent = session.get(
-                VideoParseTaskRecord, lease.video_parse_task_id
+                VideoParseTask, lease.video_parse_task_id
             )
             if parent is None or parent.is_deleted:
                 return False
             if isinstance(lease, PrefixParseLease):
                 child = session.get(
-                    ChunkParseTaskRecord, lease.chunk_parse_task_id
+                    ChunkParseTask, lease.chunk_parse_task_id
                 )
-                chunk = session.get(VideoChunkRecord, lease.video_chunk_id)
+                chunk = session.get(VideoChunk, lease.video_chunk_id)
                 if (
                     child is None
                     or chunk is None
@@ -757,7 +757,7 @@ class MySqlVideoParseQueue:
                 )
             if isinstance(lease, ChunkParseLease):
                 child = session.get(
-                    ChunkParseTaskRecord, lease.chunk_parse_task_id
+                    ChunkParseTask, lease.chunk_parse_task_id
                 )
                 return bool(
                     child is not None
@@ -768,14 +768,14 @@ class MySqlVideoParseQueue:
                 )
 
             interval = session.get(
-                IntervalParseTaskRecord, lease.interval_parse_task_id
+                IntervalParseTask, lease.interval_parse_task_id
             )
             if (
                 interval is None
                 or interval.video_parse_task_id != lease.video_parse_task_id
             ):
                 return False
-            result = session.get(IntervalParseContentRecord, interval.id)
+            result = session.get(IntervalParseContent, interval.id)
             if result is None:
                 return False
             detail = result.detail if isinstance(result.detail, dict) else {}
@@ -803,17 +803,17 @@ class MySqlVideoParseQueue:
         failed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             task = session.scalar(
-                select(VideoParseTaskRecord)
+                select(VideoParseTask)
                 .where(
-                    VideoParseTaskRecord.id == lease.video_parse_task_id,
-                    VideoParseTaskRecord.status.in_([
+                    VideoParseTask.id == lease.video_parse_task_id,
+                    VideoParseTask.status.in_([
                         VideoParseTaskStatus.PREPARING.value,
                         VideoParseTaskStatus.PARSING.value,
                         VideoParseTaskStatus.INDEXING.value,
                     ]),
-                    VideoParseTaskRecord.lease_owner == lease.worker_id,
-                    VideoParseTaskRecord.lease_version == lease.lease_version,
-                    VideoParseTaskRecord.lease_expire_time > failed_at,
+                    VideoParseTask.lease_owner == lease.worker_id,
+                    VideoParseTask.lease_version == lease.lease_version,
+                    VideoParseTask.lease_expire_time > failed_at,
                 )
                 .with_for_update()
             )
@@ -853,13 +853,13 @@ class MySqlVideoParseQueue:
         failed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             task = session.scalar(
-                select(ChunkParseTaskRecord)
+                select(ChunkParseTask)
                 .where(
-                    ChunkParseTaskRecord.id == lease.chunk_parse_task_id,
-                    ChunkParseTaskRecord.status == ChunkParseTaskStatus.UNDERSTANDING.value,
-                    ChunkParseTaskRecord.lease_owner == lease.worker_id,
-                    ChunkParseTaskRecord.lease_version == lease.lease_version,
-                    ChunkParseTaskRecord.lease_expire_time > failed_at,
+                    ChunkParseTask.id == lease.chunk_parse_task_id,
+                    ChunkParseTask.status == ChunkParseTaskStatus.UNDERSTANDING.value,
+                    ChunkParseTask.lease_owner == lease.worker_id,
+                    ChunkParseTask.lease_version == lease.lease_version,
+                    ChunkParseTask.lease_expire_time > failed_at,
                 )
                 .with_for_update()
             )
@@ -892,13 +892,13 @@ class MySqlVideoParseQueue:
         failed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
             interval = session.scalar(
-                select(IntervalParseTaskRecord)
+                select(IntervalParseTask)
                 .where(
-                    IntervalParseTaskRecord.id == lease.interval_parse_task_id,
-                    IntervalParseTaskRecord.status == lease.phase,
-                    IntervalParseTaskRecord.lease_owner == lease.worker_id,
-                    IntervalParseTaskRecord.lease_version == lease.lease_version,
-                    IntervalParseTaskRecord.lease_expire_time > failed_at,
+                    IntervalParseTask.id == lease.interval_parse_task_id,
+                    IntervalParseTask.status == lease.phase,
+                    IntervalParseTask.lease_owner == lease.worker_id,
+                    IntervalParseTask.lease_version == lease.lease_version,
+                    IntervalParseTask.lease_expire_time > failed_at,
                 )
                 .with_for_update()
             )
@@ -940,13 +940,13 @@ class MySqlVideoParseQueue:
             raise ValueError("only an INDEXING lease can wait for dependencies")
         with self._session_factory.begin() as session:
             result = session.execute(
-                update(IntervalParseTaskRecord)
+                update(IntervalParseTask)
                 .where(
-                    IntervalParseTaskRecord.id == lease.interval_parse_task_id,
-                    IntervalParseTaskRecord.status == IntervalParseTaskStatus.INDEXING.value,
-                    IntervalParseTaskRecord.lease_owner == lease.worker_id,
-                    IntervalParseTaskRecord.lease_version == lease.lease_version,
-                    IntervalParseTaskRecord.lease_expire_time > released_at,
+                    IntervalParseTask.id == lease.interval_parse_task_id,
+                    IntervalParseTask.status == IntervalParseTaskStatus.INDEXING.value,
+                    IntervalParseTask.lease_owner == lease.worker_id,
+                    IntervalParseTask.lease_version == lease.lease_version,
+                    IntervalParseTask.lease_expire_time > released_at,
                 )
                 .values(
                     lease_owner=None,
@@ -984,19 +984,19 @@ class MySqlVideoParseQueue:
     def _finalize_draining_videos(self, *, now: datetime, limit: int) -> None:
         with self._session_factory() as session:
             candidate_ids = list(session.scalars(
-                select(VideoParseTaskRecord.id).where(
-                    VideoParseTaskRecord.status.in_([
+                select(VideoParseTask.id).where(
+                    VideoParseTask.status.in_([
                         VideoParseTaskStatus.PARSING.value,
                         VideoParseTaskStatus.INDEXING.value,
                     ]),
-                    VideoParseTaskRecord.lease_owner.is_(None),
-                    VideoParseTaskRecord.is_deleted.is_(False),
-                    VideoParseTaskRecord.detail[RUNTIME_DETAIL_KEY]["failure_status"]
+                    VideoParseTask.lease_owner.is_(None),
+                    VideoParseTask.is_deleted.is_(False),
+                    VideoParseTask.detail[RUNTIME_DETAIL_KEY]["failure_status"]
                     .as_string().in_([
                         VideoParseTaskStatus.PARSING_FAILED.value,
                         VideoParseTaskStatus.INDEXING_FAILED.value,
                     ]),
-                ).order_by(VideoParseTaskRecord.update_time, VideoParseTaskRecord.id)
+                ).order_by(VideoParseTask.update_time, VideoParseTask.id)
                 .limit(limit)
             ))
         for task_id in candidate_ids:
@@ -1004,11 +1004,11 @@ class MySqlVideoParseQueue:
             # first child read. Never take child locks while holding parent.
             with self._session_factory.begin() as session:
                 task = session.scalar(
-                    select(VideoParseTaskRecord).where(
-                        VideoParseTaskRecord.id == task_id,
-                        VideoParseTaskRecord.lease_owner.is_(None),
-                        VideoParseTaskRecord.is_deleted.is_(False),
-                        VideoParseTaskRecord.status.in_([
+                    select(VideoParseTask).where(
+                        VideoParseTask.id == task_id,
+                        VideoParseTask.lease_owner.is_(None),
+                        VideoParseTask.is_deleted.is_(False),
+                        VideoParseTask.status.in_([
                             VideoParseTaskStatus.PARSING.value,
                             VideoParseTaskStatus.INDEXING.value,
                         ]),
@@ -1034,18 +1034,18 @@ class MySqlVideoParseQueue:
         retry_at = reaped_at + retry_delay
         with self._session_factory() as session:
             candidate_ids = list(session.scalars(
-                select(VideoParseTaskRecord.id)
+                select(VideoParseTask.id)
                 .where(
-                    VideoParseTaskRecord.status.in_([
+                    VideoParseTask.status.in_([
                         VideoParseTaskStatus.PREPARING.value,
                         VideoParseTaskStatus.PARSING.value,
                         VideoParseTaskStatus.INDEXING.value,
                     ]),
-                    VideoParseTaskRecord.lease_expire_time <= reaped_at,
+                    VideoParseTask.lease_expire_time <= reaped_at,
                 )
                 .order_by(
-                    VideoParseTaskRecord.lease_expire_time,
-                    VideoParseTaskRecord.id,
+                    VideoParseTask.lease_expire_time,
+                    VideoParseTask.id,
                 )
                 .limit(limit)
             ))
@@ -1053,15 +1053,15 @@ class MySqlVideoParseQueue:
         for candidate_id in candidate_ids:
             with self._session_factory.begin() as session:
                 task = session.scalar(
-                    select(VideoParseTaskRecord)
+                    select(VideoParseTask)
                     .where(
-                        VideoParseTaskRecord.id == candidate_id,
-                        VideoParseTaskRecord.status.in_([
+                        VideoParseTask.id == candidate_id,
+                        VideoParseTask.status.in_([
                             VideoParseTaskStatus.PREPARING.value,
                             VideoParseTaskStatus.PARSING.value,
                             VideoParseTaskStatus.INDEXING.value,
                         ]),
-                        VideoParseTaskRecord.lease_expire_time <= reaped_at,
+                        VideoParseTask.lease_expire_time <= reaped_at,
                     )
                     .with_for_update(skip_locked=True)
                 )
@@ -1104,15 +1104,15 @@ class MySqlVideoParseQueue:
         retry_at = reaped_at + retry_delay
         with self._session_factory() as session:
             candidate_ids = list(session.scalars(
-                select(ChunkParseTaskRecord.id)
+                select(ChunkParseTask.id)
                 .where(
-                    ChunkParseTaskRecord.status
+                    ChunkParseTask.status
                     == ChunkParseTaskStatus.UNDERSTANDING.value,
-                    ChunkParseTaskRecord.lease_expire_time <= reaped_at,
+                    ChunkParseTask.lease_expire_time <= reaped_at,
                 )
                 .order_by(
-                    ChunkParseTaskRecord.lease_expire_time,
-                    ChunkParseTaskRecord.id,
+                    ChunkParseTask.lease_expire_time,
+                    ChunkParseTask.id,
                 )
                 .limit(limit)
             ))
@@ -1120,19 +1120,19 @@ class MySqlVideoParseQueue:
         for candidate_id in candidate_ids:
             with self._session_factory.begin() as session:
                 task = session.scalar(
-                    select(ChunkParseTaskRecord)
+                    select(ChunkParseTask)
                     .where(
-                        ChunkParseTaskRecord.id == candidate_id,
-                        ChunkParseTaskRecord.status
+                        ChunkParseTask.id == candidate_id,
+                        ChunkParseTask.status
                         == ChunkParseTaskStatus.UNDERSTANDING.value,
-                        ChunkParseTaskRecord.lease_expire_time <= reaped_at,
+                        ChunkParseTask.lease_expire_time <= reaped_at,
                     )
                     .with_for_update(skip_locked=True)
                 )
                 if task is None:
                     continue
                 parent = session.get(
-                    VideoParseTaskRecord, task.video_parse_task_id
+                    VideoParseTask, task.video_parse_task_id
                 )
                 if parent is None:
                     continue
@@ -1175,18 +1175,18 @@ class MySqlVideoParseQueue:
         retry_at = reaped_at + retry_delay
         with self._session_factory() as session:
             candidate_ids = list(session.scalars(
-                select(IntervalParseTaskRecord.id)
+                select(IntervalParseTask.id)
                 .where(
-                    IntervalParseTaskRecord.status.in_([
+                    IntervalParseTask.status.in_([
                         IntervalParseTaskStatus.REFINING.value,
                         IntervalParseTaskStatus.INDEXING.value,
                     ]),
-                    IntervalParseTaskRecord.lease_expire_time <= reaped_at,
+                    IntervalParseTask.lease_expire_time <= reaped_at,
                 )
                 .order_by(
-                    IntervalParseTaskRecord.lease_expire_time,
-                    IntervalParseTaskRecord.start_sequence_no,
-                    IntervalParseTaskRecord.id,
+                    IntervalParseTask.lease_expire_time,
+                    IntervalParseTask.start_sequence_no,
+                    IntervalParseTask.id,
                 )
                 .limit(limit)
             ))
@@ -1194,21 +1194,21 @@ class MySqlVideoParseQueue:
         for candidate_id in candidate_ids:
             with self._session_factory.begin() as session:
                 interval = session.scalar(
-                    select(IntervalParseTaskRecord)
+                    select(IntervalParseTask)
                     .where(
-                        IntervalParseTaskRecord.id == candidate_id,
-                        IntervalParseTaskRecord.status.in_([
+                        IntervalParseTask.id == candidate_id,
+                        IntervalParseTask.status.in_([
                             IntervalParseTaskStatus.REFINING.value,
                             IntervalParseTaskStatus.INDEXING.value,
                         ]),
-                        IntervalParseTaskRecord.lease_expire_time <= reaped_at,
+                        IntervalParseTask.lease_expire_time <= reaped_at,
                     )
                     .with_for_update(skip_locked=True)
                 )
                 if interval is None:
                     continue
                 parent = session.get(
-                    VideoParseTaskRecord, interval.video_parse_task_id
+                    VideoParseTask, interval.video_parse_task_id
                 )
                 if parent is None:
                     continue
@@ -1245,23 +1245,23 @@ class MySqlVideoParseQueue:
         return changed
 
 
-def _accepted(task: VideoParseTaskRecord) -> bool:
+def _accepted(task: VideoParseTask) -> bool:
     runtime = (task.detail or {}).get(RUNTIME_DETAIL_KEY)
     return isinstance(runtime, dict) and runtime.get("accepted") is True
 
 
 def _is_latest_video_task(
-    session: Session, task: VideoParseTaskRecord
+    session: Session, task: VideoParseTask
 ) -> bool:
     latest_id = session.scalar(
-        select(VideoParseTaskRecord.id)
+        select(VideoParseTask.id)
         .where(
-            VideoParseTaskRecord.video_id == task.video_id,
-            VideoParseTaskRecord.is_deleted.is_(False),
+            VideoParseTask.video_id == task.video_id,
+            VideoParseTask.is_deleted.is_(False),
         )
         .order_by(
-            VideoParseTaskRecord.version.desc(),
-            VideoParseTaskRecord.id,
+            VideoParseTask.version.desc(),
+            VideoParseTask.id,
         )
         .limit(1)
     )
@@ -1270,7 +1270,7 @@ def _is_latest_video_task(
 
 def _chunk_dispatch_allowed(
     session: Session,
-    parent: VideoParseTaskRecord,
+    parent: VideoParseTask,
     candidate_sequence: int,
     now: datetime,
 ) -> bool:
@@ -1278,27 +1278,27 @@ def _chunk_dispatch_allowed(
         return False
     batch_size = _positive_int(parent.parse_config.get("batch_max_size"), "batch_max_size")
     active_count = int(session.scalar(
-        select(func.count(ChunkParseTaskRecord.id))
+        select(func.count(ChunkParseTask.id))
         .where(
-            ChunkParseTaskRecord.video_parse_task_id == parent.id,
-            ChunkParseTaskRecord.status == ChunkParseTaskStatus.UNDERSTANDING.value,
+            ChunkParseTask.video_parse_task_id == parent.id,
+            ChunkParseTask.status == ChunkParseTaskStatus.UNDERSTANDING.value,
         )
     ) or 0)
     requested = list(session.scalars(
-        select(ChunkParseTaskRecord)
+        select(ChunkParseTask)
         .where(
-            ChunkParseTaskRecord.video_parse_task_id == parent.id,
-            ChunkParseTaskRecord.status == ChunkParseTaskStatus.QUEUED.value,
+            ChunkParseTask.video_parse_task_id == parent.id,
+            ChunkParseTask.status == ChunkParseTaskStatus.QUEUED.value,
         )
     ))
     reserved_count = sum(_dispatch_requested(item) for item in requested)
     if active_count + reserved_count >= batch_size:
         return False
     rows = list(session.execute(
-        select(VideoChunkRecord.sequence_no, ChunkParseTaskRecord.status)
-        .join(ChunkParseTaskRecord, ChunkParseTaskRecord.video_chunk_id == VideoChunkRecord.video_chunk_id)
-        .where(ChunkParseTaskRecord.video_parse_task_id == parent.id)
-        .order_by(VideoChunkRecord.sequence_no)
+        select(VideoChunk.sequence_no, ChunkParseTask.status)
+        .join(ChunkParseTask, ChunkParseTask.video_chunk_id == VideoChunk.video_chunk_id)
+        .where(ChunkParseTask.video_parse_task_id == parent.id)
+        .order_by(VideoChunk.sequence_no)
     ))
     opened_through = min(batch_size, len(rows)) - 1
     batch_start = 0
@@ -1334,23 +1334,23 @@ def _chunk_dispatch_allowed(
 
 def _chunk_claim_allowed(
     session: Session,
-    parent: VideoParseTaskRecord,
+    parent: VideoParseTask,
     candidate_sequence: int,
 ) -> bool:
     batch_size = _positive_int(parent.parse_config.get("batch_max_size"), "batch_max_size")
     active_count = int(session.scalar(
-        select(func.count(ChunkParseTaskRecord.id)).where(
-            ChunkParseTaskRecord.video_parse_task_id == parent.id,
-            ChunkParseTaskRecord.status == ChunkParseTaskStatus.UNDERSTANDING.value,
+        select(func.count(ChunkParseTask.id)).where(
+            ChunkParseTask.video_parse_task_id == parent.id,
+            ChunkParseTask.status == ChunkParseTaskStatus.UNDERSTANDING.value,
         )
     ) or 0)
     if active_count >= batch_size:
         return False
     rows = list(session.execute(
-        select(VideoChunkRecord.sequence_no, ChunkParseTaskRecord.status)
-        .join(ChunkParseTaskRecord, ChunkParseTaskRecord.video_chunk_id == VideoChunkRecord.video_chunk_id)
-        .where(ChunkParseTaskRecord.video_parse_task_id == parent.id)
-        .order_by(VideoChunkRecord.sequence_no)
+        select(VideoChunk.sequence_no, ChunkParseTask.status)
+        .join(ChunkParseTask, ChunkParseTask.video_chunk_id == VideoChunk.video_chunk_id)
+        .where(ChunkParseTask.video_parse_task_id == parent.id)
+        .order_by(VideoChunk.sequence_no)
     ))
     opened_through = min(batch_size, len(rows)) - 1
     batch_start = batch_size
@@ -1368,7 +1368,7 @@ def _chunk_claim_allowed(
     return candidate_sequence <= opened_through
 
 
-def _record_chunk_dispatch(parent: VideoParseTaskRecord, now: datetime) -> None:
+def _record_chunk_dispatch(parent: VideoParseTask, now: datetime) -> None:
     detail = _ensure_runtime(parent.detail)
     runtime = deepcopy(detail[RUNTIME_DETAIL_KEY])
     runtime["chunk_scheduler"] = {
@@ -1379,7 +1379,7 @@ def _record_chunk_dispatch(parent: VideoParseTaskRecord, now: datetime) -> None:
     parent.update_time = now
 
 
-def _dispatch_requested(task: ChunkParseTaskRecord) -> bool:
+def _dispatch_requested(task: ChunkParseTask) -> bool:
     return isinstance(task.detail, dict) and task.detail.get("dispatch_requested") is True
 
 
@@ -1392,8 +1392,8 @@ def _set_dispatch_requested(
 
 
 def _schedule_wait_seconds(
-    parent: VideoParseTaskRecord,
-    rows: list[tuple[ChunkParseTaskRecord, VideoChunkRecord]],
+    parent: VideoParseTask,
+    rows: list[tuple[ChunkParseTask, VideoChunk]],
     now: datetime,
 ) -> float:
     due = [
@@ -1412,18 +1412,18 @@ def _schedule_wait_seconds(
 
 
 def _interval_has_index_work(
-    session: Session, interval: IntervalParseTaskRecord
+    session: Session, interval: IntervalParseTask
 ) -> bool:
-    result = session.get(IntervalParseContentRecord, interval.id)
+    result = session.get(IntervalParseContent, interval.id)
     if result is None:
         return False
     indexed = _indexed_versions(result.detail)
     contents = {
         task_id: version
         for task_id, version in session.execute(
-            select(ChunkParseTaskRecord.id, ChunkParseContentRecord.version)
-            .join(ChunkParseContentRecord, ChunkParseContentRecord.chunk_parse_task_id == ChunkParseTaskRecord.id)
-            .where(ChunkParseTaskRecord.id.in_(interval.chunk_parse_task_ids))
+            select(ChunkParseTask.id, ChunkParseContent.version)
+            .join(ChunkParseContent, ChunkParseContent.chunk_parse_task_id == ChunkParseTask.id)
+            .where(ChunkParseTask.id.in_(interval.chunk_parse_task_ids))
         )
     }
     covering = _submitted_intervals_by_member(session, interval.video_parse_task_id)

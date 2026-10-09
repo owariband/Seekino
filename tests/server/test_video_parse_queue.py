@@ -16,12 +16,12 @@ from server.database import (
 )
 from server.model.dto.jobDTO import VideoParseLease
 from server.model.job import (
-    ChunkParseContentRecord,
-    ChunkParseTaskRecord,
-    IntervalParseTaskRecord,
-    VideoParseTaskRecord,
+    ChunkParseContent,
+    ChunkParseTask,
+    IntervalParseTask,
+    VideoParseTask,
 )
-from server.model.video import SeriesRecord, VideoRecord
+from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.mq.video_parse_consumer import (
     VideoParseConsumer,
@@ -47,12 +47,12 @@ def _config(*, batch_size: int) -> dict:
 def _task(factory, *, chunk_count: int, accepted: bool, batch_size: int = 10):
     series_id, video_id, task_id = str(uuid4()), str(uuid4()), str(uuid4())
     with factory.begin() as session:
-        session.add(SeriesRecord(
+        session.add(Series(
             series_id=series_id, workspace_id="mine", name=f"Series {series_id}",
             description=None, status="INDEXING", important_extra_data=None,
             character_bible=[],
         ))
-        session.add(VideoRecord(
+        session.add(Video(
             video_id=video_id, series_id=series_id, episode_order=1,
             upload_sequence=1, original_filename="episode.mp4",
             original_source_uri="artifact://test/episode.mp4",
@@ -60,7 +60,7 @@ def _task(factory, *, chunk_count: int, accepted: bool, batch_size: int = 10):
             duration_seconds=chunk_count * 10000, upload_status="COMPLETED",
             parse_status="QUEUED", upload_progress=100, parse_progress=0,
         ))
-        session.add(VideoParseTaskRecord(
+        session.add(VideoParseTask(
             id=task_id, video_id=video_id, pipeline_version="v2", status="PENDING",
             parse_config=_config(batch_size=batch_size), chunk_count=chunk_count,
             version=1, next_execute_time=NOW, attempt_count=0, max_attempts=3,
@@ -105,7 +105,7 @@ def test_video_claim_requires_explicit_v2_acceptance(repository):
     )
     assert lease is not None and lease.video_parse_task_id == accepted_id
     with factory() as session:
-        assert session.get(VideoParseTaskRecord, legacy_id).status == "PENDING"
+        assert session.get(VideoParseTask, legacy_id).status == "PENDING"
 
 
 def test_dispatch_and_claim_enforce_ninety_percent_batch_gate(repository):
@@ -121,12 +121,12 @@ def test_dispatch_and_claim_enforce_ninety_percent_batch_gate(repository):
 
     with factory.begin() as session:
         for child_id in prepared.chunk_parse_task_ids[:8]:
-            session.get(ChunkParseTaskRecord, child_id).status = "COMPLETE"
+            session.get(ChunkParseTask, child_id).status = "COMPLETE"
     assert not queue.load_chunk_schedule(task_id, now=NOW).tasks[10].dispatchable
 
     with factory.begin() as session:
         session.get(
-            ChunkParseTaskRecord, prepared.chunk_parse_task_ids[8]
+            ChunkParseTask, prepared.chunk_parse_task_ids[8]
         ).status = "COMPLETE"
     opened = queue.load_chunk_schedule(task_id, now=NOW)
     assert opened.tasks[10].dispatchable and opened.tasks[11].dispatchable
@@ -176,7 +176,7 @@ def test_video_lease_survives_activation_and_can_be_reclaimed_after_expiry(repos
     queue = MySqlVideoParseQueue(factory)
     _repo, lease, _prepared = _prepare(factory, queue, task_id, chunk_count=1)
     with factory() as session:
-        task = session.get(VideoParseTaskRecord, task_id)
+        task = session.get(VideoParseTask, task_id)
         assert task.status == "PARSING"
         assert (task.lease_owner, task.lease_version) == ("main", lease.lease_version)
     assert queue.heartbeat_video(
@@ -209,7 +209,7 @@ def test_reaper_limits_are_independent_across_video_and_chunk_families(repositor
     )
     assert chunk_lease is not None
     with factory.begin() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         parent.lease_expire_time = NOW + timedelta(seconds=5)
 
     # Each family receives its own limit, so a due coordinator cannot starve
@@ -220,9 +220,9 @@ def test_reaper_limits_are_independent_across_video_and_chunk_families(repositor
         limit=1,
     ) == 2
     with factory() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         child = session.get(
-            ChunkParseTaskRecord, chunk_lease.chunk_parse_task_id
+            ChunkParseTask, chunk_lease.chunk_parse_task_id
         )
         assert parent.lease_owner is None
         assert child.status == "QUEUED"
@@ -277,7 +277,7 @@ def test_exhausted_coordinator_drains_and_a_new_consumer_finalizes_without_recla
     factory = create_session_factory(engine)
     task_id = _task(factory, chunk_count=2, accepted=True, batch_size=2)
     with factory.begin() as session:
-        session.get(VideoParseTaskRecord, task_id).max_attempts = 1
+        session.get(VideoParseTask, task_id).max_attempts = 1
     queue = MySqlVideoParseQueue(factory)
     repo, video_lease, prepared = _prepare(factory, queue, task_id, chunk_count=2)
     assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
@@ -290,10 +290,10 @@ def test_exhausted_coordinator_drains_and_a_new_consumer_finalizes_without_recla
         )
     else:
         with factory.begin() as session:
-            session.get(VideoParseTaskRecord, task_id).lease_expire_time = NOW + timedelta(seconds=5)
+            session.get(VideoParseTask, task_id).lease_expire_time = NOW + timedelta(seconds=5)
         assert queue.reap_expired_videos(retry_delay=timedelta(0), now=failed_at) == 1
     with factory() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         assert parent.status == "PARSING"
         assert parent.finish_time is None
         assert parent.lease_owner is None
@@ -322,17 +322,17 @@ def test_exhausted_coordinator_drains_and_a_new_consumer_finalizes_without_recla
     )
     assert not asyncio.run(consumer.run_once())
     with factory() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         assert parent.status == "PARSING_FAILED"
         assert parent.finish_time == poll_at
         assert parent.lease_owner is None
-        assert session.get(ChunkParseTaskRecord, child.chunk_parse_task_id).status == "COMPLETE"
-        content = session.query(ChunkParseContentRecord).filter_by(
+        assert session.get(ChunkParseTask, child.chunk_parse_task_id).status == "COMPLETE"
+        content = session.query(ChunkParseContent).filter_by(
             chunk_parse_task_id=child.chunk_parse_task_id,
         ).one()
         assert content.content == {"persons": ["retained"], "timeline": []}
         assert content.version == 1
-        assert session.get(ChunkParseTaskRecord, prepared.chunk_parse_task_ids[1]).status == "QUEUED"
+        assert session.get(ChunkParseTask, prepared.chunk_parse_task_ids[1]).status == "QUEUED"
     engine.dispose()
 
 
@@ -359,7 +359,7 @@ def test_failure_intent_blocks_each_delivery_but_not_existing_chunk_execution(
         assert refine is not None
         repo.commit_interval_refinement(refine, interval_content={"ready": True}, member_updates={}, now=NOW)
     with factory.begin() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         parent.detail = {"_worker_runtime_v2": {"accepted": True, "failure_status": "PARSING_FAILED"}}
 
     assert not any(item.dispatchable for item in queue.load_chunk_schedule(task_id, now=NOW).tasks)
@@ -368,7 +368,7 @@ def test_failure_intent_blocks_each_delivery_but_not_existing_chunk_execution(
     claim_interval = queue.claim_interval_refine if interval_phase == "refine" else queue.claim_interval_index
     assert claim_interval("new", lease_duration=timedelta(minutes=1), now=NOW) is None
     with factory.begin() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         parent.lease_owner = None
         parent.lease_expire_time = None
         parent.heartbeat_time = None
@@ -377,8 +377,8 @@ def test_failure_intent_blocks_each_delivery_but_not_existing_chunk_execution(
     assert queue.heartbeat_chunk(in_flight, lease_duration=timedelta(minutes=1), now=NOW)
     repo.commit_chunk_result(in_flight, content={"persons": ["existing"], "timeline": []}, now=NOW)
     with factory() as session:
-        assert session.get(ChunkParseTaskRecord, in_flight.chunk_parse_task_id).status == "COMPLETE"
-        content = session.query(ChunkParseContentRecord).filter_by(
+        assert session.get(ChunkParseTask, in_flight.chunk_parse_task_id).status == "COMPLETE"
+        content = session.query(ChunkParseContent).filter_by(
             chunk_parse_task_id=in_flight.chunk_parse_task_id,
         ).one()
         assert content.content["persons"] == ["existing"]
@@ -391,11 +391,11 @@ def test_exhausted_chunk_stops_sibling_redelivery_after_an_underbudget_error(rep
     with factory.begin() as session:
         config = _config(batch_size=3)
         config["execution"]["max_retry_count"] = 1
-        session.get(VideoParseTaskRecord, task_id).parse_config = config
+        session.get(VideoParseTask, task_id).parse_config = config
     queue = MySqlVideoParseQueue(factory)
     _repo, video_lease, prepared = _prepare(factory, queue, task_id, chunk_count=3)
     with factory.begin() as session:
-        session.get(ChunkParseTaskRecord, prepared.chunk_parse_task_ids[0]).retry_count = 1
+        session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).retry_count = 1
     for child_id in prepared.chunk_parse_task_ids[:2]:
         assert queue.dispatch_chunk(child_id, video_lease, now=NOW)
     failed = queue.claim_chunk("failed", lease_duration=timedelta(minutes=1), now=NOW)
@@ -403,17 +403,17 @@ def test_exhausted_chunk_stops_sibling_redelivery_after_an_underbudget_error(rep
     assert failed is not None and sibling is not None
     assert queue.retry_chunk(failed, error="retry exhausted", retry_at=NOW, now=NOW)
     with factory() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         assert parent.status == "PARSING" and parent.finish_time is None
         assert parent.detail["_worker_runtime_v2"]["failure_status"] == "PARSING_FAILED"
-        assert session.get(ChunkParseTaskRecord, sibling.chunk_parse_task_id).lease_owner == "sibling"
+        assert session.get(ChunkParseTask, sibling.chunk_parse_task_id).lease_owner == "sibling"
     assert queue.retry_video(
         video_lease, error="coordinator observed the exhausted Chunk", retry_at=NOW, now=NOW,
     )
     assert queue.claim_video("new", lease_duration=timedelta(minutes=1), now=NOW) is None
     assert queue.retry_chunk(sibling, error="temporary sibling error", retry_at=NOW, now=NOW)
     with factory() as session:
-        child = session.get(ChunkParseTaskRecord, sibling.chunk_parse_task_id)
+        child = session.get(ChunkParseTask, sibling.chunk_parse_task_id)
         assert child.status == "QUEUED"
         assert child.retry_count == 1
         assert child.lease_owner is None
@@ -421,8 +421,8 @@ def test_exhausted_chunk_stops_sibling_redelivery_after_an_underbudget_error(rep
     assert queue.claim_chunk("new", lease_duration=timedelta(minutes=1), now=NOW) is None
     MySqlVideoParseQueue(factory).reap_expired(retry_delay=timedelta(0), now=NOW)
     with factory() as session:
-        assert session.get(VideoParseTaskRecord, task_id).status == "PARSING_FAILED"
-        assert session.get(ChunkParseTaskRecord, sibling.chunk_parse_task_id).retry_count == 1
+        assert session.get(VideoParseTask, task_id).status == "PARSING_FAILED"
+        assert session.get(ChunkParseTask, sibling.chunk_parse_task_id).retry_count == 1
 
 
 def test_expired_child_owner_must_be_reaped_before_failure_is_published(repository):
@@ -435,26 +435,26 @@ def test_expired_child_owner_must_be_reaped_before_failure_is_published(reposito
     old = queue.claim_chunk("lost", lease_duration=timedelta(seconds=5), now=NOW)
     assert old is not None
     with factory.begin() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         parent.detail = {"_worker_runtime_v2": {"accepted": True, "failure_status": "PARSING_FAILED"}}
     reaped_at = NOW + timedelta(seconds=6)
     state = repo.aggregate_task(video_lease, now=reaped_at)
     assert state.status == "PARSING" and state.finish_time is None
     with factory() as session:
-        assert session.get(ChunkParseTaskRecord, old.chunk_parse_task_id).lease_owner == "lost"
+        assert session.get(ChunkParseTask, old.chunk_parse_task_id).lease_owner == "lost"
     assert queue.retry_video(
         video_lease, error="coordinator exits during failure drain", retry_at=reaped_at, now=reaped_at,
     )
     with factory() as session:
-        assert session.get(VideoParseTaskRecord, task_id).status == "PARSING"
-        assert session.get(ChunkParseTaskRecord, old.chunk_parse_task_id).lease_owner == "lost"
+        assert session.get(VideoParseTask, task_id).status == "PARSING"
+        assert session.get(ChunkParseTask, old.chunk_parse_task_id).lease_owner == "lost"
     MySqlVideoParseQueue(factory).reap_expired(retry_delay=timedelta(0), now=reaped_at)
     with factory() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         assert parent.status == "PARSING_FAILED"
         assert parent.finish_time == reaped_at
         assert parent.lease_owner is None
-        child = session.get(ChunkParseTaskRecord, old.chunk_parse_task_id)
+        child = session.get(ChunkParseTask, old.chunk_parse_task_id)
         assert child.status == "QUEUED" and child.lease_owner is None
         assert child.retry_count == 1
     with pytest.raises(VideoParseLeaseLostError):
@@ -469,7 +469,7 @@ def test_interval_failure_intent_respects_the_still_running_parse_phase(reposito
     with factory.begin() as session:
         config = _config(batch_size=4)
         config["execution"]["max_retry_count"] = 0
-        session.get(VideoParseTaskRecord, task_id).parse_config = config
+        session.get(VideoParseTask, task_id).parse_config = config
     queue = MySqlVideoParseQueue(factory)
     repo, video_lease, prepared = _prepare(factory, queue, task_id, chunk_count=4)
     for child_id in prepared.chunk_parse_task_ids[1:]:
@@ -490,9 +490,9 @@ def test_interval_failure_intent_respects_the_still_running_parse_phase(reposito
         failed = refine
     assert queue.retry_interval(failed, error="interval exhausted", retry_at=NOW, now=NOW)
     with factory() as session:
-        parent = session.get(VideoParseTaskRecord, task_id)
+        parent = session.get(VideoParseTask, task_id)
         assert parent.status == "PARSING" and parent.finish_time is None
-        interval = session.get(IntervalParseTaskRecord, failed.interval_parse_task_id)
+        interval = session.get(IntervalParseTask, failed.interval_parse_task_id)
         assert interval.status == ("INDEXING_FAILED" if failed_phase == "index" else "PARSING_FAILED")
         assert interval.lease_owner is None
         runtime = parent.detail["_worker_runtime_v2"]
@@ -511,7 +511,7 @@ def test_interval_failure_intent_respects_the_still_running_parse_phase(reposito
         repo.commit_chunk_result(in_flight, content={"persons": ["retained"], "timeline": []}, now=NOW)
         MySqlVideoParseQueue(factory).reap_expired(retry_delay=timedelta(0), now=NOW)
         with factory() as session:
-            assert session.get(VideoParseTaskRecord, task_id).status == "PARSING_FAILED"
+            assert session.get(VideoParseTask, task_id).status == "PARSING_FAILED"
 
 
 def test_consumer_heartbeat_interval_is_bounded_by_lease(repository):
@@ -802,7 +802,7 @@ def test_one_consumer_keeps_coordinator_alive_while_processing_children(tmp_path
     factory = create_session_factory(engine)
     task_id = _task(factory, chunk_count=1, accepted=True, batch_size=1)
     with factory.begin() as session:
-        session.get(VideoParseTaskRecord, task_id).next_execute_time = datetime(
+        session.get(VideoParseTask, task_id).next_execute_time = datetime(
             2020, 1, 1, tzinfo=UTC
         )
     queue = MySqlVideoParseQueue(factory)
@@ -864,7 +864,7 @@ def test_one_consumer_keeps_coordinator_alive_while_processing_children(tmp_path
     try:
         while time.monotonic() < deadline:
             with factory() as session:
-                if session.get(VideoParseTaskRecord, task_id).status == "COMPLETE":
+                if session.get(VideoParseTask, task_id).status == "COMPLETE":
                     break
             time.sleep(0.02)
         else:

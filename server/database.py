@@ -417,16 +417,16 @@ def create_schema(engine: Engine) -> None:
             + ", ".join(sorted(missing_v2_schema))
         )
 
-    from .model.job import IntervalParseTaskRecord, VideoParseTaskRecord
+    from .model.job import IntervalParseTask, VideoParseTask
     from .model.parse_usage import (
-        ModelUsageRecord,
-        ParseModelCallRecord,
-        VideoParseUsageAttemptRecord,
+        ModelUsage,
+        ParseModelCall,
+        VideoParseUsageAttempt,
     )
 
     worker_runtime_tables = (
-        VideoParseUsageAttemptRecord.__table__,
-        ParseModelCallRecord.__table__,
+        VideoParseUsageAttempt.__table__,
+        ParseModelCall.__table__,
     )
     if has_existing_core_schema or existing_tables.intersection(
         table.name for table in worker_runtime_tables
@@ -443,8 +443,8 @@ def create_schema(engine: Engine) -> None:
                 + ", ".join(sorted(incompatible_worker_runtime))
             )
 
-    if ModelUsageRecord.__tablename__ in existing_tables:
-        table = ModelUsageRecord.__table__
+    if ModelUsage.__tablename__ in existing_tables:
+        table = ModelUsage.__table__
         incompatible_usage = _schema_structure_differences(
             inspector, existing_tables, (table,),
         )
@@ -471,7 +471,7 @@ def create_schema(engine: Engine) -> None:
             )
 
     incompatible_task_checks: set[str] = set()
-    for model in (VideoParseTaskRecord, IntervalParseTaskRecord):
+    for model in (VideoParseTask, IntervalParseTask):
         table = model.__table__
         if table.name not in existing_tables:
             continue

@@ -83,7 +83,7 @@ class VideoIndexStatus(StrEnum):
     FAILED = "FAILED"
 
 
-class TimestampedRecord:
+class TimestampMixin:
     created_at: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
@@ -97,7 +97,7 @@ class TimestampedRecord:
     )
 
 
-class SeriesRecord(TimestampedRecord, Base):
+class Series(TimestampMixin, Base):
     __tablename__ = "series"
     __table_args__ = (
         UniqueConstraint("workspace_id", "name", name="uq_series_workspace_name"),
@@ -118,7 +118,7 @@ class SeriesRecord(TimestampedRecord, Base):
     )
 
 
-class VideoRecord(TimestampedRecord, Base):
+class Video(TimestampMixin, Base):
     __tablename__ = "video"
     __table_args__ = (
         UniqueConstraint("series_id", "episode_order", name="uq_video_series_order"),
@@ -171,7 +171,7 @@ class VideoRecord(TimestampedRecord, Base):
     )
 
 
-class VideoChunkRecord(TimestampedRecord, Base):
+class VideoChunk(TimestampMixin, Base):
     __tablename__ = "video_chunk"
     __table_args__ = (
         UniqueConstraint(
@@ -235,7 +235,7 @@ class VideoChunkRecord(TimestampedRecord, Base):
     )
 
 
-class VideoChunkInfoRecord(Base):
+class VideoChunkInfo(Base):
     __tablename__ = "video_chunk_info"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
@@ -263,7 +263,7 @@ class VideoChunkInfoRecord(Base):
     )
 
 
-class ContextSnapshotRecord(Base):
+class ContextSnapshot(Base):
     __tablename__ = "context_snapshot"
     __table_args__ = (
         UniqueConstraint(
@@ -305,7 +305,7 @@ class ContextSnapshotRecord(Base):
     )
 
 
-class VideoChunkEmbeddingRecord(TimestampedRecord, Base):
+class VideoChunkEmbedding(TimestampMixin, Base):
     __tablename__ = "video_chunk_embedding"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
