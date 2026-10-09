@@ -1,7 +1,7 @@
 import { Check, Database, Moon, Server, ShieldCheck, Sun } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 
-import { API_BASE_URL, ApiClientError, errorMessage, getAgentGlobalSettings, updateAgentGlobalSettings, WORKSPACE_ID } from "../../api/client";
+import { API_BASE_URL, ApiClientError, errorMessage, getAgentGlobalSettings, updateAgentGlobalSettings, TENANT_ID } from "../../api/client";
 import type { AgentGlobalSettings, AgentGlobalSettingsValues, AgentReasoningEffort } from "../../api/contracts";
 import { useTheme } from "../../app/theme";
 import { useWorkspace } from "../../app/workspace";
@@ -244,7 +244,7 @@ export function SettingsPage() {
           <dl className={styles.connectionList}>
             <div><dt><Server size={16} />API 状态</dt><dd data-mode={mode}><i />{mode === "live" ? "已连接" : mode === "offline" ? "不可用" : "正在检查"}</dd></div>
             <div><dt><Database size={16} />API 地址</dt><dd>{shownApiUrl}</dd></div>
-            <div><dt><ShieldCheck size={16} />Workspace</dt><dd>{WORKSPACE_ID}</dd></div>
+            <div><dt><ShieldCheck size={16} />Workspace</dt><dd>{TENANT_ID}</dd></div>
           </dl>
           {mode === "offline" ? (
             <p className={styles.modeNote}>当前无法连接 API。请确认 anivag Server 已启动；恢复连接后页面会重新读取真实 Series 和任务状态。</p>

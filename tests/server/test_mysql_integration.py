@@ -87,13 +87,13 @@ def test_mysql_agent_message_detail_request_idempotency_and_pairing():
     try:
         repository.create_conversation(
             conversation_id=conversation_id,
-            workspace_id="mysql-agent-detail-request",
+            tenant_id="mysql-agent-detail-request",
             title="Agent detail request test",
             idempotency_key=str(uuid4()),
         )
         request = dict(
             conversation_id=conversation_id,
-            workspace_id="mysql-agent-detail-request",
+            tenant_id="mysql-agent-detail-request",
             content="Find the scene",
             model_name="test-model",
             requested_top_k=5,
@@ -157,7 +157,7 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
     create_schema(engine)
     session_factory = create_session_factory(engine)
     series = LibraryService(LibraryRepository(session_factory)).create_series(
-        workspace_id="mysql-manual-retry",
+        tenant_id="mysql-manual-retry",
         name=f"Manual Retry {uuid4()}",
     )
     store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
@@ -173,7 +173,7 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
         probe_duration=lambda _path: 10_000,
     )
     upload = uploads.create_session(
-        workspace_id="mysql-manual-retry",
+        tenant_id="mysql-manual-retry",
         series_id=series.series_id,
         episode_order=1,
         original_filename="episode.mp4",
@@ -185,7 +185,7 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
         upload.upload_session_id,
         0,
         b"abcd",
-        workspace_id="mysql-manual-retry",
+        tenant_id="mysql-manual-retry",
         checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
         start_byte=0,
         end_byte_exclusive=4,
@@ -193,7 +193,7 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
     )
     completed = uploads.complete(
         upload.upload_session_id,
-        workspace_id="mysql-manual-retry",
+        tenant_id="mysql-manual-retry",
     )
     assert completed.video_parse_task_id is not None
     with session_factory.begin() as session:
@@ -213,7 +213,7 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
         try:
             return uploads.retry_parse(
                 upload.upload_session_id,
-                workspace_id="mysql-manual-retry",
+                tenant_id="mysql-manual-retry",
                 expected_job_version=1,
             )
         except (UploadConflictError, UploadStateError) as exc:
@@ -261,7 +261,7 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
     create_schema(engine)
     session_factory = create_session_factory(engine)
     series = LibraryService(LibraryRepository(session_factory)).create_series(
-        workspace_id="mysql-reparse",
+        tenant_id="mysql-reparse",
         name=f"Concurrent Reparse {uuid4()}",
     )
     uploads = UploadService(
@@ -275,7 +275,7 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
         probe_duration=lambda _path: 120,
     )
     upload = uploads.create_session(
-        workspace_id="mysql-reparse",
+        tenant_id="mysql-reparse",
         series_id=series.series_id,
         episode_order=1,
         original_filename="episode.mp4",
@@ -287,7 +287,7 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
         upload.upload_session_id,
         0,
         b"abcd",
-        workspace_id="mysql-reparse",
+        tenant_id="mysql-reparse",
         checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
         start_byte=0,
         end_byte_exclusive=4,
@@ -295,7 +295,7 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
     )
     completed = uploads.complete(
         upload.upload_session_id,
-        workspace_id="mysql-reparse",
+        tenant_id="mysql-reparse",
     )
     assert completed.video_parse_task_id is not None
     with session_factory.begin() as session:
@@ -315,7 +315,7 @@ def test_mysql_reparse_allocates_one_new_v2_version_under_concurrent_requests(
         try:
             return uploads.reparse(
                 upload.upload_session_id,
-                workspace_id="mysql-reparse",
+                tenant_id="mysql-reparse",
                 expected_job_version=1,
             )
         except UploadConflictError as exc:
@@ -377,7 +377,7 @@ def mysql_v2_series():
     factory = create_session_factory(engine)
     now = unix_time_ms_to_datetime(now_unix_time_ms())
     series_id = str(uuid4())
-    workspace_id = f"mysql-v2-{uuid4()}"
+    tenant_id = f"mysql-v2-{uuid4()}"
     config = default_video_parse_v2_config().model_dump(mode="json")
     config.update({
         "chunk_duration": 10,
@@ -394,7 +394,7 @@ def mysql_v2_series():
     try:
         with factory.begin() as session:
             session.add(Series(
-                series_id=series_id, workspace_id=workspace_id,
+                series_id=series_id, tenant_id=tenant_id,
                 name=f"V2 lock test {series_id}", status="READY",
                 character_bible=[],
             ))
@@ -468,7 +468,7 @@ def mysql_v2_series():
                     interval_parse_task_id=ids["interval_id"], content={"retained": True},
                 ))
                 session.add(UploadSession(
-                    upload_session_id=ids["upload_id"], workspace_id=workspace_id,
+                    upload_session_id=ids["upload_id"], tenant_id=tenant_id,
                     series_id=series_id, episode_order=order, upload_sequence=order,
                     original_filename=f"episode-{order}.mp4", media_type="video/mp4",
                     total_size_bytes=4, preferred_segment_size_bytes=4, total_segments=1,
@@ -477,7 +477,7 @@ def mysql_v2_series():
                     video_id=ids["video_id"], initial_video_parse_task_id=ids["task_id"],
                     video_parse_config=deepcopy(config),
                 ))
-        yield engine, factory, series_id, workspace_id, now, episodes
+        yield engine, factory, series_id, tenant_id, now, episodes
     finally:
         event.remove(engine, "checkout", bounded_lock_wait)
         with factory.begin() as session:
@@ -490,7 +490,7 @@ def mysql_v2_series():
 def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
     mysql_v2_series, takeover, active,
 ):
-    engine, factory, _series_id, workspace_id, now, episodes = mysql_v2_series
+    engine, factory, _series_id, tenant_id, now, episodes = mysql_v2_series
     first, second, third = episodes
     expires = now + (timedelta(minutes=5) if active else -timedelta(seconds=1))
     with factory.begin() as session:
@@ -553,7 +553,7 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
                 assert locked.wait(5), "holder did not acquire the later parent lock"
                 future = contenders.submit(
                     UploadRepository(factory).reparse, first["upload_id"],
-                    workspace_id=workspace_id, expected_job_version=1,
+                    tenant_id=tenant_id, expected_job_version=1,
                     execution_mode="v2", now=now,
                 )
                 assert observed.wait(5), "uncommitted entry changes were not observed"
@@ -628,7 +628,7 @@ def test_mysql_reparse_prefix_suffix_is_atomic_across_connections(
 
 @pytest.mark.parametrize("kind", ["chunk", "refine", "index"])
 def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series, kind):
-    engine, factory, _series_id, workspace_id, now, episodes = mysql_v2_series
+    engine, factory, _series_id, tenant_id, now, episodes = mysql_v2_series
     target = episodes[0]
     queue = MySqlVideoParseQueue(factory)
     table = "chunk_parse_task" if kind == "chunk" else "interval_parse_task"
@@ -700,7 +700,7 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
                     parent.status = "INDEXING_FAILED" if kind == "index" else "PARSING_FAILED"
                 retry = retries.submit(
                     UploadRepository(factory).retry_parse, target["upload_id"],
-                    workspace_id=workspace_id, expected_job_version=1, now=now,
+                    tenant_id=tenant_id, expected_job_version=1, now=now,
                 )
                 assert retry_locked.wait(5), "retry never acquired the candidate child lock"
                 resume_claim.set()
@@ -728,7 +728,7 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
 
 @pytest.mark.parametrize("kind", ["chunk", "refine"])
 def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series, kind):
-    engine, factory, _series_id, workspace_id, now, episodes = mysql_v2_series
+    engine, factory, _series_id, tenant_id, now, episodes = mysql_v2_series
     target = episodes[0]
     expires = now + timedelta(minutes=5)
     with factory.begin() as session:
@@ -810,7 +810,7 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
                 assert worker_locked.wait(5), "worker did not acquire its Interval locks"
                 retry = retries.submit(
                     UploadRepository(factory).retry_parse, target["upload_id"],
-                    workspace_id=workspace_id, expected_job_version=1, now=now,
+                    tenant_id=tenant_id, expected_job_version=1, now=now,
                 )
                 worker.result(timeout=8)
                 restored = retry.result(timeout=8)
@@ -837,7 +837,7 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
 def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
     mysql_v2_series, kind, expired,
 ):
-    engine, factory, _series_id, _workspace_id, now, episodes = mysql_v2_series
+    engine, factory, _series_id, _tenant_id, now, episodes = mysql_v2_series
     target = episodes[0]
     expires = now + timedelta(minutes=5)
     checked_at = now + (timedelta(minutes=6) if expired else timedelta(seconds=2))
@@ -1045,7 +1045,7 @@ def test_mysql_index_sync_hides_video_while_upload_deletion_is_pending(
         with session_factory.begin() as session:
             session.add(UploadSession(
                 upload_session_id=str(uuid4()),
-                workspace_id=prepared.workspace_id,
+                tenant_id=prepared.tenant_id,
                 series_id=prepared.series_id,
                 episode_order=prepared.episode_order,
                 upload_sequence=prepared.upload_sequence,
@@ -1081,7 +1081,7 @@ def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monk
     create_schema(engine)
     session_factory = create_session_factory(engine)
     series = LibraryService(LibraryRepository(session_factory)).create_series(
-        workspace_id="mysql-delete", name=f"Upload Delete {uuid4()}",
+        tenant_id="mysql-delete", name=f"Upload Delete {uuid4()}",
     )
     store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
     uploads = UploadService(UploadRepository(session_factory), store,
@@ -1097,7 +1097,7 @@ def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monk
 
     try:
         upload = uploads.create_session(
-            workspace_id="mysql-delete", series_id=series.series_id,
+            tenant_id="mysql-delete", series_id=series.series_id,
             episode_order=1,
             original_filename="episode.mp4", media_type="video/mp4",
             total_size_bytes=4, idempotency_key="first",
@@ -1105,20 +1105,20 @@ def test_mysql_delete_fences_in_flight_upload_and_preserves_order(tmp_path, monk
         monkeypatch.setattr(store, "put_upload_segment", delayed_put)
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(uploads.upload_segment,
-                upload.upload_session_id, 0, b"abcd", workspace_id="mysql-delete",
+                upload.upload_session_id, 0, b"abcd", tenant_id="mysql-delete",
                 checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
                 start_byte=0, end_byte_exclusive=4, total_size_bytes=4)
             try:
                 assert entered.wait(10)
-                assert uploads.delete_session(upload.upload_session_id, workspace_id="mysql-delete").status == "EXPIRED"
+                assert uploads.delete_session(upload.upload_session_id, tenant_id="mysql-delete").status == "EXPIRED"
             finally:
                 release.set()
             with pytest.raises(UploadStateError, match="expired"):
                 future.result(timeout=10)
         assert not (store.base_directory / "staging" / "uploads" / upload.upload_session_id).exists()
-        assert uploads.list_sessions(workspace_id="mysql-delete") == []
+        assert uploads.list_sessions(tenant_id="mysql-delete") == []
         next_upload = uploads.create_session(
-            workspace_id="mysql-delete", series_id=series.series_id,
+            tenant_id="mysql-delete", series_id=series.series_id,
             episode_order=2,
             original_filename="next.mp4", media_type="video/mp4",
             total_size_bytes=4, idempotency_key="next",
@@ -1137,7 +1137,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
     create_schema(engine)
     session_factory = create_session_factory(engine)
     series = LibraryService(LibraryRepository(session_factory)).create_series(
-        workspace_id="mysql-completed-delete",
+        tenant_id="mysql-completed-delete",
         name=f"Completed Upload Delete {uuid4()}",
     )
     store = LocalArtifactStore(tmp_path / "artifacts", environment="test")
@@ -1152,7 +1152,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
         probe_duration=lambda _path: 10_000,
     )
     upload = uploads.create_session(
-        workspace_id="mysql-completed-delete",
+        tenant_id="mysql-completed-delete",
         series_id=series.series_id,
         episode_order=1,
         original_filename="episode.mp4",
@@ -1164,7 +1164,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
         upload.upload_session_id,
         0,
         b"abcd",
-        workspace_id="mysql-completed-delete",
+        tenant_id="mysql-completed-delete",
         checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
         start_byte=0,
         end_byte_exclusive=4,
@@ -1172,7 +1172,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
     )
     completed = uploads.complete(
         upload.upload_session_id,
-        workspace_id="mysql-completed-delete",
+        tenant_id="mysql-completed-delete",
     )
     now = now_unix_time_ms()
     call_id = str(uuid4())
@@ -1189,7 +1189,7 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
             job_id=completed.job_id,
             attempt_count=1,
             lease_version=1,
-            workspace_id="mysql-completed-delete",
+            tenant_id="mysql-completed-delete",
             series_id=series.series_id,
             video_id=completed.video_id,
             provider="test",
@@ -1203,11 +1203,11 @@ def test_mysql_delete_completed_upload_removes_video_job_and_usage(tmp_path):
     try:
         deleted = uploads.delete_session(
             upload.upload_session_id,
-            workspace_id="mysql-completed-delete",
+            tenant_id="mysql-completed-delete",
         )
         repeated = uploads.delete_session(
             upload.upload_session_id,
-            workspace_id="mysql-completed-delete",
+            tenant_id="mysql-completed-delete",
         )
         assert deleted.status == UploadSessionStatus.EXPIRED.value
         assert repeated.version == deleted.version
@@ -1231,7 +1231,7 @@ def test_mysql_enforces_episode_order_under_concurrent_requests(tmp_path) -> Non
     create_schema(engine)
     session_factory = create_session_factory(engine)
     series = LibraryService(LibraryRepository(session_factory)).create_series(
-        workspace_id="mysql-order", name=f"Concurrent Upload Order {uuid4()}",
+        tenant_id="mysql-order", name=f"Concurrent Upload Order {uuid4()}",
     )
     uploads = UploadService(
         UploadRepository(session_factory),
@@ -1243,7 +1243,7 @@ def test_mysql_enforces_episode_order_under_concurrent_requests(tmp_path) -> Non
         barrier.wait()
         try:
             return uploads.create_session(
-                workspace_id="mysql-order", series_id=series.series_id,
+                tenant_id="mysql-order", series_id=series.series_id,
                 episode_order=999,
                 original_filename=f"episode-999-{number}.mp4", media_type="video/mp4",
                 total_size_bytes=100, idempotency_key=f"upload-{number}",
@@ -1265,7 +1265,7 @@ def test_mysql_enforces_episode_order_under_concurrent_requests(tmp_path) -> Non
             number for number, item in enumerate(results) if item is created
         )
         replay = uploads.create_session(
-            workspace_id="mysql-order", series_id=series.series_id,
+            tenant_id="mysql-order", series_id=series.series_id,
             episode_order=999,
             original_filename=f"episode-999-{winner}.mp4", media_type="video/mp4",
             total_size_bytes=100, idempotency_key=f"upload-{winner}",
@@ -1514,7 +1514,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
     session_factory = create_session_factory(engine)
     unique_name = f"Upload Integration {uuid4()}"
     series = LibraryService(LibraryRepository(session_factory)).create_series(
-        workspace_id="mysql-integration",
+        tenant_id="mysql-integration",
         name=unique_name,
     )
     artifacts = LocalArtifactStore(tmp_path / "artifacts", environment="test")
@@ -1530,7 +1530,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
     )
     source = b"abcdefghij"
     upload = uploads.create_session(
-        workspace_id="mysql-integration",
+        tenant_id="mysql-integration",
         series_id=series.series_id,
         episode_order=1,
         original_filename="episode.mp4",
@@ -1544,7 +1544,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
             upload.upload_session_id,
             number,
             data,
-            workspace_id="mysql-integration",
+            tenant_id="mysql-integration",
             checksum_sha256=hashlib.sha256(data).hexdigest(),
             start_byte=start,
             end_byte_exclusive=start + len(data),
@@ -1552,11 +1552,11 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         )
     completed = uploads.complete(
         upload.upload_session_id,
-        workspace_id="mysql-integration",
+        tenant_id="mysql-integration",
     )
     second_source = b"klmnopqrst"
     second_upload = uploads.create_session(
-        workspace_id="mysql-integration",
+        tenant_id="mysql-integration",
         series_id=series.series_id,
         episode_order=2,
         original_filename="episode-2.mp4",
@@ -1570,7 +1570,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
             second_upload.upload_session_id,
             number,
             data,
-            workspace_id="mysql-integration",
+            tenant_id="mysql-integration",
             checksum_sha256=hashlib.sha256(data).hexdigest(),
             start_byte=start,
             end_byte_exclusive=start + len(data),
@@ -1578,7 +1578,7 @@ def test_mysql_chunked_upload_claim_and_lease_fencing(tmp_path) -> None:
         )
     second_completed = uploads.complete(
         second_upload.upload_session_id,
-        workspace_id="mysql-integration",
+        tenant_id="mysql-integration",
     )
     jobs = ParseJobRepository(session_factory)
     queue = MySqlParseJobQueue(session_factory)

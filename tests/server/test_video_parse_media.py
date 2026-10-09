@@ -185,7 +185,7 @@ def test_reaper_deletes_only_old_inactive_lease_directories(tmp_path):
     assert directories[fresh].exists()
 
 
-def test_reaper_uses_workspace_identity_when_marker_is_missing_or_corrupt(tmp_path):
+def test_reaper_uses_tenant_identity_when_marker_is_missing_or_corrupt(tmp_path):
     now = 10_000.0
     service = VideoParseMediaService(tmp_path / "work", clock=lambda: now)
     markerless = _identity(lease_version=4)

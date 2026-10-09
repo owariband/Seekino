@@ -211,7 +211,7 @@ class _RecoveringElasticsearchBoundary(_ElasticsearchBoundary):
     def search_lexical(self, query, *, limit, **scope):
         documents = [
             item for item in self.documents.values()
-            if item.workspace_id == scope["workspace_id"]
+            if item.tenant_id == scope["tenant_id"]
             and item.series_id in scope["series_ids"]
             and scope["parse_tasks_by_video_id"].get(item.video_id) == item.parse_task_id
             and item.index_generation == scope["index_generation"]
@@ -271,7 +271,7 @@ def _create_task(factory, source: Path) -> str:
     with factory.begin() as session:
         session.add(Series(
             series_id=series_id,
-            workspace_id="workspace-1",
+            tenant_id="workspace-1",
             name="Worker fixture",
             description=None,
             status="INDEXING",
@@ -876,7 +876,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
     try:
         with TestClient(create_app(services)) as client:
             series = client.post("/api/series/create", json={
-                "workspaceId": "pipeline-test", "name": "Product pipeline",
+                "tenantId": "pipeline-test", "name": "Product pipeline",
             })
             assert series.status_code == 201, series.text
             series_id = series.json()["seriesId"]
@@ -884,14 +884,14 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
                 "/api/uploads/create", params={"seriesId": series_id},
                 headers={"Idempotency-Key": "pipeline-upload"},
                 json={
-                    "workspaceId": "pipeline-test", "episodeOrder": 1,
+                    "tenantId": "pipeline-test", "episodeOrder": 1,
                     "originalFilename": "episode.mp4", "mediaType": "video/mp4",
                     "totalSizeBytes": 4, "videoParseConfig": parse_config,
                 },
             )
             assert created.status_code == 201, created.text
             upload_id = created.json()["uploadSessionId"]
-            scope = {"workspaceId": "pipeline-test", "uploadSessionId": upload_id}
+            scope = {"tenantId": "pipeline-test", "uploadSessionId": upload_id}
             segment = client.put(
                 "/api/uploads/segments/upload", params={**scope, "segmentNumber": 0},
                 headers={
@@ -904,9 +904,9 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             assert completed.status_code == 200, completed.text
             task_id = completed.json()["videoParseTaskId"]
             video_id = completed.json()["videoId"]
-            task_scope = {"workspaceId": "pipeline-test", "videoParseTaskId": task_id}
+            task_scope = {"tenantId": "pipeline-test", "videoParseTaskId": task_id}
             search_body = {
-                "workspaceId": "pipeline-test", "seriesIds": [series_id],
+                "tenantId": "pipeline-test", "seriesIds": [series_id],
                 "query": "hand", "topK": 5,
             }
 
@@ -940,7 +940,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             assert failed.json()["canRetry"]
             assert "_worker_runtime_v2" not in failed.json()["detail"]
             assert client.get(
-                "/api/jobs/video-parse/get", params={**task_scope, "workspaceId": "other"},
+                "/api/jobs/video-parse/get", params={**task_scope, "tenantId": "other"},
             ).status_code == 404
 
             retried = client.post(
@@ -974,7 +974,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
                     row.detail["_index_embeddings_v2"]["receipt"]["video_chunk_id"]:
                     row.detail["_index_embeddings_v2"]["receipt"] for row in contents
                 }
-            result = retrieval.search("hand", workspace_id="pipeline-test", series_ids=[series_id])
+            result = retrieval.search("hand", tenant_id="pipeline-test", series_ids=[series_id])
             assert len(result.hits) == 2
             assert result.searched_video_ids == [video_id]
             for hit in result.hits:
@@ -1007,7 +1007,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             # Cleanup failure must fence query access before external I/O recovers.
             store.fail_next_delete = True
             with pytest.raises(RuntimeError, match="injected index cleanup failure"):
-                uploads.delete_session(upload_id, workspace_id="pipeline-test")
+                uploads.delete_session(upload_id, tenant_id="pipeline-test")
             with factory() as session:
                 assert session.get(UploadSession, upload_id).last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
                 assert session.get(VideoParseTask, task_id).is_deleted
@@ -1431,7 +1431,7 @@ def test_model_stage_traces_actual_worker_calls_without_a_ledger(monkeypatch):
         attempt_count=2, max_attempts=3, parse_config={},
     )
     task_input = SimpleNamespace(
-        workspace_id="workspace", series_id="series",
+        tenant_id="workspace", series_id="series",
         task=SimpleNamespace(video_id="video"),
     )
 
@@ -1450,7 +1450,7 @@ def test_model_stage_traces_actual_worker_calls_without_a_ledger(monkeypatch):
     asyncio.run(execute())
     assert len(traced) == len(outer) == 1
     assert thread_ids[0] != main_thread
-    assert traced[0].context["workspace_id"] == "workspace"
+    assert traced[0].context["tenant_id"] == "workspace"
     assert traced[0].context["video_parse_task_id"] == "task"
     assert traced[0].context["lease_version"] == 9
     assert traced[0].context["attempt_count"] == 2

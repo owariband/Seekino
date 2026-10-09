@@ -8,7 +8,7 @@ import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
 
 function video(videoId = "video-1", playbackStatus: VideoSummary["playbackStatus"] = "READY"): VideoSummary {
   return {
-    videoId, workspaceId: "local-default", seriesId: "series-1", episodeOrder: 1, uploadSequence: 1,
+    videoId, tenantId: "local-default", seriesId: "series-1", episodeOrder: 1, uploadSequence: 1,
     originalFilename: `${videoId}.mp4`, totalBytes: 100, durationSeconds: 120_000,
     uploadStatus: "COMPLETED", parseStatus: "SUCCEEDED", uploadProgress: 100, parseProgress: 100,
     indexStatus: "READY", playbackStatus,

@@ -8,7 +8,7 @@ from typing import Any
 @dataclass(frozen=True, slots=True)
 class ParseJobState:
     job_id: str
-    workspace_id: str
+    tenant_id: str
     series_id: str
     video_id: str
     series_name: str
@@ -37,6 +37,7 @@ class ParseJobState:
     upload_session_id: str | None = None
     is_primary_upload_job: bool = False
     parse_config: dict | None = None
+    created_by_user_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,12 +65,13 @@ class VideoParseTaskState:
     detail: dict
     create_time: datetime
     update_time: datetime
+    created_by_user_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class VideoParseTaskDetail:
     task: VideoParseTaskState
-    workspace_id: str
+    tenant_id: str
     series_id: str
     series_name: str
     episode_order: int
@@ -95,7 +97,7 @@ class VideoParseTaskInputState:
     content_hash: str
     total_bytes: int
     duration_seconds: int
-    workspace_id: str = ""
+    tenant_id: str = ""
     background: dict[str, Any] = field(default_factory=dict)
 
 
@@ -118,7 +120,7 @@ class ParseJobLease:
     content_hash: str
     total_bytes: int
     duration_seconds: int
-    workspace_id: str
+    tenant_id: str
     series_name: str
     series_description: str | None
     important_extra_data: dict | None
@@ -145,7 +147,7 @@ class VideoChunkCheckpointState:
 
 @dataclass(frozen=True, slots=True)
 class ParseJobSummaryState:
-    workspace_id: str
+    tenant_id: str
     series_id: str | None
     counts: dict[str, int]
     checkpoint_count: int
@@ -254,7 +256,7 @@ class IntervalMemberSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class IndexableChunkState:
-    workspace_id: str
+    tenant_id: str
     series_id: str
     video_id: str
     chunk_parse_task_id: str

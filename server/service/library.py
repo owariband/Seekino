@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from engine.common.background import extract_background_image_ids, prepare_background_text
 
+from typing import TYPE_CHECKING
+
+from ..constants.identity import LOCAL_USER_ID
+
 from ..model.identifiers import derive_series_id
 from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
 from ..repository.library import LibraryRepository
 from ..storage.artifact import ArtifactStore
 from ..utils.validation import canonical_uuid, normalize_language_tag_hint, require_nonempty_text
+
+if TYPE_CHECKING:
+    from .media import MediaService
 
 
 class LibraryService:
@@ -19,14 +26,14 @@ class LibraryService:
     def create_series(
         self,
         *,
-        workspace_id: str,
+        tenant_id: str,
         name: str,
         description: str | None = None,
         transcript_language_hint: str | None = None,
         important_extra_data: dict | None = None,
         character_bible: list[dict] | None = None,
     ) -> SeriesState:
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         normalized_name = require_nonempty_text(name, "name")
         normalized_description = None
         if description is not None:
@@ -40,7 +47,7 @@ class LibraryService:
         )
         created = self._repository.create_series(
             series_id=series_id,
-            workspace_id=normalized_workspace,
+            tenant_id=normalized_workspace,
             name=normalized_name,
             description=normalized_description,
             transcript_language_hint=normalized_language_hint,
@@ -50,17 +57,26 @@ class LibraryService:
         return self._repository.get_series(created.series_id, normalized_workspace)
 
     def update_series(
-        self, series_id: str, *, workspace_id: str, changes: dict,
+        self, series_id: str, *, tenant_id: str, changes: dict, owner_user_id: str = LOCAL_USER_ID,
     ) -> SeriesState:
-        series = self.get_series(series_id, workspace_id=workspace_id)
+        series = self.get_series(series_id, tenant_id=tenant_id, owner_user_id=owner_user_id)
         if changes.keys() - {
             "description", "transcript_language_hint", "important_extra_data",
+            "is_published",
         }:
             raise ValueError(
                 "only description, transcript_language_hint and "
-                "important_extra_data can be updated"
+                "important_extra_data and is_published can be updated"
             )
         normalized = dict(changes)
+        if "is_published" in normalized:
+            if not isinstance(normalized["is_published"], bool):
+                raise ValueError("is_published must be a boolean")
+            if normalized["is_published"] and (
+                series.status != "READY" or series.video_count == 0
+                or series.ready_video_count != series.video_count or series.pending_upload_count > 0
+            ):
+                raise ValueError("only a complete, ready Series can be published")
         if "description" in normalized and normalized["description"] is not None:
             description = normalized["description"]
             if not isinstance(description, str):
@@ -85,15 +101,15 @@ class LibraryService:
                 raise ValueError("background content is not valid JSON") from exc
             self._validate_background_images(series.series_id, background_text)
         self._repository.update_series(
-            series.series_id, workspace_id=series.workspace_id, changes=normalized,
+            series.series_id, tenant_id=series.tenant_id, changes=normalized,
         )
-        return self._repository.get_series(series.series_id, series.workspace_id)
+        return self._repository.get_series(series.series_id, series.tenant_id, owner_user_id=owner_user_id)
 
     def update_video_episode_order(
         self,
         video_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
         episode_order: int,
     ) -> VideoSummaryState:
         if (
@@ -106,10 +122,10 @@ class LibraryService:
                 "episode_order must be a positive 32-bit signed integer"
             )
         normalized_video_id = canonical_uuid(video_id, "video_id")
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         self._repository.update_video_episode_order(
             normalized_video_id,
-            workspace_id=normalized_workspace,
+            tenant_id=normalized_workspace,
             episode_order=episode_order,
         )
         return self._repository.get_video(
@@ -131,11 +147,13 @@ class LibraryService:
     def list_series(
         self,
         *,
-        workspace_id: str,
+        tenant_id: str,
         status: str | None = None,
         query: str | None = None,
         offset: int = 0,
         limit: int | None = None,
+        published_only: bool = False,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> list[SeriesState]:
         if status is not None and status not in {"EMPTY", "INDEXING", "PARTIAL", "READY", "FAILED"}:
             raise ValueError("status is not a supported Series status")
@@ -144,31 +162,52 @@ class LibraryService:
         if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100):
             raise ValueError("limit must be between 1 and 100")
         return self._repository.list_series(
-            require_nonempty_text(workspace_id, "workspace_id"),
+            require_nonempty_text(tenant_id, "tenant_id"),
             status=status, query=query.strip() if query else None, offset=offset, limit=limit,
+            published_only=published_only, owner_user_id=owner_user_id,
         )
 
-    def count_series(self, *, workspace_id: str, status: str | None = None, query: str | None = None) -> int:
+    def list_public_series_page(
+        self, *, tenant_id: str, media: MediaService, owner_user_id: str,
+        status: str | None = None, query: str | None = None, offset: int = 0, limit: int = 50,
+    ) -> tuple[list[SeriesState], int]:
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a nonnegative integer")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        candidates = self.list_series(
+            tenant_id=tenant_id, status=status, query=query,
+            published_only=True, owner_user_id=owner_user_id,
+        )
+        visible: list[SeriesState] = []
+        for candidate in candidates:
+            state = self.get_series(candidate.series_id, tenant_id=tenant_id, owner_user_id=owner_user_id)
+            if media.publication_ready(state):
+                visible.append(state)
+        return visible[offset:offset + limit], len(visible)
+
+    def count_series(self, *, tenant_id: str, status: str | None = None, query: str | None = None) -> int:
         if status is not None and status not in {"EMPTY", "INDEXING", "PARTIAL", "READY", "FAILED"}:
             raise ValueError("status is not a supported Series status")
         return self._repository.count_series(
-            require_nonempty_text(workspace_id, "workspace_id"),
+            require_nonempty_text(tenant_id, "tenant_id"),
             status=status, query=query.strip() if query else None,
         )
 
-    def get_series(self, series_id: str, *, workspace_id: str) -> SeriesState:
+    def get_series(self, series_id: str, *, tenant_id: str, owner_user_id: str = LOCAL_USER_ID) -> SeriesState:
         return self._repository.get_series(
             canonical_uuid(series_id, "series_id"),
-            require_nonempty_text(workspace_id, "workspace_id"),
+            require_nonempty_text(tenant_id, "tenant_id"),
+            owner_user_id=owner_user_id,
         )
 
     def get_video(
         self,
         video_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
     ) -> VideoSummaryState:
         return self._repository.get_video(
             canonical_uuid(video_id, "video_id"),
-            require_nonempty_text(workspace_id, "workspace_id"),
+            require_nonempty_text(tenant_id, "tenant_id"),
         )

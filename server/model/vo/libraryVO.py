@@ -20,7 +20,7 @@ class LastSearchView(ContractModel):
 
 class VideoSummary(ContractModel):
     video_id: str
-    workspace_id: str
+    tenant_id: str
     series_id: str
     episode_order: int = Field(gt=0)
     upload_sequence: int = Field(gt=0)
@@ -41,8 +41,9 @@ class VideoSummary(ContractModel):
 
 
 class SeriesSummary(ContractModel):
+    is_published: bool = False
     series_id: str
-    workspace_id: str
+    tenant_id: str
     name: str
     description: str | None
     status: Literal["EMPTY", "INDEXING", "PARTIAL", "READY", "FAILED"]

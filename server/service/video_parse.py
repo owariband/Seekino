@@ -900,7 +900,7 @@ class VideoParseRuntimeService:
                 context[name] = value
         if task_input is not None:
             context.update(
-                workspace_id=task_input.workspace_id,
+                tenant_id=task_input.tenant_id,
                 series_id=task_input.series_id,
                 video_id=task_input.task.video_id,
                 session_id=task_input.task.video_id,

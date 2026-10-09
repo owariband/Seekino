@@ -283,7 +283,7 @@ def test_default_video_id_does_not_change_with_episode_order(
         series_name=prepared_import.series_name,
         episode_order=8,
         pipeline_version=prepared_import.pipeline_version,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
     )
 
     assert reloaded.video_id == prepared_import.video_id
@@ -376,7 +376,7 @@ def test_file_import_checks_exact_source_duration_in_milliseconds(
         "series_name": prepared_import.series_name,
         "episode_order": prepared_import.episode_order,
         "pipeline_version": prepared_import.pipeline_version,
-        "workspace_id": prepared_import.workspace_id,
+        "tenant_id": prepared_import.tenant_id,
     }
     if accepted:
         reloaded = prepare_video_parse_import(parse_path, canonical_directory, **arguments)
@@ -417,7 +417,7 @@ def test_parse_import_accepts_legacy_segment_media_names(
         series_name=prepared_import.series_name,
         episode_order=prepared_import.episode_order,
         pipeline_version=prepared_import.pipeline_version,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
     )
 
     assert [item.chunk_media_ref for item in reloaded.chunks] == [
@@ -464,7 +464,7 @@ def test_parse_import_relocates_legacy_analysis_window_paths(
         series_name=prepared_import.series_name,
         episode_order=prepared_import.episode_order,
         pipeline_version=prepared_import.pipeline_version,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
     )
 
     assert [item.analysis_window_media_ref for item in reloaded.chunks] == [
@@ -800,7 +800,7 @@ def test_ready_series_scope_is_complete_ordered_and_deduplicated(
     with pytest.raises(SeriesNotReadyError, match="INDEXING"):
         video_repository.require_ready_series(
             [prepared_import.series_id],
-            workspace_id=prepared_import.workspace_id,
+            tenant_id=prepared_import.tenant_id,
         )
 
     with engine.begin() as connection:
@@ -811,14 +811,14 @@ def test_ready_series_scope_is_complete_ordered_and_deduplicated(
         )
     assert video_repository.require_ready_series(
         [prepared_import.series_id, prepared_import.series_id],
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
     ) == [prepared_import.series_id]
 
     missing_id = "00000000-0000-0000-0000-000000000000"
     with pytest.raises(SeriesScopeNotFoundError, match=missing_id):
         video_repository.require_ready_series(
             [prepared_import.series_id, missing_id],
-            workspace_id=prepared_import.workspace_id,
+            tenant_id=prepared_import.tenant_id,
         )
 
 
@@ -847,7 +847,7 @@ def test_searchable_video_requires_every_chunk_and_transcripts_follow_video_scop
         )
 
     assert video_repository.list_indexed_video_ids(
-        [report.series_id], workspace_id=prepared_import.workspace_id,
+        [report.series_id], tenant_id=prepared_import.tenant_id,
     ) == []
     with engine.begin() as connection:
         connection.execute(
@@ -857,24 +857,24 @@ def test_searchable_video_requires_every_chunk_and_transcripts_follow_video_scop
         )
 
     assert video_repository.list_indexed_video_ids(
-        [report.series_id], workspace_id=prepared_import.workspace_id,
+        [report.series_id], tenant_id=prepared_import.tenant_id,
     ) == [report.video_id]
     assert video_repository.list_indexed_video_ids(
-        [report.series_id], workspace_id="other-workspace",
+        [report.series_id], tenant_id="other-workspace",
     ) == []
     assert video_repository.list_searchable_transcripts(
         [report.series_id],
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
         video_ids=[],
     ) == []
     assert video_repository.list_searchable_transcripts(
         [report.series_id],
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
         video_ids=[str(uuid4())],
     ) == []
     documents = video_repository.list_searchable_transcripts(
         [report.series_id],
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
         video_ids=[report.video_id],
     )
     assert [document.video_chunk_id for document in documents] == [

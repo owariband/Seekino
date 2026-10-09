@@ -226,7 +226,7 @@ def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
     with create_session_factory(engine).begin() as session:
         session.add(UploadSession(
             upload_session_id=str(uuid4()),
-            workspace_id=prepared.workspace_id,
+            tenant_id=prepared.tenant_id,
             series_id=prepared.series_id,
             episode_order=prepared.episode_order,
             upload_sequence=prepared.upload_sequence,

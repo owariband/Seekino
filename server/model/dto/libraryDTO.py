@@ -16,7 +16,7 @@ class Character(ContractModel):
 
 
 class SeriesCreateRequest(ContractModel):
-    workspace_id: str = Field(min_length=1, max_length=64)
+    tenant_id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     transcript_language_hint: str | None = Field(default=None, max_length=64)
@@ -30,15 +30,16 @@ class SeriesBackground(ContractModel):
 
 
 class SeriesUpdateRequest(ContractModel):
-    workspace_id: str = Field(min_length=1, max_length=64)
+    tenant_id: str = Field(min_length=1, max_length=64)
     series_id: str = Field(min_length=1)
     description: str | None = None
     transcript_language_hint: str | None = Field(default=None, max_length=64)
     important_extra_data: SeriesBackground | None = None
+    is_published: bool | None = Field(default=None, strict=True)
 
 
 class VideoEpisodeUpdateRequest(ContractModel):
-    workspace_id: str = Field(min_length=1, max_length=64)
+    tenant_id: str = Field(min_length=1, max_length=64)
     video_id: str = Field(min_length=1)
     episode_order: int = Field(gt=0, le=2_147_483_647, strict=True)
 
@@ -46,7 +47,7 @@ class VideoEpisodeUpdateRequest(ContractModel):
 @dataclass(frozen=True, slots=True)
 class VideoSummaryState:
     video_id: str
-    workspace_id: str
+    tenant_id: str
     series_id: str
     episode_order: int
     upload_sequence: int
@@ -76,7 +77,7 @@ class SeriesLastSearchState:
 @dataclass(frozen=True, slots=True)
 class SeriesState:
     series_id: str
-    workspace_id: str
+    tenant_id: str
     name: str
     description: str | None
     transcript_language_hint: str | None
@@ -86,6 +87,7 @@ class SeriesState:
     video_count: int
     created_at: int
     updated_at: int
+    is_published: bool = False
     ready_video_count: int = 0
     failed_video_count: int = 0
     pending_upload_count: int = 0

@@ -33,7 +33,7 @@ class CurrentVideoChunkView(ContractModel):
 class ParseJobView(ContractModel):
     job_id: str
     upload_session_id: str | None
-    workspace_id: str
+    tenant_id: str
     series_id: str
     video_id: str
     series_name: str
@@ -96,7 +96,7 @@ class VideoParseTaskView(ContractModel):
     detail: dict
     create_time: UnixTimeMs
     update_time: UnixTimeMs
-    workspace_id: str | None = None
+    tenant_id: str | None = None
     series_id: str | None = None
     series_name: str | None = None
     episode_order: int | None = Field(default=None, gt=0)
@@ -119,7 +119,7 @@ class JobCounts(ContractModel):
 
 
 class JobSummary(ContractModel):
-    workspace_id: str
+    tenant_id: str
     series_id: str | None
     counts: JobCounts
     checkpoint_count: int = Field(ge=0)

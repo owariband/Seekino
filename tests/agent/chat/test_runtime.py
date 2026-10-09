@@ -102,7 +102,7 @@ def _writer(tools, operation):
 def _inputs(name="conversation", *, workspace="workspace", series="series") -> RunInputs:
     return {
         "conversation_id": name, "assistant_message_id": f"{name}-answer",
-        "workspace_id": workspace, "series_ids": [series], "series_context": [],
+        "tenant_id": workspace, "series_ids": [series], "series_context": [],
         "user_message": f"{name}: find the broken cup", "history": [], "requested_top_k": 8,
     }
 
@@ -168,7 +168,7 @@ def _read_all(tool, video_chunk_id):
 
 def _hit(chunk_id="chunk-1", *, workspace="workspace", series="series"):
     evidence = VideoChunkEvidence(
-        series_id=series, workspace_id=workspace, series_name="series name",
+        series_id=series, tenant_id=workspace, series_name="series name",
         series_description=None, series_status="READY", important_extra_data=None,
         character_bible=[], video_id=f"video-{chunk_id}", episode_order=1,
         original_filename="episode.mp4", original_source_uri="episode.mp4",
@@ -208,14 +208,14 @@ class Retrieval:
         self,
         query,
         *,
-        workspace_id,
+        tenant_id,
         series_ids,
         top_k,
         lexical_weight,
         text_weight,
         vision_weight,
     ):
-        self.calls.append((query, workspace_id, series_ids, top_k))
+        self.calls.append((query, tenant_id, series_ids, top_k))
         self.weights.append((lexical_weight, text_weight, vision_weight))
         hits = [hit.model_copy(deep=True) for hit in self.hits[:top_k]]
         return VideoChunkSearchResult(
@@ -724,7 +724,7 @@ def test_next_query_gets_original_plan_all_calls_drafts_and_review_advice():
 
 
 @pytest.mark.parametrize("mutation, expected", [
-    (lambda hit: setattr(hit.evidence, "workspace_id", "other"), "outside the fixed scope"),
+    (lambda hit: setattr(hit.evidence, "tenant_id", "other"), "outside the fixed scope"),
     (lambda hit: setattr(hit.evidence, "series_id", "other"), "outside the fixed scope"),
     (lambda hit: setattr(hit.evidence, "end_seconds", 101), "invalid video time range"),
     (lambda hit: setattr(hit.evidence, "start_seconds", -1), "invalid video time range"),
@@ -1833,17 +1833,17 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
     def search(
         query,
         *,
-        workspace_id,
+        tenant_id,
         series_ids,
         top_k,
         lexical_weight,
         text_weight,
         vision_weight,
     ):
-        assert workspace_id == f"workspace-{query}"
+        assert tenant_id == f"workspace-{query}"
         assert series_ids == [f"series-{query}"]
         assert (lexical_weight, text_weight, vision_weight) == (0.0, 0.5, 0.5)
-        hit = _hit(f"chunk-{query}", workspace=workspace_id, series=series_ids[0])
+        hit = _hit(f"chunk-{query}", workspace=tenant_id, series=series_ids[0])
         return VideoChunkSearchResult(query=query, series_ids=series_ids,
             agent_reply=AgentReply(message=query, result_count=1), hits=[hit])
 
@@ -1864,7 +1864,7 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
         assert results[name].hits[0].evidence.video_chunk_id == f"chunk-{name}"
         assert all(event["conversationId"] == name for event in events[name])
         evidence = next(event for event in events[name] if event["type"] == "answer.evidence")
-        assert evidence["searchResult"]["hits"][0]["evidence"]["workspaceId"] == f"workspace-{name}"
+        assert evidence["searchResult"]["hits"][0]["evidence"]["tenantId"] == f"workspace-{name}"
 
 
 class DisjointRetrieval(Retrieval):

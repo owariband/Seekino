@@ -40,7 +40,7 @@ def _seed_job(
     repository,
     *,
     max_attempts: int = 3,
-    workspace_id: str = "local-default",
+    tenant_id: str = "local-default",
     duration_seconds: int = 60,
 ):
     engine, _video_repository = repository
@@ -53,7 +53,7 @@ def _seed_job(
         session.add(
             Series(
                 series_id=series_id,
-                workspace_id=workspace_id,
+                tenant_id=tenant_id,
                 name=f"Series {series_id}",
                 description="description",
                 status="INDEXING",
@@ -178,7 +178,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
             ),
             UploadSession(
                 upload_session_id=upload_session_id,
-                workspace_id="local-default",
+                tenant_id="local-default",
                 series_id=session.get(Video, video_id).series_id,
                 episode_order=1,
                 upload_sequence=1,
@@ -223,10 +223,10 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
     assert jobs.get_video_parse_task(first_id) == first
     detail = jobs.get_video_parse_task_detail(
         second_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     assert detail.task.video_parse_task_id == second_id
-    assert detail.workspace_id == "local-default"
+    assert detail.tenant_id == "local-default"
     assert detail.series_name.startswith("Series ")
     assert detail.episode_order == 1
     assert detail.original_filename == "episode.mp4"
@@ -241,13 +241,13 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
     )
     takeover = v2_service.get_video_parse_task(
         second_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     assert takeover.pending_takeover_enabled is True
     assert project_video_parse_task(takeover).can_reparse is True
     assert jobs.get_video_parse_task_detail(
         first_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     ).is_latest is False
     failed_latest = replace(
         detail,
@@ -257,13 +257,13 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
     failed_history = replace(
         jobs.get_video_parse_task_detail(
             first_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
         ),
         task=replace(first, status="PARSING_FAILED"),
     )
     assert project_video_parse_task(failed_history).can_retry is False
     with pytest.raises(ParseJobNotFoundError):
-        jobs.get_video_parse_task_detail(second_id, workspace_id="foreign")
+        jobs.get_video_parse_task_detail(second_id, tenant_id="foreign")
 
     pending = jobs.list_video_parse_tasks_for_workspace(
         "local-default",
@@ -321,7 +321,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
 
     executing = jobs.get_video_parse_task_detail(
         second_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     assert executing.has_active_execution_lease is True
     assert executing.has_active_deletion_lease is True
@@ -338,7 +338,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
 
     released = jobs.get_video_parse_task_detail(
         second_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     assert released.has_active_execution_lease is False
     assert released.has_active_deletion_lease is False
@@ -400,7 +400,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
 
     suffix_fenced = jobs.get_video_parse_task_detail(
         second_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     assert suffix_fenced.has_active_prefix_lease is False
     assert suffix_fenced.has_active_prefix_suffix_lease is True
@@ -440,7 +440,7 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
     jobs, queue, first_job_id, _first_video, now = _seed_job(repository)
     _jobs, _queue, second_job_id, _second_video, _ = _seed_job(repository)
     _jobs, _queue, foreign_job_id, _foreign_video, _ = _seed_job(
-        repository, workspace_id="foreign",
+        repository, tenant_id="foreign",
     )
     engine, _video_repository = repository
     factory = create_session_factory(engine)
@@ -474,7 +474,7 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
     assert subset.counts.running == 1
     assert subset.counts.queued == 0
     assert subset.version == 3
-    detail = service.get(lease.job_id, workspace_id="local-default")
+    detail = service.get(lease.job_id, tenant_id="local-default")
     public_checkpoint = project_job(detail).checkpoints[0].model_dump(by_alias=True)
     assert public_checkpoint == {
         "sequenceNo": 0,
@@ -559,10 +559,10 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     assert waiting.series_name.startswith("Series ")
     assert waiting.episode_order == 1
     assert waiting.original_filename == "episode.mp4"
-    waiting_detail = service.get(job_id, workspace_id="local-default")
+    waiting_detail = service.get(job_id, tenant_id="local-default")
     assert waiting_detail.processing_duration_ms == 123
     assert waiting_detail.processing_timing_complete is False
-    [waiting_listed] = service.list(workspace_id="local-default")
+    [waiting_listed] = service.list(tenant_id="local-default")
     assert waiting_listed.processing_duration_ms == 123
     assert waiting_listed.processing_timing_complete is False
 
@@ -602,10 +602,10 @@ def test_job_claim_progress_checkpoint_retry_and_success(repository) -> None:
     assert completed.status == ParseJobStatus.SUCCEEDED.value
     assert completed.stage == ParseJobStage.COMPLETED.value
     assert completed.progress == 100
-    completed_detail = service.get(job_id, workspace_id="local-default")
+    completed_detail = service.get(job_id, tenant_id="local-default")
     assert completed_detail.processing_duration_ms == 579
     assert completed_detail.processing_timing_complete is True
-    [completed_listed] = service.list(workspace_id="local-default")
+    [completed_listed] = service.list(tenant_id="local-default")
     assert completed_listed.processing_duration_ms == 579
     assert completed_listed.processing_timing_complete is True
 

@@ -54,7 +54,7 @@ class VideoChunkKeyframeReference(_RetrievalContractModel):
 
 class VideoChunkEvidence(_RetrievalContractModel):
     series_id: str
-    workspace_id: str
+    tenant_id: str
     series_name: str
     series_description: str | None
     series_status: str
@@ -109,7 +109,7 @@ class VideoChunkRetrievalIdentity(_RetrievalContractModel):
         frozen=True,
     )
 
-    workspace_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
     series_id: str = Field(min_length=1)
     video_id: str = Field(min_length=1)
     parse_task_id: str = Field(min_length=1)

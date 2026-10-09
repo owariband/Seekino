@@ -107,7 +107,7 @@ class VideoRepository:
         self,
         *,
         limit: int,
-        workspace_id: str | None = None,
+        tenant_id: str | None = None,
         series_id: str | None = None,
         video_id: str | None = None,
         after: KeyframeBackfillCandidate | None = None,
@@ -117,8 +117,8 @@ class VideoRepository:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ValueError("limit must be a positive integer")
         normalized_workspace = (
-            require_nonempty_text(workspace_id, "workspace_id")
-            if workspace_id is not None
+            require_nonempty_text(tenant_id, "tenant_id")
+            if tenant_id is not None
             else None
         )
         normalized_series = (
@@ -133,7 +133,7 @@ class VideoRepository:
         )
         statement = (
             select(
-                Series.workspace_id,
+                Series.tenant_id,
                 Series.series_id,
                 Video.video_id,
                 Video.episode_order,
@@ -159,7 +159,7 @@ class VideoRepository:
         )
         if normalized_workspace is not None:
             statement = statement.where(
-                Series.workspace_id == normalized_workspace
+                Series.tenant_id == normalized_workspace
             )
         if normalized_series is not None:
             statement = statement.where(
@@ -193,7 +193,7 @@ class VideoRepository:
             rows = session.execute(statement.limit(limit)).all()
         return [
             KeyframeBackfillCandidate(
-                workspace_id=row.workspace_id,
+                tenant_id=row.tenant_id,
                 series_id=row.series_id,
                 video_id=row.video_id,
                 episode_order=row.episode_order,
@@ -347,7 +347,7 @@ class VideoRepository:
                     )
             existing_series = session.get(Series, prepared.series_id)
             if existing_series is not None and (
-                existing_series.workspace_id != prepared.workspace_id
+                existing_series.tenant_id != prepared.tenant_id
                 or existing_series.name.casefold() != prepared.series_name.casefold()
             ):
                 raise ParseImportConflictError(
@@ -357,18 +357,18 @@ class VideoRepository:
             if existing_series is None:
                 series_with_same_name = session.scalar(
                     select(Series).where(
-                        Series.workspace_id == prepared.workspace_id,
+                        Series.tenant_id == prepared.tenant_id,
                         Series.name == prepared.series_name,
                     )
                 )
                 if series_with_same_name is not None:
                     raise ParseImportConflictError(
-                        "workspace_id and Series name already use another series_id"
+                        "tenant_id and Series name already use another series_id"
                     )
                 session.add(
                     Series(
                         series_id=prepared.series_id,
-                        workspace_id=prepared.workspace_id,
+                        tenant_id=prepared.tenant_id,
                         name=prepared.series_name,
                         description=prepared.series_description,
                         status="INDEXING",
@@ -666,7 +666,7 @@ class VideoRepository:
         self,
         series_ids: Sequence[str],
         *,
-        workspace_id: str,
+        tenant_id: str,
     ) -> list[str]:
         """Resolve a complete, READY Series scope without silently narrowing it."""
 
@@ -687,7 +687,7 @@ class VideoRepository:
             rows = session.execute(
                 select(Series.series_id, Series.status).where(
                     Series.series_id.in_(ordered_ids),
-                    Series.workspace_id == workspace_id,
+                    Series.tenant_id == tenant_id,
                 )
             ).all()
         statuses = {series_id: status for series_id, status in rows}
@@ -707,13 +707,13 @@ class VideoRepository:
             )
         return ordered_ids
 
-    def list_indexed_video_ids(self, series_ids: Sequence[str], *, workspace_id: str) -> list[str]:
+    def list_indexed_video_ids(self, series_ids: Sequence[str], *, tenant_id: str) -> list[str]:
         if not series_ids:
             return []
         with self._session_factory() as session:
             scoped_series_ids = list(session.scalars(
                 select(Series.series_id).where(
-                    Series.workspace_id == workspace_id,
+                    Series.tenant_id == tenant_id,
                     Series.series_id.in_(series_ids),
                 )
             ))
@@ -723,7 +723,7 @@ class VideoRepository:
         self,
         series_ids: Sequence[str],
         *,
-        workspace_id: str,
+        tenant_id: str,
         video_ids: Sequence[str],
     ) -> list[TranscriptChunkDocument]:
         """Load ASR cues only for complete, searchable videos in the scope."""
@@ -737,7 +737,7 @@ class VideoRepository:
         )
         if not ordered_series_ids:
             raise ValueError("series_ids must not be empty")
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         if not video_ids:
             return []
         statement = (
@@ -756,7 +756,7 @@ class VideoRepository:
                 == VideoChunk.video_chunk_id,
             )
             .where(
-                Series.workspace_id == normalized_workspace,
+                Series.tenant_id == normalized_workspace,
                 Series.series_id.in_(ordered_series_ids),
                 Video.video_id.in_(video_ids),
                 IndexSyncIntent.status == IndexSyncStatus.SYNCED.value,
@@ -809,7 +809,7 @@ class VideoRepository:
         if retained_point_cue_count or skipped_invalid_cue_count:
             _logger.warning(
                 "event=persisted_transcript_cues_soft_validated "
-                "workspace_id=%s series_count=%s affected_chunk_count=%s "
+                "tenant_id=%s series_count=%s affected_chunk_count=%s "
                 "retained_point_cue_count=%s skipped_invalid_cue_count=%s "
                 "action=continue",
                 normalized_workspace,
@@ -886,7 +886,7 @@ class VideoRepository:
             )
             evidence = VideoChunkEvidence(
                 series_id=series.series_id,
-                workspace_id=series.workspace_id,
+                tenant_id=series.tenant_id,
                 series_name=series.name,
                 series_description=series.description,
                 series_status=series.status,

@@ -15,7 +15,7 @@ from engine.parsev1.retrieval import (
     build_video_chunk_retrieval_documents,
 )
 
-from ...constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
+from ...constants.tenant import DEFAULT_LOCAL_TENANT_ID
 from ...model.identifiers import (
     derive_context_snapshot_id,
     derive_series_id,
@@ -35,7 +35,7 @@ from ...utils.validation import canonical_uuid
 def prepare_completed_video_parse_import(
     parse_result: VideoParseResult,
     *,
-    workspace_id: str,
+    tenant_id: str,
     series_id: str,
     series_name: str,
     series_description: str | None,
@@ -65,8 +65,8 @@ def prepare_completed_video_parse_import(
     canonical_video_id = canonical_uuid(video_id, "video_id")
     if derive_video_id(canonical_series_id, content_hash) != canonical_video_id:
         raise ValueError("video_id does not match Series and source content hash")
-    if not workspace_id.strip() or not series_name.strip():
-        raise ValueError("workspace_id and series_name must not be empty")
+    if not tenant_id.strip() or not series_name.strip():
+        raise ValueError("tenant_id and series_name must not be empty")
     if not pipeline_version.strip():
         raise ValueError("pipeline_version must not be empty")
     if episode_order <= 0 or upload_sequence <= 0:
@@ -122,7 +122,7 @@ def prepare_completed_video_parse_import(
 
     return PreparedVideoParseImport(
         series_id=canonical_series_id,
-        workspace_id=workspace_id.strip(),
+        tenant_id=tenant_id.strip(),
         series_name=series_name.strip(),
         series_description=series_description,
         important_extra_data=important_extra_data,
@@ -152,7 +152,7 @@ def prepare_video_parse_import(
     series_name: str,
     episode_order: int,
     pipeline_version: str,
-    workspace_id: str = DEFAULT_LOCAL_WORKSPACE_ID,
+    tenant_id: str = DEFAULT_LOCAL_TENANT_ID,
     upload_sequence: int | None = None,
     series_id: str | None = None,
     video_id: str | None = None,
@@ -185,7 +185,7 @@ def prepare_video_parse_import(
         raise ValueError("upload_sequence must be greater than zero")
     for name, value in (
         ("series_name", series_name),
-        ("workspace_id", workspace_id),
+        ("tenant_id", tenant_id),
         ("pipeline_version", pipeline_version),
     ):
         if not value.strip():
@@ -207,7 +207,7 @@ def prepare_video_parse_import(
 
     content_hash = _sha256_file(source_video)
     resolved_series_id = (
-        derive_series_id(workspace_id, series_name)
+        derive_series_id(tenant_id, series_name)
         if series_id is None
         else canonical_uuid(series_id, "series_id")
     )
@@ -316,7 +316,7 @@ def prepare_video_parse_import(
     parsed_at = parse_path.stat().st_mtime_ns // 1_000_000
     return PreparedVideoParseImport(
         series_id=resolved_series_id,
-        workspace_id=workspace_id.strip(),
+        tenant_id=tenant_id.strip(),
         series_name=series_name.strip(),
         series_description=series_description,
         important_extra_data=important_extra_data,

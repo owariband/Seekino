@@ -94,7 +94,7 @@ def _inputs() -> RunInputs:
     return {
         "conversation_id": "conversation",
         "assistant_message_id": "answer",
-        "workspace_id": "workspace",
+        "tenant_id": "workspace",
         "series_ids": ["series"],
         "series_context": [],
         "user_message": "find the broken cup",
@@ -106,7 +106,7 @@ def _inputs() -> RunInputs:
 def _hit(chunk_id: str, *, episode: int = 1, large_text: str = "") -> VideoChunkSearchHit:
     evidence = VideoChunkEvidence(
         series_id="series",
-        workspace_id="workspace",
+        tenant_id="workspace",
         series_name="Series",
         series_description=None,
         series_status="READY",
@@ -170,7 +170,7 @@ class Retrieval:
         self,
         query,
         *,
-        workspace_id,
+        tenant_id,
         series_ids,
         top_k,
         lexical_weight,
@@ -178,7 +178,7 @@ class Retrieval:
         vision_weight,
     ) -> VideoChunkSearchResult:
         self.calls += 1
-        assert workspace_id == "workspace"
+        assert tenant_id == "workspace"
         assert series_ids == ["series"]
         assert lexical_weight + text_weight + vision_weight == pytest.approx(1)
         hits = [item.model_copy(deep=True) for item in self.hits[:top_k]]

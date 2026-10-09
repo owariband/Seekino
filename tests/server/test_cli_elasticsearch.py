@@ -12,7 +12,7 @@ import yaml
 from gateway.config import load_config
 from server import cli
 from server.common import retrieval as retrieval_bootstrap
-from server.common import storage
+from server.caller import elasticsearch as elasticsearch_caller, mysql as mysql_caller
 from server.config.parse_profile import default_video_parse_v2_config
 from server.repository.video_parse import VideoParseRetrievalScope
 from server.service.video_retrieval import RetrievalIndexConsistencyError
@@ -32,8 +32,8 @@ def test_hydrate_keeps_database_evidence_output(monkeypatch, capsys) -> None:
                 "videoChunkId": "chunk-1", "retrievalText": "原有数据库证据",
             })]
 
-    monkeypatch.setattr(storage, "create_database_engine", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
-    monkeypatch.setattr(storage, "create_session_factory", lambda _engine: factory)
+    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
+    monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: factory)
     monkeypatch.setattr(cli, "VideoRepository", Repository)
     monkeypatch.setattr(sys, "argv", [
         "anivag-server", "hydrate", *chunk_ids,
@@ -74,8 +74,8 @@ def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) ->
             created[0].ready = True
 
     monkeypatch.delenv("ANIVAG_DATABASE_URL", raising=False)
-    monkeypatch.setattr(storage, "Elasticsearch", Client)
-    monkeypatch.setattr(storage, "ElasticsearchVideoChunkStore", Store)
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", Client)
+    monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", Store)
     monkeypatch.setattr(sys, "argv", [
         "anivag-server", "init-es-index", "--environment", "test",
         "--elasticsearch-url", "http://127.0.0.1:9200",
@@ -99,7 +99,7 @@ def test_init_es_index_is_explicit_and_needs_no_database(monkeypatch, capsys) ->
 
 
 def test_init_es_index_rejects_wrong_environment_before_connecting(monkeypatch) -> None:
-    monkeypatch.setattr(storage, "Elasticsearch", lambda *_args, **_kwargs: pytest.fail("connected"))
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", lambda *_args, **_kwargs: pytest.fail("connected"))
     monkeypatch.setattr(sys, "argv", [
         "anivag-server", "init-es-index", "--environment", "test",
         "--elasticsearch-url", "http://127.0.0.1:9200",
@@ -128,8 +128,8 @@ def test_init_es_index_closes_client_on_schema_error(monkeypatch) -> None:
         def ensure_index(self):
             raise RuntimeError("mapping differs")
 
-    monkeypatch.setattr(storage, "Elasticsearch", Client)
-    monkeypatch.setattr(storage, "ElasticsearchVideoChunkStore", Store)
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", Client)
+    monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", Store)
     monkeypatch.setattr(sys, "argv", [
         "anivag-server", "init-es-index", "--environment", "test",
         "--elasticsearch-url", "http://127.0.0.1:9200",
@@ -157,14 +157,14 @@ def test_request_es_index_rebuild_schedules_one_v2_task(
             return ("interval-1", "interval-2")
 
     monkeypatch.setattr(
-        storage,
+        mysql_caller,
         "create_database_engine",
         lambda url, *, environment, pool_recycle_seconds: (
             calls.update(database_url=url, environment=environment) or engine
         ),
     )
     monkeypatch.setattr(
-        storage,
+        mysql_caller,
         "create_session_factory",
         lambda selected: factory if selected is engine else pytest.fail("wrong engine"),
     )
@@ -228,20 +228,20 @@ def test_rebuild_index_v2_requests_task_without_index_client(
             return ("interval-3",)
 
     monkeypatch.setattr(
-        storage,
+        mysql_caller,
         "create_database_engine",
         lambda url, *, environment, pool_recycle_seconds: (
             calls.update(database_url=url, environment=environment) or engine
         ),
     )
     monkeypatch.setattr(
-        storage,
+        mysql_caller,
         "create_session_factory",
         lambda selected: factory if selected is engine else pytest.fail("wrong engine"),
     )
     monkeypatch.setattr(cli, "VideoParseRepository", Repository)
     monkeypatch.setattr(
-        storage, "Elasticsearch", lambda *_args, **_kwargs: pytest.fail("used ES"),
+        elasticsearch_caller, "Elasticsearch", lambda *_args, **_kwargs: pytest.fail("used ES"),
     )
     monkeypatch.setattr(sys, "argv", [
         "anivag-server",
@@ -270,7 +270,7 @@ def test_rebuild_index_v2_requests_task_without_index_client(
 
 
 def test_rebuild_index_v2_requires_video_parse_task_id(monkeypatch) -> None:
-    monkeypatch.setattr(storage, "create_database_engine", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
+    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
     monkeypatch.setattr(sys, "argv", [
         "anivag-server",
         "rebuild-index",
@@ -334,19 +334,19 @@ def test_search_v2_uses_only_elasticsearch_and_closes_client(
             return Result()
 
     monkeypatch.setattr(
-        storage,
+        mysql_caller,
         "create_database_engine",
         lambda url, *, environment, pool_recycle_seconds: (
             calls.update(database_url=url, environment=environment) or engine
         ),
     )
     monkeypatch.setattr(
-        storage,
+        mysql_caller,
         "create_session_factory",
         lambda selected: factory if selected is engine else pytest.fail("wrong engine"),
     )
-    monkeypatch.setattr(storage, "Elasticsearch", Client)
-    monkeypatch.setattr(storage, "ElasticsearchVideoChunkStore", Store)
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", Client)
+    monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", Store)
     monkeypatch.setattr(cli, "VideoParseRepository", Repository)
     monkeypatch.setattr(retrieval_bootstrap, "_LazyQueryEmbedder", Embedder)
     monkeypatch.setattr(retrieval_bootstrap, "VideoParseRetrievalService", Retrieval)
@@ -440,7 +440,7 @@ def test_search_v2_uses_only_elasticsearch_and_closes_client(
     assert calls["search"] == (
         "why are they crying",
         {
-            "workspace_id": "workspace-1",
+            "tenant_id": "workspace-1",
             "series_ids": ["series-1", "series-2"],
             "top_k": 4,
         },
@@ -467,10 +467,10 @@ def test_search_v2_closes_elasticsearch_client_on_failure(monkeypatch) -> None:
         def search(self, *_args, **_kwargs):
             raise RuntimeError("search failed")
 
-    monkeypatch.setattr(storage, "create_database_engine", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
-    monkeypatch.setattr(storage, "create_session_factory", lambda _engine: object())
-    monkeypatch.setattr(storage, "Elasticsearch", Client)
-    monkeypatch.setattr(storage, "ElasticsearchVideoChunkStore", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
+    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
+    monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", Client)
+    monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
     monkeypatch.setattr(cli, "VideoParseRepository", lambda _factory: object())
     monkeypatch.setattr(retrieval_bootstrap, "_LazyQueryEmbedder", lambda *_args, **_kwargs: SimpleNamespace(dispose=lambda: None))
     monkeypatch.setattr(retrieval_bootstrap, "VideoParseRetrievalService", Retrieval)
@@ -556,9 +556,9 @@ def test_init_db_ignores_unrelated_configuration_and_disposes_engine(
     monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX_GENERATION", "invalid")
     monkeypatch.setenv("ANIVAG_TEXT_VECTOR_DIMENSIONS", "invalid")
     monkeypatch.setenv("ANIVAG_RETRIEVAL_TEXT_WEIGHT", "invalid")
-    monkeypatch.setattr(storage, "create_database_engine", lambda *args, **kwargs: engine)
-    monkeypatch.setattr(storage, "create_session_factory", lambda _engine: object())
-    monkeypatch.setattr(storage, "Elasticsearch", lambda *args, **kwargs: pytest.fail("used ES"))
+    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *args, **kwargs: engine)
+    monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", lambda *args, **kwargs: pytest.fail("used ES"))
     monkeypatch.setattr(cli, "load_config", lambda _path: pytest.fail("loaded model config"))
 
     def create_schema(selected):
@@ -591,13 +591,13 @@ def test_cli_closes_resources_when_storage_construction_fails(monkeypatch, failu
 
     if failure == "sessions":
         engine = SimpleNamespace(dispose=lambda: closed.append("database"))
-        monkeypatch.setattr(storage, "create_database_engine", lambda *args, **kwargs: engine)
-        monkeypatch.setattr(storage, "create_session_factory", fail)
+        monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *args, **kwargs: engine)
+        monkeypatch.setattr(mysql_caller, "create_session_factory", fail)
         argv = ["init-db", "--database-url", "sqlite+pysqlite:///:memory:"]
     else:
         client = SimpleNamespace(close=lambda: closed.append("elasticsearch"))
-        monkeypatch.setattr(storage, "Elasticsearch", lambda *args, **kwargs: client)
-        monkeypatch.setattr(storage, "ElasticsearchVideoChunkStore", fail)
+        monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", lambda *args, **kwargs: client)
+        monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", fail)
         argv = [
             "init-es-index", "--elasticsearch-url", "http://127.0.0.1:9200",
             "--elasticsearch-index", "construction_test",
@@ -649,8 +649,8 @@ def test_cli_search_uses_real_endpoint_contract_selected_key_and_shared_policy(
         def __init__(self, _sessions):
             pass
 
-        def resolve_retrieval_scope(self, selected_ids, *, workspace_id):
-            assert selected_ids == [series_id] and workspace_id == "workspace"
+        def resolve_retrieval_scope(self, selected_ids, *, tenant_id):
+            assert selected_ids == [series_id] and tenant_id == "workspace"
             return scope
 
     class Store:
@@ -680,12 +680,12 @@ def test_cli_search_uses_real_endpoint_contract_selected_key_and_shared_policy(
         )
 
     engine = SimpleNamespace(dispose=lambda: events.append("database"))
-    monkeypatch.setattr(storage, "create_database_engine", lambda *args, **kwargs: engine)
-    monkeypatch.setattr(storage, "create_session_factory", lambda _engine: object())
-    monkeypatch.setattr(storage, "Elasticsearch", lambda *args, **kwargs: SimpleNamespace(
+    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *args, **kwargs: engine)
+    monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", lambda *args, **kwargs: SimpleNamespace(
         close=lambda: events.append("elasticsearch"),
     ))
-    monkeypatch.setattr(storage, "ElasticsearchVideoChunkStore", Store)
+    monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", Store)
     monkeypatch.setattr(cli, "VideoParseRepository", Repository)
     monkeypatch.setattr(retrieval_bootstrap, "Ark", SimpleNamespace(volc=sdk_client))
     build = cli.build_retrieval_service
@@ -750,8 +750,8 @@ def test_import_command_passes_series_bible_path_to_importer(monkeypatch, tmp_pa
 
     received = {}
     engine = SimpleNamespace(dispose=lambda: received.update(disposed=True))
-    monkeypatch.setattr(storage, "create_database_engine", lambda *args, **kwargs: engine)
-    monkeypatch.setattr(storage, "create_session_factory", lambda _engine: object())
+    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *args, **kwargs: engine)
+    monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
 
     def prepare(*args, **kwargs):
         received.update(kwargs)
@@ -782,8 +782,8 @@ def test_backfill_cli_uses_configured_media_limits_without_creating_dry_run_stor
     engine = SimpleNamespace(dispose=lambda: received.update(disposed=True))
     monkeypatch.setenv("ANIVAG_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
     monkeypatch.setenv("ANIVAG_PARSE_MAX_HEIGHT", "480")
-    monkeypatch.setattr(storage, "create_database_engine", lambda *args, **kwargs: engine)
-    monkeypatch.setattr(storage, "create_session_factory", lambda _engine: object())
+    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *args, **kwargs: engine)
+    monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
     monkeypatch.setattr(cli, "VideoRepository", lambda _sessions: "repository")
 
     def artifact(root, **kwargs):
@@ -813,7 +813,7 @@ def test_backfill_cli_uses_configured_media_limits_without_creating_dry_run_stor
     )
     assert received["max_height"] == 480
     assert received["backfill"] == {
-        "limit": 25, "dry_run": True, "workspace_id": "workspace",
+        "limit": 25, "dry_run": True, "tenant_id": "workspace",
         "series_id": "series", "video_id": None,
     }
     assert received["disposed"] is True

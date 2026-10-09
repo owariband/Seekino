@@ -14,7 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
 from ..utils.time import now_unix_time_ms
-from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampMixin
+from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS
 
 
 class IndexSyncOperation(StrEnum):
@@ -28,7 +28,7 @@ class IndexSyncStatus(StrEnum):
     SYNCED = "SYNCED"
 
 
-class IndexSyncIntent(TimestampMixin, Base):
+class IndexSyncIntent(Base):
     __tablename__ = "index_sync_intent"
     __table_args__ = (
         CheckConstraint(
@@ -72,3 +72,14 @@ class IndexSyncIntent(TimestampMixin, Base):
     )
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
     synced_at: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=now_unix_time_ms,
+    )
+    updated_at: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=now_unix_time_ms,
+        onupdate=now_unix_time_ms,
+    )

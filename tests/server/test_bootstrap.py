@@ -14,13 +14,16 @@ from engine.rag.retrieval.contracts import QueryEncodingRequest
 from gateway.config import ArkModelSourceConfig, OpenAIModelSourceConfig, load_config
 from gateway.openai.structured import OpenAIStructuredToolAgentModel
 
-from server import bootstrap
-from server.common import retrieval as retrieval_builder, storage as storage_builder
+from server import bootstrap, main as main_module
+from server.caller import CallerResources
+from server.caller import elasticsearch as elasticsearch_caller, mysql as mysql_caller
+from server.common import retrieval as retrieval_builder
 from server.api.app import create_app
 from server.config import ServerSettings
 from server.config.elasticsearch import ElasticsearchConfig
 from server.config.retrieval import RetrievalConfig
 from server.config.agent import AgentServiceConfig
+from server.config.auth import AuthConfig
 from server.config.media import ImageUploadConfig
 from server.config.parse_profile import ParseConfig
 from server.config.sse import SSEConfig
@@ -35,14 +38,21 @@ from server.storage.elasticsearch import ElasticsearchVideoChunkStore
 
 
 @pytest.mark.parametrize("module_name", [
-    "server.bootstrap", "server.api.app", "server.cli", "scripts.local_services",
+    "server.main", "server.bootstrap", "server.api.app", "server.cli", "scripts.local_services",
     "server.common.storage", "server.common.retrieval",
+    "server.caller", "server.caller.base", "server.caller.mysql",
+    "server.caller.elasticsearch", "server.caller.redis",
 ])
 def test_formal_entrypoints_import_without_qdrant_or_v1_runtime(module_name):
     runtime_blocks = (
         "agent.chat.video_search.runtime", "agent.chat.supervisor",
         "agent.video_parse_v2.runtime", "langgraph",
-    ) if module_name in {"server.cli", "server.common.storage", "server.common.retrieval"} else ()
+    ) if module_name in {
+        "server.cli", "server.common.storage", "server.common.retrieval",
+        "server.caller", "server.caller.base", "server.caller.mysql",
+        "server.caller.elasticsearch", "server.caller.redis",
+    } else ()
+    business_blocks = ("server.bootstrap",) if module_name.startswith("server.caller") else ()
     script = f"""
 import importlib
 import importlib.abc
@@ -52,7 +62,7 @@ blocked = (
     'qdrant_client', 'server.storage.qdrant', 'engine.parsev1.runtime',
     'engine.parsev1.pipeline', 'server.service.parsev1.video_processing',
     'server.service.parsev1.index_sync', 'server.mq.consumer',
-) + {runtime_blocks!r}
+) + {runtime_blocks!r} + {business_blocks!r}
 
 class RejectLegacyImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
@@ -86,22 +96,28 @@ class _ElasticsearchClient:
 def test_database_construction_disposes_engine_when_session_factory_fails(monkeypatch):
     closed = []
     engine = SimpleNamespace(dispose=lambda: closed.append("database"))
-    monkeypatch.setattr(storage_builder, "create_database_engine", lambda *_a, **_k: engine)
+    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *_a, **_k: engine)
 
     def fail(_engine):
         raise RuntimeError("session setup failed")
 
-    monkeypatch.setattr(storage_builder, "create_session_factory", fail)
+    monkeypatch.setattr(mysql_caller, "create_session_factory", fail)
     with pytest.raises(RuntimeError, match="session setup failed"):
-        storage_builder.build_database_storage(
+        mysql_caller.build_database_storage(
             "unused", environment=DatabaseEnvironment.TEST, pool_recycle_seconds=1200,
         )
     assert closed == ["database"]
 
 
-def test_application_construction_closes_es_and_database_when_store_setup_fails(
-    monkeypatch, tmp_path,
+@pytest.mark.parametrize(("mode", "failure"), [
+    ("local", "elasticsearch"), ("cloud", "elasticsearch"),
+    ("cloud", "redis"), ("cloud", "identity"),
+])
+def test_application_construction_closes_allocated_clients_when_setup_fails(
+    monkeypatch, tmp_path, mode, failure,
 ):
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from server.caller import redis as redis_caller
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
             monkeypatch.delenv(name, raising=False)
@@ -112,21 +128,44 @@ def test_application_construction_closes_es_and_database_when_store_setup_fails(
     monkeypatch.setenv("ANIVAG_ELASTICSEARCH_INDEX", "failure_test")
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    if mode == "cloud":
+        monkeypatch.setenv("ANIVAG_AUTH_MODE", "cloud")
+        monkeypatch.setenv("ANIVAG_AUTH_SECRET_KEY", "x" * 32)
+        monkeypatch.setenv("ANIVAG_AUTH_REDIS_URL", "redis://127.0.0.1:16379/15")
+        monkeypatch.setenv("ANIVAG_SMTP_HOST", "smtp.example.com")
+        monkeypatch.setenv("ANIVAG_SMTP_SENDER", "noreply@example.com")
     settings = ServerSettings.from_environment()
     closed = []
     engine = SimpleNamespace(dispose=lambda: closed.append("database"))
-    monkeypatch.setattr(storage_builder, "create_database_engine", lambda *_a, **_k: engine)
-    monkeypatch.setattr(storage_builder, "create_session_factory", lambda _engine: object())
+    monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *_a, **_k: engine)
+    monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: object())
+    def ping():
+        if failure == "redis":
+            raise RedisConnectionError("connection failed")
+        return True
+
+    redis_client = SimpleNamespace(ping=ping, close=lambda: closed.append("redis"))
+    monkeypatch.setattr(redis_caller.Redis, "from_url", lambda *_a, **_k: redis_client)
+
+    def bootstrap_identity(_self):
+        if failure == "identity":
+            raise RuntimeError("identity setup failed")
+
+    monkeypatch.setattr(bootstrap.AuthService, "bootstrap", bootstrap_identity)
     client = SimpleNamespace(close=lambda: closed.append("elasticsearch"))
-    monkeypatch.setattr(storage_builder, "Elasticsearch", lambda *_a, **_k: client)
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", lambda *_a, **_k: client)
 
-    def fail(*_args, **_kwargs):
-        raise RuntimeError("store setup failed")
+    real_store = elasticsearch_caller.ElasticsearchVideoChunkStore
+    def build_store(*args, **kwargs):
+        if failure == "elasticsearch":
+            raise RuntimeError("store setup failed")
+        return real_store(*args, **kwargs)
 
-    monkeypatch.setattr(storage_builder, "ElasticsearchVideoChunkStore", fail)
-    with pytest.raises(RuntimeError, match="store setup failed"):
-        bootstrap.build_application_services(settings)
-    assert closed == ["elasticsearch", "database"]
+    monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", build_store)
+    message = {"elasticsearch": "store setup failed", "redis": "Redis is unavailable", "identity": "identity setup failed"}[failure]
+    with pytest.raises(RuntimeError, match=message):
+        main_module.init_application(settings)
+    assert closed == (["elasticsearch"] if failure != "redis" else []) + (["redis"] if mode == "cloud" else []) + ["database"]
 
 
 @pytest.mark.parametrize("kind", ["database", "elasticsearch"])
@@ -136,16 +175,16 @@ def test_storage_context_closes_its_resource_after_command(monkeypatch, kind, fa
     selected = object()
     if kind == "database":
         engine = SimpleNamespace(dispose=lambda: closed.append(kind))
-        monkeypatch.setattr(storage_builder, "create_database_engine", lambda *_a, **_k: engine)
-        monkeypatch.setattr(storage_builder, "create_session_factory", lambda _engine: selected)
-        context = storage_builder.open_database_storage(
+        monkeypatch.setattr(mysql_caller, "create_database_engine", lambda *_a, **_k: engine)
+        monkeypatch.setattr(mysql_caller, "create_session_factory", lambda _engine: selected)
+        context = mysql_caller.open_database_storage(
             "unused", environment=DatabaseEnvironment.TEST, pool_recycle_seconds=1200,
         )
     else:
         client = SimpleNamespace(close=lambda: closed.append(kind))
-        monkeypatch.setattr(storage_builder, "Elasticsearch", lambda *_a, **_k: client)
-        monkeypatch.setattr(storage_builder, "ElasticsearchVideoChunkStore", lambda *_a, **_k: selected)
-        context = storage_builder.open_elasticsearch_storage(
+        monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", lambda *_a, **_k: client)
+        monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", lambda *_a, **_k: selected)
+        context = elasticsearch_caller.open_elasticsearch_storage(
             ElasticsearchConfig(url="http://127.0.0.1:9200", index_name="context_test"),
             environment=DatabaseEnvironment.TEST, semantic_dimensions=2, vision_dimensions=2,
         )
@@ -254,9 +293,9 @@ def test_process_assembly_receives_runtime_configuration(
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "unexpected-env-model")
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "0.5")
     monkeypatch.setenv("ANIVAG_BACKGROUND_IMAGE_MAX_EDGE", "2048")
-    monkeypatch.setattr(storage_builder, "Elasticsearch", _ElasticsearchClient)
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", _ElasticsearchClient)
     received = {}
-    real_create_engine = storage_builder.create_database_engine
+    real_create_engine = mysql_caller.create_database_engine
 
     def create_engine(*args, **kwargs):
         received["pool_recycle_seconds"] = kwargs["pool_recycle_seconds"]
@@ -264,7 +303,7 @@ def test_process_assembly_receives_runtime_configuration(
         create_schema(engine)
         return engine
 
-    monkeypatch.setattr(storage_builder, "create_database_engine", create_engine)
+    monkeypatch.setattr(mysql_caller, "create_database_engine", create_engine)
     real_retrieval = retrieval_builder.VideoParseRetrievalService
 
     def create_retrieval(*args, **kwargs):
@@ -273,7 +312,8 @@ def test_process_assembly_receives_runtime_configuration(
         return real_retrieval(*args, **kwargs)
 
     monkeypatch.setattr(retrieval_builder, "VideoParseRetrievalService", create_retrieval)
-    services = bootstrap.build_application_services(settings)
+    application = main_module.init_application(settings)
+    services = application.services
     try:
         assert services.media.image_upload_config == settings.images
         assert received["retrieval"]["channel_top_k"] == 35
@@ -368,11 +408,11 @@ def test_process_assembly_receives_runtime_configuration(
         app = create_app(services, settings=settings)
         assert app.state.sse_config == settings.sse
     finally:
-        services.close()
-    assert isinstance(services.elasticsearch_client, _ElasticsearchClient)
-    assert services.elasticsearch_client.url == "http://127.0.0.1:9200"
-    assert services.elasticsearch_client.api_key == "test-key"
-    assert services.elasticsearch_client.closed
+        application.close()
+    assert isinstance(application.resources.elasticsearch_client, _ElasticsearchClient)
+    assert application.resources.elasticsearch_client.url == "http://127.0.0.1:9200"
+    assert application.resources.elasticsearch_client.api_key == "test-key"
+    assert application.resources.elasticsearch_client.closed
     assert received["pool_recycle_seconds"] == settings.database_pool_recycle_seconds
 
 
@@ -416,15 +456,15 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         return real_retrieval(*args, **kwargs)
     monkeypatch.setattr(retrieval_builder, "VideoParseRetrievalService", create_retrieval)
 
-    monkeypatch.setattr(storage_builder, "Elasticsearch", _ElasticsearchClient)
-    real_create_engine = storage_builder.create_database_engine
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", _ElasticsearchClient)
+    real_create_engine = mysql_caller.create_database_engine
 
     def create_engine(*args, **kwargs):
         engine = real_create_engine(*args, **kwargs)
         create_schema(engine)
         return engine
 
-    monkeypatch.setattr(storage_builder, "create_database_engine", create_engine)
+    monkeypatch.setattr(mysql_caller, "create_database_engine", create_engine)
 
     def forbidden_v1_runtime(*_args, **_kwargs):
         raise AssertionError("V2 mode must not construct the V1 parse runtime")
@@ -435,7 +475,8 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
     monkeypatch.setattr("engine.parsev1.runtime.EngineVideoParseRuntime", forbidden_v1_runtime)
     monkeypatch.setattr("server.mq.consumer.ParseJobConsumer", forbidden_v1_consumer)
 
-    services = bootstrap.build_application_services(settings)
+    application = main_module.init_application(settings)
+    services = application.services
     try:
         consumer = services.parse_consumer
         assert isinstance(consumer, VideoParseConsumer)
@@ -457,7 +498,7 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert consumer._handlers.maintenance.__self__ is runtime
         assert consumer._maintenance_interval == settings.mq.lease_duration
         assert isinstance(runtime._elasticsearch_store, ElasticsearchVideoChunkStore)
-        assert runtime._elasticsearch_store._client is services.elasticsearch_client
+        assert runtime._elasticsearch_store._client is application.resources.elasticsearch_client
         assert isinstance(services.retrieval, VideoParseRetrievalService)
         assert services.retrieval._embedder._model == "selected-task-embedding"
         assert services.retrieval._embedder._dimensions == 512
@@ -497,7 +538,7 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
             tmp_path / "artifacts" / "test" / "work" / "video-parse-v2"
         )
     finally:
-        services.close()
+        application.close()
 
 
 def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
@@ -517,15 +558,15 @@ def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     settings = ServerSettings.from_environment()
-    monkeypatch.setattr(storage_builder, "Elasticsearch", _ElasticsearchClient)
-    real_create_engine = storage_builder.create_database_engine
+    monkeypatch.setattr(elasticsearch_caller, "Elasticsearch", _ElasticsearchClient)
+    real_create_engine = mysql_caller.create_database_engine
 
     def create_engine(*args, **kwargs):
         engine = real_create_engine(*args, **kwargs)
         create_schema(engine)
         return engine
 
-    monkeypatch.setattr(storage_builder, "create_database_engine", create_engine)
+    monkeypatch.setattr(mysql_caller, "create_database_engine", create_engine)
     clients = []
     requests = []
     response_model = "doubao-embedding-vision-250615"
@@ -553,7 +594,8 @@ def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
 
     monkeypatch.setattr(retrieval_builder, "Ark", SimpleNamespace(volc=create_client))
     monkeypatch.setattr("server.service.video_parse.Ark", SimpleNamespace(volc=create_client))
-    services = bootstrap.build_application_services(settings)
+    application = main_module.init_application(settings)
+    services = application.services
     try:
         defaults = services.uploads.parse_defaults
         assert defaults.embedding.model == "ep-A"
@@ -587,7 +629,7 @@ def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
             client.close()
         assert clients and all(item.closed for item in clients)
     finally:
-        services.close()
+        application.close()
 
 
 def test_v2_mode_requires_elasticsearch_before_allocating_services(
@@ -606,10 +648,10 @@ def test_v2_mode_requires_elasticsearch_before_allocating_services(
     settings = ServerSettings.from_environment()
 
     with pytest.raises(ValueError, match="Video Parse V2 requires"):
-        bootstrap.build_application_services(settings)
+        main_module.init_application(settings)
 
 
-def test_mq_once_reuses_application_bootstrap(monkeypatch):
+def test_mq_once_reuses_process_application_assembly(monkeypatch):
     from types import SimpleNamespace
 
     events = []
@@ -620,6 +662,7 @@ def test_mq_once_reuses_application_bootstrap(monkeypatch):
         ),
         close=lambda: events.append("close"),
     )
+    runtime = SimpleNamespace(services=services, close=services.close)
     monkeypatch.setattr(
         mq_main.ServerSettings,
         "from_environment",
@@ -634,8 +677,8 @@ def test_mq_once_reuses_application_bootstrap(monkeypatch):
     )
     monkeypatch.setattr(
         mq_main,
-        "build_application_services",
-        lambda received: services if received is settings else None,
+        "init_application",
+        lambda received: runtime if received is settings else None,
     )
     monkeypatch.setattr(sys, "argv", ["python -m tests.manual.server_mq_once", "--once"])
 
@@ -656,6 +699,7 @@ def test_mq_once_uses_v2_synchronous_diagnostic_entrypoint(monkeypatch):
         ),
         close=lambda: events.append("close"),
     )
+    runtime = SimpleNamespace(services=services, close=services.close)
     monkeypatch.setattr(
         mq_main.ServerSettings,
         "from_environment",
@@ -670,8 +714,8 @@ def test_mq_once_uses_v2_synchronous_diagnostic_entrypoint(monkeypatch):
     )
     monkeypatch.setattr(
         mq_main,
-        "build_application_services",
-        lambda received: services if received is settings else None,
+        "init_application",
+        lambda received: runtime if received is settings else None,
     )
     monkeypatch.setattr(sys, "argv", ["python -m tests.manual.server_mq_once", "--once"])
 
@@ -704,11 +748,16 @@ def test_application_stops_consumer_before_agent_database_and_vector_store():
         agent_model_factory=SimpleNamespace(close=lambda: order.append("model_factory")),
         tracing=SimpleNamespace(close=lambda: order.append("tracing")),
         parse_usage=SimpleNamespace(close=lambda: order.append("usage_reader")),
+    )
+    resources = CallerResources(
         elasticsearch_client=SimpleNamespace(close=lambda: order.append("es")),
+        redis_client=SimpleNamespace(close=lambda: order.append("redis")),
         engine=SimpleNamespace(dispose=lambda: order.append("database")),
     )
-    services.close()
-    assert order == ["consumer", "agent", "model_factory", "tracing", "usage_reader", "es", "database"]
+    runtime = main_module.ApplicationRuntime(services=services, resources=resources)
+    runtime.close()
+    runtime.close()
+    assert order == ["consumer", "agent", "model_factory", "tracing", "usage_reader", "es", "redis", "database"]
 
 
 @pytest.mark.parametrize("failure", ["consumer", "agent"])
@@ -734,11 +783,15 @@ def test_application_closes_tracing_after_model_teardown_even_if_host_close_fail
         agent_model_factory=SimpleNamespace(close=lambda: order.append("model_factory")),
         tracing=SimpleNamespace(close=lambda: order.append("tracing")),
         parse_usage=SimpleNamespace(close=lambda: order.append("usage_reader")),
+    )
+    resources = CallerResources(
         elasticsearch_client=SimpleNamespace(close=lambda: order.append("es")),
         engine=SimpleNamespace(dispose=lambda: order.append("database")),
     )
+    runtime = main_module.ApplicationRuntime(services=services, resources=resources)
     with pytest.raises(RuntimeError, match=f"{failure} close failed"):
-        services.close()
+        runtime.close()
+    runtime.close()
     assert order == ["consumer", "agent", "model_factory", "tracing", "usage_reader", "es", "database"]
 
 
@@ -852,7 +905,7 @@ def test_unsupported_retrieval_options_fail_before_allocating_services(monkeypat
     monkeypatch.setattr(bootstrap, "load_config", lambda _path: config)
     def forbidden_database(*args, **kwargs):
         raise AssertionError("invalid retrieval must fail before allocating services")
-    monkeypatch.setattr(storage_builder, "create_database_engine", forbidden_database)
+    monkeypatch.setattr(mysql_caller, "create_database_engine", forbidden_database)
     settings = SimpleNamespace(
         model_config_path=None,
         parse_execution_mode="v2" if option == "unsupported_source" else "v1",
@@ -863,22 +916,47 @@ def test_unsupported_retrieval_options_fail_before_allocating_services(monkeypat
         ),
     )
     with pytest.raises(ValueError, match="requires a DeepSeek" if option == "unsupported_source" else "supports only Video Parse V2"):
-        bootstrap.build_application_services(settings)
+        main_module.init_application(settings)
 
 
 @pytest.mark.parametrize("injected", [False, True])
 def test_app_lifespan_closes_only_services_it_owns(monkeypatch, injected):
     from fastapi.testclient import TestClient
     from types import SimpleNamespace
-    import server.api.app as app_module
     lifecycle = []
     services = SimpleNamespace(
         start=lambda: lifecycle.append("start"),
         close=lambda: lifecycle.append("close"),
     )
-    settings = SimpleNamespace(sse=SSEConfig(), allowed_origins=())
-    monkeypatch.setattr(app_module, "build_application_services", lambda _settings: services)
+    runtime = SimpleNamespace(services=services, start=services.start, close=services.close)
+    settings = SimpleNamespace(sse=SSEConfig(), allowed_origins=(), auth=AuthConfig())
+    monkeypatch.setattr(main_module, "init_application", lambda _settings: runtime)
     app = create_app(services if injected else None, settings=settings)
     with TestClient(app):
         pass
     assert lifecycle == ([] if injected else ["start", "close"])
+
+
+@pytest.mark.parametrize("failure", ["elasticsearch", "redis"])
+def test_application_keeps_closing_clients_after_dependency_close_fails(failure):
+    order = []
+
+    def close(name):
+        order.append(name)
+        if name == failure:
+            raise RuntimeError(f"{name} close failed")
+
+    services = bootstrap.ApplicationServices(
+        library=None, uploads=None, jobs=None, media=None, retrieval=None,
+        agent=SimpleNamespace(close=lambda: close("agent")),
+    )
+    resources = CallerResources(
+        elasticsearch_client=SimpleNamespace(close=lambda: close("elasticsearch")),
+        redis_client=SimpleNamespace(close=lambda: close("redis")),
+        engine=SimpleNamespace(dispose=lambda: close("database")),
+    )
+    runtime = main_module.ApplicationRuntime(services=services, resources=resources)
+    with pytest.raises(RuntimeError, match=f"{failure} close failed"):
+        runtime.close()
+    runtime.close()
+    assert order == ["agent", "elasticsearch", "redis", "database"]

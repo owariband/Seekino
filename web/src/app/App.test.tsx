@@ -11,7 +11,7 @@ import { WorkspaceProvider } from "./workspace";
 
 const apiSeries: SeriesView = {
   seriesId: "series-from-api",
-  workspaceId: "local-default",
+  tenantId: "local-default",
   name: "接口返回的系列",
   description: "这条资料来自 Series API。",
   transcriptLanguageHint: null,
@@ -23,7 +23,7 @@ const apiSeries: SeriesView = {
 };
 
 const pendingUpload: UploadSessionView = {
-  uploadSessionId: "upload/session", workspaceId: "local-default", seriesId: apiSeries.seriesId,
+  uploadSessionId: "upload/session", tenantId: "local-default", seriesId: apiSeries.seriesId,
   episodeOrder: 1, uploadSequence: 1, originalFilename: "unfinished.mp4", mediaType: "video/mp4",
   totalSizeBytes: 10, contentSha256: null, preferredSegmentSizeBytes: 10, totalSegments: 1,
   status: "UPLOADING", uploadedSegmentCount: 0, uploadedSizeBytes: 0, missingSegmentNumbers: [0],
@@ -73,7 +73,7 @@ const initialGlobalSettings: AgentGlobalSettings = {
 
 const videoWithoutProgress: VideoSummary = {
   videoId: "video-without-progress",
-  workspaceId: "local-default",
+  tenantId: "local-default",
   seriesId: apiSeries.seriesId,
   episodeOrder: 1,
   uploadSequence: 1,
@@ -112,7 +112,7 @@ function renderApp(
   let messageOptions = initialMessageOptions;
   let globalSettings = initialGlobalSettings;
   const now = Date.parse("2026-09-15T00:00:00Z");
-  const conversation: AgentConversationView = { conversationId: "conversation", workspaceId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
+  const conversation: AgentConversationView = { conversationId: "conversation", tenantId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
   let conversations: AgentConversationView[] = [conversation];
   const conversationMessages = new Map<string, AgentMessageView[]>();
   const assistantMessage: AgentMessageView = {
@@ -494,7 +494,7 @@ describe("application shell", () => {
     expect(screen.queryByRole("dialog", { name: "新建视频系列" })).not.toBeInTheDocument();
     const creation = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/series/create"));
     expect(JSON.parse(String(creation?.[1]?.body))).toEqual({
-      workspaceId: "local-default",
+      tenantId: "local-default",
       name: "MyGO",
       description: null,
       transcriptLanguageHint: null,
@@ -562,7 +562,7 @@ describe("application shell", () => {
     const update = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/videos/update_episode"));
     expect(String(update?.[0])).toBe("/api/videos/update_episode");
     expect(JSON.parse(String(update?.[1]?.body))).toEqual({
-      workspaceId: "local-default",
+      tenantId: "local-default",
       videoId: videoWithoutProgress.videoId,
       episodeOrder: 7,
     });
@@ -610,7 +610,7 @@ describe("application shell", () => {
     expect(await screen.findByText("已保存")).toBeInTheDocument();
     expect(screen.getByText(/背景资料来自用户的补充/)).toBeInTheDocument();
     const update = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/series/update"));
-    expect(JSON.parse(String(update?.[1]?.body))).toEqual({ workspaceId: "local-default", seriesId: apiSeries.seriesId, importantExtraData: { format: "markdown", content: "# 人物关系\n背景资料来自用户的补充。" } });
+    expect(JSON.parse(String(update?.[1]?.body))).toEqual({ tenantId: "local-default", seriesId: apiSeries.seriesId, importantExtraData: { format: "markdown", content: "# 人物关系\n背景资料来自用户的补充。" } });
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/jobs/create"))).toBe(false);
     await user.click(screen.getByRole("button", { name: "编辑背景" }));
     expect(screen.getByRole("textbox", { name: "背景正文" })).toHaveValue("# 人物关系\n背景资料来自用户的补充。");
@@ -638,7 +638,7 @@ describe("application shell", () => {
     await waitFor(() => expect(screen.queryByText(pendingUpload.originalFilename)).not.toBeInTheDocument());
     expect(screen.getByText(merging.originalFilename)).toBeInTheDocument();
     const deletion = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/uploads/delete"));
-    expect(String(deletion?.[0])).toBe("/api/uploads/delete?uploadSessionId=upload%2Fsession&workspaceId=local-default");
+    expect(String(deletion?.[0])).toBe("/api/uploads/delete?uploadSessionId=upload%2Fsession&tenantId=local-default");
     expect(deletion?.[1]?.method).toBe("POST");
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/jobs/delete"))).toBe(false);
   });
@@ -688,7 +688,7 @@ describe("application shell", () => {
     expect(await screen.findByText("回答已完成")).toHaveAttribute("role", "status");
     const creation = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/agent/conversations/create"));
     expect(String(creation?.[0])).toBe("/api/agent/conversations/create");
-    expect(JSON.parse(String(creation?.[1]?.body))).toEqual({ workspaceId: "local-default" });
+    expect(JSON.parse(String(creation?.[1]?.body))).toEqual({ tenantId: "local-default" });
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/sessions/"))).toBe(false);
     const sendCall = fetchMock.mock.calls.find(([input]) =>
       String(input).includes("/api/agent/messages/send?conversationId=conversation"),
@@ -696,7 +696,7 @@ describe("application shell", () => {
     expect(sendCall).toBeDefined();
     expect(new Headers(sendCall?.[1]?.headers).get("Accept")).toBe("text/event-stream");
     expect(JSON.parse(String(sendCall?.[1]?.body))).toEqual({
-      workspaceId: "local-default",
+      tenantId: "local-default",
       content: "雨天门口",
       seriesIds: [],
       reference: null,

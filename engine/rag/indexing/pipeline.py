@@ -38,7 +38,7 @@ INDEX_SOURCE_VERSION = "parse-v2-video-result-v1"
 class ChunkIndexSource:
     """Formal Chunk facts and visual input; fact/enrichment changes advance the version."""
 
-    workspace_id: str
+    tenant_id: str
     series_id: str
     video_id: str
     video_chunk_id: str
@@ -54,7 +54,7 @@ class ChunkIndexSource:
         if any(
             not _nonblank(value)
             for value in (
-                self.workspace_id,
+                self.tenant_id,
                 self.series_id,
                 self.video_id,
                 self.video_chunk_id,
@@ -118,7 +118,7 @@ class ChunkIndexingContract:
 
 @dataclass(frozen=True, slots=True)
 class ChunkIndexPlan:
-    workspace_id: str
+    tenant_id: str
     series_id: str
     video_id: str
     video_chunk_id: str
@@ -175,7 +175,7 @@ class ChunkIndexReceipt:
 class VideoChunkIndexDocument:
     """Logical index document; physical IDs and versions belong to the store."""
 
-    workspace_id: str
+    tenant_id: str
     series_id: str
     video_id: str
     video_chunk_id: str
@@ -205,7 +205,7 @@ class VideoChunkIndexDocument:
         """Return the exact identity a storage hit must retain through fusion."""
 
         return VideoChunkRetrievalIdentity(
-            workspace_id=self.workspace_id,
+            tenant_id=self.tenant_id,
             series_id=self.series_id,
             video_id=self.video_id,
             parse_task_id=self.parse_task_id,
@@ -252,7 +252,7 @@ def plan_chunk_index(
         else None
     )
     return ChunkIndexPlan(
-        workspace_id=source.workspace_id,
+        tenant_id=source.tenant_id,
         series_id=source.series_id,
         video_id=source.video_id,
         video_chunk_id=source.video_chunk_id,
@@ -317,7 +317,7 @@ def finalize_chunk_index(
     elif sparse_artifact is not None:
         raise ValueError("sparse artifact is not requested by the index plan")
     return VideoChunkIndexDocument(
-        workspace_id=plan.workspace_id,
+        tenant_id=plan.tenant_id,
         series_id=plan.series_id,
         video_id=plan.video_id,
         video_chunk_id=plan.video_chunk_id,

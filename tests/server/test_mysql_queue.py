@@ -28,7 +28,7 @@ def _seed(repository, *, max_attempts: int = 3):
         session.add(
             Series(
                 series_id=series_id,
-                workspace_id="local-default",
+                tenant_id="local-default",
                 name=f"Queue Series {series_id}",
                 description=None,
                 status="INDEXING",
@@ -190,7 +190,7 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
             session.add(
                 Series(
                     series_id=series_id,
-                    workspace_id="local-default",
+                    tenant_id="local-default",
                     name=f"Series {series_id}",
                     description=None,
                     status="INDEXING",
@@ -382,7 +382,7 @@ def test_earlier_upload_without_job_blocks_later_parse_until_expired(
         session.add(
             UploadSession(
                 upload_session_id=str(uuid4()),
-                workspace_id="local-default",
+                tenant_id="local-default",
                 series_id=candidate.series_id,
                 episode_order=1,
                 upload_sequence=1,

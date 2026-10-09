@@ -109,7 +109,7 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
         session.get(Video, report.video_id).original_source_uri = original.uri
     media = MediaService(library, store, probe_playback=lambda _path: True)
 
-    initial = library.get_series(report.series_id, workspace_id="local-default")
+    initial = library.get_series(report.series_id, tenant_id="local-default")
     assert initial.video_count == 1
     assert initial.ready_video_count == 0
     assert initial.videos[0].index_status == VideoIndexStatus.NOT_READY
@@ -119,12 +119,12 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
         for chunk in session.scalars(select(VideoChunkEmbedding)):
             chunk.text_vector = [0.1, 0.2]
             chunk.vision_vector = [0.2, 0.3]
-    assert library.get_video(report.video_id, workspace_id="local-default").index_status == VideoIndexStatus.SYNCING
+    assert library.get_video(report.video_id, tenant_id="local-default").index_status == VideoIndexStatus.SYNCING
     with factory.begin() as session:
         for intent in session.scalars(select(IndexSyncIntent)):
             intent.operation = "UPSERT"
             intent.status = "SYNCED"
-    ready = library.get_series(report.series_id, workspace_id="local-default")
+    ready = library.get_series(report.series_id, tenant_id="local-default")
     assert ready.ready_video_count == 1
     detail = project_series_detail(ready, media).model_dump(by_alias=True)
     assert detail["createdAt"] == ready.created_at
@@ -155,7 +155,7 @@ def test_v2_library_status_uses_latest_video_parse_task(repository, prepared_imp
         LibraryRepository(factory, execution_mode="v2")
     )
 
-    ready = library.get_series(report.series_id, workspace_id="local-default")
+    ready = library.get_series(report.series_id, tenant_id="local-default")
     assert ready.status == "READY"
     assert ready.ready_video_count == 1
     assert ready.videos[0].index_status == VideoIndexStatus.READY
@@ -171,7 +171,7 @@ def test_v2_library_status_uses_latest_video_parse_task(repository, prepared_imp
 
     reparsing = library.get_series(
         report.series_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     assert reparsing.status == "INDEXING"
     assert reparsing.ready_video_count == 0
@@ -201,7 +201,7 @@ def test_v2_library_detail_projects_parse_task_status(
     )))
 
     detail = library_api.get_series(
-        request, series_id=report.series_id, workspace_id="local-default",
+        request, series_id=report.series_id, tenant_id="local-default",
     ).model_dump(mode="json", by_alias=True)
 
     assert detail["videos"][0]["parseStatus"] == parse_status
@@ -225,7 +225,7 @@ def test_latest_job_failure_and_index_error_are_actual_and_workspace_scoped(repo
         for intent in session.scalars(select(IndexSyncIntent)):
             intent.status = "RETRY_WAIT"
             intent.last_error = "private index endpoint failure"
-    state = library.get_series(report.series_id, workspace_id="local-default")
+    state = library.get_series(report.series_id, tenant_id="local-default")
     assert state.failed_video_count == 1
     assert state.ready_video_count == 0
     video = state.videos[0]
@@ -234,7 +234,7 @@ def test_latest_job_failure_and_index_error_are_actual_and_workspace_scoped(repo
     assert video.parse_progress is None
     assert video.index_status == VideoIndexStatus.FAILED
     with pytest.raises(SeriesNotFoundError):
-        library.get_video(report.video_id, workspace_id="other-workspace")
+        library.get_video(report.video_id, tenant_id="other-workspace")
 
 
 def test_ready_video_count_keeps_an_indexed_video_during_failed_reparse(
@@ -265,7 +265,7 @@ def test_ready_video_count_keeps_an_indexed_video_during_failed_reparse(
             last_error="reparse failed before replacing the indexed result",
         ))
 
-    state = library.get_series(report.series_id, workspace_id="local-default")
+    state = library.get_series(report.series_id, tenant_id="local-default")
     assert state.ready_video_count == 1
     assert state.videos[0].parse_status == "FAILED"
     assert state.videos[0].index_status == VideoIndexStatus.READY
@@ -311,7 +311,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
             ),
         ])
 
-    video = library.get_video(report.video_id, workspace_id="local-default")
+    video = library.get_video(report.video_id, tenant_id="local-default")
 
     assert video.latest_job_id == job_id
     assert video.parse_progress == 74
@@ -323,7 +323,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
     assert (
         library.get_video(
             report.video_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
         ).parse_progress
         is None
     )
@@ -331,7 +331,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
 
 def test_pending_upload_counts_expiry_and_full_detail(repository):
     factory, _videos, library = _library(repository)
-    series = library.create_series(workspace_id="local-default", name="Pending Series")
+    series = library.create_series(tenant_id="local-default", name="Pending Series")
     uploads = UploadRepository(factory)
     now = now_utc()
     active = []
@@ -341,7 +341,7 @@ def test_pending_upload_counts_expiry_and_full_detail(repository):
         (4, now - timedelta(seconds=1)),
     ):
         state = uploads.create_session(
-            workspace_id="local-default", series_id=series.series_id,
+            tenant_id="local-default", series_id=series.series_id,
             episode_order=episode,
             original_filename=f"episode-{episode}.mp4", media_type="video/mp4",
             total_size_bytes=10, preferred_segment_size_bytes=4, total_segments=3,
@@ -353,25 +353,25 @@ def test_pending_upload_counts_expiry_and_full_detail(repository):
         )
         if episode != 4:
             active.append(state.upload_session_id)
-    detail = library.get_series(series.series_id, workspace_id="local-default")
+    detail = library.get_series(series.series_id, tenant_id="local-default")
     assert detail.video_count == 0
     assert detail.pending_upload_count == 2
     assert [item.upload_session_id for item in detail.pending_uploads] == active
     assert [item.upload_sequence for item in detail.pending_uploads] == [2, 3]
     assert all(item.missing_segment_numbers == (0, 1, 2) for item in detail.pending_uploads)
-    assert library.list_series(workspace_id="local-default")[0].pending_upload_count == 2
+    assert library.list_series(tenant_id="local-default")[0].pending_upload_count == 2
 
 
 def test_last_search_uses_each_message_scope_and_workspace(repository):
     factory, _videos, library = _library(repository)
-    first = library.create_series(workspace_id="local-default", name="First")
-    second = library.create_series(workspace_id="local-default", name="Second")
+    first = library.create_series(tenant_id="local-default", name="First")
+    second = library.create_series(tenant_id="local-default", name="Second")
     now = now_unix_time_ms()
     local_conversation, foreign_conversation = str(uuid4()), str(uuid4())
     with factory.begin() as session:
         for conversation_id, workspace in ((local_conversation, "local-default"), (foreign_conversation, "other")):
             session.add(AgentConversation(
-                conversation_id=conversation_id, workspace_id=workspace,
+                conversation_id=conversation_id, tenant_id=workspace,
                 title="Scope history", idempotency_key=conversation_id,
             ))
         session.flush()
@@ -385,7 +385,7 @@ def test_last_search_uses_each_message_scope_and_workspace(repository):
                 role="USER", status="COMPLETED", content=content, series_ids=scope,
                 requested_series_ids=scope, created_at=created_at,
             ))
-    states = {state.series_id: state for state in library.list_series(workspace_id="local-default")}
+    states = {state.series_id: state for state in library.list_series(tenant_id="local-default")}
     assert states[first.series_id].last_search.query == "first question"
     assert states[second.series_id].last_search.query == "second question"
     assert states[first.series_id].last_search.conversation_id == local_conversation
@@ -394,8 +394,8 @@ def test_last_search_uses_each_message_scope_and_workspace(repository):
 def test_series_page_counts_filters_and_cursor_bind_actual_query(repository, tmp_path):
     factory, _videos, library = _library(repository)
     for name in ("Match A", "Match B", "Other"):
-        library.create_series(workspace_id="local-default", name=name)
-    library.create_series(workspace_id="other", name="Match Foreign")
+        library.create_series(tenant_id="local-default", name=name)
+    library.create_series(tenant_id="other", name="Match Foreign")
     media = MediaService(library, LocalArtifactStore(tmp_path / "artifacts", environment=DatabaseEnvironment.TEST))
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(services=SimpleNamespace(library=library, media=media))))
     first = library_api.list_series(request, "local-default", None, 1, "EMPTY", "Match")
@@ -416,9 +416,9 @@ def test_series_page_counts_filters_and_cursor_bind_actual_query(repository, tmp
 def test_background_edit_preserves_video_order_and_character_metadata(repository, prepared_import):
     _factory, videos, library = _library(repository)
     report = videos.import_video_parse(prepared_import)
-    before = library.get_series(report.series_id, workspace_id="local-default")
+    before = library.get_series(report.series_id, tenant_id="local-default")
     edited = library.update_series(
-        report.series_id, workspace_id="local-default",
+        report.series_id, tenant_id="local-default",
         changes={"description": "背景资料更新", "important_extra_data": {"content": "# 新背景"}},
     )
     assert edited.description == "背景资料更新"
@@ -443,7 +443,7 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
         session.add_all([
             UploadSession(
                 upload_session_id=upload_session_id,
-                workspace_id=prepared_import.workspace_id,
+                tenant_id=prepared_import.tenant_id,
                 series_id=report.series_id,
                 episode_order=prepared_import.episode_order,
                 upload_sequence=prepared_import.upload_sequence,
@@ -461,7 +461,7 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
             ),
             UploadSession(
                 upload_session_id=inactive_upload_session_id,
-                workspace_id=prepared_import.workspace_id,
+                tenant_id=prepared_import.tenant_id,
                 series_id=report.series_id,
                 episode_order=prepared_import.episode_order,
                 upload_sequence=prepared_import.upload_sequence,
@@ -481,12 +481,12 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
 
     edited = library.update_video_episode_order(
         report.video_id,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
         episode_order=9,
     )
     replay = library.update_video_episode_order(
         report.video_id,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
         episode_order=9,
     )
 
@@ -532,7 +532,7 @@ def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
     with factory.begin() as session:
         session.add(Series(
             series_id=series_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             name=f"Episode move {target_index}-{episode_order}",
             description=None,
             status="INDEXING",
@@ -567,7 +567,7 @@ def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
     library = LibraryRepository(factory)
     library.update_video_episode_order(
         video_ids[target_index],
-        workspace_id="local-default",
+        tenant_id="local-default",
         episode_order=episode_order,
     )
     with factory() as session:
@@ -598,7 +598,7 @@ def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
 
     library.update_video_episode_order(
         video_ids[target_index],
-        workspace_id="local-default",
+        tenant_id="local-default",
         episode_order=episode_order,
     )
     with factory() as session:
@@ -621,7 +621,7 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
     with factory.begin() as session:
         session.add(Series(
             series_id=series_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             name="Active Prefix episode move",
             description=None,
             status="INDEXING",
@@ -650,7 +650,7 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
             ))
         session.add(UploadSession(
             upload_session_id=upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             series_id=series_id,
             episode_order=1,
             upload_sequence=1,
@@ -684,7 +684,7 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
     with pytest.raises(VideoEpisodeOrderConflictError, match="active lease"):
         LibraryRepository(factory).update_video_episode_order(
             target_video_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             episode_order=2,
         )
 
@@ -715,7 +715,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
         session.add_all([
             UploadSession(
                 upload_session_id=linked_upload_id,
-                workspace_id=prepared_import.workspace_id,
+                tenant_id=prepared_import.tenant_id,
                 series_id=report.series_id,
                 episode_order=prepared_import.episode_order,
                 upload_sequence=prepared_import.upload_sequence,
@@ -733,7 +733,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
             ),
             UploadSession(
                 upload_session_id=reserved_upload_id,
-                workspace_id=prepared_import.workspace_id,
+                tenant_id=prepared_import.tenant_id,
                 series_id=report.series_id,
                 episode_order=10,
                 upload_sequence=10,
@@ -772,7 +772,7 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
         ):
             library.update_video_episode_order(
                 report.video_id,
-                workspace_id=prepared_import.workspace_id,
+                tenant_id=prepared_import.tenant_id,
                 episode_order=occupied_episode,
             )
 
@@ -792,20 +792,20 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
 def test_create_preserves_legacy_freeform_background_and_validates_managed_refs(repository):
     _factory, _videos, library = _library(repository)
     legacy = {"seriesBible": "旧Markdown", "arbitrary": {"custom": [1, "freeform"]}}
-    series = library.create_series(workspace_id="local-default", name="Legacy", important_extra_data=legacy)
+    series = library.create_series(tenant_id="local-default", name="Legacy", important_extra_data=legacy)
     assert series.important_extra_data == legacy
     with pytest.raises(ValueError, match="storage is unavailable"):
         library.create_series(
-            workspace_id="local-default", name="Invalid image",
+            tenant_id="local-default", name="Invalid image",
             important_extra_data={"arbitrary": {"image": "asset://missing"}},
         )
-    assert library.count_series(workspace_id="local-default") == 1
+    assert library.count_series(tenant_id="local-default") == 1
 
 
 def test_series_transcript_language_hint_is_normalized_updated_and_cleared(repository):
     _factory, _videos, library = _library(repository)
     created = library.create_series(
-        workspace_id="local-default",
+        tenant_id="local-default",
         name="Japanese audio",
         transcript_language_hint="  ja-jp  ",
     )
@@ -813,19 +813,19 @@ def test_series_transcript_language_hint_is_normalized_updated_and_cleared(repos
 
     updated = library.update_series(
         created.series_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         changes={"transcript_language_hint": "zh-hans"},
     )
     assert updated.transcript_language_hint == "zh-Hans"
     assert library.update_series(
         created.series_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         changes={"transcript_language_hint": None},
     ).transcript_language_hint is None
 
     with pytest.raises(ValueError, match="BCP-47"):
         library.update_series(
             created.series_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             changes={"transcript_language_hint": "Japanese language"},
         )

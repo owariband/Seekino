@@ -48,13 +48,13 @@ def service(repository):
 def video_scope(capture):
     return capture.capture_video(
         SimpleNamespace(video_parse_task_id="task", lease_version=8),
-        SimpleNamespace(workspace_id="workspace", series_id="series", task=SimpleNamespace(video_id="video")),
+        SimpleNamespace(tenant_id="workspace", series_id="series", task=SimpleNamespace(video_id="video")),
         sequence_no=4, category="embedding",
     )
 
 
 def chat_context():
-    return {"workspace_id": "workspace", "assistant_message_id": "message", "run_id": "message",
+    return {"tenant_id": "workspace", "assistant_message_id": "message", "run_id": "message",
             "conversation_id": "conversation", "series_ids": ("series", "other"), "stage": "agent_chat"}
 
 
@@ -69,7 +69,7 @@ def test_capture_video_combines_observers_and_persists_one_explicit_snapshot(tmp
                 with track_model_call(provider="provider", model="actual", operation="text_embedding") as tracker:
                     tracker.usage = TokenUsage(100, 0, 100, 30, None)
         assert len(outer) == 1
-        batch = repository.query(workspace_id="workspace", from_start_time=unix_time_ms_to_datetime(outer[0].started_at - 1),
+        batch = repository.query(tenant_id="workspace", from_start_time=unix_time_ms_to_datetime(outer[0].started_at - 1),
                                  to_start_time=unix_time_ms_to_datetime(outer[0].started_at + 1))
         assert len(batch.records) == 1
         row = batch.records[0]
@@ -115,7 +115,7 @@ def test_parallel_chat_scopes_do_not_cross_workspace_or_run(tmp_path):
     barrier = Barrier(2)
 
     def invoke(index):
-        with capture.capture_chat({"workspace_id": f"workspace-{index}", "assistant_message_id": f"message-{index}"}):
+        with capture.capture_chat({"tenant_id": f"workspace-{index}", "assistant_message_id": f"message-{index}"}):
             with track_model_call(provider="p", model="m", operation="chat") as tracker:
                 barrier.wait(timeout=5)
                 tracker.usage = TokenUsage(10 + index, 0, 10 + index, None, None)
@@ -125,7 +125,7 @@ def test_parallel_chat_scopes_do_not_cross_workspace_or_run(tmp_path):
         with ThreadPoolExecutor(max_workers=2) as executor:
             calls = list(executor.map(invoke, range(2)))
         for index, (call_id, started_at) in enumerate(calls):
-            rows = repository.query(workspace_id=f"workspace-{index}",
+            rows = repository.query(tenant_id=f"workspace-{index}",
                                     from_start_time=unix_time_ms_to_datetime(started_at - 1),
                                     to_start_time=unix_time_ms_to_datetime(started_at + 1)).records
             assert len(rows) == 1 and rows[0].call_id == call_id
@@ -154,7 +154,7 @@ def test_failed_call_keeps_confirmed_usage_and_write_failure_preserves_business(
 
 
 @pytest.mark.parametrize("changes", [
-    {"run_id": "other"}, {"workspace_id": "other"}, {"assistant_message_id": "other"},
+    {"run_id": "other"}, {"tenant_id": "other"}, {"assistant_message_id": "other"},
     {"video_parse_task_id": "task"},
 ])
 def test_conflicting_context_is_rejected_without_recording(changes, caplog):
@@ -169,12 +169,12 @@ def test_conflicting_context_is_rejected_without_recording(changes, caplog):
 def test_v1_and_standalone_retrieval_do_not_fabricate_an_owner():
     repository = Repository()
     capture = service(repository)
-    lease = SimpleNamespace(workspace_id="workspace", series_id="series", video_id="video", job_id="job",
+    lease = SimpleNamespace(tenant_id="workspace", series_id="series", video_id="video", job_id="job",
                             attempt_count=2, lease_version=7)
     with capture.capture(lease):
         with track_model_call(provider="p", model="m", operation="video_parse"):
             pass
-    with model_call_context({"workspace_id": "workspace", "series_ids": ["series"]}):
+    with model_call_context({"tenant_id": "workspace", "series_ids": ["series"]}):
         with track_model_call(provider="p", model="m", operation="text_embedding"):
             pass
     # Even an outer Chat subscriber must ignore a legacy V1 job context.
@@ -199,7 +199,7 @@ def test_capture_video_keeps_category_validation():
 
 def recorded(identity="call", *, tokens=None, unknown=False, sdk=(), metadata=None, **changes):
     values = dict(
-        call_id=identity, workspace_id="workspace", task_type="video_parse", run_id="task",
+        call_id=identity, tenant_id="workspace", task_type="video_parse", run_id="task",
         started_at=_NOW, created_at=_NOW,
         usage={"tokens": None if unknown else asdict(tokens or TokenUsage(100, 20, 120, 30, 5)),
                "sdk_model_usage": [{"model_name": model, "tokens": asdict(usage) if usage is not None else None}
@@ -220,7 +220,7 @@ def test_sql_overview_sdk_details_replace_parent_and_call_count_is_distinct():
         ("child-B", TokenUsage(20, 4, 24, None, None)),
         ("child-A", TokenUsage(5, 1, 6, None, None)),
     ))
-    state = service(Repository([sdk, sdk])).overview(workspace_id="workspace")
+    state = service(Repository([sdk, sdk])).overview(tenant_id="workspace")
     assert state.totals.call_count == 1
     assert state.totals.total_tokens == state.totals.known_tokens == 42
     assert {row.model: (row.call_count, row.total_tokens) for row in state.models} == {
@@ -235,7 +235,7 @@ def test_sql_overview_sdk_details_replace_parent_and_call_count_is_distinct():
 
 
 def test_subset_unknown_only_nulls_the_affected_subset():
-    state = service(Repository([recorded(tokens=TokenUsage(100, 20, 120, None, None))])).overview(workspace_id="workspace")
+    state = service(Repository([recorded(tokens=TokenUsage(100, 20, 120, None, None))])).overview(tenant_id="workspace")
     assert state.totals.input_tokens == 100 and state.totals.output_tokens == 20
     assert state.totals.total_tokens == 120 and state.totals.missing_usage_count == 0
     assert state.totals.cached_input_tokens is state.totals.reasoning_tokens is None
@@ -246,7 +246,7 @@ def test_cache_reasoning_and_modality_subsets_are_not_added_again():
     tokens = TokenUsage(100, 20, 120, 30, 5, text_input_tokens=50, image_input_tokens=10,
                         audio_input_tokens=20, cached_audio_input_tokens=5, cache_write_input_tokens=15,
                         cache_write_5m_input_tokens=10, cache_write_1h_input_tokens=5)
-    totals = service(Repository([recorded(tokens=tokens)])).overview(workspace_id="workspace").totals
+    totals = service(Repository([recorded(tokens=tokens)])).overview(tenant_id="workspace").totals
     assert totals.total_tokens == totals.known_tokens == 120
     assert totals.cached_input_tokens == 30 and totals.cache_write_input_tokens == 15
     assert totals.reasoning_tokens == 5
@@ -254,7 +254,7 @@ def test_cache_reasoning_and_modality_subsets_are_not_added_again():
 
 def test_missing_sdk_usage_is_counted_once_per_call_and_does_not_use_parent_total():
     partial = recorded("partial", sdk=(("child-A", None), ("child-B", None), ("known", TokenUsage(10, 2, 12, 0, 0))))
-    state = service(Repository([recorded("complete"), partial])).overview(workspace_id="workspace")
+    state = service(Repository([recorded("complete"), partial])).overview(tenant_id="workspace")
     assert state.totals.call_count == 2 and state.totals.missing_usage_count == 1
     assert state.totals.input_tokens is state.totals.output_tokens is state.totals.total_tokens is None
     assert state.totals.known_tokens == 132
@@ -265,7 +265,7 @@ def test_missing_sdk_usage_is_counted_once_per_call_and_does_not_use_parent_tota
 def test_main_loop_is_a_known_subtotal_at_all_affected_group_levels():
     partial = recorded("partial", metadata={"usage_scope": "main_loop"})
     complete = recorded("complete", run_id="other")
-    state = service(Repository([partial, complete])).overview(workspace_id="workspace")
+    state = service(Repository([partial, complete])).overview(tenant_id="workspace")
     for totals in (state.totals, state.models[0], next(row for row in state.runs if row.run_id == "task")):
         assert totals.input_tokens is totals.output_tokens is totals.total_tokens is None
         assert totals.missing_usage_count == 1
@@ -275,7 +275,7 @@ def test_main_loop_is_a_known_subtotal_at_all_affected_group_levels():
 
 
 def test_truncated_window_nulls_complete_totals_but_does_not_invent_missing_calls():
-    state = service(Repository([recorded()], truncated=True)).overview(workspace_id="workspace")
+    state = service(Repository([recorded()], truncated=True)).overview(tenant_id="workspace")
     assert state.truncated
     for totals in (state.totals, state.models[0], state.runs[0]):
         assert totals.call_count == 1 and totals.missing_usage_count == 0
@@ -285,14 +285,14 @@ def test_truncated_window_nulls_complete_totals_but_does_not_invent_missing_call
 
 
 def test_failed_call_still_counts_confirmed_tokens_and_unknown_call_does_not_become_zero():
-    state = service(Repository([recorded("failed", metadata={"status": "failed"}), recorded("unknown", unknown=True)])).overview(workspace_id="workspace")
+    state = service(Repository([recorded("failed", metadata={"status": "failed"}), recorded("unknown", unknown=True)])).overview(tenant_id="workspace")
     assert state.totals.call_count == 2 and state.totals.missing_usage_count == 1
     assert state.totals.total_tokens is None and state.totals.known_tokens == 120
 
 
 def test_two_task_types_with_the_same_run_id_remain_separate_runs():
     chat = recorded("chat", task_type="chat_retrieval", metadata={"context": {"series_ids": ["series", "other"]}})
-    state = service(Repository([recorded(), chat])).overview(workspace_id="workspace")
+    state = service(Repository([recorded(), chat])).overview(tenant_id="workspace")
     assert len(state.runs) == 2 and {run.task_type for run in state.runs} == {"video_parse", "chat_retrieval"}
     assert next(run for run in state.runs if run.task_type == "chat_retrieval").series_id is None
 
@@ -300,7 +300,7 @@ def test_two_task_types_with_the_same_run_id_remain_separate_runs():
 def test_database_query_failure_is_unavailable_and_does_not_expose_credentials(caplog):
     from sqlalchemy.exc import OperationalError
 
-    state = service(Repository(error=OperationalError("secret payload", {}, Exception("secret credential")))).overview(workspace_id="workspace")
+    state = service(Repository(error=OperationalError("secret payload", {}, Exception("secret credential")))).overview(tenant_id="workspace")
     assert state.status == "unavailable" and state.totals.call_count is None
     assert not state.models and not state.runs and not state.truncated
     assert "secret" not in state.message and "secret" not in caplog.text
@@ -308,20 +308,20 @@ def test_database_query_failure_is_unavailable_and_does_not_expose_credentials(c
 
 
 def test_empty_recorded_window_is_available_with_zero_calls():
-    state = service(Repository()).overview(workspace_id="workspace")
+    state = service(Repository()).overview(tenant_id="workspace")
     assert state.status == "available" and state.totals.call_count == state.totals.total_tokens == 0
     assert state.totals.known_tokens == state.totals.missing_usage_count == 0
 
 
 def test_default_window_and_exact_filters_are_passed_to_repository():
     repository = Repository()
-    state = service(repository).overview(workspace_id="workspace", series_id="series", run_id="task")
+    state = service(repository).overview(tenant_id="workspace", series_id="series", run_id="task")
     expected_end = datetime(2026, 10, 8, 0, 1, tzinfo=UTC)
     assert state.to_start_time == datetime_to_unix_time_ms(expected_end)
     assert state.to_start_time - state.from_start_time == 30 * 86_400_000
-    assert repository.queries[0] == dict(workspace_id="workspace", from_start_time=expected_end - timedelta(days=30),
+    assert repository.queries[0] == dict(tenant_id="workspace", from_start_time=expected_end - timedelta(days=30),
                                       to_start_time=expected_end, series_id="series", run_id="task")
-    exact = service(repository).overview(workspace_id="workspace", to_start_time=datetime_to_unix_time_ms(_NOW))
+    exact = service(repository).overview(tenant_id="workspace", to_start_time=datetime_to_unix_time_ms(_NOW))
     assert exact.to_start_time == datetime_to_unix_time_ms(_NOW)
 
 
@@ -329,14 +329,14 @@ def test_default_window_and_exact_filters_are_passed_to_repository():
 def test_invalid_windows_are_rejected_before_query(start, end):
     repository = Repository()
     with pytest.raises(ValueError):
-        service(repository).overview(workspace_id="workspace", from_start_time=start, to_start_time=end)
+        service(repository).overview(tenant_id="workspace", from_start_time=start, to_start_time=end)
     assert not repository.queries
 
 
-@pytest.mark.parametrize("field,value", [("workspace_id", " w"), ("series_id", "s "), ("run_id", " r")])
+@pytest.mark.parametrize("field,value", [("tenant_id", " w"), ("series_id", "s "), ("run_id", " r")])
 def test_overview_identity_whitespace_is_rejected_before_query(field, value):
     repository = Repository()
-    arguments = {"workspace_id": "workspace", field: value}
+    arguments = {"tenant_id": "workspace", field: value}
     with pytest.raises(ValueError):
         service(repository).overview(**arguments)
     assert not repository.queries
@@ -352,19 +352,19 @@ def test_sql_api_preserves_get_route_and_parameter_contract(tmp_path):
     application = create_app(services=SimpleNamespace(parse_usage=service(repository)))
     try:
         with TestClient(application) as client:
-            response = client.get("/api/usage/overview", params={"workspaceId": "workspace", "seriesId": "series", "runId": "task"})
+            response = client.get("/api/usage/overview", params={"tenantId": "workspace", "seriesId": "series", "runId": "task"})
             assert response.status_code == 200
             public = response.json()
             assert public["source"] == "local" and public["totals"]["totalTokens"] == 120
             assert public["runs"][0]["taskType"] == "video_parse"
             assert "currency" not in public and "estimatedCostUsd" not in public["totals"]
-            assert client.get("/api/usage/overview", params={"workspaceId": "foreign"}).json()["totals"]["callCount"] == 0
-            assert client.get("/api/jobs/usage/get", params={"workspaceId": "workspace", "jobId": "job"}).status_code == 404
-            for params in ({}, {"workspaceId": ""}, {"workspaceId": "x" * 65}, {"workspaceId": "workspace", "fromStartTime": -1}):
+            assert client.get("/api/usage/overview", params={"tenantId": "foreign"}).json()["totals"]["callCount"] == 0
+            assert client.get("/api/jobs/usage/get", params={"tenantId": "workspace", "jobId": "job"}).status_code == 404
+            for params in ({}, {"tenantId": ""}, {"tenantId": "x" * 65}, {"tenantId": "workspace", "fromStartTime": -1}):
                 assert client.get("/api/usage/overview", params=params).status_code == 422
             from fastapi.openapi.utils import get_openapi
             query_properties = get_openapi(title="usage-test", version="1", routes=application.routes)["paths"]["/api/usage/overview"]["get"]["parameters"]
-            assert {item["name"] for item in query_properties} == {"workspaceId", "fromStartTime", "toStartTime", "seriesId", "runId"}
+            assert {item["name"] for item in query_properties} == {"tenantId", "fromStartTime", "toStartTime", "seriesId", "runId"}
     finally:
         engine.dispose()
 
@@ -385,7 +385,7 @@ def test_sql_api_reports_partial_sdk_usage_and_keeps_task_types_separate(tmp_pat
         application = create_app(services=SimpleNamespace(parse_usage=service(repository)))
         with TestClient(application) as client:
             response = client.get("/api/usage/overview", params={
-                "workspaceId": "workspace", "seriesId": "series", "runId": "task",
+                "tenantId": "workspace", "seriesId": "series", "runId": "task",
                 "fromStartTime": datetime_to_unix_time_ms(_NOW),
                 "toStartTime": datetime_to_unix_time_ms(_NOW + timedelta(milliseconds=1)),
             })
@@ -414,7 +414,7 @@ def test_usage_api_database_failure_returns_unavailable_without_fabricating_zero
     repository = Repository(error=SQLAlchemyError("private-database-credential"))
     application = create_app(services=SimpleNamespace(parse_usage=service(repository)))
     with TestClient(application) as client:
-        response = client.get("/api/usage/overview", params={"workspaceId": "workspace"})
+        response = client.get("/api/usage/overview", params={"tenantId": "workspace"})
     assert response.status_code == 200
     public = response.json()
     assert public["source"] == "local" and public["status"] == "unavailable"
@@ -437,7 +437,35 @@ def test_usage_api_rejects_invalid_filters_before_database_query(params, status)
     repository = Repository()
     application = create_app(services=SimpleNamespace(parse_usage=service(repository)))
     with TestClient(application) as client:
-        response = client.get("/api/usage/overview", params={"workspaceId": "workspace", **params})
+        response = client.get("/api/usage/overview", params={"tenantId": "workspace", **params})
     assert response.status_code == status
     assert response.json()["code"] == ("INVALID_REQUEST" if status == 400 else "VALIDATION_ERROR")
     assert repository.queries == []
+
+@pytest.mark.parametrize("kind", ["chat", "parse"])
+def test_capture_uses_trusted_actor_snapshot_instead_of_nested_call_context(kind):
+    repository = Repository()
+    capture = service(repository)
+    scope = (
+        capture.capture_chat({**chat_context(), "actor_user_id": "verified-user"})
+        if kind == "chat" else capture.capture_video(
+            SimpleNamespace(video_parse_task_id="task", lease_version=8),
+            SimpleNamespace(tenant_id="tenant", series_id="series", task=SimpleNamespace(
+                video_id="video", detail={"_worker_runtime_v2": {"actor_user_id": "verified-user"}},
+            )),
+            sequence_no=0, category="parse",
+        )
+    )
+    with scope, model_call_context({"actor_user_id": "untrusted-user"}):
+        with track_model_call(provider="provider", model="actual", operation="chat") as tracker:
+            tracker.usage = TokenUsage(1, 2, 3, None, None)
+    assert len(repository.appended) == 1
+    assert repository.appended[0].actor_user_id == "verified-user"
+
+
+def test_historical_parse_without_runtime_actor_stays_unknown():
+    repository = Repository()
+    with video_scope(service(repository)):
+        with track_model_call(provider="provider", model="actual", operation="chat") as tracker:
+            tracker.usage = TokenUsage(1, 2, 3, None, None)
+    assert repository.appended[0].actor_user_id is None

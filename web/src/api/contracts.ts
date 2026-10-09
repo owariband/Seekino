@@ -1,4 +1,15 @@
 export type RuntimeMode = "checking" | "live" | "offline";
+
+export interface AuthIdentity {
+  userId: string;
+  email: string | null;
+  isGuest: boolean;
+  tenantId: string | null;
+  publicTenantId: string;
+  mode: "local" | "cloud";
+  csrfToken: string;
+  permissions: { canUpload: boolean; canManage: boolean; canConfigure: boolean };
+}
 export type ThemeMode = "light" | "dark";
 
 export type SeriesStatus = "EMPTY" | "INDEXING" | "PARTIAL" | "READY" | "FAILED";
@@ -43,7 +54,7 @@ export interface Character { name: string; aliases: string[] }
 
 export interface VideoSummary {
   videoId: string;
-  workspaceId: string;
+  tenantId: string;
   seriesId: string;
   episodeOrder: number;
   uploadSequence: number;
@@ -65,14 +76,15 @@ export interface VideoSummary {
 }
 
 export interface VideoEpisodeUpdateRequest {
-  workspaceId: string;
+  tenantId: string;
   videoId: string;
   episodeOrder: number;
 }
 
 export interface SeriesSummary {
+  isPublished?: boolean;
   seriesId: string;
-  workspaceId: string;
+  tenantId: string;
   name: string;
   description: string | null;
   status: SeriesStatus;
@@ -95,7 +107,7 @@ export interface SeriesView extends SeriesSummary {
 }
 
 export interface SeriesCreateRequest {
-  workspaceId: string;
+  tenantId: string;
   name: string;
   description?: string | null;
   transcriptLanguageHint?: string | null;
@@ -109,7 +121,8 @@ export interface SeriesBackground {
 }
 
 export interface SeriesUpdateRequest {
-  workspaceId: string;
+  isPublished?: boolean;
+  tenantId: string;
   seriesId: string;
   description?: string | null;
   transcriptLanguageHint?: string | null;
@@ -117,7 +130,7 @@ export interface SeriesUpdateRequest {
 }
 
 export interface UploadSessionCreateRequest {
-  workspaceId: string;
+  tenantId: string;
   episodeOrder: number;
   uploadSequence?: number;
   originalFilename: string;
@@ -182,7 +195,7 @@ export interface ParseConfig {
 
 export interface UploadSessionView {
   uploadSessionId: string;
-  workspaceId: string;
+  tenantId: string;
   seriesId: string;
   episodeOrder: number;
   uploadSequence: number;
@@ -238,7 +251,7 @@ export interface ParseJobCurrentChunkView {
 export interface ParseJobView {
   jobId: string;
   uploadSessionId: string | null;
-  workspaceId: string;
+  tenantId: string;
   seriesId: string;
   videoId: string;
   seriesName: string;
@@ -306,7 +319,7 @@ export interface VideoParseTaskView {
   createTime: UnixTimeMs;
   updateTime: UnixTimeMs;
   /** Null on retry/reparse action responses; list/get/events always include this context. */
-  workspaceId: string | null;
+  tenantId: string | null;
   seriesId: string | null;
   seriesName: string | null;
   episodeOrder: number | null;
@@ -390,7 +403,7 @@ export interface TranscriptCue {
 
 export interface VideoChunkEvidence {
   seriesId: string;
-  workspaceId: string;
+  tenantId: string;
   seriesName: string;
   seriesStatus: SeriesStatus;
   videoId: string;
@@ -519,7 +532,7 @@ export interface AgentSearchEvidence extends Omit<VideoChunkSearchEvidence, "que
 }
 
 export interface VideoSearchRequest {
-  workspaceId: string;
+  tenantId: string;
   query: string;
   seriesIds: string[];
   topK: number;
@@ -527,7 +540,7 @@ export interface VideoSearchRequest {
 
 export interface AgentConversationView {
   conversationId: string;
-  workspaceId: string;
+  tenantId: string;
   title: string;
   messageCount: number;
   lastMessagePreview: string | null;

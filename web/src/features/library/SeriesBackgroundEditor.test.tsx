@@ -11,12 +11,12 @@ vi.mock("../../app/workspace", () => ({ useWorkspace: () => mocks }));
 vi.mock("../../api/client", async (importOriginal) => ({ ...await importOriginal<typeof import("../../api/client")>(), uploadSeriesImage: mocks.uploadSeriesImage }));
 
 const series: SeriesView = {
-  seriesId: "series-a", workspaceId: "local-default", name: "MyGO", description: "现有简介", status: "EMPTY",
+  seriesId: "series-a", tenantId: "local-default", name: "MyGO", description: "现有简介", status: "EMPTY",
   transcriptLanguageHint: null,
   importantExtraData: null, characterBible: [], videos: [], pendingUploads: [], videoCount: 0, readyVideoCount: 0,
   failedVideoCount: 0, pendingUploadCount: 0, cover: null, lastSearch: null, createdAt: 1, updatedAt: 1,
 };
-const asset: ImageAsset = { imageId: "simg_uploaded", url: "/api/media/images/content?workspaceId=local-default&imageId=simg_uploaded", expiresAt: null };
+const asset: ImageAsset = { imageId: "simg_uploaded", url: "/api/media/images/content?tenantId=local-default&imageId=simg_uploaded", expiresAt: null };
 
 async function openEditor(data: SeriesView["importantExtraData"] = null) {
   const view = render(<SeriesBackgroundEditor series={{ ...series, importantExtraData: data }} />);
@@ -42,8 +42,8 @@ describe("Series background editing", () => {
     const anon = screen.getByRole("img", { name: "爱音官方立绘" });
     const ordered = [heading, tomori, description, anonHeading, anon];
     ordered.slice(1).forEach((element, index) => expect(ordered[index]!.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy());
-    expect(tomori).toHaveAttribute("src", "/api/media/images/content?workspaceId=local-default&imageId=simg_tomori");
-    expect(anon).toHaveAttribute("src", "/api/media/images/content?workspaceId=local-default&imageId=simg_anon");
+    expect(tomori).toHaveAttribute("src", "/api/media/images/content?tenantId=local-default&imageId=simg_tomori");
+    expect(anon).toHaveAttribute("src", "/api/media/images/content?tenantId=local-default&imageId=simg_anon");
     expect(tomori.closest("p")).not.toBeNull();
     expect(description.tagName).toBe("STRONG");
     expect(screen.getAllByRole("list")).toHaveLength(2);
@@ -56,8 +56,8 @@ describe("Series background editing", () => {
     const content = "![第一次][灯]\n\n![第二次](asset://simg_tomori)\n\n[灯]: asset://simg_tomori\n\n~~~markdown\n![示例](asset://simg_code_only)\n~~~";
     const view = render(<SeriesBackgroundEditor series={{ ...series, importantExtraData: { seriesBible: content } }} />);
     expect(screen.getAllByRole("img")).toHaveLength(2);
-    expect(screen.getByRole("img", { name: "第一次" })).toHaveAttribute("src", "/api/media/images/content?workspaceId=local-default&imageId=simg_tomori");
-    expect(screen.getByRole("img", { name: "第二次" })).toHaveAttribute("src", "/api/media/images/content?workspaceId=local-default&imageId=simg_tomori");
+    expect(screen.getByRole("img", { name: "第一次" })).toHaveAttribute("src", "/api/media/images/content?tenantId=local-default&imageId=simg_tomori");
+    expect(screen.getByRole("img", { name: "第二次" })).toHaveAttribute("src", "/api/media/images/content?tenantId=local-default&imageId=simg_tomori");
     expect(view.container.querySelector("pre code")).toHaveTextContent("![示例](asset://simg_code_only)");
     expect(view.container.querySelectorAll("figure")).toHaveLength(0);
   });

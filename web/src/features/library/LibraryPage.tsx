@@ -153,7 +153,7 @@ export function LibraryPage() {
 
       {selectedSeries ? (
         <>
-          <SeriesBackgroundEditor key={`${selectedSeries.workspaceId}:${selectedSeries.seriesId}`} series={selectedSeries} />
+          <SeriesBackgroundEditor key={`${selectedSeries.tenantId}:${selectedSeries.seriesId}`} series={selectedSeries} />
 
           <section className={styles.episodes}>
             <div className={styles.sectionHeader}>

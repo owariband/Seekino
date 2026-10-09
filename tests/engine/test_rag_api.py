@@ -130,7 +130,7 @@ def test_projection_version_patch_changes_canonical_fingerprint(monkeypatch) -> 
 def test_persisted_identity_uses_content_version_and_generation_and_search_json_round_trips() -> None:
     canonical = importlib.import_module("engine.rag.contracts")
     payload = {
-        "workspaceId": "workspace", "seriesId": "series", "videoId": "video",
+        "tenantId": "workspace", "seriesId": "series", "videoId": "video",
         "parseTaskId": "task", "contentVersion": 2, "indexGeneration": 1,
     }
     identity = canonical.VideoChunkRetrievalIdentity.model_validate(payload)

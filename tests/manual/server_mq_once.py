@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 
-from server.bootstrap import build_application_services
 from server.config import ServerSettings
+from server.main import init_application
 from server.utils.logging import configure_logging
 
 
@@ -27,7 +27,8 @@ def main() -> None:
         parser.error("pass --once to run the single-job diagnostic")
     settings = ServerSettings.from_environment()
     configure_logging("mq", environment=settings.environment, config=settings.logging)
-    services = build_application_services(settings)
+    runtime = init_application(settings)
+    services = runtime.services
     try:
         if services.parse_consumer is None:
             raise RuntimeError("parse consumer is not configured")
@@ -37,7 +38,7 @@ def main() -> None:
         else:
             services.parse_consumer.run_once()
     finally:
-        services.close()
+        runtime.close()
 
 
 if __name__ == "__main__":

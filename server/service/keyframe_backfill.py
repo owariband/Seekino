@@ -49,7 +49,7 @@ class KeyframeBackfillService:
         *,
         limit: int,
         dry_run: bool,
-        workspace_id: str | None = None,
+        tenant_id: str | None = None,
         series_id: str | None = None,
         video_id: str | None = None,
     ) -> KeyframeBackfillReport:
@@ -69,7 +69,7 @@ class KeyframeBackfillService:
         while not finished:
             candidates = self._videos.list_keyframe_backfill_candidates(
                 limit=scan_page_size,
-                workspace_id=workspace_id,
+                tenant_id=tenant_id,
                 series_id=series_id,
                 video_id=video_id,
                 after=after,

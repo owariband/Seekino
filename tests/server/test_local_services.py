@@ -343,6 +343,7 @@ def test_start_claude_api_key_mode_requires_configured_key(monkeypatch) -> None:
 
 def test_local_start_validates_explicit_elasticsearch_before_applications(monkeypatch) -> None:
     events: list[str] = []
+    requests = []
     settings = SimpleNamespace(
         elasticsearch=SimpleNamespace(
             url="http://127.0.0.1:9200", index_name="anivag_video_chunks_dev",
@@ -365,12 +366,17 @@ def test_local_start_validates_explicit_elasticsearch_before_applications(monkey
         def ensure_index(self) -> None:
             events.append("schema")
 
-    monkeypatch.setattr(local_services, "Elasticsearch", lambda *_args, **_kwargs: FakeClient())
+    def create_client(config, **options):
+        requests.append((config, options))
+        return FakeClient()
+
+    monkeypatch.setattr(local_services, "create_elasticsearch_client", create_client)
     monkeypatch.setattr(local_services, "ElasticsearchVideoChunkStore", FakeStore)
 
     local_services.start_elasticsearch(settings)
 
     assert events == ["store", "schema", "closed"]
+    assert requests == [(settings.elasticsearch, {"request_timeout_seconds": 5})]
 
 
 def test_local_start_rejects_unready_elasticsearch_without_schema_write(monkeypatch) -> None:
@@ -385,7 +391,7 @@ def test_local_start_rejects_unready_elasticsearch_without_schema_write(monkeypa
         def close(self) -> None:
             closed.append(True)
 
-    monkeypatch.setattr(local_services, "Elasticsearch", lambda *_args, **_kwargs: FakeClient())
+    monkeypatch.setattr(local_services, "create_elasticsearch_client", lambda *_args, **_kwargs: FakeClient())
     monkeypatch.setattr(
         local_services, "ElasticsearchVideoChunkStore",
         lambda *_args, **_kwargs: pytest.fail("schema must not be touched"),
@@ -398,7 +404,7 @@ def test_local_start_rejects_unready_elasticsearch_without_schema_write(monkeypa
 
 def test_local_start_rejects_missing_elasticsearch_configuration(monkeypatch) -> None:
     monkeypatch.setattr(
-        local_services, "Elasticsearch",
+        local_services, "create_elasticsearch_client",
         lambda *_args, **_kwargs: pytest.fail("ES client must not be opened"),
     )
 
@@ -413,6 +419,8 @@ def test_local_start_rejects_missing_elasticsearch_configuration(monkeypatch) ->
 def test_local_status_includes_explicit_elasticsearch_health(
     monkeypatch, capsys, health, expected,
 ) -> None:
+    requests = []
+    closed = []
     settings = SimpleNamespace(
         database_url="mysql+pymysql://root@127.0.0.1:3306/anivag_development",
         elasticsearch=SimpleNamespace(url="http://127.0.0.1:9200", api_key=None),
@@ -422,9 +430,13 @@ def test_local_status_includes_explicit_elasticsearch_health(
         cluster = SimpleNamespace(health=lambda **_kwargs: health)
 
         def close(self) -> None:
-            pass
+            closed.append(True)
 
-    monkeypatch.setattr(local_services, "Elasticsearch", lambda *_args, **_kwargs: FakeClient())
+    def create_client(config, **options):
+        requests.append((config, options))
+        return FakeClient()
+
+    monkeypatch.setattr(local_services, "create_elasticsearch_client", create_client)
     monkeypatch.setattr(local_services, "listening", lambda _port: True)
     monkeypatch.setattr(local_services, "get", lambda _url: b"ready")
     monkeypatch.setattr(local_services, "api_ready", lambda _url: True)
@@ -433,3 +445,69 @@ def test_local_status_includes_explicit_elasticsearch_health(
 
     assert local_services.status(settings) is expected
     assert "Elasticsearch health" in capsys.readouterr().out
+    assert requests == [(settings.elasticsearch, {"request_timeout_seconds": 3})]
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("failure", [None, "admin", "schema"])
+def test_local_mysql_missing_database_closes_admin_and_application_engines(
+    monkeypatch, failure,
+) -> None:
+    from contextlib import contextmanager
+    from sqlalchemy.exc import OperationalError
+
+    settings = SimpleNamespace(
+        database_url="mysql+pymysql://root@127.0.0.1:3306/anivag_development",
+        environment="development",
+    )
+    events = []
+
+    @contextmanager
+    def application_connection():
+        raise OperationalError("SELECT 1", None, Exception(1049, "unknown database"))
+        yield  # pragma: no cover
+
+    def execute(statement):
+        events.append(str(statement))
+        if failure == "admin":
+            raise RuntimeError("admin failed")
+
+    @contextmanager
+    def admin_connection():
+        yield SimpleNamespace(execute=execute)
+
+    engine = SimpleNamespace(
+        connect=application_connection, dispose=lambda: events.append("application closed"),
+    )
+    admin = SimpleNamespace(
+        connect=admin_connection, dispose=lambda: events.append("admin closed"),
+    )
+
+    def create_admin(database_url, *, environment):
+        assert database_url == settings.database_url
+        assert environment == settings.environment
+        return admin
+
+    def create_schema(received):
+        assert received is engine
+        events.append("schema")
+        if failure == "schema":
+            raise RuntimeError("schema failed")
+
+    monkeypatch.setattr(local_services, "listening", lambda _port: True)
+    monkeypatch.setattr(local_services, "create_database_engine", lambda *_a, **_k: engine)
+    monkeypatch.setattr(local_services, "create_admin_database_engine", create_admin)
+    monkeypatch.setattr(local_services, "create_schema", create_schema)
+
+    if failure:
+        with pytest.raises(RuntimeError, match=f"{failure} failed"):
+            local_services.start_mysql(settings)
+    else:
+        local_services.start_mysql(settings)
+
+    assert events[0].startswith("CREATE DATABASE IF NOT EXISTS `anivag_development`")
+    assert events[-1] == "application closed"
+    assert events.count("admin closed") == 1
+    assert events.count("application closed") == 1
+    assert events.index("admin closed") < events.index("application closed")
+    assert ("schema" in events) is (failure != "admin")

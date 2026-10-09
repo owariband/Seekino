@@ -48,7 +48,7 @@ function task(
     detail: {},
     createTime: 1,
     updateTime: 2,
-    workspaceId: "local-default",
+    tenantId: "local-default",
     seriesId: "series-1",
     seriesName: "MyGO",
     episodeOrder: 1,
@@ -109,7 +109,7 @@ describe("V2 task observation", () => {
 
     await screen.findByText("pending.mp4");
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      "/api/jobs/video-parse/list?workspaceId=local-default&limit=100",
+      "/api/jobs/video-parse/list?tenantId=local-default&limit=100",
     );
     expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中3");
     expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("固定切片35");
@@ -247,7 +247,7 @@ describe("V2 task actions", () => {
       attemptCount: 3,
       maxAttempts: 4,
       lastError: null,
-      workspaceId: null,
+      tenantId: null,
       seriesId: null,
       seriesName: null,
       episodeOrder: null,
@@ -268,7 +268,7 @@ describe("V2 task actions", () => {
         serverTask = {
           ...failed,
           ...actionResponse,
-          workspaceId: failed.workspaceId,
+          tenantId: failed.tenantId,
           seriesId: failed.seriesId,
           seriesName: failed.seriesName,
           episodeOrder: failed.episodeOrder,
@@ -314,7 +314,7 @@ describe("V2 task actions", () => {
       processingDurationMs: 0,
       processingTimingComplete: true,
       finishTime: null,
-      workspaceId: null,
+      tenantId: null,
       seriesId: null,
       seriesName: null,
       episodeOrder: null,
@@ -335,7 +335,7 @@ describe("V2 task actions", () => {
         serverTask = {
           ...completed,
           ...actionResponse,
-          workspaceId: completed.workspaceId,
+          tenantId: completed.tenantId,
           seriesId: completed.seriesId,
           seriesName: completed.seriesName,
           episodeOrder: completed.episodeOrder,

@@ -47,7 +47,7 @@ def _seed(repository, *, max_attempts: int = 3):
         session.add(
             Series(
                 series_id=series_id,
-                workspace_id="local-default",
+                tenant_id="local-default",
                 name=f"Consumer Series {series_id}",
                 description=None,
                 status="INDEXING",

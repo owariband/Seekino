@@ -84,16 +84,17 @@ def test_database_environment_requires_physically_separate_databases() -> None:
         )
 
 
-def test_model_usage_mysql_ddl_has_only_the_approved_eight_columns() -> None:
+def test_model_usage_mysql_ddl_has_the_nine_identity_aware_columns() -> None:
     from sqlalchemy.schema import CreateIndex
 
     table = ModelUsage.__table__
     ddl = str(CreateTable(table).compile(dialect=mysql.dialect()))
     assert tuple(table.columns.keys()) == (
-        "call_id", "workspace_id", "task_type", "run_id", "started_at",
+        "call_id", "tenant_id", "actor_user_id", "task_type", "run_id", "started_at",
         "usage", "metadata", "created_at",
     )
-    assert all(not column.nullable for column in table.columns)
+    assert table.c.actor_user_id.nullable
+    assert all(not column.nullable for column in table.columns if column.name != "actor_user_id")
     assert not table.foreign_keys
     assert "started_at TIMESTAMP(3) NOT NULL" in ddl
     assert "created_at TIMESTAMP(3) NOT NULL" in ddl
@@ -102,9 +103,84 @@ def test_model_usage_mysql_ddl_has_only_the_approved_eight_columns() -> None:
     assert "ck_model_usage_task_type" in ddl
     indexes = {str(CreateIndex(index).compile(dialect=mysql.dialect())) for index in table.indexes}
     assert indexes == {
-        "CREATE INDEX ix_model_usage_workspace_started ON model_usage (workspace_id, started_at, call_id)",
-        "CREATE INDEX ix_model_usage_workspace_run_started ON model_usage (workspace_id, run_id, started_at)",
+        "CREATE INDEX ix_model_usage_tenant_started ON model_usage (tenant_id, started_at, call_id)",
+        "CREATE INDEX ix_model_usage_tenant_run_started ON model_usage (tenant_id, run_id, started_at)",
+        "CREATE INDEX ix_model_usage_tenant_actor_started ON model_usage (tenant_id, actor_user_id, started_at)",
     }
+
+
+def test_create_schema_registers_twenty_four_tables_and_identity_is_repeatable() -> None:
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    create_schema(engine)
+    tables = inspect(engine).get_table_names()
+    assert len(tables) == 24 and {"user", "tenant"}.issubset(tables)
+
+
+def test_create_schema_rejects_old_twenty_two_tables_without_adding_identity() -> None:
+    from server.model.tenant import Tenant
+    from server.model.user import User
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    Tenant.__table__.drop(engine)
+    User.__table__.drop(engine)
+    assert len(inspect(engine).get_table_names()) == 22
+    with pytest.raises(SchemaUpgradeRequiredError, match="20261010_user_tenant_identity.sql"):
+        create_schema(engine)
+    assert len(inspect(engine).get_table_names()) == 22
+
+
+@pytest.mark.parametrize("table_name", ["series", "upload_session", "agent_conversation", "model_usage", "parse_model_call"])
+def test_create_schema_rejects_legacy_workspace_scope_before_mutation(table_name) -> None:
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    with engine.begin() as connection:
+        connection.execute(text(f"CREATE TABLE {table_name} (workspace_id VARCHAR(64))"))
+        connection.execute(text(f"INSERT INTO {table_name} VALUES ('local-default')"))
+    with pytest.raises(SchemaUpgradeRequiredError, match="20261010_user_tenant_identity.sql"):
+        create_schema(engine)
+    assert inspect(engine).get_table_names() == [table_name]
+    with engine.connect() as connection:
+        assert connection.execute(text(f"SELECT workspace_id FROM {table_name}")).scalar_one() == "local-default"
+
+
+@pytest.mark.parametrize("table_name,column_name", [
+    ("series", "is_published"), ("agent_conversation", "owner_user_id"),
+    ("upload_session", "created_by_user_id"), ("series_parse_job", "created_by_user_id"),
+    ("video_parse_task", "created_by_user_id"),
+])
+def test_create_schema_requires_identity_business_columns(monkeypatch, table_name, column_name) -> None:
+    import server.database as database
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    inspector = inspect(engine)
+    columns = inspector.get_columns
+    monkeypatch.setattr(inspector, "get_columns", lambda table: [column for column in columns(table) if not (table == table_name and column["name"] == column_name)])
+    monkeypatch.setattr(database, "inspect", lambda _: inspector)
+    with pytest.raises(SchemaUpgradeRequiredError, match=column_name):
+        create_schema(engine)
+
+
+def test_create_schema_requires_owner_in_conversation_idempotency(monkeypatch) -> None:
+    import server.database as database
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    inspector = inspect(engine)
+    unique = inspector.get_unique_constraints
+
+    def old_unique(table):
+        values = [dict(item) for item in unique(table)]
+        if table == "agent_conversation":
+            for item in values:
+                item["column_names"] = [column for column in item["column_names"] if column != "owner_user_id"]
+        return values
+
+    monkeypatch.setattr(inspector, "get_unique_constraints", old_unique)
+    monkeypatch.setattr(database, "inspect", lambda _: inspector)
+    with pytest.raises(SchemaUpgradeRequiredError, match="identity_idempotency"):
+        create_schema(engine)
 
 
 def test_create_schema_adds_model_usage_to_existing_current_schema() -> None:
@@ -144,7 +220,7 @@ def test_model_usage_database_rejects_unsupported_task_type() -> None:
     with pytest.raises(IntegrityError):
         with engine.begin() as connection:
             connection.execute(ModelUsage.__table__.insert().values(
-                call_id="00000000-0000-0000-0000-000000000001", workspace_id="w",
+                call_id="00000000-0000-0000-0000-000000000001", tenant_id="w",
                 task_type="retrieval", run_id="r", started_at=datetime.now(UTC),
                 usage={}, metadata={}, created_at=datetime.now(UTC),
             ))
@@ -162,7 +238,7 @@ def test_existing_model_usage_rejects_case_insensitive_mysql_collation(monkeypat
     def columns(table_name):
         result = [dict(column) for column in original(table_name)]
         if table_name == "model_usage" and column_override:
-            next(column for column in result if column["name"] == "workspace_id")["type"] = mysql.VARCHAR(64, collation="utf8mb4_general_ci")
+            next(column for column in result if column["name"] == "tenant_id")["type"] = mysql.VARCHAR(64, collation="utf8mb4_general_ci")
         return result
 
     monkeypatch.setattr(engine.dialect, "name", "mysql")
@@ -578,7 +654,7 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
         CreateTable(AgentMessage.__table__).compile(dialect=mysql.dialect())
     )
     assert "ENGINE=InnoDB" in conversation_ddl
-    assert "workspace_id VARCHAR(64) NOT NULL" in conversation_ddl
+    assert "tenant_id VARCHAR(64) NOT NULL" in conversation_ddl
     assert "session_id" not in conversation_ddl
     assert "series_ids" not in conversation_ddl
     assert "content LONGTEXT" in message_ddl
@@ -685,12 +761,12 @@ def test_create_schema_requires_controlled_message_scope_migration(
         connection.execute(
             text(
                 "CREATE TABLE agent_conversation "
-                f"(conversation_id TEXT, workspace_id TEXT{scope_column})"
+                f"(conversation_id TEXT, tenant_id TEXT{scope_column})"
             )
         )
         connection.execute(
             text(
-                "INSERT INTO agent_conversation (conversation_id, workspace_id) "
+                "INSERT INTO agent_conversation (conversation_id, tenant_id) "
                 "VALUES ('existing-conversation', 'local-default')"
             )
         )
@@ -1208,7 +1284,7 @@ def test_create_schema_requires_series_language_hint_migration() -> None:
         connection.execute(
             text(
                 "CREATE TABLE series "
-                "(series_id TEXT, workspace_id TEXT, name TEXT, description TEXT)"
+                "(series_id TEXT, tenant_id TEXT, name TEXT, description TEXT)"
             )
         )
 
@@ -1229,7 +1305,7 @@ def test_create_schema_requires_unix_millisecond_bigint_timestamps() -> None:
         connection.execute(
             text(
                 "CREATE TABLE agent_conversation "
-                "(conversation_id TEXT, workspace_id TEXT, title_is_auto BOOL, "
+                "(conversation_id TEXT, tenant_id TEXT, title_is_auto BOOL, "
                 "last_message_at DATETIME)"
             )
         )

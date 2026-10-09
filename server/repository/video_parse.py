@@ -251,12 +251,12 @@ class VideoParseRepository:
         self._session_factory = session_factory
 
     def get_chunk_evidence(
-        self, video_chunk_id: str, *, workspace_id: str,
+        self, video_chunk_id: str, *, tenant_id: str,
     ) -> VideoChunkEvidence:
         """Read media evidence through the latest complete V2 receipt."""
 
         chunk_id = canonical_uuid(video_chunk_id, "video_chunk_id")
-        workspace = require_nonempty_text(workspace_id, "workspace_id")
+        workspace = require_nonempty_text(tenant_id, "tenant_id")
         with self._session_factory() as session:
             row = session.execute(
                 select(Series, Video)
@@ -264,7 +264,7 @@ class VideoParseRepository:
                 .join(VideoChunk, VideoChunk.video_id == Video.video_id)
                 .where(
                     VideoChunk.video_chunk_id == chunk_id,
-                    Series.workspace_id == workspace,
+                    Series.tenant_id == workspace,
                 )
             ).one_or_none()
             if row is None:
@@ -294,7 +294,7 @@ class VideoParseRepository:
                 raise VideoParseConflictError("videoChunkId has no COMPLETE V2 content")
             receipt = _index_receipt(content, task_id, chunk_id)
             identity = VideoChunkRetrievalIdentity(
-                workspace_id=workspace,
+                tenant_id=workspace,
                 series_id=series.series_id,
                 video_id=video.video_id,
                 parse_task_id=task_id,
@@ -307,7 +307,7 @@ class VideoParseRepository:
         self,
         series_ids: Sequence[str],
         *,
-        workspace_id: str,
+        tenant_id: str,
         require_sparse: bool = False,
     ) -> VideoParseRetrievalScope:
         """Select only Videos whose latest non-deleted V2 task is COMPLETE.
@@ -327,13 +327,13 @@ class VideoParseRepository:
             raise ValueError("series_ids must be a sequence of IDs") from exc
         if not ordered_series_ids:
             raise ValueError("series_ids must not be empty")
-        workspace = require_nonempty_text(workspace_id, "workspace_id")
+        workspace = require_nonempty_text(tenant_id, "tenant_id")
 
         with self._session_factory() as session:
             existing_series_ids = set(session.scalars(
                 select(Series.series_id).where(
                     Series.series_id.in_(ordered_series_ids),
-                    Series.workspace_id == workspace,
+                    Series.tenant_id == workspace,
                 )
             ))
             missing = [
@@ -665,7 +665,7 @@ class VideoParseRepository:
                                 "retrieval context uses a different index generation"
                             )
                         other_identity = VideoChunkRetrievalIdentity(
-                            workspace_id=other_series.workspace_id,
+                            tenant_id=other_series.tenant_id,
                             series_id=other_series.series_id,
                             video_id=other_video.video_id,
                             parse_task_id=task.id,
@@ -707,7 +707,7 @@ class VideoParseRepository:
                     f"VideoParseTask {video_parse_task_id!r} does not exist"
                 )
             task, video, series = row
-            return _task_input_state(task, video, workspace_id=series.workspace_id, series=series)
+            return _task_input_state(task, video, tenant_id=series.tenant_id, series=series)
 
     def ensure_prepared(
         self,
@@ -1113,7 +1113,7 @@ class VideoParseRepository:
                 chunk_media_ref=chunk.chunk_media_ref,
                 analysis_window_media_ref=chunk.analysis_window_media_ref,
                 task_input=_task_input_state(
-                    parent, video, workspace_id=series.workspace_id, series=series
+                    parent, video, tenant_id=series.tenant_id, series=series
                 ),
             )
 
@@ -1292,7 +1292,7 @@ class VideoParseRepository:
                     source_media_ref=source_media_ref,
                     chunk_media_ref=chunk.chunk_media_ref,
                     analysis_window_media_ref=chunk.analysis_window_media_ref,
-                    workspace_id=series.workspace_id,
+                    tenant_id=series.tenant_id,
                     series_id=series.series_id,
                     video_id=video.video_id,
                     start_seconds=chunk.start_seconds,
@@ -2124,7 +2124,7 @@ def _task_input_state(
     task: VideoParseTask,
     video: Video,
     *,
-    workspace_id: str,
+    tenant_id: str,
     series: Series | None = None,
 ) -> VideoParseTaskInputState:
     return VideoParseTaskInputState(
@@ -2137,7 +2137,7 @@ def _task_input_state(
         content_hash=video.content_hash,
         total_bytes=video.total_bytes,
         duration_seconds=video.duration_seconds,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
         background=(
             {"series_id": series.series_id, "description": series.description,
              "important_extra_data": deepcopy(series.important_extra_data),
@@ -2183,6 +2183,7 @@ def _task_state(task: VideoParseTask) -> VideoParseTaskState:
         detail=deepcopy(dict(task.detail)),
         create_time=task.create_time,
         update_time=task.update_time,
+        created_by_user_id=task.created_by_user_id,
     )
 
 
@@ -2733,7 +2734,7 @@ def _require_matching_retrieval_identity(
 ) -> None:
     mismatches: list[str] = []
     for name, actual, expected in (
-        ("workspaceId", identity.workspace_id, series.workspace_id),
+        ("tenantId", identity.tenant_id, series.tenant_id),
         ("seriesId", identity.series_id, series.series_id),
         ("videoId", identity.video_id, video.video_id),
         ("parseTaskId", identity.parse_task_id, receipt["parse_task_id"]),
@@ -2821,7 +2822,7 @@ def _video_parse_evidence(
     )
     return VideoChunkEvidence(
         series_id=series.series_id,
-        workspace_id=series.workspace_id,
+        tenant_id=series.tenant_id,
         series_name=series.name,
         series_description=series.description,
         series_status="READY",

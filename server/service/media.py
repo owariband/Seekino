@@ -10,7 +10,10 @@ from urllib.parse import urlencode
 from ..config.media import ImageUploadConfig
 from ..constants.media import SERIES_IMAGE_ID_PREFIX
 from ..utils.validation import canonical_uuid
-from ..model.dto.libraryDTO import VideoSummaryState
+from ..constants.identity import LOCAL_USER_ID
+from ..model.dto.libraryDTO import SeriesState, VideoSummaryState
+from ..model.dto.authDTO import AuthIdentity
+from ..model.video import VideoIndexStatus
 from ..model.dto.mediaDTO import (
     ImageReference,
     KeyframeImageReference,
@@ -31,6 +34,7 @@ from ..utils.media import (
     image_media_type,
 )
 from .library import LibraryService
+from .access import require_series_read, require_tenant_read
 
 
 class MediaMissingError(FileNotFoundError):
@@ -59,27 +63,73 @@ class MediaService:
         self._probe_playback = probe_playback or _cached_browser_playable
         self.image_upload_config = config or ImageUploadConfig()
 
+    def publication_ready(self, series: SeriesState, *, require_published: bool = True) -> bool:
+        if (
+            (require_published and not series.is_published)
+            or series.status != "READY" or series.video_count == 0
+            or series.ready_video_count != series.video_count
+            or series.pending_upload_count > 0 or series.pending_uploads
+            or len(series.videos) != series.video_count
+        ):
+            return False
+        return all(
+            video.index_status == VideoIndexStatus.READY
+            and video.parse_status in {"SUCCEEDED", "COMPLETED", "COMPLETE"}
+            and self.playback_view(video.video_id, tenant_id=series.tenant_id, video=video).status == "READY"
+            for video in series.videos
+        )
+
+    def require_public_series(self, series: SeriesState) -> None:
+        if not self.publication_ready(series):
+            raise SeriesNotFoundError("公开课程不存在或尚不可用")
+
+    def require_series_access(self, identity: AuthIdentity, series_ids: list[str], *, tenant_id: str) -> None:
+        if identity.mode == "local":
+            return
+        require_tenant_read(identity, tenant_id)
+        for series_id in dict.fromkeys(series_ids):
+            series = self._library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
+            require_series_read(identity, series)
+            if tenant_id == identity.public_tenant_id:
+                self.require_public_series(series)
+
+    def image_series(
+        self, image_id: str, *, tenant_id: str, owner_user_id: str = LOCAL_USER_ID,
+    ) -> SeriesState:
+        try:
+            if isinstance(image_id, str) and image_id.startswith(SERIES_IMAGE_ID_PREFIX):
+                series_id, _checksum, _extension = decode_series_image_id(image_id)
+            else:
+                scope, identifier, _index = decode_keyframe_image_id(image_id)
+                if scope == "video":
+                    series_id = self._library.get_video(identifier, tenant_id=tenant_id).series_id
+                else:
+                    series_id = self.get_chunk_evidence(identifier, tenant_id=tenant_id).series_id
+        except ValueError as exc:
+            raise SeriesNotFoundError("图片资源不存在") from exc
+        return self._library.get_series(series_id, tenant_id=tenant_id, owner_user_id=owner_user_id)
+
     def upload_series_image(
-        self, series_id: str, data: bytes, *, workspace_id: str,
+        self, series_id: str, data: bytes, *, tenant_id: str,
     ) -> ImageReference:
-        series = self._library.get_series(series_id, workspace_id=workspace_id)
+        series = self._library.get_series(series_id, tenant_id=tenant_id)
         extension, model_data = prepare_series_image(data, config=self.image_upload_config)
         image_id = self._artifact_store.put_series_image(
             series.series_id, data, extension=extension, model_data=model_data,
         )
         return ImageReference(image_id, "/api/media/images/content?" + urlencode({
-            "workspaceId": workspace_id, "imageId": image_id,
+            "tenantId": tenant_id, "imageId": image_id,
         }))
 
     def get_original(
         self,
         video_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
         video: VideoSummaryState | VideoChunkEvidence | None = None,
     ) -> VideoMedia:
-        video = video or self._library.get_video(video_id, workspace_id=workspace_id)
-        if video.video_id != video_id or getattr(video, "workspace_id", workspace_id) != workspace_id:
+        video = video or self._library.get_video(video_id, tenant_id=tenant_id)
+        if video.video_id != video_id or getattr(video, "tenant_id", tenant_id) != tenant_id:
             raise SeriesNotFoundError("视频资源不存在")
         try:
             path = self._artifact_store.resolve(video.original_source_uri)
@@ -95,12 +145,12 @@ class MediaService:
         )
 
     def playback_view(
-        self, video_id: str, *, workspace_id: str,
+        self, video_id: str, *, tenant_id: str,
         video: VideoSummaryState | VideoChunkEvidence | None = None,
     ) -> PlaybackMedia:
         # File presence and codec facts are rechecked when a public VO is built.
         try:
-            media = self.get_original(video_id, workspace_id=workspace_id, video=video)
+            media = self.get_original(video_id, tenant_id=tenant_id, video=video)
         except MediaMissingError:
             return PlaybackMedia("MISSING", None)
         except (MediaNotReadyError, ValueError, OSError):
@@ -112,22 +162,22 @@ class MediaService:
         if not playable:
             return PlaybackMedia("FAILED", None)
         return PlaybackMedia("READY", "/api/videos/content?" + urlencode({
-            "workspaceId": workspace_id, "videoId": video_id, "variant": "playback",
+            "tenantId": tenant_id, "videoId": video_id, "variant": "playback",
         }))
 
-    def get_playback(self, video_id: str, *, workspace_id: str) -> VideoMedia:
-        playback = self.playback_view(video_id, workspace_id=workspace_id)
+    def get_playback(self, video_id: str, *, tenant_id: str) -> VideoMedia:
+        playback = self.playback_view(video_id, tenant_id=tenant_id)
         if playback.status == "MISSING":
             raise MediaMissingError("原视频文件已丢失")
         if playback.status != "READY":
             raise MediaNotReadyError("原视频尚无可确认兼容浏览器的播放媒体")
-        return self.get_original(video_id, workspace_id=workspace_id)
+        return self.get_original(video_id, tenant_id=tenant_id)
 
     def thumbnail_view(
-        self, video_id: str, *, workspace_id: str, video: VideoSummaryState | None = None,
+        self, video_id: str, *, tenant_id: str, video: VideoSummaryState | None = None,
     ) -> ImageReference | None:
-        video = video or self._library.get_video(video_id, workspace_id=workspace_id)
-        if video.video_id != video_id or getattr(video, "workspace_id", workspace_id) != workspace_id:
+        video = video or self._library.get_video(video_id, tenant_id=tenant_id)
+        if video.video_id != video_id or getattr(video, "tenant_id", tenant_id) != tenant_id:
             raise SeriesNotFoundError("视频资源不存在")
         for index, uri in enumerate(getattr(video, "keyframe_uris", ())):
             try:
@@ -138,7 +188,7 @@ class MediaService:
                 continue
             image_id = encode_video_keyframe_image_id(video_id, index)
             return ImageReference(image_id, "/api/media/images/content?" + urlencode({
-                "workspaceId": workspace_id, "imageId": image_id,
+                "tenantId": tenant_id, "imageId": image_id,
             }))
         return None
 
@@ -146,9 +196,9 @@ class MediaService:
         self,
         evidence: VideoChunkEvidence,
         *,
-        workspace_id: str,
+        tenant_id: str,
     ) -> tuple[KeyframeImageReference, ...]:
-        if evidence.workspace_id != workspace_id:
+        if evidence.tenant_id != tenant_id:
             raise SeriesNotFoundError("片段资源不存在")
         for refresh in (False, True):
             projected: list[KeyframeImageReference] = []
@@ -173,7 +223,7 @@ class MediaService:
                     KeyframeImageReference(
                         image_id=image_id,
                         url="/api/media/images/content?" + urlencode({
-                            "workspaceId": workspace_id,
+                            "tenantId": tenant_id,
                             "imageId": image_id,
                         }),
                         at_seconds=keyframe.at_seconds,
@@ -194,7 +244,7 @@ class MediaService:
             try:
                 current = self.get_chunk_evidence(
                     evidence.video_chunk_id,
-                    workspace_id=workspace_id,
+                    tenant_id=tenant_id,
                 )
             except (LookupError, ValueError, MediaNotReadyError):
                 return ()
@@ -207,13 +257,13 @@ class MediaService:
             evidence = current
         raise AssertionError("unreachable")
 
-    def get_image(self, image_id: str, *, workspace_id: str) -> VideoMedia:
+    def get_image(self, image_id: str, *, tenant_id: str) -> VideoMedia:
         if isinstance(image_id, str) and image_id.startswith(SERIES_IMAGE_ID_PREFIX):
             try:
                 series_id, _checksum, _extension = decode_series_image_id(image_id)
             except ValueError as exc:
                 raise SeriesNotFoundError("图片资源不存在") from exc
-            self._library.get_series(series_id, workspace_id=workspace_id)
+            self._library.get_series(series_id, tenant_id=tenant_id)
             try:
                 path = self._artifact_store.resolve_series_image(image_id, series_id=series_id)
                 media_type = image_media_type(path)
@@ -230,12 +280,12 @@ class MediaService:
         except ValueError as exc:
             raise SeriesNotFoundError("图片资源不存在") from exc
         if scope == "video":
-            video = self._library.get_video(identifier, workspace_id=workspace_id)
+            video = self._library.get_video(identifier, tenant_id=tenant_id)
             sources = getattr(video, "keyframe_uris", ())
         else:
             evidence = self.get_chunk_evidence(
                 identifier,
-                workspace_id=workspace_id,
+                tenant_id=tenant_id,
             )
             sources = tuple(item.uri for item in evidence.keyframe_uris)
         if index >= len(sources):
@@ -252,11 +302,11 @@ class MediaService:
             raise MediaNotReadyError("关键帧资源不是可确认的图片")
         return VideoMedia(path, media_type, size)
 
-    def get_chunk_evidence(self, video_chunk_id: str, *, workspace_id: str) -> VideoChunkEvidence:
+    def get_chunk_evidence(self, video_chunk_id: str, *, tenant_id: str) -> VideoChunkEvidence:
         if self._video_parse_repository is not None:
             try:
                 return self._video_parse_repository.get_chunk_evidence(
-                    video_chunk_id, workspace_id=workspace_id,
+                    video_chunk_id, tenant_id=tenant_id,
                 )
             except VideoParseConflictError as error:
                 raise MediaNotReadyError("片段的最新 V2 证据尚不可读取") from error
@@ -264,7 +314,7 @@ class MediaService:
             raise MediaNotReadyError("片段证据读取尚未装配")
         chunk_id = canonical_uuid(video_chunk_id, "video_chunk_id")
         evidence = self._video_repository.hydrate_video_chunk_states([chunk_id])[0].evidence
-        if evidence.workspace_id != workspace_id:
+        if evidence.tenant_id != tenant_id:
             raise SeriesNotFoundError("片段资源不存在")
         return evidence
 

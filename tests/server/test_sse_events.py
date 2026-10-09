@@ -25,13 +25,18 @@ from server.utils.time import timedelta_to_ms
 
 _NOW = 1_789_454_400_000
 _CONVERSATION_ID = "conversation-1"
-_WORKSPACE_ID = "workspace-1"
+_TENANT_ID = "workspace-1"
 
 
 class _Request:
     def __init__(self, disconnect_after: int) -> None:
         self.disconnect_after = disconnect_after
         self.checks = 0
+        self.app = SimpleNamespace(state=SimpleNamespace(services=SimpleNamespace(auth=None)))
+        self.state = SimpleNamespace()
+        self.cookies = {}
+        self.headers = {}
+        self.method = "GET"
 
     async def is_disconnected(self) -> bool:
         self.checks += 1
@@ -100,10 +105,11 @@ class _AgentService:
         self,
         conversation_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
+        owner_user_id: str = "local-user",
     ) -> list[AgentMessageState]:
         index = min(len(self.calls), len(self.snapshots) - 1)
-        self.calls.append((conversation_id, workspace_id))
+        self.calls.append((conversation_id, tenant_id))
         if self.clock is not None:
             self.clock.now += self.query_seconds
         return self.snapshots[index]
@@ -117,7 +123,7 @@ def test_agent_sse_initial_snapshot_includes_messages_after_500(monkeypatch) -> 
     events = asyncio.run(
         _collect(
             agent_api._agent_message_events(
-                _Request(1), service, _CONVERSATION_ID, _WORKSPACE_ID, SSEConfig()
+                _Request(1), service, _CONVERSATION_ID, _TENANT_ID, SSEConfig()
             )
         )
     )
@@ -131,7 +137,7 @@ def test_agent_sse_initial_snapshot_includes_messages_after_500(monkeypatch) -> 
     assert payload["messages"][-1]["modelName"] == "chat-model-v1"
     assert payload["messages"][0]["modelName"] is None
     assert all(message["seriesIds"] == ["series-1"] for message in payload["messages"])
-    assert service.calls == [(_CONVERSATION_ID, _WORKSPACE_ID)]
+    assert service.calls == [(_CONVERSATION_ID, _TENANT_ID)]
 
 
 @pytest.mark.parametrize("final_status", ["COMPLETED", "FAILED"])
@@ -153,7 +159,7 @@ def test_agent_sse_emits_same_sequence_status_updates(monkeypatch, final_status)
     events = asyncio.run(
         _collect(
             agent_api._agent_message_events(
-                _Request(3), service, _CONVERSATION_ID, _WORKSPACE_ID, SSEConfig()
+                _Request(3), service, _CONVERSATION_ID, _TENANT_ID, SSEConfig()
             )
         )
     )
@@ -189,7 +195,7 @@ def test_agent_sse_keepalive_uses_elapsed_time_not_poll_count(
     events = asyncio.run(
         _collect(
             agent_api._agent_message_events(
-                _Request(polls), service, _CONVERSATION_ID, _WORKSPACE_ID, config
+                _Request(polls), service, _CONVERSATION_ID, _TENANT_ID, config
             )
         )
     )
@@ -205,9 +211,9 @@ def test_agent_sse_ends_normally_when_conversation_is_deleted(monkeypatch) -> No
 
     class _DeletedConversationService:
         @staticmethod
-        def list_all_messages(conversation_id: str, *, workspace_id: str):
+        def list_all_messages(conversation_id: str, *, tenant_id: str, owner_user_id: str = "local-user"):
             raise AgentConversationNotFoundError(
-                f"conversationId {conversation_id!r} does not exist in {workspace_id!r}"
+                f"conversationId {conversation_id!r} does not exist in {tenant_id!r}"
             )
 
     events = asyncio.run(
@@ -216,7 +222,7 @@ def test_agent_sse_ends_normally_when_conversation_is_deleted(monkeypatch) -> No
                 _Request(1),
                 _DeletedConversationService(),
                 _CONVERSATION_ID,
-                _WORKSPACE_ID,
+                _TENANT_ID,
                 SSEConfig(),
             )
         )
@@ -229,7 +235,7 @@ def _job_detail() -> ParseJobDetail:
     return ParseJobDetail(
         job=ParseJobState(
             job_id="job-1",
-            workspace_id=_WORKSPACE_ID,
+            tenant_id=_TENANT_ID,
             version=1,
             series_id="series-1",
             video_id="video-1",
@@ -351,9 +357,9 @@ class _JobService:
         self.snapshots = snapshots
         self.calls: list[tuple[str, str]] = []
 
-    def get(self, job_id: str, *, workspace_id: str) -> ParseJobDetail:
+    def get(self, job_id: str, *, tenant_id: str) -> ParseJobDetail:
         index = min(len(self.calls), len(self.snapshots) - 1)
-        self.calls.append((job_id, workspace_id))
+        self.calls.append((job_id, tenant_id))
         return self.snapshots[index]
 
 
@@ -391,7 +397,7 @@ def _video_parse_task_detail(
             create_time=now,
             update_time=now,
         ),
-        workspace_id=_WORKSPACE_ID,
+        tenant_id=_TENANT_ID,
         series_id="series-1",
         series_name="Test Series",
         episode_order=1,
@@ -411,10 +417,10 @@ class _VideoParseTaskService:
         self,
         video_parse_task_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
     ) -> VideoParseTaskDetail:
         index = min(len(self.calls), len(self.snapshots) - 1)
-        self.calls.append((video_parse_task_id, workspace_id))
+        self.calls.append((video_parse_task_id, tenant_id))
         return self.snapshots[index]
 
 
@@ -457,7 +463,7 @@ def test_video_parse_task_sse_ignores_heartbeat_and_closes_on_terminal(
                 _Request(3),
                 service,
                 initial.task.video_parse_task_id,
-                _WORKSPACE_ID,
+                _TENANT_ID,
                 initial,
                 SSEConfig(poll_interval_seconds=0.5, keepalive_interval_seconds=15),
             )
@@ -470,8 +476,8 @@ def test_video_parse_task_sse_ignores_heartbeat_and_closes_on_terminal(
     assert all(_payload(event)["detail"] == {"source": "upload"} for event in events)
     assert _payload(events[-1])["canReparse"] is True
     assert service.calls == [
-        (initial.task.video_parse_task_id, _WORKSPACE_ID),
-        (initial.task.video_parse_task_id, _WORKSPACE_ID),
+        (initial.task.video_parse_task_id, _TENANT_ID),
+        (initial.task.video_parse_task_id, _TENANT_ID),
     ]
     assert clock.sleeps == [0.5, 0.5]
 
@@ -585,7 +591,7 @@ def test_video_parse_task_sse_closes_at_terminal_status(
         _Request(2),
         service,
         terminal.task.video_parse_task_id,
-        _WORKSPACE_ID,
+        _TENANT_ID,
         terminal,
         SSEConfig(poll_interval_seconds=0.5, keepalive_interval_seconds=15),
     )))
@@ -616,7 +622,7 @@ def test_job_sse_ignores_heartbeat_but_emits_progress(monkeypatch) -> None:
     events = asyncio.run(
         _collect(
             jobs_api._job_events(
-                _Request(3), service, initial.job.job_id, _WORKSPACE_ID, initial, config
+                _Request(3), service, initial.job.job_id, _TENANT_ID, initial, config
             )
         )
     )
@@ -624,7 +630,7 @@ def test_job_sse_ignores_heartbeat_but_emits_progress(monkeypatch) -> None:
     assert len(events) == 2
     assert all(event.startswith("event: job\n") for event in events)
     assert [_payload(event)["progress"] for event in events] == [30, 40]
-    assert service.calls == [(initial.job.job_id, _WORKSPACE_ID)] * 2
+    assert service.calls == [(initial.job.job_id, _TENANT_ID)] * 2
     assert clock.sleeps == [0.5, 0.5]
 
 
@@ -638,7 +644,7 @@ def test_job_sse_keepalive_uses_configured_elapsed_time(monkeypatch) -> None:
     events = asyncio.run(
         _collect(
             jobs_api._job_events(
-                _Request(5), service, initial.job.job_id, _WORKSPACE_ID, initial, config
+                _Request(5), service, initial.job.job_id, _TENANT_ID, initial, config
             )
         )
     )
@@ -670,7 +676,7 @@ def test_job_sse_emits_terminal_snapshot_then_closes(
     events = asyncio.run(
         _collect(
             jobs_api._job_events(
-                _Request(100), service, terminal.job.job_id, _WORKSPACE_ID,
+                _Request(100), service, terminal.job.job_id, _TENANT_ID,
                 terminal if already_terminal else detail, SSEConfig(),
             )
         )
@@ -679,7 +685,7 @@ def test_job_sse_emits_terminal_snapshot_then_closes(
     assert len(events) == (1 if already_terminal else 2)
     assert _payload(events[-1])["status"] == terminal_status
     assert service.calls == (
-        [] if already_terminal else [(terminal.job.job_id, _WORKSPACE_ID)]
+        [] if already_terminal else [(terminal.job.job_id, _TENANT_ID)]
     )
     assert clock.sleeps == ([] if already_terminal else [1.0])
 

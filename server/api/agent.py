@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from queue import Empty
 from typing import AsyncIterator
 
@@ -20,11 +20,14 @@ from ..model.dto.agentDTO import (
     AgentMessageState,
 )
 from ..service.agent_chat import AgentChatService, AgentMessageExecution
+from ..service.access import model_query, require_admin, require_series_read, require_tenant_read
+from ..error.auth import AuthError
+from ..model.dto.authDTO import AuthIdentity
 from ..service.media import MediaService
 from ..utils.time import now_unix_time_ms
 from ..model.vo.commonVO import Page
 from .search import search_evidence_fields
-from .context import get_services, get_sse_config
+from .context import get_identity, get_services, get_sse_config, revalidate_identity
 from ..model.vo.agentVO import (
     AgentConversationView,
     AgentGlobalSettingsView,
@@ -47,6 +50,7 @@ from ..model.vo.agentVO import (
     AgentVideoRenderBlockView,
 )
 from ..repository.agent import AgentConversationNotFoundError
+from ..repository.library import SeriesNotFoundError
 from ..config.global_agent_settings import (
     patch_global_agent_settings,
     read_global_agent_settings,
@@ -56,6 +60,7 @@ _logger = logging.getLogger(__name__)
 
 
 def get_agent_global_settings(request: Request) -> AgentGlobalSettingsView:
+    require_admin(get_identity(request))
     config, revision = read_global_agent_settings(request.app.state.model_config_path)
     return AgentGlobalSettingsView(
         revision=revision,
@@ -71,8 +76,16 @@ def patch_agent_global_settings(
     request: Request,
     body: AgentGlobalSettingsPatchRequest,
 ) -> AgentGlobalSettingsView:
+    identity = get_identity(request)
+    require_admin(identity)
+    if identity.mode == "cloud" and "execution_timeout_seconds" in body.values:
+        timeout = body.values["execution_timeout_seconds"]
+        if isinstance(timeout, bool) or not isinstance(timeout, (float, int)):
+            raise ValueError("执行超时必须是正数")
+        if timeout >= get_services(request).auth.config.query_lease_seconds:
+            raise ValueError("执行超时必须小于查询并发租约有效期")
     client_host = request.client.host if request.client else None
-    if client_host not in {"127.0.0.1", "::1", "testclient"}:
+    if identity.mode == "local" and client_host not in {"127.0.0.1", "::1", "testclient"}:
         raise HTTPException(status_code=403, detail="全局设置只允许从本机修改")
     config, revision = patch_global_agent_settings(
         body.values, body.revision, request.app.state.model_config_path,
@@ -88,9 +101,20 @@ def patch_agent_global_settings(
 
 
 def get_agent_message_options(request: Request) -> AgentMessageOptionsView:
-    return AgentMessageOptionsView.model_validate(
-        get_services(request).agent.message_options()
-    )
+    services = get_services(request)
+    identity = get_identity(request)
+    options = services.agent.message_options()
+    if identity.mode == "cloud" and identity.is_guest:
+        cap = services.auth.config.guest_max_model_calls
+        def bounded(option, maximum):
+            ceiling = max(option.minimum, min(option.maximum, maximum))
+            return replace(option, default_value=min(option.default_value, ceiling), maximum=ceiling)
+        options = replace(
+            options,
+            max_model_calls_per_turn=bounded(options.max_model_calls_per_turn, cap),
+            max_tool_calls_per_turn=bounded(options.max_tool_calls_per_turn, cap * 2),
+        )
+    return AgentMessageOptionsView.model_validate(options)
 
 
 def create_agent_conversation(
@@ -98,8 +122,11 @@ def create_agent_conversation(
     body: AgentConversationCreateRequest,
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> AgentConversationView:
+    identity = get_identity(request)
+    require_tenant_read(identity, body.tenant_id)
     state = get_services(request).agent.create_conversation(
-        workspace_id=body.workspace_id,
+        tenant_id=body.tenant_id,
+        owner_user_id=identity.user_id,
         title=body.title,
         idempotency_key=idempotency_key,
     )
@@ -108,14 +135,17 @@ def create_agent_conversation(
 
 def list_agent_conversations(
     request: Request,
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
     limit: int = Query(50, ge=1, le=100),
     cursor: str | None = Query(None),
     series_id: str | None = Query(None, alias="seriesId"),
     query: str | None = Query(None),
 ) -> Page[AgentConversationView]:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
     page = get_services(request).agent.page_conversations(
-        workspace_id=workspace_id, limit=limit, cursor=cursor, series_id=series_id, query=query,
+        tenant_id=tenant_id, limit=limit, cursor=cursor, series_id=series_id, query=query,
+        owner_user_id=identity.user_id,
     )
     return Page[AgentConversationView](
         items=[AgentConversationView.model_validate(item) for item in page.items],
@@ -126,11 +156,14 @@ def list_agent_conversations(
 def get_agent_conversation(
     request: Request,
     conversation_id: str = Query(alias="conversationId"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
 ) -> AgentConversationView:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
     state = get_services(request).agent.get_conversation(
         conversation_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
+        owner_user_id=identity.user_id,
     )
     return AgentConversationView.model_validate(state)
 
@@ -138,11 +171,14 @@ def get_agent_conversation(
 def delete_agent_conversation(
     request: Request,
     conversation_id: str = Query(alias="conversationId"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
 ) -> AgentConversationView:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
     state = get_services(request).agent.delete_conversation(
         conversation_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
+        owner_user_id=identity.user_id,
     )
     return AgentConversationView.model_validate(state)
 
@@ -150,16 +186,19 @@ def delete_agent_conversation(
 def list_agent_messages(
     request: Request,
     conversation_id: str = Query(alias="conversationId"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
     after_sequence_no: int = Query(-1, ge=-1, alias="afterSequenceNo"),
     limit: int = Query(50, ge=1, le=100),
     cursor: str | None = Query(None),
 ) -> Page[AgentMessageView]:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
     services = get_services(request)
-    page = services.agent.page_messages(conversation_id, workspace_id=workspace_id,
-                                       after_sequence_no=after_sequence_no, limit=limit, cursor=cursor)
+    page = services.agent.page_messages(conversation_id, tenant_id=tenant_id,
+                                       after_sequence_no=after_sequence_no, limit=limit, cursor=cursor,
+                                       owner_user_id=identity.user_id)
     return Page[AgentMessageView](
-        items=[_agent_message_view(item, media=services.media, workspace_id=workspace_id) for item in page.items],
+        items=[_agent_message_view(item, media=services.media, tenant_id=tenant_id, identity=identity) for item in page.items],
         total=page.total, next_cursor=page.next_cursor, has_more=page.has_more,
     )
 
@@ -167,16 +206,19 @@ def list_agent_messages(
 def get_agent_message(
     request: Request,
     conversation_id: str = Query(alias="conversationId"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
     message_id: str | None = Query(None, alias="messageId"),
     idempotency_key: str | None = Query(None, alias="idempotencyKey"),
 ) -> AgentMessageSendView:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
     services = get_services(request)
-    pair = services.agent.get_message(conversation_id, workspace_id=workspace_id,
-                                     message_id=message_id, idempotency_key=idempotency_key)
+    pair = services.agent.get_message(conversation_id, tenant_id=tenant_id,
+                                     message_id=message_id, idempotency_key=idempotency_key,
+                                     owner_user_id=identity.user_id)
     return AgentMessageSendView(
-        user_message=_agent_message_view(pair.user_message, media=services.media, workspace_id=workspace_id),
-        assistant_message=_agent_message_view(pair.assistant_message, media=services.media, workspace_id=workspace_id),
+        user_message=_agent_message_view(pair.user_message, media=services.media, tenant_id=tenant_id, identity=identity),
+        assistant_message=_agent_message_view(pair.assistant_message, media=services.media, tenant_id=tenant_id, identity=identity),
     )
 
 
@@ -186,7 +228,47 @@ async def send_agent_message(
     conversation_id: str = Query(alias="conversationId"),
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> AgentMessageSendView | StreamingResponse:
-    service = get_services(request).agent
+    services = get_services(request)
+    service = services.agent
+    identity = await run_in_threadpool(get_identity, request)
+    require_tenant_read(identity, body.tenant_id)
+    source_tenant_id = body.source_tenant_id or body.tenant_id
+    series_ids = await run_in_threadpool(
+        _authorize_query_scope, request, identity, source_tenant_id, body.series_ids,
+    )
+    playback = (body.extra_context or {}).get("playback")
+    if identity.mode == "cloud" and isinstance(playback, dict):
+        video = await run_in_threadpool(
+            services.library.get_video, playback.get("videoId"), tenant_id=source_tenant_id,
+        )
+        await run_in_threadpool(
+            _authorize_query_scope, request, identity, source_tenant_id, [video.series_id],
+        )
+    await run_in_threadpool(
+        service.get_conversation, conversation_id, tenant_id=body.tenant_id,
+        owner_user_id=identity.user_id,
+    )
+    max_model_calls = body.max_model_calls_per_turn
+    max_tool_calls = body.max_tool_calls_per_turn
+    if identity.mode == "cloud" and identity.is_guest:
+        options = service.message_options()
+        config = services.auth.config
+        max_model_calls = min(
+            max_model_calls or options.max_model_calls_per_turn.default_value,
+            config.guest_max_model_calls,
+        )
+        max_tool_calls = min(
+            max_tool_calls or options.max_tool_calls_per_turn.default_value,
+            config.guest_max_model_calls * 2,
+        )
+    arguments = dict(
+        tenant_id=body.tenant_id, source_tenant_id=source_tenant_id,
+        owner_user_id=identity.user_id, content=body.content, series_ids=series_ids,
+        reference=body.reference.model_dump(by_alias=True) if body.reference is not None else None,
+        extra_context=body.extra_context, idempotency_key=idempotency_key, top_k=body.top_k,
+        max_model_calls_per_turn=max_model_calls, max_tool_calls_per_turn=max_tool_calls,
+        max_loop_turns=None if identity.mode == "cloud" else body.max_loop_turns,
+    )
     accepted = []
     for item in request.headers.get("accept", "").split(","):
         media_type, *parameters = item.lower().split(";")
@@ -207,70 +289,99 @@ async def send_agent_message(
         accepted, key=lambda item: item[0], default=(0, "application/json"),
     )[1] == "text/event-stream"
     if wants_stream:
-        execution = await run_in_threadpool(
-            service.start_message,
-            conversation_id,
-            workspace_id=body.workspace_id,
-            content=body.content,
-            series_ids=body.series_ids,
-            reference=body.reference.model_dump(by_alias=True) if body.reference is not None else None,
-            extra_context=body.extra_context,
-            idempotency_key=idempotency_key,
-            top_k=body.top_k,
-            max_model_calls_per_turn=body.max_model_calls_per_turn,
-            max_tool_calls_per_turn=body.max_tool_calls_per_turn,
-            max_loop_turns=body.max_loop_turns,
-            stream=True,
-        )
+        reservation = model_query(getattr(services, "auth", None), identity,
+                                  request.client.host if request.client else "unknown",
+                                  maximum_concurrent=getattr(service, "active_maximum_concurrent_kicks", None))
+        await run_in_threadpool(reservation.__enter__)
+        try:
+            execution = await run_in_threadpool(service.start_message, conversation_id, stream=True, **arguments)
+        except BaseException:
+            await run_in_threadpool(reservation.__exit__, None, None, None)
+            raise
+        # Disconnected HTTP consumers do not stop the Service-owned execution.
+        # Keep the concurrency reservation until the actual model work finishes.
+        if execution.future is not None:
+            await run_in_threadpool(
+                execution.future.add_done_callback,
+                lambda _future: reservation.__exit__(None, None, None),
+            )
+        else:
+            await run_in_threadpool(reservation.__exit__, None, None, None)
         return StreamingResponse(
             _answer_events(request, execution, get_sse_config(request),
-                           media=get_services(request).media, workspace_id=body.workspace_id),
+                           media=services.media, tenant_id=source_tenant_id, series_ids=series_ids),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={"Cache-Control": "private, no-store", "X-Accel-Buffering": "no"},
         )
-    result = await run_in_threadpool(
-        service.send_message,
-        conversation_id,
-        workspace_id=body.workspace_id,
-        content=body.content,
-        series_ids=body.series_ids,
-        reference=body.reference.model_dump(by_alias=True) if body.reference is not None else None,
-        extra_context=body.extra_context,
-        idempotency_key=idempotency_key,
-        top_k=body.top_k,
-        max_model_calls_per_turn=body.max_model_calls_per_turn,
-        max_tool_calls_per_turn=body.max_tool_calls_per_turn,
-        max_loop_turns=body.max_loop_turns,
-    )
+    def send():
+        with model_query(getattr(services, "auth", None), identity,
+                         request.client.host if request.client else "unknown",
+                         maximum_concurrent=getattr(service, "active_maximum_concurrent_kicks", None)):
+            return service.send_message(conversation_id, **arguments)
+    result = await run_in_threadpool(send)
+    identity = await run_in_threadpool(revalidate_identity, request)
     return AgentMessageSendView(
-        user_message=_agent_message_view(result.user_message, media=get_services(request).media, workspace_id=body.workspace_id),
-        assistant_message=_agent_message_view(result.assistant_message, media=get_services(request).media, workspace_id=body.workspace_id),
+        user_message=_agent_message_view(result.user_message, media=services.media, tenant_id=source_tenant_id, identity=identity),
+        assistant_message=_agent_message_view(result.assistant_message, media=services.media, tenant_id=source_tenant_id, identity=identity),
     )
+
+
+def _authorize_query_scope(
+    request: Request, identity: AuthIdentity, tenant_id: str, series_ids: list[str],
+) -> list[str]:
+    require_tenant_read(identity, tenant_id)
+    if identity.mode == "local":
+        return series_ids
+    services = get_services(request)
+    if tenant_id == identity.public_tenant_id and not series_ids:
+        offset = 0
+        selected = []
+        while True:
+            page, total = services.library.list_public_series_page(
+                tenant_id=tenant_id, media=services.media, owner_user_id=identity.user_id,
+                offset=offset, limit=100,
+            )
+            selected.extend(item.series_id for item in page)
+            offset += len(page)
+            if offset >= total or not page:
+                break
+        if not selected:
+            raise ValueError("暂无可体验的公开课程")
+        return selected
+    for series_id in series_ids:
+        series = services.library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
+        require_series_read(identity, series)
+        if tenant_id == identity.public_tenant_id:
+            services.media.require_public_series(series)
+    return series_ids
 
 
 async def stream_agent_messages(
     request: Request,
     conversation_id: str = Query(alias="conversationId"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
 ) -> StreamingResponse:
     service = get_services(request).agent
+    identity = await run_in_threadpool(get_identity, request)
+    require_tenant_read(identity, tenant_id)
     await run_in_threadpool(
         service.get_conversation,
         conversation_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
+        owner_user_id=identity.user_id,
     )
     return StreamingResponse(
         _agent_message_events(
             request,
             service,
             conversation_id,
-            workspace_id,
+            tenant_id,
             get_sse_config(request),
             media=get_services(request).media,
         ),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "private, no-store",
             "X-Accel-Buffering": "no",
         },
     )
@@ -280,7 +391,7 @@ async def _agent_message_events(
     request: Request,
     service: AgentChatService,
     conversation_id: str,
-    workspace_id: str,
+    tenant_id: str,
     config: SSEConfig,
     *, media: MediaService | None = None,
 ) -> AsyncIterator[str]:
@@ -288,18 +399,24 @@ async def _agent_message_events(
     last_event_at = time.monotonic()
     while True:
         try:
+            identity = await run_in_threadpool(revalidate_identity, request)
+            require_tenant_read(identity, tenant_id)
             states = await run_in_threadpool(
                 service.list_all_messages,
                 conversation_id,
-                workspace_id=workspace_id,
+                tenant_id=tenant_id,
+                owner_user_id=identity.user_id,
             )
-        except AgentConversationNotFoundError:
+        except (AgentConversationNotFoundError, AuthError, SeriesNotFoundError):
             return
-        view = AgentMessageEventView(
-            conversation_id=conversation_id,
-            messages=[_agent_message_view(item, media=media, workspace_id=workspace_id) for item in states],
-            occurred_at=now_unix_time_ms(),
-        )
+        try:
+            view = AgentMessageEventView(
+                conversation_id=conversation_id,
+                messages=[_agent_message_view(item, media=media, tenant_id=tenant_id, identity=identity) for item in states],
+                occurred_at=now_unix_time_ms(),
+            )
+        except (AuthError, SeriesNotFoundError):
+            return
         payload = view.model_dump_json(by_alias=True)
         fingerprint = hashlib.sha256(view.model_dump_json(by_alias=True, exclude={"occurred_at"}).encode("utf-8")).hexdigest()
         if fingerprint != previous_fingerprint:
@@ -316,15 +433,20 @@ async def _agent_message_events(
 
 def _agent_message_view(
     state: AgentMessageState | dict, *, media: MediaService | None = None,
-    workspace_id: str | None = None,
+    tenant_id: str | None = None, identity: AuthIdentity | None = None,
 ) -> AgentMessageView:
     state = AgentMessageState(**state) if isinstance(state, dict) else state
+    tenant_id = state.source_tenant_id or tenant_id
+    if identity is not None and identity.mode == "cloud":
+        if media is None or tenant_id is None:
+            raise ValueError("evidence projection requires the source Tenant and media service")
+        media.require_series_access(identity, list(state.series_ids), tenant_id=tenant_id)
     result = None
     if state.search_result is not None:
-        if media is None or workspace_id is None:
-            raise ValueError("evidence projection requires the owning Workspace and media service")
+        if media is None or tenant_id is None:
+            raise ValueError("evidence projection requires the source Tenant and media service")
         result = _agent_search_evidence_view(
-            state.search_result, media, workspace_id=workspace_id,
+            state.search_result, media, tenant_id=tenant_id, identity=identity,
         )
     render_blocks = _agent_render_blocks(state, result)
     return AgentMessageView(
@@ -421,9 +543,14 @@ def _agent_search_evidence_view(
     result: dict,
     media: MediaService,
     *,
-    workspace_id: str,
+    tenant_id: str,
+    identity: AuthIdentity | None = None,
 ) -> AgentSearchEvidenceView:
-    evidence = search_evidence_fields(result, media, workspace_id=workspace_id)
+    if identity is not None and identity.mode == "cloud":
+        media.require_series_access(
+            identity, result.get("seriesIds", result.get("series_ids", [])), tenant_id=tenant_id,
+        )
+    evidence = search_evidence_fields(result, media, tenant_id=tenant_id)
     raw_trace = result.get("retrievalTrace", result.get("retrieval_trace", []))
     return AgentSearchEvidenceView(
         **evidence.model_dump(),
@@ -447,11 +574,21 @@ async def _answer_events(
     request: Request,
     execution: AgentMessageExecution,
     config: SSEConfig,
-    *, media: MediaService | None = None, workspace_id: str | None = None,
+    *, media: MediaService | None = None, tenant_id: str | None = None,
+    series_ids: list[str] | None = None,
 ) -> AsyncIterator[str]:
     last_event_at = time.monotonic()
     try:
         while not await request.is_disconnected():
+            try:
+                identity = await run_in_threadpool(revalidate_identity, request)
+                if tenant_id is not None:
+                    require_tenant_read(identity, tenant_id)
+                    if media is not None and identity.mode == "cloud":
+                        await run_in_threadpool(media.require_series_access, identity, series_ids or [], tenant_id=tenant_id)
+            except (AuthError, AgentConversationNotFoundError, SeriesNotFoundError):
+                execution.cancellation.set()
+                return
             try:
                 event = await run_in_threadpool(
                     execution.next_event,
@@ -471,12 +608,12 @@ async def _answer_events(
             data = dict(event)
             for field in ("userMessage", "assistantMessage"):
                 if field in data:
-                    data[field] = _agent_message_view(data[field], media=media, workspace_id=workspace_id)
+                    data[field] = _agent_message_view(data[field], media=media, tenant_id=tenant_id, identity=identity)
             if event_type == "answer.evidence":
-                if media is None or workspace_id is None:
-                    raise ValueError("evidence projection requires the owning Workspace and media service")
+                if media is None or tenant_id is None:
+                    raise ValueError("evidence projection requires the source Tenant and media service")
                 projected = _agent_search_evidence_view(
-                    data["searchResult"], media, workspace_id=workspace_id,
+                    data["searchResult"], media, tenant_id=tenant_id, identity=identity,
                 )
                 data["searchResult"] = projected
                 _logger.info(
@@ -496,5 +633,8 @@ async def _answer_events(
                 exclude={name for name, value in view if value is None},
             )
             yield f"event: {view.type}\nid: {view.message_id}:{view.sequence}\ndata: {payload}\n\n"
+    except (AuthError, SeriesNotFoundError):
+        execution.cancellation.set()
+        return
     finally:
         execution.detach()

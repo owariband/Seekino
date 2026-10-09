@@ -148,7 +148,7 @@ class _Store:
         for item in documents:
             self.states[(item.parse_task_id, item.video_chunk_id)] = StoredDocumentState(
                 present=True,
-                workspace_id=item.workspace_id,
+                tenant_id=item.tenant_id,
                 series_id=item.series_id,
                 video_id=item.video_id,
                 parse_task_id=item.parse_task_id,
@@ -171,7 +171,7 @@ class _Store:
         return (
             document_id(item.parse_task_id, item.video_chunk_id),
             _external_version(item.content_version, item.index_generation),
-            item.workspace_id, item.series_id, item.video_id,
+            item.tenant_id, item.series_id, item.video_id,
             item.chunk_start_seconds, item.chunk_end_seconds,
             item.projection.model_dump_json(), item.semantic_vector,
             item.vision_vector, item.sparse_token_weights,
@@ -282,7 +282,7 @@ def _fixture(tmp_path):
     media = tmp_path / "chunk.mp4"
     media.write_bytes(b"video-bytes")
     chunk = IndexableChunkState(
-        workspace_id=ids["workspace"],
+        tenant_id=ids["workspace"],
         series_id=ids["series"],
         video_id=ids["video"],
         chunk_parse_task_id=ids["chunk_task"],

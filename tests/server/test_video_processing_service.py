@@ -364,7 +364,7 @@ def _lease() -> ParseJobLease:
         content_hash="0" * 64,
         total_bytes=1,
         duration_seconds=20000,
-        workspace_id="local-default",
+        tenant_id="local-default",
         series_name="Fixture",
         series_description=None,
         important_extra_data=None,

@@ -143,7 +143,7 @@ def _check_neighbor(fact: ChunkRetrievalFacts, neighbor: ChunkRetrievalFacts) ->
     identity, other = fact.retrieval_identity, neighbor.retrieval_identity
     if (neighbor.video_chunk_id == fact.video_chunk_id or any(
         getattr(identity, name) != getattr(other, name)
-        for name in ("workspace_id", "series_id", "video_id", "parse_task_id")
+        for name in ("tenant_id", "series_id", "video_id", "parse_task_id")
     )):
         raise RetrievalConsistencyError("context must retain its adjacent Chunk's own identity")
     if neighbor.sequence_no == fact.sequence_no - 1 and neighbor.end_seconds == fact.start_seconds:

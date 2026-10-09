@@ -37,7 +37,7 @@ const hit: VideoChunkSearchHit = {
   },
   evidence: {
     seriesId: "series-1",
-    workspaceId: "local-default",
+    tenantId: "local-default",
     seriesName: "测试系列",
     seriesStatus: "READY",
     videoId: "video-1",
@@ -66,7 +66,7 @@ const hit: VideoChunkSearchHit = {
     isFallback: false,
     parsedAt: Date.parse("2026-09-15T00:00:00Z"),
     playbackStatus: "READY",
-    playbackUrl: "/api/videos/content?videoId=video-1&workspaceId=local-default&variant=playback",
+    playbackUrl: "/api/videos/content?videoId=video-1&tenantId=local-default&variant=playback",
     playbackUrlExpiresAt: null, thumbnail: null, keyframes: [],
   },
 };
@@ -83,7 +83,7 @@ function metadata(video: HTMLVideoElement) {
   fireEvent.loadedMetadata(video);
 }
 function nextHit(overrides: Partial<VideoChunkSearchHit["evidence"]>): VideoChunkSearchHit {
-  return { ...hit, evidence: { ...hit.evidence, ...(overrides.videoId ? { playbackUrl: `/api/videos/content?videoId=${overrides.videoId}&workspaceId=local-default&variant=playback` } : {}), ...overrides } };
+  return { ...hit, evidence: { ...hit.evidence, ...(overrides.videoId ? { playbackUrl: `/api/videos/content?videoId=${overrides.videoId}&tenantId=local-default&variant=playback` } : {}), ...overrides } };
 }
 const playbackRange = { startSeconds: 12_000, endSeconds: 15_000 };
 const nextPlaybackRange = { startSeconds: 25_000, endSeconds: 27_000 };
@@ -113,7 +113,7 @@ describe("Evidence range playback", () => {
     const video = screen.getByLabelText<HTMLVideoElement>("视频证据");
     const timeline = screen.getByRole<HTMLInputElement>("slider", { name: "视频片段播放进度" });
     expect(video.currentTime).toBe(0);
-    expect(video.src).toContain("/api/videos/content?videoId=video-1&workspaceId=local-default");
+    expect(video.src).toContain("/api/videos/content?videoId=video-1&tenantId=local-default");
     expect(screen.getByRole("link", { name: "在整集中观看" })).toHaveAttribute("href", "/watch/series-1/video-1?atSeconds=12000");
     expect(video).not.toHaveAttribute("controls");
     expect(video).toHaveAttribute("playsinline");
@@ -246,7 +246,7 @@ describe("Evidence range playback", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("视频媒体无法读取");
     fireEvent.click(screen.getByRole("button", { name: "刷新媒体状态" }));
     await waitFor(() => expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument());
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/video-chunks/get?workspaceId=local-default&videoChunkId=chunk-1");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/video-chunks/get?tenantId=local-default&videoChunkId=chunk-1");
     expect(screen.getByRole("status")).toHaveTextContent("原视频文件已丢失");
     expect(screen.getByText(hit.selectionReason.summary)).toBeInTheDocument();
     vi.unstubAllGlobals();

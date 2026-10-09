@@ -67,7 +67,7 @@ def _contract(sparse=False):
 def _scope(**updates):
     values = dict(series_id="series", video_id="video", parse_task_id="task", status="COMPLETE")
     values.update(updates)
-    return RetrievalScope(workspace_id="workspace", tasks=(SelectedVideoTask(**values),))
+    return RetrievalScope(tenant_id="workspace", tasks=(SelectedVideoTask(**values),))
 
 
 def _policy(**updates):
@@ -126,7 +126,7 @@ def _fact(plan, *, chunk="chunk", sequence=0, bounds=(0, 10000), version=2,
     })
     contract = plan.index_contract
     identity = VideoChunkRetrievalIdentity(
-        workspace_id="workspace", series_id="series", video_id="video", parse_task_id="task",
+        tenant_id="workspace", series_id="series", video_id="video", parse_task_id="task",
         content_version=version, index_generation=contract.index_generation,
     )
     return ChunkRetrievalFacts(video_chunk_id=chunk, retrieval_identity=identity, sequence_no=sequence,
@@ -213,7 +213,7 @@ def test_visual_recall_requires_the_planned_input_and_empty_scope_needs_no_encod
         build_recall_requests(plan)
     with pytest.raises(ValueError, match="missing"):
         build_recall_requests(plan, vectors=[vector.model_copy(update={"input_sha256": "old"})])
-    empty = _visual_plan(kind, scope=RetrievalScope(workspace_id="workspace", tasks=()))
+    empty = _visual_plan(kind, scope=RetrievalScope(tenant_id="workspace", tasks=()))
     assert empty.encoding_requests == ()
     assert build_recall_requests(empty) == ()
     assert fuse_retrieval_candidates(empty, []) == ()
@@ -287,7 +287,7 @@ def test_sparse_off_requires_no_output_and_on_reaches_request_and_fusion():
 
 
 def test_empty_scope_needs_no_paid_encodings_and_non_complete_is_rejected():
-    plan = _plan(scope=RetrievalScope(workspace_id="workspace", tasks=()))
+    plan = _plan(scope=RetrievalScope(tenant_id="workspace", tasks=()))
     assert plan.encoding_requests == ()
     assert build_recall_requests(plan) == ()
     assert fuse_retrieval_candidates(plan, []) == ()
@@ -296,7 +296,7 @@ def test_empty_scope_needs_no_paid_encodings_and_non_complete_is_rejected():
 
 
 @pytest.mark.parametrize("changes", [{"parse_task_id": "old-task"}, {"index_generation": 2},
-                                     {"workspace_id": "other"}, {"series_id": "other"},
+                                     {"tenant_id": "other"}, {"series_id": "other"},
                                      {"video_id": "other"}])
 def test_raw_hits_outside_pinned_scope_fail(changes):
     plan = _plan()
@@ -558,7 +558,7 @@ def test_evidence_requests_allow_empty_candidates_and_no_neighbor_at_video_bound
 
 
 @pytest.mark.parametrize("changes", [
-    {"workspace_id": "other"}, {"series_id": "other"}, {"video_id": "other"},
+    {"tenant_id": "other"}, {"series_id": "other"}, {"video_id": "other"},
     {"parse_task_id": "old-task"}, {"index_generation": 2},
 ])
 def test_evidence_requests_reject_candidates_outside_trusted_scope_or_generation(changes):

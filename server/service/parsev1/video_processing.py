@@ -363,7 +363,7 @@ class VideoProcessingService:
                 {
                     "version": 2 if context is not None else 1,
                     "job_id": lease.job_id,
-                    "workspace_id": lease.workspace_id,
+                    "tenant_id": lease.tenant_id,
                     "series_id": lease.series_id,
                     "content_hash": lease.content_hash,
                     "series_bible": text,
@@ -374,7 +374,7 @@ class VideoProcessingService:
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         if not isinstance(snapshot, dict) or snapshot.get("version") not in {1, 2} or any(
             snapshot.get(key) != expected for key, expected in {
-                "job_id": lease.job_id, "workspace_id": lease.workspace_id,
+                "job_id": lease.job_id, "tenant_id": lease.tenant_id,
                 "series_id": lease.series_id, "content_hash": lease.content_hash,
             }.items()
         ):

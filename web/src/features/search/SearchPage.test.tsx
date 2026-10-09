@@ -18,7 +18,7 @@ vi.mock("./useAgentConversation", () => ({ useAgentConversation: mocks.useAgentC
 const now = Date.parse("2026-09-17T00:00:00Z");
 const series: SeriesSummary = {
   seriesId: "series-1",
-  workspaceId: "local-default",
+  tenantId: "local-default",
   name: "测试系列",
   description: null,
   status: "READY",
@@ -54,7 +54,7 @@ function searchHit(videoChunkId: string, rank: number, alt: string): VideoChunkS
     },
     evidence: {
       seriesId: series.seriesId,
-      workspaceId: series.workspaceId,
+      tenantId: series.tenantId,
       seriesName: series.name,
       seriesStatus: "READY",
       videoId: "video-1",
@@ -81,11 +81,11 @@ function searchHit(videoChunkId: string, rank: number, alt: string): VideoChunkS
       isFallback: false,
       parsedAt: now,
       playbackStatus: "READY",
-      playbackUrl: "/api/videos/content?videoId=video-1&workspaceId=local-default&variant=playback",
+      playbackUrl: "/api/videos/content?videoId=video-1&tenantId=local-default&variant=playback",
       playbackUrlExpiresAt: null,
       thumbnail: {
         imageId: `thumbnail-${rank}`,
-        url: `/api/media/images/content?workspaceId=local-default&imageId=thumbnail-${rank}`,
+        url: `/api/media/images/content?tenantId=local-default&imageId=thumbnail-${rank}`,
         expiresAt: null,
         atSeconds: startSeconds,
         alt,

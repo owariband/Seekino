@@ -50,7 +50,7 @@ def _task(factory, *, chunk_count: int, accepted: bool, batch_size: int = 10):
     series_id, video_id, task_id = str(uuid4()), str(uuid4()), str(uuid4())
     with factory.begin() as session:
         session.add(Series(
-            series_id=series_id, workspace_id="mine", name=f"Series {series_id}",
+            series_id=series_id, tenant_id="mine", name=f"Series {series_id}",
             description=None, status="INDEXING", important_extra_data=None,
             character_bible=[],
         ))

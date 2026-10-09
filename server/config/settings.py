@@ -11,6 +11,7 @@ from engine.common.config import VideoParseRuntimeConfig
 
 from ..database import DatabaseEnvironment
 from .agent import AgentServiceConfig
+from .auth import AuthConfig
 from .elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
 from .global_agent_settings import read_global_agent_settings
 from .media import ImageUploadConfig
@@ -49,6 +50,7 @@ class ServerSettings:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     elasticsearch: ElasticsearchConfig | None = None
     parse_execution_mode: Literal["v2"] = "v2"
+    auth: AuthConfig = field(default_factory=AuthConfig)
 
     @classmethod
     def from_environment(cls) -> "ServerSettings":
@@ -105,6 +107,7 @@ class ServerSettings:
         model_pricing_config = _optional_environment("ANIVAG_MODEL_PRICING_CONFIG")
         agent_config, _ = read_global_agent_settings(model_config)
         return cls(
+            auth=AuthConfig.from_environment(),
             environment=environment,
             database_url=database_url,
             artifact_root=artifact_root,

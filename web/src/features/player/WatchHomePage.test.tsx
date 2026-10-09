@@ -25,7 +25,7 @@ vi.mock("./playbackProgress", () => ({
 }));
 
 const firstSeries: SeriesSummary = {
-  seriesId: "series-a", workspaceId: "local-default", name: "甲系列", description: null,
+  seriesId: "series-a", tenantId: "local-default", name: "甲系列", description: null,
   status: "READY", videoCount: 3, readyVideoCount: 3, failedVideoCount: 0,
   pendingUploadCount: 0, cover: null, lastSearch: null, createdAt: 0, updatedAt: 0,
 };
@@ -35,7 +35,7 @@ const secondSeries: SeriesSummary = {
 
 function video(seriesId: string, videoId: string, episodeOrder: number): VideoSummary {
   return {
-    videoId, workspaceId: "local-default", seriesId, episodeOrder, uploadSequence: episodeOrder,
+    videoId, tenantId: "local-default", seriesId, episodeOrder, uploadSequence: episodeOrder,
     originalFilename: `${videoId}.mp4`, totalBytes: 100, durationSeconds: 120_000,
     uploadStatus: "COMPLETED", parseStatus: "SUCCEEDED", uploadProgress: 100,
     parseProgress: 100, indexStatus: "READY", playbackStatus: "READY",

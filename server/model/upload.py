@@ -21,7 +21,6 @@ from .video import (
     LONG_TEXT,
     MYSQL_TABLE_OPTIONS,
     UTC_TIMESTAMP,
-    TimestampMixin,
 )
 
 UPLOAD_DELETION_PENDING_ERROR_CODE = "DELETION_PENDING"
@@ -41,13 +40,14 @@ class UploadCompletionStage(StrEnum):
     CREATING_JOB = "CREATING_JOB"
 
 
-class UploadSession(TimestampMixin, Base):
+class UploadSession(Base):
     __tablename__ = "upload_session"
     __table_args__ = (
         UniqueConstraint(
-            "workspace_id",
+            "tenant_id",
+            "created_by_user_id",
             "idempotency_key",
-            name="uq_upload_session_workspace_idempotency",
+            name="uq_upload_session_tenant_idempotency",
         ),
         UniqueConstraint(
             "active_slot_key",
@@ -86,7 +86,8 @@ class UploadSession(TimestampMixin, Base):
         String(ID_LENGTH),
         primary_key=True,
     )
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by_user_id: Mapped[str | None] = mapped_column(String(64))
     series_id: Mapped[str] = mapped_column(
         ForeignKey("series.series_id", ondelete="CASCADE"),
         nullable=False,

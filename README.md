@@ -140,6 +140,49 @@ V1/Qdrant；Web 已接入 V2 Task 列表、单任务事件和 retry/reparse/dele
 启用前需应用 Server 说明列出的受控迁移。状态迁移及能力边界见
 [Server 说明](server/README.md)。
 
+### 云端游客、邮箱登录与公开课程
+
+`ANIVAG_AUTH_MODE=local` 使用明确的 `local-user` / `local-default` 本地身份，保留无需登录的本机流程。云端设置 `ANIVAG_AUTH_MODE=cloud`，并配置 [.env.example](.env.example) 中的签名秘密、Redis 与 SMTP；缺少这些配置会拒绝启动。正式入口使用同源 HTTPS，受控反代保留公开 Host 并正确传递 HTTPS scheme 和客户端地址，使 IP 额度按访问者计数；Cookie 默认为 HttpOnly、Secure、SameSite=Lax。
+
+开发 Redis 是 Compose 的可选 profile，端口只监听 loopback，AOF 保存在独立持久卷：
+
+```bash
+docker compose --profile cloud-auth up -d --wait redis
+```
+
+首次访问先读取 `/api/auth/me`，cloud 缺少或过期 Cookie 返回 401，前端显式调用 `/api/auth/guest` 获取游客。游客能浏览、检索、播放 `platform-public` 中已发布且解析完成的课程；对话按本人 owner 隔离。验证码登录后拥有个人 Tenant，可在个人资料和公共课程之间切换。公开课程读取权限不授予平台写权限。普通账号不能修改全局模型配置；管理员由受控邮箱配置及数据库角色表达。
+
+首版仅新增 `user`、`tenant` 两张 SQL 表。个人 Tenant 使用独立 UUID 和显式 owner；验证码的 HMAC 摘要、TTL、尝试次数、冷却及限流放在 Redis，不保存在 User，不返回开发验证码。正式账号退出会撤销同账号的旧版本凭据并换发游客身份。接口包含 me、guest、email/send、email/verify、logout，cloud 写请求携带 `X-CSRF-Token`。
+
+模型请求默认按 86400 秒窗口限制：游客共享 IP 预算 20 次，登录用户按 user_id 200 次；并发分别为 1 和 3，同时受服务总并发上限控制。游客更换身份不会重置 IP 预算。租约默认 600 秒，Agent 执行超时必须小于租约；游客每轮最多 4 次模型调用、8 次工具调用。local 免请求额度。这些是请求次数、并发及单轮调用限制，实际 Token 的预扣/结算硬额度尚未实现，`model_usage` 用于已记录消耗统计。
+
+旧数据库需要受控应用 [20261010 身份迁移](docs/migrations/20261010_user_tenant_identity.sql)；`init-db` 遇到旧 22 表、`workspace_id` 或缺少身份字段时明确报升级错误，不自动修改。SQL 保留资源 ID 和旧范围值，历史 creator/actor 保持 NULL，本机历史对话归 `local-user`，所有课程默认未发布。脚本预检只接受已明确的 `local-default` 旧范围，其他范围先建立显式映射。历史证据 JSON 由读取适配规范化为新 Tenant 合同。
+
+ES v5 旧索引先通过独立工具检查复制计划：
+
+```bash
+uv run python -m scripts.migrate_tenant_index --source old_development --destination tenant_development --environment development
+```
+
+停 API/Worker 写入后追加 `--apply`，复制为 v6 新物理索引并验证成功，才切换 `ANIVAG_ELASTICSEARCH_INDEX`；保留 `ANIVAG_ELASTICSEARCH_INDEX_GENERATION`、旧索引、文档 ID、external version 和向量，不重算 embedding。生产环境命令选择 `--environment production` 和对应索引名。该工具和 SQL 已准备，本轮未对现有数据执行。
+
+隔离 auth 与真实 Redis 请求额度测试合计 **49 passed、零 skip**（临时 SQLite、独立 Redis、邮件/模型替身），ES 复制预检 **27 项测试**通过；前端 **229 项单元测试**、生产构建和 **2 项 Chromium 流程测试**通过，浏览器用例使用模拟 API 验证游客初始化、邮箱登录、退出及身份切换。身份 SQL 已在隔离 MySQL 8.4 验证旧 22 表升级至 24 表，并保留历史记录。真实 SMTP 发信、云端部署、课程准备与真实服务端浏览器联调仍需部署验收。职责按 [config](server/config/auth.py)、[constants](server/constants/auth.py)、[error](server/error/auth.py)、[utils](server/utils/auth.py)、[service](server/service/auth.py)、[repository](server/repository/identity.py) 分层，详细设计见 [用户/Tenant TRD](server/design/user-tenant-trd.md)。
+
+HTTP 进程的总装配入口是 [server/main.py](server/main.py)，`python -m server.api` 转交该入口，原启动参数保持可用。装配顺序为：
+
+```text
+main.init_application(settings)       # 配置检查与进程总装配
+├── caller.init(settings, ...)        # MySQL → Redis → Elasticsearch
+└── bootstrap.build_application_services(settings, resources, ...)
+    └── Repository → Service → Agent／Consumer
+main.create_http_application(...)    # 将上述运行时交给 HTTP 生命周期
+└── api.app.build_app(services, ...)  # 中间件、异常处理、路由绑定
+```
+
+MySQL、Elasticsearch、Redis 的客户端创建、连接适配和释放在 [server/caller](server/caller/__init__.py)：[mysql.py](server/caller/mysql.py)、[elasticsearch.py](server/caller/elasticsearch.py)、[redis.py](server/caller/redis.py)。`CallerResources` 持有共享客户端，`ApplicationServices` 持有业务服务，`ApplicationRuntime` 负责先停止业务、再释放客户端；构造或启动失败也执行清理。`AuthService` 只借用 Redis，SQL Schema 管理继续在 `database.py`，ES Mapping、索引及检索继续在 `storage/elasticsearch.py`。
+
+[server/cli.py](server/cli.py) 是一次性命令入口，按命令借用 caller 的资源上下文：`init-db` 使用 MySQL，`init-es-index` 使用 ES，`search` 使用 MySQL、ES 和查询编码器。上下文退出时自动释放资源；CLI 不启动 HTTP、后台 Consumer 或登录 Redis。测试中注入 `create_app(services)` 的服务仍由注入方管理。
+
 ## 仓库结构
 
 ```text

@@ -72,7 +72,7 @@ vi.mock("../search/SearchPage", async () => {
 
 const video = (videoId: string, episodeOrder: number): VideoSummary => ({
   videoId,
-  workspaceId: "local-default",
+  tenantId: "local-default",
   seriesId: "series-1",
   episodeOrder,
   uploadSequence: episodeOrder,
@@ -85,7 +85,7 @@ const video = (videoId: string, episodeOrder: number): VideoSummary => ({
   parseProgress: 100,
   indexStatus: "READY",
   playbackStatus: "READY",
-  playbackUrl: `/api/videos/content?videoId=${videoId}&workspaceId=local-default&variant=playback`,
+  playbackUrl: `/api/videos/content?videoId=${videoId}&tenantId=local-default&variant=playback`,
   playbackUrlExpiresAt: null,
   thumbnail: null,
   latestJobId: null,
@@ -94,7 +94,7 @@ const video = (videoId: string, episodeOrder: number): VideoSummary => ({
 
 const series: SeriesView = {
   seriesId: "series-1",
-  workspaceId: "local-default",
+  tenantId: "local-default",
   name: "测试课程",
   description: null,
   status: "READY",

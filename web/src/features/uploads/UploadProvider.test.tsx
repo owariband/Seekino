@@ -49,7 +49,7 @@ const parseConfig: ParseConfig = {
   execution: { requestTimeoutSeconds: 600, maxAttempts: 3 },
 };
 const session: UploadSessionView = {
-  uploadSessionId: "session-a", workspaceId: "local-default", seriesId: "series-a",
+  uploadSessionId: "session-a", tenantId: "local-default", seriesId: "series-a",
   episodeOrder: 1, uploadSequence: 1, originalFilename: file.name, mediaType: file.type,
   totalSizeBytes: 10, contentSha256: null, preferredSegmentSizeBytes: 4, totalSegments: 3,
   status: "UPLOADING", uploadedSegmentCount: 0, uploadedSizeBytes: 0,
@@ -60,7 +60,7 @@ const session: UploadSessionView = {
 
 const retriedJob: ParseJobView = {
   jobId: "job-a", uploadSessionId: session.uploadSessionId,
-  workspaceId: "local-default", seriesId: session.seriesId, videoId: "video-a",
+  tenantId: "local-default", seriesId: session.seriesId, videoId: "video-a",
   seriesName: "测试系列", episodeOrder: 1, originalFilename: file.name,
   pipelineVersion: "m1", retryOfJobId: null, status: "QUEUED", stage: "QUEUED",
   progress: 18, overallProgress: 18, stageProgress: null,
@@ -97,7 +97,7 @@ const videoParseTask: VideoParseTaskView = {
   detail: {},
   createTime: 1,
   updateTime: 2,
-  workspaceId: "local-default",
+  tenantId: "local-default",
   seriesId: "series-a",
   seriesName: "测试系列",
   episodeOrder: 1,
@@ -344,7 +344,7 @@ describe("upload deletion", () => {
     await user.click(screen.getByRole("button", { name: `继续合并 ${file.name}` }));
 
     await waitFor(() => expect(source.url).toBe(
-      "/api/jobs/video-parse/events?videoParseTaskId=task-a&workspaceId=local-default",
+      "/api/jobs/video-parse/events?videoParseTaskId=task-a&tenantId=local-default",
     ));
     act(() => source.dispatchEvent(new MessageEvent("video-parse-task", {
       data: JSON.stringify(videoParseTask),

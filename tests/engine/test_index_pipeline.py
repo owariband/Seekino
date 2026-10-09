@@ -192,7 +192,7 @@ def _source(
     enrichments=(),
 ) -> ChunkIndexSource:
     return ChunkIndexSource(
-        workspace_id="workspace-1",
+        tenant_id="workspace-1",
         series_id="series-1",
         video_id="video-1",
         video_chunk_id="chunk-1",
@@ -582,7 +582,7 @@ def test_external_results_are_validated_before_finalizing_logical_document(
     assert document.semantic_vector == (1.0, 0.0)
     assert document.vision_vector == (0.0, 1.0)
     assert document.retrieval_identity.model_dump() == {
-        "workspace_id": "workspace-1",
+        "tenant_id": "workspace-1",
         "series_id": "series-1",
         "video_id": "video-1",
         "parse_task_id": "task-1",

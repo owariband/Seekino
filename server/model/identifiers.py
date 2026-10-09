@@ -7,11 +7,11 @@ from uuid import NAMESPACE_URL, uuid5
 _VIDEO_CHUNK_ID_SEED = "anivag:video-segment"
 
 
-def derive_series_id(workspace_id: str, series_name: str) -> str:
+def derive_series_id(tenant_id: str, series_name: str) -> str:
     return str(
         uuid5(
             NAMESPACE_URL,
-            f"anivag:series:{workspace_id.strip()}:{series_name.strip().casefold()}",
+            f"anivag:series:{tenant_id.strip()}:{series_name.strip().casefold()}",
         )
     )
 

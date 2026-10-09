@@ -15,9 +15,10 @@ from ..model.dto.libraryDTO import (
 )
 from ..model.job import ParseJobStatus
 from ..service.media import MediaService
+from ..service.access import require_admin, require_series_read, require_tenant_read, require_tenant_write
 from ..service.pagination import decode_cursor, encode_cursor
 from .uploads import project_upload_session
-from .context import get_services
+from .context import get_identity, get_services
 from ..model.vo.commonVO import Page, Failure, ImageAsset
 from ..model.vo.libraryVO import (
     SeriesView,
@@ -29,8 +30,10 @@ from ..model.vo.libraryVO import (
 
 
 def create_series(request: Request, body: SeriesCreateRequest) -> SeriesView:
+    identity = get_identity(request)
+    require_tenant_write(identity, body.tenant_id)
     state = get_services(request).library.create_series(
-        workspace_id=body.workspace_id,
+        tenant_id=body.tenant_id,
         name=body.name,
         description=body.description,
         transcript_language_hint=body.transcript_language_hint,
@@ -42,9 +45,19 @@ def create_series(request: Request, body: SeriesCreateRequest) -> SeriesView:
 
 def update_series(request: Request, body: SeriesUpdateRequest) -> SeriesView:
     services = get_services(request)
-    changes = body.model_dump(exclude_unset=True, exclude={"workspace_id", "series_id"})
+    identity = get_identity(request)
+    changes = body.model_dump(exclude_unset=True, exclude={"tenant_id", "series_id"})
+    if "is_published" in changes:
+        require_admin(identity)
+        if body.tenant_id != identity.public_tenant_id:
+            raise ValueError("only platform public courses can be published")
+        if changes["is_published"]:
+            series = services.library.get_series(body.series_id, tenant_id=body.tenant_id, owner_user_id=identity.user_id)
+            if not services.media.publication_ready(series, require_published=False):
+                raise ValueError("only a complete Series with playable media can be published")
+    require_tenant_write(identity, body.tenant_id)
     state = services.library.update_series(
-        body.series_id, workspace_id=body.workspace_id, changes=changes,
+        body.series_id, tenant_id=body.tenant_id, changes=changes, owner_user_id=identity.user_id,
     )
     return _series_view(state, services.media)
 
@@ -54,9 +67,10 @@ def update_video_episode(
     body: VideoEpisodeUpdateRequest,
 ) -> VideoSummary:
     services = get_services(request)
+    require_tenant_write(get_identity(request), body.tenant_id)
     state = services.library.update_video_episode_order(
         body.video_id,
-        workspace_id=body.workspace_id,
+        tenant_id=body.tenant_id,
         episode_order=body.episode_order,
     )
     return project_video(state, services.media)
@@ -65,10 +79,11 @@ def update_video_episode(
 async def upload_series_image(
     request: Request,
     series_id: str = Query(alias="seriesId"),
-    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
 ) -> ImageAsset:
     services = get_services(request)
-    await run_in_threadpool(services.library.get_series, series_id, workspace_id=workspace_id)
+    require_tenant_write(get_identity(request), tenant_id)
+    await run_in_threadpool(services.library.get_series, series_id, tenant_id=tenant_id)
     maximum_bytes = services.media.image_upload_config.maximum_upload_size_bytes
     content_length = request.headers.get("content-length")
     if content_length is not None:
@@ -88,27 +103,38 @@ async def upload_series_image(
     if content_length is not None and size != declared_size:
         raise ValueError("background image body size does not match Content-Length")
     image = await run_in_threadpool(
-        services.media.upload_series_image, series_id, b"".join(chunks), workspace_id=workspace_id,
+        services.media.upload_series_image, series_id, b"".join(chunks), tenant_id=tenant_id,
     )
     return ImageAsset.model_validate(asdict(image))
 
 
 def list_series(
     request: Request,
-    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
     cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
     status: str | None = Query(None),
     query: str | None = Query(None),
 ) -> Page[SeriesSummary]:
     services = get_services(request)
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
     normalized_query = query.strip() if query else None
-    scope = {"workspaceId": workspace_id, "status": status, "query": normalized_query, "sort": "createdAt,seriesId:asc"}
+    scope = {"tenantId": tenant_id, "ownerUserId": identity.user_id, "status": status, "query": normalized_query, "sort": "createdAt,seriesId:asc"}
     offset = decode_cursor(cursor, scope=scope)
-    states = services.library.list_series(
-        workspace_id=workspace_id, status=status, query=normalized_query, offset=offset, limit=limit,
-    )
-    total = services.library.count_series(workspace_id=workspace_id, status=status, query=normalized_query)
+    if identity.mode == "cloud" and tenant_id == identity.public_tenant_id:
+        states, total = services.library.list_public_series_page(
+            tenant_id=tenant_id, media=services.media, owner_user_id=identity.user_id,
+            status=status, query=normalized_query, offset=offset, limit=limit,
+        )
+    else:
+        states = services.library.list_series(
+            tenant_id=tenant_id, status=status, query=normalized_query, offset=offset, limit=limit,
+            owner_user_id=identity.user_id,
+        )
+        total = services.library.count_series(tenant_id=tenant_id, status=status, query=normalized_query)
+    for state in states:
+        require_series_read(identity, state)
     has_more = offset + len(states) < total
     return Page[SeriesSummary](
         items=[project_series_summary(state, services.media) for state in states], total=total,
@@ -120,13 +146,21 @@ def list_series(
 def get_series(
     request: Request,
     series_id: str = Query(alias="seriesId"),
-    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
 ) -> SeriesView:
-    state = get_services(request).library.get_series(
-        series_id,
-        workspace_id=workspace_id,
-    )
+    state = read_series(request, series_id, tenant_id=tenant_id)
     return _series_view(state, get_services(request).media)
+
+
+def read_series(request: Request, series_id: str, *, tenant_id: str) -> SeriesState:
+    identity = get_identity(request)
+    require_tenant_read(identity, tenant_id)
+    services = get_services(request)
+    state = services.library.get_series(series_id, tenant_id=tenant_id, owner_user_id=identity.user_id)
+    require_series_read(identity, state)
+    if identity.mode == "cloud" and tenant_id == identity.public_tenant_id:
+        services.media.require_public_series(state)
+    return state
 
 
 def _series_view(state: SeriesState, media: MediaService) -> SeriesView:
@@ -134,15 +168,15 @@ def _series_view(state: SeriesState, media: MediaService) -> SeriesView:
 
 
 def project_video(state: VideoSummaryState, media: MediaService) -> VideoSummary:
-    playback = media.playback_view(state.video_id, workspace_id=state.workspace_id, video=state)
-    thumbnail = media.thumbnail_view(state.video_id, workspace_id=state.workspace_id, video=state)
+    playback = media.playback_view(state.video_id, tenant_id=state.tenant_id, video=state)
+    thumbnail = media.thumbnail_view(state.video_id, tenant_id=state.tenant_id, video=state)
     error = Failure(code="PROCESSING_FAILED", message="视频建库发生错误，请查看任务状态") if state.last_error else None
     if error is None and playback.status == "MISSING":
         error = Failure(code="MEDIA_MISSING", message="原视频文件已丢失")
     elif error is None and playback.status == "FAILED":
         error = Failure(code="MEDIA_NOT_READY", message="原视频尚无可确认兼容浏览器的播放媒体")
     return VideoSummary(
-        video_id=state.video_id, workspace_id=state.workspace_id, series_id=state.series_id,
+        video_id=state.video_id, tenant_id=state.tenant_id, series_id=state.series_id,
         episode_order=state.episode_order, upload_sequence=state.upload_sequence,
         original_filename=state.original_filename, total_bytes=state.total_bytes,
         duration_seconds=state.duration_seconds, upload_status=state.upload_status,
@@ -159,10 +193,11 @@ def project_video(state: VideoSummaryState, media: MediaService) -> VideoSummary
 def project_series_summary(state: SeriesState, media: MediaService) -> SeriesSummary:
     representative = state.representative_video
     cover = media.thumbnail_view(
-        representative.video_id, workspace_id=state.workspace_id, video=representative,
+        representative.video_id, tenant_id=state.tenant_id, video=representative,
     ) if representative else None
     return SeriesSummary(
-        series_id=state.series_id, workspace_id=state.workspace_id,
+        series_id=state.series_id, tenant_id=state.tenant_id,
+        is_published=state.is_published,
         name=state.name, description=state.description, status=state.status,
         video_count=state.video_count, ready_video_count=state.ready_video_count,
         failed_video_count=state.failed_video_count, pending_upload_count=state.pending_upload_count,

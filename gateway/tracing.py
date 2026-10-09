@@ -31,7 +31,7 @@ from gateway.usage import ModelCallTracker, ModelCallUsage, TokenUsage, capture_
 
 _logger = logging.getLogger(__name__)
 _CONTEXT_FIELDS = frozenset({
-    "workspace_id", "series_id", "series_ids", "video_id", "video_ids",
+    "tenant_id", "series_id", "series_ids", "video_id", "video_ids",
     "video_parse_task_id", "video_parse_task_ids", "chunk_parse_task_id",
     "interval_parse_task_id", "video_chunk_id", "sequence_no", "category", "stage",
     "lease_version", "attempt_count", "retry_count", "conversation_id", "user_message_id",

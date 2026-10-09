@@ -48,7 +48,7 @@ def source_to_recall():
             }],
         })
         source = ChunkIndexSource(
-            workspace_id="workspace", series_id="series", video_id="video",
+            tenant_id="workspace", series_id="series", video_id="video",
             video_chunk_id=chunk_id, parse_task_id="task", content_version=version,
             chunk_start_seconds=start, chunk_end_seconds=end, result=result,
             visual_input=VideoClipManifest(
@@ -82,7 +82,7 @@ def source_to_recall():
         ))
     query = plan_retrieval_query(
         "千早爱音说我没事", index_contract=contract,
-        scope=RetrievalScope(workspace_id="workspace", tasks=(SelectedVideoTask(
+        scope=RetrievalScope(tenant_id="workspace", tasks=(SelectedVideoTask(
             series_id="series", video_id="video", parse_task_id="task", status="COMPLETE",
         ),)), policy=RetrievalPolicy(
             lexical_weight=1.0, semantic_weight=1.0, vision_weight=1.0, sparse_weight=1.0,

@@ -63,7 +63,7 @@ def build_canvas_checkpoint(
         "canvas_id": canvas.id,
         "canvas_revision": canvas.revision,
         "role": role,
-        "workspace_id": canvas.workspace_id,
+        "tenant_id": canvas.tenant_id,
         "series_ids": list(canvas.series_ids),
         "retrieval_catalog": {
             "item_count": len(retrieval_ids),
@@ -114,7 +114,7 @@ def project_inputs(
     return {
         "conversation_id": inputs["conversation_id"],
         "assistant_message_id": inputs["assistant_message_id"],
-        "workspace_id": inputs["workspace_id"],
+        "tenant_id": inputs["tenant_id"],
         "series_ids": list(inputs["series_ids"]),
         "series_context": list(inputs["series_context"]),
         "user_message": inputs["user_message"],

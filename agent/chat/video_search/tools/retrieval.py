@@ -195,7 +195,7 @@ def build_retrieve_tool(
             try:
                 result = search(
                     query,
-                    workspace_id=inputs["workspace_id"],
+                    tenant_id=inputs["tenant_id"],
                     series_ids=list(inputs["series_ids"]),
                     top_k=bounded_top_k,
                     text_weight=semantic_weight,

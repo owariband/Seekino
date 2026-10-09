@@ -219,7 +219,7 @@ class VideoParseIndexCoordinator:
             self._check_active()
             plan = plan_chunk_index(
                 ChunkIndexSource(
-                    workspace_id=chunk.workspace_id,
+                    tenant_id=chunk.tenant_id,
                     series_id=chunk.series_id,
                     video_id=chunk.video_id,
                     video_chunk_id=chunk.video_chunk_id,
@@ -346,14 +346,14 @@ class VideoParseIndexCoordinator:
         if not stored.present:
             return False
         expected_identity = (
-            chunk.workspace_id,
+            chunk.tenant_id,
             chunk.series_id,
             chunk.video_id,
             snapshot.video_parse_task_id,
             chunk.video_chunk_id,
         )
         stored_identity = (
-            stored.workspace_id,
+            stored.tenant_id,
             stored.series_id,
             stored.video_id,
             stored.parse_task_id,

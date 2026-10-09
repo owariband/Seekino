@@ -1,0 +1,54 @@
+.loading {
+  display: grid;
+  min-height: 100vh;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--ink-soft);
+  background: var(--surface);
+}
+
+.backdrop {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, #0d1117 58%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.dialog {
+  width: min(440px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.dialog header { display: flex; justify-content: space-between; gap: 14px; }
+.dialog h2 { margin: 0; font: 400 1.8rem/1.2 var(--display); }
+.dialog header p { color: var(--ink-faint); font-size: .8rem; line-height: 1.6; }
+.dialog form, .dialog label { display: grid; gap: 10px; }
+.dialog form { gap: 16px; margin-top: 12px; }
+.dialog label span { color: var(--ink-soft); font-size: .8rem; }
+.close {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--surface-raised);
+}
+.notice { margin: 0; color: var(--teal-deep); font-size: .75rem; overflow-wrap: anywhere; }
+.error { margin: 0; color: var(--red); font-size: .8rem; line-height: 1.5; }
+.guestLink { color: var(--ink-faint); background: transparent; cursor: pointer; font-size: .78rem; }

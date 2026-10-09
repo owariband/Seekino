@@ -9,6 +9,7 @@ import type {
   AgentMessageSendView,
   AgentMessageView,
   ApiErrorPayload,
+  AuthIdentity,
   EvidenceReference,
   ImageAsset,
   Page,
@@ -31,9 +32,12 @@ import type {
   VideoSearchRequest,
 } from "./contracts";
 
-export const WORKSPACE_ID =
-  import.meta.env.VITE_WORKSPACE_ID?.trim() || "local-default";
-const WORKSPACE_QUERY = encodeURIComponent(WORKSPACE_ID);
+export let TENANT_ID =
+  import.meta.env.VITE_TENANT_ID?.trim() || "local-default";
+let TENANT_QUERY = encodeURIComponent(TENANT_ID);
+let apiIdentity: AuthIdentity | null = null;
+let scopeController: AbortController | null = null;
+const eventSources = new Set<EventSource>();
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(
   /\/$/,
   "",
@@ -77,38 +81,95 @@ async function requestJson<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const signal = scopedSignal(init?.signal);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  if (apiIdentity?.csrfToken && !["GET", "HEAD"].includes(init?.method ?? "GET")) {
+    headers.set("X-CSRF-Token", apiIdentity.csrfToken);
+  }
   const response = await fetch(apiUrl(path), {
     ...init,
-    headers: {
-      Accept: "application/json",
-      ...init?.headers,
-    },
+    credentials: "include",
+    headers,
+    signal,
   });
+  signal?.throwIfAborted();
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith("/api/auth/")) window.dispatchEvent(new Event("anivag-auth-required"));
     throw new ApiClientError(response.status, await readError(response));
   }
-  return (await response.json()) as T;
+  const payload = (await response.json()) as T;
+  signal?.throwIfAborted();
+  return payload;
+}
+
+function scopedSignal(signal?: AbortSignal | null): AbortSignal | undefined {
+  if (!scopeController) return signal ?? undefined;
+  return signal ? AbortSignal.any([scopeController.signal, signal]) : scopeController.signal;
+}
+
+export function configureApiIdentity(identity: AuthIdentity, tenantId: string): void {
+  scopeController?.abort();
+  eventSources.forEach((source) => source.close());
+  eventSources.clear();
+  apiIdentity = identity;
+  TENANT_ID = tenantId;
+  TENANT_QUERY = encodeURIComponent(tenantId);
+  scopeController = identity.mode === "cloud" ? new AbortController() : null;
+}
+
+export function identityStorageKey(prefix: string, localKey = `${prefix}:${TENANT_ID}`): string {
+  return apiIdentity?.mode === "cloud" ? `${prefix}:${apiIdentity.userId}:${TENANT_ID}` : localKey;
+}
+
+export function getAuthIdentity(signal?: AbortSignal): Promise<AuthIdentity> {
+  return requestJson("/api/auth/me", { signal });
+}
+
+export function createGuestIdentity(signal?: AbortSignal): Promise<AuthIdentity> {
+  return requestJson("/api/auth/guest", { method: "POST", signal });
+}
+
+export function sendEmailCode(email: string): Promise<{ retryAfterSeconds: number }> {
+  return requestJson("/api/auth/email/send", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }),
+  });
+}
+
+export function verifyEmailCode(email: string, code: string): Promise<AuthIdentity> {
+  return requestJson("/api/auth/email/verify", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, code }),
+  });
+}
+
+export function logoutIdentity(): Promise<AuthIdentity> {
+  return requestJson("/api/auth/logout", { method: "POST" });
 }
 
 export async function checkHealth(): Promise<boolean> {
+  const signal = scopedSignal();
   const response = await fetch(apiUrl("/healthz"), {
+    credentials: "include",
     headers: { Accept: "application/json" },
+    signal,
   });
+  signal?.throwIfAborted();
   if (!response.ok) {
     throw new ApiClientError(response.status, await readError(response));
   }
   const payload = (await response.json()) as { status?: string };
+  signal?.throwIfAborted();
   return payload.status === "ok";
 }
 
 export function listSeries(cursor?: string, limit = 100): Promise<Page<SeriesSummary>> {
-  return requestJson(`/api/series/list?workspaceId=${WORKSPACE_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+  return requestJson(`/api/series/list?tenantId=${TENANT_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
 }
 
 export function getSeries(seriesId: string): Promise<SeriesView> {
   return requestJson(
     `/api/series/get?seriesId=${encodeURIComponent(seriesId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}`,
+      `&tenantId=${TENANT_QUERY}`,
   );
 }
 
@@ -129,7 +190,7 @@ export function updateSeries(body: SeriesUpdateRequest): Promise<SeriesView> {
 }
 
 export function uploadSeriesImage(seriesId: string, file: File, signal?: AbortSignal): Promise<ImageAsset> {
-  return requestJson(`/api/series/images/upload?${new URLSearchParams({ workspaceId: WORKSPACE_ID, seriesId })}`, {
+  return requestJson(`/api/series/images/upload?${new URLSearchParams({ tenantId: TENANT_ID, seriesId })}`, {
     method: "POST",
     headers: { "Content-Type": file.type || "application/octet-stream" },
     body: file,
@@ -145,8 +206,8 @@ export function updateVideoEpisode(body: VideoEpisodeUpdateRequest): Promise<Vid
   });
 }
 
-export function imageContentUrl(imageId: string, workspaceId = WORKSPACE_ID): string {
-  return apiUrl(`/api/media/images/content?${new URLSearchParams({ workspaceId, imageId })}`);
+export function imageContentUrl(imageId: string, tenantId = TENANT_ID): string {
+  return apiUrl(`/api/media/images/content?${new URLSearchParams({ tenantId, imageId })}`);
 }
 
 export function createUploadSession(
@@ -177,7 +238,7 @@ export function getUploadSession(
 ): Promise<UploadSessionView> {
   return requestJson(
     `/api/uploads/get?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}`,
+      `&tenantId=${TENANT_QUERY}`,
     { signal },
   );
 }
@@ -185,7 +246,7 @@ export function getUploadSession(
 export function deleteUploadSession(uploadSessionId: string): Promise<UploadSessionView> {
   return requestJson(
     `/api/uploads/delete?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}`,
+      `&tenantId=${TENANT_QUERY}`,
     { method: "POST" },
   );
 }
@@ -196,7 +257,7 @@ export function retryUploadParse(
 ): Promise<VideoParseTaskView> {
   return requestJson(
     `/api/uploads/retry-parse?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}` +
+      `&tenantId=${TENANT_QUERY}` +
       `&expectedJobVersion=${encodeURIComponent(String(expectedJobVersion))}`,
     { method: "POST" },
   );
@@ -208,7 +269,7 @@ export function reparseUpload(
 ): Promise<VideoParseTaskView> {
   return requestJson(
     `/api/uploads/reparse?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}` +
+      `&tenantId=${TENANT_QUERY}` +
       `&expectedJobVersion=${encodeURIComponent(String(expectedJobVersion))}`,
     { method: "POST" },
   );
@@ -219,13 +280,13 @@ export function completeUpload(
 ): Promise<UploadCompleteView> {
   return requestJson(
     `/api/uploads/complete?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}`,
+      `&tenantId=${TENANT_QUERY}`,
     { method: "POST" },
   );
 }
 
 export function listJobs(cursor?: string, limit = 100, signal?: AbortSignal): Promise<Page<ParseJobView>> {
-  return requestJson(`/api/jobs/list?workspaceId=${WORKSPACE_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal });
+  return requestJson(`/api/jobs/list?tenantId=${TENANT_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal });
 }
 
 export async function listAllJobs(signal?: AbortSignal): Promise<ParseJobView[]> {
@@ -246,7 +307,7 @@ export async function listAllJobs(signal?: AbortSignal): Promise<ParseJobView[]>
 export function getJob(jobId: string): Promise<ParseJobView> {
   return requestJson(
     `/api/jobs/get?jobId=${encodeURIComponent(jobId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}`,
+      `&tenantId=${TENANT_QUERY}`,
   );
 }
 
@@ -256,7 +317,7 @@ export function listVideoParseTasks(
   signal?: AbortSignal,
 ): Promise<Page<VideoParseTaskView>> {
   return requestJson(
-    `/api/jobs/video-parse/list?workspaceId=${WORKSPACE_QUERY}&limit=${limit}` +
+    `/api/jobs/video-parse/list?tenantId=${TENANT_QUERY}&limit=${limit}` +
       `${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
     { signal },
   );
@@ -288,12 +349,12 @@ export function getVideoParseTask(
 ): Promise<VideoParseTaskView> {
   return requestJson(
     `/api/jobs/video-parse/get?videoParseTaskId=${encodeURIComponent(videoParseTaskId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}`,
+      `&tenantId=${TENANT_QUERY}`,
   );
 }
 
 export function getUsageOverview(options: UsageOverviewOptions = {}, signal?: AbortSignal): Promise<UsageOverviewVO> {
-  const query = new URLSearchParams({ workspaceId: WORKSPACE_ID });
+  const query = new URLSearchParams({ tenantId: TENANT_ID });
   for (const [key, value] of Object.entries(options)) {
     if (value !== undefined && value !== "") query.set(key, String(value));
   }
@@ -306,14 +367,14 @@ export function getUsageOverview(options: UsageOverviewOptions = {}, signal?: Ab
 export function jobEventsUrl(jobId: string): string {
   return apiUrl(
     `/api/jobs/events?jobId=${encodeURIComponent(jobId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}`,
+      `&tenantId=${TENANT_QUERY}`,
   );
 }
 
 export function videoParseTaskEventsUrl(videoParseTaskId: string): string {
   return apiUrl(
     `/api/jobs/video-parse/events?videoParseTaskId=${encodeURIComponent(videoParseTaskId)}` +
-      `&workspaceId=${WORKSPACE_QUERY}`,
+      `&tenantId=${TENANT_QUERY}`,
   );
 }
 
@@ -333,30 +394,30 @@ export function createAgentConversation(
   return requestJson("/api/agent/conversations/create", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ workspaceId: WORKSPACE_ID }),
+    body: JSON.stringify({ tenantId: TENANT_ID }),
   });
 }
 
 export function listAgentConversations(limit = 100, cursor?: string): Promise<Page<AgentConversationView>> {
-  return requestJson(`/api/agent/conversations/list?workspaceId=${WORKSPACE_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+  return requestJson(`/api/agent/conversations/list?tenantId=${TENANT_QUERY}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
 }
 
 export function getAgentConversation(conversationId: string): Promise<AgentConversationView> {
-  return requestJson(`/api/agent/conversations/get?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}`);
+  return requestJson(`/api/agent/conversations/get?conversationId=${encodeURIComponent(conversationId)}&tenantId=${TENANT_QUERY}`);
 }
 
 export function deleteAgentConversation(conversationId: string): Promise<AgentConversationView> {
-  return requestJson(`/api/agent/conversations/delete?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}`, {
+  return requestJson(`/api/agent/conversations/delete?conversationId=${encodeURIComponent(conversationId)}&tenantId=${TENANT_QUERY}`, {
     method: "POST",
   });
 }
 
 export function listAgentMessages(conversationId: string, afterSequenceNo = -1, cursor?: string): Promise<Page<AgentMessageView>> {
-  return requestJson(`/api/agent/messages/list?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}&afterSequenceNo=${afterSequenceNo}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+  return requestJson(`/api/agent/messages/list?conversationId=${encodeURIComponent(conversationId)}&tenantId=${TENANT_QUERY}&afterSequenceNo=${afterSequenceNo}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
 }
 
 export function getAgentMessage(conversationId: string, identity: { messageId: string } | { idempotencyKey: string }): Promise<AgentMessageSendView> {
-  const query = new URLSearchParams({ workspaceId: WORKSPACE_ID, conversationId, ...identity });
+  const query = new URLSearchParams({ tenantId: TENANT_ID, conversationId, ...identity });
   return requestJson(`/api/agent/messages/get?${query}`);
 }
 
@@ -379,8 +440,8 @@ export function updateAgentGlobalSettings(
   });
 }
 
-export function getVideoChunk(videoChunkId: string, workspaceId = WORKSPACE_ID): Promise<VideoChunkEvidence> {
-  return requestJson(`/api/video-chunks/get?${new URLSearchParams({ workspaceId, videoChunkId })}`);
+export function getVideoChunk(videoChunkId: string, tenantId = TENANT_ID): Promise<VideoChunkEvidence> {
+  return requestJson(`/api/video-chunks/get?${new URLSearchParams({ tenantId, videoChunkId })}`);
 }
 
 export function mediaUrl(url: string | null): string | null {
@@ -390,21 +451,27 @@ export function mediaUrl(url: string | null): string | null {
 }
 
 export function agentMessagesEventsUrl(conversationId: string): string {
-  return apiUrl(`/api/agent/messages/events?conversationId=${encodeURIComponent(conversationId)}&workspaceId=${WORKSPACE_QUERY}`);
+  return apiUrl(`/api/agent/messages/events?conversationId=${encodeURIComponent(conversationId)}&tenantId=${TENANT_QUERY}`);
 }
 
 export function subscribeAgentMessages(
   conversationId: string,
   onSnapshot: (snapshot: AgentMessageEventView) => void,
 ): () => void {
-  const source = new EventSource(agentMessagesEventsUrl(conversationId));
+  const signal = scopedSignal();
+  const source = new EventSource(agentMessagesEventsUrl(conversationId), { withCredentials: true });
+  eventSources.add(source);
   source.addEventListener("messages", (event) => {
+    if (signal?.aborted) return;
     let snapshot: AgentMessageEventView;
     try { snapshot = JSON.parse((event as MessageEvent<string>).data) as AgentMessageEventView; }
     catch { return; }
     if (snapshot?.conversationId === conversationId && Array.isArray(snapshot.messages)) onSnapshot(snapshot);
   });
-  return () => source.close();
+  source.addEventListener("error", () => {
+    if (!signal?.aborted) window.dispatchEvent(new Event("anivag-auth-required"));
+  });
+  return () => { eventSources.delete(source); source.close(); };
 }
 
 export function sendAgentMessage(
@@ -420,7 +487,7 @@ export function sendAgentMessage(
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({
-      workspaceId: WORKSPACE_ID,
+      tenantId: TENANT_ID,
       content,
       seriesIds,
       reference,
@@ -441,11 +508,15 @@ export async function streamAgentMessage(
   options: AgentMessageRunOptions = {},
   extraContext: Record<string, unknown> | null = null,
 ): Promise<void> {
+  signal = scopedSignal(signal)!;
   const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`), {
     method: "POST",
-    headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    credentials: "include",
+    headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey,
+      ...(apiIdentity?.csrfToken ? { "X-CSRF-Token": apiIdentity.csrfToken } : {}),
+    },
     body: JSON.stringify({
-      workspaceId: WORKSPACE_ID,
+      tenantId: TENANT_ID,
       content,
       seriesIds,
       reference,
@@ -454,7 +525,11 @@ export async function streamAgentMessage(
     }),
     signal,
   });
-  if (!response.ok) throw new ApiClientError(response.status, await readError(response));
+  signal.throwIfAborted();
+  if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event("anivag-auth-required"));
+    throw new ApiClientError(response.status, await readError(response));
+  }
   if (!response.body || !response.headers.get("Content-Type")?.includes("text/event-stream")) {
     await response.body?.cancel().catch(() => undefined);
     throw new Error("服务未返回回答事件流");
@@ -528,10 +603,10 @@ async function consumeEventStream(
   }
 }
 
-export function videoContentUrl(videoId: string, workspaceId = WORKSPACE_ID): string {
+export function videoContentUrl(videoId: string, tenantId = TENANT_ID): string {
   return apiUrl(
     `/api/videos/content?videoId=${encodeURIComponent(videoId)}` +
-      `&workspaceId=${encodeURIComponent(workspaceId)}`,
+      `&tenantId=${encodeURIComponent(tenantId)}`,
   );
 }
 
@@ -560,6 +635,7 @@ export async function uploadSegment({
   signal,
   onProgress,
 }: UploadSegmentOptions): Promise<number> {
+  signal = scopedSignal(signal)!;
   if (signal.aborted) {
     throw new DOMException("Upload paused", "AbortError");
   }
@@ -585,9 +661,11 @@ export async function uploadSegment({
       apiUrl(
         "/api/uploads/segments/upload" +
           `?uploadSessionId=${encodeURIComponent(session.uploadSessionId)}` +
-          `&segmentNumber=${segmentNumber}&workspaceId=${WORKSPACE_QUERY}`,
+          `&segmentNumber=${segmentNumber}&tenantId=${TENANT_QUERY}`,
       ),
     );
+    xhr.withCredentials = true;
+    if (apiIdentity?.csrfToken) xhr.setRequestHeader("X-CSRF-Token", apiIdentity.csrfToken);
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.setRequestHeader(
       "Content-Range",

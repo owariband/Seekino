@@ -102,7 +102,7 @@ def _ranked(*sequence_nos: int) -> list[RankedVideoChunk]:
 
 def _retrieval_identity(**updates: object) -> VideoChunkRetrievalIdentity:
     values: dict[str, object] = {
-        "workspace_id": "workspace-1",
+        "tenant_id": "workspace-1",
         "series_id": "series-1",
         "video_id": "video-1",
         "parse_task_id": "task-1",
@@ -289,7 +289,7 @@ def test_versioned_rrf_preserves_identity_across_three_channels() -> None:
     assert len(fused) == 1
     assert fused[0].retrieval_identity == identity
     assert fused[0].model_dump(mode="json")["retrieval_identity"] == {
-        "workspace_id": "workspace-1",
+        "tenant_id": "workspace-1",
         "series_id": "series-1",
         "video_id": "video-1",
         "parse_task_id": "task-1",
@@ -301,7 +301,7 @@ def test_versioned_rrf_preserves_identity_across_three_channels() -> None:
 @pytest.mark.parametrize(
     ("field", "changed"),
     [
-        ("workspace_id", "workspace-2"),
+        ("tenant_id", "workspace-2"),
         ("series_id", "series-2"),
         ("video_id", "video-2"),
         ("parse_task_id", "task-2"),
@@ -320,7 +320,7 @@ def test_versioned_rrf_rejects_cross_channel_identity_changes(
         ValueError,
         match=(
             "multiple workspace/index generations"
-            if field in {"workspace_id", "index_generation"}
+            if field in {"tenant_id", "index_generation"}
             else "retrieval identity changed between channels"
         ),
     ):

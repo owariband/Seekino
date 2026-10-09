@@ -12,7 +12,7 @@ from .commonVO import Failure, UnixTimeMs
 
 class UploadSessionView(ContractModel):
     upload_session_id: str
-    workspace_id: str
+    tenant_id: str
     series_id: str
     episode_order: int = Field(gt=0)
     upload_sequence: int = Field(gt=0)

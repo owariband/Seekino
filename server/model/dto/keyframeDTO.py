@@ -9,7 +9,7 @@ from ...schema import ContractModel
 
 @dataclass(frozen=True, slots=True)
 class KeyframeBackfillCandidate:
-    workspace_id: str
+    tenant_id: str
     series_id: str
     video_id: str
     episode_order: int

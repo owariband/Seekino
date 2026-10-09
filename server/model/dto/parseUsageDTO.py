@@ -27,13 +27,14 @@ def _freeze_json(value: Any) -> Any:
 @dataclass(frozen=True, slots=True)
 class ModelUsageState:
     call_id: str
-    workspace_id: str
+    tenant_id: str
     task_type: Literal["video_parse", "chat_retrieval"]
     run_id: str
     started_at: datetime
     usage: Mapping[str, Any]
     metadata: Mapping[str, Any]
     created_at: datetime
+    actor_user_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("usage", "metadata"):
@@ -56,7 +57,7 @@ class ParseModelCallState:
     video_parse_task_id: str | None
     attempt_count: int
     lease_version: int
-    workspace_id: str
+    tenant_id: str
     series_id: str
     video_id: str
     sequence_no: int | None

@@ -80,6 +80,23 @@
   margin-top: 36px;
 }
 
+.account {
+  display: grid;
+  gap: 11px;
+  margin-top: 24px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+.account > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.account > div > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-soft); font-size: .7rem; }
+.account button { flex: 0 0 auto; color: var(--teal-deep); background: transparent; cursor: pointer; font-size: .7rem; }
+.account label { display: grid; gap: 6px; color: var(--ink-faint); font-size: .66rem; }
+.account select { width: 100%; padding: 8px; font-size: .72rem; }
+.account p { margin: 0; color: var(--red); font-size: .7rem; }
+.mobileAccount { display: none; }
+
 .navItem {
   position: relative;
   display: flex;
@@ -248,6 +265,8 @@
 }
 
 @media (max-width: 760px) {
+  .mobileAccount { display: grid; grid-template-columns: 1fr 1fr; align-items: center; margin: 12px 18px; }
+  .mobileAccount label { grid-template-columns: auto 1fr; align-items: center; }
   .sidebarToggle {
     display: none;
   }

@@ -20,7 +20,7 @@ import {
   jobEventsUrl,
   uploadSegment,
   videoParseTaskEventsUrl,
-  WORKSPACE_ID,
+  TENANT_ID,
 } from "../../api/client";
 import type {
   ParseJobView,
@@ -29,6 +29,7 @@ import type {
   VideoParseTaskView,
 } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
+import { useAuth } from "../auth/AuthProvider";
 import type { UploadInput, UploadTask } from "./upload-types";
 import { mediaTypeForFile, taskProgress } from "./upload-types";
 
@@ -58,6 +59,7 @@ const UploadContext = createContext<UploadContextValue | null>(null);
 
 export function UploadProvider({ children }: PropsWithChildren) {
   const { selectedSeries, refreshSeries } = useWorkspace();
+  const { canUpload } = useAuth();
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const controllers = useRef(new Map<string, AbortController>());
@@ -114,7 +116,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
   const watchJob = useCallback(
     (taskId: string, initialJob: ParseJobView | { jobId: string }) => {
       jobSources.current.get(taskId)?.close();
-      const source = new EventSource(jobEventsUrl(initialJob.jobId));
+      const source = new EventSource(jobEventsUrl(initialJob.jobId), { withCredentials: true });
       jobSources.current.set(taskId, source);
       let recovering = false;
 
@@ -159,6 +161,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
       jobSources.current.get(taskId)?.close();
       const source = new EventSource(
         videoParseTaskEventsUrl(initialTask.videoParseTaskId),
+        { withCredentials: true },
       );
       jobSources.current.set(taskId, source);
       let recovering = false;
@@ -225,7 +228,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
         const mediaType = mediaTypeForFile(task.file);
         if (!mediaType) throw new Error("只支持 MP4、MOV 和 AVI 视频");
         session = await createUploadSession(task.seriesId, task.idempotencyKey, {
-          workspaceId: WORKSPACE_ID,
+          tenantId: TENANT_ID,
           episodeOrder: task.episodeOrder,
           originalFilename: task.file.name,
           mediaType,
@@ -387,7 +390,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
   );
 
   useEffect(() => {
-    if (!selectedSeries) return;
+    if (!canUpload || !selectedSeries) return;
     setTasks((current) => {
       const known = new Set(current.map((task) =>
         (sessions.current.get(task.taskId) ?? task.session)?.uploadSessionId,
@@ -411,9 +414,10 @@ export function UploadProvider({ children }: PropsWithChildren) {
         error: session.status === "COMPLETING" ? undefined : session.lastError?.message ?? "请重新选择同一个原视频，系统会从服务端已确认的分片继续上传",
       }))];
     });
-  }, [selectedSeries]);
+  }, [canUpload, selectedSeries]);
 
   useEffect(() => {
+    if (!canUpload) return;
     const active = tasks.filter(
       (task) => ["creating", "uploading", "completing"].includes(task.status),
     ).length;
@@ -422,7 +426,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
       .filter((task) => task.status === "queued")
       .slice(0, available)
       .forEach((task) => void runTask(task));
-  }, [runTask, tasks]);
+  }, [canUpload, runTask, tasks]);
 
   useEffect(
     () => () => {
@@ -434,7 +438,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
 
   const enqueue = useCallback(
     (inputs: UploadInput[]) => {
-      if (!selectedSeries || inputs.length === 0) return;
+      if (!canUpload || !selectedSeries || inputs.length === 0) return;
       const additions = inputs.map<UploadTask>(({ file, episodeOrder, parseConfig }) => ({
         taskId: crypto.randomUUID(),
         seriesId: selectedSeries.seriesId,
@@ -450,7 +454,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
       }));
       setTasks((current) => [...current, ...additions]);
     },
-    [selectedSeries],
+    [canUpload, selectedSeries],
   );
 
   const pause = useCallback(
@@ -500,7 +504,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
         if (!session && task.file && mediaType && task.status !== "queued") {
           // Replay an uncertain creation response before removing its server session.
           session = await createUploadSession(task.seriesId, task.idempotencyKey, {
-            workspaceId: WORKSPACE_ID, episodeOrder: task.episodeOrder,
+            tenantId: TENANT_ID, episodeOrder: task.episodeOrder,
             originalFilename: task.file.name, mediaType, totalSizeBytes: task.file.size,
             parseConfig: task.parseConfig,
           });
@@ -586,7 +590,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
       ).length,
       overallProgress,
       dialogOpen,
-      openDialog: () => setDialogOpen(true),
+      openDialog: () => { if (canUpload) setDialogOpen(true); },
       closeDialog: () => setDialogOpen(false),
       enqueue,
       pause,
@@ -601,7 +605,7 @@ export function UploadProvider({ children }: PropsWithChildren) {
           current.filter((task) => !["completed", "cancelled"].includes(task.status)),
         ),
     }),
-    [attachFile, cancel, dialogOpen, enqueue, forgetDeletedSession, overallProgress, pause, resume, syncRequeuedParse, tasks, visibleTasks],
+    [attachFile, cancel, canUpload, dialogOpen, enqueue, forgetDeletedSession, overallProgress, pause, resume, syncRequeuedParse, tasks, visibleTasks],
   );
 
   return <UploadContext.Provider value={value}>{children}</UploadContext.Provider>;

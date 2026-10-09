@@ -57,12 +57,12 @@ class LangfuseObservationStore:
     def query(
         self,
         *,
-        workspace_id: str,
+        tenant_id: str,
         from_start_time: datetime,
         to_start_time: datetime,
     ) -> UsageObservationBatch:
-        if not workspace_id.strip() or len(workspace_id) > 64:
-            raise ValueError("workspace_id must contain 1 to 64 characters")
+        if not tenant_id.strip() or len(tenant_id) > 64:
+            raise ValueError("tenant_id must contain 1 to 64 characters")
         if (
             from_start_time.utcoffset() is None
             or to_start_time.utcoffset() is None
@@ -71,7 +71,7 @@ class LangfuseObservationStore:
             raise ValueError("Langfuse usage requires an aware, bounded time window")
         if self._client is None or self._closed:
             raise LangfuseQueryError("Langfuse 用量查询尚未配置或已关闭")
-        key = (workspace_id, from_start_time, to_start_time)
+        key = (tenant_id, from_start_time, to_start_time)
         if not self._lock.acquire(timeout=self._settings.export_timeout_seconds):
             raise LangfuseQueryError("Langfuse 用量查询繁忙，请稍后重试")
         try:
@@ -79,7 +79,7 @@ class LangfuseObservationStore:
             if cached is not None and time.monotonic() - cached[0] < 30:
                 self._cache.move_to_end(key)
                 return cached[1]
-            result = self._read(workspace_id, from_start_time, to_start_time)
+            result = self._read(tenant_id, from_start_time, to_start_time)
             self._cache[key] = (time.monotonic(), result)
             self._cache.move_to_end(key)
             while len(self._cache) > 32:
@@ -89,13 +89,13 @@ class LangfuseObservationStore:
             self._lock.release()
 
     def _read(
-        self, workspace_id: str, from_start_time: datetime, to_start_time: datetime,
+        self, tenant_id: str, from_start_time: datetime, to_start_time: datetime,
     ) -> UsageObservationBatch:
         assert self._client is not None
         # Advanced filters replace the fixed parameters in the v2 API. Include
         # every scope condition here so pagination cannot widen the request.
         filters = [
-            {"type": "stringObject", "column": "metadata", "key": "workspace_id", "operator": "=", "value": workspace_id},
+            {"type": "stringObject", "column": "metadata", "key": "tenant_id", "operator": "=", "value": tenant_id},
             {"type": "datetime", "column": "startTime", "operator": ">=", "value": from_start_time.isoformat()},
             {"type": "datetime", "column": "startTime", "operator": "<", "value": to_start_time.isoformat()},
             {"type": "stringOptions", "column": "environment", "operator": "any of", "value": [self._settings.environment]},
@@ -130,7 +130,7 @@ class LangfuseObservationStore:
                 if not isinstance(row, dict):
                     raise LangfuseQueryError("Langfuse 返回了无法识别的用量记录")
                 metadata = row.get("metadata")
-                if not isinstance(metadata, dict) or metadata.get("workspace_id") != workspace_id:
+                if not isinstance(metadata, dict) or metadata.get("tenant_id") != tenant_id:
                     raise LangfuseQueryError("Langfuse 返回的用量记录与请求范围不一致")
                 rows.append(row)
             meta = payload.get("meta", {})

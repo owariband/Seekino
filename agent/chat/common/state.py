@@ -21,7 +21,7 @@ class AnswerPhase(StrEnum):
 class RunInputs(TypedDict):
     conversation_id: str
     assistant_message_id: str
-    workspace_id: str
+    tenant_id: str
     series_ids: list[str]
     series_context: list[dict]
     user_message: str

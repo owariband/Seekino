@@ -54,7 +54,7 @@ class _RetrievalStub:
         self,
         query,
         *,
-        workspace_id,
+        tenant_id,
         series_ids,
         top_k,
         lexical_weight=None,
@@ -67,7 +67,7 @@ class _RetrievalStub:
         ):
             assert None not in (lexical_weight, text_weight, vision_weight)
             assert lexical_weight + text_weight + vision_weight == pytest.approx(1.0)
-        self.calls.append((query, list(series_ids), top_k, workspace_id))
+        self.calls.append((query, list(series_ids), top_k, tenant_id))
         return VideoChunkSearchResult(
             query=query, series_ids=list(series_ids),
             agent_reply=AgentReply(message="底层检索完成。", result_count=len(self.hits)), hits=self.hits,
@@ -274,11 +274,11 @@ def build_service(tmp_path):
             repository, library, runtime, **(service_kwargs or {}),
         )
         resources.append((service, engine))
-        series = library.create_series(workspace_id="local-default", name="Test Series")
+        series = library.create_series(tenant_id="local-default", name="Test Series")
         with factory.begin() as session:
             session.get(Series, series.series_id).status = "READY"
         conversation = service.create_conversation(
-            workspace_id="local-default", title="测试对话",
+            tenant_id="local-default", title="测试对话",
             idempotency_key="conversation",
         )
         return service, conversation, retrieval, repository, query, evaluator, chat
@@ -308,7 +308,7 @@ def _send(
     extra_context=None,
 ):
     return service.send_message(
-        conversation.conversation_id, workspace_id="local-default",
+        conversation.conversation_id, tenant_id="local-default",
         content=content, idempotency_key=key, series_ids=series_ids,
         reference=reference, extra_context=extra_context,
     )
@@ -356,7 +356,7 @@ def test_chat_tracing_binds_message_identity_in_the_actual_executor(build_servic
     assert len(observed) == 1
     assert thread_ids[0] != main_thread
     context = observed[0].context
-    assert context["workspace_id"] == "local-default"
+    assert context["tenant_id"] == "local-default"
     assert context["conversation_id"] == conversation.conversation_id
     assert context["user_message_id"] == first.user_message.message_id
     assert context["assistant_message_id"] == first.assistant_message.message_id
@@ -399,7 +399,8 @@ def test_chat_sql_capture_runs_in_executor_and_preserves_terminal_result(build_s
         rows = session.scalars(select(ModelUsage)).all()
         assert len(rows) == 1
         row = rows[0]
-        assert row.workspace_id == "local-default" and row.task_type == "chat_retrieval"
+        assert row.tenant_id == "local-default" and row.task_type == "chat_retrieval"
+        assert row.actor_user_id == "local-user"
         assert row.run_id == first.assistant_message.message_id
         assert row.metadata_["status"] == ("failed" if failed else "completed")
         assert row.metadata_["context"]["conversation_id"] == conversation.conversation_id
@@ -586,15 +587,15 @@ def evidence_service(build_service, prepared_import):
 
 def test_first_question_titles_only_default_conversations_and_creation_replay_is_stable(build_service):
     service, custom, *_ = build_service()
-    default = service.create_conversation(workspace_id="local-default", idempotency_key="default-title")
+    default = service.create_conversation(tenant_id="local-default", idempotency_key="default-title")
     question = "寻找爽世哭泣并说出春日影的片段"
     _send(service, default, content=question)
-    updated = service.get_conversation(default.conversation_id, workspace_id="local-default")
+    updated = service.get_conversation(default.conversation_id, tenant_id="local-default")
     assert updated.title == question
     assert updated.last_message_preview == "目前没有足够的候选画面，建议补充人物或动作。"
-    assert service.create_conversation(workspace_id="local-default", idempotency_key="default-title") == updated
+    assert service.create_conversation(tenant_id="local-default", idempotency_key="default-title") == updated
     _send(service, custom, key="custom-message", content=question)
-    assert service.get_conversation(custom.conversation_id, workspace_id="local-default").title == "测试对话"
+    assert service.get_conversation(custom.conversation_id, tenant_id="local-default").title == "测试对话"
 
 
 def test_query_agent_receives_series_transcript_language_hint(build_service):
@@ -615,14 +616,14 @@ def test_read_only_message_recovery_by_user_assistant_or_request_key(build_servi
     for identifier in ({"message_id": result.user_message.message_id},
                        {"message_id": result.assistant_message.message_id},
                        {"idempotency_key": "message"}):
-        assert service.get_message(conversation.conversation_id, workspace_id="local-default", **identifier) == result
+        assert service.get_message(conversation.conversation_id, tenant_id="local-default", **identifier) == result
     assert len(retrieval.calls) == 1
     with pytest.raises(ValueError, match="exactly one"):
-        service.get_message(conversation.conversation_id, workspace_id="local-default")
+        service.get_message(conversation.conversation_id, tenant_id="local-default")
     with pytest.raises(AgentMessageNotFoundError):
-        service.get_message(conversation.conversation_id, workspace_id="local-default", idempotency_key="not-accepted")
+        service.get_message(conversation.conversation_id, tenant_id="local-default", idempotency_key="not-accepted")
     with pytest.raises(AgentConversationNotFoundError):
-        service.get_message(conversation.conversation_id, workspace_id="other-workspace", idempotency_key="message")
+        service.get_message(conversation.conversation_id, tenant_id="other-workspace", idempotency_key="message")
 
 
 def test_reference_uses_saved_same_version_evidence_with_ordered_history(evidence_service):
@@ -785,18 +786,18 @@ def test_invalid_reference_does_not_start_a_message(evidence_service, invalid):
     elif invalid == "missing-chunk":
         reference["videoChunkId"] = str(uuid4())
     elif invalid == "other-conversation":
-        target = service.create_conversation(workspace_id="local-default", title="独立聊天", idempotency_key="other")
+        target = service.create_conversation(tenant_id="local-default", title="独立聊天", idempotency_key="other")
     else:
         library = LibraryService(LibraryRepository(repository._session_factory))
-        series = library.create_series(workspace_id="local-default", name="Other Series")
+        series = library.create_series(tenant_id="local-default", name="Other Series")
         with repository._session_factory.begin() as session:
             session.get(Series, series.series_id).status = "READY"
         scope = [series.series_id]
-    before = service.list_all_messages(target.conversation_id, workspace_id="local-default")
+    before = service.list_all_messages(target.conversation_id, tenant_id="local-default")
     query_count = len(query.prompts)
     with pytest.raises(AgentReferenceInvalidError):
         _send(service, target, key="bad-reference", reference=reference, series_ids=scope)
-    assert service.list_all_messages(target.conversation_id, workspace_id="local-default") == before
+    assert service.list_all_messages(target.conversation_id, tenant_id="local-default") == before
     assert len(query.prompts) == query_count
 
 
@@ -804,34 +805,34 @@ def test_agent_pages_count_filter_and_bind_cursor_to_query_and_scope(build_servi
     service, conversation, retrieval, *_ = build_service()
     first = _send(service, conversation)
     _send(service, conversation, key="second")
-    initial = service.page_messages(conversation.conversation_id, workspace_id="local-default", limit=2)
+    initial = service.page_messages(conversation.conversation_id, tenant_id="local-default", limit=2)
     assert initial.total == 4 and initial.has_more and len(initial.items) == 2
-    next_page = service.page_messages(conversation.conversation_id, workspace_id="local-default", limit=2,
+    next_page = service.page_messages(conversation.conversation_id, tenant_id="local-default", limit=2,
                                       cursor=initial.next_cursor)
     assert [item.sequence_no for item in next_page.items] == [2, 3]
     assert next_page.total == 4 and not next_page.has_more and next_page.next_cursor is None
     with pytest.raises(ValueError):
-        service.page_messages(conversation.conversation_id, workspace_id="local-default", limit=2,
+        service.page_messages(conversation.conversation_id, tenant_id="local-default", limit=2,
                               cursor=initial.next_cursor, after_sequence_no=0)
-    service.create_conversation(workspace_id="local-default", title="没搜索的对话", idempotency_key="unused")
-    filtered = service.page_conversations(workspace_id="local-default", series_id=first.user_message.series_ids[0], query="测试")
+    service.create_conversation(tenant_id="local-default", title="没搜索的对话", idempotency_key="unused")
+    filtered = service.page_conversations(tenant_id="local-default", series_id=first.user_message.series_ids[0], query="测试")
     assert filtered.total == 1 and filtered.items[0].conversation_id == conversation.conversation_id
-    assert service.page_conversations(workspace_id="local-default", query="不存在").total == 0
+    assert service.page_conversations(tenant_id="local-default", query="不存在").total == 0
     assert len(retrieval.calls) == 2
 
 
 def test_conversation_creation_is_idempotent_within_workspace(build_service):
     service, conversation, *_ = build_service()
     repeated = service.create_conversation(
-        workspace_id="local-default", title="测试对话",
+        tenant_id="local-default", title="测试对话",
         idempotency_key="conversation",
     )
     assert repeated.conversation_id == conversation.conversation_id
-    assert repeated.workspace_id == "local-default"
-    assert [item.conversation_id for item in service.list_conversations(workspace_id="local-default")] == [conversation.conversation_id]
+    assert repeated.tenant_id == "local-default"
+    assert [item.conversation_id for item in service.list_conversations(tenant_id="local-default")] == [conversation.conversation_id]
     with pytest.raises(AgentConflictError, match="different fields"):
         service.create_conversation(
-            workspace_id="local-default", title="另一条对话",
+            tenant_id="local-default", title="另一条对话",
             idempotency_key="conversation",
         )
 
@@ -885,7 +886,7 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
         environment=DatabaseEnvironment.TEST,
     )
     conversation_id, user_id, assistant_id = (str(uuid4()) for _ in range(3))
-    workspace_id = f"mysql-agent-timing-{uuid4()}"
+    tenant_id = f"mysql-agent-timing-{uuid4()}"
     created = False
     try:
         create_schema(engine)
@@ -893,13 +894,13 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
         factory = create_session_factory(engine)
         repository = AgentRepository(factory)
         repository.create_conversation(
-            conversation_id=conversation_id, workspace_id=workspace_id,
+            conversation_id=conversation_id, tenant_id=tenant_id,
             title="Timing roundtrip", idempotency_key="conversation",
         )
         created = True
         started_at = 1_700_000_000_000
         repository.start_message(
-            conversation_id=conversation_id, workspace_id=workspace_id,
+            conversation_id=conversation_id, tenant_id=tenant_id,
             content="Test timing", model_name="chat-test", requested_top_k=1,
             requested_run_options={}, idempotency_key="message",
             series_ids=[], requested_series_ids=[], user_message_id=user_id,
@@ -972,7 +973,7 @@ def test_service_delete_is_workspace_scoped_and_rejects_processing_answer(build_
     )
     execution = service.start_message(
         conversation.conversation_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         content="找到杯子",
         idempotency_key="processing-delete",
         stream=True,
@@ -981,16 +982,16 @@ def test_service_delete_is_workspace_scoped_and_rejects_processing_answer(build_
         with pytest.raises(AgentConversationNotFoundError):
             service.delete_conversation(
                 conversation.conversation_id,
-                workspace_id="another-workspace",
+                tenant_id="another-workspace",
             )
         with pytest.raises(AgentMessageInProgressError):
             service.delete_conversation(
                 conversation.conversation_id,
-                workspace_id="local-default",
+                tenant_id="local-default",
             )
         assert service.get_conversation(
             conversation.conversation_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
         ).message_count == 2
     finally:
         release.set()
@@ -998,30 +999,30 @@ def test_service_delete_is_workspace_scoped_and_rejects_processing_answer(build_
 
     deleted = service.delete_conversation(
         conversation.conversation_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     assert deleted.conversation_id == conversation.conversation_id
     assert deleted.message_count == 2
     with pytest.raises(AgentConversationNotFoundError):
         service.get_conversation(
             conversation.conversation_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
         )
 
 
 def test_conversation_reads_and_execution_do_not_cross_workspaces(build_service):
     service, conversation, retrieval, _, query, *_ = build_service()
-    assert service.list_conversations(workspace_id="another-workspace") == []
+    assert service.list_conversations(tenant_id="another-workspace") == []
     for read in [service.get_conversation, service.list_messages, service.list_all_messages]:
         with pytest.raises(AgentConversationNotFoundError):
-            read(conversation.conversation_id, workspace_id="another-workspace")
+            read(conversation.conversation_id, tenant_id="another-workspace")
     with pytest.raises(AgentConversationNotFoundError):
         service.send_message(
-            conversation.conversation_id, workspace_id="another-workspace",
+            conversation.conversation_id, tenant_id="another-workspace",
             content="寻找摔杯子的片段", idempotency_key="message",
         )
     assert not retrieval.calls and not query.prompts
-    assert service.list_all_messages(conversation.conversation_id, workspace_id="local-default") == []
+    assert service.list_all_messages(conversation.conversation_id, tenant_id="local-default") == []
 
 
 @pytest.mark.parametrize("second_query", ["补充摔杯子", None])
@@ -1032,7 +1033,7 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
     )
     first = _send(service, conversation)
     repeated = _send(service, conversation)
-    messages = service.list_messages(conversation.conversation_id, workspace_id="local-default")
+    messages = service.list_messages(conversation.conversation_id, tenant_id="local-default")
     assert first.assistant_message.message_id == repeated.assistant_message.message_id
     assert len(messages) == 2
     assert [m.status for m in messages] == ["COMPLETED", "COMPLETED"]
@@ -1072,11 +1073,11 @@ def test_reviewed_chat_is_persisted_and_idempotent(build_service, second_query):
     assert context["turns"][0]["draft"]["message"] == "第 1 轮待审核草稿。"
     assert context["turns"][0]["review"]["advice"] == "补充摔杯子的动作，重新核验。"
     with pytest.raises(AgentConflictError, match="different request fields"):
-        service.send_message(conversation.conversation_id, workspace_id="local-default", content="寻找摔杯子的片段", top_k=7, idempotency_key="message")
+        service.send_message(conversation.conversation_id, tenant_id="local-default", content="寻找摔杯子的片段", top_k=7, idempotency_key="message")
     with pytest.raises(AgentConflictError, match="different request fields"):
         service.send_message(
             conversation.conversation_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             content="寻找摔杯子的片段",
             idempotency_key="message",
             max_model_calls_per_turn=7,
@@ -1101,7 +1102,7 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
     service._runtime.kick = capture_kick
     result = service.send_message(
         conversation.conversation_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         content="寻找摔杯子的片段",
         idempotency_key="custom-run-options",
         max_model_calls_per_turn=9,
@@ -1120,14 +1121,14 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
         assert user.detail["request"]["idempotencyKey"] == "custom-run-options"
     service.send_message(
         conversation.conversation_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         content="再找一个片段",
         idempotency_key="auto-loop-options",
         max_loop_turns=0,
     )
     service.send_message(
         conversation.conversation_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         content="换个片段",
         idempotency_key="custom-loop-options",
         max_loop_turns=100,
@@ -1147,7 +1148,7 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
     with pytest.raises(AgentConflictError, match="different request fields"):
         service.send_message(
             conversation.conversation_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             content="换个片段",
             idempotency_key="custom-loop-options",
             max_loop_turns=0,
@@ -1155,7 +1156,7 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
     with pytest.raises(ValueError, match="between 0 and 100"):
         service.send_message(
             conversation.conversation_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             content="轮次过高",
             idempotency_key="over-loop-limit",
             max_loop_turns=101,
@@ -1163,7 +1164,7 @@ def test_per_message_run_options_are_bounded_persisted_and_passed_to_runtime(
     with pytest.raises(ValueError, match="between 1 and 12"):
         service.send_message(
             conversation.conversation_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             content="再找一个片段",
             idempotency_key="over-model-limit",
             max_model_calls_per_turn=13,
@@ -1178,7 +1179,7 @@ def test_third_continue_persists_failure_and_never_calls_chat(build_service):
     with pytest.raises(AgentModelInvocationError, match="after 3 turns"):
         _send(service, conversation)
     assert evaluator.calls == 3 and not chat.prompts
-    messages = service.list_all_messages(conversation.conversation_id, workspace_id="local-default")
+    messages = service.list_all_messages(conversation.conversation_id, tenant_id="local-default")
     assert [m.status for m in messages] == ["COMPLETED", "FAILED"]
     assert messages[1].search_result is None and messages[1].model_name == "chat-test"
     assert messages[1].timing is not None
@@ -1197,7 +1198,7 @@ def test_context_budget_failure_is_persisted_with_a_specific_public_error(build_
         _send(service, conversation)
 
     messages = service.list_all_messages(
-        conversation.conversation_id, workspace_id="local-default",
+        conversation.conversation_id, tenant_id="local-default",
     )
     assert messages[-1].status == "FAILED"
     assert messages[-1].last_error.code == "AGENT_CONTEXT_BUDGET_EXCEEDED"
@@ -1230,7 +1231,7 @@ def test_next_kick_reads_only_completed_conversation_history(build_service):
         },
     }
     with pytest.raises(AgentConversationNotFoundError):
-        service.send_message(conversation.conversation_id, workspace_id="other-workspace", content="隔离", idempotency_key="other")
+        service.send_message(conversation.conversation_id, tenant_id="other-workspace", content="隔离", idempotency_key="other")
 
 
 def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kick(
@@ -1240,14 +1241,14 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
         evaluator=_EvaluatorModel(approve_after=2),
     )
     library = LibraryService(LibraryRepository(repository._session_factory))
-    original_id = library.list_series(workspace_id="local-default")[0].series_id
+    original_id = library.list_series(tenant_id="local-default")[0].series_id
     run_structured = query.run_structured
     added_ids = []
 
     def query_with_new_series(*args, **kwargs):
         draft = run_structured(*args, **kwargs)
         if not added_ids:
-            added = library.create_series(workspace_id="local-default", name="Added mid-loop")
+            added = library.create_series(tenant_id="local-default", name="Added mid-loop")
             with repository._session_factory.begin() as session:
                 session.get(Series, added.series_id).status = "READY"
             added_ids.append(added.series_id)
@@ -1280,8 +1281,8 @@ def test_all_scope_is_frozen_across_turns_and_replay_then_refreshes_for_next_kic
 def test_next_message_can_choose_another_scope_without_reusing_old_evidence(build_service):
     service, conversation, retrieval, repository, query, _, _ = build_service()
     library = LibraryService(LibraryRepository(repository._session_factory))
-    original_id = library.list_series(workspace_id="local-default")[0].series_id
-    added = library.create_series(workspace_id="local-default", name="Second animation")
+    original_id = library.list_series(tenant_id="local-default")[0].series_id
+    added = library.create_series(tenant_id="local-default", name="Second animation")
     with repository._session_factory.begin() as session:
         session.get(Series, added.series_id).status = "READY"
 
@@ -1300,7 +1301,7 @@ def test_next_message_can_choose_another_scope_without_reusing_old_evidence(buil
 def test_tool_answer_is_atomic_and_disconnect_does_not_cancel(build_service):
     release = Event()
     service, conversation, _, _, _, _, _ = build_service(chat=_ChatModel(release=release))
-    execution = service.start_message(conversation.conversation_id, workspace_id="local-default", content="找到杯子", idempotency_key="stream", stream=True)
+    execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="找到杯子", idempotency_key="stream", stream=True)
     try:
         events = [execution.next_event(timeout=2) for _ in range(4)]
         assert [event["type"] for event in events] == [
@@ -1331,7 +1332,7 @@ def test_tool_answer_is_atomic_and_disconnect_does_not_cancel(build_service):
         with pytest.raises(Empty):
             execution.next_event(timeout=0.05)
         processing = service.list_all_messages(
-            conversation.conversation_id, workspace_id="local-default",
+            conversation.conversation_id, tenant_id="local-default",
         )[-1]
         assert processing.status == "PROCESSING"
         assert processing.timing is not None
@@ -1340,9 +1341,9 @@ def test_tool_answer_is_atomic_and_disconnect_does_not_cancel(build_service):
             "QUEUED", "RETRIEVING", "EVALUATING",
         ]
         with pytest.raises(AgentMessageInProgressError):
-            service.start_message(conversation.conversation_id, workspace_id="local-default", content="找到杯子", idempotency_key="stream")
+            service.start_message(conversation.conversation_id, tenant_id="local-default", content="找到杯子", idempotency_key="stream")
         with pytest.raises(AgentMessageInProgressError):
-            service.start_message(conversation.conversation_id, workspace_id="local-default", content="另一个问题", idempotency_key="other")
+            service.start_message(conversation.conversation_id, tenant_id="local-default", content="另一个问题", idempotency_key="other")
         execution.detach()
         assert not execution.cancellation.is_set()
     finally:
@@ -1352,11 +1353,11 @@ def test_tool_answer_is_atomic_and_disconnect_does_not_cancel(build_service):
 
 def test_completed_event_observes_committed_snapshot(build_service):
     service, conversation, _, _, _, _, _ = build_service()
-    execution = service.start_message(conversation.conversation_id, workspace_id="local-default", content="找杯子", idempotency_key="stream", stream=True)
+    execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="找杯子", idempotency_key="stream", stream=True)
     events = _collect(execution)
     assert events[-1]["type"] == "answer.completed"
     completed = execution.result().assistant_message
-    persisted = service.list_all_messages(conversation.conversation_id, workspace_id="local-default")[-1]
+    persisted = service.list_all_messages(conversation.conversation_id, tenant_id="local-default")[-1]
     assert persisted == completed
     assert events[-1]["assistantMessage"]["status"] == "COMPLETED"
     assert [event["type"] for event in events].count("answer.evidence") == 1
@@ -1391,13 +1392,13 @@ def test_failure_has_no_completed_event_and_never_persists_unvalidated_chat_text
         def fail_commit(*_args, **_kwargs):
             raise RuntimeError("database commit failed")
         monkeypatch.setattr(repository, "complete_assistant_message", fail_commit)
-    execution = service.start_message(conversation.conversation_id, workspace_id="local-default", content="找杯子", idempotency_key="stream", stream=True)
+    execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="找杯子", idempotency_key="stream", stream=True)
     events = _collect(execution)
     with pytest.raises((RuntimeError, AgentModelInvocationError)):
         execution.result()
     assert events[-1]["type"] == "answer.failed"
     assert "answer.completed" not in [event["type"] for event in events]
-    failed = service.list_all_messages(conversation.conversation_id, workspace_id="local-default")[-1]
+    failed = service.list_all_messages(conversation.conversation_id, tenant_id="local-default")[-1]
     assert failed.status == "FAILED"
     assert failed.content is None
     assert failed.search_result is None
@@ -1436,7 +1437,7 @@ def test_unconfirmed_terminal_write_emits_interrupted_and_recovers_processing_sn
     def unavailable_failure_write(*_args, **_kwargs):
         raise RuntimeError("terminal database write unavailable")
     monkeypatch.setattr(repository, "fail_assistant_message", unavailable_failure_write)
-    execution = service.start_message(conversation.conversation_id, workspace_id="local-default",
+    execution = service.start_message(conversation.conversation_id, tenant_id="local-default",
                                       content="找画面", idempotency_key="unknown-terminal", stream=True)
     events = _collect(execution)
     with pytest.raises(AgentModelInvocationError):
@@ -1444,7 +1445,7 @@ def test_unconfirmed_terminal_write_emits_interrupted_and_recovers_processing_sn
     assert events[-1]["type"] == "answer.interrupted"
     assert not {"userMessage", "assistantMessage"} & set(events[-1])
     assert not {"answer.completed", "answer.failed"} & {event["type"] for event in events}
-    recovered = service.get_message(conversation.conversation_id, workspace_id="local-default",
+    recovered = service.get_message(conversation.conversation_id, tenant_id="local-default",
                                     idempotency_key="unknown-terminal").assistant_message
     assert recovered.status == "PROCESSING" and recovered.search_result is None
     assert (recovered.content or "") == "".join(
@@ -1454,7 +1455,7 @@ def test_unconfirmed_terminal_write_emits_interrupted_and_recovers_processing_sn
 
 def test_slow_consumer_receives_one_atomic_tool_answer(build_service):
     service, conversation, *_ = build_service()
-    execution = service.start_message(conversation.conversation_id, workspace_id="local-default",
+    execution = service.start_message(conversation.conversation_id, tenant_id="local-default",
                                       content="找画面", idempotency_key="slow-reader", stream=True)
     result = execution.result()
     events = _collect(execution)
@@ -1466,7 +1467,7 @@ def test_slow_consumer_receives_one_atomic_tool_answer(build_service):
     assert events[-1]["type"] == "answer.completed"
     assert result.assistant_message.status == "COMPLETED"
     assert result.assistant_message.content == "目前没有足够的候选画面，建议补充人物或动作。"
-    assert service.get_message(conversation.conversation_id, workspace_id="local-default",
+    assert service.get_message(conversation.conversation_id, tenant_id="local-default",
                                idempotency_key="slow-reader") == result
 
 
@@ -1479,7 +1480,7 @@ def test_shutdown_requests_stop_and_waits_before_resources_close(build_service):
         evaluator=evaluator,
         chat=_ChatModel(release=release),
     )
-    execution = service.start_message(conversation.conversation_id, workspace_id="local-default", content="找杯子", idempotency_key="shutdown", stream=True)
+    execution = service.start_message(conversation.conversation_id, tenant_id="local-default", content="找杯子", idempotency_key="shutdown", stream=True)
     try:
         for _ in range(4):
             execution.next_event(timeout=2)
@@ -1490,7 +1491,7 @@ def test_shutdown_requests_stop_and_waits_before_resources_close(build_service):
     assert closed == [True]
     with pytest.raises(AgentModelInvocationError, match="cancelled"):
         execution.result()
-    assert service.list_all_messages(conversation.conversation_id, workspace_id="local-default")[-1].status == "FAILED"
+    assert service.list_all_messages(conversation.conversation_id, tenant_id="local-default")[-1].status == "FAILED"
     with pytest.raises(AgentMessageInProgressError, match="shutting down"):
         _send(service, conversation, key="late")
 
@@ -1529,7 +1530,7 @@ def test_global_settings_reload_applies_to_new_messages_only(build_service):
 
     repository.list_recent_completed_messages = record_history_limit
     before = service.start_message(
-        conversation.conversation_id, workspace_id="local-default",
+        conversation.conversation_id, tenant_id="local-default",
         content="改配置前", idempotency_key="before",
     )
     try:
@@ -1541,10 +1542,10 @@ def test_global_settings_reload_applies_to_new_messages_only(build_service):
         )
         revision = "after"
         next_conversation = service.create_conversation(
-            workspace_id="local-default", idempotency_key="next-conversation",
+            tenant_id="local-default", idempotency_key="next-conversation",
         )
         after = service.start_message(
-            next_conversation.conversation_id, workspace_id="local-default",
+            next_conversation.conversation_id, tenant_id="local-default",
             content="改配置后", idempotency_key="after",
         )
         assert after.result().assistant_message.status == "COMPLETED"
@@ -1575,7 +1576,7 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
     session_factory = create_session_factory(engine)
     repository = AgentRepository(session_factory)
     library = LibraryService(LibraryRepository(session_factory))
-    series = library.create_series(workspace_id="workspace-1", name="Long Conversation")
+    series = library.create_series(tenant_id="workspace-1", name="Long Conversation")
     service = AgentChatService(
         repository,
         library,
@@ -1588,7 +1589,7 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
         ),
     )
     conversation = service.create_conversation(
-        workspace_id="workspace-1",
+        tenant_id="workspace-1",
         title="History",
         idempotency_key="conversation",
     )
@@ -1614,7 +1615,7 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
     now = 1_789_454_400_000
     started = repository.start_message(
         conversation_id=conversation.conversation_id,
-        workspace_id="workspace-1",
+        tenant_id="workspace-1",
         content="new question",
         model_name="current-model",
         requested_top_k=8,
@@ -1630,10 +1631,10 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
         now=now,
     )
     page = service.list_messages(
-        conversation.conversation_id, workspace_id="workspace-1", limit=500
+        conversation.conversation_id, tenant_id="workspace-1", limit=500
     )
     snapshot = service.list_all_messages(
-        conversation.conversation_id, workspace_id="workspace-1"
+        conversation.conversation_id, tenant_id="workspace-1"
     )
     assert len(page) == 500 and page[-1].sequence_no == 499
     assert len(snapshot) == 502
@@ -1654,7 +1655,7 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
             now=1_789_454_399_000,
         )
     final = service.list_all_messages(
-        conversation.conversation_id, workspace_id="workspace-1"
+        conversation.conversation_id, tenant_id="workspace-1"
     )
     assert len(final) == 502
     assert final[-1].message_id == snapshot[-1].message_id
@@ -1667,5 +1668,115 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
     assert all(message.timing is None for message in final[:-1])
     with pytest.raises(AgentConversationNotFoundError):
         service.list_all_messages(
-            conversation.conversation_id, workspace_id="another-workspace"
+            conversation.conversation_id, tenant_id="another-workspace"
+        )
+
+
+@pytest.mark.parametrize("legacy_key", ["workspaceId", "workspace_id"])
+def test_historical_message_evidence_scope_is_read_without_changing_json(evidence_service, legacy_key):
+    service, conversation, _, repository, query, *_ = evidence_service
+    source = _send(service, conversation)
+    assistant_id = source.assistant_message.message_id
+    with repository._session_factory.begin() as session:
+        record = session.get(AgentMessage, assistant_id)
+        stored = json.loads(json.dumps(record.search_result))
+        for hit in stored["hits"]:
+            evidence = hit["evidence"]
+            evidence[legacy_key] = evidence.pop("tenantId")
+            evidence["importantExtraData"] = {"workspaceId": "unrelated-metadata"}
+        record.search_result = stored
+    restored = service.get_message(conversation.conversation_id, tenant_id="local-default", message_id=assistant_id)
+    assert all(hit["evidence"]["tenantId"] == "local-default" for hit in restored.assistant_message.search_result["hits"])
+    assert restored.assistant_message.search_result["hits"][0]["evidence"]["importantExtraData"] == {"workspaceId": "unrelated-metadata"}
+    reference = {"messageId": assistant_id, "videoChunkId": restored.assistant_message.search_result["hits"][0]["candidate"]["videoChunkId"]}
+    _send(service, conversation, key="legacy-reference", reference=reference)
+    context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
+    assert context["reference_context"]["evidence"]["videoChunkId"] == reference["videoChunkId"]
+    with repository._session_factory() as session:
+        assert session.get(AgentMessage, assistant_id).search_result == stored
+
+
+
+@pytest.mark.parametrize("conflicting_new_key", [None, "tenantId", "tenant_id"])
+def test_historical_evidence_scope_rejects_cross_tenant_or_conflicting_aliases(evidence_service, conflicting_new_key):
+    service, conversation, _, repository, *_ = evidence_service
+    source = _send(service, conversation)
+    assistant_id = source.assistant_message.message_id
+    with repository._session_factory.begin() as session:
+        record = session.get(AgentMessage, assistant_id)
+        stored = json.loads(json.dumps(record.search_result))
+        evidence = stored["hits"][0]["evidence"]
+        evidence["workspaceId"] = "other-tenant"
+        evidence.pop("tenantId")
+        if conflicting_new_key is not None:
+            evidence[conflicting_new_key] = "local-default"
+        record.search_result = stored
+    if conflicting_new_key is not None:
+        with pytest.raises(AgentReferenceInvalidError, match="资源范围冲突"):
+            service.get_message(conversation.conversation_id, tenant_id="local-default", message_id=assistant_id)
+    else:
+        reference = {"messageId": assistant_id, "videoChunkId": stored["hits"][0]["candidate"]["videoChunkId"]}
+        with pytest.raises(AgentReferenceInvalidError, match="不属于本次检索范围"):
+            _send(service, conversation, key="cross-tenant-legacy", reference=reference)
+
+
+
+def test_public_tenant_conversations_are_private_per_owner(build_service):
+    service, _, _, repository, *_ = build_service()
+    first = service.create_conversation(
+        tenant_id="local-default", owner_user_id="guest-A",
+        idempotency_key="shared-creation-key",
+    )
+    second = service.create_conversation(
+        tenant_id="local-default", owner_user_id="guest-B",
+        idempotency_key="shared-creation-key",
+    )
+    assert first.conversation_id != second.conversation_id
+    assert service.create_conversation(
+        tenant_id="local-default", owner_user_id="guest-A",
+        idempotency_key="shared-creation-key",
+    ).conversation_id == first.conversation_id
+    answer = service.send_message(
+        first.conversation_id, tenant_id="local-default", owner_user_id="guest-A",
+        content="private question", idempotency_key="private-message",
+    )
+    assert [item.conversation_id for item in service.page_conversations(
+        tenant_id="local-default", owner_user_id="guest-B",
+    ).items] == [second.conversation_id]
+    checks = (
+        lambda: service.get_conversation(first.conversation_id, tenant_id="local-default", owner_user_id="guest-B"),
+        lambda: service.page_messages(first.conversation_id, tenant_id="local-default", owner_user_id="guest-B"),
+        lambda: service.list_messages(first.conversation_id, tenant_id="local-default", owner_user_id="guest-B"),
+        lambda: service.list_all_messages(first.conversation_id, tenant_id="local-default", owner_user_id="guest-B"),
+        lambda: service.get_message(first.conversation_id, tenant_id="local-default", owner_user_id="guest-B",
+                                   message_id=answer.user_message.message_id),
+        lambda: service.send_message(first.conversation_id, tenant_id="local-default", owner_user_id="guest-B",
+                                    content="private question", idempotency_key="private-message"),
+        lambda: service.delete_conversation(first.conversation_id, tenant_id="local-default", owner_user_id="guest-B"),
+        lambda: repository.list_recent_completed_messages(
+            first.conversation_id, "local-default", owner_user_id="guest-B", before_sequence_no=10, limit=10),
+    )
+    for check in checks:
+        with pytest.raises(AgentConversationNotFoundError):
+            check()
+
+
+
+def test_private_conversation_can_use_one_public_source_and_replay_checks_source(build_service):
+    service, _, retrieval, _, *_ = build_service()
+    private = service.create_conversation(
+        tenant_id="personal-tenant", owner_user_id="user-A", idempotency_key="private-conversation",
+    )
+    result = service.send_message(
+        private.conversation_id, tenant_id="personal-tenant", source_tenant_id="local-default",
+        owner_user_id="user-A", content="public course question", idempotency_key="source-message",
+    )
+    assert result.assistant_message.status == "COMPLETED"
+    assert all(call[3] == "local-default" for call in retrieval.calls)
+    assert result.assistant_message.source_tenant_id == "local-default"
+    assert service.list_messages(private.conversation_id, tenant_id="personal-tenant", owner_user_id="user-A")
+    with pytest.raises(AgentConflictError, match="different request fields"):
+        service.send_message(
+            private.conversation_id, tenant_id="personal-tenant", source_tenant_id="another-source",
+            owner_user_id="user-A", content="public course question", idempotency_key="source-message",
         )

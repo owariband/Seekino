@@ -20,6 +20,7 @@ from ..model.dto.parseUsageDTO import (
     ModelUsageState,
     UsageModelRow, UsageOverviewState, UsageRunRow, UsageTotals,
 )
+from ..repository.video_parse import RUNTIME_DETAIL_KEY
 from ..repository.model_usage import ModelUsageRepository
 from ..utils.time import datetime_to_unix_time_ms, now_utc, unix_time_ms_to_datetime
 from ..utils.validation import require_nonempty_text
@@ -48,7 +49,7 @@ class ParseUsageService:
         self._repository, self._tracing, self._clock = repository, tracing, clock
         # Gateway de-duplicates subscribers by callable identity across nested scopes.
         self._observer = self._record_call
-        self._owner: ContextVar[tuple[str, str, str] | None] = ContextVar("local_usage_owner", default=None)
+        self._owner: ContextVar[tuple[str, str, str, str | None] | None] = ContextVar("local_usage_owner", default=None)
 
     def close(self) -> None:
         pass  # The application owns the shared engine and its lifetime.
@@ -56,7 +57,7 @@ class ParseUsageService:
     @contextmanager
     def capture(self, lease: ParseJobLease) -> Iterator[None]:
         context = {
-            "workspace_id": lease.workspace_id, "series_id": lease.series_id,
+            "tenant_id": lease.tenant_id, "series_id": lease.series_id,
             "video_id": lease.video_id, "job_id": lease.job_id,
             "run_id": lease.job_id, "session_id": lease.video_id,
             "attempt_count": lease.attempt_count, "lease_version": lease.lease_version,
@@ -81,8 +82,14 @@ class ParseUsageService:
             raise ValueError("category must be parse or embedding")
         if sequence_no is not None and (type(sequence_no) is not int or sequence_no < 0):
             raise ValueError("sequence_no must be a nonnegative integer")
+        detail = getattr(task_input.task, "detail", None) or {}
+        runtime = detail.get(RUNTIME_DETAIL_KEY, {})
+        actor_user_id = runtime.get("actor_user_id") if isinstance(runtime, dict) else None
+        if actor_user_id is not None:
+            actor_user_id = require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
         context = {
-            "workspace_id": task_input.workspace_id, "series_id": task_input.series_id,
+            "actor_user_id": actor_user_id,
+            "tenant_id": task_input.tenant_id, "series_id": task_input.series_id,
             "video_id": task_input.task.video_id, "video_parse_task_id": lease.video_parse_task_id,
             "run_id": lease.video_parse_task_id, "session_id": task_input.task.video_id,
             "task_type": "video_parse",
@@ -90,7 +97,7 @@ class ParseUsageService:
             "category": category,
         }
         tracing = self._tracing.scope(context) if self._tracing is not None else nullcontext()
-        owner_token = self._owner.set((task_input.workspace_id, "video_parse", lease.video_parse_task_id))
+        owner_token = self._owner.set((task_input.tenant_id, "video_parse", lease.video_parse_task_id, actor_user_id))
         try:
             with model_call_context(context), tracing, capture_model_usage(self._observer, combine=True):
                 yield
@@ -99,12 +106,15 @@ class ParseUsageService:
 
     @contextmanager
     def capture_chat(self, context: Mapping[str, Any]) -> Iterator[None]:
-        workspace_id = require_nonempty_text(context.get("workspace_id"), "workspace_id", maximum=64)
+        tenant_id = require_nonempty_text(context.get("tenant_id"), "tenant_id", maximum=64)
         message_id = require_nonempty_text(context.get("assistant_message_id"), "assistant_message_id", maximum=256)
-        owner_token = self._owner.set((workspace_id, "chat_retrieval", message_id))
+        actor_user_id = context.get("actor_user_id")
+        if actor_user_id is not None:
+            actor_user_id = require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
+        owner_token = self._owner.set((tenant_id, "chat_retrieval", message_id, actor_user_id))
         try:
             with model_call_context({
-                **context, "workspace_id": workspace_id, "task_type": "chat_retrieval", "run_id": message_id,
+                **context, "tenant_id": tenant_id, "task_type": "chat_retrieval", "run_id": message_id,
             }), capture_model_usage(self._observer, combine=True):
                 yield
         finally:
@@ -116,17 +126,18 @@ class ParseUsageService:
         if task_type not in {"video_parse", "chat_retrieval"} or self._owner.get() is None:
             return
         try:
-            workspace_id = require_nonempty_text(context.get("workspace_id"), "workspace_id", maximum=64)
+            tenant_id = require_nonempty_text(context.get("tenant_id"), "tenant_id", maximum=64)
             run_id = require_nonempty_text(context.get("run_id"), "run_id", maximum=256)
             identity = "video_parse_task_id" if task_type == "video_parse" else "assistant_message_id"
             other_identity = "assistant_message_id" if task_type == "video_parse" else "video_parse_task_id"
             if (
-                (workspace_id, task_type, run_id) != self._owner.get()
+                (tenant_id, task_type, run_id) != self._owner.get()[:3]
                 or context.get(identity) != run_id or context.get(other_identity) is not None
             ):
                 raise ValueError("model call context conflicts with its owner")
             self._repository.record_call(ModelUsageState(
-                call_id=call.call_id, workspace_id=workspace_id, task_type=task_type, run_id=run_id,
+                call_id=call.call_id, tenant_id=tenant_id, task_type=task_type, run_id=run_id,
+                actor_user_id=self._owner.get()[3],
                 started_at=unix_time_ms_to_datetime(call.started_at), created_at=self._clock(),
                 usage={
                     "tokens": asdict(call.usage) if call.usage is not None else None,
@@ -150,15 +161,18 @@ class ParseUsageService:
             )
 
     def overview(
-        self, *, workspace_id: str, from_start_time: int | None = None,
+        self, *, tenant_id: str, from_start_time: int | None = None,
         to_start_time: int | None = None, series_id: str | None = None,
         run_id: str | None = None,
+        actor_user_id: str | None = None,
     ) -> UsageOverviewState:
-        workspace_id = require_nonempty_text(workspace_id, "workspace_id", maximum=64)
+        tenant_id = require_nonempty_text(tenant_id, "tenant_id", maximum=64)
         if series_id is not None:
             series_id = require_nonempty_text(series_id, "series_id", maximum=64)
         if run_id is not None:
             run_id = require_nonempty_text(run_id, "run_id", maximum=256)
+        if actor_user_id is not None:
+            actor_user_id = require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
         fetched_at = datetime_to_unix_time_ms(self._clock())
         to_start_time = (fetched_at // 60_000 + 1) * 60_000 if to_start_time is None else to_start_time
         from_start_time = to_start_time - 30 * 86_400_000 if from_start_time is None else from_start_time
@@ -168,11 +182,12 @@ class ParseUsageService:
 
         try:
             batch = self._repository.query(
-                workspace_id=workspace_id, from_start_time=start, to_start_time=end,
+                tenant_id=tenant_id, from_start_time=start, to_start_time=end,
                 series_id=series_id, run_id=run_id,
+                **({"actor_user_id": actor_user_id} if actor_user_id is not None else {}),
             )
         except SQLAlchemyError as error:
-            _logger.warning("Model usage query failed workspace_id=%s error=%s", workspace_id, type(error).__name__)
+            _logger.warning("Model usage query failed tenant_id=%s error=%s", tenant_id, type(error).__name__)
             return UsageOverviewState(
                 status="unavailable", message="模型消耗暂时无法读取，请稍后重试。",
                 from_start_time=from_start_time, to_start_time=to_start_time,

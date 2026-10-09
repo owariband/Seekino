@@ -36,7 +36,7 @@ class FakeTextModel:
 
 def _request(adapter):
     identity = VideoChunkRetrievalIdentity(
-        workspace_id="workspace", series_id="series", video_id="video", parse_task_id="task",
+        tenant_id="workspace", series_id="series", video_id="video", parse_task_id="task",
         content_version=2, index_generation=3,
     )
     items = []

@@ -36,7 +36,7 @@ const hit: VideoChunkSearchHit = {
   },
   evidence: {
     seriesId: "series-1",
-    workspaceId: "local-default",
+    tenantId: "local-default",
     seriesName: "测试系列",
     seriesStatus: "READY",
     videoId: "video-1",
@@ -65,7 +65,7 @@ const hit: VideoChunkSearchHit = {
     isFallback: false,
     parsedAt: Date.parse("2026-09-15T00:00:00Z"),
     playbackStatus: "READY",
-    playbackUrl: "/api/videos/content?videoId=video-1&workspaceId=local-default&variant=playback",
+    playbackUrl: "/api/videos/content?videoId=video-1&tenantId=local-default&variant=playback",
     playbackUrlExpiresAt: null, thumbnail: null, keyframes: [],
   },
 };

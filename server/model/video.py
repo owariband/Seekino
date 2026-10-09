@@ -21,6 +21,7 @@ from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
+from ..constants.database import ID_LENGTH, MYSQL_TABLE_OPTIONS
 from ..database import Base
 from ..utils.time import (
     normalize_database_utc_datetime,
@@ -29,12 +30,7 @@ from ..utils.time import (
     require_utc_datetime,
 )
 
-ID_LENGTH = 36
 LONG_TEXT = Text().with_variant(LONGTEXT(), "mysql")
-MYSQL_TABLE_OPTIONS = {
-    "mysql_engine": "InnoDB",
-    "mysql_charset": "utf8mb4",
-}
 
 
 class UtcTimestamp(TypeDecorator[datetime]):
@@ -83,7 +79,26 @@ class VideoIndexStatus(StrEnum):
     FAILED = "FAILED"
 
 
-class TimestampMixin:
+class Series(Base):
+    __tablename__ = "series"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_series_tenant_name"),
+        MYSQL_TABLE_OPTIONS,
+    )
+
+    series_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(LONG_TEXT)
+    transcript_language_hint: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    important_extra_data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    character_bible: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
     created_at: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
@@ -97,28 +112,7 @@ class TimestampMixin:
     )
 
 
-class Series(TimestampMixin, Base):
-    __tablename__ = "series"
-    __table_args__ = (
-        UniqueConstraint("workspace_id", "name", name="uq_series_workspace_name"),
-        MYSQL_TABLE_OPTIONS,
-    )
-
-    series_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(LONG_TEXT)
-    transcript_language_hint: Mapped[str | None] = mapped_column(String(64))
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
-    important_extra_data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    character_bible: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON,
-        nullable=False,
-        default=list,
-    )
-
-
-class Video(TimestampMixin, Base):
+class Video(Base):
     __tablename__ = "video"
     __table_args__ = (
         UniqueConstraint("series_id", "episode_order", name="uq_video_series_order"),
@@ -171,7 +165,7 @@ class Video(TimestampMixin, Base):
     )
 
 
-class VideoChunk(TimestampMixin, Base):
+class VideoChunk(Base):
     __tablename__ = "video_chunk"
     __table_args__ = (
         UniqueConstraint(
@@ -305,7 +299,7 @@ class ContextSnapshot(Base):
     )
 
 
-class VideoChunkEmbedding(TimestampMixin, Base):
+class VideoChunkEmbedding(Base):
     __tablename__ = "video_chunk_embedding"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
@@ -318,3 +312,14 @@ class VideoChunkEmbedding(TimestampMixin, Base):
     vision_vector: Mapped[list[float] | None] = mapped_column(JSON)
     text_embedding_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     vision_embedding_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=now_unix_time_ms,
+    )
+    updated_at: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=now_unix_time_ms,
+        onupdate=now_unix_time_ms,
+    )

@@ -153,7 +153,7 @@ class MySqlParseJobQueue:
                 content_hash=video.content_hash,
                 total_bytes=video.total_bytes,
                 duration_seconds=video.duration_seconds,
-                workspace_id=series.workspace_id,
+                tenant_id=series.tenant_id,
                 series_name=series.name,
                 series_description=series.description,
                 important_extra_data=series.important_extra_data,

@@ -49,7 +49,7 @@ describe("local Token usage page", () => {
     expect(screen.getByText(/最近 30 天/)).toBeInTheDocument();
     expect(screen.getByText(/解析、向量化与 Chat/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/usage/overview?workspaceId=local-default");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/usage/overview?tenantId=local-default");
     expect(screen.queryByText(/人民币/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Langfuse|USD|费用/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "任务与 Chat" }));

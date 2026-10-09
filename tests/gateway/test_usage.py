@@ -500,7 +500,7 @@ def test_lifecycle_finisher_keeps_failed_usage_and_runs_once():
 
 def test_context_snapshot_merges_restores_and_ignores_later_caller_mutation():
     calls = []
-    context = {"workspace_id": "w", "metadata": {"attempt": 1}}
+    context = {"tenant_id": "w", "metadata": {"attempt": 1}}
     with capture_model_usage(calls.append), model_call_context(context):
         context["metadata"]["attempt"] = 99
         with model_call_context({"task_id": "t"}):
@@ -512,12 +512,12 @@ def test_context_snapshot_merges_restores_and_ignores_later_caller_mutation():
         with track_model_call(provider="ark", model="m", operation="query"):
             pass
     assert dict(calls[0].context) == {
-        "workspace_id": "w", "metadata": {"attempt": 1}, "task_id": "t",
+        "tenant_id": "w", "metadata": {"attempt": 1}, "task_id": "t",
     }
     assert "task_id" not in calls[1].context
     assert not calls[2].context
     with pytest.raises(TypeError):
-        calls[0].context["workspace_id"] = "other"
+        calls[0].context["tenant_id"] = "other"
 
 
 def test_explicit_fanout_isolates_start_and_finish_failures(caplog):

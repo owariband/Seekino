@@ -59,7 +59,7 @@ def _policy(**updates):
 
 
 def _scope():
-    return RetrievalScope(workspace_id="workspace", tasks=(SelectedVideoTask(
+    return RetrievalScope(tenant_id="workspace", tasks=(SelectedVideoTask(
         series_id="series", video_id="video", parse_task_id="task", status="COMPLETE",
     ),))
 
@@ -225,7 +225,7 @@ def test_visual_encoding_response_validates_model_and_vector(model, vector):
 
 @pytest.mark.parametrize("query", [_image(), _gif()], ids=["image", "gif"])
 def test_empty_visual_scope_needs_no_model_requests_or_recall(query):
-    plan = _plan(query, scope=RetrievalScope(workspace_id="workspace", tasks=()))
+    plan = _plan(query, scope=RetrievalScope(tenant_id="workspace", tasks=()))
     assert plan.encoding_requests == ()
     assert plan.sparse_request is None
     assert build_recall_requests(plan) == ()
@@ -236,7 +236,7 @@ def test_empty_visual_scope_needs_no_model_requests_or_recall(query):
 def test_visual_dense_result_proves_chunk_range_without_inventing_frame_time(query):
     plan = _plan(query)
     identity = VideoChunkRetrievalIdentity(
-        workspace_id="workspace", series_id="series", video_id="video", parse_task_id="task",
+        tenant_id="workspace", series_id="series", video_id="video", parse_task_id="task",
         content_version=2, index_generation=3,
     )
     hit = RawChunkHit(
@@ -264,7 +264,7 @@ def test_visual_query_rejects_hits_from_text_channels_even_if_policy_weight_is_p
     plan = _plan(_image())
     hit = RawChunkHit(
         channel=channel, video_chunk_id="chunk", retrieval_identity=VideoChunkRetrievalIdentity(
-            workspace_id="workspace", series_id="series", video_id="video", parse_task_id="task",
+            tenant_id="workspace", series_id="series", video_id="video", parse_task_id="task",
             content_version=2, index_generation=3,
         ), rank=1, score=0.8, start_seconds=0, end_seconds=10000,
     )

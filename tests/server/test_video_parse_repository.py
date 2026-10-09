@@ -212,7 +212,7 @@ def _seed(repository, *, chunk_count: int = 4, accepted: bool = True, batch_size
     with factory.begin() as session:
         session.add(Series(
             series_id=series_id,
-            workspace_id="mine",
+            tenant_id="mine",
             name=f"Series {series_id}",
             description=None,
             status="INDEXING",
@@ -403,7 +403,7 @@ def test_compact_only_prefix_preserves_legal_cross_chunk_refinement_events(repos
 
 def test_prepare_is_idempotent_and_short_video_gets_one_interval(repository):
     factory, queue, repo, task_id, _lease, prepared = _prepare(repository, chunk_count=2)
-    assert repo.load_task_input(task_id).workspace_id == "mine"
+    assert repo.load_task_input(task_id).tenant_id == "mine"
     assert len(prepared.chunk_parse_task_ids) == 2
     assert len(prepared.interval_parse_task_ids) == 1
     with factory() as session:
@@ -1597,7 +1597,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
     with factory.begin() as session:
         session.add(Series(
             series_id=series_id,
-            workspace_id="mine",
+            tenant_id="mine",
             name="Prefix chain",
             description=None,
             status="INDEXING",
@@ -2089,7 +2089,7 @@ def _seed_retrieval_chunk(repository):
         ))
 
     identity = VideoChunkRetrievalIdentity(
-        workspace_id="mine",
+        tenant_id="mine",
         series_id=video.series_id,
         video_id=video.video_id,
         parse_task_id=task_id,
@@ -2104,7 +2104,7 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
 ) -> None:
     factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
     task_id = identity.parse_task_id
-    scope = repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
+    scope = repo.resolve_retrieval_scope([video.series_id], tenant_id="mine")
     assert scope.searched_video_ids == (video.video_id,)
     assert scope.parse_tasks_by_video_id == {video.video_id: task_id}
     assert scope.series_by_video_id == {video.video_id: video.series_id}
@@ -2123,17 +2123,17 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         "contentVersion": 1,
         "indexGeneration": 2,
     }
-    assert repo.get_chunk_evidence(chunk_id, workspace_id="mine") == evidence[0]
+    assert repo.get_chunk_evidence(chunk_id, tenant_id="mine") == evidence[0]
     with pytest.raises(VideoChunkNotFoundError):
-        repo.get_chunk_evidence(chunk_id, workspace_id="other")
+        repo.get_chunk_evidence(chunk_id, tenant_id="other")
     with pytest.raises(VideoChunkNotFoundError):
-        repo.get_chunk_evidence(str(uuid4()), workspace_id="mine")
+        repo.get_chunk_evidence(str(uuid4()), tenant_id="mine")
 
     empty_series_id = str(uuid4())
     with factory.begin() as session:
         session.add(Series(
             series_id=empty_series_id,
-            workspace_id="mine",
+            tenant_id="mine",
             name="Empty Series",
             description=None,
             status="INDEXING",
@@ -2142,7 +2142,7 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         ))
     partial_scope = repo.resolve_retrieval_scope(
         [video.series_id, empty_series_id],
-        workspace_id="mine",
+        tenant_id="mine",
     )
     assert partial_scope.partial is True
     assert partial_scope.searched_video_ids == (video.video_id,)
@@ -2171,11 +2171,11 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         ))
 
     with pytest.raises(SeriesNotReadyError, match="no COMPLETE"):
-        repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
+        repo.resolve_retrieval_scope([video.series_id], tenant_id="mine")
     with pytest.raises(VideoParseConflictError, match="latest V2 task"):
         repo.hydrate_retrieval_evidence([(chunk_id, identity)])
     with pytest.raises(VideoParseConflictError, match="not COMPLETE"):
-        repo.get_chunk_evidence(chunk_id, workspace_id="mine")
+        repo.get_chunk_evidence(chunk_id, tenant_id="mine")
 
     with factory.begin() as session:
         newer = session.scalar(select(VideoParseTask).where(
@@ -2183,11 +2183,11 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
             VideoParseTask.version == 2,
         ))
         newer.is_deleted = True
-    assert repo.get_chunk_evidence(chunk_id, workspace_id="mine") == evidence[0]
+    assert repo.get_chunk_evidence(chunk_id, tenant_id="mine") == evidence[0]
     with factory.begin() as session:
         session.get(VideoParseTask, task_id).is_deleted = True
     with pytest.raises(VideoChunkNotFoundError):
-        repo.get_chunk_evidence(chunk_id, workspace_id="mine")
+        repo.get_chunk_evidence(chunk_id, tenant_id="mine")
 
 
 @pytest.mark.parametrize("weights", [None, {"17": -1.0}, {}, {"17": 0.5}])
@@ -2205,14 +2205,14 @@ def test_sparse_scope_requires_a_completed_valid_representation(repository, weig
             content.detail = detail
     if weights is None or any(value < 0 for value in weights.values()):
         with pytest.raises(VideoParseConflictError, match="Sparse representation"):
-            repo.resolve_retrieval_scope([video.series_id], workspace_id="mine", require_sparse=True)
+            repo.resolve_retrieval_scope([video.series_id], tenant_id="mine", require_sparse=True)
     else:
-        scope = repo.resolve_retrieval_scope([video.series_id], workspace_id="mine", require_sparse=True)
+        scope = repo.resolve_retrieval_scope([video.series_id], tenant_id="mine", require_sparse=True)
         assert scope.searched_video_ids == (video.video_id,)
 
 
 @pytest.mark.parametrize("field,value", [
-    ("workspace_id", "other"),
+    ("tenant_id", "other"),
     ("series_id", str(uuid4())),
     ("video_id", str(uuid4())),
     ("parse_task_id", str(uuid4())),
@@ -2246,11 +2246,11 @@ def test_v2_retrieval_requires_a_current_strict_receipt(repository, field, value
         }
         flag_modified(content, "detail")
     with pytest.raises(VideoParseConflictError, match="receipt"):
-        repo.resolve_retrieval_scope([video.series_id], workspace_id="mine")
+        repo.resolve_retrieval_scope([video.series_id], tenant_id="mine")
     with pytest.raises(VideoParseConflictError, match="receipt"):
         repo.hydrate_retrieval_candidates([(chunk_id, identity)])
     with pytest.raises(VideoParseConflictError, match="receipt"):
-        repo.get_chunk_evidence(chunk_id, workspace_id="mine")
+        repo.get_chunk_evidence(chunk_id, tenant_id="mine")
 
 
 @pytest.mark.parametrize("issue", ["child_pending", "content_missing", "receipt_missing"])
@@ -2265,7 +2265,7 @@ def test_v2_media_evidence_requires_complete_current_content(repository, issue):
         else:
             content.detail = {}
     with pytest.raises(VideoParseConflictError, match="content|receipt"):
-        repo.get_chunk_evidence(chunk_id, workspace_id="mine")
+        repo.get_chunk_evidence(chunk_id, tenant_id="mine")
 
 
 def test_v2_chunk_media_api_reads_current_receipt_and_registered_images(tmp_path):
@@ -2294,14 +2294,14 @@ def test_v2_chunk_media_api_reads_current_receipt_and_registered_images(tmp_path
     app.include_router(router)
     register_exception_handlers(app)
     client = TestClient(app)
-    params = {"workspaceId": "mine", "videoChunkId": chunk_id}
+    params = {"tenantId": "mine", "videoChunkId": chunk_id}
 
     response = client.get("/api/video-chunks/get", params=params)
     assert response.status_code == 200
     evidence = response.json()
     assert evidence["seriesStatus"] == "READY"
     assert evidence["pipelineVersion"] == "video-parse-v2"
-    assert media.get_chunk_evidence(chunk_id, workspace_id="mine").parse_provenance == {
+    assert media.get_chunk_evidence(chunk_id, tenant_id="mine").parse_provenance == {
         "parseTaskId": identity.parse_task_id, "contentVersion": 1, "indexGeneration": 2,
     }
     assert (evidence["startSeconds"], evidence["endSeconds"]) == (0, 10_000)
@@ -2310,8 +2310,8 @@ def test_v2_chunk_media_api_reads_current_receipt_and_registered_images(tmp_path
     image_response = client.get(image_url)
     assert image_response.status_code == 200
     assert image_response.content == frame.read_bytes()
-    assert client.get(image_url.replace("workspaceId=mine", "workspaceId=other")).status_code == 404
-    assert client.get("/api/video-chunks/get", params={**params, "workspaceId": "other"}).status_code == 404
+    assert client.get(image_url.replace("tenantId=mine", "tenantId=other")).status_code == 404
+    assert client.get("/api/video-chunks/get", params={**params, "tenantId": "other"}).status_code == 404
 
     with factory.begin() as session:
         content = session.scalar(select(ChunkParseContent))
@@ -2344,7 +2344,7 @@ def test_v2_scope_rejects_mixed_index_configuration_but_allows_understanding_cha
             "understanding": {**config["models"]["understanding"], "model": "other-understanding"},
         }
         task.parse_config = config
-    scope = repo.resolve_retrieval_scope([video.series_id, other.series_id], workspace_id="mine")
+    scope = repo.resolve_retrieval_scope([video.series_id, other.series_id], tenant_id="mine")
     assert set(scope.searched_video_ids) == {video.video_id, other.video_id}
     with factory.begin() as session:
         task = session.get(VideoParseTask, other_identity.parse_task_id)
@@ -2360,7 +2360,7 @@ def test_v2_scope_rejects_mixed_index_configuration_but_allows_understanding_cha
             config["models"] = {**config["models"], "embedding": embedding}
         task.parse_config = config
     with pytest.raises(VideoParseConflictError, match="different index contracts"):
-        repo.resolve_retrieval_scope([video.series_id, other.series_id], workspace_id="mine")
+        repo.resolve_retrieval_scope([video.series_id, other.series_id], tenant_id="mine")
 
 
 @pytest.mark.parametrize("first_model,first_encoder,other_model,other_encoder,compatible", [
@@ -2409,10 +2409,10 @@ def test_v2_scope_compares_fixed_encoder_identity_without_changing_request_model
 
     if not compatible:
         with pytest.raises(VideoParseConflictError, match="different index contracts"):
-            repo.resolve_retrieval_scope([video.series_id, other.series_id], workspace_id="mine")
+            repo.resolve_retrieval_scope([video.series_id, other.series_id], tenant_id="mine")
         return
 
-    scope = repo.resolve_retrieval_scope([video.series_id, other.series_id], workspace_id="mine")
+    scope = repo.resolve_retrieval_scope([video.series_id, other.series_id], tenant_id="mine")
     assert set(scope.searched_video_ids) == {video.video_id, other.video_id}
     assert scope.parse_tasks_by_video_id == {
         video.video_id: identity.parse_task_id,

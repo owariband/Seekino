@@ -20,15 +20,15 @@ from .state import ChatRenderDraft, ChatVideoBlock, DraftItem, MarkdownRenderBlo
 class VideoSearchContextCanvas(ContextCanvas):
     """Per-Kick evidence, draft, approval and rendering in the shared Canvas."""
 
-    def __init__(self, workspace_id: str, series_ids: tuple[str, ...]) -> None:
-        if not workspace_id.strip():
-            raise ValueError("workspace_id must not be empty")
+    def __init__(self, tenant_id: str, series_ids: tuple[str, ...]) -> None:
+        if not tenant_id.strip():
+            raise ValueError("tenant_id must not be empty")
         if not series_ids or any(not value.strip() for value in series_ids):
             raise ValueError("series_ids must contain nonempty values")
         if len(series_ids) != len(set(series_ids)):
             raise ValueError("series_ids must not contain duplicates")
-        super().__init__(scope=f"video-search:{workspace_id}:{','.join(series_ids)}")
-        self.workspace_id = workspace_id
+        super().__init__(scope=f"video-search:{tenant_id}:{','.join(series_ids)}")
+        self.tenant_id = tenant_id
         self.series_ids = series_ids
         self._markdown_start_revision = -1
         self._markdown_end_revision = -1
@@ -44,7 +44,7 @@ class VideoSearchContextCanvas(ContextCanvas):
                 raise AgentModelInvocationError("Retrieved Candidate and Evidence IDs do not match")
             if reference in incoming:
                 raise AgentModelInvocationError("Retrieval returned duplicate VideoChunk IDs")
-            if evidence.workspace_id != self.workspace_id or evidence.series_id not in self.series_ids:
+            if evidence.tenant_id != self.tenant_id or evidence.series_id not in self.series_ids:
                 raise AgentModelInvocationError("Retrieved Evidence is outside the fixed scope")
             incoming[reference] = hit.model_dump(mode="json")
 

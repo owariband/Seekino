@@ -84,7 +84,7 @@ class ParseUsageRepository:
                     execution_kind=None,
                     execution_task_id=None,
                     attempt_count=lease.attempt_count,
-                    lease_version=lease.lease_version, workspace_id=lease.workspace_id,
+                    lease_version=lease.lease_version, tenant_id=lease.tenant_id,
                     series_id=lease.series_id, video_id=lease.video_id, sequence_no=event.sequence_no,
                     video_chunk_id=derive_video_chunk_id(lease.video_id, event.sequence_no) if event.sequence_no is not None else None,
                     provider=call.provider, model=call.model, category=event.category, operation=call.operation,
@@ -189,7 +189,7 @@ class ParseUsageRepository:
         lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease,
         event: ParseModelCallEvent,
         *,
-        workspace_id: str,
+        tenant_id: str,
         series_id: str,
         video_id: str,
         estimated_cost_cny: Decimal | None,
@@ -212,7 +212,7 @@ class ParseUsageRepository:
                     execution_task_id=execution_id,
                     attempt_count=attempt_count,
                     lease_version=lease_version,
-                    workspace_id=workspace_id,
+                    tenant_id=tenant_id,
                     series_id=series_id,
                     video_id=video_id,
                     sequence_no=event.sequence_no,
@@ -248,27 +248,27 @@ class ParseUsageRepository:
         self,
         video_parse_task_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
     ) -> list[ParseModelCallState]:
         with self._session_factory() as session:
             records = session.scalars(
                 select(ParseModelCall)
                 .where(
                     ParseModelCall.video_parse_task_id == video_parse_task_id,
-                    ParseModelCall.workspace_id == workspace_id,
+                    ParseModelCall.tenant_id == tenant_id,
                 )
                 .order_by(ParseModelCall.started_at, ParseModelCall.call_id)
             ).all()
             return [self._state(record) for record in records]
 
-    def list_calls(self, job_id: str, *, workspace_id: str) -> list[ParseModelCallState]:
+    def list_calls(self, job_id: str, *, tenant_id: str) -> list[ParseModelCallState]:
         with self._session_factory() as session:
             records = session.scalars(select(ParseModelCall).where(
-                ParseModelCall.job_id == job_id, ParseModelCall.workspace_id == workspace_id,
+                ParseModelCall.job_id == job_id, ParseModelCall.tenant_id == tenant_id,
             ).order_by(ParseModelCall.started_at, ParseModelCall.call_id)).all()
             return [self._state(record) for record in records]
 
-    def snapshot(self, job_id: str, *, workspace_id: str) -> ParseUsageLedgerState:
+    def snapshot(self, job_id: str, *, tenant_id: str) -> ParseUsageLedgerState:
         # One statement keeps calls, completion markers and the current attempt
         # consistent even when the Worker finishes or claims another attempt.
         with self._session_factory() as session:
@@ -279,10 +279,10 @@ class ParseUsageRepository:
                 .join(Series, Series.series_id == SeriesParseJob.series_id)
                 .outerjoin(ParseModelCall, and_(
                     ParseModelCall.job_id == SeriesParseJob.job_id,
-                    ParseModelCall.workspace_id == workspace_id,
+                    ParseModelCall.tenant_id == tenant_id,
                 ))
                 .outerjoin(ParseUsageAttempt, ParseUsageAttempt.job_id == SeriesParseJob.job_id)
-                .where(SeriesParseJob.job_id == job_id, Series.workspace_id == workspace_id)
+                .where(SeriesParseJob.job_id == job_id, Series.tenant_id == tenant_id)
                 .order_by(ParseModelCall.started_at, ParseModelCall.call_id)
             ).all()
             if not rows:
@@ -302,7 +302,7 @@ class ParseUsageRepository:
             call_id=record.call_id, job_id=record.job_id,
             video_parse_task_id=record.video_parse_task_id,
             attempt_count=record.attempt_count,
-            lease_version=record.lease_version, workspace_id=record.workspace_id,
+            lease_version=record.lease_version, tenant_id=record.tenant_id,
             series_id=record.series_id, video_id=record.video_id, sequence_no=record.sequence_no,
             video_chunk_id=record.video_chunk_id, provider=record.provider, model=record.model,
             category=record.category, operation=record.operation, started_at=record.started_at,

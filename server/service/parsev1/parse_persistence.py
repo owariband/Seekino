@@ -306,7 +306,7 @@ class VideoParsePersistence:
         self.ensure_active()
         prepared = prepare_completed_video_parse_import(
             result.parse_result,
-            workspace_id=self._lease.workspace_id,
+            tenant_id=self._lease.tenant_id,
             series_id=self._lease.series_id,
             series_name=self._lease.series_name,
             series_description=self._lease.series_description,

@@ -107,7 +107,7 @@ class SupervisorRuntime:
         max_tool_calls_per_turn: int | None = None,
         max_loop_turns: int | None = None,
     ) -> SupervisorResult:
-        if not inputs["workspace_id"].strip() or not inputs["user_message"].strip():
+        if not inputs["tenant_id"].strip() or not inputs["user_message"].strip():
             raise ValueError("Supervisor requires workspace and user message")
         control = ExecutionControl(
             monotonic() + min(

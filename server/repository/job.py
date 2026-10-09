@@ -84,7 +84,7 @@ class ParseJobRepository:
                     SeriesParseJob,
                     upload_session_id,
                     is_primary_upload_job,
-                    Series.workspace_id,
+                    Series.tenant_id,
                     Series.name,
                     Video.episode_order,
                     Video.original_filename,
@@ -106,7 +106,7 @@ class ParseJobRepository:
                 record,
                 linked_upload_session_id,
                 linked_as_primary_job,
-                workspace_id,
+                tenant_id,
                 series_name,
                 episode_order,
                 original_filename,
@@ -116,7 +116,7 @@ class ParseJobRepository:
                 record,
                 upload_session_id=linked_upload_session_id,
                 is_primary_upload_job=linked_as_primary_job,
-                workspace_id=workspace_id,
+                tenant_id=tenant_id,
                 series_name=series_name,
                 episode_order=episode_order,
                 original_filename=original_filename,
@@ -226,18 +226,18 @@ class ParseJobRepository:
         self,
         video_parse_task_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
     ) -> VideoParseTaskDetail:
         """Read one V2 task with the public library context used by job views."""
 
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         with self._session_factory() as session:
             upload_session_id = self._video_parse_upload_session_id()
             is_latest = self._video_parse_task_is_latest()
             row = session.execute(
                 select(
                     VideoParseTask,
-                    Series.workspace_id,
+                    Series.tenant_id,
                     Series.series_id,
                     Series.name,
                     Video.episode_order,
@@ -254,7 +254,7 @@ class ParseJobRepository:
                 .where(
                     VideoParseTask.id == video_parse_task_id,
                     VideoParseTask.is_deleted.is_(False),
-                    Series.workspace_id == normalized_workspace,
+                    Series.tenant_id == normalized_workspace,
                 )
             ).one_or_none()
             if row is None:
@@ -289,14 +289,14 @@ class ParseJobRepository:
 
     def list_video_parse_tasks_for_workspace(
         self,
-        workspace_id: str,
+        tenant_id: str,
         *,
         limit: int = 100,
         offset: int = 0,
         series_id: str | None = None,
         statuses: tuple[str, ...] | None = None,
     ) -> list[VideoParseTaskDetail]:
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ValueError("limit must be a positive integer")
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
@@ -307,7 +307,7 @@ class ParseJobRepository:
             rows = session.execute(
                 select(
                     VideoParseTask,
-                    Series.workspace_id,
+                    Series.tenant_id,
                     Series.series_id,
                     Series.name,
                     Video.episode_order,
@@ -368,12 +368,12 @@ class ParseJobRepository:
 
     def count_video_parse_tasks_for_workspace(
         self,
-        workspace_id: str,
+        tenant_id: str,
         *,
         series_id: str | None = None,
         statuses: tuple[str, ...] | None = None,
     ) -> int:
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         with self._session_factory() as session:
             return int(
                 session.scalar(
@@ -399,14 +399,14 @@ class ParseJobRepository:
 
     def list_for_workspace(
         self,
-        workspace_id: str,
+        tenant_id: str,
         *,
         limit: int = 100,
         offset: int = 0,
         series_id: str | None = None,
         statuses: tuple[str, ...] | None = None,
     ) -> list[ParseJobState]:
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ValueError("limit must be a positive integer")
         with self._session_factory() as session:
@@ -429,7 +429,7 @@ class ParseJobRepository:
                     SeriesParseJob,
                     upload_session_id,
                     is_primary_upload_job,
-                    Series.workspace_id,
+                    Series.tenant_id,
                     Series.name,
                     Video.episode_order,
                     Video.original_filename,
@@ -456,7 +456,7 @@ class ParseJobRepository:
                     record,
                     upload_session_id=linked_upload_session_id,
                     is_primary_upload_job=linked_as_primary_job,
-                    workspace_id=workspace_id,
+                    tenant_id=tenant_id,
                     series_name=series_name,
                     episode_order=episode_order,
                     original_filename=original_filename,
@@ -466,7 +466,7 @@ class ParseJobRepository:
                     record,
                     linked_upload_session_id,
                     linked_as_primary_job,
-                    workspace_id,
+                    tenant_id,
                     series_name,
                     episode_order,
                     original_filename,
@@ -476,7 +476,7 @@ class ParseJobRepository:
 
     def count_for_workspace(
         self,
-        workspace_id: str,
+        tenant_id: str,
         *,
         series_id: str | None = None,
         statuses: tuple[str, ...] | None = None,
@@ -485,10 +485,10 @@ class ParseJobRepository:
             return int(session.scalar(
                 select(func.count(SeriesParseJob.job_id))
                 .join(Series)
-                .where(*self._workspace_filters(workspace_id, series_id=series_id, statuses=statuses))
+                .where(*self._workspace_filters(tenant_id, series_id=series_id, statuses=statuses))
             ) or 0)
 
-    def summary_for_workspace(self, workspace_id: str, *, series_id: str | None = None) -> ParseJobSummaryState:
+    def summary_for_workspace(self, tenant_id: str, *, series_id: str | None = None) -> ParseJobSummaryState:
         with self._session_factory() as session:
             rows = session.execute(
                 select(
@@ -498,17 +498,17 @@ class ParseJobRepository:
                     func.max(SeriesParseJob.updated_at),
                 )
                 .join(Series)
-                .where(*self._workspace_filters(workspace_id, series_id=series_id, statuses=None))
+                .where(*self._workspace_filters(tenant_id, series_id=series_id, statuses=None))
                 .group_by(SeriesParseJob.status)
             ).all()
             checkpoint_count = session.scalar(
                 select(func.count(VideoChunkCheckpoint.video_chunk_id))
                 .join(SeriesParseJob)
                 .join(Series)
-                .where(*self._workspace_filters(workspace_id, series_id=series_id, statuses=None))
+                .where(*self._workspace_filters(tenant_id, series_id=series_id, statuses=None))
             )
             return ParseJobSummaryState(
-                workspace_id=workspace_id, series_id=series_id,
+                tenant_id=tenant_id, series_id=series_id,
                 counts={status: int(count) for status, count, _version, _updated in rows},
                 checkpoint_count=int(checkpoint_count or 0),
                 version=sum(int(version) for _status, _count, version, _updated in rows),
@@ -519,8 +519,8 @@ class ParseJobRepository:
             )
 
     @staticmethod
-    def _workspace_filters(workspace_id: str, *, series_id: str | None, statuses: tuple[str, ...] | None):
-        filters = [Series.workspace_id == workspace_id]
+    def _workspace_filters(tenant_id: str, *, series_id: str | None, statuses: tuple[str, ...] | None):
+        filters = [Series.tenant_id == tenant_id]
         if series_id is not None:
             filters.append(SeriesParseJob.series_id == series_id)
         if statuses is not None:
@@ -529,13 +529,13 @@ class ParseJobRepository:
 
     @staticmethod
     def _video_parse_task_workspace_filters(
-        workspace_id: str,
+        tenant_id: str,
         *,
         series_id: str | None,
         statuses: tuple[str, ...] | None,
     ) -> list:
         filters = [
-            Series.workspace_id == workspace_id,
+            Series.tenant_id == tenant_id,
             VideoParseTask.is_deleted.is_(False),
         ]
         if series_id is not None:
@@ -790,7 +790,7 @@ class ParseJobRepository:
         *,
         upload_session_id: str | None,
         is_primary_upload_job: bool,
-        workspace_id: str,
+        tenant_id: str,
         series_name: str,
         episode_order: int,
         original_filename: str,
@@ -798,9 +798,10 @@ class ParseJobRepository:
     ) -> ParseJobState:
         return ParseJobState(
             job_id=record.job_id,
+        created_by_user_id=record.created_by_user_id,
             upload_session_id=upload_session_id,
             is_primary_upload_job=is_primary_upload_job,
-            workspace_id=workspace_id,
+            tenant_id=tenant_id,
             series_id=record.series_id,
             video_id=record.video_id,
             series_name=series_name,
@@ -977,7 +978,7 @@ class ParseJobRepository:
     ) -> VideoParseTaskDetail:
         (
             record,
-            workspace_id,
+            tenant_id,
             series_id,
             series_name,
             episode_order,
@@ -988,7 +989,7 @@ class ParseJobRepository:
         ) = row
         return VideoParseTaskDetail(
             task=cls._video_parse_task_state(record),
-            workspace_id=workspace_id,
+            tenant_id=tenant_id,
             series_id=series_id,
             series_name=series_name,
             episode_order=episode_order,

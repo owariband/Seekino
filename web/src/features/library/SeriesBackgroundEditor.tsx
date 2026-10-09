@@ -136,7 +136,7 @@ export function SeriesBackgroundEditor({ series }: { series: SeriesView }) {
     event.preventDefault();
     if (busy || !changed || mode !== "live") return;
     setError(null);
-    const changes: Omit<SeriesUpdateRequest, "workspaceId"> = { seriesId: series.seriesId };
+    const changes: Omit<SeriesUpdateRequest, "tenantId"> = { seriesId: series.seriesId };
     if (draft.description.trim() !== baseline.description.trim()) changes.description = draft.description.trim() || null;
     if (draft.transcriptLanguageHint.trim() !== baseline.transcriptLanguageHint.trim()) {
       changes.transcriptLanguageHint = draft.transcriptLanguageHint.trim() || null;
@@ -211,7 +211,7 @@ export function SeriesBackgroundEditor({ series }: { series: SeriesView }) {
                   if (key === "src" && node.tagName === "img" && url.startsWith("asset://")) {
                     const imageId = url.slice("asset://".length);
                     if (!/^[A-Za-z0-9_-]+$/.test(imageId)) return "";
-                    return assets[imageId] ? mediaUrl(assets[imageId].url) ?? "" : imageContentUrl(imageId, series.workspaceId);
+                    return assets[imageId] ? mediaUrl(assets[imageId].url) ?? "" : imageContentUrl(imageId, series.tenantId);
                   }
                   return defaultUrlTransform(url);
                 }}
@@ -233,7 +233,7 @@ export function SeriesBackgroundEditor({ series }: { series: SeriesView }) {
       )}
       {(editing || document.format === "json") && imageIds.length ? <div className={styles.backgroundImages} aria-label="背景参考图">{imageIds.map((imageId) => (
         <figure key={imageId}>
-          {failedImages.includes(imageId) ? <div className={styles.imageUnavailable}>图片暂时无法预览</div> : <img src={assets[imageId] ? mediaUrl(assets[imageId].url) ?? undefined : imageContentUrl(imageId, series.workspaceId)} alt="背景参考图" loading="lazy" onError={() => setFailedImages((value) => [...new Set([...value, imageId])])} />}
+          {failedImages.includes(imageId) ? <div className={styles.imageUnavailable}>图片暂时无法预览</div> : <img src={assets[imageId] ? mediaUrl(assets[imageId].url) ?? undefined : imageContentUrl(imageId, series.tenantId)} alt="背景参考图" loading="lazy" onError={() => setFailedImages((value) => [...new Set([...value, imageId])])} />}
           {editing && draft.format === "json" ? <label><span className="sr-only">图片引用</span><input className="field" value={`asset://${imageId}`} readOnly onFocus={(event) => event.currentTarget.select()} /></label> : null}
         </figure>
       ))}</div> : null}

@@ -9,6 +9,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from agent.chat.common.state import AnswerPhase
 
+from ..constants.identity import LOCAL_USER_ID
 from ..model.agent import (
     AGENT_MESSAGE_IDEMPOTENCY_KEY,
     AgentConversation,
@@ -54,17 +55,19 @@ class AgentRepository:
         self,
         *,
         conversation_id: str,
-        workspace_id: str,
+        tenant_id: str,
         title: str,
         idempotency_key: str,
         title_is_auto: bool = False,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
         for attempt in range(2):
             try:
                 with self._session_factory.begin() as session:
                     existing = session.scalar(
                         select(AgentConversation).where(
-                            AgentConversation.workspace_id == workspace_id,
+                            AgentConversation.tenant_id == tenant_id,
+                            AgentConversation.owner_user_id == owner_user_id,
                             AgentConversation.idempotency_key == idempotency_key,
                         )
                     )
@@ -90,7 +93,8 @@ class AgentRepository:
 
                     record = AgentConversation(
                         conversation_id=conversation_id,
-                        workspace_id=workspace_id,
+                        tenant_id=tenant_id,
+                        owner_user_id=owner_user_id,
                         title=title,
                         title_is_auto=title_is_auto,
                         idempotency_key=idempotency_key,
@@ -109,9 +113,10 @@ class AgentRepository:
 
     def list_conversations(
         self,
-        workspace_id: str,
+        tenant_id: str,
         *,
         limit: int,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> list[AgentConversationState]:
         with self._session_factory() as session:
             rows = session.execute(
@@ -125,7 +130,7 @@ class AgentRepository:
                     AgentMessage.conversation_id
                     == AgentConversation.conversation_id,
                 )
-                .where(AgentConversation.workspace_id == workspace_id)
+                .where(AgentConversation.tenant_id == tenant_id, AgentConversation.owner_user_id == owner_user_id)
                 .group_by(AgentConversation.conversation_id)
                 .order_by(
                     AgentConversation.last_message_at.desc(),
@@ -146,13 +151,16 @@ class AgentRepository:
     def get_conversation(
         self,
         conversation_id: str,
-        workspace_id: str,
+        tenant_id: str,
+        *,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
         with self._session_factory() as session:
             record = self._require_conversation(
                 session,
                 conversation_id,
-                workspace_id,
+                tenant_id,
+                owner_user_id=owner_user_id,
             )
             message_count = session.scalar(
                 select(func.count(AgentMessage.message_id)).where(
@@ -168,14 +176,17 @@ class AgentRepository:
     def delete_conversation(
         self,
         conversation_id: str,
-        workspace_id: str,
+        tenant_id: str,
+        *,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
         with self._session_factory.begin() as session:
             record = self._require_conversation(
                 session,
                 conversation_id,
-                workspace_id,
+                tenant_id,
                 for_update=True,
+                owner_user_id=owner_user_id,
             )
             # The Conversation row is the lifecycle mutex. Completion locks the
             # Message before this row, so deletion must not lock them in reverse.
@@ -212,10 +223,12 @@ class AgentRepository:
             return state
 
     def list_conversation_page(
-        self, workspace_id: str, *, offset: int, limit: int,
+        self, tenant_id: str, *, offset: int, limit: int,
         series_id: str | None = None, query: str | None = None,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> tuple[list[AgentConversationState], int]:
-        filters = [AgentConversation.workspace_id == workspace_id]
+        filters = [AgentConversation.tenant_id == tenant_id,
+                   AgentConversation.owner_user_id == owner_user_id]
         if query:
             filters.append(AgentConversation.title.contains(query, autoescape=True))
         if series_id:
@@ -242,11 +255,12 @@ class AgentRepository:
                     for record, count, preview in rows], total
 
     def list_message_page(
-        self, conversation_id: str, workspace_id: str, *, offset: int,
+        self, conversation_id: str, tenant_id: str, *, offset: int,
         limit: int, after_sequence_no: int,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> tuple[list[AgentMessageState], int]:
         with self._session_factory() as session:
-            self._require_conversation(session, conversation_id, workspace_id)
+            self._require_conversation(session, conversation_id, tenant_id, owner_user_id=owner_user_id)
             filters = [AgentMessage.conversation_id == conversation_id,
                        AgentMessage.sequence_no > after_sequence_no]
             total = int(session.scalar(select(func.count()).select_from(AgentMessage).where(*filters)) or 0)
@@ -258,13 +272,14 @@ class AgentRepository:
     def list_messages(
         self,
         conversation_id: str,
-        workspace_id: str,
+        tenant_id: str,
         *,
         after_sequence_no: int,
         limit: int | None,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> list[AgentMessageState]:
         with self._session_factory() as session:
-            self._require_conversation(session, conversation_id, workspace_id)
+            self._require_conversation(session, conversation_id, tenant_id, owner_user_id=owner_user_id)
             records = session.scalars(
                 select(AgentMessage)
                 .where(
@@ -279,13 +294,14 @@ class AgentRepository:
     def list_recent_completed_messages(
         self,
         conversation_id: str,
-        workspace_id: str,
+        tenant_id: str,
         *,
         before_sequence_no: int,
         limit: int,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> list[AgentMessageState]:
         with self._session_factory() as session:
-            self._require_conversation(session, conversation_id, workspace_id)
+            self._require_conversation(session, conversation_id, tenant_id, owner_user_id=owner_user_id)
             records = session.scalars(
                 select(AgentMessage)
                 .where(
@@ -302,7 +318,7 @@ class AgentRepository:
         self,
         *,
         conversation_id: str,
-        workspace_id: str,
+        tenant_id: str,
         content: str,
         requested_top_k: int,
         requested_run_options: dict[str, int],
@@ -310,9 +326,11 @@ class AgentRepository:
         requested_series_ids: list[str],
         reference: dict[str, str] | None = None,
         extra_context: dict | None = None,
+        owner_user_id: str = LOCAL_USER_ID,
+        source_tenant_id: str | None = None,
     ) -> StartedAgentMessageState | None:
         with self._session_factory() as session:
-            self._require_conversation(session, conversation_id, workspace_id)
+            self._require_conversation(session, conversation_id, tenant_id, owner_user_id=owner_user_id)
             return self._find_idempotent_message(
                 session,
                 conversation_id=conversation_id,
@@ -323,14 +341,16 @@ class AgentRepository:
                 requested_series_ids=requested_series_ids,
                 reference=reference,
                 extra_context=extra_context,
+                source_tenant_id=source_tenant_id,
             )
 
     def get_message_pair(
-        self, conversation_id: str, workspace_id: str, *,
+        self, conversation_id: str, tenant_id: str, *,
         message_id: str | None = None, idempotency_key: str | None = None,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> StartedAgentMessageState:
         with self._session_factory() as session:
-            self._require_conversation(session, conversation_id, workspace_id)
+            self._require_conversation(session, conversation_id, tenant_id, owner_user_id=owner_user_id)
             identifier = (AgentMessage.message_id == message_id if message_id is not None
                           else AGENT_MESSAGE_IDEMPOTENCY_KEY == idempotency_key)
             statement = select(AgentMessage).where(
@@ -404,7 +424,7 @@ class AgentRepository:
         self,
         *,
         conversation_id: str,
-        workspace_id: str,
+        tenant_id: str,
         content: str,
         model_name: str,
         requested_top_k: int,
@@ -417,13 +437,16 @@ class AgentRepository:
         now: int,
         reference: dict[str, str] | None = None,
         extra_context: dict | None = None,
+        owner_user_id: str = LOCAL_USER_ID,
+        source_tenant_id: str | None = None,
     ) -> StartedAgentMessageState:
         with self._session_factory.begin() as session:
             conversation = self._require_conversation(
                 session,
                 conversation_id,
-                workspace_id,
+                tenant_id,
                 for_update=True,
+                owner_user_id=owner_user_id,
             )
             existing = self._find_idempotent_message(
                 session,
@@ -435,6 +458,7 @@ class AgentRepository:
                 requested_series_ids=requested_series_ids,
                 reference=reference,
                 extra_context=extra_context,
+                source_tenant_id=source_tenant_id,
             )
             if existing is not None:
                 return existing
@@ -466,7 +490,8 @@ class AgentRepository:
                 requested_series_ids=requested_series_ids,
                 reference=reference,
                 extra_context=extra_context,
-                detail={"request": {"idempotencyKey": idempotency_key}},
+                detail={"request": {"idempotencyKey": idempotency_key},
+                        **({"sourceTenantId": source_tenant_id} if source_tenant_id is not None else {})},
                 version=1,
             )
             assistant = AgentMessage(
@@ -481,6 +506,7 @@ class AgentRepository:
                 series_ids=series_ids,
                 model_name=model_name,
                 detail={
+                    **({"sourceTenantId": source_tenant_id} if source_tenant_id is not None else {}),
                     "timing": {
                         "startedAt": now,
                         "totalDurationMs": None,
@@ -601,6 +627,7 @@ class AgentRepository:
         requested_series_ids: list[str],
         reference: dict[str, str] | None = None,
         extra_context: dict | None = None,
+        source_tenant_id: str | None = None,
     ) -> StartedAgentMessageState | None:
         existing_user = session.scalar(
             select(AgentMessage).where(
@@ -618,6 +645,7 @@ class AgentRepository:
             or existing_user.requested_series_ids != requested_series_ids
             or existing_user.reference != reference
             or existing_user.extra_context != extra_context
+            or (existing_user.detail or {}).get("sourceTenantId") != source_tenant_id
         ):
             raise AgentConflictError(
                 "the message idempotency key is already used with "
@@ -644,13 +672,15 @@ class AgentRepository:
     def _require_conversation(
         session: Session,
         conversation_id: str,
-        workspace_id: str,
+        tenant_id: str,
         *,
         for_update: bool = False,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversation:
         statement = select(AgentConversation).where(
             AgentConversation.conversation_id == conversation_id,
-            AgentConversation.workspace_id == workspace_id,
+            AgentConversation.tenant_id == tenant_id,
+                            AgentConversation.owner_user_id == owner_user_id,
         )
         if for_update:
             statement = statement.with_for_update()
@@ -670,7 +700,8 @@ class AgentRepository:
     ) -> AgentConversationState:
         return AgentConversationState(
             conversation_id=record.conversation_id,
-            workspace_id=record.workspace_id,
+            tenant_id=record.tenant_id,
+            owner_user_id=record.owner_user_id,
             title=record.title,
             message_count=message_count,
             last_message_at=record.last_message_at,
@@ -690,7 +721,7 @@ class AgentRepository:
             content=record.content,
             series_ids=tuple(record.series_ids),
             model_name=record.model_name,
-            search_result=record.search_result,
+            search_result=AgentRepository._normalize_search_result_scope(record.search_result),
             last_error=(
                 AgentFailure(record.last_error_code or "PROCESSING_FAILED",
                              record.last_error_message or "这次对话未能完成，请稍后重试。")
@@ -703,7 +734,36 @@ class AgentRepository:
             reference=record.reference,
             timing=AgentRepository._timing_state(record.detail),
             extra_context=record.extra_context,
+            source_tenant_id=(record.detail or {}).get("sourceTenantId"),
         )
+
+    @staticmethod
+    def _normalize_search_result_scope(result: dict | None) -> dict | None:
+        """Read historical evidence scope keys without rewriting stored JSON."""
+        if not isinstance(result, dict) or not isinstance(result.get("hits"), list):
+            return result
+        hits = []
+        changed = False
+        for hit in result["hits"]:
+            evidence = hit.get("evidence") if isinstance(hit, dict) else None
+            if not isinstance(evidence, dict) or not any(
+                key in evidence for key in ("workspaceId", "workspace_id")
+            ):
+                hits.append(hit)
+                continue
+            values = [evidence[key] for key in (
+                "tenantId", "tenant_id", "workspaceId", "workspace_id",
+            ) if key in evidence]
+            if any(value != values[0] for value in values[1:]):
+                raise AgentReferenceInvalidError("历史证据的资源范围冲突。")
+            normalized = {
+                key: value for key, value in evidence.items()
+                if key not in {"workspaceId", "workspace_id", "tenant_id"}
+            }
+            normalized["tenantId"] = values[0]
+            hits.append({**hit, "evidence": normalized})
+            changed = True
+        return {**result, "hits": hits} if changed else result
 
     @staticmethod
     def _apply_timing(

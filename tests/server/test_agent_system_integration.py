@@ -192,7 +192,7 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
     )
     session_factory = create_session_factory(engine)
     series_id, video_id, task_id = (str(uuid4()) for _ in range(3))
-    workspace_id = "agent-system-ci"
+    tenant_id = "agent-system-ci"
     es_client = Elasticsearch(
         os.environ["ANIVAG_TEST_ELASTICSEARCH_URL"],
         api_key=os.getenv("ANIVAG_TEST_ELASTICSEARCH_API_KEY") or None,
@@ -220,7 +220,7 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
         )
         with session_factory.begin() as session:
             session.add(Series(
-                series_id=series_id, workspace_id=workspace_id,
+                series_id=series_id, tenant_id=tenant_id,
                 name="Agent ES integration", status="INDEXING", character_bible=[],
             ))
             session.flush()
@@ -321,11 +321,11 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
             runtime,
         )
         conversation = service.create_conversation(
-            workspace_id=workspace_id, title="CI Agent",
+            tenant_id=tenant_id, title="CI Agent",
             idempotency_key=f"ci-agent-conversation-{task_id}",
         )
         completed = service.send_message(
-            conversation.conversation_id, workspace_id=workspace_id,
+            conversation.conversation_id, tenant_id=tenant_id,
             content="第一段发生了什么？", idempotency_key="ci-agent-message",
             series_ids=[series_id], top_k=1,
         )
@@ -339,7 +339,7 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
             for block in search_result["renderBlocks"]
         )
         persisted = service.list_all_messages(
-            conversation.conversation_id, workspace_id=workspace_id,
+            conversation.conversation_id, tenant_id=tenant_id,
         )
         assert [message.status for message in persisted] == ["COMPLETED", "COMPLETED"]
         assert persisted[1].search_result == search_result

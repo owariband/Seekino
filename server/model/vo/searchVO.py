@@ -23,7 +23,7 @@ class VisualEventView(ContractModel):
 
 
 class VideoChunkEvidenceView(ContractModel):
-    workspace_id: str
+    tenant_id: str
     series_id: str
     series_name: str
     series_status: str

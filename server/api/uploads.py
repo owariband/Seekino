@@ -13,8 +13,9 @@ from ..model.dto.uploadDTO import (
 )
 from ..config.parse_profile import ParseConfig
 from ..service.pagination import decode_cursor, encode_cursor
+from ..service.access import require_tenant_write
 from ..model.vo.commonVO import Failure, Page
-from .context import get_services
+from .context import get_identity, get_services
 from ..model.vo.uploadVO import UploadCompleteView, UploadSegmentView, UploadSessionView
 from ..model.vo.jobVO import VideoParseTaskView
 from ..utils.time import datetime_to_unix_time_ms
@@ -24,6 +25,8 @@ _CONTENT_RANGE_PATTERN = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
 
 
 def get_parse_config(request: Request) -> ParseConfig:
+    identity = get_identity(request)
+    require_tenant_write(identity, identity.tenant_id)
     defaults = get_services(request).uploads.parse_defaults
     if defaults is None:
         raise RuntimeError("parse configuration is unavailable")
@@ -36,9 +39,11 @@ def create_upload_session(
     series_id: str = Query(alias="seriesId"),
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> UploadSessionView:
+    identity = get_identity(request)
+    require_tenant_write(identity, body.tenant_id)
     service = get_services(request).uploads
     state = service.create_session(
-        workspace_id=body.workspace_id,
+        tenant_id=body.tenant_id,
         series_id=series_id,
         episode_order=body.episode_order,
         original_filename=body.original_filename,
@@ -48,25 +53,27 @@ def create_upload_session(
         content_sha256=body.content_sha256,
         parse_config=body.parse_config,
         video_parse_config=body.video_parse_config,
+        created_by_user_id=identity.user_id,
     )
     detail = service.get_detail(
         state.upload_session_id,
-        workspace_id=body.workspace_id,
+        tenant_id=body.tenant_id,
     )
     return _upload_view(detail)
 
 
 def list_upload_sessions(
     request: Request,
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
     series_id: str | None = Query(None, alias="seriesId"),
     status: str | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
     cursor: str | None = Query(None),
 ) -> Page[UploadSessionView]:
-    scope = {"workspaceId": workspace_id, "seriesId": series_id, "status": status, "sort": "episode-order-created-id-asc"}
+    require_tenant_write(get_identity(request), tenant_id)
+    scope = {"tenantId": tenant_id, "seriesId": series_id, "status": status, "sort": "episode-order-created-id-asc"}
     offset = decode_cursor(cursor, scope=scope)
-    items = get_services(request).uploads.list_sessions(workspace_id=workspace_id, series_id=series_id, status=status)
+    items = get_services(request).uploads.list_sessions(tenant_id=tenant_id, series_id=series_id, status=status)
     has_more = offset + limit < len(items)
     return Page(
         items=[project_upload_session(state) for state in items[offset:offset + limit]],
@@ -77,11 +84,12 @@ def list_upload_sessions(
 def get_upload_session(
     request: Request,
     upload_session_id: str = Query(alias="uploadSessionId"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
 ) -> UploadSessionView:
+    require_tenant_write(get_identity(request), tenant_id)
     detail = get_services(request).uploads.get_detail(
         upload_session_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
     )
     return _upload_view(detail)
 
@@ -89,25 +97,29 @@ def get_upload_session(
 def delete_upload_session(
     request: Request,
     upload_session_id: str = Query(alias="uploadSessionId"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
 ) -> UploadSessionView:
+    require_tenant_write(get_identity(request), tenant_id)
     return project_upload_session(get_services(request).uploads.delete_session(
-        upload_session_id, workspace_id=workspace_id,
+        upload_session_id, tenant_id=tenant_id,
     ))
 
 
 def retry_upload_parse(
     request: Request,
     upload_session_id: str = Query(alias="uploadSessionId"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
     # Transitional wire name: callers must pass the V2 task's parse version.
     expected_job_version: int = Query(ge=1, alias="expectedJobVersion"),
 ) -> VideoParseTaskView:
+    identity = get_identity(request)
+    require_tenant_write(identity, tenant_id)
     services = get_services(request)
     task = services.uploads.retry_parse(
         upload_session_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
         expected_job_version=expected_job_version,
+        actor_user_id=identity.user_id,
     )
     return project_video_parse_task(task)
 
@@ -116,16 +128,19 @@ def reparse_upload(
     request: Request,
     body: UploadReparseRequest | None = None,
     upload_session_id: str = Query(alias="uploadSessionId"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
     # Transitional wire name: callers must pass the V2 task's parse version.
     expected_job_version: int = Query(ge=1, alias="expectedJobVersion"),
 ) -> VideoParseTaskView:
+    identity = get_identity(request)
+    require_tenant_write(identity, tenant_id)
     services = get_services(request)
     task = services.uploads.reparse(
         upload_session_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
         expected_job_version=expected_job_version,
         video_parse_config=(body.video_parse_config if body is not None else None),
+        actor_user_id=identity.user_id,
     )
     return project_video_parse_task(task)
 
@@ -136,8 +151,10 @@ async def upload_segment(
     segment_number: int = Query(ge=0, alias="segmentNumber"),
     content_range: str = Header(alias="Content-Range"),
     checksum_sha256: str = Header(alias="X-Content-SHA256"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
 ) -> UploadSegmentView:
+    identity = await run_in_threadpool(get_identity, request)
+    await run_in_threadpool(require_tenant_write, identity, tenant_id)
     start, end_exclusive, total = _parse_content_range(content_range)
     service = get_services(request).uploads
     body_size = end_exclusive - start
@@ -153,7 +170,7 @@ async def upload_segment(
         service.require_uploadable_segment,
         upload_session_id,
         segment_number,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
         start_byte=start,
         end_byte_exclusive=end_exclusive,
         total_size_bytes=total,
@@ -164,7 +181,7 @@ async def upload_segment(
         upload_session_id,
         segment_number,
         data,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
         checksum_sha256=checksum_sha256,
         start_byte=start,
         end_byte_exclusive=end_exclusive,
@@ -180,18 +197,20 @@ async def upload_segment(
 async def complete_upload(
     request: Request,
     upload_session_id: str = Query(alias="uploadSessionId"),
-    workspace_id: str = Query(alias="workspaceId"),
+    tenant_id: str = Query(alias="tenantId"),
 ) -> UploadCompleteView:
+    identity = await run_in_threadpool(get_identity, request)
+    await run_in_threadpool(require_tenant_write, identity, tenant_id)
     service = get_services(request).uploads
     completed = await run_in_threadpool(
         service.complete,
         upload_session_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
     )
     detail = await run_in_threadpool(
         service.get_detail,
         upload_session_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
     )
     return UploadCompleteView(
         upload_session=_upload_view(detail),
@@ -235,7 +254,7 @@ def project_upload_session(state: UploadSessionState) -> UploadSessionView:
     )
     return UploadSessionView(
         upload_session_id=state.upload_session_id,
-        workspace_id=state.workspace_id, series_id=state.series_id,
+        tenant_id=state.tenant_id, series_id=state.series_id,
         episode_order=state.episode_order, upload_sequence=state.upload_sequence,
         original_filename=state.original_filename, media_type=state.media_type,
         total_size_bytes=state.total_size_bytes, content_sha256=state.content_sha256,

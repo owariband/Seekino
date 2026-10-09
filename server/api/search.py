@@ -4,7 +4,9 @@ from fastapi import Request
 
 from engine.rag.contracts import VideoChunkSearchEvidence
 
-from .context import get_services
+from .context import get_identity, get_services, revalidate_identity
+from .library import read_series
+from ..service.access import model_query, require_tenant_read
 from ..model.dto.mediaDTO import PlaybackMedia
 from ..model.dto.searchDTO import VideoSearchRequest
 from ..model.vo.searchVO import (
@@ -26,29 +28,59 @@ def search_video_chunks(
     request: Request,
 ) -> SearchResultView:
     services = get_services(request)
+    identity = get_identity(request)
+    require_tenant_read(identity, body.tenant_id)
     top_k_options = services.agent.message_options().top_k
     top_k = top_k_options.default_value if body.top_k is None else body.top_k
     if not top_k_options.minimum <= top_k <= top_k_options.maximum:
         raise ValueError(
             f"top_k must be between {top_k_options.minimum} and {top_k_options.maximum}"
         )
-    result = services.retrieval.search(
-        body.query,
-        workspace_id=body.workspace_id,
-        series_ids=body.series_ids,
-        top_k=top_k,
-    )
-    return search_result_view(result, services.media, workspace_id=body.workspace_id)
+    series_ids = list(body.series_ids)
+    if identity.mode == "cloud":
+        if not series_ids:
+            if body.tenant_id == identity.public_tenant_id:
+                states, _total = services.library.list_public_series_page(
+                    tenant_id=body.tenant_id, media=services.media, owner_user_id=identity.user_id, limit=100,
+                )
+                while len(states) < _total:
+                    page, _total = services.library.list_public_series_page(
+                        tenant_id=body.tenant_id, media=services.media, owner_user_id=identity.user_id,
+                        offset=len(states), limit=100,
+                    )
+                    if not page:
+                        break
+                    states.extend(page)
+            else:
+                states = services.library.list_series(tenant_id=body.tenant_id, owner_user_id=identity.user_id)
+            series_ids = [state.series_id for state in states if state.status == "READY"]
+        if not series_ids:
+            raise ValueError("当前资料来源还没有可检索的视频课程")
+        for series_id in series_ids:
+            read_series(request, series_id, tenant_id=body.tenant_id)
+    with model_query(getattr(services, "auth", None), identity, request.client.host if request.client else "unknown"):
+        result = services.retrieval.search(
+            body.query, tenant_id=body.tenant_id, series_ids=series_ids, top_k=top_k,
+        )
+    if identity.mode == "cloud":
+        request.state.identity = revalidate_identity(request)
+        result = _validated_search_result(result)
+        services.media.require_series_access(
+            request.state.identity,
+            [*result.series_ids, *(hit.evidence.series_id for hit in result.hits)],
+            tenant_id=body.tenant_id,
+        )
+    return search_result_view(result, services.media, tenant_id=body.tenant_id)
 
 
 def evidence_view(
-    evidence: VideoChunkEvidence, media: MediaService, *, workspace_id: str,
+    evidence: VideoChunkEvidence, media: MediaService, *, tenant_id: str,
     playback: PlaybackMedia | None = None,
 ) -> tuple[VideoChunkEvidenceView, list[str]]:
-    if evidence.workspace_id != workspace_id:
+    if evidence.tenant_id != tenant_id:
         from ..repository.library import SeriesNotFoundError
         raise SeriesNotFoundError("片段资源不存在")
-    playback = playback or media.playback_view(evidence.video_id, workspace_id=workspace_id, video=evidence)
+    playback = playback or media.playback_view(evidence.video_id, tenant_id=tenant_id, video=evidence)
     warnings: list[str] = []
     if playback.status != "READY":
         warnings.append("原视频文件已丢失" if playback.status == "MISSING" else "尚无可确认兼容浏览器的播放媒体")
@@ -60,7 +92,7 @@ def evidence_view(
             at_seconds=item.at_seconds,
             alt=evidence.baseline_visual_caption or evidence.window_summary or None,
         )
-        for item in media.keyframe_views(evidence, workspace_id=workspace_id)
+        for item in media.keyframe_views(evidence, tenant_id=tenant_id)
     ]
     if not keyframes:
         warnings.append("缺少带原视频时间位置的已登记关键帧")
@@ -80,7 +112,7 @@ def evidence_view(
     if len(transcript) != len(evidence.transcript):
         warnings.append("部分对白缺少合法的原视频时间位置")
     return VideoChunkEvidenceView(
-        workspace_id=evidence.workspace_id, series_id=evidence.series_id,
+        tenant_id=evidence.tenant_id, series_id=evidence.series_id,
         series_name=evidence.series_name, series_status=evidence.series_status,
         video_id=evidence.video_id, episode_order=evidence.episode_order,
         original_filename=evidence.original_filename, duration_seconds=evidence.duration_seconds,
@@ -104,15 +136,15 @@ def evidence_view(
 
 
 def search_evidence_view(
-    result: VideoChunkSearchResult | dict, media: MediaService, *, workspace_id: str,
+    result: VideoChunkSearchResult | dict, media: MediaService, *, tenant_id: str,
 ) -> SearchEvidenceView:
     result = _validated_search_result(result)
-    evidence = search_evidence_fields(result, media, workspace_id=workspace_id)
+    evidence = search_evidence_fields(result, media, tenant_id=tenant_id)
     return SearchEvidenceView(**evidence.model_dump(), query=result.query)
 
 
 def search_evidence_fields(
-    result: VideoChunkSearchEvidence | dict, media: MediaService, *, workspace_id: str,
+    result: VideoChunkSearchEvidence | dict, media: MediaService, *, tenant_id: str,
 ) -> SearchEvidenceFieldsView:
     if isinstance(result, dict):
         result = VideoChunkSearchEvidence.model_validate({
@@ -129,12 +161,12 @@ def search_evidence_fields(
     playback_by_video: dict[str, PlaybackMedia] = {}
     for rank, hit in enumerate(result.hits, start=1):
         source = hit.evidence
-        if source.workspace_id != workspace_id or source.series_id not in result.series_ids:
+        if source.tenant_id != tenant_id or source.series_id not in result.series_ids:
             from ..repository.library import SeriesNotFoundError
             raise SeriesNotFoundError("片段资源不存在")
         if source.video_id not in playback_by_video:
-            playback_by_video[source.video_id] = media.playback_view(source.video_id, workspace_id=workspace_id, video=source)
-        evidence, limitations = evidence_view(source, media, workspace_id=workspace_id, playback=playback_by_video[source.video_id])
+            playback_by_video[source.video_id] = media.playback_view(source.video_id, tenant_id=tenant_id, video=source)
+        evidence, limitations = evidence_view(source, media, tenant_id=tenant_id, playback=playback_by_video[source.video_id])
         warnings.extend(f"片段 {source.video_chunk_id}：{message}" for message in limitations)
         reason = hit.selection_reason.model_copy(update={
             "limitations": list(dict.fromkeys([*hit.selection_reason.limitations, *limitations])),
@@ -152,10 +184,10 @@ def search_evidence_fields(
 
 
 def search_result_view(
-    result: VideoChunkSearchResult | dict, media: MediaService, *, workspace_id: str,
+    result: VideoChunkSearchResult | dict, media: MediaService, *, tenant_id: str,
 ) -> SearchResultView:
     result = _validated_search_result(result)
-    evidence = search_evidence_view(result, media, workspace_id=workspace_id)
+    evidence = search_evidence_view(result, media, tenant_id=tenant_id)
     return SearchResultView(
         **evidence.model_dump(), agent_reply=result.agent_reply,
     )

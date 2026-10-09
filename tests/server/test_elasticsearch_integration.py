@@ -108,7 +108,7 @@ def _document(*, series_id, video_id, chunk_id, parse_task_id, question):
         ],
     )
     return VideoChunkIndexDocument(
-        workspace_id="es-test-workspace", series_id=series_id,
+        tenant_id="es-test-workspace", series_id=series_id,
         video_id=video_id, video_chunk_id=chunk_id,
         parse_task_id=parse_task_id,
         content_version=1, index_generation=1,
@@ -173,7 +173,7 @@ def _indexing_case(tmp_path, store):
         config["models"]["embedding"]["dimensions"] = 2
         with factory.begin() as session:
             session.add(Series(
-                series_id=series_id, workspace_id="es-test-workspace",
+                series_id=series_id, tenant_id="es-test-workspace",
                 name="ES recovery", status="INDEXING", character_bible=[],
             ))
             session.flush()
@@ -197,7 +197,7 @@ def _indexing_case(tmp_path, store):
             ))
             session.flush()
             session.add(UploadSession(
-                upload_session_id=upload_id, workspace_id="es-test-workspace",
+                upload_session_id=upload_id, tenant_id="es-test-workspace",
                 series_id=series_id, episode_order=1, upload_sequence=1,
                 original_filename="episode.mp4", media_type="video/mp4",
                 total_size_bytes=source.stat().st_size,
@@ -305,7 +305,7 @@ def test_real_es_mapping_three_queries_and_authorized_tasks(isolated_store):
     assert state[(current.parse_task_id, chunk_id)].vision_vector_present
 
     scope = {
-        "workspace_id": "es-test-workspace",
+        "tenant_id": "es-test-workspace",
         "series_ids": [series_id],
         "parse_tasks_by_video_id": {video_id: current.parse_task_id, other_video: other_parse_task},
         "index_generation": 1,
@@ -369,7 +369,7 @@ def test_real_es_engine_recall_keeps_channels_and_sparse_inputs(isolated_store):
     ), sparse_token_weights=(("utterance", 0.5),))
     other_task = replace(document, parse_task_id=str(uuid4()))
     store.bulk_upsert([document, other_task], refresh="wait_for")
-    scope = RetrievalScope(workspace_id=document.workspace_id, tasks=(SelectedVideoTask(
+    scope = RetrievalScope(tenant_id=document.tenant_id, tasks=(SelectedVideoTask(
         series_id=document.series_id, video_id=document.video_id,
         parse_task_id=document.parse_task_id, status="COMPLETE",
     ),))
@@ -494,7 +494,7 @@ def test_real_es_rejects_late_content_in_the_same_generation(isolated_store):
     assert store.verify_ready([current])
     assert not store.is_ready([old])
     scope = {
-        "workspace_id": current.workspace_id, "series_ids": [current.series_id],
+        "tenant_id": current.tenant_id, "series_ids": [current.series_id],
         "parse_tasks_by_video_id": {current.video_id: current.parse_task_id},
         "index_generation": current.index_generation,
     }
@@ -546,7 +546,7 @@ def test_real_es_coordinator_recovers_partial_bulk_without_reparsing(indexing_ca
         refinement = session.get(IntervalParseContent, interval_id).content
     with pytest.raises(SeriesNotReadyError):
         case.retrieval.search(
-            "松饼行动", workspace_id="es-test-workspace", series_ids=[case.series_id],
+            "松饼行动", tenant_id="es-test-workspace", series_ids=[case.series_id],
         )
     assert case.embedder.query_calls == 0
 
@@ -574,7 +574,7 @@ def test_real_es_coordinator_recovers_partial_bulk_without_reparsing(indexing_ca
         assert session.get(IntervalParseContent, interval_id).content == refinement
     assert after == before
     result = case.retrieval.search(
-        "松饼行动", workspace_id="es-test-workspace", series_ids=[case.series_id],
+        "松饼行动", tenant_id="es-test-workspace", series_ids=[case.series_id],
     )
     assert {hit.candidate.video_chunk_id for hit in result.hits} == {
         good.video_chunk_id, bad.video_chunk_id,
@@ -624,7 +624,7 @@ def test_real_es_delete_reconcile_fences_an_immediately_late_writer(indexing_cas
     )
     monkeypatch.setattr(store, "bulk_delete", deleted_but_response_lost)
     with pytest.raises(TimeoutError, match="delete response was lost"):
-        uploads.delete_session(case.upload_id, workspace_id="es-test-workspace")
+        uploads.delete_session(case.upload_id, tenant_id="es-test-workspace")
     with case.factory() as session:
         tombstone = session.get(UploadSession, case.upload_id)
         assert tombstone.last_error_code == UPLOAD_DELETION_PENDING_ERROR_CODE
@@ -632,7 +632,7 @@ def test_real_es_delete_reconcile_fences_an_immediately_late_writer(indexing_cas
         assert session.get(VideoParseTask, case.task_id).is_deleted
     with pytest.raises(SeriesNotReadyError):
         case.retrieval.search(
-            "松饼行动", workspace_id="es-test-workspace", series_ids=[case.series_id],
+            "松饼行动", tenant_id="es-test-workspace", series_ids=[case.series_id],
         )
 
     monkeypatch.setattr(store, "bulk_delete", original_delete)

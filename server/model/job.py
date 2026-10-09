@@ -25,7 +25,6 @@ from .video import (
     LONG_TEXT,
     MYSQL_TABLE_OPTIONS,
     UTC_TIMESTAMP,
-    TimestampMixin,
 )
 
 
@@ -84,7 +83,7 @@ class IntervalParseTaskStatus(StrEnum):
     INDEXING_FAILED = "INDEXING_FAILED"
 
 
-class SeriesParseJob(TimestampMixin, Base):
+class SeriesParseJob(Base):
     __tablename__ = "series_parse_job"
     __table_args__ = (
         UniqueConstraint(
@@ -129,6 +128,7 @@ class SeriesParseJob(TimestampMixin, Base):
     )
 
     job_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(String(64))
     series_id: Mapped[str] = mapped_column(
         ForeignKey("series.series_id", ondelete="CASCADE"),
         nullable=False,
@@ -169,6 +169,17 @@ class SeriesParseJob(TimestampMixin, Base):
         default=True,
     )
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
+    created_at: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=now_unix_time_ms,
+    )
+    updated_at: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=now_unix_time_ms,
+        onupdate=now_unix_time_ms,
+    )
 
 
 class VideoChunkCheckpoint(Base):
@@ -277,6 +288,7 @@ class VideoParseTask(Base):
     )
 
     id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(String(64))
     video_id: Mapped[str] = mapped_column(
         ForeignKey("video.video_id", ondelete="CASCADE"),
         nullable=False,

@@ -115,7 +115,7 @@ def _document(ids, *, question: str = "银河蓝松饼行动"):
         ],
     )
     return VideoChunkIndexDocument(
-        workspace_id="local-default", series_id=ids.series,
+        tenant_id="local-default", series_id=ids.series,
         video_id=ids.video, video_chunk_id=ids.chunk,
         parse_task_id=ids.parse_task,
         content_version=2, index_generation=1,
@@ -135,7 +135,7 @@ def _version(document: VideoChunkIndexDocument) -> int:
 
 def _scope(ids):
     return {
-        "workspace_id": "local-default", "series_ids": [ids.series],
+        "tenant_id": "local-default", "series_ids": [ids.series],
         "parse_tasks_by_video_id": {ids.video: ids.parse_task},
         "index_generation": 1,
     }
@@ -524,7 +524,7 @@ def test_lexical_query_preserves_nested_source_and_authorized_task_pair(store, c
 
     for name, value in (
         ("parse_task_id", IDs.other_parse_task),
-        ("workspace_id", "another-workspace"),
+        ("tenant_id", "another-workspace"),
         ("series_id", str(uuid4())),
         ("index_generation", 2),
     ):
@@ -539,7 +539,7 @@ def test_lexical_query_preserves_nested_source_and_authorized_task_pair(store, c
     client.search_response = {"hits": {"hits": [_hit(store, crossed, inner=[question])]}}
     with pytest.raises(ElasticsearchDocumentConsistencyError, match="video/task scope"):
         store.search_lexical(
-            "银河蓝松饼行动", workspace_id="local-default", series_ids=[IDs.series],
+            "银河蓝松饼行动", tenant_id="local-default", series_ids=[IDs.series],
             parse_tasks_by_video_id={IDs.video: IDs.parse_task, other_video: IDs.other_parse_task},
             index_generation=1, limit=10,
         )
@@ -603,7 +603,7 @@ def test_recall_executes_engine_channel_scope_budget_and_returns_formal_identity
     document = replace(_document(IDs), sparse_token_weights=(("utterance", 0.5),))
     lexical = (document.projection.lexical_fields[0],) if channel == "lexical" else ()
     client.search_response = {"hits": {"hits": [_hit(store, document, inner=lexical or None)]}}
-    scope = RetrievalScope(workspace_id="local-default", tasks=(SelectedVideoTask(
+    scope = RetrievalScope(tenant_id="local-default", tasks=(SelectedVideoTask(
         series_id=IDs.series, video_id=IDs.video, parse_task_id=IDs.parse_task, status="COMPLETE",
     ),))
     request = RecallRequest(
@@ -626,10 +626,10 @@ def test_recall_executes_engine_channel_scope_budget_and_returns_formal_identity
 
 
 def test_recall_empty_scope_and_inactive_sparse_query_need_no_storage_call(store, client, IDs):
-    empty = RecallRequest(channel="vision", scope=RetrievalScope(workspace_id="local-default", tasks=()),
+    empty = RecallRequest(channel="vision", scope=RetrievalScope(tenant_id="local-default", tasks=()),
                           index_generation=1, limit=1, vector=(1.0, 0.0))
     assert store.recall(empty) == ()
-    scope = RetrievalScope(workspace_id="local-default", tasks=(SelectedVideoTask(
+    scope = RetrievalScope(tenant_id="local-default", tasks=(SelectedVideoTask(
         series_id=IDs.series, video_id=IDs.video, parse_task_id=IDs.parse_task, status="COMPLETE",
     ),))
     inactive = RecallRequest(channel="sparse", scope=scope, index_generation=1, limit=1, token_weights=())
@@ -641,7 +641,7 @@ def test_recall_checks_each_selected_video_series_pair(store, client, IDs):
     other_series = str(uuid4())
     document = replace(_document(IDs), series_id=other_series)
     client.search_response = {"hits": {"hits": [_hit(store, document)]}}
-    scope = RetrievalScope(workspace_id="local-default", tasks=(
+    scope = RetrievalScope(tenant_id="local-default", tasks=(
         SelectedVideoTask(series_id=IDs.series, video_id=IDs.video, parse_task_id=IDs.parse_task, status="COMPLETE"),
         SelectedVideoTask(series_id=other_series, video_id=str(uuid4()), parse_task_id=str(uuid4()), status="COMPLETE"),
     ))

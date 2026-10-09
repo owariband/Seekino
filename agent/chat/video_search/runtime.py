@@ -168,7 +168,7 @@ class AgentRuntime:
         deadline: float | None = None,
     ) -> AgentFinalOutput:
         if (
-            not inputs["workspace_id"].strip()
+            not inputs["tenant_id"].strip()
             or not inputs["user_message"].strip()
             or not inputs["series_ids"]
             or any(not value.strip() for value in inputs["series_ids"])
@@ -218,7 +218,7 @@ class AgentRuntime:
             cancellation, emit,
         )
         canvas = VideoSearchContextCanvas(
-            workspace_id=inputs["workspace_id"],
+            tenant_id=inputs["tenant_id"],
             series_ids=tuple(inputs["series_ids"]),
         )
         control.check()

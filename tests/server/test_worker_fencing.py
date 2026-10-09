@@ -44,7 +44,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
         session.add(
             Series(
                 series_id=prepared.series_id,
-                workspace_id=prepared.workspace_id,
+                tenant_id=prepared.tenant_id,
                 name=prepared.series_name,
                 description=prepared.series_description,
                 status="INDEXING",
@@ -111,7 +111,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
 
     LibraryRepository(session_factory).update_video_episode_order(
         prepared.video_id,
-        workspace_id=prepared.workspace_id,
+        tenant_id=prepared.tenant_id,
         episode_order=prepared.episode_order + 1,
     )
 

@@ -349,7 +349,7 @@ def _validated_versioned_identities(
                     "VersionedRankedVideoChunkMatch"
                 )
             identity = ranked.retrieval_identity
-            scope = (identity.workspace_id, identity.index_generation)
+            scope = (identity.tenant_id, identity.index_generation)
             if trusted_scope is None:
                 trusted_scope = scope
             elif trusted_scope != scope:

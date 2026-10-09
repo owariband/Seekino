@@ -2,6 +2,22 @@ name: anivag-local
 
 # Development dependencies only. API, Consumer, Vite and ffmpeg run on the host.
 services:
+  redis:
+    image: redis:7.4-alpine
+    profiles: [cloud-auth]
+    command: [redis-server, --appendonly, "yes", --appendfsync, everysec]
+    ports:
+      - "127.0.0.1:${ANIVAG_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    stop_grace_period: 30s
+
   mysql:
     image: mysql:8.4
     environment:
@@ -44,5 +60,6 @@ services:
     stop_grace_period: 60s
 
 volumes:
+  redis_data:
   mysql_data:
   elasticsearch_data:

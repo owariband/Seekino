@@ -30,7 +30,7 @@ describe("upload presentation state", () => {
         task({
           status: "processing",
           job: {
-            jobId: "job-1", uploadSessionId: "upload-1", workspaceId: "local-default", retryOfJobId: null, version: 1, estimatedRemainingMs: null, canRetry: false, canReparse: false, canCancel: false,
+            jobId: "job-1", uploadSessionId: "upload-1", tenantId: "local-default", retryOfJobId: null, version: 1, estimatedRemainingMs: null, canRetry: false, canReparse: false, canCancel: false,
             seriesId: "series-1",
             videoId: "video-1",
             seriesName: "测试系列",
@@ -65,7 +65,7 @@ describe("upload presentation state", () => {
     expect(taskStatusLabel(task({
       status: "processing",
       job: {
-        jobId: "job-1", uploadSessionId: "upload-1", workspaceId: "local-default", retryOfJobId: null, version: 1, estimatedRemainingMs: null, canRetry: false, canReparse: false, canCancel: false,
+        jobId: "job-1", uploadSessionId: "upload-1", tenantId: "local-default", retryOfJobId: null, version: 1, estimatedRemainingMs: null, canRetry: false, canReparse: false, canCancel: false,
         seriesId: "series-1", videoId: "video-1", seriesName: "测试系列", episodeOrder: 1,
         originalFilename: "episode-01.mp4", pipelineVersion: "m1", status: "RUNNING", stage: "TEXT_EMBEDDING",
         progress: 99, overallProgress: 99, stageProgress: 20, completedDurationSeconds: 100,
@@ -80,7 +80,7 @@ describe("upload presentation state", () => {
 
   it("keeps upload progress complete when parsing fails after transfer", () => {
     expect(taskProgress(task({ status: "failed", job: {
-      jobId: "job-1", uploadSessionId: "upload-1", workspaceId: "local-default", retryOfJobId: null,
+      jobId: "job-1", uploadSessionId: "upload-1", tenantId: "local-default", retryOfJobId: null,
       seriesId: "series-1", videoId: "video-1", seriesName: "测试系列", episodeOrder: 1,
       originalFilename: "episode-01.mp4", pipelineVersion: "m1", status: "FAILED", stage: "PARSING",
       progress: 24, overallProgress: 24, stageProgress: 37, completedDurationSeconds: 37,
@@ -101,7 +101,7 @@ describe("upload presentation state", () => {
       leaseVersion: 1, leaseExpireTime: 3, heartbeatTime: 2, startTime: 1,
       finishTime: null, processingDurationMs: 10, processingTimingComplete: false,
       lastError: null, isTest: false, detail: {}, createTime: 1, updateTime: 2,
-      workspaceId: null, seriesId: null, seriesName: null, episodeOrder: null,
+      tenantId: null, seriesId: null, seriesName: null, episodeOrder: null,
       originalFilename: null, uploadSessionId: null, durationSeconds: null,
       canRetry: false, canReparse: false, canDelete: false,
     };

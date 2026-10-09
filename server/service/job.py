@@ -26,10 +26,10 @@ class ParseJobService:
         self._library = library
         self._pending_takeover_enabled = execution_mode == "v2"
 
-    def get(self, job_id: str, *, workspace_id: str) -> ParseJobDetail:
+    def get(self, job_id: str, *, tenant_id: str) -> ParseJobDetail:
         canonical_job_id = canonical_uuid(job_id, "job_id")
         job = self._repository.get(canonical_job_id)
-        self._library.get_video(job.video_id, workspace_id=workspace_id)
+        self._library.get_video(job.video_id, tenant_id=tenant_id)
         return ParseJobDetail(
             job=job,
             checkpoints=tuple(
@@ -47,13 +47,13 @@ class ParseJobService:
         self,
         video_parse_task_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
     ) -> VideoParseTaskDetail:
         task_id = canonical_uuid(video_parse_task_id, "video_parse_task_id")
         return replace(
             self._repository.get_video_parse_task_detail(
                 task_id,
-                workspace_id=require_nonempty_text(workspace_id, "workspace_id"),
+                tenant_id=require_nonempty_text(tenant_id, "tenant_id"),
             ),
             pending_takeover_enabled=self._pending_takeover_enabled,
         )
@@ -61,7 +61,7 @@ class ParseJobService:
     def list_video_parse_tasks(
         self,
         *,
-        workspace_id: str,
+        tenant_id: str,
         limit: int = 100,
         offset: int = 0,
         series_id: str | None = None,
@@ -71,7 +71,7 @@ class ParseJobService:
             raise ValueError("offset must be a nonnegative integer")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         return [
             replace(
                 detail,
@@ -89,11 +89,11 @@ class ParseJobService:
     def count_video_parse_tasks(
         self,
         *,
-        workspace_id: str,
+        tenant_id: str,
         series_id: str | None = None,
         statuses: tuple[str, ...] | None = None,
     ) -> int:
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         return self._repository.count_video_parse_tasks_for_workspace(
             normalized_workspace,
             series_id=self._scope_series(series_id, normalized_workspace),
@@ -103,7 +103,7 @@ class ParseJobService:
     def list(
         self,
         *,
-        workspace_id: str,
+        tenant_id: str,
         limit: int = 100,
         offset: int = 0,
         series_id: str | None = None,
@@ -113,7 +113,7 @@ class ParseJobService:
             raise ValueError("offset must be a nonnegative integer")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         jobs = self._repository.list_for_workspace(
             normalized_workspace,
             limit=limit, offset=offset, series_id=self._scope_series(series_id, normalized_workspace),
@@ -139,15 +139,15 @@ class ParseJobService:
             for item in jobs
         ]
 
-    def count(self, *, workspace_id: str, series_id: str | None = None, statuses: tuple[str, ...] | None = None) -> int:
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+    def count(self, *, tenant_id: str, series_id: str | None = None, statuses: tuple[str, ...] | None = None) -> int:
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         return self._repository.count_for_workspace(
             normalized_workspace,
             series_id=self._scope_series(series_id, normalized_workspace), statuses=self._statuses(statuses),
         )
 
-    def summary(self, *, workspace_id: str, series_id: str | None = None) -> ParseJobSummaryState:
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+    def summary(self, *, tenant_id: str, series_id: str | None = None) -> ParseJobSummaryState:
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         return self._repository.summary_for_workspace(
             normalized_workspace,
             series_id=self._scope_series(series_id, normalized_workspace),
@@ -167,9 +167,9 @@ class ParseJobService:
             sorted({VideoParseTaskStatus(status).value for status in statuses})
         )
 
-    def _scope_series(self, series_id: str | None, workspace_id: str) -> str | None:
+    def _scope_series(self, series_id: str | None, tenant_id: str) -> str | None:
         if series_id is None:
             return None
         normalized = canonical_uuid(series_id, "series_id")
-        self._library.get_series(normalized, workspace_id=workspace_id)
+        self._library.get_series(normalized, tenant_id=tenant_id)
         return normalized

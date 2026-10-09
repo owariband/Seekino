@@ -19,7 +19,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.expression import Grouping
 
 from ..database import Base
-from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS, TimestampMixin
+from ..constants.identity import LOCAL_USER_ID
+from ..utils.time import now_unix_time_ms
+from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS
 
 
 class AgentMessageRole(StrEnum):
@@ -33,13 +35,14 @@ class AgentMessageStatus(StrEnum):
     FAILED = "FAILED"
 
 
-class AgentConversation(TimestampMixin, Base):
+class AgentConversation(Base):
     __tablename__ = "agent_conversation"
     __table_args__ = (
         UniqueConstraint(
-            "workspace_id",
+            "tenant_id",
+            "owner_user_id",
             "idempotency_key",
-            name="uq_agent_conversation_workspace_idempotency",
+            name="uq_agent_conversation_tenant_idempotency",
         ),
         CheckConstraint(
             "next_message_sequence >= 0",
@@ -52,7 +55,10 @@ class AgentConversation(TimestampMixin, Base):
         String(ID_LENGTH),
         primary_key=True,
     )
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    owner_user_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=LOCAL_USER_ID,
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     title_is_auto: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -62,9 +68,20 @@ class AgentConversation(TimestampMixin, Base):
         default=0,
     )
     last_message_at: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=now_unix_time_ms,
+    )
+    updated_at: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=now_unix_time_ms,
+        onupdate=now_unix_time_ms,
+    )
 
 
-class AgentMessage(TimestampMixin, Base):
+class AgentMessage(Base):
     __tablename__ = "agent_message"
     __table_args__ = (
         UniqueConstraint(
@@ -125,6 +142,17 @@ class AgentMessage(TimestampMixin, Base):
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
     last_error_code: Mapped[str | None] = mapped_column(String(64))
     last_error_message: Mapped[str | None] = mapped_column(LONG_TEXT)
+    created_at: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=now_unix_time_ms,
+    )
+    updated_at: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=now_unix_time_ms,
+        onupdate=now_unix_time_ms,
+    )
 
 
 AGENT_MESSAGE_IDEMPOTENCY_KEY = cast(

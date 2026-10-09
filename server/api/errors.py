@@ -38,6 +38,7 @@ from ..repository.video import (
     VideoChunkNotFoundError,
 )
 from ..service.media import MediaMissingError, MediaNotReadyError
+from ..error.auth import AuthError
 from ..service.upload import UploadChecksumMismatchError
 from ..service.video_retrieval import RetrievalIndexConsistencyError
 from ..storage.artifact import ArtifactIntegrityError
@@ -46,6 +47,13 @@ _logger = logging.getLogger(__name__)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(AuthError)
+    async def auth_error_handler(request: Request, exc: AuthError) -> JSONResponse:
+        headers = {"Cache-Control": "no-store"}
+        if exc.retry_after_seconds is not None:
+            headers["Retry-After"] = str(exc.retry_after_seconds)
+        return _error_response(request, exc.status_code, exc.code, str(exc), headers=headers)
+
     not_found = (
         AgentConversationNotFoundError,
         AgentMessageNotFoundError,

@@ -59,7 +59,7 @@ def _plan(*, kind="text", top_k=2, constraints=()):
             fps=1.0, max_height=720, mime_type="video/mp4", preprocess_revision="v1",
         ),
     )
-    scope = RetrievalScope(workspace_id="workspace", tasks=(SelectedVideoTask(
+    scope = RetrievalScope(tenant_id="workspace", tasks=(SelectedVideoTask(
         series_id="series", video_id="video", parse_task_id="task", status="COMPLETE",
     ),))
     policy = RetrievalPolicy(
@@ -79,7 +79,7 @@ def _pool(plan, texts=("原话", "原话", "原话")):
     facts = tuple(ChunkRetrievalFacts(
         video_chunk_id=f"chunk-{rank}", sequence_no=rank - 1,
         retrieval_identity=VideoChunkRetrievalIdentity(
-            workspace_id="workspace", series_id="series", video_id="video", parse_task_id="task",
+            tenant_id="workspace", series_id="series", video_id="video", parse_task_id="task",
             content_version=rank, index_generation=plan.index_contract.index_generation,
         ), start_seconds=((rank - 1) * 10) * 1000, end_seconds=(rank * 10) * 1000,
         result=VideoParseResult.model_validate({"persons": ["人物"], "timeline": [{

@@ -25,14 +25,14 @@ from engine.rag.encoding import validate_sparse_weights
 from ..database import DatabaseEnvironment
 from ..utils.validation import canonical_uuid, require_nonempty_text
 
-INDEX_CONTRACT_VERSION = "anivag-video-chunk-es-5"
+INDEX_CONTRACT_VERSION = "anivag-video-chunk-es-6"
 ANALYSIS_CONTRACT_VERSION = "cjk-1"
 _MAX_EXTERNAL_VERSION = 9_223_372_036_854_775_807
 _EXTERNAL_VERSION_SHIFT = 31
 _MAX_CONTENT_VERSION = (1 << _EXTERNAL_VERSION_SHIFT) - 1
 _MAX_INDEX_GENERATION = (1 << _EXTERNAL_VERSION_SHIFT) - 1
 _SOURCE_FIELDS = (
-    "workspace_id",
+    "tenant_id",
     "series_id",
     "video_id",
     "video_chunk_id",
@@ -82,7 +82,7 @@ class ElasticsearchBulkWriteError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class StoredDocumentState:
     present: bool
-    workspace_id: str | None = None
+    tenant_id: str | None = None
     series_id: str | None = None
     video_id: str | None = None
     parse_task_id: str | None = None
@@ -102,7 +102,7 @@ class StoredDocumentState:
 class VideoChunkIndexMatch:
     rank: int
     score: float
-    workspace_id: str
+    tenant_id: str
     series_id: str
     video_id: str
     video_chunk_id: str
@@ -117,7 +117,7 @@ class VideoChunkIndexMatch:
 @dataclass(frozen=True, slots=True)
 class _TrustedScope:
     query: dict[str, Any]
-    workspace_id: str
+    tenant_id: str
     series_ids: frozenset[str]
     parse_tasks_by_video_id: Mapping[str, str]
     index_generation: int
@@ -338,7 +338,7 @@ class ElasticsearchVideoChunkStore:
             )
             states[key] = StoredDocumentState(
                 present=True,
-                workspace_id=source.get("workspace_id"),
+                tenant_id=source.get("tenant_id"),
                 series_id=source.get("series_id"),
                 video_id=source.get("video_id"),
                 parse_task_id=source.get("parse_task_id"),
@@ -422,7 +422,7 @@ class ElasticsearchVideoChunkStore:
                     index=self.index_name,
                     query={"bool": {"filter": [
                         {"ids": {"values": [physical_id]}},
-                        {"term": {"workspace_id": document.workspace_id}},
+                        {"term": {"tenant_id": document.tenant_id}},
                         {"term": {"video_id": document.video_id}},
                         {"term": {"parse_task_id": document.parse_task_id}},
                         {"term": {"content_version": document.content_version}},
@@ -538,7 +538,7 @@ class ElasticsearchVideoChunkStore:
         if not request.scope.tasks:
             return ()
         scope = {
-            "workspace_id": request.scope.workspace_id,
+            "tenant_id": request.scope.tenant_id,
             "series_ids": tuple(task.series_id for task in request.scope.tasks),
             "parse_tasks_by_video_id": {task.video_id: task.parse_task_id for task in request.scope.tasks},
             "index_generation": request.index_generation,
@@ -567,7 +567,7 @@ class ElasticsearchVideoChunkStore:
             hits.append(RawChunkHit(
                 channel=request.channel, video_chunk_id=match.video_chunk_id,
                 retrieval_identity=VideoChunkRetrievalIdentity(
-                    workspace_id=match.workspace_id, series_id=match.series_id,
+                    tenant_id=match.tenant_id, series_id=match.series_id,
                     video_id=match.video_id, parse_task_id=match.parse_task_id,
                     content_version=match.content_version, index_generation=match.index_generation,
                 ), rank=match.rank, score=match.score,
@@ -580,7 +580,7 @@ class ElasticsearchVideoChunkStore:
         self,
         query: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
         series_ids: Sequence[str],
         parse_tasks_by_video_id: Mapping[str, str],
         index_generation: int,
@@ -607,7 +607,7 @@ class ElasticsearchVideoChunkStore:
                     match_kind: {"lexical_fields.raw_text": {"query": text, "boost": boost}}
                 }}})
         scope = self._scope_query(
-            workspace_id, series_ids, parse_tasks_by_video_id, index_generation
+            tenant_id, series_ids, parse_tasks_by_video_id, index_generation
         )
         response = self._client.search(
             index=self.index_name,
@@ -623,34 +623,34 @@ class ElasticsearchVideoChunkStore:
         return self._parse_hits(response, scope, lexical=True)
 
     def search_semantic(
-        self, query_vector: Sequence[float], *, workspace_id: str,
+        self, query_vector: Sequence[float], *, tenant_id: str,
         series_ids: Sequence[str], parse_tasks_by_video_id: Mapping[str, str],
         index_generation: int, limit: int,
         exact: bool = False,
     ) -> list[VideoChunkIndexMatch]:
         return self._search_vector(
             query_vector, "semantic_vector", self.semantic_dimensions,
-            workspace_id=workspace_id, series_ids=series_ids,
+            tenant_id=tenant_id, series_ids=series_ids,
             parse_tasks_by_video_id=parse_tasks_by_video_id,
             index_generation=index_generation, limit=limit, exact=exact,
         )
 
     def search_vision(
-        self, query_vector: Sequence[float], *, workspace_id: str,
+        self, query_vector: Sequence[float], *, tenant_id: str,
         series_ids: Sequence[str], parse_tasks_by_video_id: Mapping[str, str],
         index_generation: int, limit: int,
         exact: bool = False,
     ) -> list[VideoChunkIndexMatch]:
         return self._search_vector(
             query_vector, "vision_vector", self.vision_dimensions,
-            workspace_id=workspace_id, series_ids=series_ids,
+            tenant_id=tenant_id, series_ids=series_ids,
             parse_tasks_by_video_id=parse_tasks_by_video_id,
             index_generation=index_generation, limit=limit, exact=exact,
         )
 
     def _search_vector(
         self, query_vector: Sequence[float], vector_field: str, dimensions: int,
-        *, workspace_id: str, series_ids: Sequence[str],
+        *, tenant_id: str, series_ids: Sequence[str],
         parse_tasks_by_video_id: Mapping[str, str], index_generation: int,
         limit: int, exact: bool,
     ) -> list[VideoChunkIndexMatch]:
@@ -658,7 +658,7 @@ class ElasticsearchVideoChunkStore:
         if not isinstance(exact, bool):
             raise ValueError("exact must be a bool")
         scope = self._scope_query(
-            workspace_id, series_ids, parse_tasks_by_video_id, index_generation
+            tenant_id, series_ids, parse_tasks_by_video_id, index_generation
         )
         filters = [scope.query, {"exists": {"field": vector_field}}]
         k = _positive_limit(limit)
@@ -693,12 +693,12 @@ class ElasticsearchVideoChunkStore:
         return self._parse_hits(response, scope, lexical=False)
 
     def search_sparse(
-        self, query_weights: Mapping[str, float], *, workspace_id: str,
+        self, query_weights: Mapping[str, float], *, tenant_id: str,
         series_ids: Sequence[str], parse_tasks_by_video_id: Mapping[str, str],
         index_generation: int, limit: int,
     ) -> list[VideoChunkIndexMatch]:
         weights = dict(validate_sparse_weights(query_weights))
-        scope = self._scope_query(workspace_id, series_ids, parse_tasks_by_video_id, index_generation)
+        scope = self._scope_query(tenant_id, series_ids, parse_tasks_by_video_id, index_generation)
         size = _positive_limit(limit)
         if not weights:
             return []
@@ -713,10 +713,10 @@ class ElasticsearchVideoChunkStore:
         return self._parse_hits(response, scope, lexical=False)
 
     def _scope_query(
-        self, workspace_id: str, series_ids: Sequence[str],
+        self, tenant_id: str, series_ids: Sequence[str],
         parse_tasks_by_video_id: Mapping[str, str], index_generation: int,
     ) -> _TrustedScope:
-        workspace = require_nonempty_text(workspace_id, "workspace_id")
+        workspace = require_nonempty_text(tenant_id, "tenant_id")
         series = list(dict.fromkeys(canonical_uuid(item, "series_id") for item in series_ids))
         if not series:
             raise ValueError("series_ids must not be empty")
@@ -736,7 +736,7 @@ class ElasticsearchVideoChunkStore:
         ]
         query = {
             "bool": {"filter": [
-                {"term": {"workspace_id": workspace}},
+                {"term": {"tenant_id": workspace}},
                 {"terms": {"series_id": series}},
                 {"term": {"index_generation": index_generation}},
                 {"bool": {"should": pairs, "minimum_should_match": 1}},
@@ -744,7 +744,7 @@ class ElasticsearchVideoChunkStore:
         }
         return _TrustedScope(
             query=query,
-            workspace_id=workspace,
+            tenant_id=workspace,
             series_ids=frozenset(series),
             parse_tasks_by_video_id=tasks,
             index_generation=index_generation,
@@ -766,7 +766,7 @@ class ElasticsearchVideoChunkStore:
             self._validate_identity(hit_id, source)
             video_id = source["video_id"]
             if (
-                source.get("workspace_id") != scope.workspace_id
+                source.get("tenant_id") != scope.tenant_id
                 or source.get("series_id") not in scope.series_ids
                 or source.get("index_generation") != scope.index_generation
                 or scope.parse_tasks_by_video_id.get(video_id) != source["parse_task_id"]
@@ -794,7 +794,7 @@ class ElasticsearchVideoChunkStore:
         return [
             VideoChunkIndexMatch(
                 rank=rank, score=score,
-                workspace_id=source["workspace_id"],
+                tenant_id=source["tenant_id"],
                 series_id=source["series_id"], video_id=source["video_id"],
                 video_chunk_id=source["video_chunk_id"],
                 parse_task_id=source["parse_task_id"],
@@ -811,7 +811,7 @@ class ElasticsearchVideoChunkStore:
         try:
             if hit_id != document_id(source["parse_task_id"], source["video_chunk_id"]):
                 raise ValueError("document ID differs")
-            require_nonempty_text(source["workspace_id"], "workspace_id")
+            require_nonempty_text(source["tenant_id"], "tenant_id")
             for name in ("series_id", "video_id"):
                 canonical_uuid(source[name], name)
             version = source["content_version"]
@@ -837,7 +837,7 @@ class ElasticsearchVideoChunkStore:
             raise ElasticsearchDocumentConsistencyError("stored document identity is invalid") from exc
 
     def _document_source(self, document: VideoChunkIndexDocument) -> dict[str, Any]:
-        require_nonempty_text(document.workspace_id, "workspace_id")
+        require_nonempty_text(document.tenant_id, "tenant_id")
         canonical_uuid(document.series_id, "series_id")
         canonical_uuid(document.video_id, "video_id")
         document_id(document.parse_task_id, document.video_chunk_id)
@@ -873,7 +873,7 @@ class ElasticsearchVideoChunkStore:
             document.vision_vector, self.vision_dimensions, "vision_vector"
         )
         source = {
-            "workspace_id": document.workspace_id,
+            "tenant_id": document.tenant_id,
             "series_id": document.series_id,
             "video_id": document.video_id,
             "video_chunk_id": document.video_chunk_id,
@@ -906,7 +906,7 @@ class ElasticsearchVideoChunkStore:
             },
             "properties": {
                 **{name: {"type": "keyword"} for name in (
-                    "workspace_id", "series_id", "video_id", "video_chunk_id",
+                    "tenant_id", "series_id", "video_id", "video_chunk_id",
                     "parse_task_id",
                 )},
                 "content_version": {"type": "integer"},

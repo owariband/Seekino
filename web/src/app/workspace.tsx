@@ -10,13 +10,14 @@ import {
 
 import {
   checkHealth,
+  identityStorageKey,
   createSeries as createSeriesRequest,
   getSeries,
   listSeries,
   updateSeries as updateSeriesRequest,
   updateVideoEpisode as updateVideoEpisodeRequest,
   shouldRetryApiRequest,
-  WORKSPACE_ID,
+  TENANT_ID,
 } from "../api/client";
 import type {
   RuntimeMode,
@@ -27,7 +28,6 @@ import type {
   VideoEpisodeUpdateRequest,
   VideoSummary,
 } from "../api/contracts";
-const SERIES_STORAGE_KEY = "anivag-selected-series";
 
 interface WorkspaceContextValue {
   mode: RuntimeMode;
@@ -37,9 +37,9 @@ interface WorkspaceContextValue {
   isLoading: boolean;
   error: Error | null;
   selectSeries: (seriesId: string) => void;
-  createSeries: (input: Omit<SeriesCreateRequest, "workspaceId">) => Promise<SeriesView>;
-  updateSeries: (input: Omit<SeriesUpdateRequest, "workspaceId">) => Promise<SeriesView>;
-  updateVideoEpisode: (input: Omit<VideoEpisodeUpdateRequest, "workspaceId">) => Promise<VideoSummary>;
+  createSeries: (input: Omit<SeriesCreateRequest, "tenantId">) => Promise<SeriesView>;
+  updateSeries: (input: Omit<SeriesUpdateRequest, "tenantId">) => Promise<SeriesView>;
+  updateVideoEpisode: (input: Omit<VideoEpisodeUpdateRequest, "tenantId">) => Promise<VideoSummary>;
   refreshSeries: () => Promise<void>;
 }
 
@@ -47,8 +47,9 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
+  const seriesStorageKey = identityStorageKey("anivag-selected-series", "anivag-selected-series");
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(
-    () => window.localStorage.getItem(SERIES_STORAGE_KEY),
+    () => window.localStorage.getItem(seriesStorageKey),
   );
 
   const health = useQuery({
@@ -94,11 +95,11 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     if (selectedSeriesId) {
-      window.localStorage.setItem(SERIES_STORAGE_KEY, selectedSeriesId);
+      window.localStorage.setItem(seriesStorageKey, selectedSeriesId);
     } else {
-      window.localStorage.removeItem(SERIES_STORAGE_KEY);
+      window.localStorage.removeItem(seriesStorageKey);
     }
-  }, [selectedSeriesId]);
+  }, [selectedSeriesId, seriesStorageKey]);
 
   const selectedSummary =
     series.find((item) => item.seriesId === selectedSeriesId) ?? null;
@@ -129,19 +130,19 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
       error,
       selectSeries: setSelectedSeriesId,
       createSeries: async (input) => {
-        const created = await createSeriesRequest({ ...input, workspaceId: WORKSPACE_ID });
+        const created = await createSeriesRequest({ ...input, tenantId: TENANT_ID });
         await queryClient.invalidateQueries({ queryKey: ["series"] });
         setSelectedSeriesId(created.seriesId);
         return created;
       },
       updateSeries: async (input) => {
-        const updated = await updateSeriesRequest({ ...input, workspaceId: WORKSPACE_ID });
+        const updated = await updateSeriesRequest({ ...input, tenantId: TENANT_ID });
         queryClient.setQueryData(["series-detail", updated.seriesId], updated);
         await queryClient.invalidateQueries({ queryKey: ["series"] });
         return updated;
       },
       updateVideoEpisode: async (input) => {
-        const updated = await updateVideoEpisodeRequest({ ...input, workspaceId: WORKSPACE_ID });
+        const updated = await updateVideoEpisodeRequest({ ...input, tenantId: TENANT_ID });
         queryClient.setQueryData<SeriesView>(["series-detail", updated.seriesId], (current) => current ? {
           ...current,
           videos: current.videos

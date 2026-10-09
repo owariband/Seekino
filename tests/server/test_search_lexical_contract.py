@@ -15,7 +15,7 @@ from server.model.dto.mediaDTO import PlaybackMedia
 
 def _evidence() -> VideoChunkEvidence:
     return VideoChunkEvidence(
-        series_id="series-1", workspace_id="workspace-1", series_name="测试系列",
+        series_id="series-1", tenant_id="workspace-1", series_name="测试系列",
         series_description=None, series_status="READY", important_extra_data=None,
         character_bible=[], video_id="video-1", episode_order=1,
         original_filename="episode.mp4", original_source_uri="source.mp4",
@@ -57,7 +57,7 @@ def test_search_api_preserves_lexical_source_separate_from_factual_evidence() ->
     )
 
     wire = search_evidence_view(
-        result, media, workspace_id="workspace-1",
+        result, media, tenant_id="workspace-1",
     ).model_dump(mode="json", by_alias=True)
 
     hit = wire["hits"][0]

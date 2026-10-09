@@ -1,3 +1,5 @@
+"""One-shot commands assemble only their required database, index and file dependencies."""
+
 from __future__ import annotations
 
 import argparse
@@ -6,13 +8,11 @@ from pathlib import Path
 
 from gateway.config import load_config
 
+from .caller.elasticsearch import open_elasticsearch_storage
+from .caller.mysql import open_database_storage
 from .common.retrieval import build_retrieval_service
-from .common.storage import (
-    build_artifact_storage,
-    open_database_storage,
-    open_elasticsearch_storage,
-)
-from .constants.workspace import DEFAULT_LOCAL_WORKSPACE_ID
+from .common.storage import build_artifact_storage
+from .constants.tenant import DEFAULT_LOCAL_TENANT_ID
 from .config.elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
 from .config.parse_profile import resolve_embedding_config
 from .config.retrieval import RetrievalConfig, resolve_retrieval_model_limits
@@ -85,7 +85,7 @@ def _build_parser() -> argparse.ArgumentParser:
     import_parse.add_argument("--series-description")
     import_parse.add_argument("--series-id")
     import_parse.add_argument("--video-id")
-    import_parse.add_argument("--workspace-id", default=DEFAULT_LOCAL_WORKSPACE_ID)
+    import_parse.add_argument("--tenant-id", "--workspace-id", dest="tenant_id", default=DEFAULT_LOCAL_TENANT_ID)
     import_parse.add_argument("--episode-order", type=int, required=True)
     import_parse.add_argument("--upload-sequence", type=int)
     import_parse.add_argument("--pipeline-version", required=True)
@@ -117,9 +117,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Managed Artifact Store root; defaults to ANIVAG_ARTIFACT_ROOT.",
     )
     backfill_keyframes.add_argument(
-        "--workspace-id",
-        default=DEFAULT_LOCAL_WORKSPACE_ID,
-        help="Only inspect this workspace; defaults to local-default.",
+        "--tenant-id", "--workspace-id", dest="tenant_id",
+        default=DEFAULT_LOCAL_TENANT_ID,
+        help="Only inspect this Tenant; defaults to local-default.",
     )
     backfill_keyframes.add_argument(
         "--series-id",
@@ -176,7 +176,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_execution_mode_argument(search)
     _add_elasticsearch_arguments(search)
     search.add_argument("--query", required=True)
-    search.add_argument("--workspace-id", default=DEFAULT_LOCAL_WORKSPACE_ID)
+    search.add_argument("--tenant-id", "--workspace-id", dest="tenant_id", default=DEFAULT_LOCAL_TENANT_ID)
     search.add_argument(
         "--series-id",
         dest="series_ids",
@@ -341,7 +341,7 @@ def main() -> None:
                 series_description=args.series_description,
                 series_id=args.series_id,
                 video_id=args.video_id,
-                workspace_id=args.workspace_id,
+                tenant_id=args.tenant_id,
                 episode_order=args.episode_order,
                 upload_sequence=args.upload_sequence,
                 pipeline_version=args.pipeline_version,
@@ -362,7 +362,7 @@ def main() -> None:
                 max_height=resolve_parse_max_height(args.max_height),
             ).backfill(
                 limit=args.limit, dry_run=not args.apply,
-                workspace_id=args.workspace_id, series_id=args.series_id,
+                tenant_id=args.tenant_id, series_id=args.series_id,
                 video_id=args.video_id,
             )
             result = report.model_dump(mode="json", by_alias=True)
@@ -381,7 +381,7 @@ def main() -> None:
                     exact=args.exact,
                 )
                 result = service.search(
-                    args.query, workspace_id=args.workspace_id,
+                    args.query, tenant_id=args.tenant_id,
                     series_ids=args.series_ids, top_k=args.top_k,
                 ).model_dump(mode="json", by_alias=True)
         elif args.command == "hydrate":

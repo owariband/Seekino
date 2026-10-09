@@ -4,7 +4,7 @@ import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { useWorkspace } from "../../app/workspace";
-import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, listAgentConversations, mediaUrl, WORKSPACE_ID } from "../../api/client";
+import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, listAgentConversations, mediaUrl } from "../../api/client";
 import type { AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, EvidenceReference } from "../../api/contracts";
 import { clipText, episodeLabel, formatTimeRange } from "../../shared/format";
 import { AgentProgress } from "./AgentProgress";
@@ -25,7 +25,7 @@ type SearchPageProps = {
 export interface SearchPageHandle {
   focusComposer(): void;
 }
-const messageOptionsStorageKey = `anivag-agent-message-options:${WORKSPACE_ID}`;
+const messageOptionsStorageKey = () => identityStorageKey("anivag-agent-message-options");
 type StoredMessageOptions = { overrides?: MessageOptionOverrides; serverOptions?: AgentMessageOptions; selection?: SelectedMessageOptions };
 const messageOptionNames = ["topK", "maxLoopTurns", "maxModelCallsPerTurn", "maxToolCallsPerTurn"] as const;
 
@@ -53,7 +53,7 @@ function boundedMessageOptionOverrides(overrides: MessageOptionOverrides, option
 
 function storedMessageOptionOverrides(options: AgentMessageOptions): MessageOptionOverrides {
   try {
-    const saved = JSON.parse(localStorage.getItem(messageOptionsStorageKey) ?? "null") as StoredMessageOptions | null;
+    const saved = JSON.parse(localStorage.getItem(messageOptionsStorageKey()) ?? "null") as StoredMessageOptions | null;
     if (saved?.overrides) return boundedMessageOptionOverrides(saved.overrides, options);
     if (!saved?.serverOptions || !saved.selection) return {};
     const previousDefaults = defaultMessageOptions(saved.serverOptions);
@@ -242,7 +242,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   useEffect(() => {
     if (!messageOptionOverrides) return;
     try {
-      localStorage.setItem(messageOptionsStorageKey, JSON.stringify({ overrides: messageOptionOverrides }));
+      localStorage.setItem(messageOptionsStorageKey(), JSON.stringify({ overrides: messageOptionOverrides }));
     } catch { /* Browser storage is optional; the current tab still keeps the selection. */ }
   }, [messageOptionOverrides]);
 

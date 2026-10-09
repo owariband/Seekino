@@ -24,7 +24,7 @@ const now = Date.parse("2026-09-15T00:00:00Z");
 function page<T>(items: T[]) { return { items, total: items.length, hasMore: false, nextCursor: null }; }
 function searchResult(seriesIds = ["A", "B"], hits: VideoChunkSearchHit[] = []) { return { seriesIds, searchedVideoIds: ["video"], partial: false, warnings: [], hits }; }
 function conversation(conversationId = "conv-A"): AgentConversationView {
-  return { conversationId, workspaceId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
+  return { conversationId, tenantId: "local-default", title: "Test", messageCount: 0, lastMessagePreview: null, lastMessageAt: null, createdAt: now, updatedAt: now };
 }
 function message(conversationId: string, overrides: Partial<AgentMessageView> = {}): AgentMessageView {
   return {

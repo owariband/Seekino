@@ -46,7 +46,7 @@ class SelectedVideoTask(_QueryModel):
 
 
 class RetrievalScope(_QueryModel):
-    workspace_id: _NonBlank
+    tenant_id: _NonBlank
     tasks: tuple[SelectedVideoTask, ...]
 
     @model_validator(mode="after")
@@ -352,7 +352,7 @@ class RetrievalEvidenceResult(_QueryModel):
 
 def validate_retrieval_identity(plan: RetrievalQueryPlan, identity: VideoChunkRetrievalIdentity) -> None:
     task = next((item for item in plan.scope.tasks if item.video_id == identity.video_id), None)
-    if (task is None or identity.workspace_id != plan.scope.workspace_id
+    if (task is None or identity.tenant_id != plan.scope.tenant_id
             or identity.series_id != task.series_id or identity.parse_task_id != task.parse_task_id
             or identity.index_generation != plan.index_contract.index_generation):
         raise RetrievalConsistencyError("identity falls outside trusted scope or active index contract")

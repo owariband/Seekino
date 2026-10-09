@@ -93,7 +93,7 @@ def _upload_service(
         connection.execute(
             Series.__table__.insert().values(
                 series_id="77285f16-3e5b-592e-ba15-8b224b619806",
-                workspace_id="local-default",
+                tenant_id="local-default",
                 name="Test Upload Series",
                 description=None,
                 status="EMPTY",
@@ -156,7 +156,7 @@ def test_v2_upload_preserves_fractional_media_duration_with_seconds_configuratio
         repository, tmp_path, execution_mode="v2", probe_duration=lambda _path: 8008,
     )
     upload = service.create_session(
-        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=1, original_filename="fractional.mp4", media_type="video/mp4",
         total_size_bytes=10, idempotency_key="fractional-duration",
         video_parse_config=default_video_parse_v2_config().model_copy(update={
@@ -165,7 +165,7 @@ def test_v2_upload_preserves_fractional_media_duration_with_seconds_configuratio
     )
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     with create_session_factory(engine)() as session:
         video = session.get(Video, completed.video_id)
         task = session.get(VideoParseTask, completed.video_parse_task_id)
@@ -208,7 +208,7 @@ def test_upload_freezes_endpoint_encoder_identity_without_changing_its_route(
         "embedding": config.models.embedding.model_copy(update={"encoder_model": encoder_model}),
     })})
     session = service.create_session(
-        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
         total_size_bytes=10, idempotency_key="endpoint-identity", video_parse_config=config,
     )
@@ -216,7 +216,7 @@ def test_upload_freezes_endpoint_encoder_identity_without_changing_its_route(
     assert frozen["model"] == "ep-custom"
     assert frozen["encoder_model"] == "doubao-embedding-vision-250615"
     assert config.models.embedding.encoder_model == encoder_model
-    assert service.get_session(session.upload_session_id, workspace_id="local-default").video_parse_config == session.video_parse_config
+    assert service.get_session(session.upload_session_id, tenant_id="local-default").video_parse_config == session.video_parse_config
 
 
 def test_upload_rejects_endpoint_bound_to_a_different_encoder(repository, tmp_path):
@@ -232,11 +232,11 @@ def test_upload_rejects_endpoint_bound_to_a_different_encoder(repository, tmp_pa
     })})
     with pytest.raises(ValueError, match="exact active V2 query encoder"):
         service.create_session(
-            workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+            tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
             episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
             total_size_bytes=10, idempotency_key="wrong-endpoint-identity", video_parse_config=config,
         )
-    assert service.list_sessions(workspace_id="local-default") == []
+    assert service.list_sessions(tenant_id="local-default") == []
 
 
 @pytest.mark.parametrize(
@@ -263,7 +263,7 @@ def test_upload_rejects_v2_encoder_incompatible_with_active_elasticsearch(
 
     with pytest.raises(ValueError, match=error):
         service.create_session(
-            workspace_id="local-default",
+            tenant_id="local-default",
             series_id="77285f16-3e5b-592e-ba15-8b224b619806",
             episode_order=7,
             original_filename="episode-07.mp4",
@@ -273,7 +273,7 @@ def test_upload_rejects_v2_encoder_incompatible_with_active_elasticsearch(
             video_parse_config=video_parse_config,
         )
 
-    assert service.list_sessions(workspace_id="local-default") == []
+    assert service.list_sessions(tenant_id="local-default") == []
 
 
 def test_upload_completion_rechecks_legacy_v2_dimensions_before_enqueue(
@@ -285,7 +285,7 @@ def test_upload_completion_rechecks_legacy_v2_dimensions_before_enqueue(
         tmp_path,
     )
     upload = service.create_session(
-        workspace_id="local-default",
+        tenant_id="local-default",
         series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7,
         original_filename="episode-07.mp4",
@@ -301,7 +301,7 @@ def test_upload_completion_rechecks_legacy_v2_dimensions_before_enqueue(
     with pytest.raises(ValueError, match="active Elasticsearch"):
         service.complete(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
         )
 
     with create_session_factory(engine)() as session:
@@ -320,7 +320,7 @@ def test_pending_takeover_rechecks_v2_dimensions_before_accepting(
         execution_mode="v1",
     )
     upload = service.create_session(
-        workspace_id="local-default",
+        tenant_id="local-default",
         series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7,
         original_filename="episode-07.mp4",
@@ -333,7 +333,7 @@ def test_pending_takeover_rechecks_v2_dimensions_before_accepting(
         _put(service, upload.upload_session_id, number, data)
     completed = service.complete(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     service._video_parse_index_store = _VideoParseIndexStore(2, 2)
     service._execution_mode = "v2"
@@ -341,7 +341,7 @@ def test_pending_takeover_rechecks_v2_dimensions_before_accepting(
     with pytest.raises(ValueError, match="active Elasticsearch"):
         service.reparse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
         )
 
@@ -377,7 +377,7 @@ def test_reparse_rejects_v2_encoder_before_creating_a_new_task(
         video_parse_index_store=_VideoParseIndexStore(2, 2),
     )
     upload = service.create_session(
-        workspace_id="local-default",
+        tenant_id="local-default",
         series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7,
         original_filename="episode-07.mp4",
@@ -390,7 +390,7 @@ def test_reparse_rejects_v2_encoder_before_creating_a_new_task(
         _put(service, upload.upload_session_id, number, data)
     completed = service.complete(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     with create_session_factory(engine).begin() as session:
         task = session.get(
@@ -402,7 +402,7 @@ def test_reparse_rejects_v2_encoder_before_creating_a_new_task(
     with pytest.raises(ValueError, match=error):
         service.reparse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
             video_parse_config=video_parse_config,
         )
@@ -424,14 +424,14 @@ def test_reparse_without_config_inherits_the_latest_task_and_freezes_endpoint_id
         video_parse_index_store=_VideoParseIndexStore(2, 2),
     )
     upload = service.create_session(
-        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
         total_size_bytes=10, idempotency_key="inherit-latest-config",
         video_parse_config=_video_parse_config_with_dimensions(2),
     )
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     factory = create_session_factory(engine)
     with factory.begin() as session:
         session.get(VideoParseTask, completed.video_parse_task_id).status = "COMPLETE"
@@ -445,7 +445,7 @@ def test_reparse_without_config_inherits_the_latest_task_and_freezes_endpoint_id
         }),
     })
     second = service.reparse(
-        upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
         video_parse_config=replacement,
     )
     expected = replacement.model_dump(mode="json")
@@ -457,7 +457,7 @@ def test_reparse_without_config_inherits_the_latest_task_and_freezes_endpoint_id
         session.get(VideoParseTask, second.video_parse_task_id).status = "COMPLETE"
 
     third = service.reparse(
-        upload.upload_session_id, workspace_id="local-default", expected_job_version=2,
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=2,
     )
     assert third.version == 3
     assert third.parse_config == second.parse_config
@@ -482,14 +482,14 @@ def test_reparse_freezes_a_legacy_endpoint_snapshot_after_selecting_the_latest_t
         video_parse_index_store=_VideoParseIndexStore(2, 2),
     )
     upload = service.create_session(
-        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
         total_size_bytes=10, idempotency_key="legacy-reparse-config",
         video_parse_config=_video_parse_config_with_dimensions(2),
     )
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     factory = create_session_factory(engine)
     with factory.begin() as session:
         task = session.get(VideoParseTask, completed.video_parse_task_id)
@@ -502,7 +502,7 @@ def test_reparse_freezes_a_legacy_endpoint_snapshot_after_selecting_the_latest_t
     service._execution_mode = "v2"
 
     reparsed = service.reparse(
-        upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
     )
     expected = json.loads(json.dumps(legacy))
     expected["models"]["embedding"]["encoder_model"] = "doubao-embedding-vision-250615"
@@ -534,11 +534,11 @@ def test_v2_execution_mode_creates_only_an_accepted_v2_task(
 
     completed = service.complete(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     repeated = service.complete(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
 
     assert completed.job_id is repeated.job_id is None
@@ -555,7 +555,7 @@ def test_v2_execution_mode_creates_only_an_accepted_v2_task(
 
 def _create(service: UploadService):
     return service.create_session(
-        workspace_id="local-default",
+        tenant_id="local-default",
         series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7,
         original_filename="episode-07.mp4",
@@ -578,7 +578,7 @@ def _put(
         upload_session_id,
         number,
         data,
-        workspace_id="local-default",
+        tenant_id="local-default",
         checksum_sha256=hashlib.sha256(data).hexdigest(),
         start_byte=start,
         end_byte_exclusive=start + len(data),
@@ -602,7 +602,7 @@ def test_upload_session_is_idempotent_and_reports_progress(
     repeated = _put(service, first.upload_session_id, 0, b"abcd")
     current = service.get_session(
         first.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
 
     assert first.upload_session_id == second.upload_session_id
@@ -613,7 +613,7 @@ def test_upload_session_is_idempotent_and_reports_progress(
     assert current.uploaded_size_bytes == 8
     assert service.get_detail(
         first.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     ).missing_segment_numbers == (2,)
     with engine.connect() as connection:
         assert connection.execute(
@@ -652,7 +652,7 @@ def test_new_upload_and_retry_keep_ready_sibling_searchable(
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     with session_factory() as session:
         assert session.get(Series, series_id).status == "READY"
 
@@ -663,7 +663,7 @@ def test_new_upload_and_retry_keep_ready_sibling_searchable(
         task.last_error = {"code": "MODEL_ERROR"}
     service.retry_parse(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         expected_job_version=1,
     )
     with session_factory() as session:
@@ -687,7 +687,7 @@ def test_selected_parse_config_survives_upload_completion_and_job_claim(
         repository, tmp_path, parse_defaults=defaults,
     )
     request = dict(
-        workspace_id="local-default",
+        tenant_id="local-default",
         series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7,
         original_filename="episode-07.mp4",
@@ -762,7 +762,7 @@ def test_selected_parse_config_survives_upload_completion_and_job_claim(
     _put(service, upload.upload_session_id, 0, b"abcd")
     _put(service, upload.upload_session_id, 1, b"efgh")
     _put(service, upload.upload_session_id, 2, b"ij")
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     assert completed.video_parse_task_id is not None
     task = ParseJobRepository(create_session_factory(engine)).get_video_parse_input(
         completed.video_parse_task_id
@@ -797,7 +797,7 @@ def test_upload_replays_explicit_config_with_a_pre_encoder_identity_fingerprint(
     )
     config = defaults if config_kind == "parse_config" else defaults.to_video_parse_v2()
     request = dict(
-        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
         total_size_bytes=10, idempotency_key="legacy-explicit-fingerprint",
     )
@@ -849,7 +849,7 @@ def test_completion_rejects_a_missing_fixed_v2_config_snapshot(
     with pytest.raises(UploadConflictError, match="fixed V2 parse configuration"):
         service.complete(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
         )
 
     with session_factory() as session:
@@ -870,10 +870,10 @@ def test_service_checks_workspace_and_session_range_before_writing_bytes(
     upload = _create(service)
 
     with pytest.raises(UploadSessionNotFoundError, match="workspace"):
-        service.get_detail(upload.upload_session_id, workspace_id="another-workspace")
+        service.get_detail(upload.upload_session_id, tenant_id="another-workspace")
     with pytest.raises(UploadSessionNotFoundError, match="workspace"):
-        service.complete(upload.upload_session_id, workspace_id="another-workspace")
-    for workspace_id, total_size, end_byte, expected_error in (
+        service.complete(upload.upload_session_id, tenant_id="another-workspace")
+    for tenant_id, total_size, end_byte, expected_error in (
         ("another-workspace", 10, 4, UploadSessionNotFoundError),
         ("local-default", 11, 4, UploadConflictError),
         ("local-default", 10, 3, UploadConflictError),
@@ -883,7 +883,7 @@ def test_service_checks_workspace_and_session_range_before_writing_bytes(
                 upload.upload_session_id,
                 0,
                 b"abcd",
-                workspace_id=workspace_id,
+                tenant_id=tenant_id,
                 checksum_sha256=hashlib.sha256(b"abcd").hexdigest(),
                 start_byte=0,
                 end_byte_exclusive=end_byte,
@@ -909,14 +909,14 @@ def test_upload_rejects_checksum_mismatch_and_missing_completion(
             upload.upload_session_id,
             0,
             b"abcd",
-            workspace_id="local-default",
+            tenant_id="local-default",
             checksum_sha256="0" * 64,
             start_byte=0,
             end_byte_exclusive=4,
             total_size_bytes=10,
         )
     with pytest.raises(UploadStateError, match="missing segments: 0, 1, 2"):
-        service.complete(upload.upload_session_id, workspace_id="local-default")
+        service.complete(upload.upload_session_id, tenant_id="local-default")
 
 
 def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(repository, tmp_path):
@@ -925,18 +925,18 @@ def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(
     _put(service, upload.upload_session_id, 0, b"abcd")
     staging = store.base_directory / "staging" / "uploads" / upload.upload_session_id
     with pytest.raises(UploadSessionNotFoundError, match="workspace"):
-        service.delete_session(upload.upload_session_id, workspace_id="other")
+        service.delete_session(upload.upload_session_id, tenant_id="other")
     assert staging.exists()
     assert upload_repository.get_session(upload.upload_session_id).status == "UPLOADING"
 
     later = service.create_session(
-        workspace_id="local-default", series_id=upload.series_id,
+        tenant_id="local-default", series_id=upload.series_id,
         episode_order=8,
         original_filename="later.mp4", media_type="video/mp4", total_size_bytes=4,
         idempotency_key="later",
     )
     _put(service, later.upload_session_id, 0, b"efgh", total_size_bytes=4)
-    completed = service.complete(later.upload_session_id, workspace_id="local-default")
+    completed = service.complete(later.upload_session_id, tenant_id="local-default")
     session_factory = create_session_factory(engine)
     jobs = ParseJobRepository(session_factory)
     queue = MySqlParseJobQueue(session_factory)
@@ -944,14 +944,14 @@ def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(
         "test-worker", lease_duration=timedelta(minutes=5),
     ) is None
 
-    deleted = service.delete_session(upload.upload_session_id, workspace_id="local-default")
-    repeated = service.delete_session(upload.upload_session_id, workspace_id="local-default")
+    deleted = service.delete_session(upload.upload_session_id, tenant_id="local-default")
+    repeated = service.delete_session(upload.upload_session_id, tenant_id="local-default")
     assert deleted.status == repeated.status == "EXPIRED"
     assert repeated.version == deleted.version
     assert deleted.uploaded_size_bytes == deleted.uploaded_segment_count == 0
     assert upload_repository.list_segments(upload.upload_session_id) == []
     assert not staging.exists()
-    assert service.list_sessions(workspace_id="local-default") == []
+    assert service.list_sessions(tenant_id="local-default") == []
     lease = queue.claim_next(
         "test-worker", lease_duration=timedelta(minutes=5),
     )
@@ -959,10 +959,10 @@ def test_delete_removes_segments_and_unblocks_later_parse_without_reusing_order(
     with pytest.raises(UploadStateError, match="expired"):
         _put(service, upload.upload_session_id, 0, b"abcd")
     with pytest.raises(UploadStateError, match="expired"):
-        service.complete(upload.upload_session_id, workspace_id="local-default")
+        service.complete(upload.upload_session_id, tenant_id="local-default")
     assert _create(service).status == "EXPIRED"
     next_upload = service.create_session(
-        workspace_id="local-default", series_id=upload.series_id,
+        tenant_id="local-default", series_id=upload.series_id,
         episode_order=9,
         original_filename="next.mp4", media_type="video/mp4", total_size_bytes=4,
         idempotency_key="next",
@@ -978,10 +978,10 @@ def test_delete_fences_in_flight_segment_and_cleans_late_bytes(repository, tmp_p
 
     def put_during_delete(*args):
         if delete_before_write:
-            service.delete_session(upload.upload_session_id, workspace_id="local-default")
+            service.delete_session(upload.upload_session_id, tenant_id="local-default")
         stored = put(*args)
         if not delete_before_write:
-            service.delete_session(upload.upload_session_id, workspace_id="local-default")
+            service.delete_session(upload.upload_session_id, tenant_id="local-default")
         return stored
 
     monkeypatch.setattr(store, "put_upload_segment", put_during_delete)
@@ -998,18 +998,18 @@ def test_delete_rejects_completing_and_running_parse(repository, tmp_path):
         _put(service, upload.upload_session_id, number, data)
     claim = upload_repository.claim_completion(upload.upload_session_id)
     with pytest.raises(UploadCompletionInProgressError):
-        service.delete_session(upload.upload_session_id, workspace_id="local-default")
+        service.delete_session(upload.upload_session_id, tenant_id="local-default")
     assert upload_repository.get_session(upload.upload_session_id).status == "COMPLETING"
     assert len(upload_repository.list_segments(upload.upload_session_id)) == 3
     upload_repository.release_completion(upload.upload_session_id, claim.completion_token, error="retry")
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     lease = MySqlParseJobQueue(create_session_factory(engine)).claim_next(
         "test-worker",
         lease_duration=timedelta(minutes=5),
     )
     assert lease is not None and lease.job_id == completed.job_id
     with pytest.raises(UploadStateError, match="being parsed"):
-        service.delete_session(upload.upload_session_id, workspace_id="local-default")
+        service.delete_session(upload.upload_session_id, tenant_id="local-default")
     with create_session_factory(engine)() as session:
         video = session.get(Video, completed.video_id)
         assert video is not None
@@ -1028,7 +1028,7 @@ def test_delete_rejects_active_v2_prefix_lease(repository, tmp_path):
         _put(service, upload.upload_session_id, number, data)
     completed = service.complete(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     with create_session_factory(engine).begin() as session:
         task = session.get(
@@ -1053,12 +1053,12 @@ def test_delete_rejects_active_v2_prefix_lease(repository, tmp_path):
     with pytest.raises(UploadStateError, match="being parsed"):
         service.delete_session(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
         )
     with pytest.raises(UploadStateError, match="Prefix worker is active"):
         service.reparse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
         )
 
@@ -1094,7 +1094,7 @@ def test_reparse_atomically_invalidates_the_series_prefix_suffix(
     upload_by_order = {}
     for order in range(1, 4):
         upload = service.create_session(
-            workspace_id="local-default",
+            tenant_id="local-default",
             series_id="77285f16-3e5b-592e-ba15-8b224b619806",
             episode_order=order,
             original_filename=f"episode-{order}.mp4",
@@ -1112,7 +1112,7 @@ def test_reparse_atomically_invalidates_the_series_prefix_suffix(
         upload_by_order[order] = upload
         completed_by_order[order] = service.complete(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
         )
 
     factory = create_session_factory(engine)
@@ -1159,7 +1159,7 @@ def test_reparse_atomically_invalidates_the_series_prefix_suffix(
     with pytest.raises(UploadStateError, match="active lease"):
         upload_repository.reparse(
             target_upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
             now=now,
             execution_mode="v2",
@@ -1201,7 +1201,7 @@ def test_reparse_atomically_invalidates_the_series_prefix_suffix(
 
     reparsed = upload_repository.reparse(
         target_upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         expected_job_version=1,
         now=now,
         execution_mode="v2",
@@ -1279,7 +1279,7 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     assert completed.video_parse_task_id is not None
     video_chunk_id = str(uuid4())
     chunk_task_id = str(uuid4())
@@ -1358,7 +1358,7 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
 
     retried = service.retry_parse(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         expected_job_version=1,
     )
 
@@ -1398,7 +1398,7 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
     with pytest.raises(UploadStateError, match="failed VideoParseTask"):
         service.retry_parse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
         )
 
@@ -1408,18 +1408,18 @@ def test_manual_parse_retry_requires_the_latest_failed_v2_task(repository, tmp_p
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
 
     with pytest.raises(UploadSessionNotFoundError, match="workspace"):
         service.retry_parse(
             upload.upload_session_id,
-            workspace_id="other-workspace",
+            tenant_id="other-workspace",
             expected_job_version=1,
         )
     with pytest.raises(UploadStateError, match="failed VideoParseTask"):
         service.retry_parse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
         )
 
@@ -1431,7 +1431,7 @@ def test_manual_parse_retry_requires_the_latest_failed_v2_task(repository, tmp_p
     with pytest.raises(UploadStateError, match="failed VideoParseTask"):
         service.retry_parse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
         )
 
@@ -1441,7 +1441,7 @@ def test_manual_parse_retry_requires_the_latest_failed_v2_task(repository, tmp_p
         task.last_error = {"code": "MODEL_ERROR"}
     retried = service.retry_parse(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         expected_job_version=1,
     )
     assert retried.video_parse_task_id == completed.video_parse_task_id
@@ -1455,7 +1455,7 @@ def prepared_v2_retry(repository, tmp_path):
         repository, tmp_path, clock=lambda: retry_at,
     )
     upload = service.create_session(
-        workspace_id="local-default",
+        tenant_id="local-default",
         series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7, original_filename="episode.mp4", media_type="video/mp4",
         total_size_bytes=10, idempotency_key="interval-retry",
@@ -1465,7 +1465,7 @@ def prepared_v2_retry(repository, tmp_path):
     )
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     factory = create_session_factory(engine)
     chunk_ids = [str(uuid4()) for _ in range(4)]
     interval_ids = [str(uuid4()) for _ in range(3)]
@@ -1544,7 +1544,7 @@ def test_indexing_retry_accepts_the_unique_short_interval_and_retains_results(
 
     retried = service.retry_parse(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         expected_job_version=1,
     )
 
@@ -1675,7 +1675,7 @@ def test_indexing_retry_rejects_invalid_short_window_without_mutation(
     with pytest.raises(UploadConflictError, match=error):
         service.retry_parse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
         )
     assert persisted_state() == before
@@ -1730,7 +1730,7 @@ def test_manual_retry_restores_each_child_phase_and_retains_results(
                 child.status = status
 
     retried = service.retry_parse(
-        upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
     )
     assert (retried.video_parse_task_id, retried.status, retried.version) == (task_id, expected, 1)
     assert retried.parse_config == config
@@ -1791,7 +1791,7 @@ def test_manual_retry_rejects_failure_drain_without_clearing_intent(
     with pytest.raises(UploadStateError):
         service.retry_parse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
         )
     with factory() as session:
@@ -1838,7 +1838,7 @@ def test_manual_retry_rejects_active_execution_lease_without_partial_reset(
     with pytest.raises(UploadStateError, match="execution worker is active"):
         service.retry_parse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
         )
 
@@ -1871,7 +1871,7 @@ def test_indexing_retry_rejects_invalid_sources_without_resetting_children(prepa
             session.delete(session.get(IntervalParseTask, interval_ids[-1]))
     with pytest.raises(UploadConflictError):
         service.retry_parse(
-            upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+            upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
         )
     with factory() as session:
         assert session.get(VideoParseTask, task_id).status == "INDEXING_FAILED"
@@ -1898,11 +1898,11 @@ def test_parse_retry_resumes_partial_fixed_topology(prepared_v2_retry, conflicti
     if conflicting_boundary:
         with pytest.raises(UploadConflictError, match="fixed chunk topology"):
             service.retry_parse(
-                upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+                upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
             )
     else:
         result = service.retry_parse(
-            upload.upload_session_id, workspace_id="local-default", expected_job_version=1,
+            upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
         )
         assert result.status == "PREPARING"
     with factory() as session:
@@ -1930,7 +1930,7 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
         _put(service, upload.upload_session_id, number, data)
     completed = service.complete(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     assert completed.video_parse_task_id is not None
     video_chunk_id = str(uuid4())
@@ -2050,7 +2050,7 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
     with pytest.raises(UploadConflictError, match="fixed chunk topology"):
         service.reparse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
             video_parse_config=incompatible_config,
         )
@@ -2058,7 +2058,7 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
 
     reparsed = service.reparse(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         expected_job_version=1,
         video_parse_config=replacement_config,
     )
@@ -2127,7 +2127,7 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
     with pytest.raises(UploadConflictError, match="version changed"):
         service.reparse(
             upload.upload_session_id,
-            workspace_id="local-default",
+            tenant_id="local-default",
             expected_job_version=1,
         )
     assert len(jobs.list_video_parse_tasks(completed.video_id)) == 2
@@ -2167,7 +2167,7 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     assert completed.job_id is None
     factory = create_session_factory(engine)
     lease = MySqlVideoParseQueue(factory).claim_video(
@@ -2199,7 +2199,7 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
     failed = cleanup_state in {"bulk_failure", "not_visible", "unavailable"}
     if failed:
         with pytest.raises(RuntimeError, match="cleanup"):
-            service.delete_session(upload.upload_session_id, workspace_id="local-default")
+            service.delete_session(upload.upload_session_id, tenant_id="local-default")
         with factory() as session:
             tombstone = session.get(UploadSession, upload.upload_session_id)
             assert tombstone.last_error_code == "DELETION_PENDING"
@@ -2212,11 +2212,11 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
         service._video_parse_index_store = parse_index
         assert service.reconcile_deletions() == (1, 0)
     else:
-        service.delete_session(upload.upload_session_id, workspace_id="local-default")
+        service.delete_session(upload.upload_session_id, tenant_id="local-default")
 
     deleted = upload_repository.get_session(upload.upload_session_id)
     cleanup_calls = (list(parse_index.deleted), list(parse_index.verified))
-    repeated = service.delete_session(upload.upload_session_id, workspace_id="local-default")
+    repeated = service.delete_session(upload.upload_session_id, tenant_id="local-default")
     assert deleted.status == repeated.status == "EXPIRED"
     assert deleted.version == repeated.version
     assert deleted.video_id is None and deleted.last_error_code is None
@@ -2242,7 +2242,7 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     now = 1_789_560_000_000
     video_chunk_id = str(uuid4())
     call_id = str(uuid4())
@@ -2350,7 +2350,7 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             job_id=completed.job_id,
             attempt_count=1,
             lease_version=1,
-            workspace_id="local-default",
+            tenant_id="local-default",
             series_id=upload.series_id,
             video_id=completed.video_id,
             sequence_no=0,
@@ -2394,11 +2394,11 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
         connection.exec_driver_sql("PRAGMA foreign_keys = ON")
     deleted = service.delete_session(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
     repeated = service.delete_session(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     )
 
     assert deleted.status == repeated.status == UploadSessionStatus.EXPIRED.value
@@ -2438,7 +2438,7 @@ def test_completed_upload_cleanup_failure_retains_retry_identity(repository, tmp
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     cleanup_video = store.delete_video_artifacts
 
     def fail_video_cleanup(_series_id, _video_id):
@@ -2446,7 +2446,7 @@ def test_completed_upload_cleanup_failure_retains_retry_identity(repository, tmp
 
     monkeypatch.setattr(store, "delete_video_artifacts", fail_video_cleanup)
     with pytest.raises(PermissionError, match="locked"):
-        service.delete_session(upload.upload_session_id, workspace_id="local-default")
+        service.delete_session(upload.upload_session_id, tenant_id="local-default")
     with create_session_factory(engine)() as session:
         tombstone = session.get(UploadSession, upload.upload_session_id)
         assert tombstone.status == UploadSessionStatus.EXPIRED.value
@@ -2471,7 +2471,7 @@ def test_reconcile_resumes_active_upload_cleanup_after_begin_crash(repository, t
 
     deletion = upload_repository.begin_delete_session(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
         now=unix_time_ms_to_datetime(1_789_560_000_000),
     )
     assert deletion.session.status == UploadSessionStatus.EXPIRED.value
@@ -2492,13 +2492,13 @@ def test_delete_rejects_an_inconsistent_shared_video_reference(repository, tmp_p
     upload = _create(service)
     for number, data in enumerate((b"abcd", b"efgh", b"ij")):
         _put(service, upload.upload_session_id, number, data)
-    completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
     shared_upload_id = str(uuid4())
     with create_session_factory(engine).begin() as session:
         original = session.get(UploadSession, upload.upload_session_id)
         session.add(UploadSession(
             upload_session_id=shared_upload_id,
-            workspace_id=original.workspace_id,
+            tenant_id=original.tenant_id,
             series_id=original.series_id,
             episode_order=original.episode_order + 1,
             upload_sequence=original.upload_sequence + 1,
@@ -2519,7 +2519,7 @@ def test_delete_rejects_an_inconsistent_shared_video_reference(repository, tmp_p
         ))
 
     with pytest.raises(UploadConflictError, match="another upload session"):
-        service.delete_session(upload.upload_session_id, workspace_id="local-default")
+        service.delete_session(upload.upload_session_id, tenant_id="local-default")
     with create_session_factory(engine)() as session:
         assert session.get(Video, completed.video_id) is not None
         assert session.get(SeriesParseJob, completed.job_id) is not None
@@ -2539,7 +2539,7 @@ def test_failed_completion_removes_unregistered_published_video(repository, tmp_
         _put(service, upload.upload_session_id, number, data)
 
     with pytest.raises(RuntimeError, match="probe failed"):
-        service.complete(upload.upload_session_id, workspace_id="local-default")
+        service.complete(upload.upload_session_id, tenant_id="local-default")
 
     videos_directory = (
         store.base_directory / "media" / "series" / upload.series_id / "videos"
@@ -2547,7 +2547,7 @@ def test_failed_completion_removes_unregistered_published_video(repository, tmp_
     assert not videos_directory.exists() or list(videos_directory.iterdir()) == []
     assert service.get_session(
         upload.upload_session_id,
-        workspace_id="local-default",
+        tenant_id="local-default",
     ).status == UploadSessionStatus.UPLOADING.value
 
 
@@ -2562,9 +2562,9 @@ def test_delete_cleanup_failure_can_be_retried(repository, tmp_path, monkeypatch
 
     monkeypatch.setattr(store, "delete_upload_staging", fail_cleanup)
     with pytest.raises(PermissionError):
-        service.delete_session(upload.upload_session_id, workspace_id="local-default")
+        service.delete_session(upload.upload_session_id, tenant_id="local-default")
     monkeypatch.setattr(store, "delete_upload_staging", cleanup)
-    assert service.delete_session(upload.upload_session_id, workspace_id="local-default").status == "EXPIRED"
+    assert service.delete_session(upload.upload_session_id, tenant_id="local-default").status == "EXPIRED"
     assert not (store.base_directory / "staging" / "uploads" / upload.upload_session_id).exists()
 
 
@@ -2574,12 +2574,12 @@ def test_deleting_segments_from_an_expired_session_advances_its_visible_version(
     upload = _create(service)
     _put(service, upload.upload_session_id, 0, b"abcd")
     now += timedelta_to_ms(timedelta(hours=2))
-    expired = service.get_session(upload.upload_session_id, workspace_id="local-default")
+    expired = service.get_session(upload.upload_session_id, tenant_id="local-default")
     assert expired.status == "EXPIRED" and expired.uploaded_size_bytes == 4
-    deleted = service.delete_session(upload.upload_session_id, workspace_id="local-default")
+    deleted = service.delete_session(upload.upload_session_id, tenant_id="local-default")
     assert deleted.version > expired.version
     assert deleted.uploaded_size_bytes == 0
-    assert service.delete_session(upload.upload_session_id, workspace_id="local-default").version == deleted.version
+    assert service.delete_session(upload.upload_session_id, tenant_id="local-default").version == deleted.version
 
 
 def test_complete_creates_video_and_durable_parse_job_once(
@@ -2595,8 +2595,8 @@ def test_complete_creates_video_and_durable_parse_job_once(
     _put(service, upload.upload_session_id, 0, b"abcd")
     _put(service, upload.upload_session_id, 1, b"efgh")
 
-    first = service.complete(upload.upload_session_id, workspace_id="local-default")
-    second = service.complete(upload.upload_session_id, workspace_id="local-default")
+    first = service.complete(upload.upload_session_id, tenant_id="local-default")
+    second = service.complete(upload.upload_session_id, tenant_id="local-default")
 
     assert first.video_id == second.video_id
     assert first.job_id == second.job_id
@@ -2654,7 +2654,7 @@ def test_expired_session_rejects_new_segments(repository, tmp_path) -> None:
         == UploadSessionStatus.EXPIRED.value
     )
     renewed = expired_service.create_session(
-        workspace_id="local-default",
+        tenant_id="local-default",
         series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7,
         original_filename="episode-07.mp4",
@@ -2671,20 +2671,20 @@ def test_expired_session_rejects_new_segments(repository, tmp_path) -> None:
 def test_source_checksum_and_visible_completion_versions(repository, tmp_path, content_sha256):
     _engine, _store, upload_repository, service = _upload_service(repository, tmp_path)
     upload = service.create_session(
-        workspace_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        tenant_id="local-default", series_id="77285f16-3e5b-592e-ba15-8b224b619806",
         episode_order=7, original_filename="episode.mp4", media_type="video/mp4",
         total_size_bytes=4, idempotency_key="checksum", content_sha256=content_sha256,
     )
     assert upload.upload_sequence == 7
     _put(service, upload.upload_session_id, 0, b"abcd", total_size_bytes=4)
-    received = service.get_session(upload.upload_session_id, workspace_id="local-default")
+    received = service.get_session(upload.upload_session_id, tenant_id="local-default")
     assert received.version > upload.version
     _put(service, upload.upload_session_id, 0, b"abcd", total_size_bytes=4)
-    assert service.get_session(upload.upload_session_id, workspace_id="local-default").version == received.version
+    assert service.get_session(upload.upload_session_id, tenant_id="local-default").version == received.version
     if content_sha256 == "0" * 64:
         with pytest.raises(UploadChecksumMismatchError):
-            service.complete(upload.upload_session_id, workspace_id="local-default")
-        current = service.get_session(upload.upload_session_id, workspace_id="local-default")
+            service.complete(upload.upload_session_id, tenant_id="local-default")
+        current = service.get_session(upload.upload_session_id, tenant_id="local-default")
         assert current.status == "UPLOADING" and current.missing_segment_numbers == ()
         assert current.job_id is None and current.completion_stage is None
         assert current.version > received.version
@@ -2692,12 +2692,12 @@ def test_source_checksum_and_visible_completion_versions(repository, tmp_path, c
         assert public.last_error.code == "CHECKSUM_MISMATCH"
         assert public.completion_progress is public.estimated_remaining_ms is None
     else:
-        completed = service.complete(upload.upload_session_id, workspace_id="local-default")
+        completed = service.complete(upload.upload_session_id, tenant_id="local-default")
         assert completed.session.job_id == completed.job_id
         assert completed.session.version > received.version
         assert completed.session.content_sha256 == content_sha256
         assert completed.session.completion_stage is None
-        replay = service.complete(upload.upload_session_id, workspace_id="local-default")
+        replay = service.complete(upload.upload_session_id, tenant_id="local-default")
         assert replay.session.version == completed.session.version
         assert replay.job_id == completed.job_id
         assert replay.video_parse_task_id == completed.video_parse_task_id
@@ -2707,7 +2707,7 @@ def test_episode_order_is_stable_on_replay_and_used_as_upload_sequence(repositor
     _engine, _store, _repo, service = _upload_service(repository, tmp_path)
     first = _create(service)
     second = service.create_session(
-        workspace_id="local-default", series_id=first.series_id, episode_order=8,
+        tenant_id="local-default", series_id=first.series_id, episode_order=8,
         original_filename="episode-08.mp4", media_type="video/mp4", total_size_bytes=4,
         idempotency_key="second-upload",
     )
@@ -2716,7 +2716,7 @@ def test_episode_order_is_stable_on_replay_and_used_as_upload_sequence(repositor
     assert _create(service).upload_sequence == first.upload_sequence
     with pytest.raises(UploadConflictError, match="idempotency"):
         service.create_session(
-            workspace_id="local-default",
+            tenant_id="local-default",
             series_id=first.series_id,
             episode_order=9,
             original_filename=first.original_filename,
@@ -2726,7 +2726,7 @@ def test_episode_order_is_stable_on_replay_and_used_as_upload_sequence(repositor
         )
     with pytest.raises(UploadConflictError, match="episode"):
         service.create_session(
-            workspace_id="local-default",
+            tenant_id="local-default",
             series_id=first.series_id,
             episode_order=7,
             original_filename="duplicate-slot.mp4",
@@ -2743,14 +2743,14 @@ def test_episode_order_is_stable_on_replay_and_used_as_upload_sequence(repositor
 def test_upload_key_keeps_optional_original_request_parameters(repository, tmp_path, first_optional, changed_optional):
     _engine, _store, _repo, service = _upload_service(repository, tmp_path)
     request = {
-        "workspace_id": "local-default", "series_id": "77285f16-3e5b-592e-ba15-8b224b619806",
+        "tenant_id": "local-default", "series_id": "77285f16-3e5b-592e-ba15-8b224b619806",
         "episode_order": 7, "original_filename": "episode.mp4", "media_type": "video/mp4",
         "total_size_bytes": 4, "idempotency_key": "optional-parameters",
     }
     first = service.create_session(**request, **first_optional)
     if not first_optional and "content_sha256" in changed_optional:
         _put(service, first.upload_session_id, 0, b"abcd", total_size_bytes=4)
-        service.complete(first.upload_session_id, workspace_id="local-default")
+        service.complete(first.upload_session_id, tenant_id="local-default")
     with pytest.raises(UploadConflictError):
         service.create_session(**request, **changed_optional)
     replay = service.create_session(**request, **first_optional)
@@ -2766,7 +2766,7 @@ def test_episode_order_must_be_a_positive_signed_32_bit_integer(
     _engine, _store, _repo, service = _upload_service(repository, tmp_path)
     with pytest.raises(ValueError):
         service.create_session(
-            workspace_id="local-default",
+            tenant_id="local-default",
             series_id="77285f16-3e5b-592e-ba15-8b224b619806",
             episode_order=episode_order,
             original_filename="episode.mp4",
@@ -2794,7 +2794,7 @@ def test_episode_order_conflicts_with_existing_video_in_the_same_series(
         ))
     with pytest.raises(UploadConflictError, match="episode"):
         service.create_session(
-            workspace_id="local-default",
+            tenant_id="local-default",
             series_id="77285f16-3e5b-592e-ba15-8b224b619806",
             episode_order=9,
             original_filename="conflict.mp4",
@@ -2814,7 +2814,7 @@ def test_legacy_session_without_fingerprint_compares_file_fields(repository, tmp
         upload_repository, store, config=replace(_config(), preferred_segment_size_bytes=2),
     )
     request = {
-        "workspace_id": "local-default", "series_id": first.series_id,
+        "tenant_id": "local-default", "series_id": first.series_id,
         "episode_order": first.episode_order,
         "original_filename": first.original_filename, "media_type": first.media_type,
         "total_size_bytes": first.total_size_bytes, "idempotency_key": "upload-episode-07",
@@ -2860,3 +2860,41 @@ def test_replay_and_expiration_do_not_lock_series(repository, tmp_path, elapsed_
         assert any("update upload_session" in statement for statement in statements)
     else:
         assert replay.status == UploadSessionStatus.UPLOADING.value
+
+def test_upload_creator_stays_stable_while_retry_actor_is_persisted(repository, tmp_path):
+    engine, _, _, service = _upload_service(repository, tmp_path)
+    upload = service.create_session(
+        tenant_id="local-default", created_by_user_id="user-A",
+        series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+        episode_order=7, original_filename="episode-07.mp4", media_type="video/mp4",
+        total_size_bytes=10, idempotency_key="owned-upload",
+    )
+    for number, data in enumerate((b"abcd", b"efgh", b"ij")):
+        _put(service, upload.upload_session_id, number, data)
+    completed = service.complete(upload.upload_session_id, tenant_id="local-default")
+    factory = create_session_factory(engine)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, completed.video_parse_task_id)
+        assert task.created_by_user_id == "user-A"
+        assert task.detail["_worker_runtime_v2"]["actor_user_id"] == "user-A"
+        assert session.get(SeriesParseJob, completed.job_id).created_by_user_id == "user-A"
+        assert session.get(UploadSession, upload.upload_session_id).created_by_user_id == "user-A"
+        task.status = "PARSING_FAILED"
+    retried = service.retry_parse(
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=1, actor_user_id="user-B",
+    )
+    assert retried.video_parse_task_id == completed.video_parse_task_id
+    assert retried.created_by_user_id == "user-A"
+    assert retried.detail["_worker_runtime_v2"]["actor_user_id"] == "user-B"
+    with factory.begin() as session:
+        session.get(VideoParseTask, completed.video_parse_task_id).status = "COMPLETE"
+    reparsed = service.reparse(
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=1, actor_user_id="user-C",
+    )
+    assert reparsed.video_parse_task_id != completed.video_parse_task_id
+    assert reparsed.created_by_user_id == "user-C"
+    assert reparsed.detail["_worker_runtime_v2"]["actor_user_id"] == "user-C"
+    with factory() as session:
+        old = session.get(VideoParseTask, completed.video_parse_task_id)
+        assert old.created_by_user_id == "user-A"
+        assert old.detail["_worker_runtime_v2"]["actor_user_id"] == "user-B"

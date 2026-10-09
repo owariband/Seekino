@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 import logging
 import time
-from typing import AsyncIterator
 from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.concurrency import run_in_threadpool
 
-from ..bootstrap import ApplicationServices, build_application_services
+from ..bootstrap import ApplicationServices
 from ..config import ServerSettings
+from ..config.auth import AuthConfig
 from ..config.sse import SSEConfig
 from ..router import router
 from .errors import register_exception_handlers
@@ -26,23 +26,20 @@ def create_app(
     *,
     settings: ServerSettings | None = None,
 ) -> FastAPI:
-    owns_services = services is None
-    resolved_settings = settings
     if services is None:
-        resolved_settings = resolved_settings or ServerSettings.from_environment()
-        services = build_application_services(resolved_settings)
-    assert services is not None
+        from ..main import create_http_application
 
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        if not owns_services:
-            yield
-            return
-        try:
-            await run_in_threadpool(services.start)
-            yield
-        finally:
-            await run_in_threadpool(services.close)
+        return create_http_application(settings=settings)
+    return build_app(services, settings=settings)
+
+
+def build_app(
+    services: ApplicationServices,
+    *,
+    settings: ServerSettings | None = None,
+    lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
+) -> FastAPI:
+    resolved_settings = settings
 
     app = FastAPI(
         title="anivag Server",
@@ -50,6 +47,9 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.services = services
+    app.state.auth_config = resolved_settings.auth if resolved_settings else getattr(
+        getattr(services, "auth", None), "config", AuthConfig()
+    )
     app.state.sse_config = resolved_settings.sse if resolved_settings else SSEConfig()
     app.state.model_config_path = getattr(resolved_settings, "model_config_path", None)
 
@@ -61,6 +61,8 @@ def create_app(
         status_code = 500
         try:
             response = await call_next(request)
+            if app.state.auth_config.mode == "cloud" and request.url.path.startswith("/api/"):
+                response.headers["Cache-Control"] = "private, no-store"
             status_code = response.status_code
             response.headers["X-Request-Id"] = request.state.request_id
             return response
@@ -73,11 +75,13 @@ def create_app(
             )
             request_id_context.reset(token)
     origins = resolved_settings.allowed_origins if resolved_settings else ()
+    if "*" in origins:
+        raise ValueError("credentialed API requests require explicit allowed origins")
     if origins:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(origins),
-            allow_credentials=False,
+            allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
             allow_headers=[
                 "Content-Type",
@@ -89,13 +93,14 @@ def create_app(
                 "If-Range",
                 "If-None-Match",
                 "Last-Event-ID",
+                "X-CSRF-Token",
             ],
             expose_headers=["Content-Range", "Content-Length", "Accept-Ranges", "ETag", "X-Request-Id"],
         )
     register_exception_handlers(app)
     app.include_router(router, responses={
         code: {"model": ApiError}
-        for code in (400, 403, 404, 409, 410, 422, 500, 502)
+        for code in (400, 401, 403, 404, 409, 410, 422, 429, 500, 502, 503)
     })
     generate_openapi = app.openapi
 

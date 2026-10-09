@@ -12,12 +12,9 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
-    create_engine,
-    event,
     inspect,
 )
 from sqlalchemy.dialects.mysql import TIMESTAMP
-from sqlalchemy.engine import make_url
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -37,6 +34,8 @@ class SchemaUpgradeRequiredError(RuntimeError):
 
 
 _UNIX_TIME_MS_COLUMNS = {
+    "user": {"created_at", "updated_at"},
+    "tenant": {"created_at", "updated_at"},
     "agent_conversation": {"last_message_at", "created_at", "updated_at"},
     "agent_message": {"created_at", "updated_at"},
     "context_snapshot": {"created_at"},
@@ -198,34 +197,12 @@ def create_database_engine(
     environment: DatabaseEnvironment | str,
     pool_recycle_seconds: int = 3600,
 ) -> Engine:
-    environment = DatabaseEnvironment(environment)
-    url = make_url(database_url)
-    _validate_database_url(url.drivername, url.database, environment)
-    if url.get_backend_name() == "mysql":
-        charset = url.query.get("charset")
-        if charset is None:
-            url = url.update_query_dict({"charset": "utf8mb4"})
-        elif not isinstance(charset, str) or charset.casefold() != "utf8mb4":
-            raise ValueError("MySQL connection charset must be utf8mb4")
-    engine = create_engine(
-        url,
-        pool_pre_ping=True,
-        pool_recycle=pool_recycle_seconds,
+    from .caller.mysql import create_database_engine as create_caller_database_engine
+
+    return create_caller_database_engine(
+        database_url, environment=environment,
+        pool_recycle_seconds=pool_recycle_seconds,
     )
-    if url.get_backend_name() == "mysql":
-        event.listen(engine, "connect", _set_mysql_session_timezone_utc)
-    return engine
-
-
-def _set_mysql_session_timezone_utc(
-    dbapi_connection: object,
-    _connection_record: object,
-) -> None:
-    cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
-    try:
-        cursor.execute("SET time_zone = '+00:00'")
-    finally:
-        cursor.close()
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
@@ -235,6 +212,16 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 def create_schema(engine: Engine) -> None:
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
+    legacy_scope = {
+        f"{table_name}.workspace_id"
+        for table_name in {"series", "upload_session", "agent_conversation", "model_usage", "parse_model_call"}.intersection(existing_tables)
+        if "workspace_id" in {column["name"] for column in inspector.get_columns(table_name)}
+    }
+    if legacy_scope:
+        raise SchemaUpgradeRequiredError(
+            "identity scope requires 20261010_user_tenant_identity.sql before init-db; legacy: "
+            + ", ".join(sorted(legacy_scope))
+        )
     if engine.dialect.name == "mysql" and "video" in existing_tables:
         duration = next(
             (column for column in inspector.get_columns("video")
@@ -283,8 +270,8 @@ def create_schema(engine: Engine) -> None:
         }
         if "session_id" in conversation_columns:
             legacy_agent_schema.add("agent_conversation.session_id")
-        if "workspace_id" not in conversation_columns:
-            legacy_agent_schema.add("agent_conversation missing workspace_id")
+        if "tenant_id" not in conversation_columns:
+            legacy_agent_schema.add("agent_conversation missing tenant_id")
     if legacy_agent_schema:
         found = ", ".join(sorted(legacy_agent_schema))
         raise SchemaUpgradeRequiredError(
@@ -454,7 +441,7 @@ def create_schema(engine: Engine) -> None:
                 incompatible_usage.add(f"{table.name}.collation")
         for column in inspector.get_columns(table.name):
             name, column_type = column["name"], column["type"]
-            if name in {"call_id", "workspace_id", "task_type", "run_id"}:
+            if name in {"call_id", "tenant_id", "task_type", "run_id"}:
                 expected = table.c[name].type
                 if not isinstance(column_type, String) or column_type.length != expected.length:
                     incompatible_usage.add(f"{table.name}.{name}.type")
@@ -541,6 +528,8 @@ def create_schema(engine: Engine) -> None:
             f"TIMESTAMP(3) UTC migration before init-db; found: {found}"
         )
 
+    _check_identity_schema(inspector, existing_tables)
+
     # Importing registers every table on Base.metadata without making the
     # connection module depend on concrete repositories.
     from .model import agent as _agent_models  # noqa: F401
@@ -549,8 +538,47 @@ def create_schema(engine: Engine) -> None:
     from .model import parse_usage as _parse_usage_models  # noqa: F401
     from .model import upload as _upload_models  # noqa: F401
     from .model import video as _video_models  # noqa: F401
+    from .model import user as _user_models  # noqa: F401
+    from .model import tenant as _tenant_models  # noqa: F401
 
     Base.metadata.create_all(engine)
+
+
+def _check_identity_schema(inspector: Inspector, existing_tables: set[str]) -> None:
+    from .model.tenant import Tenant
+    from .model.user import User
+
+    required = {
+        "series": {"tenant_id", "is_published"},
+        "upload_session": {"tenant_id", "created_by_user_id"},
+        "agent_conversation": {"tenant_id", "owner_user_id"},
+        "model_usage": {"tenant_id", "actor_user_id"},
+        "parse_model_call": {"tenant_id"},
+        "series_parse_job": {"created_by_user_id"},
+        "video_parse_task": {"created_by_user_id"},
+    }
+    if not existing_tables.intersection({*required, "video", "user", "tenant"}):
+        return
+    differences = _schema_structure_differences(inspector, existing_tables, (User.__table__, Tenant.__table__))
+    for table_name, columns in required.items():
+        if table_name in existing_tables:
+            actual = {column["name"] for column in inspector.get_columns(table_name)}
+            differences.update(f"{table_name}.{name}" for name in columns - actual)
+    for table_name, expected in {
+        "agent_conversation": ("tenant_id", "owner_user_id", "idempotency_key"),
+        "upload_session": ("tenant_id", "created_by_user_id", "idempotency_key"),
+    }.items():
+        if table_name not in existing_tables:
+            continue
+        unique = {tuple(item.get("column_names") or ()) for item in inspector.get_unique_constraints(table_name)}
+        unique.update(tuple(item.get("column_names") or ()) for item in inspector.get_indexes(table_name) if item.get("unique"))
+        if expected not in unique:
+            differences.add(f"{table_name}.identity_idempotency")
+    if differences:
+        raise SchemaUpgradeRequiredError(
+            "user / tenant identity schema requires 20261010_user_tenant_identity.sql before init-db; incompatible: "
+            + ", ".join(sorted(differences))
+        )
 
 
 def _normalize_task_check(expression: str) -> str:
@@ -671,31 +699,3 @@ def _schema_structure_differences(
 def _normalize_ondelete(value: object) -> str:
     normalized = str(value or "RESTRICT").replace("_", " ").upper()
     return "RESTRICT" if normalized == "NO ACTION" else normalized
-
-
-def _validate_database_url(
-    drivername: str,
-    database_name: str | None,
-    environment: DatabaseEnvironment,
-) -> None:
-    backend = drivername.split("+", 1)[0]
-    if backend == "sqlite":
-        if environment is not DatabaseEnvironment.TEST:
-            raise ValueError("SQLite is only allowed for isolated tests")
-        return
-    if backend != "mysql":
-        raise ValueError("anivag persistence requires a MySQL database URL")
-    if not database_name:
-        raise ValueError("database URL must select a database")
-
-    normalized = database_name.casefold()
-    is_test = normalized.endswith("_test")
-    is_development = normalized.endswith(("_dev", "_development"))
-    if environment is DatabaseEnvironment.TEST and not is_test:
-        raise ValueError("test database name must end with '_test'")
-    if environment is DatabaseEnvironment.DEVELOPMENT and not is_development:
-        raise ValueError(
-            "development database name must end with '_dev' or '_development'"
-        )
-    if environment is DatabaseEnvironment.PRODUCTION and (is_test or is_development):
-        raise ValueError("production cannot use a test or development database")

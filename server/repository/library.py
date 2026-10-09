@@ -7,6 +7,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from ..constants.identity import LOCAL_USER_ID
+
 from ..model.agent import AgentConversation, AgentMessage, AgentMessageRole
 from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesState, VideoSummaryState
 from ..model.index_sync import IndexSyncIntent, IndexSyncOperation, IndexSyncStatus
@@ -63,7 +65,7 @@ class LibraryRepository:
         self,
         *,
         series_id: str,
-        workspace_id: str,
+        tenant_id: str,
         name: str,
         description: str | None,
         transcript_language_hint: str | None,
@@ -77,14 +79,14 @@ class LibraryRepository:
                     if existing is None:
                         existing = session.scalar(
                             select(Series).where(
-                                Series.workspace_id == workspace_id,
+                                Series.tenant_id == tenant_id,
                                 Series.name == name,
                             )
                         )
                     if existing is not None:
                         if (
                             existing.series_id != series_id
-                            or existing.workspace_id != workspace_id
+                            or existing.tenant_id != tenant_id
                             or existing.name.casefold() != name.casefold()
                             or existing.description != description
                             or existing.transcript_language_hint
@@ -108,7 +110,7 @@ class LibraryRepository:
 
                     record = Series(
                         series_id=series_id,
-                        workspace_id=workspace_id,
+                        tenant_id=tenant_id,
                         name=name,
                         description=description,
                         transcript_language_hint=transcript_language_hint,
@@ -124,18 +126,18 @@ class LibraryRepository:
                     raise
         raise AssertionError("unreachable")
 
-    def update_series(self, series_id: str, *, workspace_id: str, changes: dict) -> None:
+    def update_series(self, series_id: str, *, tenant_id: str, changes: dict) -> None:
         with self._session_factory.begin() as session:
             record = session.scalar(
                 select(Series).where(
                     Series.series_id == series_id,
-                    Series.workspace_id == workspace_id,
+                    Series.tenant_id == tenant_id,
                 ).with_for_update()
             )
             if record is None:
                 raise SeriesNotFoundError("Series does not exist in this workspace")
             for field in (
-                "description", "transcript_language_hint", "important_extra_data",
+                "description", "transcript_language_hint", "important_extra_data", "is_published",
             ):
                 if field in changes:
                     setattr(record, field, changes[field])
@@ -144,7 +146,7 @@ class LibraryRepository:
         self,
         video_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
         episode_order: int,
     ) -> None:
         if (
@@ -173,11 +175,11 @@ class LibraryRepository:
                         f"videoId {video_id!r} does not exist in this workspace"
                     )
                 series_workspace = session.scalar(
-                    select(Series.workspace_id).where(
+                    select(Series.tenant_id).where(
                         Series.series_id == video.series_id,
                     )
                 )
-                if series_workspace != workspace_id:
+                if series_workspace != tenant_id:
                     raise SeriesNotFoundError(
                         f"videoId {video_id!r} does not exist in this workspace"
                     )
@@ -245,68 +247,72 @@ class LibraryRepository:
 
     def list_series(
         self,
-        workspace_id: str,
+        tenant_id: str,
         *,
         status: str | None = None,
         query: str | None = None,
         offset: int = 0,
         limit: int | None = None,
+        published_only: bool = False,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> list[SeriesState]:
         with self._session_factory() as session:
             statement = (
                 select(Series)
                 .where(*self._series_filters(
-                    workspace_id,
+                    tenant_id,
                     status=status if self._execution_mode == "v1" else None,
                     query=query,
                 ))
                 .order_by(Series.created_at, Series.series_id)
             )
+            if published_only:
+                statement = statement.where(Series.is_published.is_(True))
             if self._execution_mode == "v1":
                 records = session.scalars(
                     statement.offset(offset).limit(limit)
                 ).all()
-                return self._series_states(session, records)
-            states = self._series_states(session, session.scalars(statement).all())
+                return self._series_states(session, records, owner_user_id=owner_user_id)
+            states = self._series_states(session, session.scalars(statement).all(), owner_user_id=owner_user_id)
             if status is not None:
                 states = [item for item in states if item.status == status]
             return states[offset : None if limit is None else offset + limit]
 
     def count_series(
         self,
-        workspace_id: str,
+        tenant_id: str,
         *,
         status: str | None = None,
         query: str | None = None,
     ) -> int:
         if self._execution_mode == "v2":
             return len(self.list_series(
-                workspace_id,
+                tenant_id,
                 status=status,
                 query=query,
             ))
         with self._session_factory() as session:
             return int(session.scalar(
                 select(func.count(Series.series_id)).where(
-                    *self._series_filters(workspace_id, status=status, query=query)
+                    *self._series_filters(tenant_id, status=status, query=query)
                 )
             ) or 0)
 
-    def get_series(self, series_id: str, workspace_id: str) -> SeriesState:
+    def get_series(self, series_id: str, tenant_id: str, *, owner_user_id: str = LOCAL_USER_ID) -> SeriesState:
         with self._session_factory() as session:
             series = session.scalar(
                 select(Series).where(
                     Series.series_id == series_id,
-                    Series.workspace_id == workspace_id,
+                    Series.tenant_id == tenant_id,
                 )
             )
             if series is None:
                 raise SeriesNotFoundError(
                     f"seriesId {series_id!r} does not exist in this workspace"
                 )
-            state = self._series_states(session, [series], include_videos=True)[0]
+            state = self._series_states(session, [series], include_videos=True, owner_user_id=owner_user_id)[0]
         uploads = UploadRepository(self._session_factory).list_for_series(
-            series_id, workspace_id=workspace_id,
+            series_id, tenant_id=tenant_id,
         )
         return replace(
             state,
@@ -319,10 +325,10 @@ class LibraryRepository:
     def get_video(
         self,
         video_id: str,
-        workspace_id: str,
+        tenant_id: str,
     ) -> VideoSummaryState:
         with self._session_factory() as session:
-            states = self._video_states(session, workspace_id=workspace_id, video_id=video_id)
+            states = self._video_states(session, tenant_id=tenant_id, video_id=video_id)
             if not states:
                 raise SeriesNotFoundError(
                     f"videoId {video_id!r} does not exist in this workspace"
@@ -330,8 +336,8 @@ class LibraryRepository:
             return states[0]
 
     @staticmethod
-    def _series_filters(workspace_id: str, *, status: str | None, query: str | None):
-        filters = [Series.workspace_id == workspace_id]
+    def _series_filters(tenant_id: str, *, status: str | None, query: str | None):
+        filters = [Series.tenant_id == tenant_id]
         if status:
             filters.append(Series.status == status)
         if query:
@@ -344,12 +350,13 @@ class LibraryRepository:
         records: list[Series],
         *,
         include_videos: bool = False,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> list[SeriesState]:
         if not records:
             return []
         series_ids = [record.series_id for record in records]
         videos = self._video_states(
-            session, workspace_id=records[0].workspace_id, series_ids=series_ids,
+            session, tenant_id=records[0].tenant_id, series_ids=series_ids,
         )
         ready_video_ids = (
             set(list_ready_video_ids(session, series_ids))
@@ -364,7 +371,7 @@ class LibraryRepository:
             select(UploadSession.series_id, func.count(UploadSession.upload_session_id))
             .where(
                 UploadSession.series_id.in_(series_ids),
-                UploadSession.workspace_id == records[0].workspace_id,
+                UploadSession.tenant_id == records[0].tenant_id,
                 UploadSession.status.not_in({"COMPLETED", "EXPIRED", "CANCELLED"}),
                 (UploadSession.status != "UPLOADING")
                 | (UploadSession.expires_at > now_utc()),
@@ -376,7 +383,8 @@ class LibraryRepository:
             select(AgentMessage)
             .join(AgentConversation)
             .where(
-                AgentConversation.workspace_id == records[0].workspace_id,
+                AgentConversation.tenant_id == records[0].tenant_id,
+                AgentConversation.owner_user_id == owner_user_id,
                 AgentMessage.role == AgentMessageRole.USER.value,
             )
             .order_by(AgentMessage.created_at.desc(), AgentMessage.message_id.desc())
@@ -430,14 +438,14 @@ class LibraryRepository:
         self,
         session: Session,
         *,
-        workspace_id: str,
+        tenant_id: str,
         series_ids: list[str] | None = None,
         video_id: str | None = None,
     ) -> list[VideoSummaryState]:
         if self._execution_mode == "v2":
             return self._video_states_v2(
                 session,
-                workspace_id=workspace_id,
+                tenant_id=tenant_id,
                 series_ids=series_ids,
                 video_id=video_id,
             )
@@ -455,7 +463,7 @@ class LibraryRepository:
             select(Video, latest.c.job_id, latest.c.status, latest.c.last_error)
             .join(Series, Series.series_id == Video.series_id)
             .outerjoin(latest, (latest.c.video_id == Video.video_id) & (latest.c.position == 1))
-            .where(Series.workspace_id == workspace_id)
+            .where(Series.tenant_id == tenant_id)
             .order_by(Video.episode_order, Video.video_id)
         )
         if series_ids is not None:
@@ -522,7 +530,7 @@ class LibraryRepository:
                 completed=parse_status in {"SUCCEEDED", "COMPLETED"},
             )
             states.append(self._video_state(
-                video, workspace_id=workspace_id, index_status=index_status,
+                video, tenant_id=tenant_id, index_status=index_status,
                 latest_job_id=job_id, parse_status=parse_status,
                 parse_progress=(
                     checkpoint_progress.overall_progress
@@ -543,7 +551,7 @@ class LibraryRepository:
         self,
         session: Session,
         *,
-        workspace_id: str,
+        tenant_id: str,
         series_ids: list[str] | None,
         video_id: str | None,
     ) -> list[VideoSummaryState]:
@@ -577,7 +585,7 @@ class LibraryRepository:
                 (latest.c.video_id == Video.video_id)
                 & (latest.c.position == 1),
             )
-            .where(Series.workspace_id == workspace_id)
+            .where(Series.tenant_id == tenant_id)
             .order_by(Video.episode_order, Video.video_id)
         )
         if series_ids is not None:
@@ -615,7 +623,7 @@ class LibraryRepository:
             parse_status = task_status or video.parse_status
             states.append(self._video_state(
                 video,
-                workspace_id=workspace_id,
+                tenant_id=tenant_id,
                 index_status=index_status,
                 latest_job_id=None,
                 parse_status=parse_status,
@@ -646,7 +654,7 @@ class LibraryRepository:
     ) -> SeriesState:
         return SeriesState(
             series_id=record.series_id,
-            workspace_id=record.workspace_id,
+            tenant_id=record.tenant_id,
             name=record.name,
             description=record.description,
             transcript_language_hint=record.transcript_language_hint,
@@ -660,6 +668,7 @@ class LibraryRepository:
             last_search=last_search,
             created_at=record.created_at,
             updated_at=record.updated_at,
+            is_published=record.is_published,
             representative_video=representative_video,
             videos=videos,
         )
@@ -668,7 +677,7 @@ class LibraryRepository:
     def _video_state(
         record: Video,
         *,
-        workspace_id: str,
+        tenant_id: str,
         index_status: VideoIndexStatus,
         latest_job_id: str | None,
         parse_status: str,
@@ -678,7 +687,7 @@ class LibraryRepository:
     ) -> VideoSummaryState:
         return VideoSummaryState(
             video_id=record.video_id,
-            workspace_id=workspace_id,
+            tenant_id=tenant_id,
             series_id=record.series_id,
             episode_order=record.episode_order,
             upload_sequence=record.upload_sequence,

@@ -3,7 +3,7 @@ import { CircleAlert, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { getUsageOverview, shouldRetryApiRequest, WORKSPACE_ID } from "../../api/client";
+import { getUsageOverview, shouldRetryApiRequest, TENANT_ID } from "../../api/client";
 import type { UsageOverviewVO } from "../../api/contracts";
 import { formatTokens } from "../../shared/format";
 import styles from "./usage.module.css";
@@ -26,7 +26,7 @@ export function UsagePage() {
   const [seriesId, setSeriesId] = useState("");
   const [view, setView] = useState<"models" | "runs">("models");
   const usageQuery = useQuery({
-    queryKey: ["usage-overview", WORKSPACE_ID, seriesId],
+    queryKey: ["usage-overview", TENANT_ID, seriesId],
     queryFn: ({ signal }) => getUsageOverview({ seriesId }, signal),
     retry: shouldRetryApiRequest,
     staleTime: 30_000,
@@ -35,7 +35,7 @@ export function UsagePage() {
   const overview = usageQuery.data;
   const available = overview?.status === "available";
   const totals = available ? overview.totals : undefined;
-  const allOverview = queryClient.getQueryData<UsageOverviewVO>(["usage-overview", WORKSPACE_ID, ""]);
+  const allOverview = queryClient.getQueryData<UsageOverviewVO>(["usage-overview", TENANT_ID, ""]);
   const series = [...new Set((allOverview?.runs ?? overview?.runs ?? []).flatMap((run) => run.seriesId ? [run.seriesId] : []))];
   if (seriesId && !series.includes(seriesId)) series.push(seriesId);
   const knownTokenSubtotal = totals?.totalTokens === null || overview?.truncated;

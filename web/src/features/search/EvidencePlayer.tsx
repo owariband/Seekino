@@ -27,14 +27,14 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
   const [refreshed, setRefreshed] = useState<VideoChunkEvidence | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [failedImage, setFailedImage] = useState<string | null>(null);
-  const evidence = refreshed?.videoChunkId === hit?.evidence.videoChunkId && refreshed?.workspaceId === hit?.evidence.workspaceId ? refreshed : hit?.evidence;
+  const evidence = refreshed?.videoChunkId === hit?.evidence.videoChunkId && refreshed?.tenantId === hit?.evidence.tenantId ? refreshed : hit?.evidence;
   const selectionRef = useRef<string | null>(null);
-  const selectionKey = evidence ? `${evidence.workspaceId}:${evidence.videoChunkId}` : null;
+  const selectionKey = evidence ? `${evidence.tenantId}:${evidence.videoChunkId}` : null;
   selectionRef.current = selectionKey;
-  useEffect(() => { setRefreshing(false); }, [hit?.evidence.workspaceId, hit?.evidence.videoChunkId]);
+  useEffect(() => { setRefreshing(false); }, [hit?.evidence.tenantId, hit?.evidence.videoChunkId]);
   const playbackUrl = evidence?.playbackStatus === "READY" ? mediaUrl(evidence.playbackUrl) : null;
   const clipDurationSeconds = Math.max(0, playbackRange.endSeconds - playbackRange.startSeconds);
-  const playbackKey = evidence && playbackUrl ? `${evidence.workspaceId}:${evidence.videoId}:${evidence.videoChunkId}:${playbackRange.startSeconds}:${playbackRange.endSeconds}:${playbackUrl}` : null;
+  const playbackKey = evidence && playbackUrl ? `${evidence.tenantId}:${evidence.videoId}:${evidence.videoChunkId}:${playbackRange.startSeconds}:${playbackRange.endSeconds}:${playbackUrl}` : null;
 
   useEffect(() => {
     setTab("reason");
@@ -113,7 +113,7 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
       video.removeEventListener("pause", markPaused);
       video.pause();
     };
-  }, [clipDurationSeconds, evidence?.workspaceId, evidence?.videoId, evidence?.videoChunkId, playbackRange.endSeconds, playbackRange.startSeconds, playbackUrl]);
+  }, [clipDurationSeconds, evidence?.tenantId, evidence?.videoId, evidence?.videoChunkId, playbackRange.endSeconds, playbackRange.startSeconds, playbackUrl]);
 
   if (!hit || !evidence) {
     return (
@@ -154,9 +154,9 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
   const refreshMedia = async () => {
     setRefreshing(true);
     try {
-      const next = await getVideoChunk(evidence.videoChunkId, evidence.workspaceId);
+      const next = await getVideoChunk(evidence.videoChunkId, evidence.tenantId);
       if (selectionRef.current !== selectionKey) return;
-      if (next.videoChunkId !== evidence.videoChunkId || next.workspaceId !== evidence.workspaceId) throw new Error("返回的视频证据不属于当前片段");
+      if (next.videoChunkId !== evidence.videoChunkId || next.tenantId !== evidence.tenantId) throw new Error("返回的视频证据不属于当前片段");
       setRefreshed(next);
       setPlayError(null);
     } catch (error) { if (selectionRef.current === selectionKey) setPlayError(errorMessage(error)); }

@@ -28,7 +28,7 @@ def validate_result(result: VideoChunkSearchResult, inputs: RunInputs) -> None:
         if evidence.video_chunk_id in seen:
             raise AgentModelInvocationError("Retrieval returned duplicate VideoChunk IDs")
         seen.add(evidence.video_chunk_id)
-        if (evidence.workspace_id != inputs["workspace_id"]
+        if (evidence.tenant_id != inputs["tenant_id"]
             or evidence.series_id not in scope or evidence.series_id not in result.series_ids):
             raise AgentModelInvocationError("Retrieved Evidence is outside the fixed scope")
         if not 0 <= evidence.start_seconds < evidence.end_seconds <= evidence.duration_seconds:

@@ -37,14 +37,14 @@ def storage(request):
     finally:
         with factory.begin() as session:
             session.execute(delete(ModelUsage).where(
-                ModelUsage.workspace_id.in_((workspace, workspace + "-other", workspace.upper())),
+                ModelUsage.tenant_id.in_((workspace, workspace + "-other", workspace.upper())),
             ))
         engine.dispose()
 
 
 def call(workspace, **changes):
     values = dict(
-        call_id=str(uuid4()), workspace_id=workspace, task_type="video_parse", run_id="run-A",
+        call_id=str(uuid4()), tenant_id=workspace, task_type="video_parse", run_id="run-A",
         started_at=NOW, created_at=NOW,
         usage={"tokens": asdict(TokenUsage(100, 20, 120, 30, None)), "sdk_model_usage": []},
         metadata={
@@ -59,7 +59,7 @@ def call(workspace, **changes):
 
 
 def query(repository, workspace, **changes):
-    return repository.query(workspace_id=workspace, from_start_time=NOW,
+    return repository.query(tenant_id=workspace, from_start_time=NOW,
                             to_start_time=NOW + timedelta(days=1), **changes)
 
 
@@ -82,7 +82,7 @@ def test_append_is_immutable_and_replay_does_not_overwrite(storage):
 
 
 @pytest.mark.parametrize("changes", [
-    {"workspace_id": "different"}, {"task_type": "chat_retrieval"}, {"run_id": "run-B"},
+    {"tenant_id": "different"}, {"task_type": "chat_retrieval"}, {"run_id": "run-B"},
 ])
 def test_call_id_scope_conflicts_are_rejected(storage, changes):
     repository, _, workspace = storage
@@ -144,7 +144,7 @@ def test_sql_filters_precede_the_real_20k_limit_and_extra_row_is_excluded(storag
     metadata["context"] = {"series_ids": ["series-AA"]}
     # These sort before the desired call. All SQL filters must run before LIMIT.
     rows = [dict(
-        call_id=str(UUID(int=i + 10)), workspace_id=workspace,
+        call_id=str(UUID(int=i + 10)), tenant_id=workspace,
         task_type="video_parse", run_id="run-A", started_at=NOW,
         usage={"tokens": None, "sdk_model_usage": []}, metadata=metadata, created_at=NOW,
     ) for i in range(MAX_USAGE_RECORDS + 1)]
@@ -162,8 +162,8 @@ def test_sql_filters_precede_the_real_20k_limit_and_extra_row_is_excluded(storag
 
 
 @pytest.mark.parametrize("changes", [
-    {"call_id": "not-a-uuid"}, {"workspace_id": " w"}, {"workspace_id": "w "},
-    {"workspace_id": "w" * 65}, {"run_id": "r "}, {"run_id": "r" * 257},
+    {"call_id": "not-a-uuid"}, {"tenant_id": " w"}, {"tenant_id": "w "},
+    {"tenant_id": "w" * 65}, {"run_id": "r "}, {"run_id": "r" * 257},
     {"task_type": "retrieval"}, {"started_at": NOW.replace(tzinfo=None)},
     {"usage": {"tokens": {}, "sdk_model_usage": []}},
     {"usage": {"tokens": None, "sdk_model_usage": "[]"}},
@@ -185,10 +185,10 @@ def test_json_snapshot_does_not_share_mutable_caller_values():
         call("w", usage={"tokens": object()})
 
 
-@pytest.mark.parametrize("name,value", [("workspace_id", " w"), ("run_id", "r "), ("series_id", " s")])
+@pytest.mark.parametrize("name,value", [("tenant_id", " w"), ("run_id", "r "), ("series_id", " s")])
 def test_query_rejects_whitespace_identities(storage, name, value):
     repository, _, workspace = storage
-    arguments = dict(workspace_id=workspace, from_start_time=NOW, to_start_time=NOW + timedelta(days=1))
+    arguments = dict(tenant_id=workspace, from_start_time=NOW, to_start_time=NOW + timedelta(days=1))
     arguments[name] = value
     with pytest.raises(ValueError):
         repository.query(**arguments)
@@ -222,7 +222,7 @@ def test_mysql_real_schema_and_concurrent_call_id_replay(storage, conflict):
     assert all(not column["nullable"] for column in columns.values())
     assert columns["started_at"]["type"].fsp == columns["created_at"]["type"].fsp == 3
     original = call(workspace)
-    other = replace(original, workspace_id=workspace + "-other") if conflict else original
+    other = replace(original, tenant_id=workspace + "-other") if conflict else original
     barrier = Barrier(2)
 
     def synchronize(_connection, _cursor, statement, _parameters, _context, _many):
@@ -249,3 +249,14 @@ def test_mysql_real_schema_and_concurrent_call_id_replay(storage, conflict):
     else:
         assert results == [original, original]
         assert query(repository, workspace).records == (original,)
+
+def test_actor_is_an_immutable_snapshot_and_filters_public_tenant_usage(storage):
+    repository, _, tenant = storage
+    first = call(tenant, actor_user_id="user-A")
+    repository.record_call(first)
+    repository.record_call(call(tenant, actor_user_id="user-B"))
+    repository.record_call(call(tenant))
+    assert query(repository, tenant, actor_user_id="user-A").records == (first,)
+    assert len(query(repository, tenant).records) == 3
+    with pytest.raises(ModelUsageConflictError):
+        repository.record_call(replace(first, actor_user_id="user-B"))

@@ -1,3 +1,5 @@
+import { identityStorageKey } from "../../api/client";
+
 export interface WatchProgress {
   seriesId: string;
   videoId: string;
@@ -78,8 +80,9 @@ function migrateLegacyHistory(): WatchProgress[] {
 
 export function readWatchHistory(): WatchProgress[] {
   try {
-    const encoded = localStorage.getItem(STORAGE_KEY);
-    if (encoded === null) return migrateLegacyHistory();
+    const storageKey = identityStorageKey(STORAGE_KEY, STORAGE_KEY);
+    const encoded = localStorage.getItem(storageKey);
+    if (encoded === null) return storageKey === STORAGE_KEY ? migrateLegacyHistory() : [];
     const stored: unknown = JSON.parse(encoded);
     if (!Array.isArray(stored)) return [];
     return normalizeHistory(stored);
@@ -98,7 +101,7 @@ export function saveVideoProgress(progress: Omit<WatchProgress, "updatedAt">): v
   updated.positionSeconds = Math.min(updated.positionSeconds, updated.durationSeconds);
   try {
     const history = readWatchHistory().filter((item) => item.videoId !== updated.videoId);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([updated, ...history].slice(0, MAX_HISTORY)));
+    localStorage.setItem(identityStorageKey(STORAGE_KEY, STORAGE_KEY), JSON.stringify([updated, ...history].slice(0, MAX_HISTORY)));
   } catch {
     // Browsers can disable or fill local storage; playback remains usable.
   }

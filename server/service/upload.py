@@ -111,7 +111,7 @@ class UploadService:
     def create_session(
         self,
         *,
-        workspace_id: str,
+        tenant_id: str,
         series_id: str,
         episode_order: int,
         original_filename: str,
@@ -121,8 +121,11 @@ class UploadService:
         content_sha256: str | None = None,
         parse_config: ParseConfig | None = None,
         video_parse_config: VideoParseV2Config | None = None,
+        created_by_user_id: str | None = None,
     ) -> UploadSessionState:
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
+        if created_by_user_id is not None:
+            created_by_user_id = require_nonempty_text(created_by_user_id, "created_by_user_id", maximum=64)
         normalized_series_id = canonical_uuid(series_id, "series_id")
         normalized_filename = _filename(original_filename)
         normalized_media_type = require_nonempty_text(media_type, "media_type").casefold()
@@ -187,7 +190,8 @@ class UploadService:
         total_segments = math.ceil(total_size_bytes / segment_size)
         now = self._now()
         state = self._repository.create_session(
-            workspace_id=normalized_workspace,
+            tenant_id=normalized_workspace,
+            created_by_user_id=created_by_user_id,
             series_id=normalized_series_id,
             episode_order=episode_order,
             original_filename=normalized_filename,
@@ -211,9 +215,9 @@ class UploadService:
         )
         return state
 
-    def list_sessions(self, *, workspace_id: str, series_id: str | None = None, status: str | None = None) -> list[UploadSessionState]:
+    def list_sessions(self, *, tenant_id: str, series_id: str | None = None, status: str | None = None) -> list[UploadSessionState]:
         return self._repository.list_for_workspace(
-            require_nonempty_text(workspace_id, "workspace_id"),
+            require_nonempty_text(tenant_id, "tenant_id"),
             series_id=canonical_uuid(series_id, "series_id") if series_id is not None else None,
             status=status,
         )
@@ -222,14 +226,14 @@ class UploadService:
         self,
         upload_session_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
     ) -> UploadSessionState:
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id")
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id")
         state = self._repository.get_session(
             canonical_uuid(upload_session_id, "upload_session_id"),
             now=self._now(),
         )
-        if state.workspace_id != normalized_workspace:
+        if state.tenant_id != normalized_workspace:
             raise UploadSessionNotFoundError(
                 "upload session does not exist in this workspace"
             )
@@ -239,9 +243,9 @@ class UploadService:
         self,
         upload_session_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
     ) -> UploadSessionDetail:
-        state = self.get_session(upload_session_id, workspace_id=workspace_id)
+        state = self.get_session(upload_session_id, tenant_id=tenant_id)
         return UploadSessionDetail(
             session=state,
             missing_segment_numbers=state.missing_segment_numbers,
@@ -251,8 +255,9 @@ class UploadService:
         self,
         upload_session_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
         expected_job_version: int,
+        actor_user_id: str | None = None,
     ) -> VideoParseTaskState:
         if (
             isinstance(expected_job_version, bool)
@@ -261,10 +266,13 @@ class UploadService:
         ):
             raise ValueError("expected_job_version must be a positive integer")
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
+        if actor_user_id is not None:
+            actor_user_id = require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
         task = self._repository.retry_parse(
             session_id,
-            workspace_id=require_nonempty_text(workspace_id, "workspace_id"),
+            tenant_id=require_nonempty_text(tenant_id, "tenant_id"),
             expected_job_version=expected_job_version,
+            actor_user_id=actor_user_id,
             now=self._now(),
         )
         _logger.info(
@@ -279,9 +287,10 @@ class UploadService:
         self,
         upload_session_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
         expected_job_version: int,
         video_parse_config: VideoParseV2Config | None = None,
+        actor_user_id: str | None = None,
     ) -> VideoParseTaskState:
         if (
             isinstance(expected_job_version, bool)
@@ -290,8 +299,10 @@ class UploadService:
         ):
             raise ValueError("expected_job_version must be a positive integer")
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
+        if actor_user_id is not None:
+            actor_user_id = require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
         normalized_workspace = require_nonempty_text(
-            workspace_id, "workspace_id"
+            tenant_id, "tenant_id"
         )
 
         def resolve_snapshot(snapshot: dict) -> dict:
@@ -301,8 +312,9 @@ class UploadService:
 
         task = self._repository.reparse(
             session_id,
-            workspace_id=normalized_workspace,
+            tenant_id=normalized_workspace,
             expected_job_version=expected_job_version,
+            actor_user_id=actor_user_id,
             execution_mode=self._execution_mode,
             video_parse_config=(
                 video_parse_config.model_dump(mode="json")
@@ -321,11 +333,11 @@ class UploadService:
         )
         return task
 
-    def delete_session(self, upload_session_id: str, *, workspace_id: str) -> UploadSessionState:
+    def delete_session(self, upload_session_id: str, *, tenant_id: str) -> UploadSessionState:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
         deletion = self._repository.begin_delete_session(
             session_id,
-            workspace_id=require_nonempty_text(workspace_id, "workspace_id"),
+            tenant_id=require_nonempty_text(tenant_id, "tenant_id"),
             now=self._now(),
         )
         try:
@@ -380,11 +392,11 @@ class UploadService:
             return 0, 1
         completed = 0
         failed = 0
-        for upload_session_id, workspace_id in pending:
+        for upload_session_id, tenant_id in pending:
             try:
                 self.delete_session(
                     upload_session_id,
-                    workspace_id=workspace_id,
+                    tenant_id=tenant_id,
                 )
             except Exception:
                 failed += 1
@@ -402,7 +414,7 @@ class UploadService:
         segment_number: int,
         data: bytes,
         *,
-        workspace_id: str,
+        tenant_id: str,
         checksum_sha256: str,
         start_byte: int,
         end_byte_exclusive: int,
@@ -415,7 +427,7 @@ class UploadService:
         self.require_uploadable_segment(
             session_id,
             segment_number,
-            workspace_id=workspace_id,
+            tenant_id=tenant_id,
             start_byte=start_byte,
             end_byte_exclusive=end_byte_exclusive,
             total_size_bytes=total_size_bytes,
@@ -463,13 +475,13 @@ class UploadService:
         upload_session_id: str,
         segment_number: int,
         *,
-        workspace_id: str,
+        tenant_id: str,
         start_byte: int,
         end_byte_exclusive: int,
         total_size_bytes: int,
     ) -> None:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
-        current = self.get_session(session_id, workspace_id=workspace_id)
+        current = self.get_session(session_id, tenant_id=tenant_id)
         if current.status != UploadSessionStatus.UPLOADING.value:
             raise UploadStateError(
                 f"upload session is {current.status.lower()} and cannot accept segments"
@@ -495,10 +507,10 @@ class UploadService:
         self,
         upload_session_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
     ) -> CompletedUploadState:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
-        session = self.get_session(session_id, workspace_id=workspace_id)
+        session = self.get_session(session_id, tenant_id=tenant_id)
         self._require_video_parse_index_compatibility(
             _completion_video_parse_config(session)
         )

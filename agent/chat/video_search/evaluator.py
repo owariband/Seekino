@@ -85,7 +85,7 @@ def evaluate(
                     "content": (
                         "以下是本次不可丢失的审核锚点，不是 Evidence：\n"
                         + context_json({
-                            "workspace_id": inputs["workspace_id"],
+                            "tenant_id": inputs["tenant_id"],
                             "series_ids": list(inputs["series_ids"]),
                             "user_message": inputs["user_message"],
                             "original_plan": original_plan,

@@ -8,6 +8,8 @@ from pydantic import Field, field_validator
 
 from agent.chat.common.state import AnswerPhase
 
+from ...constants.identity import LOCAL_USER_ID
+
 from ...schema import ContractModel
 
 _Item = TypeVar("_Item")
@@ -20,12 +22,13 @@ class EvidenceReference(ContractModel):
 
 
 class AgentConversationCreateRequest(ContractModel):
-    workspace_id: str = Field(min_length=1, max_length=64)
+    tenant_id: str = Field(min_length=1, max_length=64)
     title: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class AgentMessageSendRequest(ContractModel):
-    workspace_id: str = Field(min_length=1, max_length=64)
+    tenant_id: str = Field(min_length=1, max_length=64)
+    source_tenant_id: str | None = Field(default=None, min_length=1, max_length=64)
     content: str = Field(min_length=1, max_length=20_000)
     series_ids: list[str] = Field(default_factory=list)
     top_k: int | None = Field(default=None, gt=0, le=100)
@@ -34,6 +37,7 @@ class AgentMessageSendRequest(ContractModel):
     max_loop_turns: int | None = Field(default=None, ge=0, le=100)
     reference: EvidenceReference | None = None
     extra_context: dict[str, Any] | None = None
+
 
     @field_validator("extra_context")
     @classmethod
@@ -109,13 +113,14 @@ class AgentMessageTimingState:
 @dataclass(frozen=True, slots=True)
 class AgentConversationState:
     conversation_id: str
-    workspace_id: str
+    tenant_id: str
     title: str
     message_count: int
     last_message_at: int | None
     created_at: int
     updated_at: int
     last_message_preview: str | None = None
+    owner_user_id: str = LOCAL_USER_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +142,7 @@ class AgentMessageState:
     reference: dict[str, str] | None = None
     timing: AgentMessageTimingState | None = None
     extra_context: dict[str, Any] | None = None
+    source_tenant_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

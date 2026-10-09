@@ -92,7 +92,7 @@ class UploadRepository:
     def create_session(
         self,
         *,
-        workspace_id: str,
+        tenant_id: str,
         series_id: str,
         episode_order: int,
         original_filename: str,
@@ -108,6 +108,7 @@ class UploadRepository:
         requested_parse_config: dict | None = None,
         video_parse_config: dict | None = None,
         requested_video_parse_config: dict | None = None,
+        created_by_user_id: str | None = None,
     ) -> UploadSessionState:
         if (
             isinstance(episode_order, bool)
@@ -121,7 +122,8 @@ class UploadRepository:
                 "video_parse_config is required for a new upload session"
             )
         requested = {
-            "workspace_id": workspace_id,
+            "tenant_id": tenant_id,
+            **({"created_by_user_id": created_by_user_id} if created_by_user_id is not None else {}),
             "series_id": series_id,
             "episode_order": episode_order,
             "original_filename": original_filename,
@@ -141,7 +143,8 @@ class UploadRepository:
                 with self._session_factory.begin() as session:
                     existing = session.scalar(
                         select(UploadSession).where(
-                            UploadSession.workspace_id == workspace_id,
+                            UploadSession.tenant_id == tenant_id,
+                            UploadSession.created_by_user_id == created_by_user_id,
                             UploadSession.idempotency_key == idempotency_key,
                         ).with_for_update()
                     )
@@ -156,13 +159,14 @@ class UploadRepository:
                     series = session.scalar(select(Series).where(
                         Series.series_id == series_id
                     ).with_for_update())
-                    if series is None or series.workspace_id != workspace_id:
+                    if series is None or series.tenant_id != tenant_id:
                         raise UploadSeriesNotFoundError(
                             f"seriesId {series_id!r} does not exist in this workspace"
                         )
                     existing = session.scalar(
                         select(UploadSession).where(
-                            UploadSession.workspace_id == workspace_id,
+                            UploadSession.tenant_id == tenant_id,
+                            UploadSession.created_by_user_id == created_by_user_id,
                             UploadSession.idempotency_key == idempotency_key,
                         )
                     )
@@ -203,7 +207,8 @@ class UploadRepository:
 
                     record = UploadSession(
                         upload_session_id=str(uuid4()),
-                        workspace_id=workspace_id,
+                        tenant_id=tenant_id,
+                        created_by_user_id=created_by_user_id,
                         series_id=series_id,
                         episode_order=episode_order,
                         upload_sequence=episode_order,
@@ -262,15 +267,16 @@ class UploadRepository:
         self,
         upload_session_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
         expected_job_version: int,
         now: datetime,
+        actor_user_id: str | None = None,
     ) -> VideoParseTaskState:
         """Retry the latest failed V2 task without changing its identity."""
 
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
-            if upload.workspace_id != workspace_id:
+            if upload.tenant_id != tenant_id:
                 raise UploadSessionNotFoundError(
                     "upload session does not exist in this workspace"
                 )
@@ -409,9 +415,13 @@ class UploadRepository:
             task.heartbeat_time = None
             task.finish_time = None
             detail = deepcopy(dict(task.detail or {}))
-            runtime = detail.get(RUNTIME_DETAIL_KEY)
-            if isinstance(runtime, dict):
-                runtime.pop("failure_status", None)
+            runtime = dict(detail.get(RUNTIME_DETAIL_KEY) or {})
+            runtime.pop("failure_status", None)
+            if actor_user_id is None:
+                runtime.pop("actor_user_id", None)
+            else:
+                runtime["actor_user_id"] = actor_user_id
+            detail[RUNTIME_DETAIL_KEY] = runtime
             task.detail = detail
             task.update_time = now
             session.flush()
@@ -421,12 +431,13 @@ class UploadRepository:
         self,
         upload_session_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
         expected_job_version: int,
         now: datetime,
         execution_mode: Literal["v1", "v2"] = "v1",
         video_parse_config: dict | None = None,
         snapshot_resolver: Callable[[dict], dict] | None = None,
+        actor_user_id: str | None = None,
     ) -> VideoParseTaskState:
         """Create a new V2 task while retaining every prior task and result."""
 
@@ -435,7 +446,7 @@ class UploadRepository:
 
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
-            if upload.workspace_id != workspace_id:
+            if upload.tenant_id != tenant_id:
                 raise UploadSessionNotFoundError(
                     "upload session does not exist in this workspace"
                 )
@@ -515,7 +526,9 @@ class UploadRepository:
                     if isinstance(existing_runtime, dict)
                     else {}
                 )
+                runtime.pop("actor_user_id", None)
                 runtime.update({
+                    **({"actor_user_id": actor_user_id} if actor_user_id is not None else {}),
                     "accepted": True,
                     "execution_mode": "v2",
                 })
@@ -563,6 +576,7 @@ class UploadRepository:
                 )
             task = VideoParseTask(
                 id=str(uuid4()),
+                created_by_user_id=actor_user_id,
                 video_id=video.video_id,
                 pipeline_version=latest.pipeline_version,
                 status=VideoParseTaskStatus.PENDING.value,
@@ -579,6 +593,7 @@ class UploadRepository:
                 is_deleted=False,
                 detail={
                     "_worker_runtime_v2": {
+                        **({"actor_user_id": actor_user_id} if actor_user_id is not None else {}),
                         "accepted": execution_mode == "v2",
                         "execution_mode": execution_mode,
                     }
@@ -605,7 +620,7 @@ class UploadRepository:
             return list(session.execute(
                 select(
                     UploadSession.upload_session_id,
-                    UploadSession.workspace_id,
+                    UploadSession.tenant_id,
                 )
                 .where(
                     UploadSession.last_error_code
@@ -637,12 +652,12 @@ class UploadRepository:
         self,
         upload_session_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
         now: datetime,
     ) -> UploadSessionDeletion:
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
-            if upload.workspace_id != workspace_id:
+            if upload.tenant_id != tenant_id:
                 raise UploadSessionNotFoundError("upload session does not exist in this workspace")
             if upload.status == UploadSessionStatus.COMPLETING.value:
                 raise UploadCompletionInProgressError("upload completion is already in progress")
@@ -1068,10 +1083,10 @@ class UploadRepository:
                 upload.completion_stage = stage
                 upload.version += 1
 
-    def list_for_series(self, series_id: str, *, workspace_id: str, status: str | None = None) -> list[UploadSessionState]:
-        return self.list_for_workspace(workspace_id, series_id=series_id, status=status)
+    def list_for_series(self, series_id: str, *, tenant_id: str, status: str | None = None) -> list[UploadSessionState]:
+        return self.list_for_workspace(tenant_id, series_id=series_id, status=status)
 
-    def list_for_workspace(self, workspace_id: str, *, series_id: str | None = None, status: str | None = None) -> list[UploadSessionState]:
+    def list_for_workspace(self, tenant_id: str, *, series_id: str | None = None, status: str | None = None) -> list[UploadSessionState]:
         if status == "all":
             statuses = None
         elif status is None:
@@ -1079,7 +1094,7 @@ class UploadRepository:
         else:
             statuses = {UploadSessionStatus(value.strip()).value for value in status.split(",")}
         with self._session_factory.begin() as session:
-            statement = select(UploadSession).where(UploadSession.workspace_id == workspace_id)
+            statement = select(UploadSession).where(UploadSession.tenant_id == tenant_id)
             if series_id is not None:
                 statement = statement.where(UploadSession.series_id == series_id)
             records = session.scalars(statement.order_by(UploadSession.episode_order, UploadSession.created_at, UploadSession.upload_session_id).with_for_update()).all()
@@ -1222,6 +1237,7 @@ class UploadRepository:
             video_parse_task_id = str(uuid4())
             video_parse_task = VideoParseTask(
                 id=video_parse_task_id,
+                created_by_user_id=upload.created_by_user_id,
                 video_id=video_id,
                 pipeline_version=pipeline_version,
                 status=VideoParseTaskStatus.PENDING.value,
@@ -1238,6 +1254,7 @@ class UploadRepository:
                 is_deleted=False,
                 detail={
                     "_worker_runtime_v2": {
+                        **({"actor_user_id": upload.created_by_user_id} if upload.created_by_user_id is not None else {}),
                         "accepted": execution_mode == "v2",
                         "execution_mode": execution_mode,
                     }
@@ -1253,6 +1270,7 @@ class UploadRepository:
                 if job is None:
                     job = SeriesParseJob(
                         job_id=job_id,
+                        created_by_user_id=upload.created_by_user_id,
                         series_id=upload.series_id,
                         video_id=video_id,
                         pipeline_version=pipeline_version,
@@ -1363,7 +1381,8 @@ class UploadRepository:
         present = {number for number, _size in segments}
         return UploadSessionState(
             upload_session_id=upload.upload_session_id,
-            workspace_id=upload.workspace_id,
+            tenant_id=upload.tenant_id,
+            created_by_user_id=upload.created_by_user_id,
             series_id=upload.series_id,
             episode_order=upload.episode_order,
             upload_sequence=upload.upload_sequence,
@@ -1396,6 +1415,7 @@ class UploadRepository:
     def _task_snapshot(task: VideoParseTask) -> VideoParseTaskState:
         return VideoParseTaskState(
             video_parse_task_id=task.id,
+            created_by_user_id=task.created_by_user_id,
             video_id=task.video_id,
             pipeline_version=task.pipeline_version,
             status=task.status,

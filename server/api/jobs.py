@@ -19,8 +19,10 @@ from ..model.dto.jobDTO import (
 )
 from ..model.job_progress import calculate_checkpoint_progress
 from ..service.job import ParseJobService
+from ..service.access import require_tenant_write
+from ..error.auth import AuthError
 from ..service.pagination import decode_cursor, encode_cursor
-from .context import get_services, get_sse_config
+from .context import get_identity, get_services, get_sse_config, revalidate_identity
 from ..model.vo.commonVO import Page, Failure
 from ..model.vo.jobVO import (
     CurrentVideoChunkView,
@@ -66,11 +68,12 @@ _CURRENT_STAGE_CHECKPOINT_RANK = {
 def get_job(
     request: Request,
     job_id: str = Query(alias="jobId"),
-    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
 ) -> ParseJobView:
+    require_tenant_write(get_identity(request), tenant_id)
     detail = get_services(request).jobs.get(
         job_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
     )
     return _job_view(detail)
 
@@ -78,23 +81,25 @@ def get_job(
 def get_video_parse_task(
     request: Request,
     video_parse_task_id: str = Query(alias="videoParseTaskId"),
-    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
 ) -> VideoParseTaskView:
+    require_tenant_write(get_identity(request), tenant_id)
     state = get_services(request).jobs.get_video_parse_task(
         video_parse_task_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
     )
     return project_video_parse_task(state)
 
 
 def list_video_parse_tasks(
     request: Request,
-    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
     series_id: str | None = Query(None, alias="seriesId"),
     status: str | None = Query(None),
     cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
 ) -> Page[VideoParseTaskView]:
+    require_tenant_write(get_identity(request), tenant_id)
     service = get_services(request).jobs
     statuses = None
     if status and status != "all":
@@ -107,21 +112,21 @@ def list_video_parse_tasks(
             )
         )
     scope = {
-        "workspaceId": workspace_id,
+        "tenantId": tenant_id,
         "seriesId": series_id,
         "status": statuses,
         "sort": "createTime,videoParseTaskId:desc",
     }
     offset = decode_cursor(cursor, scope=scope)
     details = service.list_video_parse_tasks(
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
         series_id=series_id,
         statuses=statuses,
         offset=offset,
         limit=limit,
     )
     total = service.count_video_parse_tasks(
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
         series_id=series_id,
         statuses=statuses,
     )
@@ -140,22 +145,23 @@ def list_video_parse_tasks(
 
 def list_jobs(
     request: Request,
-    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
     series_id: str | None = Query(None, alias="seriesId"),
     status: str | None = Query(None),
     cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
 ) -> Page[ParseJobView]:
+    require_tenant_write(get_identity(request), tenant_id)
     service = get_services(request).jobs
     statuses = None
     if status and status != "all":
         statuses = tuple(sorted({ParseJobStatus(item.strip()).value for item in status.split(",")}))
-    scope = {"workspaceId": workspace_id, "seriesId": series_id, "status": statuses, "sort": "createdAt,jobId:desc"}
+    scope = {"tenantId": tenant_id, "seriesId": series_id, "status": statuses, "sort": "createdAt,jobId:desc"}
     offset = decode_cursor(cursor, scope=scope)
     details = service.list(
-        workspace_id=workspace_id, series_id=series_id, statuses=statuses, offset=offset, limit=limit,
+        tenant_id=tenant_id, series_id=series_id, statuses=statuses, offset=offset, limit=limit,
     )
-    total = service.count(workspace_id=workspace_id, series_id=series_id, statuses=statuses)
+    total = service.count(tenant_id=tenant_id, series_id=series_id, statuses=statuses)
     has_more = offset + len(details) < total
     return Page[ParseJobView](
         items=[_job_view(detail) for detail in details], total=total,
@@ -166,26 +172,29 @@ def list_jobs(
 
 def get_job_summary(
     request: Request,
-    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
     series_id: str | None = Query(None, alias="seriesId"),
 ) -> JobSummary:
-    return project_job_summary(get_services(request).jobs.summary(workspace_id=workspace_id, series_id=series_id))
+    require_tenant_write(get_identity(request), tenant_id)
+    return project_job_summary(get_services(request).jobs.summary(tenant_id=tenant_id, series_id=series_id))
 
 
 async def stream_job_events(
     request: Request,
     job_id: str = Query(alias="jobId"),
-    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
 ) -> StreamingResponse:
+    identity = await run_in_threadpool(get_identity, request)
+    await run_in_threadpool(require_tenant_write, identity, tenant_id)
     service = get_services(request).jobs
     initial = await run_in_threadpool(
         service.get,
         job_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
     )
     return StreamingResponse(
         _job_events(
-            request, service, job_id, workspace_id, initial, get_sse_config(request)
+            request, service, job_id, tenant_id, initial, get_sse_config(request)
         ),
         media_type="text/event-stream",
         headers={
@@ -198,20 +207,22 @@ async def stream_job_events(
 async def stream_video_parse_task_events(
     request: Request,
     video_parse_task_id: str = Query(alias="videoParseTaskId"),
-    workspace_id: str = Query(alias="workspaceId", min_length=1, max_length=64),
+    tenant_id: str = Query(alias="tenantId", min_length=1, max_length=64),
 ) -> StreamingResponse:
+    identity = await run_in_threadpool(get_identity, request)
+    await run_in_threadpool(require_tenant_write, identity, tenant_id)
     service = get_services(request).jobs
     initial = await run_in_threadpool(
         service.get_video_parse_task,
         video_parse_task_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
     )
     return StreamingResponse(
         _video_parse_task_events(
             request,
             service,
             video_parse_task_id,
-            workspace_id,
+            tenant_id,
             initial,
             get_sse_config(request),
         ),
@@ -227,14 +238,20 @@ async def _job_events(
     request: Request,
     service: ParseJobService,
     job_id: str,
-    workspace_id: str,
+    tenant_id: str,
     initial: ParseJobDetail,
     config: SSEConfig,
 ) -> AsyncIterator[str]:
     previous_fingerprint: str | None = None
     detail = initial
     last_event_at = time.monotonic()
+    first_poll = True
     while True:
+        if not await _require_stream_tenant_write(request, tenant_id):
+            return
+        if not first_poll:
+            detail = await run_in_threadpool(service.get, job_id, tenant_id=tenant_id)
+        first_poll = False
         view = _job_view(detail)
         payload = view.model_dump_json(by_alias=True)
         fingerprint = _job_event_fingerprint(view)
@@ -250,11 +267,6 @@ async def _job_events(
         if await request.is_disconnected():
             return
         await asyncio.sleep(config.poll_interval_seconds)
-        detail = await run_in_threadpool(
-            service.get,
-            job_id,
-            workspace_id=workspace_id,
-        )
 
 
 def _job_event_fingerprint(view: ParseJobView) -> str:
@@ -271,14 +283,22 @@ async def _video_parse_task_events(
     request: Request,
     service: ParseJobService,
     video_parse_task_id: str,
-    workspace_id: str,
+    tenant_id: str,
     initial: VideoParseTaskDetail,
     config: SSEConfig,
 ) -> AsyncIterator[str]:
     previous_fingerprint: str | None = None
     detail = initial
     last_event_at = time.monotonic()
+    first_poll = True
     while True:
+        if not await _require_stream_tenant_write(request, tenant_id):
+            return
+        if not first_poll:
+            detail = await run_in_threadpool(
+                service.get_video_parse_task, video_parse_task_id, tenant_id=tenant_id,
+            )
+        first_poll = False
         view = project_video_parse_task(detail)
         payload = view.model_dump_json(by_alias=True)
         fingerprint = _video_parse_task_event_fingerprint(view)
@@ -298,11 +318,15 @@ async def _video_parse_task_events(
         if await request.is_disconnected():
             return
         await asyncio.sleep(config.poll_interval_seconds)
-        detail = await run_in_threadpool(
-            service.get_video_parse_task,
-            video_parse_task_id,
-            workspace_id=workspace_id,
-        )
+
+
+async def _require_stream_tenant_write(request: Request, tenant_id: str) -> bool:
+    try:
+        identity = await run_in_threadpool(revalidate_identity, request)
+        await run_in_threadpool(require_tenant_write, identity, tenant_id)
+    except AuthError:
+        return False
+    return True
 
 
 def _video_parse_task_event_fingerprint(view: VideoParseTaskView) -> str:
@@ -382,7 +406,7 @@ def project_job(detail: ParseJobDetail) -> ParseJobView:
 
     return ParseJobView(
         job_id=job.job_id, upload_session_id=job.upload_session_id,
-        workspace_id=job.workspace_id, series_id=job.series_id,
+        tenant_id=job.tenant_id, series_id=job.series_id,
         video_id=job.video_id, series_name=job.series_name, episode_order=job.episode_order,
         original_filename=job.original_filename, pipeline_version=job.pipeline_version,
         parse_config=job.parse_config,
@@ -426,7 +450,7 @@ def project_job(detail: ParseJobDetail) -> ParseJobView:
 
 def project_job_summary(state: ParseJobSummaryState) -> JobSummary:
     return JobSummary(
-        workspace_id=state.workspace_id, series_id=state.series_id,
+        tenant_id=state.tenant_id, series_id=state.series_id,
         counts=JobCounts(
             queued=state.counts.get("QUEUED", 0), running=state.counts.get("RUNNING", 0),
             retry_wait=state.counts.get("RETRY_WAIT", 0), cancelling=state.counts.get("CANCELLING", 0),
@@ -493,7 +517,7 @@ def project_video_parse_task(
         detail=public_detail,
         create_time=datetime_to_unix_time_ms(task.create_time),
         update_time=datetime_to_unix_time_ms(task.update_time),
-        workspace_id=observation.workspace_id if observation is not None else None,
+        tenant_id=observation.tenant_id if observation is not None else None,
         series_id=observation.series_id if observation is not None else None,
         series_name=observation.series_name if observation is not None else None,
         episode_order=(observation.episode_order if observation is not None else None),

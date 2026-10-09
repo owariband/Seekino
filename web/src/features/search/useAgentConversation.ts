@@ -6,10 +6,11 @@ import {
   errorMessage,
   getAgentConversation,
   getAgentMessage,
+  identityStorageKey,
   listAgentMessages,
   streamAgentMessage,
   subscribeAgentMessages,
-  WORKSPACE_ID,
+  TENANT_ID,
 } from "../../api/client";
 import type {
   AgentAnswerEvent,
@@ -23,7 +24,7 @@ import type {
 
 interface StoredIdentity { key: string; id?: string }
 const conversations = new Map<string, Promise<AgentConversationView>>();
-const conversationStorageKey = `anivag-agent-conversation:${WORKSPACE_ID}`;
+const conversationStorageKey = () => identityStorageKey("anivag-agent-conversation");
 
 function storedIdentity(storageKey: string): StoredIdentity {
   const saved = localStorage.getItem(storageKey);
@@ -39,11 +40,12 @@ function storedIdentity(storageKey: string): StoredIdentity {
 }
 
 async function ensureConversation(): Promise<AgentConversationView> {
-  const storageKey = conversationStorageKey;
+  const storageKey = conversationStorageKey();
+  const tenantId = TENANT_ID;
   const pending = conversations.get(storageKey);
   if (pending) return pending;
   const promise = (async () => {
-    localStorage.removeItem(`anivag-agent-session:${WORKSPACE_ID}`);
+    localStorage.removeItem(`anivag-agent-session:${TENANT_ID}`);
     const legacySeriesId = localStorage.getItem("anivag-selected-series");
     const legacyIdentity = legacySeriesId ? localStorage.getItem(`${storageKey}:${legacySeriesId}`) : null;
     if (!localStorage.getItem(storageKey) && legacyIdentity) {
@@ -56,10 +58,11 @@ async function ensureConversation(): Promise<AgentConversationView> {
     if (identity.id) {
       try {
         const conversation = await getAgentConversation(identity.id);
-        if (conversation.workspaceId === WORKSPACE_ID) return conversation;
+        if (conversation.tenantId === tenantId) return conversation;
       } catch (error) {
         if (!(error instanceof ApiClientError) || error.status !== 404) throw error;
       }
+      if (TENANT_ID !== tenantId || conversationStorageKey() !== storageKey) throw new DOMException("Identity changed", "AbortError");
       identity = { key: crypto.randomUUID() };
       localStorage.setItem(storageKey, JSON.stringify(identity));
     }
@@ -71,8 +74,9 @@ async function ensureConversation(): Promise<AgentConversationView> {
 }
 
 function rememberConversation(conversationId: string): void {
-  const identity = storedIdentity(conversationStorageKey);
-  localStorage.setItem(conversationStorageKey, JSON.stringify({
+  const storageKey = conversationStorageKey();
+  const identity = storedIdentity(storageKey);
+  localStorage.setItem(storageKey, JSON.stringify({
     key: !identity.id || identity.id === conversationId ? identity.key : crypto.randomUUID(),
     id: conversationId,
   }));
@@ -161,7 +165,7 @@ export function useAgentConversation(requestedId: string | null = null) {
     void (async () => {
       try {
         const conversation = requestedId ? await getAgentConversation(requestedId) : await ensureConversation();
-        if (conversation.workspaceId !== WORKSPACE_ID) throw new Error("对话不属于当前工作区");
+        if (conversation.tenantId !== TENANT_ID) throw new Error("对话不属于当前工作区");
         if (activeRef.current !== active) return;
         rememberConversation(conversation.conversationId);
         active.conversationId = conversation.conversationId;

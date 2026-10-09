@@ -42,7 +42,7 @@ class PreparedVideoChunk:
 @dataclass(frozen=True)
 class PreparedVideoParseImport:
     series_id: str
-    workspace_id: str
+    tenant_id: str
     series_name: str
     series_description: str | None
     important_extra_data: dict[str, Any] | None

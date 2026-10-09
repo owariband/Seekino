@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, CircleAlert, Rows3 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { getUsageOverview, shouldRetryApiRequest, WORKSPACE_ID } from "../../api/client";
+import { getUsageOverview, shouldRetryApiRequest, TENANT_ID } from "../../api/client";
 import type { ParseJobStatus } from "../../api/contracts";
 import { formatTokens } from "../../shared/format";
 import styles from "./tasks.module.css";
@@ -23,7 +23,7 @@ export function ParseUsageDetails({ jobId, status }: { jobId: string; status: Pa
   const previousStatus = useRef(status);
   const terminal = status === "SUCCEEDED" || status === "FAILED";
   const usageQuery = useQuery({
-    queryKey: ["usage-overview", WORKSPACE_ID, "run", jobId],
+    queryKey: ["usage-overview", TENANT_ID, "run", jobId],
     queryFn: ({ signal }) => getUsageOverview({ runId: jobId }, signal),
     enabled: expanded,
     retry: shouldRetryApiRequest,

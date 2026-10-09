@@ -17,6 +17,8 @@ import { NavLink, Outlet } from "react-router";
 
 import { taskProgress } from "../features/uploads/upload-types";
 import { useUploads } from "../features/uploads/UploadProvider";
+import { useAuth } from "../features/auth/AuthProvider";
+import { errorMessage } from "../api/client";
 import { useTheme } from "./theme";
 import { useWorkspace } from "./workspace";
 import styles from "./app-shell.module.css";
@@ -30,11 +32,43 @@ const navigation = [
   { to: "/settings", label: "设置", icon: Settings },
 ];
 
+function AccountControls({ mobile = false }: { mobile?: boolean }) {
+  const { identity, activeTenantId, selectTenant, openLogin, logout } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (identity.mode === "local") return null;
+  return <section className={clsx(styles.account, mobile && styles.mobileAccount)} aria-label="当前账号">
+    <div><span title={identity.email ?? undefined}>{identity.isGuest ? "游客体验" : identity.email}</span>
+      {identity.isGuest ? <button type="button" onClick={openLogin}>邮箱登录</button>
+        : <button type="button" disabled={busy} onClick={async () => {
+          setBusy(true); setError(null);
+          try { await logout(); } catch (failure) { setError(errorMessage(failure)); }
+          finally { setBusy(false); }
+        }}>{busy ? "退出中…" : "退出"}</button>}
+    </div>
+    <label><span>资料来源</span><select className="field" aria-label={mobile ? "移动端选择资料来源" : "选择资料来源"}
+      value={activeTenantId} onChange={(event) => selectTenant(event.target.value)}>
+      <option value={identity.publicTenantId}>公开课程</option>
+      {!identity.isGuest && identity.tenantId && identity.tenantId !== identity.publicTenantId ? <option value={identity.tenantId}>我的资料库</option> : null}
+    </select></label>
+    {error ? <p role="alert">{error}</p> : null}
+  </section>;
+}
+
 export function AppShell() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("anivag-sidebar-collapsed") === "true");
   const { theme, toggleTheme } = useTheme();
   const { mode } = useWorkspace();
   const { visibleTasks, activeCount, overallProgress, openDialog } = useUploads();
+  const { identity, canUpload, canManage, canConfigure, openLogin, selectTenant } = useAuth();
+  const visibleNavigation = navigation.filter(({ to }) => {
+    if (to === "/settings") return canConfigure;
+    if (["/library", "/tasks", "/usage"].includes(to)) return canManage;
+    return true;
+  });
+  const uploadAction = canUpload ? openDialog : identity.isGuest ? openLogin : () => {
+    if (identity.tenantId) selectTenant(identity.tenantId);
+  };
   const previewTasks = visibleTasks
     .filter((task) => !["completed", "cancelled"].includes(task.status))
     .slice(0, 3);
@@ -62,8 +96,10 @@ export function AppShell() {
           <strong>anivag</strong>
         </NavLink>
 
+        <AccountControls />
+
         <nav className={styles.navigation} aria-label="主导航">
-          {navigation.map(({ to, label, icon: Icon }) => (
+          {visibleNavigation.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -75,7 +111,7 @@ export function AppShell() {
           ))}
         </nav>
 
-        <button className={styles.uploadDock} type="button" onClick={openDialog}>
+        {canUpload ? <button className={styles.uploadDock} type="button" onClick={openDialog}>
           <div className={styles.uploadDockHeading}>
             <span><ArrowUpFromLine size={15} /> 并行传输</span>
             <b>{overallProgress}%</b>
@@ -97,7 +133,11 @@ export function AppShell() {
             <span>{activeCount > 0 ? `${activeCount} 项进行中` : "打开上传案台"}</span>
             <ArrowUpFromLine size={13} />
           </div>
-        </button>
+        </button> : <button className={styles.uploadDock} type="button" onClick={uploadAction}>
+          <div className={styles.uploadDockHeading}><span><ArrowUpFromLine size={15} />
+            {identity.isGuest ? "登录后上传视频" : "进入我的资料库"}</span></div>
+          <p>{identity.isGuest ? "公开课程可直接观看和检索" : "公开课程为只读资料"}</p>
+        </button>}
 
         <footer className={styles.sidebarFooter}>
           <div className={clsx(styles.runtime, styles[`runtime${mode}`])}>
@@ -114,15 +154,16 @@ export function AppShell() {
         <header className={styles.mobileHeader}>
           <NavLink className={styles.mobileBrand} to="/watch"><img src="/anivag-mark.svg" alt="" /><strong>anivag</strong></NavLink>
           <div>
-            <button type="button" onClick={openDialog} aria-label="打开上传面板"><ArrowUpFromLine size={17} /><span>{activeCount || "上传"}</span></button>
+            <button type="button" onClick={uploadAction} aria-label={canUpload ? "打开上传面板" : identity.isGuest ? "登录后上传" : "进入个人资料库"}><ArrowUpFromLine size={17} /><span>{canUpload ? activeCount || "上传" : identity.isGuest ? "登录" : "个人资料"}</span></button>
             <button type="button" onClick={toggleTheme} aria-label="切换明暗主题">{theme === "light" ? <Moon size={17} /> : <Sun size={17} />}</button>
           </div>
         </header>
+        <AccountControls mobile />
         <Outlet />
       </div>
 
       <nav className={styles.mobileNav} aria-label="移动端主导航">
-        {navigation.map(({ to, label, icon: Icon }) => (
+        {visibleNavigation.map(({ to, label, icon: Icon }) => (
           <NavLink key={to} to={to} className={({ isActive }) => isActive ? styles.mobileActive : undefined}>
             <Icon size={18} /><span>{label}</span>
           </NavLink>

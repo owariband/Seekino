@@ -18,8 +18,7 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener
 
-from elasticsearch import Elasticsearch
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
@@ -28,8 +27,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway.config import required_api_key_env_names, load_config
+from server.caller.elasticsearch import create_elasticsearch_client, close_elasticsearch_client
+from server.caller.mysql import (
+    create_admin_database_engine, create_database_engine, close_database_engine,
+)
 from server.config import ServerSettings
-from server.database import create_database_engine, create_schema
+from server.database import create_schema
 from server.storage.elasticsearch import ElasticsearchVideoChunkStore
 
 STATE = ROOT / "outputs/local-services"
@@ -117,7 +120,7 @@ def configure() -> ServerSettings:
     port("ANIVAG_HTTP_PORT")
     # Validate the development database name before starting or creating anything.
     engine = create_database_engine(settings.database_url, environment=settings.environment)
-    engine.dispose()
+    close_database_engine(engine)
     if settings.elasticsearch is not None:
         ElasticsearchVideoChunkStore(
             None, index_name=settings.elasticsearch.index_name,
@@ -254,7 +257,9 @@ def start_mysql(settings: ServerSettings) -> None:
         except OperationalError as error:
             if error.orig.args[0] != 1049:  # MySQL: unknown database
                 raise
-            admin = create_engine(url.set(database=""), connect_args={"connect_timeout": 5})
+            admin = create_admin_database_engine(
+                settings.database_url, environment=settings.environment,
+            )
             try:
                 with admin.connect() as connection:
                     # Escape the validated development name as an identifier.
@@ -263,10 +268,10 @@ def start_mysql(settings: ServerSettings) -> None:
                         f"CREATE DATABASE IF NOT EXISTS `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
                     ))
             finally:
-                admin.dispose()
+                close_database_engine(admin)
         create_schema(engine)
     finally:
-        engine.dispose()
+        close_database_engine(engine)
     print(f"[就绪] MySQL / {url.database}，Schema 已校验", flush=True)
 
 
@@ -274,7 +279,7 @@ def start_elasticsearch(settings: ServerSettings) -> None:
     config = settings.elasticsearch
     if config is None:
         raise RuntimeError("本地启动需要显式配置 Elasticsearch。")
-    client = Elasticsearch(config.url, api_key=config.api_key, request_timeout=5)
+    client = create_elasticsearch_client(config, request_timeout_seconds=5)
     try:
         health = client.cluster.health(wait_for_status="yellow", timeout="2s")
         if health.get("timed_out") or health.get("status") not in {"yellow", "green"}:
@@ -289,7 +294,7 @@ def start_elasticsearch(settings: ServerSettings) -> None:
             "Elasticsearch 未就绪或索引合同不匹配；请检查 Compose 的 elasticsearch 服务。"
         ) from exc
     finally:
-        client.close()
+        close_elasticsearch_client(client)
     print(f"[就绪] Elasticsearch / {config.index_name}，索引 Schema 已校验", flush=True)
 
 
@@ -375,7 +380,7 @@ def status(settings: ServerSettings) -> bool:
     }
     if settings.elasticsearch is not None:
         config = settings.elasticsearch
-        client = Elasticsearch(config.url, api_key=config.api_key, request_timeout=3)
+        client = create_elasticsearch_client(config, request_timeout_seconds=3)
         try:
             health = client.cluster.health(wait_for_status="yellow", timeout="2s")
             checks["Elasticsearch health"] = (
@@ -384,7 +389,7 @@ def status(settings: ServerSettings) -> bool:
         except Exception:
             checks["Elasticsearch health"] = False
         finally:
-            client.close()
+            close_elasticsearch_client(client)
     for name, ready in checks.items():
         print(f"[{'运行' if ready else '未就绪'}] {name}")
     return all(checks.values())

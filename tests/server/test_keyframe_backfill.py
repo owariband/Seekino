@@ -37,7 +37,7 @@ def test_backfill_cli_exposes_safe_scope_dry_run_and_limit() -> None:
     ])
 
     assert args.command == "backfill-keyframes"
-    assert args.workspace_id == "workspace"
+    assert args.tenant_id == "workspace"
     assert args.limit == 25
     assert args.max_height == 480
     assert args.dry_run is True
@@ -85,13 +85,13 @@ def test_repository_pages_snapshots_and_does_not_overwrite_concurrent_parse(
 
     first_page = videos.list_keyframe_backfill_candidates(
         limit=1,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
         series_id=prepared_import.series_id,
         video_id=prepared_import.video_id,
     )
     second_page = videos.list_keyframe_backfill_candidates(
         limit=1,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
         series_id=prepared_import.series_id,
         video_id=prepared_import.video_id,
         after=first_page[0],
@@ -136,7 +136,7 @@ def test_repository_pages_snapshots_and_does_not_overwrite_concurrent_parse(
     }]
     assert videos.list_keyframe_backfill_candidates(
         limit=10,
-        workspace_id="other-workspace",
+        tenant_id="other-workspace",
     ) == []
     with pytest.raises(ValueError, match="positive integer"):
         videos.list_keyframe_backfill_candidates(limit=0)
@@ -234,7 +234,7 @@ def test_backfill_is_dry_run_bounded_resumable_and_uses_absolute_time(
     dry_run = service.backfill(
         limit=1,
         dry_run=True,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
     )
     assert dry_run.candidate_count == dry_run.ready_count == 1
     assert dry_run.backfilled_count == 0
@@ -243,17 +243,17 @@ def test_backfill_is_dry_run_bounded_resumable_and_uses_absolute_time(
     first = service.backfill(
         limit=1,
         dry_run=False,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
     )
     second = service.backfill(
         limit=1,
         dry_run=False,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
     )
     complete = service.backfill(
         limit=1,
         dry_run=False,
-        workspace_id=prepared_import.workspace_id,
+        tenant_id=prepared_import.tenant_id,
     )
 
     assert first.backfilled_count == second.backfilled_count == 1
@@ -400,7 +400,7 @@ def test_backfill_failure_log_does_not_expose_media_path(
     caplog,
 ) -> None:
     candidate = KeyframeBackfillCandidate(
-        workspace_id="workspace",
+        tenant_id="workspace",
         series_id="11111111-1111-4111-8111-111111111111",
         video_id="22222222-2222-4222-8222-222222222222",
         episode_order=1,

@@ -7,6 +7,8 @@ from pydantic import Field, model_validator
 from agent.chat.common.state import AnswerPhase
 from agent.chat.video_search.state import RetrievalTraceEntry
 
+from ...constants.identity import LOCAL_USER_ID
+
 from ...schema import ContractModel
 from ..dto.agentDTO import EvidenceReference
 from .commonVO import Failure, UnixTimeMs
@@ -72,13 +74,14 @@ class AgentMessageTimingView(ContractModel):
 
 class AgentConversationView(ContractModel):
     conversation_id: str
-    workspace_id: str
+    tenant_id: str
     title: str
     message_count: int = Field(ge=0)
     last_message_preview: str | None
     last_message_at: UnixTimeMs | None
     created_at: UnixTimeMs
     updated_at: UnixTimeMs
+    owner_user_id: str = LOCAL_USER_ID
 
 
 class AgentSearchEvidenceView(SearchEvidenceFieldsView):

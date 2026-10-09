@@ -94,7 +94,7 @@ function mergeTaskProjection(
   return {
     ...current,
     ...updated,
-    workspaceId: updated.workspaceId ?? current.workspaceId,
+    tenantId: updated.tenantId ?? current.tenantId,
     seriesId: updated.seriesId ?? current.seriesId,
     seriesName: updated.seriesName ?? current.seriesName,
     episodeOrder: updated.episodeOrder ?? current.episodeOrder,

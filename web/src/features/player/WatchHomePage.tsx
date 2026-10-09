@@ -5,12 +5,14 @@ import { Link } from "react-router";
 
 import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
 import { useWorkspace } from "../../app/workspace";
+import { useAuth } from "../auth/AuthProvider";
 import { episodeLabel, formatTimecode } from "../../shared/format";
 import { readVideoProgress, readWatchHistory } from "./playbackProgress";
 import styles from "./watch.module.css";
 
 export function WatchHomePage() {
   const { series, isLoading, error } = useWorkspace();
+  const { identity, activeTenantId, canUpload } = useAuth();
   const [requestedSeriesId, setRequestedSeriesId] = useState<string | null>(null);
   const history = readWatchHistory();
   const recent = history.find((item) => series.some((entry) => entry.seriesId === item.seriesId));
@@ -50,7 +52,10 @@ export function WatchHomePage() {
       {error ? <p className={styles.homeError} role="alert">读取视频系列失败：{error.message}</p> : null}
       {isLoading ? <p className={styles.homeEmpty} role="status">正在读取视频系列…</p> : null}
       {!isLoading && !error && series.length === 0 ? (
-        <div className={styles.homeEmpty}>资料库里还没有视频。<Link to="/library">前往资料库上传视频</Link></div>
+        <div className={styles.homeEmpty}>
+          {identity.mode === "cloud" && activeTenantId === identity.publicTenantId ? "公开课程暂未上线。" : "资料库里还没有视频。"}
+          {canUpload ? <Link to="/library">前往资料库上传视频</Link> : null}
+        </div>
       ) : null}
 
       {series.length > 0 ? (

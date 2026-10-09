@@ -69,7 +69,7 @@ def run_query(
                     "content": (
                         "以下是本次不可丢失的任务锚点，不是 Evidence：\n"
                         + context_json({
-                            "workspace_id": inputs["workspace_id"],
+                            "tenant_id": inputs["tenant_id"],
                             "series_ids": list(inputs["series_ids"]),
                             "user_message": inputs["user_message"],
                             "turn_number": context["turn_number"],

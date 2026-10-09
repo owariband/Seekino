@@ -42,10 +42,10 @@ def _validate_tokens(value: Any) -> None:
 
 
 def _check_owner(record: ModelUsage, state: ModelUsageState) -> None:
-    if (record.workspace_id, record.task_type, record.run_id) != (
-        state.workspace_id, state.task_type, state.run_id,
+    if (record.tenant_id, record.task_type, record.run_id, record.actor_user_id) != (
+        state.tenant_id, state.task_type, state.run_id, state.actor_user_id,
     ):
-        raise ModelUsageConflictError("call_id already belongs to a different workspace/task/run")
+        raise ModelUsageConflictError("call_id already belongs to a different tenant/task/run/actor")
 
 
 def _duplicate_call_id(error: IntegrityError) -> bool:
@@ -68,8 +68,10 @@ class ModelUsageRepository:
         require_nonempty_text(state.call_id, "call_id", maximum=36)
         if str(UUID(state.call_id)) != state.call_id:
             raise ValueError("call_id must be a canonical UUID")
-        require_nonempty_text(state.workspace_id, "workspace_id", maximum=64)
+        require_nonempty_text(state.tenant_id, "tenant_id", maximum=64)
         require_nonempty_text(state.run_id, "run_id", maximum=256)
+        if state.actor_user_id is not None:
+            require_nonempty_text(state.actor_user_id, "actor_user_id", maximum=64)
         if state.task_type not in {"video_parse", "chat_retrieval"}:
             raise ValueError("task_type must be video_parse or chat_retrieval")
         require_utc_datetime(state.started_at, "started_at")
@@ -98,7 +100,8 @@ class ModelUsageRepository:
                     _check_owner(existing, state)
                     return self._state(existing)
                 record = ModelUsage(
-                    call_id=state.call_id, workspace_id=state.workspace_id,
+                    call_id=state.call_id, tenant_id=state.tenant_id,
+                    actor_user_id=state.actor_user_id,
                     task_type=state.task_type, run_id=state.run_id,
                     started_at=state.started_at, created_at=state.created_at,
                     usage=_json_values(state.usage), metadata_=_json_values(state.metadata),
@@ -119,20 +122,24 @@ class ModelUsageRepository:
                 return self._state(existing)
 
     def query(
-        self, *, workspace_id: str, from_start_time: datetime,
+        self, *, tenant_id: str, from_start_time: datetime,
         to_start_time: datetime, series_id: str | None = None,
         run_id: str | None = None,
+        actor_user_id: str | None = None,
     ) -> ModelCallUsageBatch:
-        require_nonempty_text(workspace_id, "workspace_id", maximum=64)
+        require_nonempty_text(tenant_id, "tenant_id", maximum=64)
         start = require_utc_datetime(from_start_time, "from_start_time")
         end = require_utc_datetime(to_start_time, "to_start_time")
         if start >= end:
             raise ValueError("usage window must be positive")
         filters = [
-            ModelUsage.workspace_id == workspace_id,
+            ModelUsage.tenant_id == tenant_id,
             ModelUsage.started_at >= start,
             ModelUsage.started_at < end,
         ]
+        if actor_user_id is not None:
+            require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
+            filters.append(ModelUsage.actor_user_id == actor_user_id)
         if run_id is not None:
             require_nonempty_text(run_id, "run_id", maximum=256)
             filters.append(ModelUsage.run_id == run_id)
@@ -173,7 +180,8 @@ class ModelUsageRepository:
     @staticmethod
     def _state(record: ModelUsage) -> ModelUsageState:
         return ModelUsageState(
-            call_id=record.call_id, workspace_id=record.workspace_id,
+            call_id=record.call_id, tenant_id=record.tenant_id,
+            actor_user_id=record.actor_user_id,
             task_type=record.task_type, run_id=record.run_id,
             started_at=record.started_at, usage=record.usage,
             metadata=record.metadata_, created_at=record.created_at,

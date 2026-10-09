@@ -69,8 +69,8 @@ class _V2Repository:
         self.scope_calls: list[tuple[tuple[str, ...], str]] = []
         self.hydrate_calls = []
 
-    def resolve_retrieval_scope(self, series_ids, *, workspace_id, require_sparse=False):
-        self.scope_calls.append((tuple(series_ids), workspace_id))
+    def resolve_retrieval_scope(self, series_ids, *, tenant_id, require_sparse=False):
+        self.scope_calls.append((tuple(series_ids), tenant_id))
         return self.scope
 
     def hydrate_retrieval_candidates(self, identities):
@@ -124,7 +124,7 @@ def _v2_semantic_encoder() -> EncoderContract:
 
 
 def _v2_retrieval_fixture():
-    workspace_id = "mine"
+    tenant_id = "mine"
     series_id = str(uuid4())
     video_id = str(uuid4())
     chunk_id = str(uuid4())
@@ -144,7 +144,7 @@ def _v2_retrieval_fixture():
     match = VideoChunkIndexMatch(
         rank=1,
         score=1.5,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
         series_id=series_id,
         video_id=video_id,
         video_chunk_id=chunk_id,
@@ -156,7 +156,7 @@ def _v2_retrieval_fixture():
     )
     evidence = VideoChunkEvidence(
         series_id=series_id,
-        workspace_id=workspace_id,
+        tenant_id=tenant_id,
         series_name="V2 Series",
         series_description=None,
         series_status="READY",
@@ -231,13 +231,13 @@ def test_retrieval_tracing_keeps_the_chat_run_and_records_embedding_failure():
     )
     with model_call_context({"run_id": "chat-run", "conversation_id": "conversation"}):
         with pytest.raises(RuntimeError, match="embedding failed"):
-            service.search("private query", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+            service.search("private query", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
     assert len(observed) == 1
     call = observed[0]
     assert call.status == "failed" and call.usage is None
     assert call.context["run_id"] == "chat-run"
     assert call.context["conversation_id"] == "conversation"
-    assert call.context["workspace_id"] == evidence.workspace_id
+    assert call.context["tenant_id"] == evidence.tenant_id
     assert call.context["series_ids"] == scope.series_ids
     assert call.context["video_ids"] == scope.searched_video_ids
     assert call.context["video_parse_task_ids"] == tuple(scope.parse_tasks_by_video_id.values())
@@ -261,10 +261,10 @@ def test_retrieval_sql_capture_inherits_chat_owner_without_an_independent_run():
         _V2Repository(scope, evidence), _V2Store([], [], []), Embedder(),
         semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
     )
-    context = {"workspace_id": evidence.workspace_id, "assistant_message_id": "chat-message",
+    context = {"tenant_id": evidence.tenant_id, "assistant_message_id": "chat-message",
                "conversation_id": "conversation"}
     with usage.capture_chat(context), pytest.raises(RuntimeError, match="embedding failed"):
-        retrieval.search("private query", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+        retrieval.search("private query", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
     assert len(recorded) == 1
     row = recorded[0]
     assert row.task_type == "chat_retrieval" and row.run_id == "chat-message"
@@ -273,7 +273,7 @@ def test_retrieval_sql_capture_inherits_chat_owner_without_an_independent_run():
     assert row.metadata["context"]["video_ids"] == scope.searched_video_ids
     assert row.metadata["context"]["video_parse_task_ids"] == tuple(scope.parse_tasks_by_video_id.values())
     with pytest.raises(RuntimeError, match="embedding failed"):
-        retrieval.search("private query", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+        retrieval.search("private query", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
     assert len(recorded) == 1
 
 
@@ -313,12 +313,12 @@ def test_v2_retrieval_fuses_es_channels_and_hydrates_exact_identity() -> None:
 
     result = service.search(
         "  蓝色杯子  ",
-        workspace_id=evidence.workspace_id,
+        tenant_id=evidence.tenant_id,
         series_ids=[evidence.series_id],
         top_k=1,
     )
 
-    assert repository.scope_calls == [((evidence.series_id,), evidence.workspace_id)]
+    assert repository.scope_calls == [((evidence.series_id,), evidence.tenant_id)]
     assert [call[0] for call in store.calls] == ["lexical", "semantic", "vision"]
     assert embedder.calls == ["蓝色杯子"]
     for _channel, request, kwargs in store.calls:
@@ -365,7 +365,7 @@ def test_v2_retrieval_rejects_task_embedding_config_drift_before_es(field, value
         semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
     )
     with pytest.raises(RetrievalIndexConsistencyError, match="model or dimensions"):
-        service.search("角色离开", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+        service.search("角色离开", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
     assert store.calls == []
     assert embedder.calls == []
 
@@ -385,7 +385,7 @@ def test_v2_endpoint_retrieval_uses_the_same_encoder_identity_as_indexing(encode
         _V2Repository(scope, evidence), store, embedder,
         semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
     )
-    result = service.search("蓝色杯子", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+    result = service.search("蓝色杯子", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
     assert len(result.hits) == 1
     assert embedder.calls == ["蓝色杯子"]
     assert [call[0] for call in store.calls] == ["lexical", "semantic", "vision"]
@@ -407,7 +407,7 @@ def test_v2_endpoint_retrieval_still_rejects_a_wrong_actual_model(returned_model
         semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
     )
     with pytest.raises(RetrievalIndexConsistencyError, match="query encoding response model"):
-        service.search("蓝色杯子", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+        service.search("蓝色杯子", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
     assert store.calls == []
     assert embedder.calls == ["蓝色杯子"]
 
@@ -427,7 +427,7 @@ def test_v2_endpoint_retrieval_rejects_encoder_drift_before_model_calls():
         semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
     )
     with pytest.raises(RetrievalIndexConsistencyError, match="model or dimensions"):
-        service.search("蓝色杯子", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+        service.search("蓝色杯子", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
     assert store.calls == []
     assert embedder.calls == []
 
@@ -455,7 +455,7 @@ def test_v2_retrieval_rejects_gateway_embedding_metadata_before_vector_search(
     with pytest.raises(RetrievalIndexConsistencyError, match="query encoding|embedding vector"):
         service.search(
             "角色离开",
-            workspace_id=evidence.workspace_id,
+            tenant_id=evidence.tenant_id,
             series_ids=[evidence.series_id],
         )
 
@@ -478,7 +478,7 @@ def test_v2_retrieval_rejects_index_generation_before_any_es_query() -> None:
     with pytest.raises(RetrievalIndexConsistencyError, match="index generation"):
         service.search(
             "角色离开",
-            workspace_id=evidence.workspace_id,
+            tenant_id=evidence.tenant_id,
             series_ids=[evidence.series_id],
         )
 
@@ -494,7 +494,7 @@ def test_v2_retrieval_rejects_changed_query_source_before_model_or_es_calls():
         semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
         expected_embedding_source="another-ark-source")
     with pytest.raises(RetrievalIndexConsistencyError, match="embedding source"):
-        service.search("蓝色杯子", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+        service.search("蓝色杯子", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
     assert store.calls == []
     assert embedder.calls == []
 
@@ -525,7 +525,7 @@ def test_v2_retrieval_rejects_cross_channel_identity_drift() -> None:
     with pytest.raises(RetrievalIndexConsistencyError, match="identity"):
         service.search(
             "角色离开",
-            workspace_id=evidence.workspace_id,
+            tenant_id=evidence.tenant_id,
             series_ids=[evidence.series_id],
         )
 
@@ -547,7 +547,7 @@ def test_v2_retrieval_rejects_legacy_transcript_weight_before_search() -> None:
     with pytest.raises(ValueError, match="lexical_weight"):
         service.search(
             "角色离开",
-            workspace_id=evidence.workspace_id,
+            tenant_id=evidence.tenant_id,
             series_ids=[evidence.series_id],
             transcript_weight=1.0,
             text_weight=0.0,
@@ -572,7 +572,7 @@ def test_v2_retrieval_marks_a_complete_subset_as_partial() -> None:
 
     result = service.search(
         "角色离开",
-        workspace_id=evidence.workspace_id,
+        tenant_id=evidence.tenant_id,
         series_ids=[evidence.series_id],
     )
 
@@ -593,7 +593,7 @@ def test_v2_legal_top_k_is_not_rejected_by_a_smaller_candidate_budget(top_k, can
         candidate_budget=candidate_budget,
     )
 
-    result = service.search("蓝色杯子", workspace_id=evidence.workspace_id,
+    result = service.search("蓝色杯子", tenant_id=evidence.tenant_id,
                             series_ids=scope.series_ids, top_k=top_k)
 
     assert [hit.candidate.video_chunk_id for hit in result.hits] == [match.video_chunk_id]
@@ -612,7 +612,7 @@ def test_v2_invalid_top_k_is_rejected_before_scope_encoding_or_recall(top_k):
     )
 
     with pytest.raises(ValueError, match="top_k must be a positive integer"):
-        service.search("蓝色杯子", workspace_id=evidence.workspace_id,
+        service.search("蓝色杯子", tenant_id=evidence.tenant_id,
                        series_ids=scope.series_ids, top_k=top_k)
 
     assert repository.scope_calls == store.calls == embedder.calls == []
@@ -641,7 +641,7 @@ def test_v2_candidate_pool_follows_recall_config_and_covers_requested_top_k(
         channel_top_k=2, lexical_weight=0.0, candidate_budget=candidate_budget,
     )
 
-    result = service.search("蓝色杯子", workspace_id=evidence.workspace_id,
+    result = service.search("蓝色杯子", tenant_id=evidence.tenant_id,
                             series_ids=scope.series_ids, top_k=top_k)
 
     assert len(repository.hydrate_calls[0]) == pool_size
@@ -677,7 +677,7 @@ def test_v2_rerank_can_select_a_candidate_outside_the_original_top_k():
         FakeQueryEmbedder([1.0, 0.0]), semantic_encoder=_v2_semantic_encoder(),
         expected_index_generation=scope.index_generation, lexical_weight=0.0,
         text_weight=1.0, vision_weight=0.0, reranker=Scorer())
-    result = service.search("蓝色杯子", workspace_id=evidence.workspace_id,
+    result = service.search("蓝色杯子", tenant_id=evidence.tenant_id,
                             series_ids=scope.series_ids, top_k=1)
     assert len(repository.hydrate_calls[0]) == 2
     assert result.hits[0].candidate.video_chunk_id == second.video_chunk_id
@@ -711,9 +711,9 @@ def test_v2_rerank_fallback_preserves_rrf_and_propagates_host_control(failure, c
         text_weight=1.0, vision_weight=0.0, reranker=Scorer())
     if failure == "control":
         with pytest.raises(ModelCallControlError, match="host limit"):
-            service.search("蓝色杯子", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+            service.search("蓝色杯子", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
     else:
-        result = service.search("蓝色杯子", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+        result = service.search("蓝色杯子", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
         assert result.hits[0].candidate.video_chunk_id == match.video_chunk_id
         assert "using RRF" in caplog.text
 
@@ -736,7 +736,7 @@ def test_v2_sparse_channel_uses_native_weights_and_keeps_chunk_evidence():
     service = VideoParseRetrievalService(_V2Repository(scope, evidence), store, Embedder(),
         semantic_encoder=_v2_semantic_encoder(), expected_index_generation=scope.index_generation,
         lexical_weight=0.0, text_weight=0.0, vision_weight=0.0, sparse_weight=1.0)
-    result = service.search("蓝色杯子", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+    result = service.search("蓝色杯子", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)
     assert store.calls[0][0] == "sparse"
     assert store.calls[0][1].token_weights == (("17", 0.5),)
     assert result.hits[0].candidate.video_chunk_id == match.video_chunk_id
@@ -752,4 +752,4 @@ def test_v2_retrieval_rejects_index_event_text_not_in_current_formal_content():
         expected_index_generation=scope.index_generation, lexical_weight=1.0,
         text_weight=0.0, vision_weight=0.0)
     with pytest.raises(RetrievalIndexConsistencyError, match="formal projection source"):
-        service.search("不存在的事件", workspace_id=evidence.workspace_id, series_ids=scope.series_ids)
+        service.search("不存在的事件", tenant_id=evidence.tenant_id, series_ids=scope.series_ids)

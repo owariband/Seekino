@@ -25,7 +25,7 @@ class UploadSegmentState:
 @dataclass(frozen=True, slots=True)
 class UploadSessionState:
     upload_session_id: str
-    workspace_id: str
+    tenant_id: str
     series_id: str
     episode_order: int
     upload_sequence: int
@@ -52,6 +52,7 @@ class UploadSessionState:
     parse_config: dict | None = None
     video_parse_config: dict | None = None
     detail: dict | None = None
+    created_by_user_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +93,7 @@ class UploadSessionDeletion:
 
 
 class UploadSessionCreateRequest(ContractModel):
-    workspace_id: str = Field(min_length=1, max_length=64)
+    tenant_id: str = Field(min_length=1, max_length=64)
     episode_order: int = Field(
         gt=0,
         le=2_147_483_647,

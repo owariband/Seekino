@@ -20,7 +20,6 @@ from .video import (
     ID_LENGTH,
     MYSQL_TABLE_OPTIONS,
     UTC_TIMESTAMP,
-    TimestampMixin,
 )
 
 
@@ -31,13 +30,15 @@ class ModelUsage(Base):
             "task_type IN ('video_parse', 'chat_retrieval')",
             name="ck_model_usage_task_type",
         ),
-        Index("ix_model_usage_workspace_started", "workspace_id", "started_at", "call_id"),
-        Index("ix_model_usage_workspace_run_started", "workspace_id", "run_id", "started_at"),
+        Index("ix_model_usage_tenant_started", "tenant_id", "started_at", "call_id"),
+        Index("ix_model_usage_tenant_run_started", "tenant_id", "run_id", "started_at"),
+        Index("ix_model_usage_tenant_actor_started", "tenant_id", "actor_user_id", "started_at"),
         {**MYSQL_TABLE_OPTIONS, "mysql_collate": "utf8mb4_bin"},
     )
 
     call_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(String(64))
     task_type: Mapped[str] = mapped_column(String(16), nullable=False)
     run_id: Mapped[str] = mapped_column(String(256), nullable=False)
     started_at: Mapped[datetime] = mapped_column(UTC_TIMESTAMP, nullable=False)
@@ -100,7 +101,7 @@ class VideoParseUsageAttempt(Base):
     )
 
 
-class ParseModelCall(TimestampMixin, Base):
+class ParseModelCall(Base):
     __tablename__ = "parse_model_call"
     __table_args__ = (
         CheckConstraint(
@@ -154,7 +155,7 @@ class ParseModelCall(TimestampMixin, Base):
     execution_task_id: Mapped[str | None] = mapped_column(String(ID_LENGTH))
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
     lease_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
     series_id: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
     video_id: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
     sequence_no: Mapped[int | None] = mapped_column(Integer)

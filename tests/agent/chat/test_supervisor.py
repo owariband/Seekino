@@ -17,7 +17,7 @@ from agent.chat.video_search.errors import (
 def _inputs(*, series_ids=None):
     return {
         "conversation_id": "conversation", "assistant_message_id": "answer",
-        "workspace_id": "workspace", "series_ids": series_ids or [],
+        "tenant_id": "workspace", "series_ids": series_ids or [],
         "series_context": [{"seriesId": "series", "name": "Course"}]
         if series_ids else [],
         "user_message": "What happened?", "history": [], "requested_top_k": 3,
@@ -151,7 +151,7 @@ def test_video_tool_preserves_full_user_request_across_different_queries():
     delegated = video.calls[0][0]
     assert delegated["user_message"] == inputs["user_message"]
     assert delegated["series_ids"] == inputs["series_ids"] == ["series"]
-    assert delegated["workspace_id"] == inputs["workspace_id"]
+    assert delegated["tenant_id"] == inputs["tenant_id"]
     assert delegated["history"] == inputs["history"]
     assert delegated["history"] is not inputs["history"]
     assert inputs["series_context"] == [{"seriesId": "series", "name": "Course"}]

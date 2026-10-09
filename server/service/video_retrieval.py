@@ -98,14 +98,14 @@ class VideoParseRetrievalService:
         self._reranker, self._tracing, self._exact = reranker, tracing, exact
 
     def search(
-        self, query: str, *, workspace_id: str, series_ids: Sequence[str],
+        self, query: str, *, tenant_id: str, series_ids: Sequence[str],
         top_k: int = 10, lexical_weight: float | None = None,
         transcript_weight: float | None = None, text_weight: float | None = None,
         vision_weight: float | None = None,
     ) -> VideoChunkSearchResult:
-        if (not isinstance(workspace_id, str) or not workspace_id
-                or workspace_id != workspace_id.strip()):
-            raise ValueError("workspace_id must be a non-empty string")
+        if (not isinstance(tenant_id, str) or not tenant_id
+                or tenant_id != tenant_id.strip()):
+            raise ValueError("tenant_id must be a non-empty string")
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must not be empty")
         if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
@@ -132,7 +132,7 @@ class VideoParseRetrievalService:
         query = query.strip()
         try:
             selected = self._repository.resolve_retrieval_scope(
-                series_ids, workspace_id=workspace_id,
+                series_ids, tenant_id=tenant_id,
                 **({"require_sparse": True} if policy.sparse_weight else {}),
             )
         except VideoParseConflictError as error:
@@ -167,7 +167,7 @@ class VideoParseRetrievalService:
                 encoder_revision=self._semantic_encoder.encoder_revision,
             ) if policy.sparse_weight else None,
         )
-        scope = RetrievalScope(workspace_id=workspace_id, tasks=tuple(
+        scope = RetrievalScope(tenant_id=tenant_id, tasks=tuple(
             SelectedVideoTask(series_id=selected.series_by_video_id[video_id],
                 video_id=video_id, parse_task_id=task_id, status="COMPLETE")
             for video_id, task_id in selected.parse_tasks_by_video_id.items()
@@ -180,7 +180,7 @@ class VideoParseRetrievalService:
         plan = plan_retrieval_query(query, scope=scope, index_contract=contract,
                                     policy=policy, encoder_bindings=bindings)
         context = {
-            "workspace_id": workspace_id, "series_ids": selected.series_ids,
+            "tenant_id": tenant_id, "series_ids": selected.series_ids,
             "video_ids": selected.searched_video_ids,
             "video_parse_task_ids": tuple(selected.parse_tasks_by_video_id.values()),
             "index_generation": selected.index_generation, "stage": "retrieval",

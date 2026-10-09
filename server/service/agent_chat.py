@@ -21,6 +21,7 @@ from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
 from ..config.agent import AgentServiceConfig
+from ..constants.identity import LOCAL_USER_ID
 from ..model.dto.agentDTO import (
     AgentConversationState,
     AgentIntegerOptionState,
@@ -323,18 +324,19 @@ class AgentChatService:
     def create_conversation(
         self,
         *,
-        workspace_id: str,
+        tenant_id: str,
         title: str | None = None,
         idempotency_key: str,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
         normalized_workspace = require_nonempty_text(
-            workspace_id,
-            "workspace_id",
+            tenant_id,
+            "tenant_id",
             maximum=64,
         )
         return self._repository.create_conversation(
             conversation_id=str(uuid4()),
-            workspace_id=normalized_workspace,
+            tenant_id=normalized_workspace,
             title="新对话" if title is None else require_nonempty_text(title, "title", maximum=255),
             title_is_auto=title is None,
             idempotency_key=require_nonempty_text(
@@ -342,81 +344,92 @@ class AgentChatService:
                 "idempotency_key",
                 maximum=128,
             ),
+            owner_user_id=owner_user_id,
         )
 
     def list_conversations(
         self,
         *,
-        workspace_id: str,
+        tenant_id: str,
         limit: int = 100,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> list[AgentConversationState]:
         return self._repository.list_conversations(
-            workspace_id=require_nonempty_text(workspace_id, "workspace_id", maximum=64),
+            tenant_id=require_nonempty_text(tenant_id, "tenant_id", maximum=64),
             limit=_positive_limit(limit),
+            owner_user_id=owner_user_id,
         )
 
     def get_conversation(
         self,
         conversation_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
         return self._repository.get_conversation(
             canonical_uuid(conversation_id, "conversation_id"),
-            require_nonempty_text(workspace_id, "workspace_id", maximum=64),
+            require_nonempty_text(tenant_id, "tenant_id", maximum=64),
+            owner_user_id=owner_user_id,
         )
 
     def delete_conversation(
         self,
         conversation_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversationState:
         normalized_conversation_id = canonical_uuid(
             conversation_id,
             "conversation_id",
         )
         normalized_workspace = require_nonempty_text(
-            workspace_id,
-            "workspace_id",
+            tenant_id,
+            "tenant_id",
             maximum=64,
         )
         with self._lock:
             return self._repository.delete_conversation(
                 normalized_conversation_id,
                 normalized_workspace,
+                owner_user_id=owner_user_id,
             )
 
     def page_conversations(
-        self, *, workspace_id: str, cursor: str | None = None, limit: int = 50,
+        self, *, tenant_id: str, cursor: str | None = None, limit: int = 50,
         series_id: str | None = None, query: str | None = None,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentPageState[AgentConversationState]:
-        workspace_id = require_nonempty_text(workspace_id, "workspace_id", maximum=64)
+        tenant_id = require_nonempty_text(tenant_id, "tenant_id", maximum=64)
         series_id = canonical_uuid(series_id, "series_id") if series_id is not None else None
         query = query.strip() if query is not None else None
-        scope = {"workspaceId": workspace_id, "seriesId": series_id, "query": query,
+        scope = {"tenantId": tenant_id, "ownerUserId": owner_user_id, "seriesId": series_id, "query": query,
                  "resource": "conversations", "sort": "updatedAt,conversationId:desc"}
         offset = decode_cursor(cursor, scope=scope)
         items, total = self._repository.list_conversation_page(
-            workspace_id, offset=offset, limit=_positive_limit(limit, maximum=100),
+            tenant_id, offset=offset, limit=_positive_limit(limit, maximum=100),
             series_id=series_id, query=query,
+            owner_user_id=owner_user_id,
         )
         return _page(items, total, offset, scope)
 
     def page_messages(
-        self, conversation_id: str, *, workspace_id: str, cursor: str | None = None,
+        self, conversation_id: str, *, tenant_id: str, cursor: str | None = None,
         limit: int = 50, after_sequence_no: int = -1,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentPageState[AgentMessageState]:
         conversation_id = canonical_uuid(conversation_id, "conversation_id")
-        workspace_id = require_nonempty_text(workspace_id, "workspace_id", maximum=64)
+        tenant_id = require_nonempty_text(tenant_id, "tenant_id", maximum=64)
         if isinstance(after_sequence_no, bool) or not isinstance(after_sequence_no, int) or after_sequence_no < -1:
             raise ValueError("after_sequence_no must be an integer at least -1")
-        scope = {"workspaceId": workspace_id, "conversationId": conversation_id,
+        scope = {"tenantId": tenant_id, "ownerUserId": owner_user_id, "conversationId": conversation_id,
                  "afterSequenceNo": after_sequence_no, "resource": "messages", "sort": "sequenceNo:asc"}
         offset = decode_cursor(cursor, scope=scope)
         items, total = self._repository.list_message_page(
-            conversation_id, workspace_id, offset=offset,
+            conversation_id, tenant_id, offset=offset,
             limit=_positive_limit(limit, maximum=100), after_sequence_no=after_sequence_no,
+            owner_user_id=owner_user_id,
         )
         return _page(items, total, offset, scope)
 
@@ -424,9 +437,10 @@ class AgentChatService:
         self,
         conversation_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
         after_sequence_no: int = -1,
         limit: int = 200,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> list[AgentMessageState]:
         if (
             isinstance(after_sequence_no, bool)
@@ -436,45 +450,52 @@ class AgentChatService:
             raise ValueError("after_sequence_no must be an integer at least -1")
         return self._repository.list_messages(
             canonical_uuid(conversation_id, "conversation_id"),
-            require_nonempty_text(workspace_id, "workspace_id", maximum=64),
+            require_nonempty_text(tenant_id, "tenant_id", maximum=64),
             after_sequence_no=after_sequence_no,
             limit=_positive_limit(limit, maximum=500),
+            owner_user_id=owner_user_id,
         )
 
     def list_all_messages(
         self,
         conversation_id: str,
         *,
-        workspace_id: str,
+        tenant_id: str,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> list[AgentMessageState]:
         """Read a complete persisted snapshot, including in-place reply updates."""
         return self._repository.list_messages(
             canonical_uuid(conversation_id, "conversation_id"),
-            require_nonempty_text(workspace_id, "workspace_id", maximum=64),
+            require_nonempty_text(tenant_id, "tenant_id", maximum=64),
             after_sequence_no=-1,
             limit=None,
+            owner_user_id=owner_user_id,
         )
 
     def send_message(
-        self, conversation_id: str, *, workspace_id: str, content: str,
+        self, conversation_id: str, *, tenant_id: str, content: str,
         idempotency_key: str, series_ids: list[str] | None = None, top_k: int | None = None,
         max_model_calls_per_turn: int | None = None,
         max_tool_calls_per_turn: int | None = None,
         max_loop_turns: int | None = None,
         reference: dict[str, str] | None = None,
         extra_context: dict | None = None,
+        owner_user_id: str = LOCAL_USER_ID,
+        source_tenant_id: str | None = None,
     ) -> AgentMessageSendState:
         return self.start_message(
-            conversation_id, workspace_id=workspace_id, content=content,
+            conversation_id, tenant_id=tenant_id, content=content,
             idempotency_key=idempotency_key, series_ids=series_ids, top_k=top_k, reference=reference,
             extra_context=extra_context,
             max_model_calls_per_turn=max_model_calls_per_turn,
             max_tool_calls_per_turn=max_tool_calls_per_turn,
             max_loop_turns=max_loop_turns,
+            owner_user_id=owner_user_id,
+            source_tenant_id=source_tenant_id,
         ).result()
 
     def start_message(
-        self, conversation_id: str, *, workspace_id: str, content: str,
+        self, conversation_id: str, *, tenant_id: str, content: str,
         idempotency_key: str, series_ids: list[str] | None = None,
         top_k: int | None = None, stream: bool = False,
         max_model_calls_per_turn: int | None = None,
@@ -482,9 +503,16 @@ class AgentChatService:
         max_loop_turns: int | None = None,
         reference: dict[str, str] | None = None,
         extra_context: dict | None = None,
+        owner_user_id: str = LOCAL_USER_ID,
+        source_tenant_id: str | None = None,
     ) -> AgentMessageExecution:
         runtime, config, executor = self._current_config()
-        normalized_workspace = require_nonempty_text(workspace_id, "workspace_id", maximum=64)
+        normalized_workspace = require_nonempty_text(tenant_id, "tenant_id", maximum=64)
+        owner_user_id = require_nonempty_text(owner_user_id, "owner_user_id", maximum=64)
+        normalized_source = require_nonempty_text(
+            source_tenant_id if source_tenant_id is not None else normalized_workspace,
+            "source_tenant_id", maximum=64,
+        )
         normalized_conversation_id = canonical_uuid(conversation_id, "conversation_id")
         normalized_content = require_nonempty_text(content, "content", maximum=20_000)
         normalized_reference = _canonical_reference(reference)
@@ -526,26 +554,30 @@ class AgentChatService:
                 raise AgentMessageInProgressError("the Agent service is shutting down")
             started = self._repository.find_idempotent_message(
                 conversation_id=normalized_conversation_id,
-                workspace_id=normalized_workspace, content=normalized_content,
+                tenant_id=normalized_workspace, content=normalized_content,
                 requested_top_k=requested_top_k, idempotency_key=normalized_key,
                 requested_series_ids=requested_scope,
                 requested_run_options=requested_run_options,
                 reference=normalized_reference,
                 extra_context=extra_context,
+                owner_user_id=owner_user_id,
+                source_tenant_id=normalized_source if normalized_source != normalized_workspace else None,
             )
             if started is None:
                 scope = self._resolve_scope(
-                    requested_scope, normalized_workspace,
+                    requested_scope, normalized_source,
                     allow_empty=isinstance(runtime, SupervisorRuntime),
                 )
                 reference_context = self._load_reference(
                     normalized_reference, normalized_conversation_id, normalized_workspace, scope,
+                    owner_user_id=owner_user_id,
+                    source_tenant_id=normalized_source,
                 )
                 timing_started_at = self._clock()
                 timing_started_ns = self._monotonic_clock()
                 started = self._repository.start_message(
                     conversation_id=normalized_conversation_id,
-                    workspace_id=normalized_workspace, content=normalized_content,
+                    tenant_id=normalized_workspace, content=normalized_content,
                     model_name=require_nonempty_text(runtime.model_name, "chat_model.model_name", maximum=255),
                     requested_top_k=requested_top_k, idempotency_key=normalized_key,
                     series_ids=scope, requested_series_ids=requested_scope,
@@ -554,6 +586,8 @@ class AgentChatService:
                     now=timing_started_at,
                     reference=normalized_reference,
                     extra_context=extra_context,
+                    owner_user_id=owner_user_id,
+                    source_tenant_id=normalized_source if normalized_source != normalized_workspace else None,
                 )
             if started.reused and started.assistant_message.status == "PROCESSING":
                 raise AgentMessageInProgressError("the idempotent message is still being processed")
@@ -579,8 +613,9 @@ class AgentChatService:
             self._executions[started.assistant_message.message_id] = execution
             try:
                 execution.future = executor.submit(
-                    self._execute, execution, normalized_workspace, requested_top_k,
+                    self._execute, execution, normalized_source, requested_top_k,
                     run_options, max_loop_turns, runtime, config,
+                    owner_user_id=owner_user_id, conversation_tenant_id=normalized_workspace,
                 )
             except Exception:
                 self._executions.pop(started.assistant_message.message_id, None)
@@ -593,26 +628,29 @@ class AgentChatService:
             return execution
 
     def get_message(
-        self, conversation_id: str, *, workspace_id: str,
+        self, conversation_id: str, *, tenant_id: str,
         message_id: str | None = None, idempotency_key: str | None = None,
+        owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentMessageSendState:
         if (message_id is None) == (idempotency_key is None):
             raise ValueError("provide exactly one of messageId or idempotencyKey")
         pair = self._repository.get_message_pair(
             canonical_uuid(conversation_id, "conversation_id"),
-            require_nonempty_text(workspace_id, "workspace_id", maximum=64),
+            require_nonempty_text(tenant_id, "tenant_id", maximum=64),
             message_id=canonical_uuid(message_id, "message_id") if message_id is not None else None,
             idempotency_key=require_nonempty_text(idempotency_key, "idempotency_key", maximum=128)
             if idempotency_key is not None else None,
+            owner_user_id=owner_user_id,
         )
         return AgentMessageSendState(pair.user_message, pair.assistant_message)
 
-    def _load_reference(self, reference, conversation_id, workspace_id, scope):
+    def _load_reference(self, reference, conversation_id, tenant_id, scope, *, owner_user_id: str = LOCAL_USER_ID, source_tenant_id: str | None = None):
         if reference is None:
             return None
         try:
             pair = self._repository.get_message_pair(
-                conversation_id, workspace_id, message_id=reference["messageId"],
+                conversation_id, tenant_id, message_id=reference["messageId"],
+                owner_user_id=owner_user_id,
             )
             source = pair.assistant_message
             if source.message_id != reference["messageId"] or not source.search_result:
@@ -625,7 +663,7 @@ class AgentChatService:
                 evidence = VideoChunkEvidence.model_validate(hit["evidence"])
             except (KeyError, TypeError, ValueError) as exc:
                 raise AgentReferenceInvalidError("引用的历史证据已损坏。") from exc
-            if evidence.workspace_id != workspace_id or evidence.series_id not in scope:
+            if evidence.tenant_id != (source_tenant_id or tenant_id) or evidence.series_id not in scope:
                 raise AgentReferenceInvalidError("引用的片段不属于本次检索范围。")
             selected_range = _validated_stored_video_range(
                 source.search_result,
@@ -643,18 +681,18 @@ class AgentChatService:
             raise AgentReferenceInvalidError("引用的消息已失效。") from exc
 
     def _resolve_scope(
-        self, requested: list[str], workspace_id: str, *, allow_empty: bool,
+        self, requested: list[str], tenant_id: str, *, allow_empty: bool,
     ) -> list[str]:
         if requested:
             series = [
-                self._library.get_series(series_id, workspace_id=workspace_id)
+                self._library.get_series(series_id, tenant_id=tenant_id)
                 for series_id in requested
             ]
             if any(item.status != "READY" for item in series):
                 raise SeriesNotReadyError("selected Series must be READY before retrieval")
         else:
             series = [
-                item for item in self._library.list_series(workspace_id=workspace_id)
+                item for item in self._library.list_series(tenant_id=tenant_id)
                 if item.status == "READY"
             ]
         if not series and not allow_empty:
@@ -662,9 +700,12 @@ class AgentChatService:
         return sorted(item.series_id for item in series)
 
     def _execute(
-        self, execution: AgentMessageExecution, workspace_id: str, requested_top_k: int,
+        self, execution: AgentMessageExecution, tenant_id: str, requested_top_k: int,
         run_options: AgentRunOptionsState, max_loop_turns: int | None,
         runtime: AgentRuntime | SupervisorRuntime, config: AgentServiceConfig,
+        *,
+        owner_user_id: str = LOCAL_USER_ID,
+        conversation_tenant_id: str | None = None,
     ) -> AgentMessageSendState:
         initial = execution.initial
         assistant_id = initial.assistant_message.message_id
@@ -693,13 +734,14 @@ class AgentChatService:
             execution.publish(event)
         try:
             history = self._repository.list_recent_completed_messages(
-                conversation_id, workspace_id,
+                conversation_id, conversation_tenant_id or tenant_id,
                 before_sequence_no=initial.user_message.sequence_no,
                 limit=config.history_message_limit,
+                owner_user_id=owner_user_id,
             )
             def load_video_context() -> list[dict]:
                 series = [
-                    self._library.get_series(series_id, workspace_id=workspace_id)
+                    self._library.get_series(series_id, tenant_id=tenant_id)
                     for series_id in initial.user_message.series_ids
                 ]
                 return [{
@@ -717,7 +759,7 @@ class AgentChatService:
 
             inputs = RunInputs(
                 conversation_id=conversation_id, assistant_message_id=assistant_id,
-                workspace_id=workspace_id, series_ids=list(initial.user_message.series_ids),
+                tenant_id=tenant_id, series_ids=list(initial.user_message.series_ids),
                 user_message=initial.user_message.content or "",
                 requested_top_k=requested_top_k,
                 history=[{
@@ -733,7 +775,7 @@ class AgentChatService:
                     [{
                         "seriesId": series_id,
                         "name": self._library.get_series(
-                            series_id, workspace_id=workspace_id,
+                            series_id, tenant_id=tenant_id,
                         ).name,
                     } for series_id in initial.user_message.series_ids]
                     if isinstance(runtime, SupervisorRuntime)
@@ -749,7 +791,8 @@ class AgentChatService:
                     "max_loop_turns": max_loop_turns,
                 }
                 context = {
-                    "workspace_id": workspace_id,
+                    "tenant_id": tenant_id,
+                    "actor_user_id": owner_user_id,
                     "conversation_id": conversation_id,
                     "session_id": conversation_id,
                     "user_message_id": initial.user_message.message_id,
