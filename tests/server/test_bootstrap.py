@@ -6,7 +6,8 @@ from dataclasses import replace
 
 import pytest
 from engine.parsev1.pipeline import ParsePipeline
-from engine.parsev1.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from engine.common.config import VideoParseRuntimeConfig
+from engine.parsev1.runtime import EngineVideoParseRuntime
 from gateway.config import load_config
 from gateway.openai.structured import OpenAIStructuredToolAgentModel
 
@@ -184,7 +185,7 @@ def test_process_assembly_receives_runtime_configuration(
 
     monkeypatch.setattr(bootstrap, "VideoRetrievalService", create_retrieval)
     monkeypatch.setattr(bootstrap, "DoubaoMultimodalEmbedder", Embedder)
-    monkeypatch.setattr(bootstrap, "ParseJobConsumer", Consumer)
+    monkeypatch.setattr("server.mq.consumer.ParseJobConsumer", Consumer)
     services = bootstrap.build_application_services(settings)
     try:
         assert services.media.image_upload_config == settings.images
@@ -408,8 +409,8 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
     def forbidden_v1_consumer(*_args, **_kwargs):
         raise AssertionError("V2 mode must not construct the V1 parse consumer")
 
-    monkeypatch.setattr(bootstrap, "EngineVideoParseRuntime", forbidden_v1_runtime)
-    monkeypatch.setattr(bootstrap, "ParseJobConsumer", forbidden_v1_consumer)
+    monkeypatch.setattr("engine.parsev1.runtime.EngineVideoParseRuntime", forbidden_v1_runtime)
+    monkeypatch.setattr("server.mq.consumer.ParseJobConsumer", forbidden_v1_consumer)
 
     services = bootstrap.build_application_services(settings)
     try:

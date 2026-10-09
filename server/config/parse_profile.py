@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from engine.parsev1.runtime import VideoParseRuntimeConfig
+from engine.common.config import VideoParseRuntimeConfig
 from agent.video_parse_v2.input import (
     ASRModelConfig as VideoParseV2ASRModelConfig,
     EmbeddingModelConfig as VideoParseV2EmbeddingModelConfig,

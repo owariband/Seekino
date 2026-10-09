@@ -34,9 +34,8 @@ from agent.video_parse_v2.host import (
     VideoRunSnapshot,
     VideoTaskStatus,
 )
-from engine.parsev1.audio_transcription import normalize_transcription
-from engine.parsev1.model_factory import build_asr_agent, build_openai_vision
-from engine.parsev1.schemas import TranscriptAnalysis
+from engine.common.model_factory import build_asr_agent, build_openai_vision
+from engine.common.transcription import TranscriptAnalysis, normalize_transcription
 from engine.parsev2.planning import ChunkPlan, IntervalPlan
 from engine.parsev2.schemas import (
     DialogueEvent,

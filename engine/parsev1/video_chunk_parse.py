@@ -14,35 +14,26 @@ from gateway.multimodal import (
 )
 from gateway.errors import ContentFilterError
 
-from .analysis_windows import probe_video_duration_seconds
+from engine.common.frame_sampler import extract_video_frames, plan_frame_timestamps
+from engine.common.media_probe import probe_video_duration_seconds
+from engine.common.transcription import TranscriptAnalysis, clamp_transcript
+
 from .background import BackgroundImage, build_background_image_inputs
-from .frame_sampler import extract_video_frames, plan_frame_timestamps
 from .prompts import (
     ARK_FRAME_SEQUENCE_INTRO,
     FRAME_SEQUENCE_INTRO,
-    TRANSCRIPT_PROMPT,
     build_fallback_refiner_prompt,
     build_neutral_visual_prompt,
     build_video_parse_prompt,
 )
 from .schemas import (
     NeutralVisualEvidence,
-    TranscriptAnalysis,
     VideoEvidence,
     VideoParseProvenance,
     VideoTimeline,
 )
 
 ProvenanceProvider = str
-
-
-class VideoASRAgentProtocol(Protocol):
-    def transcribe(
-        self,
-        video_path: str | Path,
-        *,
-        duration_seconds: int | None = None,
-    ) -> TranscriptAnalysis: ...
 
 
 class VideoUnderstandingAgentProtocol(Protocol):
@@ -55,35 +46,6 @@ class VideoUnderstandingAgentProtocol(Protocol):
         duration_seconds: int | None = None,
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence: ...
-
-
-class VideoASRAgent:
-    """Transcribe one video window without interpreting its visual content."""
-
-    def __init__(
-        self,
-        model: MultimodalModel,
-        *,
-        fps: float,
-    ) -> None:
-        _validate_fps("fps", fps)
-        self.model_name = model.model_name
-        self.fps = fps
-        self._model = model
-
-    def transcribe(
-        self,
-        video_path: str | Path,
-        *,
-        duration_seconds: int | None = None,
-    ) -> TranscriptAnalysis:
-        path, resolved_duration_seconds = _resolve_video_chunk(video_path, duration_seconds)
-        return _transcribe_video_chunk(
-            self._model,
-            path,
-            duration_seconds=resolved_duration_seconds,
-            transcript_fps=self.fps,
-        )
 
 
 class VideoUnderstandingAgent:
@@ -112,7 +74,7 @@ class VideoUnderstandingAgent:
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         path, resolved_duration_seconds = _resolve_video_chunk(video_path, duration_seconds)
-        transcript = _clamp_transcript(transcript, resolved_duration_seconds)
+        transcript = clamp_transcript(transcript, resolved_duration_seconds)
         instruction = build_video_parse_prompt(
             resolved_duration_seconds,
             transcript,
@@ -280,7 +242,7 @@ class FrameFallbackVideoUnderstandingAgent:
         background_images: Sequence[BackgroundImage] = (),
     ) -> VideoEvidence:
         path, resolved_duration_seconds = _resolve_video_chunk(video_path, duration_seconds)
-        transcript = _clamp_transcript(transcript, resolved_duration_seconds)
+        transcript = clamp_transcript(transcript, resolved_duration_seconds)
 
         mapped_observations: list[dict[str, Any]] = []
         all_timestamps_seconds: list[int] = []
@@ -456,7 +418,7 @@ def _analyze_ordered_frames(
         sequence_intro=sequence_intro,
     )
     inputs = [*build_background_image_inputs(background_images), *inputs]
-    transcript = _clamp_transcript(transcript, duration_seconds)
+    transcript = clamp_transcript(transcript, duration_seconds)
     inputs.append(
         TextInput(
             text=build_video_parse_prompt(
@@ -739,24 +701,6 @@ def _resolve_video_chunk(
     return path, duration_seconds
 
 
-def _transcribe_video_chunk(
-    model: MultimodalModel,
-    video_path: Path,
-    *,
-    duration_seconds: int,
-    transcript_fps: float,
-) -> TranscriptAnalysis:
-    transcript = model.generate(
-        [
-            VideoInput(path=video_path, fps=transcript_fps),
-            TextInput(text=TRANSCRIPT_PROMPT),
-        ],
-        schema_name="candidate_transcript",
-        result_type=TranscriptAnalysis,
-    )
-    return _clamp_transcript(transcript, duration_seconds)
-
-
 def _to_video_evidence(
     timeline: VideoTimeline,
     transcript: TranscriptAnalysis,
@@ -800,20 +744,3 @@ def _provenance_provider(model: MultimodalModel) -> ProvenanceProvider:
     if not model.provider_name.strip():
         raise ValueError("provenance provider must not be empty")
     return model.provider_name
-
-
-def _clamp_transcript(
-    transcript: TranscriptAnalysis,
-    duration_seconds: int,
-) -> TranscriptAnalysis:
-    return transcript.model_copy(
-        update={
-            "transcript": [
-                cue.model_copy(
-                    update={"end_seconds": min(cue.end_seconds, duration_seconds)}
-                )
-                for cue in transcript.transcript
-                if cue.start_seconds < duration_seconds
-            ]
-        }
-    )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from engine.parsev1.background import extract_background_image_ids, prepare_background_text
+from engine.common.background import extract_background_image_ids, prepare_background_text
 
 from ..identity import canonical_uuid, derive_series_id
 from ..model.dto.libraryDTO import SeriesState, VideoSummaryState

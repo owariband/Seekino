@@ -12,15 +12,15 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from engine.common.transcription import TranscriptAnalysis, VideoASRAgentProtocol
+from engine.common.usage import parse_chunk_scope
+
 from .schemas import (
     AnalysisWindow,
-    TranscriptAnalysis,
     TranscriptCheckpoint,
     VideoChunkCheckpoint,
     VideoChunkParseResult,
 )
-from .usage import parse_chunk_scope
-from .video_chunk_parse import VideoASRAgentProtocol
 
 
 def write_json(payload: BaseModel | dict[str, Any], output: Path) -> None:

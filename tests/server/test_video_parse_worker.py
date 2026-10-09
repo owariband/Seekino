@@ -14,7 +14,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event, select
 
-from agent.video_parse_v2.input import GenerativeModelConfig
+from agent.video_parse_v2.input import GenerativeModelConfig, ParseInput
+from agent.video_parse_v2.host import ChunkExecution, LeaseToken
+from engine.common.model_factory import build_asr_agent
+from engine.common.transcription import TranscriptAnalysis, TranscriptCue
 from engine.parsev2.schemas import ActionEvent, VideoParseResult
 from engine.parsev2.validation import IntervalRefinementProposal
 from engine.rag import (
@@ -23,7 +26,7 @@ from engine.rag import (
     VideoClipInputContract,
     VIDEO_CLIP_PREPROCESS_REVISION,
 )
-from gateway.config import load_config
+from gateway.config import ArkModelSourceConfig, OpenAIAudioSourceConfig, load_config
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.embedding import EmbeddingResult
 from gateway.usage import TokenUsage, capture_model_usage, model_call_context, track_model_call
@@ -65,7 +68,11 @@ from server.service.upload import UploadService, UploadServiceConfig
 from server.service.video_retrieval import VideoParseRetrievalService
 from server.service.video_parse import VideoParseRuntimeService
 from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator
-from server.service.video_parse_media import MediaLeaseIdentity, VideoParseMediaService
+from server.service.video_parse_media import (
+    MediaLeaseIdentity,
+    PreparedVideoParseMedia,
+    VideoParseMediaService,
+)
 from server.storage.artifact import LocalArtifactStore
 from server.storage.elasticsearch import (
     ElasticsearchVideoChunkStore,
@@ -299,6 +306,118 @@ def _create_task(factory, source: Path) -> str:
             update_time=now,
         ))
     return task_id
+
+
+@pytest.mark.parametrize("adapter", ["openai_audio", "ark", "none"])
+def test_transcription_uses_frozen_source_prepared_media_and_absolute_milliseconds(
+    monkeypatch, tmp_path, adapter,
+):
+    source = (
+        OpenAIAudioSourceConfig(
+            provider="speech", base_url="https://speech.example/v1",
+            api_key_env="TEST_ASR_KEY",
+        )
+        if adapter == "openai_audio"
+        else ArkModelSourceConfig(api_key_env="TEST_ASR_KEY")
+    )
+    monkeypatch.setenv("TEST_ASR_KEY", "test-key")
+    monkeypatch.delenv("UNUSED_ASR_KEY", raising=False)
+    gateway = load_config()
+    gateway = gateway.model_copy(update={
+        "model_sources": {
+            **gateway.model_sources,
+            "frozen_asr": source,
+            "configured_asr": ArkModelSourceConfig(api_key_env="UNUSED_ASR_KEY"),
+        },
+        "video_parser": gateway.video_parser.model_copy(update={
+            "transcription_source": "configured_asr",
+        }),
+    })
+    config = _parse_config()
+    config["models"]["asr"].update(
+        source="frozen_asr", model="frozen-speech", fps=0.5,
+        mode="none" if adapter == "none" else "lite",
+        request_timeout_seconds=45,
+        max_output_tokens=2048 if adapter == "ark" else None,
+    )
+    inputs = ParseInput.model_validate({
+        "series_id": "series", "video_id": "video", "parse_config": config,
+    })
+    execution = ChunkExecution(
+        chunk_parse_task_id="chunk-task", video_parse_task_id="video-task",
+        sequence_no=1, chunk_start_seconds=13_000, chunk_end_seconds=14_000,
+        allowed_start_seconds=12_000, allowed_end_seconds=15_000,
+        inputs=inputs,
+        lease=LeaseToken("worker", 1, datetime.now(UTC) + timedelta(seconds=30)),
+    )
+    video = tmp_path / "prepared.mp4"
+    video.write_bytes(b"video")
+    audio = tmp_path / "prepared.wav"
+    audio.write_bytes(b"audio")
+    media = PreparedVideoParseMedia(video, audio, ())
+    runtime = VideoParseRuntimeService(
+        object(), object(), _ArtifactResolver(),
+        VideoParseMediaService(tmp_path / "media"), gateway, _ElasticsearchBoundary(),
+        worker_id="worker", lease_duration=timedelta(seconds=30),
+        heartbeat_interval=timedelta(seconds=5),
+    )
+    calls = []
+
+    async def prepared_media(_self, loaded):
+        assert loaded is execution
+        return media
+
+    def transcribe(path, **kwargs):
+        assert adapter == "openai_audio"
+        assert path == media.audio_path
+        calls.append(("audio", kwargs))
+        return {"segments": [
+            {"start": 1.5, "end": 4, "text": "hello"},
+            {"start": 3, "end": 4, "text": "outside"},
+        ]}
+
+    def build_model(model, **kwargs):
+        assert adapter == "ark"
+        calls.append((model, kwargs))
+
+        def generate(request_inputs, *, schema_name, result_type):
+            assert request_inputs[0].path == media.video_path
+            assert request_inputs[0].fps == 0.5
+            assert schema_name == "candidate_transcript"
+            assert result_type is TranscriptAnalysis
+            return TranscriptAnalysis(transcript=[
+                TranscriptCue(start_seconds=1500, end_seconds=4000, text="hello"),
+                TranscriptCue(start_seconds=3000, end_seconds=4000, text="outside"),
+            ])
+
+        return SimpleNamespace(model_name=model, generate=generate)
+
+    def build_agent(bound_config, **kwargs):
+        assert adapter == "ark"
+        return build_asr_agent(bound_config, ark_model_type=build_model, **kwargs)
+
+    monkeypatch.setattr(runtime, "_ensure_chunk_media", MethodType(prepared_media, runtime))
+    monkeypatch.setattr("server.service.video_parse.transcribe_audio", transcribe)
+    monkeypatch.setattr("server.service.video_parse.build_asr_agent", build_agent)
+    result = asyncio.run(runtime.transcribe_chunk(execution))
+
+    assert result == {"transcript": [] if adapter == "none" else [{
+        "start_seconds": 13_500, "end_seconds": 15_000, "text": "hello",
+    }]}
+    if adapter == "openai_audio":
+        assert calls == [("audio", {
+            "model": "frozen-speech", "provider": "speech",
+            "base_url": "https://speech.example/v1", "api_key": "test-key",
+            "timeout": 45, "response_format": "verbose_json",
+        })]
+    elif adapter == "ark":
+        assert calls == [("frozen-speech", {
+            "request_timeout_seconds": 45, "max_output_tokens": 2048,
+            "api_key": "test-key",
+        })]
+    else:
+        assert calls == []
+
 
 
 def test_worker_runs_real_agent_repository_and_stage_commits(

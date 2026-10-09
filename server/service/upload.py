@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
-from engine.parsev1.analysis_windows import probe_video_duration_seconds
+from engine.common.media_probe import probe_video_duration_seconds
 from engine.rag import EncoderContract
 
 from ..config.parse_profile import ParseConfig, default_video_parse_v2_config

@@ -4,6 +4,8 @@ import argparse
 import os
 from pathlib import Path
 
+from engine.common.media_probe import probe_video_duration_seconds
+from engine.common.model_factory import build_asr_agent
 from gateway.ark.multimodal import ArkMultimodalModel
 from gateway.config import OpenAIVisionSourceConfig, load_config
 from gateway.openai.multimodal import DeepSeekMultimodalModel
@@ -11,7 +13,6 @@ from gateway.openai.multimodal import DeepSeekMultimodalModel
 from .analysis_windows import (
     materialize_analysis_windows,
     plan_analysis_windows,
-    probe_video_duration_seconds,
 )
 from .checkpoints import (
     load_completed_chunks as _load_completed_chunks,
@@ -22,7 +23,7 @@ from .checkpoints import (
 from .checkpoints import (
     write_json as _write_json,
 )
-from .model_factory import build_asr_agent, build_fallback_model, build_vision_model
+from .model_factory import build_fallback_model, build_vision_model
 from .schemas import (
     VideoChunkCheckpoint,
     VideoChunkParseResult,

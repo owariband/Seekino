@@ -1,13 +1,14 @@
 # anivag Engine
 
-Engine 是 anivag 的领域算法边界。现有解析实现完整冻结在 `parsev1/`；新的
+Engine 是 anivag 的领域算法边界。V1 专用解析策略保留在 `parsev1/`；新的
 Video Parse V2 算法策略只进入 `parsev2/`，其 Agent／LangGraph 运行程序位于
 `agent/video_parse_v2/`。`rag/` 独立拥有索引表示、输入处理、召回、融合、证据核验与精筛策略；
 V1 专用检索文档构造归入 `parsev1/retrieval.py`。
 
 Engine 不拥有生产 Job、Lease、Checkpoint、Artifact、MySQL 或 Qdrant；这些执行与
 持久化生命周期仍由 Server 负责。外部模型请求由根目录下的 `gateway/` 实现。
-`parsev1` 与 `parsev2` 不互相导入，也不通过兼容模块转发实现。
+`parsev1` 与 `parsev2` 不互相导入，也不通过兼容模块转发实现。两者及 Server
+需要的版本无关媒体与模型能力直接从 `common/` 导入。
 
 ## 媒体时间单位
 
@@ -74,7 +75,9 @@ Engine 内部仍负责单个 VideoChunk 的 Prompt、显式 Transcript 融合、
 
 算法代码按版本和职责组织：
 
-- `parsev1/`：当前生产解析实现，只接受兼容性修复和明确的 V1 维护；
+- `common/`：共享解析配置、媒体探测、抽帧、背景文本、ASR DTO／适配器、
+  模型构造和调用统计；可依赖 Gateway，不依赖 `parsev1`、`parsev2`、Agent 或 Server；
+- `parsev1/`：V1 专用解析实现与对照实验入口，只接受兼容性修复和明确的 V1 维护；
 - `parsev2/`：Video Parse V2 的领域策略、状态不变量和 Patch／投影算法；不放
   LangGraph 调度、Server 恢复逻辑，也不导入 `parsev1`；
 - `rag/`：存储与模型中立的索引、查询与检索策略，消费 `parsev2` 正式 Schema，
@@ -83,7 +86,7 @@ Engine 内部仍负责单个 VideoChunk 的 Prompt、显式 Transcript 融合、
 调用方直接导入 `engine.rag` 或具体能力模块；旧 `engine/retrieval/` 已删除。
 `rag/` 不导入 `parsev1`，也不借旧路径转发实现。
 
-`parsev1/` 的主路径按现有 Pipeline 阶段命名：
+V1 解析入口及共享能力的位置：
 
 - `parsev1/pipeline.py`：V1 生产整集 Pipeline 入口，显式连接 transcribe、understand、embed 和 persist；
 - `parsev1/transcribe.py`：ASR 调用、有界并发和按序交付；
@@ -91,9 +94,18 @@ Engine 内部仍负责单个 VideoChunk 的 Prompt、显式 Transcript 融合、
 - `parsev1/embed.py`：检索文档构造、Text/Vision Embedding 和向量校验；
 - `parsev1/persist.py`：中立 `ParsePersistence` 提交契约，不实现数据库或对象存储；
 - `parsev1/runtime.py`：装配模型实现与 V1 Parse Pipeline；
-- `parsev1/frame_sampler.py`：实现审核 fallback 所需的帧时间规划与 FFmpeg 抽帧；
-- `parsev1/prompts.py`：实现 Transcript 与事件时间线的证据约束；
+- `common/frame_sampler.py`：共享帧时间规划与 FFmpeg 抽帧；
+- `common/transcription.py`：共享 Transcript DTO、归一化和音频／视频 ASR 适配器；
+- `common/model_factory.py`：共享 ASR 与 OpenAI-compatible 视觉模型构造；
+- `common/media_probe.py`：共享视频流时长探测，返回整数毫秒；
+- `common/background.py`：共享背景文本与图片引用 ID 处理，视觉图片输入仍属于 V1；
+- `common/config.py`、`common/usage.py`：共享解析配置与 Chunk 模型调用统计；
+- `parsev1/prompts.py`：V1 事件时间线与视觉证据约束；
 - `parsev1/analysis_windows.py`：提供视频窗口规划与物化原语。
+
+Server 配置直接消费 `common/config.py`。V2 解析适配器直接消费 `common/`，
+不会通过 V1 Runtime、Schema 或视觉解析器取得这些能力；V1 Runtime／Worker
+只在选择 V1 执行模式时装配。本地 V1 CLI 与 Checkpoint 恢复入口继续保留。
 
 RAG 能力按处理职责分开：
 

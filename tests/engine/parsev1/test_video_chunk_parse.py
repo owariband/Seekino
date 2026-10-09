@@ -8,19 +8,17 @@ from gateway.errors import ContentFilterError
 from gateway.multimodal import ImageInput, TextInput, VideoInput
 
 import engine.parsev1.video_chunk_parse as video_chunk_parse_module
+from engine.common.transcription import TranscriptAnalysis, TranscriptCue, VideoASRAgent
 from engine.parsev1.background import BackgroundImage
 from engine.parsev1.video_chunk_parse import (
     ContentFilterVideoUnderstandingAgent,
     FrameFallbackVideoUnderstandingAgent,
     OrderedFrameVideoUnderstandingAgent,
-    VideoASRAgent,
     VideoUnderstandingAgent,
 )
 from engine.parsev1.schemas import (
     NeutralVisualEvidence,
     TimelineEvent,
-    TranscriptAnalysis,
-    TranscriptCue,
     VideoEvidence,
     VideoParseProvenance,
     VideoTimeline,

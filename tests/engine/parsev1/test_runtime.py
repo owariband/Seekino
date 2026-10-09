@@ -11,7 +11,8 @@ from gateway.multimodal import ImageInput, TextInput, VideoInput
 from engine.parsev1.analysis_windows import plan_analysis_windows
 from engine.parsev1.background import BackgroundImage
 from engine.parsev1.checkpoints import write_json
-from engine.parsev1.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from engine.common.config import VideoParseRuntimeConfig
+from engine.parsev1.runtime import EngineVideoParseRuntime
 from engine.parsev1.video_chunk_parse import OrderedFrameVideoUnderstandingAgent
 from engine.parsev1.schemas import (
     ContextSnapshot,

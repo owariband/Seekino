@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
-from engine.parsev1.usage import parse_chunk_scope
+from engine.common.usage import parse_chunk_scope
 from engine.parsev2.schemas import VideoParseResult
 from engine.rag import (
     ChunkIndexSource,

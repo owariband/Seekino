@@ -6,11 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from engine.common.config import VideoParseRuntimeConfig
+from engine.common.usage import capture_parse_usage, parse_chunk_scope
 from engine.parsev1.checkpoints import (
     prepare_candidate_transcripts,
     stream_candidate_transcripts,
 )
-from engine.parsev1.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from engine.parsev1.runtime import EngineVideoParseRuntime
 from engine.parsev1.schemas import (
     AnalysisWindow,
     ContextSnapshot,
@@ -18,7 +20,6 @@ from engine.parsev1.schemas import (
     VideoEvidence,
     VideoTimeline,
 )
-from engine.parsev1.usage import capture_parse_usage, parse_chunk_scope
 from engine.parsev1.understand import UnderstandStage
 from gateway.ark.multimodal import ArkMultimodalModel
 from gateway.multimodal import TextInput

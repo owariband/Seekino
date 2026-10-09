@@ -3,18 +3,9 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 
-from .schemas import AnalysisWindow, ContextSnapshot, TranscriptAnalysis
+from engine.common.transcription import TranscriptAnalysis
 
-TRANSCRIPT_PROMPT = """
-你只负责从这段视频的音轨中转写可听见的人声，不负责理解画面。
-
-要求：
-1. 所有 start_seconds 和 end_seconds 都是相对于当前视频片段起点的整数毫秒。
-2. transcript 只保留能听清的原语言台词，不翻译，不补全听不清的内容。
-3. 不要根据画面、字幕、角色外观或背景知识猜测或修正台词。
-4. 不要识别说话者身份，不要输出画面描述、动作、情绪或剧情推断。
-5. 没有可确认的人声时返回空 transcript。
-""".strip()
+from .schemas import AnalysisWindow, ContextSnapshot
 
 VIDEO_PARSE_PROMPT = """
 你负责把候选 ASR 与自己从视频画面、音频和硬字幕中确认的信息，整理成一条统一、合理的事件时间线。

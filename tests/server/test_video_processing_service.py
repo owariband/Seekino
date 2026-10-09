@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 from engine.parsev1.pipeline import ParsePipelineInput
-from engine.parsev1.runtime import VideoParseRuntimeConfig
+from engine.common.config import VideoParseRuntimeConfig
 from gateway.config import load_config
 
 from server.config.media import ImageUploadConfig

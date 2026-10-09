@@ -27,9 +27,7 @@ from .database import (
 from .repository.index_sync import IndexSyncRepository
 from .repository.video import VideoRepository
 from .repository.video_parse import VideoParseRepository
-from .service.parsev1.index_sync import IndexSyncService
 from .service.keyframe_backfill import KeyframeBackfillService
-from .service.parsev1.parse_import import prepare_video_parse_import
 from .service.qdrant_mutation_lock import QdrantMutationLock
 from .service.video_retrieval import (
     VideoParseRetrievalService,
@@ -396,6 +394,8 @@ def main() -> None:
         return
 
     if args.command == "import-parse":
+        from .service.parsev1.parse_import import prepare_video_parse_import
+
         if args.create_schema:
             create_schema(engine)
         important_extra_data = _load_series_bible(args.series_bible_file)
@@ -568,6 +568,8 @@ def main() -> None:
                     top_k=args.top_k,
                 )
             else:
+                from .service.parsev1.index_sync import IndexSyncService
+
                 service = IndexSyncService(
                     IndexSyncRepository(session_factory),
                     store,

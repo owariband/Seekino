@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from engine.parsev1.analysis_windows import probe_video_duration_seconds
+from engine.common.media_probe import probe_video_duration_seconds
 
 from server.service.video_parse_media import (
     MediaLeaseIdentity,

@@ -5,12 +5,8 @@ from pathlib import Path
 import pytest
 from gateway.multimodal import ImageInput, TextInput
 
-from engine.parsev1.background import (
-    BackgroundImage,
-    build_background_image_inputs,
-    extract_background_image_ids,
-    prepare_background_text,
-)
+from engine.common.background import extract_background_image_ids, prepare_background_text
+from engine.parsev1.background import BackgroundImage, build_background_image_inputs
 
 
 def test_background_image_references_are_deduplicated_in_document_order() -> None:

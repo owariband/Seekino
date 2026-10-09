@@ -3,9 +3,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from engine.parsev1.audio_transcription import AudioTranscriptionAgent
+from engine.common.config import VideoParseRuntimeConfig
+from engine.common.transcription import AudioTranscriptionAgent
 from engine.parsev1.model_factory import build_fallback_model
-from engine.parsev1.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from engine.parsev1.runtime import EngineVideoParseRuntime
 from engine.parsev1.video_chunk_parse import OrderedFrameVideoUnderstandingAgent
 from gateway.config import load_config
 from gateway.openai.vision import OpenAIVisionModel

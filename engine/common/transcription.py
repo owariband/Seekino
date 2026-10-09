@@ -4,11 +4,49 @@ import math
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Protocol
 
+from pydantic import BaseModel, ConfigDict, Field
+
+from gateway.multimodal import MultimodalModel, TextInput, VideoInput
 from gateway.openai.audio import transcribe_audio
 
-from .analysis_windows import probe_video_duration_seconds
-from .schemas import TranscriptAnalysis, TranscriptCue
+from .media_probe import probe_video_duration_seconds
+
+
+class TranscriptCue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_seconds: int = Field(ge=0)
+    end_seconds: int = Field(ge=0)
+    text: str = Field(min_length=1)
+
+
+class TranscriptAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transcript: list[TranscriptCue]
+
+
+TRANSCRIPT_PROMPT = """
+你只负责从这段视频的音轨中转写可听见的人声，不负责理解画面。
+
+要求：
+1. 所有 start_seconds 和 end_seconds 都是相对于当前视频片段起点的整数毫秒。
+2. transcript 只保留能听清的原语言台词，不翻译，不补全听不清的内容。
+3. 不要根据画面、字幕、角色外观或背景知识猜测或修正台词。
+4. 不要识别说话者身份，不要输出画面描述、动作、情绪或剧情推断。
+5. 没有可确认的人声时返回空 transcript。
+""".strip()
+
+
+class VideoASRAgentProtocol(Protocol):
+    def transcribe(
+        self,
+        video_path: str | Path,
+        *,
+        duration_seconds: int | None = None,
+    ) -> TranscriptAnalysis: ...
 
 
 class AudioTranscriptionAgent:
@@ -76,6 +114,45 @@ class AudioTranscriptionAgent:
         return normalize_transcription(payload, duration_seconds=duration)
 
 
+class VideoASRAgent:
+    """Transcribe one video window without interpreting its visual content."""
+
+    def __init__(
+        self,
+        model: MultimodalModel,
+        *,
+        fps: float,
+    ) -> None:
+        if not 0.2 <= fps <= 5.0:
+            raise ValueError("fps must be between 0.2 and 5.0")
+        self.model_name = model.model_name
+        self.fps = fps
+        self._model = model
+
+    def transcribe(
+        self,
+        video_path: str | Path,
+        *,
+        duration_seconds: int | None = None,
+    ) -> TranscriptAnalysis:
+        path = Path(video_path).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"video file does not exist: {path}")
+        if duration_seconds is None:
+            duration_seconds = probe_video_duration_seconds(path)
+        elif duration_seconds <= 0:
+            raise ValueError("duration_seconds must be greater than zero")
+        transcript = self._model.generate(
+            [
+                VideoInput(path=path, fps=self.fps),
+                TextInput(text=TRANSCRIPT_PROMPT),
+            ],
+            schema_name="candidate_transcript",
+            result_type=TranscriptAnalysis,
+        )
+        return clamp_transcript(transcript, duration_seconds)
+
+
 def normalize_transcription(
     payload: dict, *, duration_seconds: int
 ) -> TranscriptAnalysis:
@@ -118,4 +195,21 @@ def normalize_transcription(
         ]
         if text.strip()
         else []
+    )
+
+
+def clamp_transcript(
+    transcript: TranscriptAnalysis,
+    duration_seconds: int,
+) -> TranscriptAnalysis:
+    return transcript.model_copy(
+        update={
+            "transcript": [
+                cue.model_copy(
+                    update={"end_seconds": min(cue.end_seconds, duration_seconds)}
+                )
+                for cue in transcript.transcript
+                if cue.start_seconds < duration_seconds
+            ]
+        }
     )

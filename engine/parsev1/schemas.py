@@ -5,6 +5,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from engine.common.transcription import TranscriptAnalysis, TranscriptCue
+
 # Media positions/durations use integer milliseconds; existing names stay fixed.
 # Chunk/overlap/group configuration values and request timeouts remain seconds.
 
@@ -19,20 +21,6 @@ def _rename_legacy_fields(data: Any, fields: dict[str, str]) -> Any:
             populated.setdefault(current_name, populated[legacy_name])
             populated.pop(legacy_name)
     return populated
-
-
-class TranscriptCue(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    start_seconds: int = Field(ge=0)
-    end_seconds: int = Field(ge=0)
-    text: str = Field(min_length=1)
-
-
-class TranscriptAnalysis(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    transcript: list[TranscriptCue]
 
 
 class TimelineEvent(BaseModel):

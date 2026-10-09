@@ -7,7 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Literal, cast
 
-from engine.parsev1.runtime import VideoParseRuntimeConfig
+from engine.common.config import VideoParseRuntimeConfig
 
 from ..database import DatabaseEnvironment
 from .agent import AgentServiceConfig

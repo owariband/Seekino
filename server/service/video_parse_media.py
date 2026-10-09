@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from engine.parsev1.frame_sampler import plan_frame_timestamps
-from engine.parsev1.analysis_windows import probe_video_duration_seconds
+from engine.common.frame_sampler import plan_frame_timestamps
+from engine.common.media_probe import probe_video_duration_seconds
 
 from ..identity import canonical_uuid
 

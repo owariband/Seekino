@@ -9,7 +9,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from engine.parsev1.usage import ParseModelCall
+from engine.common.usage import ParseModelCall
 from gateway.usage import TokenUsage
 
 from ..identity import derive_video_chunk_id

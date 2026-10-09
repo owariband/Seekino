@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import event, select
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
-from engine.parsev1.runtime import VideoParseRuntimeConfig
+from engine.common.config import VideoParseRuntimeConfig
 from engine.rag import EncoderContract
 from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.config import load_config

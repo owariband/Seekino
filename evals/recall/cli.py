@@ -8,7 +8,7 @@ from elasticsearch import Elasticsearch
 from gateway.config import load_config
 from gateway.ark.embedding import DoubaoMultimodalEmbedder
 
-from engine.parsev1.analysis_windows import probe_video_duration_seconds
+from engine.common.media_probe import probe_video_duration_seconds
 from .elasticsearch_index import ElasticsearchVideoChunkIndex
 from .recall_eval import (
     RecallEvaluator,

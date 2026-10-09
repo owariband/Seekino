@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from engine.parsev1.usage import capture_parse_usage
+from engine.common.usage import capture_parse_usage
 from engine.rag import (
     ChunkIndexingContract,
     EncoderContract,

@@ -2,12 +2,12 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from engine.common.frame_sampler import plan_frame_timestamps
+from engine.common.media_probe import probe_video_duration_seconds
 from engine.parsev1.analysis_windows import (
     materialize_canonical_chunks,
     plan_analysis_windows,
-    probe_video_duration_seconds,
 )
-from engine.parsev1.frame_sampler import plan_frame_timestamps
 
 
 def test_probe_video_duration_preserves_milliseconds_and_ignores_audio_tail(
@@ -17,7 +17,7 @@ def test_probe_video_duration_preserves_milliseconds_and_ignores_audio_tail(
     video = tmp_path / "episode.mp4"
     video.write_bytes(b"video")
     monkeypatch.setattr(
-        "engine.parsev1.analysis_windows.subprocess.run",
+        "engine.common.media_probe.subprocess.run",
         lambda *_args, **_kwargs: SimpleNamespace(stdout=json.dumps({
             "streams": [{"duration": "8.008"}], "format": {"duration": "8.999"},
         })),
@@ -30,7 +30,7 @@ def test_probe_video_duration_uses_stream_time_base_when_duration_is_missing(tmp
     video = tmp_path / "episode.mp4"
     video.write_bytes(b"video")
     monkeypatch.setattr(
-        "engine.parsev1.analysis_windows.subprocess.run",
+        "engine.common.media_probe.subprocess.run",
         lambda *_args, **_kwargs: SimpleNamespace(stdout=json.dumps({
             "streams": [{"duration": "N/A", "duration_ts": 192192, "time_base": "1/24000"}],
         })),
@@ -50,7 +50,7 @@ def test_probe_video_duration_uses_actual_frame_times_without_stream_duration(tm
         ]},
     ])
     monkeypatch.setattr(
-        "engine.parsev1.analysis_windows.subprocess.run",
+        "engine.common.media_probe.subprocess.run",
         lambda *_args, **_kwargs: SimpleNamespace(stdout=json.dumps(next(responses))),
     )
     assert probe_video_duration_seconds(video) == 120

@@ -18,7 +18,7 @@ from langchain_core.tools import BaseTool
 from PIL import Image
 from sqlalchemy import select
 
-from engine.parsev1.runtime import VideoParseRuntimeConfig
+from engine.common.config import VideoParseRuntimeConfig
 from gateway.config import load_config
 from server.api.app import create_app
 from agent.chat.video_search.runtime import AgentRuntime

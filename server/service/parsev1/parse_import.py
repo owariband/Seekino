@@ -8,8 +8,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from engine.common.media_probe import probe_video_duration_seconds
 from engine.parsev1.schemas import VideoParseResult
-from engine.parsev1.analysis_windows import probe_video_duration_seconds
 from engine.parsev1.retrieval import (
     VideoChunkRetrievalDocument,
     build_video_chunk_retrieval_documents,

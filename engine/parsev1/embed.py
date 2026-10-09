@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from engine.common.usage import parse_chunk_scope
 from gateway.embedding import EmbeddingResult
 
 from .retrieval import (
@@ -15,7 +16,6 @@ from .retrieval import (
 )
 
 from .schemas import VideoParseResult
-from .usage import parse_chunk_scope
 
 if TYPE_CHECKING:
     from .persist import ParsePersistence

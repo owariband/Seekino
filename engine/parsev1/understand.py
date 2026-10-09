@@ -4,6 +4,8 @@ import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 
+from engine.common.usage import parse_chunk_scope
+
 from .background import BackgroundImage
 from .prompts import build_video_parse_context
 from .schemas import (
@@ -17,7 +19,6 @@ from .schemas import (
     TranscriptAnalysis,
     VideoParseResult,
 )
-from .usage import parse_chunk_scope
 from .video_chunk_parse import VideoUnderstandingAgentProtocol
 
 

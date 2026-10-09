@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
-from engine.parsev1.schemas import VideoChunkParseResult, VideoParseResult
-from engine.parsev1.retrieval import VideoChunkRetrievalDocument
-
 from ...schema import ContractModel, VideoChunkKeyframeReference
+
+if TYPE_CHECKING:
+    from engine.parsev1.schemas import VideoChunkParseResult, VideoParseResult
+    from engine.parsev1.retrieval import VideoChunkRetrievalDocument
 
 
 class ParseImportReport(ContractModel):

@@ -5,13 +5,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 import logging
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from agent.chat.supervisor import SupervisorRuntime
 from agent.chat.video_search.runtime import AgentRuntime
 from arkruntime import Ark
 from elasticsearch import Elasticsearch
-from engine.parsev1.runtime import EngineVideoParseRuntime, VideoParseRuntimeConfig
+from engine.common.config import VideoParseRuntimeConfig
 from engine.rag import EncoderContract
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.factory import AgentModelFactory
@@ -38,8 +38,6 @@ from .config.global_agent_settings import read_global_agent_settings
 from .config.parse_profile import ParseConfig
 from .config.video_processing import VideoProcessingConfig
 from .database import create_database_engine, create_session_factory
-from .mq.consumer import ParseJobConsumer
-from .mq.mysql_queue import MySqlParseJobQueue
 from .mq.video_parse_consumer import (
     VideoParseConsumer,
     VideoParseConsumerHandlers,
@@ -63,7 +61,6 @@ from .service.qdrant_mutation_lock import QdrantMutationLock
 from .service.upload import UploadService
 from .service.video_parse import VideoParseRuntimeService
 from .service.video_parse_media import VideoParseMediaService
-from .service.parsev1.video_processing import VideoProcessingService
 from .service.video_retrieval import (
     VideoParseRetrievalService,
     VideoRetrievalService,
@@ -71,6 +68,10 @@ from .service.video_retrieval import (
 from .storage.artifact import LocalArtifactStore
 from .storage.elasticsearch import ElasticsearchVideoChunkStore
 from .storage.qdrant import QdrantVideoChunkStore
+
+if TYPE_CHECKING:
+    from .mq.consumer import ParseJobConsumer
+    from .service.parsev1.video_processing import VideoProcessingService
 
 _logger = logging.getLogger(__name__)
 _ResultModel = TypeVar("_ResultModel", bound=BaseModel)
@@ -534,6 +535,12 @@ def build_application_services(settings: ServerSettings) -> ApplicationServices:
 
     parse_consumer: ParseJobConsumer | VideoParseConsumer
     if settings.parse_execution_mode == "v1":
+        from engine.parsev1.runtime import EngineVideoParseRuntime
+
+        from .mq.consumer import ParseJobConsumer
+        from .mq.mysql_queue import MySqlParseJobQueue
+        from .service.parsev1.video_processing import VideoProcessingService
+
         processing_embedder = DoubaoMultimodalEmbedder(
             embedding_model,
             output_dimensionality=settings.text_vector_dimensions,
