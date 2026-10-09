@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -9,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
 
 from engine.parsev2.schemas import VideoParseResult
+from engine.parsev2.validation import parse_content_fingerprint
 from engine.rag.contracts import VideoChunkRetrievalIdentity
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
@@ -29,6 +32,7 @@ from server.repository.video_parse import (
     VideoParseConflictError,
     VideoParseLeaseLostError,
     VideoParseRepository,
+    VideoParseSnapshotConflictError,
     VideoParseTaskNotFoundError,
     invalidate_series_prefixes_from,
 )
@@ -36,6 +40,152 @@ from server.repository.video import SeriesNotReadyError, VideoChunkNotFoundError
 
 
 NOW = datetime(2026, 9, 29, 2, 0, tzinfo=UTC)
+
+
+def _refinement_inputs(repo, lease, *, now=None):
+    snapshot = repo.load_interval_members(lease, now=now)
+    return {
+        "input_versions": {member.chunk_parse_task_id: member.version for member in snapshot.members},
+        "input_fingerprints": {member.chunk_parse_task_id: parse_content_fingerprint(member.content) for member in snapshot.members},
+    }
+
+
+def _fixture_event(value, *, sequence_no=0):
+    return {"event_type": "ACTION", "start_seconds": sequence_no * 10_000 + 1000,
+            "end_seconds": sequence_no * 10_000 + 4000, "description": str(value),
+            "participants": [], "visible_persons": []}
+
+
+def test_refinement_checks_all_member_versions_before_any_write(repository):
+    factory, queue, repo, _task_id, video_lease, prepared = _prepare(repository)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared)
+    at = NOW + timedelta(minutes=1)
+    first = queue.claim_interval_refine("first", lease_duration=timedelta(minutes=5), now=at)
+    second = queue.claim_interval_refine("second", lease_duration=timedelta(minutes=5), now=at)
+    assert first is not None and second is not None
+    first_inputs, stale_inputs = _refinement_inputs(repo, first, now=at), _refinement_inputs(repo, second, now=at)
+    overlap = prepared.chunk_parse_task_ids[1]
+    target = prepared.chunk_parse_task_ids[3]
+    repo.commit_interval_refinement(
+        first, **first_inputs, interval_content={}, member_updates={overlap: {"persons": ["first writer"]}}, now=at,
+    )
+    with pytest.raises(VideoParseSnapshotConflictError):
+        repo.commit_interval_refinement(
+            second, **stale_inputs, interval_content={}, member_updates={target: {"persons": ["stale writer"]}}, now=at,
+        )
+    with factory() as session:
+        assert session.get(IntervalParseContent, second.interval_parse_task_id) is None
+        assert session.get(IntervalParseTask, second.interval_parse_task_id).status == "REFINING"
+        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_parse_task_id == target))
+        assert row.version == 1 and row.content["persons"] == [] and row.detail["scope"] == [3]
+    repo.commit_interval_refinement(
+        second, **_refinement_inputs(repo, second, now=at), interval_content={},
+        member_updates={target: {"persons": ["reviewed writer"]}}, now=at,
+    )
+    with factory() as session:
+        rows = {row.chunk_parse_task_id: row for row in session.scalars(select(ChunkParseContent))}
+        assert rows[overlap].content["persons"] == ["first writer"]
+        assert rows[target].content["persons"] == ["reviewed writer"]
+        assert sum(len(row.content["timeline"]) for row in rows.values()) == 4
+
+
+def test_refinement_fingerprint_and_full_result_validation_are_atomic(repository):
+    factory, queue, repo, _task_id, video_lease, prepared = _prepare(repository, chunk_count=2)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=2)
+    at = NOW + timedelta(minutes=1)
+    lease = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=at)
+    assert lease is not None
+    stale = _refinement_inputs(repo, lease, now=at)
+    target = prepared.chunk_parse_task_ids[0]
+    with factory.begin() as session:
+        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_parse_task_id == target))
+        row.content = {**row.content, "persons": ["intervening fact"]}
+    with pytest.raises(VideoParseSnapshotConflictError):
+        repo.commit_interval_refinement(lease, **stale, interval_content={}, member_updates={}, now=at)
+    current = _refinement_inputs(repo, lease, now=at)
+    with pytest.raises(ValueError):
+        repo.commit_interval_refinement(
+            lease, **current, interval_content={}, now=at,
+            member_updates={target: {"persons": ["valid first update"]},
+                            prepared.chunk_parse_task_ids[1]: {"persons": ["duplicate", "duplicate"]}},
+        )
+    assert _refinement_inputs(repo, lease, now=at) == current
+    with factory() as session:
+        rows = list(session.scalars(select(ChunkParseContent)))
+        assert all(row.detail["scope"] == [index] for index, row in sorted(
+            ((prepared.chunk_parse_task_ids.index(row.chunk_parse_task_id), row) for row in rows),
+        ))
+        assert session.get(IntervalParseContent, lease.interval_parse_task_id) is None
+
+
+def test_successive_windows_preserve_previously_valid_cross_window_events(repository):
+    factory, queue, repo, _task_id, video_lease, prepared = _prepare(repository)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared)
+    at = NOW + timedelta(minutes=1)
+    first = queue.claim_interval_refine("first", lease_duration=timedelta(minutes=5), now=at)
+    assert first is not None and first.start_sequence_no == 0
+    retained_target = prepared.chunk_parse_task_ids[1]
+    history = [_fixture_event("fact from earlier consulted scope"), _fixture_event("original fact", sequence_no=1)]
+    repo.commit_interval_refinement(
+        first, **_refinement_inputs(repo, first, now=at), interval_content={},
+        member_updates={retained_target: {"timeline": history}}, now=at,
+    )
+    second = queue.claim_interval_refine("second", lease_duration=timedelta(minutes=5), now=at)
+    assert second is not None and second.start_sequence_no == 1
+    repo.commit_interval_refinement(
+        second, **_refinement_inputs(repo, second, now=at), interval_content={},
+        member_updates={prepared.chunk_parse_task_ids[3]: {"persons": ["updated member"]}}, now=at,
+    )
+    with factory() as session:
+        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_parse_task_id == retained_target))
+        assert content.content["timeline"] == history
+        assert content.detail["scope"] == [0, 1, 2, 3]
+        assert content.version == 2
+
+
+def test_original_36_event_canvas_result_is_committed_without_losing_other_events(repository):
+    from agent.video_parse_v2.timelineEvent_canvas import ParseContextCanvas
+
+    fixture = json.loads((Path(__file__).parents[1] / "agent/video_parse_v2/fixtures/context_canvas_refine_36.json").read_text())
+    factory, task_id = _seed(repository, chunk_count=2)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        task.parse_config = {**task.parse_config, "chunk_duration": 60, "interval_duration": 180}
+        session.get(Video, task.video_id).duration_seconds = 90132
+    queue, repo = MySqlVideoParseQueue(factory), VideoParseRepository(factory)
+    lease = queue.claim_video("prepare", lease_duration=timedelta(minutes=10), now=NOW)
+    chunks = repo.ensure_video_chunks(lease, [(0, 0, 60000), (1, 60000, 90132)], now=NOW)
+    prepared = repo.ensure_parse_tasks(lease, [chunk.video_chunk_id for chunk in chunks], [(0, 2)], now=NOW)
+    repo.activate_video_task(lease, now=NOW)
+    members = {}
+    for member in fixture["members"]:
+        task = prepared.chunk_parse_task_ids[member["sequence_no"]]
+        assert queue.dispatch_chunk(task, lease, now=NOW)
+        child = queue.claim_chunk("understand", lease_duration=timedelta(minutes=5), now=NOW)
+        repo.commit_chunk_result(child, content=member["content"], detail={"evidence": {"asr": None, "ocr": None}}, now=NOW)
+        members[task] = {"sequence_no": member["sequence_no"], "version": 1, "bounds": member["bounds"], "content": member["content"]}
+    refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=NOW)
+    assert refine is not None
+    inputs = _refinement_inputs(repo, refine, now=NOW)
+    canvas = ParseContextCanvas(scope="refine:original-fixture", members=members)
+    issued = {(value["member_ref"], value["source"]["position"]): ref for ref, value in canvas.items("events")}
+    canvas.write(role="refine", batch_id="original-corrections", expected_revision=canvas.revision, operations=[
+        {"op": "event_array", "event_ref": issued[(prepared.chunk_parse_task_ids[item["sequence_no"]], item["position"])],
+         "field": "participants", "action": "add", "values": item["participants_add"]}
+        for item in fixture["corrections"]
+    ])
+    result = canvas.interval_result()
+    updates = {prepared.chunk_parse_task_ids[update.sequence_no]: update.model_dump(
+        mode="json", exclude={"sequence_no"}, exclude_unset=True,
+    ) for update in result.updates}
+    repo.commit_interval_refinement(refine, **inputs, interval_content=result.model_dump(mode="json"), member_updates=updates, now=NOW)
+    with factory() as session:
+        stored = {row.chunk_parse_task_id: row.content for row in session.scalars(select(ChunkParseContent))}
+        assert sum(len(content["timeline"]) for content in stored.values()) == 36
+        for reference in members:
+            assert stored[reference] == canvas.result(reference).model_dump(mode="json")
+
+
 
 
 def _config(*, chunk_count: int = 4, batch_size: int = 4) -> dict:
@@ -160,7 +310,7 @@ def _commit_all_chunks(factory, queue, repo, video_lease, prepared, *, count: in
         assert lease is not None and lease.chunk_parse_task_id == task_id
         repo.commit_chunk_result(
             lease,
-            content={"persons": [], "timeline": [{"value": index}]},
+            content={"persons": [], "timeline": [_fixture_event(index, sequence_no=index)]},
             detail={"source": "fixture"},
             now=NOW + timedelta(seconds=index + 1),
         )
@@ -189,7 +339,7 @@ def _prepare_two_chunk_prefix_chain(repository):
     assert refine is not None
     repo.commit_interval_refinement(
         refine,
-        interval_content={"summary": "short"},
+        **_refinement_inputs(repo, refine, now=NOW + timedelta(minutes=1, seconds=1)), interval_content={"summary": "short"},
         member_updates={},
         now=NOW + timedelta(minutes=1, seconds=1),
     )
@@ -214,6 +364,41 @@ def _prepare_two_chunk_prefix_chain(repository):
         video_lease, now=NOW + timedelta(minutes=1, seconds=4)
     ).status == "COMPLETE"
     return factory, queue, repo, task_id
+
+
+def test_compact_only_prefix_preserves_legal_cross_chunk_refinement_events(repository):
+    from agent.video_parse_v2.timelineEvent_canvas import ParseContextCanvas
+    from tests.agent.video_parse_v2.test_framework import _inputs, _lease
+
+    factory, _queue, repo, task_id = _prepare_two_chunk_prefix_chain(repository)
+    with factory.begin() as session:
+        row = session.scalar(select(ChunkParseContent).join(ChunkParseTask).join(VideoChunk).where(
+            ChunkParseTask.video_parse_task_id == task_id, VideoChunk.sequence_no == 0,
+        ))
+        row.content = {**row.content, "timeline": [*row.content["timeline"], _fixture_event("cross boundary", sequence_no=1)]}
+        row.version += 1
+    at = NOW + timedelta(minutes=2)
+    prefix = repo.claim_next_prefix_any("prefix", lease_duration=timedelta(minutes=5), now=at)
+    assert prefix is not None and prefix.sequence_no == 0
+    assert prefix.content_detail["scope"] == [0, 1]
+    canvas = ParseContextCanvas.from_prefix({
+        "chunk_parse_task_id": prefix.chunk_parse_task_id, "video_parse_task_id": task_id,
+        "inputs": _inputs(compact_enabled=True), "lease": _lease(), "sequence_no": 0,
+        "allowed_start_seconds": 0, "allowed_end_seconds": 20_000,
+        "scope": [0, 1], "content": VideoParseResult.model_validate(prefix.content),
+        "content_version": prefix.content_version, "series_prefix_compact": "", "video_prefix_compact": "",
+    })
+    canvas.write(role="prefix", batch_id="summaries", expected_revision=canvas.revision, operations=[
+        {"op": "set_compact", "series_compact": "same facts", "video_compact": "cross-boundary facts retained"},
+    ])
+    result = canvas.prefix_result()
+    assert result.update is None
+    repo.commit_prefix(prefix, content_updates={}, series_prefix_compact=result.series_compact,
+                       video_prefix_compact=result.video_compact, now=at)
+    with factory() as session:
+        stored = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_parse_task_id == prefix.chunk_parse_task_id))
+        assert stored.content == prefix.content
+        assert stored.version == prefix.content_version
 
 
 def test_prepare_is_idempotent_and_short_video_gets_one_interval(repository):
@@ -241,7 +426,7 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
     snapshot = repo.load_interval_members(first, now=NOW + timedelta(minutes=1))
     repo.commit_interval_refinement(
         first,
-        interval_content={"summary": "first"},
+        **_refinement_inputs(repo, first, now=NOW + timedelta(minutes=1, seconds=1)), interval_content={"summary": "first"},
         member_updates={snapshot.members[1].chunk_parse_task_id: {"persons": ["A"]}},
         now=NOW + timedelta(minutes=1, seconds=1),
     )
@@ -333,8 +518,8 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
     second_snapshot = repo.load_interval_members(second, now=NOW + timedelta(minutes=2))
     repo.commit_interval_refinement(
         second,
-        interval_content={"summary": "second"},
-        member_updates={second_snapshot.members[0].chunk_parse_task_id: {"timeline": [{"value": "changed"}]}},
+        **_refinement_inputs(repo, second, now=NOW + timedelta(minutes=2, seconds=1)), interval_content={"summary": "second"},
+        member_updates={second_snapshot.members[0].chunk_parse_task_id: {"timeline": [_fixture_event("changed", sequence_no=1)]}},
         now=NOW + timedelta(minutes=2, seconds=1),
     )
     with factory() as session:
@@ -425,7 +610,7 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
                 assert inflight is not None
                 repo.commit_interval_refinement(
                     inflight,
-                    interval_content={"summary": f"interval-{index}"},
+                    **_refinement_inputs(repo, inflight, now=claimed_at), interval_content={"summary": f"interval-{index}"},
                     member_updates={},
                     now=claimed_at,
                 )
@@ -478,7 +663,7 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
         )
         repo.commit_chunk_result(
             inflight,
-            content={"persons": [], "timeline": [{"value": "retained-inflight"}]},
+            content={"persons": [], "timeline": [_fixture_event("retained-inflight", sequence_no=1)]},
             now=committed_at,
         )
     elif phase == "refine":
@@ -487,7 +672,7 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
         )
         repo.commit_interval_refinement(
             inflight,
-            interval_content={"summary": "retained-inflight"},
+            **_refinement_inputs(repo, inflight, now=committed_at), interval_content={"summary": "retained-inflight"},
             member_updates={},
             now=committed_at,
         )
@@ -515,7 +700,7 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
             content = session.scalar(select(ChunkParseContent).where(
                 ChunkParseContent.chunk_parse_task_id == inflight.chunk_parse_task_id
             ))
-            assert content.content["timeline"] == [{"value": "retained-inflight"}]
+            assert content.content["timeline"] == [_fixture_event("retained-inflight", sequence_no=1)]
         elif phase == "refine":
             content = session.get(IntervalParseContent, inflight.interval_parse_task_id)
             assert content.content == {"summary": "retained-inflight"}
@@ -626,14 +811,14 @@ def test_interval_lease_rejects_forged_parent_phase_members_and_range(
         with pytest.raises(VideoParseLeaseLostError):
             repo.commit_interval_refinement(
                 forged,
-                interval_content={"summary": "forged"},
+                **_refinement_inputs(repo, lease, now=NOW + timedelta(minutes=1)), interval_content={"summary": "forged"},
                 member_updates={},
                 now=NOW + timedelta(minutes=1),
             )
 
     repo.commit_interval_refinement(
         lease,
-        interval_content={"summary": "valid"},
+        **_refinement_inputs(repo, lease, now=NOW + timedelta(minutes=1)), interval_content={"summary": "valid"},
         member_updates={},
         now=NOW + timedelta(minutes=1),
     )
@@ -648,7 +833,7 @@ def test_content_version_fences_late_index_completion(repository):
     assert refine is not None
     repo.commit_interval_refinement(
         refine,
-        interval_content={"summary": "short"},
+        **_refinement_inputs(repo, refine, now=NOW + timedelta(minutes=1, seconds=1)), interval_content={"summary": "short"},
         member_updates={},
         now=NOW + timedelta(minutes=1, seconds=1),
     )
@@ -677,7 +862,7 @@ def test_index_rebuild_preserves_results_and_fences_the_old_index_lease(reposito
     assert refine is not None
     repo.commit_interval_refinement(
         refine,
-        interval_content={"summary": "preserved"},
+        **_refinement_inputs(repo, refine, now=NOW + timedelta(minutes=1, seconds=1)), interval_content={"summary": "preserved"},
         member_updates={},
         now=NOW + timedelta(minutes=1, seconds=1),
     )
@@ -1057,7 +1242,7 @@ def test_chunk_and_interval_model_slots_fence_the_actual_execution_lease(reposit
     )
     repo.commit_interval_refinement(
         interval_lease,
-        interval_content={"summary": "committed"},
+        **_refinement_inputs(repo, interval_lease, now=NOW + timedelta(minutes=1, seconds=32)), interval_content={"summary": "committed"},
         member_updates={},
         now=NOW + timedelta(minutes=1, seconds=32),
     )
@@ -1127,7 +1312,7 @@ def test_v2_snapshots_always_expose_the_whole_video_media_source(repository):
     assert refine is not None
     repo.commit_interval_refinement(
         refine,
-        interval_content={"summary": "source"},
+        **_refinement_inputs(repo, refine, now=NOW + timedelta(minutes=1, seconds=1)), interval_content={"summary": "source"},
         member_updates={},
         now=NOW + timedelta(minutes=1, seconds=1),
     )
@@ -1338,7 +1523,7 @@ def test_prefix_frontier_never_falls_back_to_an_older_parse_version(repository):
     assert refine is not None
     repo.commit_interval_refinement(
         refine,
-        interval_content={"summary": "old"},
+        **_refinement_inputs(repo, refine, now=NOW + timedelta(minutes=1, seconds=1)), interval_content={"summary": "old"},
         member_updates={},
         now=NOW + timedelta(minutes=1, seconds=1),
     )

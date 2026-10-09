@@ -1,4 +1,4 @@
-"""Production host adapter for the Video Parse V2 Agent harness."""
+"""Parse execution, model calls and transactional result persistence."""
 
 from __future__ import annotations
 
@@ -17,6 +17,11 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from agent.video_parse_v2 import ParseAgent
+from agent.utils.context_canvas_tools import build_context_canvas_tools
+from agent.utils.tool import as_langchain_tools
+from agent.video_parse_v2.timelineEvent_canvas import (
+    CanvasCompletion, ParseCanvasWrite, ParseContextCanvas, PrefixCompactCompletion,
+)
 from agent.video_parse_v2.input import (
     ASRModelConfig,
     GenerativeModelConfig,
@@ -25,7 +30,7 @@ from agent.video_parse_v2.input import (
 from agent.video_parse_v2.prefix.context import PrefixContext
 from agent.video_parse_v2.refine.input import RefineInput
 from agent.video_parse_v2.prompts import build_ocr_prompt
-from agent.video_parse_v2.host import (
+from agent.video_parse_v2.state import (
     ChunkExecution,
     ChunkScheduleEntry,
     ChunkScheduleSnapshot,
@@ -41,10 +46,10 @@ from engine.parsev2.observations import ASRResult, OCRResult
 from engine.parsev2.planning import ChunkPlan, IntervalPlan
 from engine.parsev2.schemas import VideoParseResult
 from engine.parsev2.validation import (
-    IntervalRefinementProposal,
-    PrefixRefinementProposal,
     ValidatedIntervalRefinement,
     ValidatedPrefixRefinement,
+    parse_content_fingerprint,
+    validate_member_scopes,
 )
 from engine.rag import (
     ChunkIndexingContract,
@@ -54,15 +59,12 @@ from engine.rag import (
     VIDEO_CLIP_PREPROCESS_REVISION,
 )
 from gateway.agent_model.context import ContextWindowPolicy
-from gateway.agent_model.factory import AgentModelFactory
 from gateway.ark.embedding import (
     DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
     DoubaoMultimodalEmbedder,
 )
 from gateway.ark.multimodal import ArkMultimodalModel
 from gateway.config import (
-    AgentFallbackConfig,
-    AgentModelConfig,
     ArkModelSourceConfig,
     GatewayConfig,
     OpenAIAudioSourceConfig,
@@ -87,8 +89,10 @@ from ..model.dto.jobDTO import (
 )
 from ..mq.video_parse_queue import MySqlVideoParseQueue
 from ..repository.video_parse import (
+    ModelCallBudgetExhaustedError,
     VideoParseLeaseLostError,
     VideoParseRepository,
+    VideoParseSnapshotConflictError,
 )
 from ..storage.artifact import ArtifactStore
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
@@ -120,7 +124,7 @@ class _ChunkBinding:
 
 
 class VideoParseRuntimeService:
-    """Connect the Agent protocol to durable Server and Gateway capabilities."""
+    """Run Parse with its existing repository, media and Gateway dependencies."""
 
     def __init__(
         self,
@@ -409,6 +413,7 @@ class VideoParseRuntimeService:
         finally:
             event.clear()
 
+
     async def advance_video_task(
         self, video_parse_task_id: str, lease: LeaseToken
     ) -> VideoTaskStatus:
@@ -438,6 +443,8 @@ class VideoParseRuntimeService:
             allowed_end_seconds=state.analysis_window_end_seconds,
             inputs=self._parse_input(state.task_input),
             lease=self._lease_token(binding.lease),
+            background=state.task_input.background,
+            source_media_ref=state.source_media_ref,
         )
 
     async def prepare_chunk_visual(self, execution: ChunkExecution) -> None:
@@ -506,6 +513,7 @@ class VideoParseRuntimeService:
         asr_result: ASRResult,
         ocr_result: OCRResult | None,
         prompt: str,
+        canvas: ParseContextCanvas,
     ) -> VideoParseResult:
         del asr_result, ocr_result
         media = await self._ensure_chunk_media(execution)
@@ -533,24 +541,31 @@ class VideoParseRuntimeService:
                 + str([timestamp for timestamp, _path in media.frames])
             )),
         ]
-        return await self._generate_multimodal(
+        receipt = await self._generate_multimodal(
             execution.inputs.parse_config.models.understanding,
             media_inputs,
             fallback_inputs=fallback_inputs,
             schema_name="video_parse_v2_chunk",
-            result_type=VideoParseResult,
+            result_type=CanvasCompletion,
+            tools=self._canvas_tools(canvas), canvas=canvas,
+            max_model_calls=execution.inputs.parse_config.execution.max_model_calls,
         )
+        CanvasCompletion.model_validate(receipt)
+        return canvas.result(execution.chunk_parse_task_id)
 
     async def commit_chunk_result(
         self,
         execution: ChunkExecution,
         result: VideoParseResult,
+        *,
+        evidence: dict[str, object],
     ) -> None:
         binding = self._require_chunk_execution(execution)
         await asyncio.to_thread(
             self._repository.commit_chunk_result,
             binding.lease,
             content=result.model_dump(mode="json"),
+            detail={"evidence": evidence},
         )
 
     async def notify_chunk_committed(self, execution: ChunkExecution) -> None:
@@ -585,6 +600,17 @@ class VideoParseRuntimeService:
         }
         duration = task_input.duration_seconds
         chunk_duration = inputs.parse_config.chunk_duration * 1000
+        raw_scopes = {
+            item.sequence_no: item.detail.get("scope", [item.sequence_no])
+            for task_id, item in by_id.items()
+        }
+        validated_scopes = validate_member_scopes(
+            raw_scopes, member_sequence_nos=list(range(snapshot.start_sequence_no,
+                                                     snapshot.start_sequence_no + snapshot.chunk_count)),
+        )
+        if any(scope[-1] >= task_input.task.chunk_count for scope in validated_scopes.values()):
+            raise ValueError("Refine member scope exceeds the fixed Video topology")
+        member_scopes = {task_id: list(validated_scopes[item.sequence_no]) for task_id, item in by_id.items()}
         return {
             "interval_parse_task_id": snapshot.interval_parse_task_id,
             "video_parse_task_id": snapshot.video_parse_task_id,
@@ -595,8 +621,8 @@ class VideoParseRuntimeService:
             "member_sequence_nos": member_sequence_nos,
             "member_bounds": {
                 task_id: (
-                    item.sequence_no * chunk_duration,
-                    min(duration, (item.sequence_no + 1) * chunk_duration),
+                    min(member_scopes[task_id]) * chunk_duration,
+                    min(duration, (max(member_scopes[task_id]) + 1) * chunk_duration),
                 )
                 for task_id, item in by_id.items()
             },
@@ -607,10 +633,17 @@ class VideoParseRuntimeService:
             "member_versions": {
                 task_id: item.version for task_id, item in by_id.items()
             },
-            "member_scopes": {
-                task_id: list(item.detail.get("scope", [item.sequence_no]))
+            "member_scopes": member_scopes,
+            "member_evidence": {
+                task_id: item.detail.get("evidence", {"asr": None, "ocr": None, "availability": "not_retained"})
                 for task_id, item in by_id.items()
             },
+            "member_fingerprints": {
+                task_id: parse_content_fingerprint(item.content) for task_id, item in by_id.items()
+            },
+            "background": task_input.background,
+            "write_bounds": (snapshot.start_sequence_no * chunk_duration,
+                             min(duration, (snapshot.start_sequence_no + snapshot.chunk_count) * chunk_duration)),
         }
 
     async def generate_interval_refinement(
@@ -618,7 +651,8 @@ class VideoParseRuntimeService:
         snapshot: RefineInput,
         *,
         prompt: str,
-    ) -> IntervalRefinementProposal:
+        canvas: ParseContextCanvas,
+    ) -> CanvasCompletion:
         binding = (
             snapshot["inputs"].parse_config.models.refine
             or snapshot["inputs"].parse_config.models.understanding
@@ -626,16 +660,16 @@ class VideoParseRuntimeService:
         return await self._generate_text_structured(
             binding,
             prompt,
-            tools=(),
-            result_type=IntervalRefinementProposal,
-            max_model_calls=1,
+            tools=self._canvas_tools(canvas), canvas=canvas,
+            result_type=CanvasCompletion,
+            max_model_calls=snapshot["inputs"].parse_config.execution.max_model_calls,
         )
 
     async def commit_interval_refinement(
         self,
         snapshot: RefineInput,
         result: ValidatedIntervalRefinement,
-    ) -> None:
+    ) -> bool:
         lease = self._require_interval_token(
             snapshot["interval_parse_task_id"], snapshot["lease"], phase="REFINING"
         )
@@ -651,16 +685,18 @@ class VideoParseRuntimeService:
             )
             if values:
                 member_updates[task_id] = values
-        await asyncio.to_thread(
-            self._repository.commit_interval_refinement,
-            lease,
-            interval_content=result.model_dump(mode="json"),
-            member_updates=member_updates,
-            detail={
-                "input_versions": snapshot["member_versions"],
-                "input_scopes": snapshot["member_scopes"],
-            },
-        )
+        try:
+            await asyncio.to_thread(
+                self._repository.commit_interval_refinement, lease,
+                interval_content=result.model_dump(mode="json"), member_updates=member_updates,
+                input_versions=snapshot["member_versions"],
+                input_fingerprints=snapshot["member_fingerprints"],
+                detail={"input_versions": snapshot["member_versions"], "input_scopes": snapshot["member_scopes"]},
+            )
+        except VideoParseSnapshotConflictError:
+            _logger.info("Refine snapshot changed; refreshing interval %s", snapshot["interval_parse_task_id"])
+            return False
+        return True
 
     async def notify_interval_committed(self, snapshot: RefineInput) -> None:
         self._notify_change(snapshot["video_parse_task_id"])
@@ -673,15 +709,19 @@ class VideoParseRuntimeService:
         lease = self._prefix_lease.get()
         if lease is None or lease.chunk_parse_task_id != chunk_parse_task_id:
             raise VideoParseLeaseLostError("Prefix lease is not bound to this task")
-        task_input = await asyncio.to_thread(
-            self._repository.load_task_input, lease.video_parse_task_id
+        task_input, content = await asyncio.gather(
+            asyncio.to_thread(self._repository.load_task_input, lease.video_parse_task_id),
+            asyncio.to_thread(self._repository.load_prefix_content, lease),
         )
         inputs = self._parse_input(task_input)
-        start = lease.sequence_no * inputs.parse_config.chunk_duration * 1000
-        end = min(
-            task_input.duration_seconds,
-            (lease.sequence_no + 1) * inputs.parse_config.chunk_duration * 1000,
-        )
+        scope = list(validate_member_scopes(
+            {lease.sequence_no: content.detail.get("scope", [lease.sequence_no])},
+            member_sequence_nos=[lease.sequence_no],
+        )[lease.sequence_no])
+        if scope[-1] >= task_input.task.chunk_count:
+            raise ValueError("Prefix scope exceeds the fixed Video topology")
+        start = min(scope) * inputs.parse_config.chunk_duration * 1000
+        end = min(task_input.duration_seconds, (max(scope) + 1) * inputs.parse_config.chunk_duration * 1000)
         return {
             "chunk_parse_task_id": lease.chunk_parse_task_id,
             "video_parse_task_id": lease.video_parse_task_id,
@@ -690,9 +730,14 @@ class VideoParseRuntimeService:
             "sequence_no": lease.sequence_no,
             "allowed_start_seconds": start,
             "allowed_end_seconds": end,
-            "scope": list(lease.content_detail.get("scope", [lease.sequence_no])),
-            "content": VideoParseResult.model_validate(lease.content),
-            "content_version": lease.content_version,
+            "scope": scope,
+            "content": VideoParseResult.model_validate(content.content),
+            "content_version": content.version,
+            "content_fingerprint": parse_content_fingerprint(content.content),
+            "evidence": content.detail.get("evidence", {"asr": None, "ocr": None, "availability": "not_retained"}),
+            "background": task_input.background,
+            "write_bounds": (lease.sequence_no * inputs.parse_config.chunk_duration * 1000,
+                             min(task_input.duration_seconds, (lease.sequence_no + 1) * inputs.parse_config.chunk_duration * 1000)),
             "series_prefix_compact": lease.series_prefix_compact,
             "video_prefix_compact": lease.video_prefix_compact,
         }
@@ -702,26 +747,44 @@ class VideoParseRuntimeService:
         context: PrefixContext,
         *,
         prompt: str,
-        tools: Sequence[BaseTool],
-    ) -> PrefixRefinementProposal:
+        canvas: ParseContextCanvas,
+    ) -> CanvasCompletion:
         binding = context["inputs"].parse_config.models.prefix_context
         if binding is None:
             raise ValueError("Prefix execution has no fixed model binding")
         prefix = context["inputs"].parse_config.prefix_context
-        max_calls = 1 + (prefix.max_tool_calls if prefix is not None else 0)
+        maximum_tools = prefix.max_tool_calls if prefix is not None else 0
+        if maximum_tools == 0:
+            compact = await self._generate_text_structured(
+                binding,
+                prompt + "\nTool access is disabled. Return complete:true with series_compact and video_compact only; event updates are forbidden.",
+                tools=(), result_type=PrefixCompactCompletion, max_model_calls=1,
+            )
+            compact = PrefixCompactCompletion.model_validate(compact)
+            canvas.write(role="prefix", batch_id="compact-only-completion", expected_revision=canvas.revision,
+                         operations=[{"op": "set_compact", "series_compact": compact.series_compact,
+                                      "video_compact": compact.video_compact}])
+            return CanvasCompletion(complete=True)
+        tool_calls = 0
+
+        def count_tool(_name):
+            nonlocal tool_calls
+            if tool_calls >= maximum_tools:
+                raise ModelCallBudgetExhaustedError("Prefix max_tool_calls exhausted")
+            tool_calls += 1
         return await self._generate_text_structured(
             binding,
             prompt,
-            tools=tools,
-            result_type=PrefixRefinementProposal,
-            max_model_calls=max_calls,
+            tools=self._canvas_tools(canvas, on_call=count_tool), canvas=canvas,
+            result_type=CanvasCompletion,
+            max_model_calls=context["inputs"].parse_config.execution.max_model_calls,
         )
 
     async def commit_prefix_refinement(
         self,
         context: PrefixContext,
         result: ValidatedPrefixRefinement,
-    ) -> None:
+    ) -> bool:
         lease = self._require_prefix_token(
             context["chunk_parse_task_id"], context["lease"]
         )
@@ -732,13 +795,16 @@ class VideoParseRuntimeService:
             if result.update is not None
             else {}
         )
-        await asyncio.to_thread(
-            self._repository.commit_prefix,
-            lease,
-            content_updates=updates,
-            video_prefix_compact=result.video_compact,
-            series_prefix_compact=result.series_compact,
-        )
+        try:
+            await asyncio.to_thread(
+                self._repository.commit_prefix, lease, content_updates=updates,
+                video_prefix_compact=result.video_compact, series_prefix_compact=result.series_compact,
+                input_version=context["content_version"], input_fingerprint=context["content_fingerprint"],
+            )
+        except VideoParseSnapshotConflictError:
+            _logger.info("Prefix snapshot changed; refreshing chunk %s", context["chunk_parse_task_id"])
+            return False
+        return True
 
     async def notify_prefix_committed(self, context: PrefixContext) -> None:
         self._notify_change(context["video_parse_task_id"])
@@ -978,6 +1044,17 @@ class VideoParseRuntimeService:
             max_output_tokens=binding.max_output_tokens,
         )
 
+    def _canvas_tools(self, canvas: ParseContextCanvas, *, on_call=None) -> list[BaseTool]:
+        manager = self._model_manager.get()
+        return as_langchain_tools(build_context_canvas_tools(
+            canvas, role=canvas.stage,
+            read_collections=("members", "events", "evidence", "background", "compact"),
+            write_args_schema=ParseCanvasWrite, maximum_result_bytes=32_000,
+            maximum_read_chars=12_000, maximum_catalog_items=100,
+            check_control=manager.check_active if manager is not None else None,
+            on_call=on_call,
+        ))
+
     async def _generate_multimodal(
         self,
         binding: GenerativeModelConfig,
@@ -986,25 +1063,31 @@ class VideoParseRuntimeService:
         fallback_inputs: Sequence[ImageInput | VideoInput | TextInput] | None = None,
         schema_name: str,
         result_type: type[_Result],
+        tools: Sequence[BaseTool] = (),
+        canvas: ParseContextCanvas | None = None,
+        max_model_calls: int | None = None,
     ) -> _Result:
+        if tools:
+            manager = self._model_manager.get()
+            return await self._run_blocking(
+                self._invoke_multimodal, binding, inputs,
+                schema_name=schema_name, result_type=result_type,
+                tools=tools, max_model_calls=max_model_calls,
+                context_checkpoint=canvas.checkpoint if canvas is not None else None,
+                check_control=manager.check_active if manager is not None else None,
+                fallback_inputs=fallback_inputs,
+            )
         try:
             return await self._run_blocking(
-                self._invoke_multimodal,
-                binding,
-                inputs,
-                schema_name=schema_name,
-                result_type=result_type,
+                self._invoke_multimodal, binding, inputs,
+                schema_name=schema_name, result_type=result_type,
             )
         except ContentFilterError:
-            fallback = binding.fallback
-            if fallback is None:
+            if binding.fallback is None:
                 raise
             return await self._run_blocking(
-                self._invoke_multimodal,
-                fallback,
-                fallback_inputs or inputs,
-                schema_name=schema_name,
-                result_type=result_type,
+                self._invoke_multimodal, binding.fallback, fallback_inputs or inputs,
+                schema_name=schema_name, result_type=result_type,
             )
 
     async def _generate_text_structured(
@@ -1015,63 +1098,12 @@ class VideoParseRuntimeService:
         tools: Sequence[BaseTool],
         result_type: type[_Result],
         max_model_calls: int,
+        canvas: ParseContextCanvas | None = None,
     ) -> _Result:
-        source = self._source(binding.source)
-        if not tools:
-            return await self._generate_multimodal(
-                binding,
-                [TextInput(prompt)],
-                schema_name=result_type.__name__,
-                result_type=result_type,
-            )
-        if isinstance(source, OpenAIVisionSourceConfig):
-            raise TypeError("openai_vision does not support Prefix tools")
-        max_output_tokens = binding.max_output_tokens or 8192
-        model_config = AgentModelConfig(
-            source=binding.source,
-            model=binding.model,
-            request_timeout_seconds=binding.request_timeout_seconds,
-            max_output_tokens=max_output_tokens,
-            fallback=(
-                AgentFallbackConfig(
-                    source=binding.fallback.source,
-                    model=binding.fallback.model,
-                    request_timeout_seconds=(
-                        binding.fallback.request_timeout_seconds
-                    ),
-                    max_output_tokens=binding.fallback.max_output_tokens,
-                    reasoning_effort=binding.fallback.reasoning_effort,
-                )
-                if binding.fallback is not None
-                else None
-            ),
+        return await self._generate_multimodal(
+            binding, [TextInput(prompt)], schema_name=result_type.__name__,
+            result_type=result_type, tools=tools, canvas=canvas, max_model_calls=max_model_calls,
         )
-        factory = AgentModelFactory(model_config, self._gateway_config.model_sources)
-        try:
-            model = factory.build_structured(
-                model=binding.model,
-                reasoning_effort=binding.reasoning_effort or "none",
-                request_timeout_seconds=binding.request_timeout_seconds,
-                max_output_tokens=max_output_tokens,
-                max_input_chars=400_000,
-                context_window_policy=ContextWindowPolicy(
-                    context_window_tokens=128_000,
-                    output_reserve_tokens=max_output_tokens,
-                    safety_margin_tokens=2_048,
-                    auto_compact_tokens=100_000,
-                    compact_target_tokens=80_000,
-                ),
-            )
-            return await self._run_blocking(
-                model.run_structured,
-                prompt,
-                tools=tools,
-                result_type=result_type,
-                max_model_calls=max_model_calls,
-                request_timeout_seconds=binding.request_timeout_seconds,
-            )
-        finally:
-            factory.close()
 
     def _invoke_multimodal(
         self,
@@ -1080,47 +1112,69 @@ class VideoParseRuntimeService:
         *,
         schema_name: str,
         result_type: type[_Result],
+        tools: Sequence[BaseTool] = (),
+        max_model_calls: int | None = None,
+        context_checkpoint=None,
+        check_control=None,
+        fallback_inputs=None,
     ) -> _Result:
-        source = self._source(binding.source)
-        model: object
-        close: Callable[[], None] | None = None
-        if isinstance(source, ArkModelSourceConfig):
-            model = ArkMultimodalModel(
-                binding.model,
-                request_timeout_seconds=binding.request_timeout_seconds,
-                max_output_tokens=binding.max_output_tokens,
-                **ark_options(source),
-            )
-        elif isinstance(source, OpenAIVisionSourceConfig):
-            model = build_openai_vision(
-                source,
-                model=binding.model,
-                timeout=binding.request_timeout_seconds,
-                max_output_tokens=binding.max_output_tokens,
-            )
-        elif isinstance(source, OpenAIModelSourceConfig):
-            model = DeepSeekMultimodalModel(
-                binding.model,
-                base_url=source.base_url,
-                api_key=source_key(source),
-                max_output_tokens=binding.max_output_tokens or 8192,
-                request_timeout_seconds=binding.request_timeout_seconds,
-                reasoning_effort=binding.reasoning_effort or "none",
-            )
-            close = model.close
-        else:
-            raise TypeError(
-                f"model source {binding.source!r} cannot produce structured media output"
-            )
+        models = []
+
+        def build(selected):
+            source = self._source(selected.source)
+            if isinstance(source, ArkModelSourceConfig):
+                model = ArkMultimodalModel(
+                    selected.model, request_timeout_seconds=selected.request_timeout_seconds,
+                    max_output_tokens=selected.max_output_tokens,
+                    reasoning_effort=selected.reasoning_effort, **ark_options(source),
+                )
+            elif isinstance(source, OpenAIVisionSourceConfig):
+                model = build_openai_vision(
+                    source, model=selected.model, timeout=selected.request_timeout_seconds,
+                    max_output_tokens=selected.max_output_tokens,
+                )
+            elif isinstance(source, OpenAIModelSourceConfig):
+                model = DeepSeekMultimodalModel(
+                    selected.model, base_url=source.base_url, api_key=source_key(source),
+                    max_output_tokens=selected.max_output_tokens or 8192,
+                    request_timeout_seconds=selected.request_timeout_seconds,
+                    reasoning_effort=selected.reasoning_effort or "none",
+                )
+            else:
+                raise TypeError(f"model source {selected.source!r} cannot produce structured media output")
+            models.append(model)
+            return model
+
         try:
+            model = build(binding)
+            if not tools:
+                return model.generate(inputs, schema_name=schema_name, result_type=result_type)
+            fallback = build(binding.fallback) if binding.fallback is not None else None
+            output_reserve = max(
+                binding.max_output_tokens or 8192,
+                binding.fallback.max_output_tokens or 8192 if binding.fallback is not None else 0,
+            )
+            input_limit = 128_000 - output_reserve - 2048
+            policy = (ContextWindowPolicy(
+                context_window_tokens=128_000, output_reserve_tokens=output_reserve,
+                safety_margin_tokens=2048,
+                auto_compact_tokens=max(2, input_limit * 9 // 10),
+                compact_target_tokens=max(1, input_limit * 3 // 4),
+            ) if input_limit > 2 else None)
             return model.generate(
-                inputs,
-                schema_name=schema_name,
-                result_type=result_type,
+                inputs, schema_name=schema_name, result_type=result_type,
+                tools=tools, max_model_calls=max_model_calls,
+                request_timeout_seconds=binding.request_timeout_seconds,
+                check_control=check_control, context_checkpoint=context_checkpoint,
+                context_window_policy=policy, max_input_chars=400_000,
+                fallback_model=fallback, fallback_inputs=fallback_inputs,
+                fallback_on_error=lambda error: isinstance(error, ContentFilterError),
             )
         finally:
-            if close is not None:
-                close()
+            for model in reversed(models):
+                close = getattr(model, "close", None)
+                if close is not None:
+                    close()
 
     def _build_index_coordinator(
         self,

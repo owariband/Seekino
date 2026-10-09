@@ -153,8 +153,12 @@ class VideoParseResult(_ParseV2Model):
                 raise ValueError("timeline must be ordered by start_seconds")
             previous_start_seconds = event.start_seconds
 
+            # Non-dialogue observations may have uncertain person attribution.
+            if not isinstance(event, DialogueEvent):
+                continue
+
             referenced_persons = event.participants + event.visible_persons
-            if isinstance(event, DialogueEvent) and event.speaker is not None:
+            if event.speaker is not None:
                 referenced_persons.append(event.speaker)
 
             unknown_persons = set(referenced_persons) - known_persons

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -10,8 +11,8 @@ from engine.rag.contracts import (
 )
 
 if TYPE_CHECKING:
-    from .state import RunInputs
-    from .workspace import AgentWorkspace
+    from .state import DraftItem, RunInputs
+    from .video_search_canvas import VideoSearchContextCanvas
 
 
 _MAX_CHECKPOINT_RETRIEVAL_IDS = 200
@@ -45,22 +46,25 @@ _EVIDENCE_ALIASES = tuple(
 )
 
 
-def build_workspace_checkpoint(
-    workspace: AgentWorkspace,
+def build_canvas_checkpoint(
+    canvas: VideoSearchContextCanvas,
     *,
     role: Literal["query", "evaluator", "chat"],
 ) -> dict[str, Any]:
     """Project bounded canonical state when the Harness installs a new window."""
 
-    retrieval_ids = workspace.retrieval_item_ids()
+    retrieval_ids = (tuple(item.video_chunk_id for item in canvas.draft_items(approved=True))
+                     if role == "chat" else canvas.retrieval_item_ids())
     visible_retrieval_ids = retrieval_ids[-_MAX_CHECKPOINT_RETRIEVAL_IDS:]
     approved = role == "chat"
-    draft_items = workspace.draft_items(approved=approved)
+    draft_items = canvas.draft_items(approved=approved)
     checkpoint: dict[str, Any] = {
-        "schema": "anivag.agent-workspace-checkpoint.v1",
+        "schema": "anivag.context-canvas-checkpoint.v1",
+        "canvas_id": canvas.id,
+        "canvas_revision": canvas.revision,
         "role": role,
-        "workspace_id": workspace.workspace_id,
-        "series_ids": list(workspace.series_ids),
+        "workspace_id": canvas.workspace_id,
+        "series_ids": list(canvas.series_ids),
         "retrieval_catalog": {
             "item_count": len(retrieval_ids),
             "visible_video_chunk_ids": list(visible_retrieval_ids),
@@ -76,11 +80,11 @@ def build_workspace_checkpoint(
         ],
         "recovery": (
             "Treat IDs and counts as navigation metadata only. Use the registered "
-            "Catalog/Read Tools for exact Evidence or Draft content."
+            "get_context_canvas for exact Evidence or Draft content."
         ),
     }
     if role == "chat":
-        blocks = workspace.render_blocks()
+        blocks = canvas.render_blocks()
         checkpoint["render_draft"] = {
             "block_count": len(blocks),
             "blocks": [
@@ -353,3 +357,45 @@ def _truncate(value: Any, maximum: int) -> Any:
     if not isinstance(value, str) or len(value) <= maximum:
         return value
     return value[: maximum - 1].rstrip() + "…"
+
+
+_EVIDENCE_SECTION_FIELDS = {
+    "evidence.transcript": ("transcript",),
+    "evidence.events": ("allTimeEvents", "allTimeEventText"),
+    "evidence.text": (
+        "baselineVisualCaption", "retrievalText", "videoCompact",
+        "contextBeforeCompact", "contextAfterCompact", "windowSummary",
+    ),
+    "evidence.series_context": (
+        "seriesDescription", "importantExtraData", "characterBible",
+    ),
+}
+
+
+def detail_sections(
+    hit: VideoChunkSearchHit, draft: DraftItem | None = None,
+) -> dict[str, str]:
+    evidence = hit.evidence.model_dump(mode="json", by_alias=True)
+    grouped = {
+        name: {field_name: evidence[field_name] for field_name in field_names}
+        for name, field_names in _EVIDENCE_SECTION_FIELDS.items()
+    }
+    grouped_fields = {
+        field_name
+        for field_names in _EVIDENCE_SECTION_FIELDS.values()
+        for field_name in field_names
+    }
+    grouped["evidence.metadata"] = {
+        name: value for name, value in evidence.items() if name not in grouped_fields
+    }
+    sections = {
+        "candidate": hit.candidate.model_dump(mode="json", by_alias=True),
+        "selection_reason": hit.selection_reason.model_dump(mode="json", by_alias=True),
+        **grouped,
+    }
+    if draft is not None:
+        sections = {"draft": draft.model_dump(mode="json"), **sections}
+    return {
+        name: json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        for name, value in sections.items()
+    }

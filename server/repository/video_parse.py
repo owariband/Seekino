@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from agent.video_parse_v2.input import ParseConfig
 from engine.parsev2.schemas import DialogueEvent, VideoParseResult
+from engine.parsev2.validation import parse_content_fingerprint, validate_result_time_range
 from engine.rag.contracts import (
     TranscriptCueView,
     VideoChunkEvidence,
@@ -81,6 +82,10 @@ class VideoParseTaskNotFoundError(VideoParseRepositoryError):
 
 class VideoParseConflictError(VideoParseRepositoryError):
     pass
+
+
+class VideoParseSnapshotConflictError(VideoParseConflictError):
+    """A refinement input changed; refresh facts without rerunning observations."""
 
 
 class VideoParseLeaseLostError(VideoParseRepositoryError):
@@ -702,7 +707,7 @@ class VideoParseRepository:
                     f"VideoParseTask {video_parse_task_id!r} does not exist"
                 )
             task, video, series = row
-            return _task_input_state(task, video, workspace_id=series.workspace_id)
+            return _task_input_state(task, video, workspace_id=series.workspace_id, series=series)
 
     def ensure_prepared(
         self,
@@ -999,6 +1004,11 @@ class VideoParseRepository:
             chunk = session.get(VideoChunk, task.video_chunk_id)
             if chunk is None:
                 raise VideoParseConflictError("ChunkParseTask VideoChunk no longer exists")
+            payload = validate_result_time_range(
+                VideoParseResult.model_validate(payload),
+                start_seconds=chunk.analysis_window_start_seconds,
+                end_seconds=chunk.analysis_window_end_seconds,
+            ).model_dump(mode="json")
             result = session.scalar(
                 select(ChunkParseContent)
                 .where(ChunkParseContent.chunk_parse_task_id == task.id)
@@ -1103,7 +1113,7 @@ class VideoParseRepository:
                 chunk_media_ref=chunk.chunk_media_ref,
                 analysis_window_media_ref=chunk.analysis_window_media_ref,
                 task_input=_task_input_state(
-                    parent, video, workspace_id=series.workspace_id
+                    parent, video, workspace_id=series.workspace_id, series=series
                 ),
             )
 
@@ -1131,14 +1141,12 @@ class VideoParseRepository:
         *,
         interval_content: Mapping[str, Any],
         member_updates: Mapping[str, Mapping[str, Any]],
+        input_versions: Mapping[str, int],
+        input_fingerprints: Mapping[str, str],
         detail: Mapping[str, Any] | None = None,
         now: datetime | None = None,
     ) -> tuple[str, ...]:
-        """Apply only explicitly changed fields to current member content.
-
-        Input versions are deliberately not a precondition: overlapping
-        Intervals merge onto the rows currently locked in the database.
-        """
+        """Fence every input snapshot, validate all candidates, and commit once."""
 
         committed_at = now if now is not None else now_utc()
         with self._session_factory.begin() as session:
@@ -1155,6 +1163,39 @@ class VideoParseRepository:
                 raise VideoParseConflictError("refinement updates a nonmember Chunk")
 
             rows = _member_content_rows(session, interval, for_update=True)
+            expected_members = set(interval.chunk_parse_task_ids)
+            if set(input_versions) != expected_members or set(input_fingerprints) != expected_members:
+                raise VideoParseConflictError("refinement input identity must cover every Interval member")
+            for chunk_task, _chunk, result in rows:
+                if (type(input_versions[chunk_task.id]) is not int
+                        or result.version != input_versions[chunk_task.id]
+                        or parse_content_fingerprint(dict(result.content or {})) != input_fingerprints[chunk_task.id]):
+                    raise VideoParseSnapshotConflictError("Refine member content snapshot changed")
+            consulted_scope = []
+            for _chunk_task, chunk, result in rows:
+                consulted_scope = _ordered_int_union(
+                    consulted_scope, _ordered_int_union(dict(result.detail or {}).get("scope"), [chunk.sequence_no]),
+                )
+            parent = session.get(VideoParseTask, interval.video_parse_task_id)
+            video = session.get(Video, parent.video_id) if parent is not None else None
+            if video is None or consulted_scope[0] < 0 or consulted_scope[-1] >= parent.chunk_count:
+                raise VideoParseConflictError("refinement scope exceeds its fixed Video topology")
+            chunk_duration = parent.parse_config.get("chunk_duration")
+            if type(chunk_duration) is not int or chunk_duration <= 0:
+                raise VideoParseConflictError("frozen parse config has an invalid chunk_duration")
+            chunk_duration_ms = chunk_duration * 1000
+            start_ms = consulted_scope[0] * chunk_duration_ms
+            end_ms = min(video.duration_seconds, (consulted_scope[-1] + 1) * chunk_duration_ms)
+            candidates = {}
+            for chunk_task, _chunk, result in rows:
+                current = deepcopy(dict(result.content or {}))
+                changed = member_updates.get(chunk_task.id, {})
+                if set(changed) - {"persons", "timeline"}:
+                    raise VideoParseConflictError("refinement can only commit persons and timeline")
+                candidate = {**current, **deepcopy(dict(changed))}
+                candidates[chunk_task.id] = validate_result_time_range(
+                    VideoParseResult.model_validate(candidate), start_seconds=start_ms, end_seconds=end_ms,
+                ).model_dump(mode="json")
             member_scope = list(
                 range(
                     interval.start_sequence_no,
@@ -1164,13 +1205,7 @@ class VideoParseRepository:
             changed_member_ids: list[str] = []
             for chunk_task, _chunk, result in rows:
                 current = deepcopy(dict(result.content or {}))
-                updated = deepcopy(current)
-                for field, value in member_updates.get(chunk_task.id, {}).items():
-                    if field not in current:
-                        raise VideoParseConflictError(
-                            f"refinement cannot add unknown field {field!r}"
-                        )
-                    updated[field] = deepcopy(value)
+                updated = candidates[chunk_task.id]
                 content_changed = updated != current
                 if content_changed:
                     result.content = updated
@@ -1871,6 +1906,26 @@ class VideoParseRepository:
             task.update_time = heartbeat_at
             return True
 
+    def load_prefix_content(
+        self, lease: PrefixParseLease, *, now: datetime | None = None,
+    ) -> ChunkParseContentState:
+        loaded_at = now if now is not None else now_utc()
+        with self._session_factory() as session:
+            task = session.get(VideoParseTask, lease.video_parse_task_id)
+            if _current_prefix_lease(task, lease, loaded_at) is None:
+                raise VideoParseLeaseLostError("Prefix lease is no longer current")
+            row = session.execute(
+                select(ChunkParseTask, VideoChunk, ChunkParseContent)
+                .join(VideoChunk, VideoChunk.video_chunk_id == ChunkParseTask.video_chunk_id)
+                .join(ChunkParseContent, ChunkParseContent.chunk_parse_task_id == ChunkParseTask.id)
+                .where(ChunkParseTask.id == lease.chunk_parse_task_id,
+                       ChunkParseTask.video_parse_task_id == lease.video_parse_task_id)
+            ).one_or_none()
+            if row is None:
+                raise VideoParseConflictError("Prefix target no longer exists")
+            return _content_state(*row)
+
+
     def commit_prefix(
         self,
         lease: PrefixParseLease,
@@ -1878,6 +1933,8 @@ class VideoParseRepository:
         content_updates: Mapping[str, Any],
         video_prefix_compact: str,
         series_prefix_compact: str | None = None,
+        input_version: int | None = None,
+        input_fingerprint: str | None = None,
         now: datetime | None = None,
     ) -> tuple[str, ...]:
         committed_at = now if now is not None else now_utc()
@@ -1916,8 +1973,13 @@ class VideoParseRepository:
                 )
             if chunk_task is None or content is None:
                 raise VideoParseConflictError("Prefix target no longer exists")
-            if content.version != lease.content_version:
-                raise VideoParseConflictError("Prefix target content version changed")
+            expected_version = lease.content_version if input_version is None else input_version
+            expected_fingerprint = (
+                parse_content_fingerprint(lease.content) if input_fingerprint is None else input_fingerprint
+            )
+            if (content.version != expected_version
+                    or parse_content_fingerprint(dict(content.content or {})) != expected_fingerprint):
+                raise VideoParseSnapshotConflictError("Prefix target content snapshot changed")
             current = deepcopy(dict(content.content or {}))
             updated = deepcopy(current)
             for field, value in content_updates.items():
@@ -1926,6 +1988,24 @@ class VideoParseRepository:
                         f"Prefix cannot add unknown field {field!r}"
                     )
                 updated[field] = deepcopy(value)
+            chunk = session.get(VideoChunk, chunk_task.video_chunk_id)
+            if chunk is None:
+                raise VideoParseConflictError("Prefix target media identity is missing")
+            scope = _ordered_int_union(dict(content.detail or {}).get("scope"), [chunk.sequence_no])
+            if scope[-1] >= task.chunk_count:
+                raise VideoParseConflictError("Prefix scope exceeds its fixed Video topology")
+            video = session.get(Video, task.video_id)
+            if video is None:
+                raise VideoParseConflictError("Prefix source Video is missing")
+            chunk_duration = task.parse_config.get("chunk_duration")
+            if type(chunk_duration) is not int or chunk_duration <= 0:
+                raise VideoParseConflictError("frozen parse config has an invalid chunk_duration")
+            chunk_duration_ms = chunk_duration * 1000
+            updated = validate_result_time_range(
+                VideoParseResult.model_validate(updated),
+                start_seconds=scope[0] * chunk_duration_ms,
+                end_seconds=min(video.duration_seconds, (scope[-1] + 1) * chunk_duration_ms),
+            ).model_dump(mode="json")
             changed = updated != current
             reset: tuple[str, ...] = ()
             if changed:
@@ -2045,6 +2125,7 @@ def _task_input_state(
     video: Video,
     *,
     workspace_id: str,
+    series: Series | None = None,
 ) -> VideoParseTaskInputState:
     return VideoParseTaskInputState(
         task=_task_state(task),
@@ -2057,6 +2138,12 @@ def _task_input_state(
         total_bytes=video.total_bytes,
         duration_seconds=video.duration_seconds,
         workspace_id=workspace_id,
+        background=(
+            {"series_id": series.series_id, "description": series.description,
+             "important_extra_data": deepcopy(series.important_extra_data),
+             "character_bible": deepcopy(series.character_bible)}
+            if series is not None else {}
+        ),
     )
 
 

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Sequence
-from typing import Any, TypeVar
+from collections.abc import Callable, Iterator, Sequence
+from typing import Any, Literal, TypeVar
 
 from arkruntime import Ark
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from gateway.ark.sse import request_sse_json, request_sse_text
 from gateway.constants import ARK_PROVIDER
 from gateway.agent_model.fallback import log_model_fallback
+from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
 from gateway.media import encode_media_file
 from gateway.multimodal import (
     ImageInput,
@@ -37,6 +39,7 @@ class ArkMultimodalModel:
         *,
         request_timeout_seconds: float | None = None,
         max_output_tokens: int | None = None,
+        reasoning_effort: Literal["none", "low", "high", "max"] | None = None,
         fallback_model: str | None = None,
         client: Ark | None = None,
         api_key: str | None = None,
@@ -47,6 +50,8 @@ class ArkMultimodalModel:
             raise ValueError("request_timeout_seconds must be greater than zero")
         if max_output_tokens is not None and max_output_tokens <= 0:
             raise ValueError("max_output_tokens must be greater than zero")
+        if reasoning_effort not in (None, "none", "low", "high", "max"):
+            raise ValueError("unsupported reasoning_effort")
         if fallback_model is not None and not fallback_model.strip():
             raise ValueError("fallback_model must not be empty")
 
@@ -59,6 +64,7 @@ class ArkMultimodalModel:
             ARK_PROVIDER if self.fallback_model_name is not None else None
         )
         self.max_output_tokens = max_output_tokens
+        self.reasoning_effort = reasoning_effort
         self._request_timeout_seconds = request_timeout_seconds
         self._client = client
         self._api_key = api_key
@@ -70,6 +76,15 @@ class ArkMultimodalModel:
         schema_name: str,
         result_type: type[_ResultModel],
         request_timeout_seconds: float | None = None,
+        tools: Sequence[BaseTool] | None = None,
+        max_model_calls: int | None = None,
+        check_control: Callable[[], None] | None = None,
+        context_checkpoint: ContextCheckpoint | None = None,
+        context_window_policy: ContextWindowPolicy | None = None,
+        max_input_chars: int | None = None,
+        fallback_model: Any | None = None,
+        fallback_inputs: Sequence[MultimodalInput] | None = None,
+        fallback_on_error: Callable[[BaseException], bool] | None = None,
     ) -> _ResultModel:
         validate_generate_request(inputs, schema_name)
         if request_timeout_seconds is not None and request_timeout_seconds <= 0:
@@ -106,6 +121,18 @@ class ArkMultimodalModel:
                         "fps": item.fps,
                     }
                 )
+
+        if tools:
+            from gateway.agent_model.multimodal import generate_with_tools
+            return generate_with_tools(
+                self, content, schema_name=schema_name, result_type=result_type,
+                tools=tools, max_model_calls=max_model_calls,
+                request_timeout_seconds=request_timeout_seconds,
+                check_control=check_control, context_checkpoint=context_checkpoint,
+                context_window_policy=context_window_policy, max_input_chars=max_input_chars,
+                fallback_model=fallback_model, fallback_inputs=fallback_inputs,
+                fallback_on_error=fallback_on_error,
+            )
 
         request: dict[str, Any] = {
             "model": self.model_name,

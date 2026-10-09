@@ -114,6 +114,12 @@ def test_scope_validation_and_union_are_ordered_deduplicated_and_monotonic() -> 
         validate_member_scopes({1: [0]}, member_sequence_nos=[1])
 
 
+@pytest.mark.parametrize("scope", [None, [], "0", [0, None], [False], [-1, 0]])
+def test_scope_validation_rejects_invalid_persisted_metadata(scope) -> None:
+    with pytest.raises(ValueError, match="scope"):
+        validate_member_scopes({0: scope}, member_sequence_nos=[0])
+
+
 def test_prefix_is_bound_to_one_target_and_compact_budgets() -> None:
     member = RefinementMember(3, 0, 20000, _result())
     proposal = PrefixRefinementProposal(

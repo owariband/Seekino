@@ -74,9 +74,9 @@ class _RetrievalStub:
         )
 
 
-def _read_all(tool, video_chunk_id: str) -> dict:
+def _read_all(tool, video_chunk_id: str, *, collection: str) -> dict:
     overview = json.loads(tool.invoke({
-        "video_chunk_id": video_chunk_id,
+        "collection": collection, "reference": video_chunk_id,
         "section": "overview",
     }))
     sections = {}
@@ -88,7 +88,7 @@ def _read_all(tool, video_chunk_id: str) -> dict:
             end = total
             while True:
                 page = json.loads(tool.invoke({
-                    "video_chunk_id": video_chunk_id,
+                    "collection": collection, "reference": video_chunk_id,
                     "section": name,
                     "start": start,
                     "end": end,
@@ -104,6 +104,17 @@ def _read_all(tool, video_chunk_id: str) -> dict:
             start = end
         sections[name] = json.loads("".join(content))
     return sections
+
+
+def _write_canvas(tools_by_name, operation: str, fields: dict) -> dict:
+    collection = "draft" if "draft" in operation else "approved"
+    current = json.loads(tools_by_name["get_context_canvas"].invoke({"collection": collection}))
+    receipt = json.loads(tools_by_name["write_context_canvas"].invoke({
+        "batch_id": uuid4().hex, "expected_revision": current["revision"],
+        "operations": [{"operation": operation, **fields}],
+    }))
+    assert "error" not in receipt
+    return receipt["results"][0]
 
 
 @dataclass
@@ -129,8 +140,8 @@ class _QueryModel:
                 },
             })
         for video_chunk_id, start_seconds, end_seconds in self.selected_ranges:
-            _read_all(tools_by_name["read_trieve_item"], video_chunk_id)
-            tools_by_name["update_draft_item"].invoke({
+            _read_all(tools_by_name["get_context_canvas"], video_chunk_id, collection="retrieval")
+            _write_canvas(tools_by_name, "upsert_draft_item", {
                 "video_chunk_id": video_chunk_id,
                 "start_seconds": start_seconds,
                 "end_seconds": end_seconds,
@@ -153,7 +164,8 @@ class _EvaluatorModel:
         cursor = None
         item_ids = []
         while True:
-            page = json.loads(tools_by_name["get_draft_catelog"].invoke({
+            page = json.loads(tools_by_name["get_context_canvas"].invoke({
+                "collection": "draft",
                 "cursor": cursor,
             }))
             item_ids.extend(item["video_chunk_id"] for item in page["items"])
@@ -161,7 +173,7 @@ class _EvaluatorModel:
             if cursor is None:
                 break
         for video_chunk_id in item_ids:
-            _read_all(tools_by_name["read_draft_item"], video_chunk_id)
+            _read_all(tools_by_name["get_context_canvas"], video_chunk_id, collection="draft")
         self.calls += 1
         return result_type.model_validate({
             "action": "complete" if self.calls >= self.approve_after else "continue",
@@ -182,8 +194,11 @@ class _ChatModel:
         require_tool_call=False,
         request_timeout_seconds=None, check_control=None, max_input_chars=None,
     ):
-        update_video_item = next(tool for tool in tools if tool.name == "update_video_item")
-        assert set(update_video_item.args_schema.model_fields) == {"video_chunk_id", "claim"}
+        tools_by_name = {tool.name: tool for tool in tools}
+        assert set(tools_by_name) == {"get_context_canvas", "write_context_canvas"}
+        assert set(tools_by_name["write_context_canvas"].args_schema.model_fields) == {
+            "batch_id", "expected_revision", "operations",
+        }
         self.prompts.append(prompt)
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
@@ -208,7 +223,7 @@ class _ChatModel:
                 "claim": f"片段 {chunk_id} 支持回答。",
             }
             self.submitted_items.append(item)
-            assert json.loads(update_video_item.invoke(item)) == {
+            assert _write_canvas(tools_by_name, "upsert_video_item", item) == {
                 "accepted": True,
                 "operation": "inserted",
                 "video_chunk_id": chunk_id,

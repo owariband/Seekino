@@ -7,9 +7,7 @@ from .understanding import ChunkUnderstandingWorkflow
 from .errors import ParseError
 from .prefix import PrefixContextAgent
 from .refine import IntervalRefine
-from .host import (
-    MissingVideoParseRuntime,
-    VideoParseRuntime,
+from .state import (
     VideoTaskStatus,
 )
 from .state import RunState
@@ -22,9 +20,9 @@ class ParseAgent:
     def __init__(
         self,
         *,
-        runtime: VideoParseRuntime | None = None,
+        runtime,
     ) -> None:
-        self.runtime = runtime or MissingVideoParseRuntime()  # type: ignore[assignment]
+        self.runtime = runtime
         self.prefix_context_agent = PrefixContextAgent(
             runtime=self.runtime,
         )

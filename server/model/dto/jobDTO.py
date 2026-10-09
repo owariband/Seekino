@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -96,6 +96,7 @@ class VideoParseTaskInputState:
     total_bytes: int
     duration_seconds: int
     workspace_id: str = ""
+    background: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,6 +7,8 @@ from uuid import uuid4
 
 import pytest
 
+from tests.server.test_video_parse_repository import _refinement_inputs
+
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import (
     DatabaseEnvironment,
@@ -357,7 +359,7 @@ def test_failure_intent_blocks_each_delivery_but_not_existing_chunk_execution(
     if interval_phase == "index":
         refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW)
         assert refine is not None
-        repo.commit_interval_refinement(refine, interval_content={"ready": True}, member_updates={}, now=NOW)
+        repo.commit_interval_refinement(refine, **_refinement_inputs(repo, refine, now=NOW), interval_content={"ready": True}, member_updates={}, now=NOW)
     with factory.begin() as session:
         parent = session.get(VideoParseTask, task_id)
         parent.detail = {"_worker_runtime_v2": {"accepted": True, "failure_status": "PARSING_FAILED"}}
@@ -480,7 +482,7 @@ def test_interval_failure_intent_respects_the_still_running_parse_phase(reposito
     refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=1), now=NOW)
     assert refine is not None
     if failed_phase == "index":
-        repo.commit_interval_refinement(refine, interval_content={"ready": True}, member_updates={}, now=NOW)
+        repo.commit_interval_refinement(refine, **_refinement_inputs(repo, refine, now=NOW), interval_content={"ready": True}, member_updates={}, now=NOW)
         failed = queue.claim_interval_index("index", lease_duration=timedelta(minutes=1), now=NOW)
         assert failed is not None
     else:
@@ -838,7 +840,7 @@ def test_one_consumer_keeps_coordinator_alive_while_processing_children(tmp_path
         repo.load_interval_members(lease)
         repo.commit_interval_refinement(
             lease,
-            interval_content={"summary": "done"},
+            **_refinement_inputs(repo, lease, now=None), interval_content={"summary": "done"},
             member_updates={},
         )
 

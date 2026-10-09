@@ -37,13 +37,13 @@ from .skills import LEXICAL_RETRIEVAL_SKILL_PROMPT, RETRIEVAL_SKILL_PROMPT
 from .tools import (
     DraftReadAudit, build_chat_tools, build_evaluator_tools, build_query_tools,
 )
-from .workspace import AgentWorkspace
+from .video_search_canvas import VideoSearchContextCanvas
 
 _logger = logging.getLogger(__name__)
 
 
 class AgentRuntime:
-    """Run isolated Query, Evaluator and Chat contexts over one per-Kick Workspace."""
+    """Run isolated Query, Evaluator and Chat contexts over one per-Kick Canvas."""
 
     def __init__(
         self,
@@ -217,7 +217,7 @@ class AgentRuntime:
             min(own_deadline, deadline) if deadline is not None else own_deadline,
             cancellation, emit,
         )
-        workspace = AgentWorkspace(
+        canvas = VideoSearchContextCanvas(
             workspace_id=inputs["workspace_id"],
             series_ids=tuple(inputs["series_ids"]),
         )
@@ -225,7 +225,7 @@ class AgentRuntime:
         result = self._graph.invoke(
             {
                 "inputs": deepcopy(inputs),
-                "workspace": workspace,
+                "canvas": canvas,
                 "turns": [],
                 "control": control,
                 "limits": limits,
@@ -241,7 +241,7 @@ class AgentRuntime:
     def turn(self, state: RunState) -> dict:
         control = state["control"]
         inputs = state["inputs"]
-        workspace = state["workspace"]
+        canvas = state["canvas"]
         previous = state["turns"]
         limits = state["limits"]
         control.check()
@@ -268,7 +268,7 @@ class AgentRuntime:
         )
         query_tools = build_query_tools(
             self._retrieve,
-            workspace=workspace,
+            canvas=canvas,
             inputs=inputs,
             control=query_control,
             calls=calls,
@@ -289,7 +289,7 @@ class AgentRuntime:
                 max_model_calls=limits.max_model_calls_per_turn,
                 control=query_control,
                 context_budget=context_budget,
-                workspace=workspace,
+                canvas=canvas,
                 retrieval_skill_prompt=self._retrieval_skill_prompt,
             )
             query_control.check()
@@ -301,7 +301,7 @@ class AgentRuntime:
                 stage_control=query_control,
                 run_control=control,
             )
-        draft_items = workspace.draft_items()
+        draft_items = canvas.draft_items()
         draft = QueryDraft(
             plan_context=completion.plan_context,
             message=completion.message,
@@ -335,7 +335,7 @@ class AgentRuntime:
         )
         evaluator_tools = build_evaluator_tools(
             self._retrieve,
-            workspace=workspace,
+            canvas=canvas,
             inputs=inputs,
             control=evaluator_control,
             calls=calls,
@@ -360,7 +360,7 @@ class AgentRuntime:
                 max_model_calls=limits.max_model_calls_per_turn,
                 control=evaluator_control,
                 max_prompt_chars=self._max_prompt_chars,
-                workspace=workspace,
+                canvas=canvas,
                 retrieval_skill_prompt=self._retrieval_skill_prompt,
             )
             evaluator_control.check()
@@ -374,31 +374,35 @@ class AgentRuntime:
             )
         evaluator_review = review
         review_source = "evaluator"
-        if review.action == "complete" and not audit.covers(
-            item.video_chunk_id for item in draft_items
-        ):
-            review = EvalDecision(
-                action="continue",
-                advice=(
-                    "Evaluator must read the complete Draft catalog and every Draft "
-                    "item before approval. Repeat the audit using the read Tools."
-                ),
-            )
-            review_source = "draft_read_guard"
         if review.action == "complete":
-            try:
-                validate_approved_video_ranges(selected, draft)
-            except AgentModelInvocationError as exc:
-                review = EvalDecision(
-                    action="continue",
-                    advice=(
-                        "Approved range validation rejected the draft: "
-                        f"{exc}. Revise the Draft Item ranges before resubmitting."
-                    ),
-                )
-                review_source = "range_validation"
-        if review.action == "complete":
-            workspace.approve_draft()
+            with canvas._lock:
+                approval_revision = canvas.revision
+                if canvas.draft_items() != draft_items or not audit.covers(
+                    [item.video_chunk_id for item in draft_items], revision=approval_revision,
+                ):
+                    review = EvalDecision(
+                        action="continue",
+                        advice=("Evaluator must read every page of the current Draft catalog "
+                                "and every section of each current Draft item before approval. "
+                                "Repeat the audit using get_context_canvas."),
+                    )
+                    review_source = "draft_read_guard"
+                else:
+                    # Output uses the same immutable evidence that was actually audited.
+                    selected = selected.model_copy(update={"hits": [
+                        canvas.retrieval_snapshot(item.video_chunk_id) for item in draft_items
+                    ]}, deep=True)
+                    try:
+                        validate_approved_video_ranges(selected, draft)
+                    except AgentModelInvocationError as exc:
+                        review = EvalDecision(
+                            action="continue",
+                            advice=("Approved range validation rejected the draft: "
+                                    f"{exc}. Revise the Draft Item ranges before resubmitting."),
+                        )
+                        review_source = "range_validation"
+                    if review.action == "complete":
+                        canvas.approve_draft(expected_revision=approval_revision)
 
         current = LoopTurn(
             number=len(previous) + 1,
@@ -461,7 +465,7 @@ class AgentRuntime:
             ),
         )
         chat_tools = build_chat_tools(
-            workspace=state["workspace"],
+            canvas=state["canvas"],
             control=chat_control,
             maximum_tool_calls=limits.max_tool_calls_per_turn,
             maximum_result_bytes=self._max_tool_result_bytes,
@@ -474,7 +478,7 @@ class AgentRuntime:
                 self._chat_model,
                 state["inputs"],
                 current,
-                state["workspace"],
+                state["canvas"],
                 tools=as_langchain_tools(chat_tools),
                 control=chat_control,
                 max_prompt_chars=self._max_prompt_chars,

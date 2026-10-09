@@ -8,12 +8,14 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from agent.video_parse_v2 import ParseAgent
+from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion
+from agent.video_parse_v2.prompts import build_canvas_understanding_prompt
 from agent.video_parse_v2.scheduler import ChunkScheduler
 from agent.video_parse_v2.understanding import ChunkUnderstandingWorkflow
 from agent.video_parse_v2.input import ParseInput
 from agent.video_parse_v2.prefix import PrefixContextAgent
 from agent.video_parse_v2.refine import IntervalRefine
-from agent.video_parse_v2.host import (
+from agent.video_parse_v2.state import (
     ChunkExecution,
     ChunkScheduleEntry,
     ChunkScheduleSnapshot,
@@ -25,11 +27,6 @@ from agent.video_parse_v2.host import (
 )
 from engine.parsev2.schemas import VideoParseResult
 from engine.parsev2.observations import OCRResult
-from engine.parsev2.validation import (
-    ChunkResultUpdate,
-    IntervalRefinementProposal,
-    PrefixRefinementProposal,
-)
 
 
 def _lease() -> LeaseToken:
@@ -112,9 +109,9 @@ def _result(
     })
 
 
-def test_default_entry_stops_at_unconfigured_runtime_boundary() -> None:
-    with pytest.raises(NotImplementedError, match="load_video_run"):
-        asyncio.run(ParseAgent().run("video-task-1"))
+def test_entry_requires_its_actual_runtime_dependency() -> None:
+    with pytest.raises(TypeError, match="runtime"):
+        ParseAgent()
 
 
 def test_main_graph_prepares_fixed_topology_then_completes() -> None:
@@ -264,26 +261,35 @@ def test_chunk_workflow_commits_before_notifying_and_cleans_media(offset_ms) -> 
             }]})
 
         async def understand_chunk(self, loaded, **kwargs):
+            canvas = kwargs["canvas"]
+            assert build_canvas_understanding_prompt(execution, canvas=canvas) == kwargs["prompt"]
             assert kwargs["ocr_result"].lines[0].text == "screen text"
             assert kwargs["asr_result"] is asr_result
-            assert '"text": "screen text"' in kwargs["prompt"]
+            evidence = canvas.get("evidence", task_id)
+            assert evidence["ocr"]["lines"][0]["text"] == "screen text"
+            assert evidence["asr"] == asr_result
             assert f"[{offset_ms}, {offset_ms + 20_000})" in kwargs["prompt"]
             assert "integer source-video milliseconds" in kwargs["prompt"]
-            assert f'"start_seconds": {offset_ms + 1000}' in kwargs["prompt"]
-            assert f'"end_seconds": {offset_ms + 3000}' in kwargs["prompt"]
+            assert evidence["asr"]["transcript"][0]["start_seconds"] == offset_ms + 1000
+            assert evidence["asr"]["transcript"][0]["end_seconds"] == offset_ms + 3000
             time_contract = kwargs["prompt"].lower()
             assert "already normalized" in time_contract
             assert "legacy" in time_contract
             assert "do not multiply or divide" in time_contract
             assert "1000" in time_contract and "offset" in time_contract
             calls.append("understand")
-            return _result(offset_ms=offset_ms)
+            canvas.write(role="understanding", batch_id="initial", expected_revision=canvas.revision, operations=[
+                {"op": "persons", "member_ref": task_id, "action": "add", "values": ["爱音"]},
+                {"op": "add_event", "member_ref": task_id, "key": "initial-event", "event": _result(offset_ms=offset_ms).timeline[0]},
+            ])
+            return canvas.result(task_id)
 
-        async def commit_chunk_result(self, loaded, result):
+        async def commit_chunk_result(self, loaded, result, *, evidence):
             assert loaded is execution
             assert result == _result(offset_ms=offset_ms)
             assert result.timeline[0].start_seconds == offset_ms + 1000
             assert result.timeline[0].end_seconds == offset_ms + 3000
+            assert evidence["asr"] == asr_result
             calls.append("commit")
 
         async def notify_chunk_committed(self, loaded):
@@ -371,6 +377,10 @@ def test_chunk_workflow_failure_never_notifies_and_always_cleans_media(failure) 
     runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
 
 
+
+
+
+
 @pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])
 def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields(offset_ms) -> None:
     sequence_no = int(offset_ms != 0)
@@ -388,15 +398,17 @@ def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields(offs
         "member_versions": {task_id: 2},
         "member_scopes": {task_id: [0, 1]},
     }
+    async def refine(_snapshot, *, canvas, prompt):
+        reference = canvas.items("events")[0][0]
+        canvas.write(role="refine", batch_id="refine", expected_revision=canvas.revision, operations=[
+            {"op": "persons", "member_ref": task_id, "action": "set", "values": ["爱音"]},
+            {"op": "patch_event", "event_ref": reference, "fields": {"description": "爱音推门走进房间"}},
+        ])
+        return CanvasCompletion(complete=True)
+
     runtime = SimpleNamespace(
         load_refine_input=AsyncMock(return_value=snapshot),
-        generate_interval_refinement=AsyncMock(return_value=IntervalRefinementProposal(
-            updates=[ChunkResultUpdate(
-                sequence_no=sequence_no,
-                persons=["爱音"],
-                timeline=_result("爱音推门走进房间", offset_ms=offset_ms).timeline,
-            )]
-        )),
+        generate_interval_refinement=AsyncMock(side_effect=refine),
         commit_interval_refinement=AsyncMock(),
         notify_interval_committed=AsyncMock(),
     )
@@ -404,14 +416,14 @@ def test_refine_prompt_carries_scope_and_commit_receives_only_actual_fields(offs
 
     prompt = runtime.generate_interval_refinement.await_args.kwargs["prompt"]
     assert '"scope": [0, 1]' in prompt
-    assert f'"start_seconds": {offset_ms + 1000}' in prompt
-    assert f'"end_seconds": {offset_ms + 3000}' in prompt
+    assert f'"start_ms": {offset_ms}' in prompt
+    assert f'"end_ms": {offset_ms + 20_000}' in prompt
     time_contract = prompt.lower()
     assert "absolute integer source-video milliseconds" in time_contract
     assert "legacy" in time_contract
     assert "do not multiply or divide" in time_contract
     assert "1000" in time_contract and "offset" in time_contract
-    assert "preserve" in time_contract and "timestamps" in time_contract
+    assert "preserve" in time_contract and "time bounds" in time_contract
     validated = runtime.commit_interval_refinement.await_args.args[1]
     assert validated.updates[0].changed_fields == {"timeline"}
     assert validated.updates[0].timeline[0].start_seconds == offset_ms + 1000
@@ -445,13 +457,16 @@ def test_prefix_is_optional_and_validates_bound_target_before_commit() -> None:
     runtime.generate_prefix_refinement.assert_not_awaited()
 
     enabled = {**disabled, "inputs": _inputs(compact_enabled=True)}
+    async def prefix(_context, *, canvas, prompt):
+        canvas.write(role="prefix", batch_id="prefix", expected_revision=canvas.revision, operations=[
+            {"op": "persons", "member_ref": "chunk-task-0", "action": "add", "values": ["乐奈"]},
+            {"op": "set_compact", "series_compact": "prior episodes", "video_compact": "prior chunks"},
+        ])
+        return CanvasCompletion(complete=True)
+
     runtime = SimpleNamespace(
         load_prefix_context=AsyncMock(return_value=enabled),
-        generate_prefix_refinement=AsyncMock(return_value=PrefixRefinementProposal(
-            series_compact="prior episodes",
-            video_compact="prior chunks",
-            update=ChunkResultUpdate(sequence_no=0, persons=["爱音", "乐奈"]),
-        )),
+        generate_prefix_refinement=AsyncMock(side_effect=prefix),
         commit_prefix_refinement=AsyncMock(),
         notify_prefix_committed=AsyncMock(),
     )

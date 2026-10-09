@@ -206,11 +206,49 @@ def test_dialogue_speaker_must_be_a_participant() -> None:
     "reference_field",
     ["participants", "visible_persons"],
 )
-def test_result_rejects_unknown_person_references(reference_field: str) -> None:
+def test_dialogue_rejects_unknown_person_references(reference_field: str) -> None:
     payload = _valid_result_payload()
-    payload["timeline"][0][reference_field] = ["未知人物"]
+    payload["timeline"][1]["speaker"] = None
+    payload["timeline"][1][reference_field] = ["未知人物"]
 
     with pytest.raises(ValidationError, match="unknown person names"):
+        VideoParseResult.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    ["SCENE", "ACTION", "EMOTION", "RELATION_CHANGE", "ON_SCREEN_TEXT", "OTHER"],
+)
+@pytest.mark.parametrize("reference_field", ["participants", "visible_persons"])
+def test_non_dialogue_preserves_references_outside_persons(
+    event_type: str,
+    reference_field: str,
+) -> None:
+    event = {
+        "event_type": event_type,
+        "start_seconds": 11000,
+        "end_seconds": 17000,
+        "description": "画面仅出现吉他和手部，归属不确定",
+        "participants": [],
+        "visible_persons": [],
+        reference_field: ["吉他", "手部"],
+    }
+    if event_type == "ON_SCREEN_TEXT":
+        event.update(language="ja", text="ライブ")
+    payload = {"persons": [], "timeline": [event]}
+
+    result = VideoParseResult.model_validate(payload)
+
+    assert result.model_dump(mode="json") == payload
+    assert VideoParseResult.model_validate_json(result.model_dump_json()) == result
+
+
+def test_non_dialogue_unregistered_references_do_not_skip_timeline_ordering() -> None:
+    payload = _valid_result_payload()
+    payload["timeline"][0]["visible_persons"] = ["吉他"]
+    payload["timeline"][1]["start_seconds"] = 10000
+
+    with pytest.raises(ValidationError, match="ordered by start_seconds"):
         VideoParseResult.model_validate(payload)
 
 

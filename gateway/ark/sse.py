@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
@@ -14,6 +14,21 @@ _OUTPUT_CONTENT_FILTER_CODES = frozenset(
         "content_filter",
     }
 )
+
+
+def request_sse_response(
+    responses: Any, *, usage_call: ModelCallTracker,
+    check_control: Callable[[], None] | None = None, **request: Any,
+) -> tuple[Any, str]:
+    """Read a verified terminal response, including function-call-only turns."""
+    metadata: dict[str, Any] = {}
+    for _ in _request_sse_text(
+        responses, allow_terminal_text=True, allow_function_calls=True,
+        metadata=metadata, usage_call=usage_call, check_control=check_control,
+        **request,
+    ):
+        pass
+    return metadata["response"], metadata.get("output_text", "")
 
 
 def request_sse_json(
@@ -66,9 +81,13 @@ def _request_sse_text(
     allow_terminal_text: bool,
     usage_call: ModelCallTracker,
     metadata: dict[str, Any] | None = None,
+    allow_function_calls: bool = False,
+    check_control: Callable[[], None] | None = None,
     **request: Any,
 ) -> Iterator[str]:
     usage_call.raise_if_cancelled()
+    if check_control is not None:
+        check_control()
     try:
         stream = responses.create(stream=True, **request)
     except Exception as error:
@@ -99,6 +118,8 @@ def _request_sse_text(
     try:
         for event in stream:
             usage_call.raise_if_cancelled()
+            if check_control is not None:
+                check_control()
             response = getattr(event, "response", None)
             event_type = getattr(event, "type", None)
             usage_call.capture_response(response, include_usage=event_type in {"response.completed", "response.failed", "response.incomplete"})
@@ -222,6 +243,14 @@ def _request_sse_text(
         )
 
     output_text = response_text or streamed_text
+    if metadata is not None:
+        metadata["response"] = completed_response
+        metadata["output_text"] = output_text
+    if not output_text and allow_function_calls and any(
+        getattr(item, "type", None) == "function_call"
+        for item in getattr(completed_response, "output", None) or []
+    ):
+        return
     if not output_text:
         raise SSEProxyError(
             "Ark Responses SSE returned no output text",

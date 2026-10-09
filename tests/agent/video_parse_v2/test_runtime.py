@@ -10,7 +10,7 @@ import pytest
 
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.errors import ParseError
-from agent.video_parse_v2.host import LeaseToken, VideoRunSnapshot, VideoTaskStatus
+from agent.video_parse_v2.state import LeaseToken, VideoRunSnapshot, VideoTaskStatus
 
 from tests.agent.video_parse_v2.test_framework import _inputs
 

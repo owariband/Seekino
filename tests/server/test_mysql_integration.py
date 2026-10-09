@@ -10,6 +10,8 @@ from threading import Barrier, Event, current_thread
 from uuid import uuid4
 
 import pytest
+
+from tests.server.test_video_parse_repository import _refinement_inputs
 from sqlalchemy import delete, event, func, select
 from sqlalchemy.exc import IntegrityError
 
@@ -794,7 +796,7 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
             lease_expire_time=expires, retry_count=0, max_retry_count=2,
         )
         return repository.commit_interval_refinement(
-            lease, interval_content={"refined": True},
+            lease, **_refinement_inputs(repository, lease, now=now), interval_content={"refined": True},
             member_updates={target["chunk_task_id"]: {"persons": ["worker"]}}, now=now,
         )
 
@@ -910,7 +912,7 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                 lease, {target["chunk_task_id"]: 1}, now=committed_at,
             )
         return repository.commit_interval_refinement(
-            lease, interval_content={"refined": "drained"},
+            lease, **_refinement_inputs(repository, lease, now=committed_at), interval_content={"refined": "drained"},
             member_updates={target["chunk_task_id"]: {"persons": ["drained"]}},
             now=committed_at,
         )

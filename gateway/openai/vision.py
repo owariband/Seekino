@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
-from typing import TypeVar
+from collections.abc import Callable, Sequence
+from typing import Any, TypeVar
 
+from langchain_core.tools import BaseTool
 from openai import APIError, OpenAI
 from pydantic import BaseModel
 
 from gateway.errors import ContentFilterError
+from gateway.agent_model.context import ContextCheckpoint, ContextWindowPolicy
 from gateway.media import encode_media_file
 from gateway.multimodal import (
     MultimodalInput,
@@ -22,6 +24,8 @@ _Result = TypeVar("_Result", bound=BaseModel)
 
 class OpenAIVisionModel:
     """Portable image Chat Completions adapter; video is sampled by the Engine."""
+
+    _tool_protocol = "chat"
 
     def __init__(
         self,
@@ -44,6 +48,24 @@ class OpenAIVisionModel:
         self._token_parameter = token_parameter
         self._format = response_format
 
+    @property
+    def max_output_tokens(self) -> int:
+        return self._max_tokens
+
+    @property
+    def reasoning_effort(self) -> None:
+        return None
+
+    @property
+    def _request_timeout_seconds(self) -> float:
+        return self._timeout
+
+    def _new_client(self) -> OpenAI:
+        return OpenAI(
+            base_url=self._base_url, api_key=self._api_key,
+            timeout=self._timeout, max_retries=0,
+        )
+
     def generate(
         self,
         inputs: Sequence[MultimodalInput],
@@ -51,6 +73,15 @@ class OpenAIVisionModel:
         schema_name: str,
         result_type: type[_Result],
         request_timeout_seconds: float | None = None,
+        tools: Sequence[BaseTool] | None = None,
+        max_model_calls: int | None = None,
+        check_control: Callable[[], None] | None = None,
+        context_checkpoint: ContextCheckpoint | None = None,
+        context_window_policy: ContextWindowPolicy | None = None,
+        max_input_chars: int | None = None,
+        fallback_model: Any | None = None,
+        fallback_inputs: Sequence[MultimodalInput] | None = None,
+        fallback_on_error: Callable[[BaseException], bool] | None = None,
     ) -> _Result:
         validate_generate_request(inputs, schema_name)
         content = []
@@ -69,6 +100,17 @@ class OpenAIVisionModel:
                         "image_url": {"url": url, "detail": item.detail},
                     }
                 )
+        if tools:
+            from gateway.agent_model.multimodal import generate_with_tools
+            return generate_with_tools(
+                self, content, schema_name=schema_name, result_type=result_type,
+                tools=tools, max_model_calls=max_model_calls,
+                request_timeout_seconds=request_timeout_seconds,
+                check_control=check_control, context_checkpoint=context_checkpoint,
+                context_window_policy=context_window_policy, max_input_chars=max_input_chars,
+                fallback_model=fallback_model, fallback_inputs=fallback_inputs,
+                fallback_on_error=fallback_on_error,
+            )
         schema = result_type.model_json_schema()
         if self._format == "json_schema":
             output_format = {

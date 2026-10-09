@@ -4,11 +4,10 @@ import asyncio
 from math import ceil
 
 from .errors import ParseError
-from .host import (
+from .state import (
     ChunkScheduleEntry,
     ChunkScheduleSnapshot,
     ChunkTaskStatus,
-    VideoParseRuntime,
 )
 from .state import RunState
 
@@ -16,7 +15,7 @@ from .state import RunState
 class ChunkScheduler:
     """Open ordered batches and ask the host to dispatch due Chunk work."""
 
-    def __init__(self, *, runtime: VideoParseRuntime) -> None:
+    def __init__(self, *, runtime) -> None:
         self._runtime = runtime
 
     async def run(self, state: RunState) -> RunState:

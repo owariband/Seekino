@@ -5,21 +5,17 @@ from collections.abc import Callable
 from engine.rag.contracts import VideoChunkSearchResult
 
 from ...common.state import ExecutionControl, RunInputs
-from ...common.tool import AgentTool
+from agent.utils.tool import AgentTool
 from ..state import RetrievalCall, RetrievalChannelContract
-from ..workspace import AgentWorkspace
-from .draft import (
-    build_get_draft_catelog_tool, build_read_draft_item_tool,
-    build_remove_draft_item_tool, build_update_draft_item_tool,
-)
-from .retrieval import build_read_trieve_item_tool, build_retrieve_tool
+from ..video_search_canvas import VideoSearchContextCanvas
+from .canvas import build_video_search_canvas_tools
+from .retrieval import build_retrieve_tool
 from .shared import _ToolCallBudget, DraftReadAudit
-from .video_item import build_remove_video_item_tool, build_update_video_item_tool
 
 def build_query_tools(
     search: Callable[..., VideoChunkSearchResult],
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     inputs: RunInputs,
     control: ExecutionControl,
     calls: list[RetrievalCall],
@@ -37,7 +33,7 @@ def build_query_tools(
     return [
         build_retrieve_tool(
             search,
-            workspace=workspace,
+            canvas=canvas,
             inputs=inputs,
             control=control,
             calls=calls,
@@ -47,38 +43,11 @@ def build_query_tools(
             retrieval_channel=retrieval_channel,
             budget=budget,
         ),
-        build_read_trieve_item_tool(
-            workspace=workspace,
-            control=control,
-            maximum_result_bytes=maximum_result_bytes,
-            maximum_read_chars=maximum_read_chars,
-            budget=budget,
-        ),
-        build_update_draft_item_tool(
-            workspace=workspace,
-            control=control,
-            maximum_result_bytes=maximum_result_bytes,
-            budget=budget,
-        ),
-        build_remove_draft_item_tool(
-            workspace=workspace,
-            control=control,
-            maximum_result_bytes=maximum_result_bytes,
-            budget=budget,
-        ),
-        build_get_draft_catelog_tool(
-            workspace=workspace,
-            control=control,
+        *build_video_search_canvas_tools(
+            canvas=canvas, role="query", control=control,
             maximum_result_bytes=maximum_result_bytes,
             maximum_catalog_items=maximum_catalog_items,
-            budget=budget,
-        ),
-        build_read_draft_item_tool(
-            workspace=workspace,
-            control=control,
-            maximum_result_bytes=maximum_result_bytes,
-            maximum_read_chars=maximum_read_chars,
-            budget=budget,
+            maximum_read_chars=maximum_read_chars, budget=budget,
         ),
     ]
 
@@ -86,7 +55,7 @@ def build_query_tools(
 def build_evaluator_tools(
     search: Callable[..., VideoChunkSearchResult],
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     inputs: RunInputs,
     control: ExecutionControl,
     calls: list[RetrievalCall],
@@ -105,7 +74,7 @@ def build_evaluator_tools(
     return [
         build_retrieve_tool(
             search,
-            workspace=workspace,
+            canvas=canvas,
             inputs=inputs,
             control=control,
             calls=calls,
@@ -115,35 +84,18 @@ def build_evaluator_tools(
             retrieval_channel=retrieval_channel,
             budget=budget,
         ),
-        build_read_trieve_item_tool(
-            workspace=workspace,
-            control=control,
-            maximum_result_bytes=maximum_result_bytes,
-            maximum_read_chars=maximum_read_chars,
-            budget=budget,
-        ),
-        build_get_draft_catelog_tool(
-            workspace=workspace,
-            control=control,
+        *build_video_search_canvas_tools(
+            canvas=canvas, role="evaluator", control=control,
             maximum_result_bytes=maximum_result_bytes,
             maximum_catalog_items=maximum_catalog_items,
-            budget=budget,
-            audit=audit,
-        ),
-        build_read_draft_item_tool(
-            workspace=workspace,
-            control=control,
-            maximum_result_bytes=maximum_result_bytes,
-            maximum_read_chars=maximum_read_chars,
-            budget=budget,
-            audit=audit,
+            maximum_read_chars=maximum_read_chars, budget=budget, audit=audit,
         ),
     ]
 
 
 def build_chat_tools(
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     control: ExecutionControl,
     maximum_tool_calls: int | None,
     maximum_result_bytes: int,
@@ -154,33 +106,9 @@ def build_chat_tools(
         _ToolCallBudget(maximum_tool_calls, "Chat")
         if maximum_tool_calls is not None else None
     )
-    return [
-        build_remove_video_item_tool(
-            workspace=workspace,
-            control=control,
-            maximum_result_bytes=maximum_result_bytes,
-            budget=budget,
-        ),
-        build_update_video_item_tool(
-            workspace=workspace,
-            control=control,
-            maximum_result_bytes=maximum_result_bytes,
-            budget=budget,
-        ),
-        build_get_draft_catelog_tool(
-            workspace=workspace,
-            control=control,
-            maximum_result_bytes=maximum_result_bytes,
-            maximum_catalog_items=maximum_catalog_items,
-            approved=True,
-            budget=budget,
-        ),
-        build_read_draft_item_tool(
-            workspace=workspace,
-            control=control,
-            maximum_result_bytes=maximum_result_bytes,
-            maximum_read_chars=maximum_read_chars,
-            approved=True,
-            budget=budget,
-        ),
-    ]
+    return build_video_search_canvas_tools(
+        canvas=canvas, role="chat", control=control,
+        maximum_result_bytes=maximum_result_bytes,
+        maximum_catalog_items=maximum_catalog_items,
+        maximum_read_chars=maximum_read_chars, budget=budget,
+    )

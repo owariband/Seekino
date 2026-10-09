@@ -8,7 +8,7 @@ from ...common.state import ExecutionControl
 from ...common.tool import AgentTool, build_agent_tool
 from ...common.tool_result import JsonToolResult, ToolResult
 from ..state import ChatVideoBlock
-from ..workspace import AgentWorkspace
+from ..video_search_canvas import VideoSearchContextCanvas
 from .shared import _ToolCallBudget, RemoveItemArguments, _start_tool_call
 
 class UpdateVideoItemArguments(BaseModel):
@@ -25,14 +25,14 @@ class UpdateVideoItemArguments(BaseModel):
 
 def build_update_video_item_tool(
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     control: ExecutionControl,
     maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
 ) -> AgentTool:
     def update_video_item(video_chunk_id: str, claim: str) -> ToolResult:
         _start_tool_call(control, budget, "update_video_item")
-        inserted = workspace.upsert_video_item(ChatVideoBlock(
+        inserted = canvas.upsert_video_item(ChatVideoBlock(
             video_chunk_id=video_chunk_id,
             claim=claim,
         ))
@@ -42,7 +42,7 @@ def build_update_video_item_tool(
                 "accepted": True,
                 "operation": "inserted" if inserted else "updated",
                 "video_chunk_id": video_chunk_id,
-                "video_item_count": workspace.video_item_count(),
+                "video_item_count": canvas.video_item_count(),
             },
         )
 
@@ -60,20 +60,20 @@ def build_update_video_item_tool(
 
 def build_remove_video_item_tool(
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     control: ExecutionControl,
     maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
 ) -> AgentTool:
     def remove_video_item(video_chunk_id: str) -> ToolResult:
         _start_tool_call(control, budget, "remove_video_item")
-        removed = workspace.remove_video_item(video_chunk_id)
+        removed = canvas.remove_video_item(video_chunk_id)
         return JsonToolResult(
             success=True,
             payload={
                 "removed": removed,
                 "video_chunk_id": video_chunk_id,
-                "video_item_count": workspace.video_item_count(),
+                "video_item_count": canvas.video_item_count(),
             },
         )
 

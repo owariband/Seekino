@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 from contextlib import asynccontextmanager, contextmanager, nullcontext
 from contextvars import ContextVar
@@ -15,7 +16,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, select
 
 from agent.video_parse_v2.input import GenerativeModelConfig, ParseInput
-from agent.video_parse_v2.host import ChunkExecution, LeaseToken
+from agent.video_parse_v2.state import ChunkExecution, LeaseToken
+from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion, ParseContextCanvas
 from engine.common.model_factory import build_asr_agent
 from engine.common.transcription import TranscriptAnalysis
 from engine.parsev2.observations import OCRResult
@@ -607,35 +609,25 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         parse_usage=ParseUsageService(ModelUsageRepository(factory)),
     )
 
-    async def generate_multimodal(
-        _self,
-        _binding,
-        _inputs,
-        **_options,
-    ) -> VideoParseResult:
+    async def generate_multimodal(_self, _binding, _inputs, **options):
         with track_model_call(provider="fixture", model="vision", operation="video_parse") as tracker:
             tracker.usage = TokenUsage(10, 2, 12, None, None)
-        return VideoParseResult(
-            persons=[],
-            timeline=[ActionEvent(
-                event_type="ACTION",
-                start_seconds=1000,
-                end_seconds=4000,
-                description="A hand waves in the frame.",
-                participants=[],
-                visible_persons=[],
-            )],
-        )
+        canvas = options["canvas"]
+        reference = canvas.items("members")[0][0]
+        write = next(tool for tool in options["tools"] if tool.name == "write_context_canvas")
+        write.invoke({
+            "batch_id": "understanding", "expected_revision": canvas.revision,
+            "operations": [{"op": "add_event", "member_ref": reference, "key": "wave",
+                            "event": ActionEvent(event_type="ACTION", start_seconds=1000,
+                                                 end_seconds=4000, description="A hand waves in the frame.",
+                                                 participants=[], visible_persons=[]).model_dump(mode="json")}],
+        })
+        return CanvasCompletion(complete=True)
 
-    async def generate_text(
-        _self,
-        _binding,
-        _prompt,
-        **_options,
-    ) -> IntervalRefinementProposal:
+    async def generate_text(_self, _binding, _prompt, **_options):
         with track_model_call(provider="fixture", model="refine", operation="chat") as tracker:
             tracker.usage = TokenUsage(10, 2, 12, None, None)
-        return IntervalRefinementProposal(updates=[])
+        return CanvasCompletion(complete=True)
 
     def build_index_coordinator(_self, inputs, *, check_active):
         model = inputs.parse_config.models.embedding
@@ -828,22 +820,29 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
     )
     model_calls = {"understanding": 0, "ocr": 0, "refine": 0}
 
-    async def generate_multimodal(_self, _binding, _inputs, **_options):
-        if _options["schema_name"] == "video_parse_v2_ocr":
+    async def generate_multimodal(_self, _binding, _inputs, **options):
+        if options["schema_name"] == "video_parse_v2_ocr":
             model_calls["ocr"] += 1
-            return _options["result_type"](lines=[])
+            return options["result_type"](lines=[])
         model_calls["understanding"] += 1
         state = _self._require_chunk_binding().state
         assert state is not None
-        return VideoParseResult(persons=[], timeline=[ActionEvent(
-            event_type="ACTION", start_seconds=state.start_seconds + 1000,
-            end_seconds=state.start_seconds + 4000,
-            description="A hand waves in the frame.", participants=[], visible_persons=[],
-        )])
+        canvas = options["canvas"]
+        reference = canvas.items("members")[0][0]
+        write = next(tool for tool in options["tools"] if tool.name == "write_context_canvas")
+        write.invoke({
+            "batch_id": "understanding", "expected_revision": canvas.revision,
+            "operations": [{"op": "add_event", "member_ref": reference, "key": "wave",
+                            "event": ActionEvent(event_type="ACTION", start_seconds=state.start_seconds + 1000,
+                                                 end_seconds=state.start_seconds + 4000,
+                                                 description="A hand waves in the frame.",
+                                                 participants=[], visible_persons=[]).model_dump(mode="json")}],
+        })
+        return CanvasCompletion(complete=True)
 
     async def generate_text(_self, _binding, _prompt, **_options):
         model_calls["refine"] += 1
-        return IntervalRefinementProposal(updates=[])
+        return CanvasCompletion(complete=True)
 
     def build_index_coordinator(_self, inputs, *, check_active):
         return VideoParseIndexCoordinator(
@@ -1030,58 +1029,228 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
     assert list(media.base_directory.rglob(".lease.json")) == []
 
 
-def test_prefix_agent_factory_receives_frozen_fallback_controls(monkeypatch):
+def test_canvas_tool_channel_receives_frozen_fallback_controls(monkeypatch):
+    captured = {}
+    closed = []
+
+    class Primary:
+        def __init__(self, model, **options):
+            captured["primary"] = (model, options)
+
+        def generate(self, inputs, **options):
+            captured["generate"] = options
+            return CanvasCompletion(complete=True)
+
+        def close(self):
+            closed.append("primary")
+
+    class Fallback:
+        def __init__(self, model, **options):
+            captured["fallback"] = (model, options)
+
+        def close(self):
+            closed.append("fallback")
+
+    monkeypatch.setattr("server.service.video_parse.DeepSeekMultimodalModel", Primary)
+    monkeypatch.setattr("server.service.video_parse.ArkMultimodalModel", Fallback)
+    monkeypatch.setenv("ARK_API_KEY", "fake-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._gateway_config = load_config()
+    runtime._model_manager = ContextVar("fallback-controls-manager", default=None)
+    binding = GenerativeModelConfig(
+        source="deepseek_api", model="primary-model", request_timeout_seconds=61,
+        max_output_tokens=4096, reasoning_effort="none",
+        fallback={"source": "ark_default", "model": "fallback-model", "request_timeout_seconds": 17,
+                  "max_output_tokens": 2048, "reasoning_effort": "none"},
+    )
+    result = asyncio.run(runtime._generate_text_structured(
+        binding, "refine", tools=(object(),), result_type=CanvasCompletion, max_model_calls=2,
+    ))
+    assert result.complete
+    assert captured["primary"][1]["request_timeout_seconds"] == 61
+    assert captured["fallback"][1]["request_timeout_seconds"] == 17
+    assert captured["fallback"][1]["max_output_tokens"] == 2048
+    assert captured["fallback"][1]["reasoning_effort"] == "none"
+    assert captured["generate"]["max_model_calls"] == 2
+    assert captured["generate"]["context_window_policy"].output_reserve_tokens == 4096
+    assert closed == ["fallback", "primary"]
+
+
+@pytest.mark.parametrize("reasoning_effort", [None, "none", "low"])
+def test_runtime_uses_frozen_ark_controls_instead_of_current_defaults(
+    monkeypatch, reasoning_effort,
+):
     captured = {}
 
     class _Model:
-        @staticmethod
-        def run_structured(*_args, **_kwargs):
-            return IntervalRefinementProposal(updates=[])
-
-    class _Factory:
-        def __init__(self, config, _sources):
-            captured["config"] = config
+        def __init__(self, model, **kwargs):
+            captured.update(model=model, **kwargs)
 
         @staticmethod
-        def build_structured(**_kwargs):
-            return _Model()
+        def generate(*_args, **_kwargs):
+            return IntervalRefinementProposal()
 
-        @staticmethod
-        def close():
-            captured["closed"] = True
-
-    monkeypatch.setattr("server.service.video_parse.AgentModelFactory", _Factory)
+    monkeypatch.setenv("ARK_API_KEY", "fake-ark-key")
+    monkeypatch.setattr("server.service.video_parse.ArkMultimodalModel", _Model)
     runtime = object.__new__(VideoParseRuntimeService)
     runtime._gateway_config = load_config()
     binding = GenerativeModelConfig(
-        source="deepseek_api",
-        model="primary-model",
-        request_timeout_seconds=61,
-        max_output_tokens=4096,
-        reasoning_effort="none",
-        fallback={
-            "source": "ark_default",
-            "model": "fallback-model",
-            "request_timeout_seconds": 17,
-            "max_output_tokens": 2048,
-            "reasoning_effort": "none",
-        },
+        source="ark_default", model="frozen-model", request_timeout_seconds=61,
+        max_output_tokens=131072, reasoning_effort=reasoning_effort,
     )
 
-    result = asyncio.run(runtime._generate_text_structured(
-        binding,
-        "refine",
-        tools=(object(),),  # type: ignore[arg-type]
-        result_type=IntervalRefinementProposal,
-        max_model_calls=2,
-    ))
+    result = runtime._invoke_multimodal(
+        binding, [], schema_name="refine", result_type=IntervalRefinementProposal,
+    )
 
     assert result.updates == []
-    fallback = captured["config"].fallback
-    assert fallback.request_timeout_seconds == 17
-    assert fallback.max_output_tokens == 2048
-    assert fallback.reasoning_effort == "none"
-    assert captured["closed"] is True
+    assert captured["max_output_tokens"] == 131072
+    assert captured["reasoning_effort"] == reasoning_effort
+    assert captured["request_timeout_seconds"] == 61
+
+
+def test_refinement_reuses_understanding_output_budget_and_reasoning(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._model_manager = ContextVar("budget-manager", default=None)
+    generated = AsyncMock(return_value=CanvasCompletion(complete=True))
+    monkeypatch.setattr(runtime, "_generate_text_structured", generated)
+    config = default_video_parse_v2_config()
+    config = config.model_copy(update={"models": config.models.model_copy(update={
+        "understanding": config.models.understanding.model_copy(update={
+            "max_output_tokens": 65536, "reasoning_effort": "none",
+        }),
+    })})
+    assert config.models.refine is None
+
+    asyncio.run(runtime.generate_interval_refinement(
+        {"inputs": SimpleNamespace(parse_config=config)}, prompt="refine",
+        canvas=ParseContextCanvas(scope="refine:budget", members={"member": {
+            "sequence_no": 0, "version": 1, "bounds": (0, 20_000),
+            "content": VideoParseResult(persons=[], timeline=[]),
+        }}),
+    ))
+
+    binding = generated.await_args.args[0]
+    assert binding is config.models.understanding
+    assert binding.max_output_tokens == 65536
+    assert binding.reasoning_effort == "none"
+    assert config.models.asr.reasoning_effort is None
+
+
+@pytest.mark.parametrize("maximum_tools", [0, 1])
+def test_prefix_zero_and_single_tool_budgets_keep_canvas_facts(monkeypatch, maximum_tools):
+    from agent.video_parse_v2.timelineEvent_canvas import PrefixCompactCompletion
+    from agent.video_parse_v2.prompts import build_prefix_prompt
+    from tests.agent.video_parse_v2.test_framework import _inputs, _lease, _result
+
+    inputs = _inputs(compact_enabled=True)
+    prefix = inputs.parse_config.prefix_context.model_copy(update={"max_tool_calls": maximum_tools})
+    inputs = inputs.model_copy(update={"parse_config": inputs.parse_config.model_copy(update={"prefix_context": prefix})})
+    context = {
+        "chunk_parse_task_id": "member", "video_parse_task_id": "video", "inputs": inputs,
+        "lease": _lease(), "sequence_no": 0, "allowed_start_seconds": 0, "allowed_end_seconds": 20_000,
+        "scope": [0], "content": _result(), "content_version": 1,
+        "series_prefix_compact": "", "video_prefix_compact": "",
+        "evidence": {"asr": {"transcript": [{"start_seconds": 1000, "end_seconds": 3000, "text": "original"}]}, "ocr": None},
+    }
+    canvas = ParseContextCanvas.from_prefix(context)
+    event_reference = canvas.items("events")[0][0]
+    prompt = build_prefix_prompt(sequence_no=0, scope=[0], canvas=canvas, max_tool_calls=maximum_tools)
+    assert event_reference in prompt and context["content"].timeline[0].description in prompt
+    assert "original" in prompt
+    calls = []
+
+    async def generate(_binding, _prompt, *, tools, result_type, max_model_calls, **options):
+        calls.append("generate")
+        if maximum_tools == 0:
+            assert not tools and result_type is PrefixCompactCompletion and max_model_calls == 1
+            with pytest.raises(ValueError):
+                result_type.model_validate({"complete": True, "series_compact": "summary", "video_compact": "summary", "timeline": []})
+            return PrefixCompactCompletion(complete=True, series_compact="series", video_compact="video")
+        assert result_type is CanvasCompletion and max_model_calls == inputs.parse_config.execution.max_model_calls
+        write = next(tool for tool in tools if tool.name == "write_context_canvas")
+        result = write.invoke({
+            "batch_id": "one-batch", "expected_revision": canvas.revision,
+            "operations": [
+                {"op": "set_compact", "series_compact": "series", "video_compact": "video"},
+                {"op": "patch_event", "event_ref": event_reference, "fields": {"description": "corrected in one permitted batch"}},
+            ],
+        })
+        assert json.loads(result)["results"]
+        return CanvasCompletion(complete=True)
+
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._model_manager = ContextVar("prefix-budget-manager", default=None)
+    monkeypatch.setattr(runtime, "_generate_text_structured", generate)
+    receipt = asyncio.run(runtime.generate_prefix_refinement(context, prompt=prompt, canvas=canvas))
+    assert receipt.complete and calls == ["generate"]
+    assert canvas.prefix_result().video_compact == "video"
+    result = canvas.result("member")
+    assert len(result.timeline) == 1
+    assert result.timeline[0].start_seconds == 1000 and result.timeline[0].end_seconds == 3000
+    assert result.timeline[0].description == ("corrected in one permitted batch" if maximum_tools else context["content"].timeline[0].description)
+    assert canvas.get("evidence", "member") == context["evidence"]
+
+
+@pytest.mark.parametrize("stage", ["refine", "prefix"])
+@pytest.mark.parametrize("scope", [None, [], "0", [0, None], [False], [-1, 0], [0, 2]])
+def test_canvas_input_rejects_invalid_persisted_scope_before_deriving_bounds(monkeypatch, stage, scope):
+    from tests.agent.video_parse_v2.test_framework import _inputs, _result
+
+    inputs = _inputs(compact_enabled=True)
+    task_input = SimpleNamespace(task=SimpleNamespace(chunk_count=2), duration_seconds=40_000)
+    member = SimpleNamespace(chunk_parse_task_id="member", sequence_no=0, detail={"scope": scope},
+                             content=_result().model_dump(mode="json"), version=1)
+    snapshot = SimpleNamespace(start_sequence_no=0, chunk_count=1, members=[member])
+    lease = SimpleNamespace(chunk_parse_task_id="member", video_parse_task_id="video", sequence_no=0)
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._repository = SimpleNamespace(
+        load_task_input=lambda _task: task_input,
+        load_interval_members=lambda _lease: snapshot,
+        load_prefix_content=lambda _lease: member,
+    )
+    runtime._prefix_lease = ContextVar("invalid-prefix-scope", default=lease)
+    monkeypatch.setattr(runtime, "_require_interval_lease", lambda *_args, **_kwargs: lease)
+    monkeypatch.setattr(runtime, "_parse_input", lambda _task: inputs)
+
+    load = runtime.load_refine_input if stage == "refine" else runtime.load_prefix_context
+    with pytest.raises(ValueError, match="scope"):
+        asyncio.run(load("member"))
+
+
+@pytest.mark.parametrize("max_output_tokens", [None, 65_536, 131_072])
+def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatch, max_output_tokens):
+    captured = {}
+
+    class Model:
+        def __init__(self, _name, **options):
+            captured["constructed"] = options
+
+        def generate(self, _inputs, **options):
+            captured["generated"] = options
+            return CanvasCompletion(complete=True)
+
+    monkeypatch.setenv("ARK_API_KEY", "fake-key")
+    monkeypatch.setattr("server.service.video_parse.ArkMultimodalModel", Model)
+    runtime = object.__new__(VideoParseRuntimeService)
+    runtime._gateway_config = load_config()
+    binding = GenerativeModelConfig(source="ark_default", model="model", request_timeout_seconds=60,
+                                    max_output_tokens=max_output_tokens, reasoning_effort="none")
+    result = runtime._invoke_multimodal(binding, [], schema_name="CanvasCompletion", result_type=CanvasCompletion,
+                                       tools=(object(),), max_model_calls=3)
+    assert result.complete
+    assert captured["constructed"]["max_output_tokens"] is max_output_tokens
+    assert captured["constructed"]["reasoning_effort"] == "none"
+    policy = captured["generated"]["context_window_policy"]
+    if max_output_tokens == 131_072:
+        assert policy is None
+    else:
+        assert policy.auto_compact_tokens < policy.maximum_input_tokens
+        assert policy.compact_target_tokens < policy.auto_compact_tokens
+    assert captured["generated"]["max_input_chars"] == 400_000
 
 
 def test_prefix_cancellation_releases_lease_without_retrying(monkeypatch):

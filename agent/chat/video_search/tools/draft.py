@@ -13,7 +13,7 @@ from ...common.tool import AgentTool, build_agent_tool
 from ...common.tool_output import page_items
 from ...common.tool_result import JsonToolResult, TextToolResult, ToolResult
 from ..errors import InvalidDraftRangeError
-from ..workspace import AgentWorkspace
+from ..video_search_canvas import VideoSearchContextCanvas
 from .retrieval import ReadItemArguments
 from .shared import (
     _OptionalCursor, _ToolCallBudget, DraftReadAudit, RemoveItemArguments,
@@ -43,7 +43,7 @@ class UpdateDraftTemArguments(BaseModel):
 
 def build_update_draft_item_tool(
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     control: ExecutionControl,
     maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
@@ -56,7 +56,7 @@ def build_update_draft_item_tool(
     ) -> ToolResult:
         _start_tool_call(control, budget, "update_draft_item")
         try:
-            operation, draft_item_count = workspace.upsert_draft_item(
+            operation, draft_item_count = canvas.upsert_draft_item(
                 video_chunk_id=video_chunk_id,
                 start_seconds=start_seconds,
                 end_seconds=end_seconds,
@@ -96,20 +96,20 @@ def build_update_draft_item_tool(
         ),
         args_schema=UpdateDraftTemArguments,
         maximum_result_bytes=maximum_result_bytes,
-        draft_item_count=workspace.draft_item_count,
+        draft_item_count=canvas.draft_item_count,
     )
 
 
 def build_remove_draft_item_tool(
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     control: ExecutionControl,
     maximum_result_bytes: int,
     budget: _ToolCallBudget | None = None,
 ) -> AgentTool:
     def remove_draft_item(video_chunk_id: str) -> ToolResult:
         _start_tool_call(control, budget, "remove_draft_item")
-        removed, draft_item_count = workspace.remove_draft_item(video_chunk_id)
+        removed, draft_item_count = canvas.remove_draft_item(video_chunk_id)
         return JsonToolResult(
             success=True,
             payload={
@@ -125,13 +125,13 @@ def build_remove_draft_item_tool(
         description="Remove one Draft Item by video_chunk_id.",
         args_schema=RemoveItemArguments,
         maximum_result_bytes=maximum_result_bytes,
-        draft_item_count=workspace.draft_item_count,
+        draft_item_count=canvas.draft_item_count,
     )
 
 
 def build_get_draft_catelog_tool(
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     control: ExecutionControl,
     maximum_result_bytes: int,
     maximum_catalog_items: int,
@@ -143,7 +143,7 @@ def build_get_draft_catelog_tool(
 
     def get_draft_catelog(cursor: str | None = None) -> ToolResult:
         _start_tool_call(control, budget, "get_draft_catelog")
-        items = [_draft_card(workspace, item) for item in workspace.draft_items(
+        items = [_draft_card(canvas, item) for item in canvas.draft_items(
             approved=approved,
         )]
         try:
@@ -183,7 +183,7 @@ def build_get_draft_catelog_tool(
 
 def build_read_draft_item_tool(
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     control: ExecutionControl,
     maximum_result_bytes: int,
     maximum_read_chars: int = 16_384,
@@ -198,9 +198,9 @@ def build_read_draft_item_tool(
         end: int | None = None,
     ) -> ToolResult:
         _start_tool_call(control, budget, "read_draft_item")
-        item = workspace.draft_item(video_chunk_id, approved=approved)
+        item = canvas.draft_item(video_chunk_id, approved=approved)
         sections = _detail_sections(
-            workspace.retrieval_snapshot(video_chunk_id), item,
+            canvas.retrieval_snapshot(video_chunk_id), item,
         )
         result = _read_detail_section(
             video_chunk_id, sections,

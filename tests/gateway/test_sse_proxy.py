@@ -3,8 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from gateway.ark.sse import request_sse_json, request_sse_text
+from gateway.ark.sse import request_sse_json, request_sse_response, request_sse_text
 from gateway.errors import SSEProxyError
+from gateway.usage import capture_model_usage, track_model_call
 
 
 class FakeStream:
@@ -27,6 +28,23 @@ class FakeResponses:
     def create(self, **kwargs: object) -> FakeStream:
         self.calls.append(kwargs)
         return self.stream
+
+
+def test_tool_only_terminal_response_keeps_usage_and_closes_stream() -> None:
+    response = SimpleNamespace(
+        id="tool-response", status="completed",
+        output=[SimpleNamespace(type="function_call", call_id="read-1", name="read", arguments="{}")],
+        usage=SimpleNamespace(input_tokens=80, output_tokens=12, total_tokens=92),
+    )
+    stream = FakeStream([SimpleNamespace(type="response.completed", sequence_number=0, response=response)])
+    calls = []
+    with capture_model_usage(calls.append), track_model_call(provider="ark", model="test", operation="read") as call:
+        terminal, text = request_sse_response(FakeResponses(stream), usage_call=call, model="test", input=[])
+    assert terminal is response and text == ""
+    assert stream.closed
+    assert len(calls) == 1 and calls[0].usage.total_tokens == 92
+    with pytest.raises(SSEProxyError, match="no output text"):
+        request_sse_json(FakeResponses(FakeStream(stream.events)), model="test", input=[])
 
 
 def _output_response(response_id: str, text: str) -> object:

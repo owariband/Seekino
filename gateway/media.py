@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -12,6 +13,51 @@ _SUPPORTED_VIDEO_MIME_TYPES = {
     "video/quicktime",
     "video/x-msvideo",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class ToolImage:
+    data_url: str
+    size_bytes: int
+    description: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ToolImageArtifact:
+    images: tuple[ToolImage, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.images) > 4 or sum(image.size_bytes for image in self.images) > 8 * 1024 * 1024:
+            raise ValueError("tool images exceed their independent media budget")
+
+    @classmethod
+    def from_paths(
+        cls, images: list[tuple[str | Path, str]], *,
+        maximum_images: int = 4, maximum_bytes: int = 8 * 1024 * 1024,
+    ) -> ToolImageArtifact:
+        if len(images) > maximum_images:
+            raise ValueError("tool image count exceeds its budget")
+        encoded = []
+        total = 0
+        for path, description in images:
+            url, size = encode_media_file(path, expected_kind="image")
+            total += size
+            if total > maximum_bytes:
+                raise ValueError("tool image bytes exceed their budget")
+            encoded.append(ToolImage(url, size, description))
+        return cls(tuple(encoded))
+
+    def openai_content(self) -> list[dict]:
+        content = []
+        for image in self.images:
+            if image.description:
+                content.append({"type": "text", "text": image.description})
+            content.append({
+                "type": "image_url", "image_url": {
+                    "url": image.data_url, "detail": "high",
+                },
+            })
+        return content
 
 
 def encode_media_file(

@@ -34,7 +34,7 @@ from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.agent import AgentRepository
 from server.repository.library import LibraryRepository
-from server.repository.video_parse import VideoParseRepository
+from server.repository.video_parse import VideoParseRepository, parse_content_fingerprint
 from server.service.agent_chat import AgentChatService
 from server.service.library import LibraryService
 from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator
@@ -51,18 +51,36 @@ def _invoke(tool: BaseTool, arguments: dict) -> dict:
     return json.loads(tool.invoke(arguments))
 
 
-def _read_item(tool: BaseTool, video_chunk_id: str) -> None:
+def _read_item(tool: BaseTool, video_chunk_id: str, *, collection: str) -> None:
     overview = _invoke(tool, {
-        "video_chunk_id": video_chunk_id,
-        "section": "overview",
+        "collection": collection, "reference": video_chunk_id, "section": "overview",
     })
     for section in overview["sections"]:
-        _invoke(tool, {
-            "video_chunk_id": video_chunk_id,
-            "section": section["name"],
-            "start": 0,
-            "end": section["total_chars"],
-        })
+        start, total = 0, section["total_chars"]
+        while start < total:
+            end = total
+            while True:
+                page = _invoke(tool, {
+                    "collection": collection, "reference": video_chunk_id,
+                    "section": section["name"], "start": start, "end": end,
+                })
+                if "error" not in page:
+                    break
+                assert page["error"]["code"] == "RANGE_TOO_LARGE"
+                end = page["error"]["suggested_end"]
+            assert page["start"] == start and page["end"] == end
+            start = end
+
+
+def _write_canvas(tools_by_name, operation: str, fields: dict) -> dict:
+    collection = "draft" if "draft" in operation else "approved"
+    current = _invoke(tools_by_name["get_context_canvas"], {"collection": collection})
+    receipt = _invoke(tools_by_name["write_context_canvas"], {
+        "batch_id": uuid4().hex, "expected_revision": current["revision"],
+        "operations": [{"operation": operation, **fields}],
+    })
+    assert "error" not in receipt
+    return receipt["results"][0]
 
 
 @dataclass
@@ -85,8 +103,8 @@ class _QueryModel:
             },
         })
         assert result["items"][0]["video_chunk_id"] == self.video_chunk_id
-        _read_item(tools_by_name["read_trieve_item"], self.video_chunk_id)
-        accepted = _invoke(tools_by_name["update_draft_item"], {
+        _read_item(tools_by_name["get_context_canvas"], self.video_chunk_id, collection="retrieval")
+        accepted = _write_canvas(tools_by_name, "upsert_draft_item", {
             "video_chunk_id": self.video_chunk_id,
             "start_seconds": self.start_seconds,
             "end_seconds": self.end_seconds,
@@ -106,12 +124,16 @@ class _EvaluatorModel:
 
     def run_structured(self, _prompt, *, tools, result_type, **_kwargs):
         tools_by_name = _tool_map(tools)
-        catalog = _invoke(tools_by_name["get_draft_catelog"], {"cursor": None})
-        assert len(catalog["items"]) == 1
-        _read_item(
-            tools_by_name["read_draft_item"],
-            catalog["items"][0]["video_chunk_id"],
-        )
+        cursor = None
+        references = []
+        while True:
+            catalog = _invoke(tools_by_name["get_context_canvas"], {"collection": "draft", "cursor": cursor})
+            references.extend(item["reference"] for item in catalog["items"])
+            cursor = catalog["next_cursor"]
+            if cursor is None:
+                break
+        assert len(references) == 1
+        _read_item(tools_by_name["get_context_canvas"], references[0], collection="draft")
         return result_type.model_validate({
             "action": "complete",
             "advice": "证据完整。",
@@ -136,8 +158,7 @@ class _ChatModel:
     ):
         assert require_tool_call is True
         check_control()
-        update = _tool_map(tools)["update_video_item"]
-        accepted = _invoke(update, {
+        accepted = _write_canvas(_tool_map(tools), "upsert_video_item", {
             "video_chunk_id": self.expected_video_chunk_id,
             "claim": "第一段动作与问题匹配。",
         })
@@ -249,8 +270,12 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
             video_parse_task_id=task_id,
         )
         assert refine_lease is not None
+        refine_input = repository.load_interval_members(refine_lease)
         repository.commit_interval_refinement(
             refine_lease, interval_content={"summary": "unchanged"}, member_updates={},
+            input_versions={member.chunk_parse_task_id: member.version for member in refine_input},
+            input_fingerprints={member.chunk_parse_task_id: parse_content_fingerprint(member.content)
+                                for member in refine_input},
         )
         index_lease = queue.claim_interval_index(
             "agent-test-index", lease_duration=timedelta(minutes=10),
@@ -287,7 +312,7 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
         runtime = AgentRuntime(
             _QueryModel(chunk_id, 0, 10), _EvaluatorModel(), _ChatModel(chunk_id),
             retrieval.search, max_loop_turns=1, max_model_calls_per_turn=3,
-            max_tool_calls_per_turn=8, limits_enabled=True, execution_timeout_seconds=30,
+            max_tool_calls_per_turn=16, limits_enabled=True, execution_timeout_seconds=30,
             retrieval_channel="lexical",
         )
         service = AgentChatService(

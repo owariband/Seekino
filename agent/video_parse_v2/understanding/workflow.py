@@ -1,14 +1,14 @@
-"""Executable Chunk subgraph with all external effects delegated to the host."""
+"""Prepare observations, build a Canvas draft, and commit validated facts once."""
 
 from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from engine.parsev2.observations import build_chunk_without_understanding
-from engine.parsev2.validation import validate_result_time_range
+from agent.common.chunk_understanding import understand_chunk
+from engine.parsev2.schemas import VideoParseResult
 
-from ..prompts import build_understanding_prompt
-from ..host import VideoParseRuntime
+from ..timelineEvent_canvas import ParseContextCanvas
+from ..prompts import build_canvas_understanding_prompt
 from .state import ChunkState
 
 
@@ -18,22 +18,16 @@ class ChunkUnderstandingWorkflow:
     def __init__(
         self,
         *,
-        runtime: VideoParseRuntime,
+        runtime,
     ) -> None:
         self._runtime = runtime
 
         builder = StateGraph(ChunkState)
-        builder.add_node("visual_input", self._visual_input)
-        builder.add_node("asr", self._transcribe)
         builder.add_node("understanding", self._understand)
-        builder.add_node("validate", self._validate)
         builder.add_node("commit", self._commit)
         builder.add_node("notify", self._notify)
-        builder.add_edge(START, "visual_input")
-        builder.add_edge(START, "asr")
-        builder.add_edge(["asr", "visual_input"], "understanding")
-        builder.add_edge("understanding", "validate")
-        builder.add_edge("validate", "commit")
+        builder.add_edge(START, "understanding")
+        builder.add_edge("understanding", "commit")
         builder.add_edge("commit", "notify")
         builder.add_edge("notify", END)
         self._graph = builder.compile()
@@ -59,56 +53,66 @@ class ChunkUnderstandingWorkflow:
                 if caught is None:
                     raise
 
-    async def _visual_input(self, state: ChunkState) -> dict[str, object]:
-        execution = state["execution"]
-        await self._runtime.prepare_chunk_visual(execution)
-        updates: dict[str, object] = {"visual_ready": True}
-        if execution.inputs.parse_config.ocr_enabled:
-            updates["ocr_result"] = await self._runtime.read_chunk_text(execution)
-        return updates
-
-    async def _transcribe(self, state: ChunkState) -> dict[str, object]:
-        return {
-            "asr_result": await self._runtime.transcribe_chunk(state["execution"])
-        }
-
     async def _understand(self, state: ChunkState) -> dict[str, object]:
         execution = state["execution"]
-        asr_result = state["asr_result"]
-        ocr_result = state.get("ocr_result")
-        if execution.inputs.parse_config.understanding_enabled:
-            prompt = build_understanding_prompt(
-                execution,
-                asr_result=asr_result,
-                ocr_result=ocr_result,
-            )
-            result = await self._runtime.understand_chunk(
-                execution,
-                asr_result=asr_result,
-                ocr_result=ocr_result,
-                prompt=prompt,
-            )
-        else:
-            result = build_chunk_without_understanding(
-                asr_result=asr_result,
-                ocr_result=ocr_result,
-            )
-        return {"result": result}
-
-    @staticmethod
-    def _validate(state: ChunkState) -> dict[str, object]:
-        execution = state["execution"]
-        result = validate_result_time_range(
-            state["result"],
-            start_seconds=execution.allowed_start_seconds,
-            end_seconds=execution.allowed_end_seconds,
+        config = execution.inputs.parse_config
+        canvas = ParseContextCanvas(
+            scope="chunk:" + execution.chunk_parse_task_id, stage="understanding",
+            members={execution.chunk_parse_task_id: {
+                "sequence_no": execution.sequence_no, "version": 0,
+                "bounds": (execution.allowed_start_seconds, execution.allowed_end_seconds),
+                "content": VideoParseResult(persons=[], timeline=[]),
+            }},
+            background=execution.background,
+            evidence={"media": {
+                "source_media_ref": execution.source_media_ref,
+                "video_id": execution.inputs.video_id,
+                "start_ms": execution.allowed_start_seconds,
+                "end_ms": execution.allowed_end_seconds,
+            }},
         )
-        return {"result": result}
+        observations = {}
+
+        def preserve_observations(asr_result, ocr_result):
+            observations.update(asr_result=asr_result, ocr_result=ocr_result)
+            canvas.register_evidence(execution.chunk_parse_task_id, {
+                "asr": asr_result,
+                "ocr": ocr_result.model_dump(mode="json") if ocr_result is not None else None,
+            })
+
+        result = await understand_chunk(
+            start_ms=execution.allowed_start_seconds,
+            end_ms=execution.allowed_end_seconds,
+            ocr_enabled=config.ocr_enabled,
+            understanding_enabled=config.understanding_enabled,
+            prepare_visual=lambda: self._runtime.prepare_chunk_visual(execution),
+            transcribe=lambda: self._runtime.transcribe_chunk(execution),
+            read_text=lambda: self._runtime.read_chunk_text(execution),
+            understand=lambda **kwargs: self._runtime.understand_chunk(
+                execution, canvas=canvas, **kwargs,
+            ),
+            prompt_builder=lambda **kwargs: build_canvas_understanding_prompt(execution, canvas=canvas),
+            observation_callback=preserve_observations,
+        )
+        if not config.understanding_enabled:
+            operations = [
+                {"op": "add_event", "member_ref": execution.chunk_parse_task_id,
+                 "key": f"observation-{index}", "event": event.model_dump(mode="json")}
+                for index, event in enumerate(result.timeline)
+            ]
+            if operations:
+                canvas.write(role="understanding", batch_id="normalized-observations",
+                             expected_revision=canvas.revision, operations=operations)
+        return {"result": canvas.result(execution.chunk_parse_task_id), "canvas": canvas, **observations}
 
     async def _commit(self, state: ChunkState) -> dict[str, object]:
         await self._runtime.commit_chunk_result(
             state["execution"],
             state["result"],
+            evidence={
+                **state["canvas"].get("evidence", state["execution"].chunk_parse_task_id),
+                "media": state["canvas"].get("evidence", "media"),
+            },
         )
         return {}
 

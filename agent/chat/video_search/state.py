@@ -347,9 +347,9 @@ class ModelContextBudget:
 
 class RunState(TypedDict):
     inputs: RunInputs
-    # AgentWorkspace is intentionally typed as Any here: LangGraph resolves all
-    # TypedDict hints at runtime, while workspace.py imports this module.
-    workspace: Any
+    # VideoSearchContextCanvas is intentionally typed as Any here: LangGraph resolves all
+    # TypedDict hints at runtime, while video_search_canvas.py imports this module.
+    canvas: Any
     turns: list[LoopTurn]
     control: ExecutionControl
     limits: RunLimits

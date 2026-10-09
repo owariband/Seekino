@@ -1,6 +1,6 @@
 # Video Retrieval Skill
 
-检索采用严格的两层读取协议：先用 `retrieve` 获得有界 Catalog，再只对确有价值的候选调用 `read_trieve_item` 精读。不要假设 Catalog 已包含完整证据，也不要为了“保险”把全部候选都展开。
+检索采用严格的两层读取协议：先用 `retrieve` 获得有界 Catalog，再只对确有价值的候选调用 `get_context_canvas` 精读。不要假设 Catalog 已包含完整证据，也不要为了“保险”把全部候选都展开。
 
 ## 第一层：retrieve
 
@@ -37,11 +37,11 @@ Catalog 中常用字段：
 - `fused_rank`、各通道 rank/score：排序与诊断信号，不是事实或置信度百分比。
 - `next_cursor`：Catalog 下一页；为空表示本次召回已读完。
 
-## 第二层：read_trieve_item
+## 第二层：get_context_canvas
 
-对 Catalog 中可能直接支撑答案的 `video_chunk_id` 调用 `read_trieve_item`。先用 `section="overview"` 查看可读 section 和长度，再用同一 `video_chunk_id`、所需 `section` 和起始位置读取内容，必要时指定结束位置。可读 section 为 `candidate`、`selection_reason`、`evidence.transcript`、`evidence.events`、`evidence.text`、`evidence.series_context`、`evidence.metadata`。Transcript、视觉事件、语义上下文、来源信息和 canonical 时间范围都应从相关 section 核验。
+对 Catalog 中可能直接支撑答案的 `video_chunk_id` 调用 `get_context_canvas`。使用 `collection="retrieval"` 和 `reference=video_chunk_id`，先用 `section="overview"` 查看可读 section 和长度，再用同一 `reference`、所需 `section` 和起始位置读取内容，必要时指定结束位置。可读 section 为 `candidate`、`selection_reason`、`evidence.transcript`、`evidence.events`、`evidence.text`、`evidence.series_context`、`evidence.metadata`。Transcript、视觉事件、语义上下文、来源信息和 canonical 时间范围都应从相关 section 核验。
 
-精读不使用 cursor。读取 `overview` 时只需传 `video_chunk_id` 和 `section="overview"`，可省略 `start`、`end`；它列出有限、互不重叠的 section 及字符长度。读取其他 section 时可指定字符半开范围 `[start, end)`，返回值包含 `total_chars`。若请求范围过大，按工具提示缩小范围并再次调用；需要更多内容时用相邻范围继续读。同一 ID 可以按显式范围反复读取，不依赖此前返回的书签。Catalog 的 `next_cursor` 仍只用于 `retrieve` 翻页。
+精读不使用 cursor。读取 `overview` 时只需传 `collection="retrieval"`、`reference=video_chunk_id` 和 `section="overview"`，可省略 `start`、`end`；它列出有限、互不重叠的 section 及字符长度。读取其他 section 时可指定字符半开范围 `[start, end)`，返回值包含 `total_chars`。若请求范围过大，按工具提示缩小范围并再次调用；需要更多内容时用相邻范围继续读。同一 ID 可以按显式范围反复读取，不依赖此前返回的书签。Catalog 的 `next_cursor` 仍只用于 `retrieve` 翻页。
 
 要读到当前 section 末尾可省略 `end`；要读完整 section 时先用 `start=0` 且省略 `end`。如果工具返回 `RANGE_TOO_LARGE`，按 `suggested_end` 分段读取。显式填写 `end` 时必须满足 `start < end <=` 当前 `video_chunk_id`、当前 section 的 `total_chars`；不同片段的长度不能互用。
 
@@ -66,7 +66,7 @@ Transcript 通道不会翻译 Query。`inputs.series_context[].transcriptLanguag
 
 ## Evidence 核验结果
 
-`retrieve` 只发现 canonical VideoChunk，`read_trieve_item` 负责核验。需要形成播放候选时，应遵守：
+`retrieve` 只发现 canonical VideoChunk，`get_context_canvas` 负责核验。需要形成播放候选时，应遵守：
 
 - `video_chunk_id` 必须来自本轮或此前真实召回；
 - `start_seconds`、`end_seconds` 必须位于精读证据的 canonical 范围内；

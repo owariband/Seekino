@@ -20,3 +20,8 @@ from .retrieval import (
     build_retrieve_tool,
 )
 from .shared import DraftReadAudit, RemoveItemArguments
+
+from .canvas import (
+    ChatWriteCanvasArguments, QueryWriteCanvasArguments, WriteCanvasArguments,
+    build_video_search_canvas_tools,
+)

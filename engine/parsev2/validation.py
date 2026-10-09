@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from hashlib import sha256
+import json
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -19,7 +21,7 @@ class _ValidationModel(BaseModel):
 
 
 class ChunkResultUpdate(_ValidationModel):
-    """Explicit business fields a model proposes to change on one Chunk result."""
+    """Complete validated fields assembled by the program for one Chunk commit."""
 
     sequence_no: int = Field(ge=0, strict=True)
     persons: list[_PersonName] | None = None
@@ -40,7 +42,11 @@ class ChunkResultUpdate(_ValidationModel):
 
 
 class IntervalRefinementProposal(_ValidationModel):
-    """Model proposal for an Interval; omitted members and fields stay unchanged."""
+    """Compatibility transport for complete snapshot-relative member fields.
+
+    Active agents assemble these fields from Canvas; model tools use explicit
+    local operations instead. Omitted members and fields stay unchanged.
+    """
 
     updates: list[ChunkResultUpdate] = Field(default_factory=list)
 
@@ -53,13 +59,13 @@ class IntervalRefinementProposal(_ValidationModel):
 
 
 class ValidatedIntervalRefinement(_ValidationModel):
-    """Only fields that actually differed from the model input snapshot."""
+    """Program-assembled fields that differ from the bound input snapshot."""
 
     updates: list[ChunkResultUpdate]
 
 
 class PrefixRefinementProposal(_ValidationModel):
-    """Background compact output and an optional update for the bound target."""
+    """Compatibility transport for summaries and complete bound-target fields."""
 
     series_compact: str
     video_compact: str
@@ -121,11 +127,20 @@ def validate_result_time_range(
     return validated
 
 
+def parse_content_fingerprint(content: Mapping[str, object]) -> str:
+    """Bind a persisted parse snapshot to its full canonical JSON payload."""
+
+    return sha256(json.dumps(
+        dict(content), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+
+
 def apply_chunk_update(
     current: VideoParseResult,
     update: ChunkResultUpdate,
 ) -> VideoParseResult:
-    """Apply explicit fields to current DB content; omitted fields remain current."""
+    """Apply complete program fields to an exact snapshot, retaining omissions."""
 
     values = current.model_dump(mode="python")
     for field in update.changed_fields:
@@ -145,11 +160,10 @@ def validate_interval_refinement(
     *,
     members: Sequence[RefinementMember],
 ) -> ValidatedIntervalRefinement:
-    """Validate member authority and retain only actual snapshot-relative changes.
+    """Validate program-assembled fields against the exact refinement snapshot.
 
-    The returned explicit fields are later applied to rows locked at commit time.
-    This preserves fields omitted by this model call while allowing a later commit
-    to win when two Intervals deliberately update the same field.
+    The transaction must check every input version and fingerprint before
+    applying these complete fields. Model-facing operations live in Canvas.
     """
 
     proposal = IntervalRefinementProposal.model_validate(proposal)
@@ -214,10 +228,15 @@ def validate_member_scopes(
         raise ValueError("member scopes must match the Interval members exactly")
     validated: dict[int, tuple[int, ...]] = {}
     for sequence_no in expected:
-        scope = tuple(member_scopes[sequence_no])
+        raw_scope = member_scopes[sequence_no]
+        if not isinstance(raw_scope, (list, tuple)):
+            raise ValueError("member scope must be an ordered sequence of Chunk numbers")
+        scope = tuple(raw_scope)
+        if not scope:
+            raise ValueError("member scope must not be empty")
+        ordered_scope_union(scope, ())
         if list(scope) != sorted(set(scope)):
             raise ValueError("member scope must be ordered and unique")
-        ordered_scope_union(scope, ())
         if sequence_no not in scope:
             raise ValueError("member scope must include its own sequence number")
         validated[sequence_no] = scope

@@ -2,17 +2,17 @@
 
 本 Skill 必须保持作品无关，不得写入或依赖任何具体动画、角色、集数、剧情、台词或镜头特例。
 
-你只整理已经由 Evaluator 放行的 Draft，Tool 集合固定为：
+你整理宿主核准的回答，只有 `get_context_canvas` 和 `write_context_canvas`。
 
-1. `get_draft_catelog`：查看获批草稿 Catalog；用 `next_cursor` 分页。
-2. `read_draft_item`：精读获批草稿项及 evidence；先读 `section="overview"`，再按 section 和范围读取所需内容。
-3. `update_video_item`：在最终答案中插入或更新一个视频块。Agent Workspace 按 `video_chunk_id` 去重，最终输出构造器绑定获批时间范围。
-4. `remove_video_item`：删除最终答案中不需要的视频块。
+通过 `get_context_canvas(collection="approved")` 读取核准目录，使用 reference=video_chunk_id 和 section="overview" 查看条目，再分段读取相关 section。核准草稿、证据和播放范围已冻结；不能重新检索或读取未获批候选，不能改范围或引入未获批 ID。
 
-普通 assistant 文本会按产生顺序写入 Markdown 草稿；视频块由 `update_video_item` 写入。可以调整措辞、顺序和 Markdown，但不能重新检索、修改获批范围、引入未获批 ID，或编造证据中没有的事实。不存在 `submit_video_item` 或最终 submit Tool；Agent Loop 正常结束即表示渲染完成。
+普通 assistant 文本沿现有流式回调写入同一个 Canvas 的 Markdown 渲染状态。使用 `write_context_canvas` 维护视频块，传当前 expected_revision、唯一 batch_id 和 operations：
 
-精读不使用 cursor。先传 `video_chunk_id` 和 `section="overview"`，此时可省略 `start`、`end`；返回值列出有限、互不重叠的 section 及字符长度。草稿 section 为 `draft`、`candidate`、`selection_reason`、`evidence.transcript`、`evidence.events`、`evidence.text`、`evidence.series_context`、`evidence.metadata`。读取其他 section 时可指定字符半开范围 `[start, end)`，返回值包含 `total_chars`。范围过大时按工具提示缩小并重读；Catalog 的 `next_cursor` 仍用于翻页。
+- `operation="upsert_video_item"`：提供获批 video_chunk_id；新增时提供 claim，更新时可只修改 claim。不得提供播放范围，程序使用核准范围。
+- `operation="remove_video_item"`：删除最终回答中的一个视频块。
 
-读取当前 section 到末尾时可省略 `end`；显式传 `end` 时必须小于等于当前 ID、当前 section 的 `total_chars`，不能沿用别的片段的长度。若返回 `RANGE_TOO_LARGE`，按 `suggested_end` 分段读取。
+同一视频 ID 原位更新，不打乱其他 Markdown 和视频块顺序。整批失败没有部分修改；相同成功 batch_id 与操作重放幂等。文本回调也会更新 revision，写视频块前通过 collection="render" 或 approved 的读取取得当前版本；遇到 STALE_REVISION 时读取后复核并重试。
 
-最终答案至少包含一段非空 Markdown。有获批证据时，应读取相关草稿项，并用 `update_video_item` 放置需要展示的视频块。
+目录用 next_cursor 分页；条目按当前项当前节的字符半开范围读取，范围过大按 suggested_end 分段。不把导航摘要当事实证据。
+
+只改善表达、顺序与 Markdown，保持核准结论、来源和不确定性。最终至少有一段非空 Markdown；存在获批项时至少放置一个视频块，无获批项时不放视频块。没有 submit Tool。

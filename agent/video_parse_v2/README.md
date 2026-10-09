@@ -1,23 +1,22 @@
 # Video Parse V2 Agent Harness
 
 This package coordinates the persisted V2 task state machine. It never imports
-Server repositories or Gateway clients. The host implements
-[`VideoParseRuntime`](host.py), injects it into [`ParseAgent`](runtime.py), and
-retains database and model ownership.
+Server repositories or Gateway clients. The service injects its runtime object
+into [`ParseAgent`](runtime.py) and retains database and model ownership.
 
 ## Entry point and module layout
 
 `runtime.py` assembles the stages and builds the Video coordinator Graph.
-`host.py` defines the injected host capabilities and task/lease DTOs; it does
-not execute the Graph. Stage-local state stays alongside its stage.
+`state.py` holds the task and execution DTOs consumed by the stages. The stages
+call the injected runtime directly. Stage-local state stays alongside its stage.
 
 ```text
 video_parse_v2/
 ├── __init__.py             # public ParseAgent export
 ├── runtime.py              # stage assembly, main Graph and ParseAgent.run
-├── host.py                 # Server/Gateway protocol and task/lease DTOs
 ├── input.py                # task inputs and frozen configuration
-├── state.py                # main Graph state
+├── state.py                # task/execution DTOs and main Graph state
+├── timelineEvent_canvas.py # Parse facts, evidence and validated local operations
 ├── errors.py               # parse errors
 ├── prepare.py              # topology and child-task initialization
 ├── scheduler.py            # ordered batches and Chunk dispatch
@@ -34,7 +33,7 @@ video_parse_v2/
     ├── __init__.py          # PrefixContextAgent export
     ├── agent.py             # optional background Prefix execution
     ├── context.py           # bound Chunk and prefix context snapshot
-    └── tools.py             # target-bound, proposal-only tools
+    └── tools.py             # shared Canvas tools bound to the current target
 ```
 
 The public entry point remains `ParseAgent`. The host enters claimed Chunk,
@@ -57,8 +56,8 @@ await agent.interval_refine.run(interval_parse_task_id) # claimed Refine worker
 await agent.prefix_context_agent.run(chunk_task_id)     # claimed Prefix worker
 ```
 
-The default missing runtime fails at the first external operation. It never
-reports a fake success.
+Executing a stage requires an injected runtime. Constructing the coordinator
+alone does not execute external operations.
 
 ## Persisted recovery
 
@@ -111,8 +110,9 @@ ChunkUnderstandingWorkflow workers
   → content + initial scope + ready masks + Chunk COMPLETE in one transaction
         ↓
 IntervalRefine workers
-  current member content + member scopes → explicit persons/timeline updates
-  → apply actual fields to current locked rows + scope union + INDEXING
+  independent member snapshot + original evidence → local Canvas corrections
+  → check all member versions/fingerprints + validate complete results
+  → transactionally save changed content + scope union + INDEXING
         ↓
 host indexing scan/notification
   all containing Intervals submitted Refine → current content/version
@@ -125,7 +125,7 @@ Refine and indexing.
 
 ## Runtime and transaction rules
 
-[`host.py`](host.py) contains only domain DTOs and host operations.
+The runtime object supplies the operations actually consumed by each stage.
 Synchronous repositories/queues may be adapted by an async service, but model
 and media calls run outside row-locking transactions.
 
@@ -136,22 +136,34 @@ Intervals and rechecks readiness while claiming them; no Agent callback writes
 masks or enqueues Refine. Post-commit notifications wake the Video coordinator,
 and durable scans continue work even when notifications are lost.
 
-ASR returns the Engine-owned normalized transcript contract, with absolute
-integer-millisecond timestamps. OCR uses Engine's `OCRResult` and Agent's OCR
-prompt; the host prepares media and executes the model. With Understanding
+The ASR provider returns seconds; the service converts them once to absolute
+integer milliseconds before using the Engine-owned transcript contract. OCR
+uses Engine's `OCRResult` and Agent's OCR prompt. Original normalized ASR/OCR
+are retained in Chunk detail and exposed as read-only Canvas evidence. The
+service prepares media and executes the model. With Understanding
 disabled, the workflow directly calls Engine's pure observation-to-event
 conversion and applies the same time-range validation before committing.
 
 Refine input includes each member's content, version, bounds, sequence, and
-ordered scope. Engine returns only fields actually changed relative to that
-input. Commit checks the Interval lease and unsubmitted state, locks member rows
-in fixed order, applies those explicit fields to current content, unions current
-scope, and enters `INDEXING`. A concurrent content/version change alone does not
-rerun the model.
+ordered scope, plus original evidence and full content fingerprints. Understanding,
+[`ParseContextCanvas`](timelineEvent_canvas.py) in Refine and Prefix uses the same [`ContextCanvas`](../utils/context_canvas.py)
+implementation and shared `get_context_canvas` / `write_context_canvas` tools as
+Chat. Refine operations add or correct events; omitted events and fields remain
+unchanged, and event deletion is unavailable. Each batch validates an independent
+draft before publishing it. The program assembles the final timeline from Canvas;
+the model returns only a completion receipt.
 
-Prefix tools are bound to the one current Chunk and only produce a proposal.
-The host validates its independent lease and target content version before
-commit. A factual update increments content version and returns already-refined
+Commit checks the Interval lease and unsubmitted state, locks member rows in
+fixed order, and checks every input member version and fingerprint before any
+updates. It validates full results, saves changed content, unions current scope,
+and enters `INDEXING` in one transaction. A changed input snapshot triggers fresh
+refinement of that window while retaining completed ASR and Understanding work.
+Content conflicts are distinct from lease loss and cancellation.
+
+Prefix tools are bound to one current Chunk Canvas. The service validates its
+independent lease and input content version/fingerprint before commit; a content
+conflict refreshes that Prefix review. A factual update increments content
+version and returns already-refined
 containing Intervals to `INDEXING`; compact-only and scope-only writes do not.
 The Server consumer's bounded background scan claims Prefix work through its
 repository. It advances the persisted cursor without Agent readiness callbacks.
@@ -161,4 +173,6 @@ state. `ChunkUnderstandingWorkflow.run` always calls runtime cleanup with the
 same fenced `ChunkExecution`; orphan cleanup after process death belongs to the
 Worker reaper.
 
-The active design contract is [`design/trd.md`](design/trd.md).
+The task-state contract is [`design/trd.md`](design/trd.md); the shared Canvas
+contract and implementation evidence are in
+[`../design/utils_context_canvas.md`](../design/utils_context_canvas.md).

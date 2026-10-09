@@ -5,14 +5,47 @@ import pytest
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
+from agent.utils.tool import build_agent_tool
+from agent.utils.tool_result import JsonToolResult
 from gateway.errors import ContentFilterError
 from gateway.multimodal import ImageInput, TextInput
 from gateway.openai.audio import transcribe_audio
 from gateway.openai.vision import OpenAIVisionModel
+from gateway.usage import ModelCallCancelledError, capture_model_usage, control_model_calls
 
 
 class Result(BaseModel):
     summary: str
+
+
+class CanvasArguments(BaseModel):
+    value: str
+
+
+def _vision_response(*, tool=False):
+    message = {"role": "assistant", "content": '{"summary":"scene"}'}
+    if tool:
+        message.update(content=None, tool_calls=[{
+            "id": "write-1", "type": "function", "function": {
+                "name": "write_context_canvas", "arguments": '{"value":"scene"}',
+            },
+        }])
+    return {
+        "id": "vision-result", "object": "chat.completion", "created": 0,
+        "model": "custom-vision", "choices": [{
+            "index": 0, "finish_reason": "tool_calls" if tool else "stop", "message": message,
+        }], "usage": {"prompt_tokens": 120, "completion_tokens": 20, "total_tokens": 140},
+    }
+
+
+def _write_tool(calls):
+    def write(value):
+        calls.append(value)
+        return JsonToolResult(success=True, payload={"written": value})
+    return build_agent_tool(
+        func=write, name="write_context_canvas", description="Write the analysis Canvas.",
+        args_schema=CanvasArguments, maximum_result_bytes=1024,
+    ).as_langchain_tool()
 
 
 def install_transport(monkeypatch, module, handler):
@@ -84,6 +117,78 @@ def test_vision_sends_images_to_selected_endpoint_and_validates_json(
     assert body["messages"][0]["content"][1]["image_url"]["url"].startswith(
         "data:image/png;base64,"
     )
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize(
+    "output_format,token_parameter",
+    [("json_schema", "max_tokens"), ("json_object", "max_completion_tokens")],
+)
+def test_vision_tools_keep_selected_protocol_budget_and_real_usage(
+    monkeypatch, tmp_path, output_format, token_parameter,
+):
+    requests, writes, usage = [], [], []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=_vision_response(tool=len(requests) == 1))
+
+    clients = install_transport(monkeypatch, "gateway.openai.vision", handler)
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"test-image")
+    model = OpenAIVisionModel(
+        "custom-vision", provider="portable", base_url="https://vision.example/v1",
+        api_key="offline", max_output_tokens=131072, token_parameter=token_parameter,
+        response_format=output_format, request_timeout_seconds=19,
+    )
+    with capture_model_usage(usage.append):
+        result = model.generate(
+            [TextInput("describe"), ImageInput(frame, detail="low")],
+            schema_name="scene", result_type=Result, tools=[_write_tool(writes)],
+            max_model_calls=2, context_window_policy=None, max_input_chars=400000,
+        )
+    assert result.summary == "scene" and writes == ["scene"]
+    assert len(requests) == 2 and all(body[token_parameter] == 131072 for body in requests)
+    assert all(body["response_format"]["type"] == output_format for body in requests)
+    assert requests[0]["tool_choice"] == "required"
+    assert requests[1]["tool_choice"] == "auto"
+    assert requests[0]["tools"][0]["function"]["name"] == "write_context_canvas"
+    content = requests[0]["messages"][0]["content"]
+    assert content[1]["image_url"]["detail"] == "low"
+    if output_format == "json_object":
+        assert content[-1]["text"].startswith("Return only JSON matching this schema:")
+    assert requests[1]["messages"][-1]["tool_call_id"] == "write-1"
+    assert json.loads(requests[1]["messages"][-1]["content"])["written"] == "scene"
+    assert [(record.provider, record.usage.input_tokens, record.status) for record in usage] == [
+        ("portable", 120, "completed"), ("portable", 120, "completed"),
+    ]
+    assert all(client.is_closed for client in clients)
+
+
+def test_vision_tool_control_cancels_transport_before_canvas_write(monkeypatch):
+    admitted, released, writes, usage = [], [], [], []
+
+    class Control:
+        def acquire(self, call):
+            admitted.append(call)
+
+        def release(self, call):
+            released.append(call.call_id)
+
+    def handler(request):
+        admitted[-1].cancel()
+        return httpx.Response(200, json=_vision_response(tool=True))
+
+    clients = install_transport(monkeypatch, "gateway.openai.vision", handler)
+    model = OpenAIVisionModel(
+        "custom-vision", provider="portable", base_url="https://vision.example/v1", api_key="offline",
+    )
+    with control_model_calls(Control()), capture_model_usage(usage.append), pytest.raises(ModelCallCancelledError):
+        model.generate(
+            [TextInput("describe")], schema_name="scene", result_type=Result, tools=[_write_tool(writes)],
+        )
+    assert writes == [] and released == [admitted[0].call_id]
+    assert len(usage) == 1 and usage[0].status == "failed"
     assert all(client.is_closed for client in clients)
 
 

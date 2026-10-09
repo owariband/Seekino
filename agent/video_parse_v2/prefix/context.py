@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from engine.parsev2.schemas import VideoParseResult
 
 from ..input import ParseInput
-from ..host import LeaseToken
+from ..state import LeaseToken
 
 
 class PrefixContext(TypedDict):
@@ -23,3 +23,8 @@ class PrefixContext(TypedDict):
     content_version: int
     series_prefix_compact: str
     video_prefix_compact: str
+
+    evidence: NotRequired[dict[str, Any]]
+    background: NotRequired[dict[str, Any]]
+    content_fingerprint: NotRequired[str]
+    write_bounds: NotRequired[tuple[int, int]]

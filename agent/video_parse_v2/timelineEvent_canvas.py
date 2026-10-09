@@ -1,0 +1,409 @@
+"""Execution-local parse facts, immutable observations and explicit event edits."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Mapping
+from copy import deepcopy
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from agent.utils.context_canvas import ContextCanvas
+from agent.utils.errors import AgentToolFeedbackError
+from engine.parsev2.schemas import DialogueTextVariant, TimelineEvent, VideoParseResult
+from engine.parsev2.validation import (
+    ChunkResultUpdate, ValidatedIntervalRefinement, ValidatedPrefixRefinement,
+    validate_result_time_range,
+)
+
+
+def content_fingerprint(value: object) -> str:
+    return hashlib.sha256(json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    ).encode()).hexdigest()
+
+
+class _Operation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class EventFields(_Operation):
+    start_seconds: int | None = Field(default=None, ge=0, strict=True)
+    end_seconds: int | None = Field(default=None, gt=0, strict=True)
+    description: str | None = Field(default=None, min_length=1, pattern=r"\S")
+    speaker: str | None = None
+    language: str | None = None
+    text: str | None = Field(default=None, min_length=1, pattern=r"\S")
+
+    @model_validator(mode="after")
+    def explicit_fields(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one event field must be supplied")
+        if any(getattr(self, field) is None for field in self.model_fields_set - {"speaker", "language"}):
+            raise ValueError("only speaker and language may be explicitly null")
+        return self
+
+
+class AddEvent(_Operation):
+    op: Literal["add_event"]
+    member_ref: str
+    key: str = Field(min_length=1, pattern=r"\S")
+    event: TimelineEvent
+
+
+class PatchEvent(_Operation):
+    op: Literal["patch_event"]
+    event_ref: str
+    fields: EventFields
+
+
+class SetEvent(_Operation):
+    op: Literal["set_event"]
+    event_ref: str
+    event: TimelineEvent
+
+
+class PersonsOperation(_Operation):
+    op: Literal["persons"]
+    member_ref: str
+    action: Literal["add", "remove", "set"]
+    values: list[Annotated[str, Field(min_length=1, pattern=r"\S")]]
+
+
+class EventArrayOperation(_Operation):
+    op: Literal["event_array"]
+    event_ref: str
+    field: Literal["participants", "visible_persons", "text_variants"]
+    action: Literal["add", "remove", "set"]
+    values: list[str | DialogueTextVariant]
+
+    @model_validator(mode="after")
+    def validate_element_type(self):
+        if self.field == "text_variants":
+            if any(not isinstance(value, DialogueTextVariant) for value in self.values):
+                raise ValueError("text_variants operations require complete language/role/text values")
+        elif any(not isinstance(value, str) or not value.strip() for value in self.values):
+            raise ValueError("person array operations require nonblank person names")
+        return self
+
+
+class CompactOperation(_Operation):
+    op: Literal["set_compact"]
+    series_compact: str
+    video_compact: str
+
+
+ParseOperation = Annotated[
+    AddEvent | PatchEvent | SetEvent | PersonsOperation | EventArrayOperation | CompactOperation,
+    Field(discriminator="op"),
+]
+
+
+class ParseCanvasWrite(_Operation):
+    batch_id: str = Field(min_length=1, pattern=r"\S")
+    expected_revision: int = Field(ge=0, strict=True)
+    operations: list[ParseOperation] = Field(min_length=1)
+
+
+class CanvasCompletion(_Operation):
+    complete: Literal[True]
+
+
+class PrefixCompactCompletion(CanvasCompletion):
+    """The configured zero-tool Prefix path can update summaries only."""
+
+    series_compact: str
+    video_compact: str
+
+
+class ParseContextCanvas(ContextCanvas):
+    """Share storage and transactions while enforcing one bound parse window."""
+
+    def __init__(
+        self, *, scope: str, members: Mapping[str, dict[str, Any]],
+        evidence: Mapping[str, dict[str, Any]] | None = None,
+        background: Mapping[str, Any] | None = None,
+        stage: Literal["understanding", "refine", "prefix"] = "refine",
+        compact: dict[str, str] | None = None,
+        compact_limits: tuple[int, int] | None = None,
+        write_bounds: tuple[int, int] | None = None,
+    ) -> None:
+        super().__init__(scope=scope)
+        if not members:
+            raise ValueError("a Parse Canvas must bind at least one member")
+        self.stage = stage
+        self._authority = deepcopy(dict(members))
+        self._initial = {
+            ref: VideoParseResult.model_validate(member["content"])
+            for ref, member in members.items()
+        }
+        self._compact_limits = compact_limits
+        self._write_bounds = write_bounds or (
+            min(member["bounds"][0] for member in members.values()),
+            max(member["bounds"][1] for member in members.values()),
+        )
+
+        def initialize(draft):
+            draft["members"] = {}
+            draft["events"] = {}
+            draft["evidence"] = deepcopy(dict(evidence or {}))
+            draft["background"] = {"context": deepcopy(dict(background or {}))}
+            draft["compact"] = {"prefix": deepcopy(compact or {})}
+            for ref, member in self._authority.items():
+                draft["members"][ref] = {
+                    "sequence_no": member["sequence_no"],
+                    "content_version": member["version"],
+                    "scope": list(member.get("scope", [member["sequence_no"]])),
+                    "persons": list(self._initial[ref].persons),
+                    "start_ms": member["bounds"][0],
+                    "end_ms": member["bounds"][1],
+                }
+                for position, event in enumerate(self._initial[ref].timeline):
+                    value = event.model_dump(mode="json")
+                    identity = {
+                        "member_ref": ref, "version": member["version"],
+                        "position": position, "fingerprint": content_fingerprint(value),
+                    }
+                    event_ref = "event:" + content_fingerprint([self.id, identity])[:32]
+                    draft["events"][event_ref] = {
+                        "member_ref": ref, "event": value, "source": identity,
+                    }
+
+        self.mutate(initialize, readonly_collections=("evidence", "background"))
+        self._initial_identities = {
+            ref: value["source"] for ref, value in self.items("events")
+        }
+        self._initial_times = {
+            ref: (value["event"]["start_seconds"], value["event"]["end_seconds"])
+            for ref, value in self.items("events")
+        }
+
+    @classmethod
+    def from_refine(cls, snapshot):
+        refs = snapshot["member_sequence_nos"]
+        return cls(
+            scope="refine:" + snapshot["interval_parse_task_id"],
+            members={
+                ref: {
+                    "sequence_no": sequence, "version": snapshot["member_versions"][ref],
+                    "bounds": snapshot["member_bounds"][ref],
+                    "scope": snapshot["member_scopes"][ref],
+                    "content": snapshot["member_contents"][ref],
+                } for ref, sequence in refs.items()
+            },
+            evidence=snapshot.get("member_evidence", {}),
+            background=snapshot.get("background", {}),
+            write_bounds=snapshot.get("write_bounds"),
+        )
+
+    @classmethod
+    def from_prefix(cls, context):
+        config = context["inputs"].parse_config.prefix_context
+        return cls(
+            scope="prefix:" + context["chunk_parse_task_id"], stage="prefix",
+            members={context["chunk_parse_task_id"]: {
+                "sequence_no": context["sequence_no"], "version": context["content_version"],
+                "bounds": (context["allowed_start_seconds"], context["allowed_end_seconds"]),
+                "scope": context["scope"], "content": context["content"],
+            }},
+            evidence={context["chunk_parse_task_id"]: context.get("evidence", {})},
+            background=context.get("background", {}),
+            compact={
+                "series_compact": context["series_prefix_compact"],
+                "video_compact": context["video_prefix_compact"],
+            },
+            compact_limits=(config.series_compact_max_chars, config.video_compact_max_chars),
+            write_bounds=context.get("write_bounds"),
+        )
+
+    def catalog(self, collection: str, *, role: str) -> list[dict[str, Any]]:
+        self._check_role(role)
+        return [
+            {
+                "reference": ref,
+                **({"member_ref": value["member_ref"], "event_type": value["event"]["event_type"]}
+                   if collection == "events" else {}),
+                **({"sequence_no": value["sequence_no"], "content_version": value["content_version"],
+                    "scope": value["scope"], "start_ms": value["start_ms"], "end_ms": value["end_ms"]}
+                   if collection == "members" else {}),
+            } for ref, value in self.items(collection)
+        ]
+
+    def sections(self, collection: str, reference: str, *, role: str) -> dict[str, str]:
+        self._check_role(role)
+        value = self.get(collection, reference)
+        if value is None:
+            raise ValueError("unknown Canvas reference; read the current catalog")
+        sections = {"content": json.dumps(value, ensure_ascii=False, sort_keys=True)}
+        if collection == "evidence":
+            sections.update({
+                key: json.dumps(item, ensure_ascii=False, sort_keys=True)
+                for key, item in value.items()
+            })
+        return sections
+
+    def checkpoint(self, *, role: str | None = None) -> str:
+        return json.dumps({
+            "scope": self.scope, "canvas_id": self.id, "revision": self.revision,
+            "stage": self.stage,
+            "write_bounds_ms": self._write_bounds,
+            "collections": {name: self.catalog(name, role=role or self.stage)
+                            for name in ("members", "events", "evidence", "background", "compact")},
+            "read": "Use get_context_canvas to restore exact facts; checkpoint is navigation only.",
+        }, ensure_ascii=False, sort_keys=True)
+
+    def write(
+        self, *, role: str, batch_id: str, expected_revision: int,
+        operations: list[dict[str, Any] | BaseModel], maximum_result_bytes: int | None = None,
+    ):
+        self._check_role(role)
+        request = ParseCanvasWrite.model_validate({
+            "batch_id": batch_id, "expected_revision": expected_revision,
+            "operations": operations,
+        })
+
+        def apply(draft, ops):
+            results = []
+            for index, payload in enumerate(ops):
+                operation = ParseCanvasWrite.model_validate({
+                    "batch_id": batch_id, "expected_revision": expected_revision,
+                    "operations": [payload],
+                }).operations[0]
+                if isinstance(operation, AddEvent):
+                    self._member(draft, operation.member_ref)
+                    reference = "event:" + content_fingerprint([
+                        self.id, operation.member_ref, operation.key,
+                    ])[:32]
+                    value = {
+                        "member_ref": operation.member_ref,
+                        "event": operation.event.model_dump(mode="json"),
+                        "source": {"key": operation.key},
+                    }
+                    existing = draft["events"].get(reference)
+                    if existing is not None and existing != value:
+                        raise ValueError("add_event key was already used for different facts")
+                    draft["events"][reference] = value
+                elif isinstance(operation, SetEvent):
+                    reference = operation.event_ref
+                    self._event(draft, reference)["event"] = operation.event.model_dump(mode="json")
+                elif isinstance(operation, PatchEvent):
+                    reference = operation.event_ref
+                    event = self._event(draft, reference)["event"]
+                    event.update(operation.fields.model_dump(mode="json", exclude_unset=True))
+                elif isinstance(operation, PersonsOperation):
+                    reference = operation.member_ref
+                    member = self._member(draft, reference)
+                    member["persons"] = self._array(member["persons"], operation.action, operation.values)
+                elif isinstance(operation, EventArrayOperation):
+                    reference = operation.event_ref
+                    event = self._event(draft, reference)["event"]
+                    if operation.field not in event:
+                        raise ValueError("this event has no requested array field")
+                    values = [item.model_dump(mode="json") if isinstance(item, BaseModel) else item
+                              for item in operation.values]
+                    event[operation.field] = self._array(event[operation.field], operation.action, values)
+                else:
+                    if self.stage != "prefix" or self._compact_limits is None:
+                        raise ValueError("compact summaries can only be written by Prefix")
+                    if (len(operation.series_compact) > self._compact_limits[0]
+                            or len(operation.video_compact) > self._compact_limits[1]):
+                        raise ValueError("compact summary exceeds its configured character budget")
+                    reference = "prefix"
+                    draft["compact"][reference] = operation.model_dump(exclude={"op"})
+                results.append({"operation": index, "reference": reference})
+            self._validate_draft(draft)
+            return results
+
+        try:
+            return self.atomic_batch(
+                batch_id=batch_id, expected_revision=expected_revision,
+                operations=[op.model_dump(mode="json", exclude_unset=True) for op in request.operations],
+                apply=apply, role=role, maximum_result_bytes=maximum_result_bytes,
+            )
+        except AgentToolFeedbackError:
+            raise
+        except ValueError as error:
+            raise AgentToolFeedbackError(
+                "INVALID_OPERATIONS", "Canvas batch validation failed: " + str(error),
+                "Read the affected entries and retry a corrected whole batch; no operation was applied.",
+            ) from error
+
+    def result(self, member_ref: str) -> VideoParseResult:
+        snapshot = self.snapshot()
+        return self._result(snapshot.collections, member_ref)
+
+    def register_evidence(self, reference: str, value: dict[str, Any]) -> None:
+        self.put("evidence", reference, value, readonly=True)
+
+    def interval_result(self) -> ValidatedIntervalRefinement:
+        updates = []
+        for member_ref, member in self._authority.items():
+            current = self.result(member_ref)
+            original = self._initial[member_ref]
+            fields = {field: getattr(current, field) for field in ("persons", "timeline")
+                      if getattr(current, field) != getattr(original, field)}
+            if fields:
+                updates.append(ChunkResultUpdate(sequence_no=member["sequence_no"], **fields))
+        return ValidatedIntervalRefinement(updates=updates)
+
+    def prefix_result(self) -> ValidatedPrefixRefinement:
+        compact = self.get("compact", "prefix")
+        updates = self.interval_result().updates
+        return ValidatedPrefixRefinement(
+            series_compact=compact["series_compact"], video_compact=compact["video_compact"],
+            update=updates[0] if updates else None,
+        )
+
+    def _check_role(self, role):
+        if role != self.stage:
+            raise AgentToolFeedbackError(
+                "CANVAS_ROLE_DENIED", "This Canvas belongs to another parse stage.",
+                "Use only the tools bound to your current execution.",
+            )
+
+    def _member(self, draft, reference):
+        if reference not in self._authority or reference not in draft["members"]:
+            raise ValueError("member reference is outside the bound parse window")
+        return draft["members"][reference]
+
+    def _event(self, draft, reference):
+        if reference not in draft["events"]:
+            raise ValueError("unknown event reference; read the current event catalog")
+        value = draft["events"][reference]
+        self._member(draft, value["member_ref"])
+        if reference in self._initial_identities and value["source"] != self._initial_identities[reference]:
+            raise ValueError("event source identity changed")
+        return value
+
+    @staticmethod
+    def _array(current, action, values):
+        if action == "set":
+            return deepcopy(values)
+        if action == "remove":
+            return [value for value in current if value not in values]
+        return [*current, *(deepcopy(value) for value in values if value not in current)]
+
+    def _result(self, draft, member_ref):
+        member = self._member(draft, member_ref)
+        timeline = [value["event"] for value in draft["events"].values()
+                    if value["member_ref"] == member_ref]
+        timeline.sort(key=lambda event: event["start_seconds"])
+        return VideoParseResult.model_validate({"persons": member["persons"], "timeline": timeline})
+
+    def _validate_draft(self, draft):
+        start = min(member["bounds"][0] for member in self._authority.values())
+        end = max(member["bounds"][1] for member in self._authority.values())
+        for reference in self._initial_identities:
+            self._event(draft, reference)
+        for reference, value in draft["events"].items():
+            event = value["event"]
+            times = (event["start_seconds"], event["end_seconds"])
+            if self._initial_times.get(reference) != times and (
+                times[0] < self._write_bounds[0] or times[1] > self._write_bounds[1]
+            ):
+                raise ValueError("new events and timing changes must stay inside the authorized write window")
+        for member_ref in self._authority:
+            validate_result_time_range(self._result(draft, member_ref), start_seconds=start, end_seconds=end)

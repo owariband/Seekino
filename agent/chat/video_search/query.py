@@ -6,7 +6,7 @@ from gateway.agent_model.contracts import StructuredToolAgentModel
 from gateway.agent_model.errors import ModelInputTooLargeError
 from langchain_core.tools import BaseTool
 
-from .context import build_workspace_checkpoint, project_inputs
+from .context import build_canvas_checkpoint, project_inputs
 from ..common.errors import (
     AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
 )
@@ -15,7 +15,7 @@ from .state import (
     ExecutionControl, LoopTurn, ModelContextBudget, QueryCompletion, RunInputs,
     context_json,
 )
-from .workspace import AgentWorkspace
+from .video_search_canvas import VideoSearchContextCanvas
 
 
 def run_query(
@@ -27,7 +27,7 @@ def run_query(
     max_model_calls: int | None,
     control: ExecutionControl,
     context_budget: ModelContextBudget,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     retrieval_skill_prompt: str = RETRIEVAL_SKILL_PROMPT,
 ) -> QueryCompletion:
     context = {
@@ -37,7 +37,7 @@ def run_query(
         "turns": [turn.context() for turn in previous_turns],
     }
     instructions = (
-        "你是 anivag Query Agent。围绕当前用户问题维护 Workspace 中的证据草稿。"
+        "你是 anivag Query Agent。围绕当前用户问题维护 Canvas 中的证据草稿。"
         "inputs.history 是对话历史；每条历史消息的 seriesIds 只描述当时素材范围。"
         "当前 Kick 只能检索 inputs.series_ids，历史回答和 reference_context 只能帮助理解"
         "指代，不能冒充本次已经核验的证据。第一轮必须实际调用 retrieve。"
@@ -59,7 +59,7 @@ def run_query(
         context_options = {}
         if getattr(model, "supports_context_checkpoints", False):
             context_options["context_checkpoint"] = lambda: (
-                build_workspace_checkpoint(workspace, role="query")
+                build_canvas_checkpoint(canvas, role="query")
             )
         if getattr(model, "supports_context_messages", False):
             context_options["initial_messages"] = [

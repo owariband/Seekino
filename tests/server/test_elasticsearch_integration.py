@@ -11,6 +11,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+
+from tests.server.test_video_parse_repository import _refinement_inputs
 from elasticsearch import Elasticsearch
 from sqlalchemy import event, select
 
@@ -228,7 +230,7 @@ def _indexing_case(tmp_path, store):
         refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=10))
         assert refine is not None
         repository.commit_interval_refinement(
-            refine, interval_content={"summary": "unchanged"}, member_updates={},
+            refine, **_refinement_inputs(repository, refine, now=None), interval_content={"summary": "unchanged"}, member_updates={},
         )
         index_lease = queue.claim_interval_index("index", lease_duration=timedelta(minutes=10))
         assert index_lease is not None

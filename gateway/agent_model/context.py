@@ -377,8 +377,9 @@ def measure_context(
     contract: object,
 ) -> ContextWindowMeasurement:
     payload = {"messages": messages, "contract": contract}
+    projected, image_count = _media_budget_projection(payload)
     rendered = json.dumps(
-        payload,
+        projected,
         ensure_ascii=False,
         separators=(",", ":"),
         default=str,
@@ -386,7 +387,7 @@ def measure_context(
     byte_count = len(rendered.encode("utf-8"))
     return ContextWindowMeasurement(
         characters=len(rendered),
-        estimated_tokens=max(1, ceil(byte_count / _BYTES_PER_ESTIMATED_TOKEN)),
+        estimated_tokens=max(1, ceil(byte_count / _BYTES_PER_ESTIMATED_TOKEN)) + image_count * 2048,
     )
 
 
@@ -685,12 +686,39 @@ def _is_compacted_tool_result(content: object) -> bool:
 def _serialized_character_count(value: object) -> int:
     return len(
         json.dumps(
-            value,
+            _media_budget_projection(value)[0],
             ensure_ascii=False,
             separators=(",", ":"),
             default=str,
         )
     )
+
+
+def _media_budget_projection(value: object) -> tuple[object, int]:
+    """Budget media inputs without treating base64 as text tokens."""
+    if isinstance(value, dict):
+        if value.get("type") in {"image_url", "input_image"}:
+            return {"type": value["type"], "image": "<image input>"}, 1
+        if value.get("type") in {"video_url", "input_video"}:
+            return {
+                "type": value["type"], "video": "<video input>",
+                **({"fps": value["fps"]} if "fps" in value else {}),
+            }, 1
+        projected = {}
+        count = 0
+        for key, item in value.items():
+            projected[key], images = _media_budget_projection(item)
+            count += images
+        return projected, count
+    if isinstance(value, list):
+        projected = []
+        count = 0
+        for item in value:
+            converted, images = _media_budget_projection(item)
+            projected.append(converted)
+            count += images
+        return projected, count
+    return value, 0
 
 
 def _serialized_text(value: object) -> str:
@@ -699,7 +727,7 @@ def _serialized_text(value: object) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(
-        value,
+        _media_budget_projection(value)[0],
         ensure_ascii=False,
         separators=(",", ":"),
         default=str,

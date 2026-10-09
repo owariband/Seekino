@@ -11,6 +11,19 @@ from gateway.agent_model.context import (
 )
 
 
+def test_video_input_budget_excludes_inline_base64_and_keeps_media_reserve() -> None:
+    def measurement(data):
+        return measure_context([{"role": "user", "content": [{
+            "type": "input_video", "video_url": f"data:video/mp4;base64,{data}", "fps": 0.5,
+        }]}], [])
+
+    small = measurement("AAAA")
+    large = measurement("A" * 100000)
+    assert large == small
+    assert large.characters < 200
+    assert large.estimated_tokens >= 2048
+
+
 def _assistant_tool_call(call_id: str, name: str) -> dict:
     return {
         "role": "assistant",

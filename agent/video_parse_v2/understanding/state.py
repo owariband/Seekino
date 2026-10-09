@@ -6,7 +6,8 @@ from engine.parsev2.observations import ASRResult, OCRResult
 from engine.parsev2.schemas import VideoParseResult
 
 from ..input import ParseInput
-from ..host import ChunkExecution
+from ..state import ChunkExecution
+from ..timelineEvent_canvas import ParseContextCanvas
 
 
 class ChunkState(TypedDict):
@@ -19,4 +20,5 @@ class ChunkState(TypedDict):
     asr_result: NotRequired[ASRResult]
     ocr_result: NotRequired[OCRResult]
     result: NotRequired[VideoParseResult]
+    canvas: NotRequired[ParseContextCanvas]
     # 临时音视频、帧路径及调用器由 Task/Lease 的运行时上下文管理。

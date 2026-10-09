@@ -28,7 +28,7 @@ from ..state import (
     RetrievalChannelContract,
     RetrievalChannelWeights,
 )
-from ..workspace import AgentWorkspace
+from ..video_search_canvas import VideoSearchContextCanvas
 from .shared import (
     _OptionalCursor, _ToolCallBudget, _bounded_text, _detail_sections,
     _read_detail_section, _retrieval_card, _start_tool_call,
@@ -97,7 +97,7 @@ class ReadItemArguments(BaseModel):
 def build_retrieve_tool(
     search: Callable[..., VideoChunkSearchResult],
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     inputs: RunInputs,
     control: ExecutionControl,
     calls: list[RetrievalCall],
@@ -107,7 +107,7 @@ def build_retrieve_tool(
     retrieval_channel: RetrievalChannelContract = "transcript",
     budget: _ToolCallBudget | None = None,
 ) -> AgentTool:
-    """Return bounded discovery cards while retaining canonical hits in Workspace."""
+    """Return bounded discovery cards while retaining canonical hits in Canvas."""
 
     if retrieval_channel not in ("transcript", "lexical"):
         raise ValueError("retrieval_channel must be transcript or lexical")
@@ -143,7 +143,7 @@ def build_retrieve_tool(
                             maximum_bytes=maximum_result_bytes,
                             metadata={
                                 **metadata,
-                                "draft_item_count": workspace.draft_item_count(),
+                                "draft_item_count": canvas.draft_item_count(),
                             },
                         ),
                     )
@@ -216,7 +216,7 @@ def build_retrieve_tool(
             if len(result.hits) > bounded_top_k:
                 raise AgentModelInvocationError("Retrieval result exceeds its top_k budget")
 
-            workspace.record_retrieval(result)
+            canvas.record_retrieval(result)
             calls.append(RetrievalCall(
                 query=query,
                 top_k=bounded_top_k,
@@ -229,7 +229,7 @@ def build_retrieve_tool(
             metadata = {
                 "query": query,
                 "result_count": len(items),
-                "draft_item_count": workspace.draft_item_count(),
+                "draft_item_count": canvas.draft_item_count(),
                 "partial": result.partial,
                 "warnings": [_bounded_text(value, 500) for value in result.warnings[:8]],
                 "retrieval_strategy": {
@@ -258,7 +258,7 @@ def build_retrieve_tool(
         description=(
             "Search the fixed Series Scope and return a bounded Evidence catalog. "
             "Catalog entries contain descriptions and video_chunk_id handles, never "
-            "the full Evidence. Use read_trieve_item to inspect a selected handle. "
+            "the full Evidence. Use get_context_canvas with collection='retrieval' to inspect a handle. "
             "When next_cursor is present, call retrieve with cursor only."
         ),
         args_schema=(
@@ -267,13 +267,13 @@ def build_retrieve_tool(
             else RetrieveArguments
         ),
         maximum_result_bytes=maximum_result_bytes,
-        draft_item_count=workspace.draft_item_count,
+        draft_item_count=canvas.draft_item_count,
     )
 
 
 def build_read_trieve_item_tool(
     *,
-    workspace: AgentWorkspace,
+    canvas: VideoSearchContextCanvas,
     control: ExecutionControl,
     maximum_result_bytes: int,
     maximum_read_chars: int = 16_384,
@@ -286,7 +286,7 @@ def build_read_trieve_item_tool(
         end: int | None = None,
     ) -> ToolResult:
         _start_tool_call(control, budget, "read_trieve_item")
-        sections = _detail_sections(workspace.retrieval_snapshot(video_chunk_id))
+        sections = _detail_sections(canvas.retrieval_snapshot(video_chunk_id))
         return TextToolResult(
             success=True,
             content=_read_detail_section(

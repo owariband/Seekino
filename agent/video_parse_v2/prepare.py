@@ -7,7 +7,7 @@ from engine.parsev2.planning import (
     validate_chunk_topology,
 )
 
-from .host import VideoParseRuntime, VideoTaskStatus
+from .state import VideoTaskStatus
 from .state import RunState
 
 
@@ -17,7 +17,7 @@ class VideoParsePrepare:
     def __init__(
         self,
         *,
-        runtime: VideoParseRuntime,
+        runtime,
     ) -> None:
         self._runtime = runtime
 

@@ -7,6 +7,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
 from time import monotonic
+from uuid import uuid4
 
 import pytest
 
@@ -32,7 +33,7 @@ from agent.chat.video_search.state import (
     LexicalRetrievalChannelWeights, QueryDraft, RetrievalChannelWeights,
     RetrievalTraceEntry,
 )
-from agent.chat.video_search.tools import UpdateVideoItemArguments
+from agent.chat.video_search.tools import ChatWriteCanvasArguments, UpdateVideoItemArguments
 
 
 @pytest.mark.parametrize("statement", [
@@ -45,6 +46,57 @@ import sys
 assert 'agent.chat.video_search.runtime' not in sys.modules
 assert not any(name == 'langgraph' or name.startswith('langgraph.') for name in sys.modules)
 """], check=True)
+
+
+class _CanvasReader:
+    """Bind a collection while exercising the registered shared read Tool."""
+
+    def __init__(self, tools, collection):
+        self.tool = tools["get_context_canvas"]
+        self.collection = collection
+
+    def _arguments(self, values):
+        values = dict(values)
+        if "video_chunk_id" in values:
+            values["reference"] = values.pop("video_chunk_id")
+        return {"collection": self.collection, **values}
+
+    def invoke(self, values):
+        if values.get("type") == "tool_call":
+            values = {**values, "name": "get_context_canvas",
+                      "args": self._arguments(values["args"])}
+        else:
+            values = self._arguments(values)
+        return self.tool.invoke(values)
+
+    def execute(self, **values):
+        return self.tool.execute(**self._arguments(values))
+
+
+class _CanvasWriter:
+    """Send one business operation through the registered atomic batch Tool."""
+
+    def __init__(self, tools, operation):
+        self.tools, self.operation = tools, operation
+        self.args_schema = tools["write_context_canvas"].args_schema
+        self.description = tools["write_context_canvas"].description
+
+    def invoke(self, values):
+        collection = "draft" if "draft" in self.operation else "approved"
+        current = json.loads(self.tools["get_context_canvas"].invoke({"collection": collection}))
+        result = json.loads(self.tools["write_context_canvas"].invoke({
+            "batch_id": uuid4().hex, "expected_revision": current["revision"],
+            "operations": [{"operation": self.operation, **values}],
+        }))
+        return json.dumps(result["results"][0] if "results" in result else result)
+
+
+def _reader(tools, collection):
+    return _CanvasReader(tools, collection)
+
+
+def _writer(tools, operation):
+    return _CanvasWriter(tools, operation)
 
 
 def _inputs(name="conversation", *, workspace="workspace", series="series") -> RunInputs:
@@ -226,9 +278,9 @@ class Query:
             else self.selected_ranges
         )
         for item in ranges:
-            _read_all(tools_by_name["read_trieve_item"], item["video_chunk_id"])
+            _read_all(_reader(tools_by_name, "retrieval"), item["video_chunk_id"])
             self.draft_tool_results.append(
-                tools_by_name["update_draft_item"].invoke({
+                _writer(tools_by_name, "upsert_draft_item").invoke({
                     **item,
                     "claim": f"Grounded evidence for {item['video_chunk_id']}.",
                 })
@@ -262,13 +314,13 @@ class Evaluator:
         cursor = None
         item_ids = []
         while True:
-            page = _invoke_json(tools_by_name["get_draft_catelog"], {"cursor": cursor})
+            page = _invoke_json(_reader(tools_by_name, "draft"), {"cursor": cursor})
             item_ids.extend(item["video_chunk_id"] for item in page["items"])
             cursor = page["next_cursor"]
             if cursor is None:
                 break
         for video_chunk_id in item_ids:
-            _read_all(tools_by_name["read_draft_item"], video_chunk_id)
+            _read_all(_reader(tools_by_name, "draft"), video_chunk_id)
         number = len(self.contexts)
         return result_type.model_validate({
             "action": "complete" if number == self.approve_at else "continue",
@@ -293,14 +345,11 @@ class Chat:
         self, prompt, *, tools, max_model_calls, handle_text, require_tool_call=False,
         request_timeout_seconds=None, check_control=None, max_input_chars=None,
     ):
-        assert [tool.name for tool in tools] == [
-            "remove_video_item", "update_video_item",
-            "get_draft_catelog", "read_draft_item",
-        ]
+        assert [tool.name for tool in tools] == ["get_context_canvas", "write_context_canvas"]
         tools_by_name = _tool_map(tools)
-        update_video_item = tools_by_name["update_video_item"]
+        update_video_item = _writer(tools_by_name, "upsert_video_item")
         assert update_video_item.description
-        assert update_video_item.args_schema is UpdateVideoItemArguments
+        assert update_video_item.args_schema is ChatWriteCanvasArguments
         context = json.loads(prompt.rsplit("\n\n", 1)[1])
         self.contexts.append(context)
         assert request_timeout_seconds is not None
@@ -382,8 +431,8 @@ def test_approval_immediately_stops_loop_and_streams_once(approve_at):
     assert result.hits[0].evidence.end_seconds == 20
     assert result.render_blocks[1].start_seconds == 11
     assert result.render_blocks[1].end_seconds == 19
-    assert "update_draft_item" in query.prompts[0]
-    assert "read_trieve_item" in query.prompts[0]
+    assert "write_context_canvas" in query.prompts[0]
+    assert "get_context_canvas" in query.prompts[0]
     assert "事实性结论" in query.prompts[0]
     assert "用户意图" in evaluator.prompts[0]
     assert "检索策略" in evaluator.prompts[0]
@@ -532,9 +581,9 @@ def test_concurrent_kicks_keep_auto_and_custom_limits_isolated() -> None:
             assert max_model_calls is None
             context = json.loads(prompt.rsplit("\n\n", 1)[1])
             tools_by_name = _tool_map(tools)
-            catalog = _invoke_json(tools_by_name["get_draft_catelog"], {})
+            catalog = _invoke_json(_reader(tools_by_name, "draft"), {})
             for item in catalog["items"]:
-                _read_all(tools_by_name["read_draft_item"], item["video_chunk_id"])
+                _read_all(_reader(tools_by_name, "draft"), item["video_chunk_id"])
             return result_type.model_validate({
                 "action": (
                     "complete"
@@ -694,7 +743,7 @@ def test_unknown_selected_id_can_be_corrected_before_evaluator_or_chat():
     class CorrectingQuery(Query):
         def run_structured(self, prompt, **kwargs):
             feedback = _invoke_json(
-                _tool_map(kwargs["tools"])["read_trieve_item"],
+                _reader(_tool_map(kwargs["tools"]), "retrieval"),
                 {"video_chunk_id": "invented", "section": "overview"},
             )
             assert feedback["error"]["code"] == "UNKNOWN_ITEM"
@@ -715,7 +764,7 @@ def test_out_of_chunk_range_is_returned_to_query_for_same_turn_revision():
             ]
             completion = super().run_structured(prompt, **kwargs)
             self.draft_tool_results.append(
-                _tool_map(kwargs["tools"])["update_draft_item"].invoke({
+                _writer(_tool_map(kwargs["tools"]), "upsert_draft_item").invoke({
                     **_selected_range("chunk-1"),
                     "claim": "Corrected grounded evidence.",
                 })
@@ -1033,7 +1082,7 @@ def test_kick_run_limits_override_only_the_current_execution():
     runtime.kick(
         _inputs(),
         max_model_calls_per_turn=7,
-        max_tool_calls_per_turn=10,
+        max_tool_calls_per_turn=12,
     )
     assert query.budgets == [7]
     assert evaluator.budgets == [7]
@@ -1508,7 +1557,7 @@ def test_chat_cannot_submit_unapproved_evidence_ids() -> None:
         def run_agent_loop(
             self, prompt, *, tools, **kwargs,
         ):
-            feedback = _invoke_json(_tool_map(tools)["update_video_item"], {
+            feedback = _invoke_json(_writer(_tool_map(tools), "upsert_video_item"), {
                 "video_chunk_id": "invented-chunk",
                 "claim": "Invented evidence.",
             })
@@ -1554,8 +1603,8 @@ def test_chat_stop_feedback_guides_missing_video_item_and_allows_correction() ->
             assert kwargs["require_tool_call"] is True
             handle_text("Grounded answer.")
             self.stop_feedback_messages.append(stop_feedback())
-            assert "update_video_item" in self.stop_feedback_messages[0]
-            assert _invoke_json(_tool_map(tools)["update_video_item"], {
+            assert "write_context_canvas" in self.stop_feedback_messages[0]
+            assert _invoke_json(_writer(_tool_map(tools), "upsert_video_item"), {
                 "video_chunk_id": "chunk-1",
                 "claim": "Grounded evidence.",
             })["accepted"] is True
@@ -1581,7 +1630,7 @@ def test_chat_updates_the_same_approved_id_in_place() -> None:
                 "video_chunk_id": "chunk-1",
                 "claim": "Grounded evidence.",
             }
-            update = _tool_map(tools)["update_video_item"]
+            update = _writer(_tool_map(tools), "upsert_video_item")
             update.invoke(item)
             update.invoke({**item, "claim": "Revised grounded evidence."})
 
@@ -1598,7 +1647,7 @@ def test_chat_requires_nonempty_markdown_even_when_video_was_submitted() -> None
         def run_agent_loop(
             self, prompt, *, tools, **kwargs,
         ):
-            _tool_map(tools)["update_video_item"].invoke({
+            _writer(_tool_map(tools), "upsert_video_item").invoke({
                 "video_chunk_id": "chunk-1",
                 "claim": "Grounded evidence.",
             })
@@ -1620,7 +1669,7 @@ def test_chat_may_choose_an_approved_subset_in_any_order(submitted_ids) -> None:
         ):
             handle_text("Before video.")
             for chunk_id in submitted_ids:
-                _tool_map(tools)["update_video_item"].invoke({
+                _writer(_tool_map(tools), "upsert_video_item").invoke({
                     "video_chunk_id": chunk_id,
                     "claim": f"Chosen {chunk_id}.",
                 })
@@ -1646,7 +1695,7 @@ def test_chat_may_choose_an_approved_subset_in_any_order(submitted_ids) -> None:
 def test_chat_tool_does_not_accept_a_playback_range() -> None:
     class RangeSubmittingChat(Chat):
         def run_agent_loop(self, prompt, *, tools, **kwargs):
-            feedback = _invoke_json(_tool_map(tools)["update_video_item"], {
+            feedback = _invoke_json(_writer(_tool_map(tools), "upsert_video_item"), {
                 "video_chunk_id": "chunk-1",
                 "start_seconds": 10,
                 "end_seconds": 20,
@@ -1743,8 +1792,8 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
             tools_by_name = _tool_map(tools)
             result = _invoke_json(tools_by_name["retrieve"], _retrieval_args(name, 1))
             video_chunk_id = result["items"][0]["video_chunk_id"]
-            _read_all(tools_by_name["read_trieve_item"], video_chunk_id)
-            tools_by_name["update_draft_item"].invoke({
+            _read_all(_reader(tools_by_name, "retrieval"), video_chunk_id)
+            _writer(tools_by_name, "upsert_draft_item").invoke({
                 "video_chunk_id": video_chunk_id,
                 "start_seconds": 11,
                 "end_seconds": 19,
@@ -1759,9 +1808,9 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
 
         def run_structured(self, prompt, *, tools, result_type, **_kwargs):
             tools_by_name = _tool_map(tools)
-            catalog = _invoke_json(tools_by_name["get_draft_catelog"], {})
+            catalog = _invoke_json(_reader(tools_by_name, "draft"), {})
             for item in catalog["items"]:
-                _read_all(tools_by_name["read_draft_item"], item["video_chunk_id"])
+                _read_all(_reader(tools_by_name, "draft"), item["video_chunk_id"])
             return result_type.model_validate({"action": "complete", "advice": "ok"})
 
     class EchoChat:
@@ -1776,7 +1825,7 @@ def test_shared_graph_concurrent_kicks_keep_tool_scope_context_and_events_separa
             chunk_ids = context["approved_turn"]["video_chunk_ids"]
             handle_text(context["approved_turn"]["plan_context"])
             for chunk_id in chunk_ids:
-                _tool_map(tools)["update_video_item"].invoke({
+                _writer(_tool_map(tools), "upsert_video_item").invoke({
                     "video_chunk_id": chunk_id,
                     "claim": f"Evidence for {chunk_id}",
                 })
@@ -1852,3 +1901,227 @@ def test_multiple_searches_may_choose_one_valid_hit_within_budget():
     assert len(evaluator.contexts[0]["retrieval_calls"]) == 2
     assert [entry.query for entry in result.retrieval_trace] == ["query-1-0", "query-1-1"]
     assert "query" not in result.model_dump(mode="json", by_alias=True)
+
+
+def test_role_checkpoints_recover_exact_canvas_state_after_discarding_messages() -> None:
+    marker = "exact-evidence-survives-model-history-reset"
+    retrieval = Retrieval([_hit()])
+    retrieval.hits[0].evidence.retrieval_text = marker
+    checkpoints = {}
+
+    class RecoveringQuery(Query):
+        supports_context_checkpoints = True
+
+        def run_structured(self, prompt, *, context_checkpoint, **kwargs):
+            completion = super().run_structured(prompt, **kwargs)
+            checkpoints["query"] = context_checkpoint()
+            assert marker not in json.dumps(checkpoints["query"])
+            # A newly installed message window holds navigation only.
+            self.contexts.clear()
+            sections = _read_all(_reader(_tool_map(kwargs["tools"]), "retrieval"), "chunk-1")
+            assert sections["evidence.text"]["retrievalText"] == marker
+            return completion
+
+    class RecoveringEvaluator(Evaluator):
+        supports_context_checkpoints = True
+
+        def run_structured(self, prompt, *, context_checkpoint, **kwargs):
+            checkpoints["evaluator"] = context_checkpoint()
+            assert marker not in json.dumps(checkpoints["evaluator"])
+            return super().run_structured(prompt, **kwargs)
+
+    class RecoveringChat(Chat):
+        supports_context_checkpoints = True
+
+        def run_agent_loop(self, prompt, *, context_checkpoint, **kwargs):
+            checkpoints["chat"] = context_checkpoint()
+            sections = _read_all(_reader(_tool_map(kwargs["tools"]), "approved"), "chunk-1")
+            assert sections["evidence.text"]["retrievalText"] == marker
+            super().run_agent_loop(prompt, **kwargs)
+            rendered = context_checkpoint()
+            assert rendered["render_draft"]["block_count"] == 3
+
+    runtime, *_ = _runtime(query=RecoveringQuery(), evaluator=RecoveringEvaluator(),
+                          chat=RecoveringChat(), retrieval=retrieval)
+    events = []
+    result = runtime.kick(_inputs(), emit=events.append)
+    assert len({value["canvas_id"] for value in checkpoints.values()}) == 1
+    assert result.hits[0].evidence.retrieval_text == marker
+    assert [block.type for block in result.render_blocks] == ["markdown", "video", "markdown"]
+    assert [event["type"] for event in events[-5:]] == [
+        "answer.evidence", "answer.block", "answer.block", "answer.block", "answer.delta",
+    ]
+
+
+def test_gateway_chat_keeps_markdown_and_video_from_the_same_model_turn() -> None:
+    import httpx
+    from openai import OpenAI
+    from gateway.openai.agent import OpenAIAgentModel
+
+    requests, receipts = [], []
+    read_revision = None
+
+    def respond(request):
+        nonlocal read_revision
+        payload = json.loads(request.content)
+        requests.append(payload)
+        number = len(requests)
+        if number == 1:
+            content, name, arguments = None, "get_context_canvas", {"collection": "approved"}
+        elif number == 2:
+            catalog = json.loads(payload["messages"][-1]["content"])
+            read_revision = catalog["revision"]
+            content, name, arguments = "Before video.", "write_context_canvas", {
+                "batch_id": "same-turn-video", "expected_revision": read_revision,
+                "operations": [{"operation": "upsert_video_item", "video_chunk_id": "chunk-1",
+                                "claim": "Grounded evidence."}],
+            }
+        else:
+            assert number == 3, "a normal mixed text/tool turn must not require a retry"
+            receipt = json.loads(payload["messages"][-1]["content"])
+            receipts.append(receipt)
+            assert "error" not in receipt, receipt
+            content, name, arguments = "After video.", None, None
+        message = {"role": "assistant", "content": content}
+        if name is not None:
+            message["tool_calls"] = [{
+                "id": f"call-{number}", "type": "function",
+                "function": {"name": name, "arguments": json.dumps(arguments)},
+            }]
+        return httpx.Response(200, json={
+            "id": f"response-{number}", "object": "chat.completion", "created": 0,
+            "model": "chat-canvas-test", "choices": [{
+                "index": 0, "finish_reason": "tool_calls" if name else "stop", "message": message,
+            }], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        })
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http:
+        client = OpenAI(api_key="offline-test-key", base_url="https://canvas.test/v1",
+                        http_client=http, max_retries=0)
+        model = OpenAIAgentModel(
+            "chat-canvas-test", base_url="https://canvas.test/v1", api_key="offline-test-key",
+            max_output_tokens=2048, request_timeout_seconds=30, client=client,
+        )
+        runtime, *_ = _runtime(chat=model)
+        events = []
+        result = runtime.kick(_inputs(), emit=events.append)
+
+    assert len(requests) == 3
+    assert receipts[0]["revision"] == read_revision + 2
+    assert receipts[0]["replayed"] is False
+    assert [block.type for block in result.render_blocks] == ["markdown", "video", "markdown"]
+    assert result.render_blocks[0].markdown == "Before video."
+    assert result.render_blocks[1].video_chunk_id == "chunk-1"
+    assert result.render_blocks[2].markdown == "After video."
+    assert [event["type"] for event in events[-5:]] == [
+        "answer.evidence", "answer.block", "answer.block", "answer.block", "answer.delta",
+    ]
+
+
+def _approved_chat_canvas_tools():
+    from agent.chat.common.state import ExecutionControl
+    from agent.chat.video_search.tools.registry import build_chat_tools
+    from agent.chat.video_search.video_search_canvas import VideoSearchContextCanvas
+
+    canvas = VideoSearchContextCanvas("workspace", ("series",))
+    canvas.record_retrieval(VideoChunkSearchResult(
+        query="cup", series_ids=["series"],
+        agent_reply=AgentReply(message="retrieved", result_count=2),
+        hits=[_hit(), _hit("chunk-2")],
+    ))
+    for reference in ("chunk-1", "chunk-2"):
+        canvas.upsert_draft_item(video_chunk_id=reference, start_seconds=11,
+                                    end_seconds=19, claim="approved claim")
+    canvas.approve_draft()
+    tools = _tool_map(build_chat_tools(
+        canvas=canvas, control=ExecutionControl(deadline=monotonic() + 30),
+        maximum_tool_calls=None, maximum_result_bytes=4096, maximum_catalog_items=1,
+    ))
+    return canvas, tools
+
+
+def test_chat_video_batch_merges_continuous_text_and_replays_without_mutating() -> None:
+    canvas, tools = _approved_chat_canvas_tools()
+    catalog = _invoke_json(tools["get_context_canvas"], {"collection": "approved"})
+    original_revision = catalog["revision"]
+    assert catalog["next_cursor"]
+    canvas.append_markdown("First paragraph.")
+    canvas.append_markdown("Second paragraph.")
+    assert canvas.revision == original_revision + 2
+    invalid_cursor = _invoke_json(tools["get_context_canvas"], {
+        "collection": "approved", "cursor": catalog["next_cursor"],
+    })
+    assert invalid_cursor["error"]["code"] == "INVALID_CATALOG_CURSOR"
+    arguments = {
+        "batch_id": "continuous-text", "expected_revision": original_revision,
+        "operations": [{"operation": "upsert_video_item", "video_chunk_id": "chunk-1",
+                        "claim": "approved video"}],
+    }
+    receipt = _invoke_json(tools["write_context_canvas"], arguments)
+    assert receipt["revision"] == original_revision + 3
+    assert [block.type for block in canvas.render_blocks()] == ["markdown", "markdown", "video"]
+    canvas.append_markdown("Third paragraph.")
+    before_replay = canvas.snapshot()
+    replay = _invoke_json(tools["write_context_canvas"], arguments)
+    assert replay == {**receipt, "replayed": True}
+    assert canvas.snapshot() == before_replay
+    assert canvas.video_item_count() == 1
+
+
+@pytest.mark.parametrize("change", ["host_video", "model_video", "retrieval", "draft"])
+def test_chat_text_merge_rejects_old_revision_after_another_change(change) -> None:
+    from agent.chat.video_search.state import ChatVideoBlock
+
+    canvas, tools = _approved_chat_canvas_tools()
+    original_revision = canvas.revision
+    canvas.append_markdown("Before concurrent change.")
+    if change == "host_video":
+        canvas.upsert_video_item(ChatVideoBlock(video_chunk_id="chunk-1", claim="concurrent video"))
+    elif change == "model_video":
+        receipt = _invoke_json(tools["write_context_canvas"], {
+            "batch_id": "concurrent-video", "expected_revision": canvas.revision,
+            "operations": [{"operation": "upsert_video_item", "video_chunk_id": "chunk-1",
+                            "claim": "concurrent video"}],
+        })
+        assert "error" not in receipt
+    elif change == "retrieval":
+        hit = _hit()
+        hit.selection_reason.summary = "new retrieval result"
+        canvas.record_retrieval(VideoChunkSearchResult(
+            query="another cup", series_ids=["series"],
+            agent_reply=AgentReply(message="retrieved", result_count=1), hits=[hit],
+        ))
+    else:
+        canvas.upsert_draft_item(video_chunk_id="chunk-1", start_seconds=11,
+                                    end_seconds=19, claim="concurrent draft")
+    refreshed_revision = canvas.revision
+    canvas.append_markdown("After concurrent change.")
+    before = canvas.snapshot()
+    rejected = _invoke_json(tools["write_context_canvas"], {
+        "batch_id": "stale-video", "expected_revision": original_revision,
+        "operations": [{"operation": "upsert_video_item", "video_chunk_id": "chunk-2",
+                        "claim": "must not overwrite the new snapshot"}],
+    })
+    assert rejected["error"]["code"] == "STALE_REVISION"
+    assert canvas.snapshot() == before
+    accepted = _invoke_json(tools["write_context_canvas"], {
+        "batch_id": "refreshed-video", "expected_revision": refreshed_revision,
+        "operations": [{"operation": "upsert_video_item", "video_chunk_id": "chunk-2",
+                        "claim": "based on the refreshed snapshot"}],
+    })
+    assert "error" not in accepted
+    assert canvas.draft_item("chunk-1", approved=True).claim == "approved claim"
+
+
+def test_markdown_revision_merge_does_not_apply_to_query_writes() -> None:
+    from agent.utils.context_canvas import CanvasRevisionConflict
+
+    canvas, _tools = _approved_chat_canvas_tools()
+    original_revision = canvas.revision
+    canvas.append_markdown("Chat text.")
+    before = canvas.snapshot()
+    with pytest.raises(CanvasRevisionConflict):
+        canvas.write(role="query", batch_id="stale-query", expected_revision=original_revision,
+                        operations=[{"operation": "upsert_draft_item", "video_chunk_id": "chunk-1",
+                                     "claim": "Query must refresh"}])
+    assert canvas.snapshot() == before

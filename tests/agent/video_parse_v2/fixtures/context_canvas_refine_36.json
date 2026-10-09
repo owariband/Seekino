@@ -1,0 +1,910 @@
+{
+  "sources": [
+    "understand_chunk-e0bcb0f9-72be-4179-9b36-b21720dae61a.json",
+    "understand_chunk-523969b4-61e4-4693-ab4a-737cdc6ddeb6.json",
+    "ark-raw-93b739fa-9736-4468-a9e4-ee230279cc95.json"
+  ],
+  "members": [
+    {
+      "sequence_no": 0,
+      "bounds": [
+        0,
+        60000
+      ],
+      "content": {
+        "persons": [
+          "粉发少女",
+          "黑发少女",
+          "白发少女",
+          "紫发少女",
+          "棕发少女"
+        ],
+        "timeline": [
+          {
+            "start_seconds": 0,
+            "end_seconds": 3100,
+            "description": "粉发少女看着手机，露出惊讶的表情，随后抬头看向画面外的人。",
+            "participants": [
+              "粉发少女"
+            ],
+            "visible_persons": [
+              "粉发少女"
+            ],
+            "event_type": "SCENE"
+          },
+          {
+            "start_seconds": 400,
+            "end_seconds": 1700,
+            "description": "粉发少女疑惑地询问对方是否在指自己。",
+            "participants": [
+              "粉发少女"
+            ],
+            "visible_persons": [
+              "粉发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "粉发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "え？私？"
+              }
+            ]
+          },
+          {
+            "start_seconds": 3100,
+            "end_seconds": 5600,
+            "description": "黑发少女表情严肃地看着粉发少女，手里拿着手机。",
+            "participants": [
+              "黑发少女",
+              "粉发少女"
+            ],
+            "visible_persons": [
+              "黑发少女",
+              "粉发少女"
+            ],
+            "event_type": "SCENE"
+          },
+          {
+            "start_seconds": 5600,
+            "end_seconds": 9600,
+            "description": "黑发少女告知粉发少女已将她拉入群组，要求她准时参加，不许迟到。",
+            "participants": [
+              "黑发少女",
+              "粉发少女"
+            ],
+            "visible_persons": [
+              "黑发少女",
+              "粉发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "黑发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "グループに入れたから、ちゃんと来て、遅刻もダメだから。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 9600,
+            "end_seconds": 11600,
+            "description": "白发少女在录音室内，手持手机，面带微笑。",
+            "participants": [
+              "白发少女"
+            ],
+            "visible_persons": [
+              "白发少女"
+            ],
+            "event_type": "SCENE"
+          },
+          {
+            "start_seconds": 11600,
+            "end_seconds": 13700,
+            "description": "白发少女催促灯开始练习。",
+            "participants": [
+              "白发少女",
+              "粉发少女"
+            ],
+            "visible_persons": [
+              "白发少女",
+              "粉发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "白发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "灯、練習始めるよ。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 13700,
+            "end_seconds": 20700,
+            "description": "录音室内，几位少女各自准备乐器，粉发少女和紫发少女站在一起。",
+            "participants": [
+              "粉发少女",
+              "紫发少女",
+              "黑发少女",
+              "白发少女",
+              "棕发少女"
+            ],
+            "visible_persons": [
+              "粉发少女",
+              "紫发少女",
+              "黑发少女",
+              "白发少女",
+              "棕发少女"
+            ],
+            "event_type": "SCENE"
+          },
+          {
+            "start_seconds": 20700,
+            "end_seconds": 22100,
+            "description": "粉发少女开口想说什么，黑发少女转头询问。",
+            "participants": [
+              "粉发少女",
+              "黑发少女"
+            ],
+            "visible_persons": [
+              "粉发少女",
+              "黑发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "粉发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "あの。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 22100,
+            "end_seconds": 23800,
+            "description": "粉发少女询问该看哪张乐谱。",
+            "participants": [
+              "粉发少女",
+              "黑发少女"
+            ],
+            "visible_persons": [
+              "粉发少女",
+              "黑发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "粉发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "楽譜どれ？"
+              }
+            ]
+          },
+          {
+            "start_seconds": 23800,
+            "end_seconds": 24900,
+            "description": "黑发少女回答说是昨天的乐谱。",
+            "participants": [
+              "黑发少女",
+              "粉发少女"
+            ],
+            "visible_persons": [
+              "黑发少女",
+              "粉发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "黑发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "昨日の。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 24900,
+            "end_seconds": 29600,
+            "description": "黑发少女按下音箱电源开关，随后表情严肃地宣布练习要求。",
+            "participants": [
+              "黑发少女"
+            ],
+            "visible_persons": [
+              "黑发少女"
+            ],
+            "event_type": "SCENE"
+          },
+          {
+            "start_seconds": 29600,
+            "end_seconds": 31000,
+            "description": "黑发少女要求大家各自练习，直到能弹奏为止。",
+            "participants": [
+              "黑发少女"
+            ],
+            "visible_persons": [
+              "黑发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "黑发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "弾けるまで個人練。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 31000,
+            "end_seconds": 34400,
+            "description": "棕发少女笑着提议大家一起练习。",
+            "participants": [
+              "棕发少女"
+            ],
+            "visible_persons": [
+              "棕发少女",
+              "粉发少女",
+              "紫发少女",
+              "黑发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "棕发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "え、みんなで一緒にやろうよ。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 34400,
+            "end_seconds": 38600,
+            "description": "白发少女弹奏吉他，询问是否不开始练习。",
+            "participants": [
+              "白发少女"
+            ],
+            "visible_persons": [
+              "白发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "白发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "やらないの？"
+              }
+            ]
+          },
+          {
+            "start_seconds": 38600,
+            "end_seconds": 44400,
+            "description": "紫发少女抱着乐谱，表情犹豫，随后开口。",
+            "participants": [
+              "紫发少女"
+            ],
+            "visible_persons": [
+              "紫发少女",
+              "粉发少女",
+              "棕发少女"
+            ],
+            "event_type": "SCENE"
+          },
+          {
+            "start_seconds": 44400,
+            "end_seconds": 45200,
+            "description": "黑发少女简短地表示同意。",
+            "participants": [
+              "黑发少女"
+            ],
+            "visible_persons": [
+              "黑发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "黑发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "いいよ。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 45200,
+            "end_seconds": 60000,
+            "description": "粉发少女背起吉他，其他成员也各自就位，准备开始练习。",
+            "participants": [
+              "粉发少女",
+              "紫发少女",
+              "黑发少女",
+              "白发少女",
+              "棕发少女"
+            ],
+            "visible_persons": [
+              "粉发少女",
+              "紫发少女",
+              "黑发少女",
+              "白发少女",
+              "棕发少女"
+            ],
+            "event_type": "SCENE"
+          }
+        ]
+      }
+    },
+    {
+      "sequence_no": 1,
+      "bounds": [
+        60000,
+        90132
+      ],
+      "content": {
+        "persons": [
+          "Kaname Raana",
+          "Nagasaki Soyo",
+          "Shiina Taki",
+          "Takamatsu Tomori",
+          "Chihaya Anon"
+        ],
+        "timeline": [
+          {
+            "start_seconds": 60000,
+            "end_seconds": 62800,
+            "description": "View of the practice room's black tiled ceiling with recessed lighting, ceiling AC unit, smoke detector, and wood panel wall trim, establishing the studio setting",
+            "participants": [],
+            "visible_persons": [],
+            "event_type": "SCENE"
+          },
+          {
+            "start_seconds": 62800,
+            "end_seconds": 63600,
+            "description": "Close-up of a hand turning the orange control knob on a red cracked-finish electric guitar",
+            "participants": [
+              "Kaname Raana"
+            ],
+            "visible_persons": [
+              "Kaname Raana"
+            ],
+            "event_type": "ACTION"
+          },
+          {
+            "start_seconds": 63600,
+            "end_seconds": 65600,
+            "description": "Camera pulls back to show three band members at their instruments; they finish playing a practice segment, the lead guitarist nods in satisfaction and turns to step away",
+            "participants": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki"
+            ],
+            "visible_persons": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki"
+            ],
+            "event_type": "ACTION"
+          },
+          {
+            "start_seconds": 64300,
+            "end_seconds": 65100,
+            "description": "The lead guitarist voices satisfaction with the segment just played",
+            "participants": [
+              "Kaname Raana"
+            ],
+            "visible_persons": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Kaname Raana",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "マンゾク。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "满足。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 65600,
+            "end_seconds": 69200,
+            "description": "The drummer stops the lead guitarist from leaving, pointing out practice is not over and their playing is completely unsynchronized",
+            "participants": [
+              "Shiina Taki",
+              "Kaname Raana"
+            ],
+            "visible_persons": [
+              "Shiina Taki",
+              "Kaname Raana",
+              "Nagasaki Soyo"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Shiina Taki",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "ちょっと、まだ終わってないんだけど、まだ全然合ってない。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "等下，还没结束呢，大家根本没合上。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 69500,
+            "end_seconds": 71500,
+            "description": "The lead guitarist acknowledges that their playing is out of sync",
+            "participants": [
+              "Kaname Raana",
+              "Shiina Taki"
+            ],
+            "visible_persons": [
+              "Kaname Raana",
+              "Shiina Taki",
+              "Nagasaki Soyo"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Kaname Raana",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "うん、そうだね。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "的确。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 71500,
+            "end_seconds": 74200,
+            "description": "The lead guitarist kneels at her amplifier to flip on the power and standby switches, then picks up her guitar; camera pulls back to reveal the full five-member band",
+            "participants": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki",
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "visible_persons": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki",
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "event_type": "ACTION"
+          },
+          {
+            "start_seconds": 72000,
+            "end_seconds": 73500,
+            "description": "Printed text labels on the orange guitar amplifier faceplate",
+            "participants": [],
+            "visible_persons": [
+              "Kaname Raana"
+            ],
+            "event_type": "ON_SCREEN_TEXT",
+            "language": "en",
+            "text": "ABSARA AUDIO - NEW YORK\nSTANDBY\nPOWER"
+          },
+          {
+            "start_seconds": 74200,
+            "end_seconds": 75600,
+            "description": "A band member comments that the lead guitarist does not need to do additional practice",
+            "participants": [
+              "Kaname Raana"
+            ],
+            "visible_persons": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki",
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": null,
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "楽奈ちゃんは大丈夫じゃない？"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "乐奈不练也没关系吧。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 76000,
+            "end_seconds": 77600,
+            "description": "The drummer confronts the bassist, asking if she has been practicing properly",
+            "participants": [
+              "Shiina Taki",
+              "Nagasaki Soyo"
+            ],
+            "visible_persons": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki",
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Shiina Taki",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "自分は ちゃんと練習してんの。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "那你呢，你好好练了吗？"
+              }
+            ]
+          },
+          {
+            "start_seconds": 78500,
+            "end_seconds": 79700,
+            "description": "The bassist cheerfully responds that she has been practicing",
+            "participants": [
+              "Nagasaki Soyo"
+            ],
+            "visible_persons": [
+              "Nagasaki Soyo"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Nagasaki Soyo",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "え、してるよ。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "我在练呀。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 80000,
+            "end_seconds": 81500,
+            "description": "The drummer critically tells the bassist her playing has become worse than before",
+            "participants": [
+              "Shiina Taki",
+              "Nagasaki Soyo"
+            ],
+            "visible_persons": [
+              "Shiina Taki"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Shiina Taki",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "前より下手になってる。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "你比以前弹得差了。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 81500,
+            "end_seconds": 82500,
+            "description": "The bassist looks surprised and upset by the drummer's harsh criticism",
+            "participants": [
+              "Nagasaki Soyo"
+            ],
+            "visible_persons": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki",
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "event_type": "EMOTION"
+          },
+          {
+            "start_seconds": 81900,
+            "end_seconds": 84100,
+            "description": "The bassist protests that she has been putting in great effort to practice",
+            "participants": [
+              "Nagasaki Soyo",
+              "Shiina Taki"
+            ],
+            "visible_persons": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki",
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Nagasaki Soyo",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "ええ？頑張ってるんだけどな。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "可是我很努力呀。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 84100,
+            "end_seconds": 86300,
+            "description": "The lead guitarist stands up from her position by the amplifier to address the whole band",
+            "participants": [
+              "Kaname Raana"
+            ],
+            "visible_persons": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki",
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "event_type": "ACTION"
+          },
+          {
+            "start_seconds": 84700,
+            "end_seconds": 86300,
+            "description": "The lead guitarist states the group does not count as a band if they cannot play in sync",
+            "participants": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki",
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "visible_persons": [
+              "Kaname Raana",
+              "Nagasaki Soyo",
+              "Shiina Taki",
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Kaname Raana",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "みんなが合わないとバンドじゃない。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "大家配合不起来，算什么乐队。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 87300,
+            "end_seconds": 89000,
+            "description": "The lead guitarist criticizes the vocalist and rhythm guitarist, saying their performance is also completely inadequate",
+            "participants": [
+              "Kaname Raana",
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "visible_persons": [
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Kaname Raana",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "お前も全然ダメ。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "你这家伙也完全不行。"
+              }
+            ]
+          },
+          {
+            "start_seconds": 88500,
+            "end_seconds": 89400,
+            "description": "The vocalist and rhythm guitarist look shocked and flustered by the unexpected criticism",
+            "participants": [
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "visible_persons": [
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "event_type": "EMOTION"
+          },
+          {
+            "start_seconds": 89400,
+            "end_seconds": 90132,
+            "description": "The vocalist stutters incoherently, flustered by the criticism",
+            "participants": [
+              "Takamatsu Tomori"
+            ],
+            "visible_persons": [
+              "Takamatsu Tomori",
+              "Chihaya Anon"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Takamatsu Tomori",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "う、ああ。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "啊、啊啊。"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "legacy_proposal": {
+    "updates": [
+      {
+        "sequence_no": 0,
+        "timeline": [
+          {
+            "start_seconds": 400,
+            "end_seconds": 1700,
+            "description": "粉发少女疑惑地询问对方是否在指自己。",
+            "participants": [
+              "粉发少女",
+              "黑发少女"
+            ],
+            "visible_persons": [
+              "粉发少女"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "粉发少女",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "え？私？"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "sequence_no": 1,
+        "timeline": [
+          {
+            "start_seconds": 78500,
+            "end_seconds": 79700,
+            "description": "The bassist cheerfully responds that she has been practicing",
+            "participants": [
+              "Nagasaki Soyo",
+              "Shiina Taki"
+            ],
+            "visible_persons": [
+              "Nagasaki Soyo"
+            ],
+            "event_type": "DIALOGUE",
+            "speaker": "Nagasaki Soyo",
+            "text_variants": [
+              {
+                "language": "ja",
+                "role": "ORIGINAL",
+                "text": "え、してるよ。"
+              },
+              {
+                "language": "zh-Hans",
+                "role": "TRANSLATION",
+                "text": "我在练呀。"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "corrections": [
+    {
+      "sequence_no": 0,
+      "position": 1,
+      "participants_add": [
+        "黑发少女"
+      ],
+      "expected_event": {
+        "start_seconds": 400,
+        "end_seconds": 1700,
+        "description": "粉发少女疑惑地询问对方是否在指自己。",
+        "participants": [
+          "粉发少女",
+          "黑发少女"
+        ],
+        "visible_persons": [
+          "粉发少女"
+        ],
+        "event_type": "DIALOGUE",
+        "speaker": "粉发少女",
+        "text_variants": [
+          {
+            "language": "ja",
+            "role": "ORIGINAL",
+            "text": "え？私？"
+          }
+        ]
+      }
+    },
+    {
+      "sequence_no": 1,
+      "position": 10,
+      "participants_add": [
+        "Shiina Taki"
+      ],
+      "expected_event": {
+        "start_seconds": 78500,
+        "end_seconds": 79700,
+        "description": "The bassist cheerfully responds that she has been practicing",
+        "participants": [
+          "Nagasaki Soyo",
+          "Shiina Taki"
+        ],
+        "visible_persons": [
+          "Nagasaki Soyo"
+        ],
+        "event_type": "DIALOGUE",
+        "speaker": "Nagasaki Soyo",
+        "text_variants": [
+          {
+            "language": "ja",
+            "role": "ORIGINAL",
+            "text": "え、してるよ。"
+          },
+          {
+            "language": "zh-Hans",
+            "role": "TRANSLATION",
+            "text": "我在练呀。"
+          }
+        ]
+      }
+    }
+  ]
+}

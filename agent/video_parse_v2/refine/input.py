@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from engine.parsev2.schemas import VideoParseResult
 
 from ..input import ParseInput
-from ..host import LeaseToken
+from ..state import LeaseToken
 
 
 class RefineInput(TypedDict):
@@ -22,3 +22,8 @@ class RefineInput(TypedDict):
     member_contents: dict[str, VideoParseResult]
     member_versions: dict[str, int]
     member_scopes: dict[str, list[int]]
+
+    member_evidence: NotRequired[dict[str, Any]]
+    background: NotRequired[dict[str, Any]]
+    member_fingerprints: NotRequired[dict[str, str]]
+    write_bounds: NotRequired[tuple[int, int]]

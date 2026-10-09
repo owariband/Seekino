@@ -13,8 +13,9 @@ from engine.rag.contracts import VideoChunkSearchHit
 from ...common.errors import AgentModelInvocationError, AgentToolFeedbackError
 from ...common.state import ExecutionControl
 from ...common.tool_output import bounded_json, range_text
+from ..context import detail_sections as _detail_sections
 from ..state import DraftItem
-from ..workspace import AgentWorkspace
+from ..video_search_canvas import VideoSearchContextCanvas
 
 _OptionalCursor = Annotated[
     str,
@@ -58,9 +59,41 @@ class DraftReadAudit:
     catalog_complete: bool = False
     expected: dict[str, dict[str, int]] = field(default_factory=dict)
     ranges: dict[str, dict[str, list[tuple[int, int]]]] = field(default_factory=dict)
+    revision: int | None = None
+    catalog_references: set[str] = field(default_factory=set)
+    catalog_total: int | None = None
     _lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
+    def record(self, payload: dict[str, Any]) -> None:
+        if payload.get("collection") != "draft":
+            return
+        with self._lock:
+            revision = payload["revision"]
+            if self.revision != revision:
+                self.revision = revision
+                self.catalog_complete = False
+                self.catalog_references.clear()
+                self.catalog_total = None
+                self.expected.clear()
+                self.ranges.clear()
+            reference = payload.get("reference")
+            if reference is None:
+                self.catalog_total = payload["total"]
+                self.catalog_references.update(item["reference"] for item in payload["items"])
+                if payload["next_cursor"] is None:
+                    self.catalog_complete = True
+            elif payload.get("section") == "overview":
+                lengths = {item["name"]: item["total_chars"] for item in payload["sections"]}
+                if self.expected.get(reference) != lengths:
+                    self.expected[reference] = lengths
+                    self.ranges[reference] = {name: [] for name in lengths}
+            else:
+                section = payload["section"]
+                if section in self.ranges.get(reference, {}):
+                    self.ranges[reference][section].append((payload["start"], payload["end"]))
+
     def mark_catalog_complete(self) -> None:
+        # Compatibility for unregistered legacy readers.
         with self._lock:
             self.catalog_complete = True
 
@@ -71,25 +104,26 @@ class DraftReadAudit:
                 self.expected[video_chunk_id] = lengths
                 self.ranges[video_chunk_id] = {name: [] for name in lengths}
 
-    def mark_range(
-        self, video_chunk_id: str, section: str, start: int, end: int,
-    ) -> None:
+    def mark_range(self, video_chunk_id: str, section: str, start: int, end: int) -> None:
         with self._lock:
             ranges = self.ranges.get(video_chunk_id)
             if ranges is not None and section in ranges:
                 ranges[section].append((start, end))
 
-    def covers(self, video_chunk_ids: Collection[str]) -> bool:
+    def covers(self, video_chunk_ids: Collection[str], *, revision: int | None = None) -> bool:
+        ids = set(video_chunk_ids)
         with self._lock:
+            if revision is not None and (
+                self.revision != revision or self.catalog_total != len(ids)
+                or self.catalog_references != ids
+            ):
+                return False
             return self.catalog_complete and all(
-                video_chunk_id in self.expected
-                and all(
-                    _ranges_cover(
-                        self.ranges[video_chunk_id][section], total_chars,
-                    )
-                    for section, total_chars in self.expected[video_chunk_id].items()
+                reference in self.expected and all(
+                    _ranges_cover(self.ranges[reference][section], total_chars)
+                    for section, total_chars in self.expected[reference].items()
                 )
-                for video_chunk_id in video_chunk_ids
+                for reference in ids
             )
 
 
@@ -103,47 +137,6 @@ def _ranges_cover(ranges: list[tuple[int, int]], total_chars: int) -> bool:
             return True
     return covered >= total_chars
 
-
-_EVIDENCE_SECTION_FIELDS = {
-    "evidence.transcript": ("transcript",),
-    "evidence.events": ("allTimeEvents", "allTimeEventText"),
-    "evidence.text": (
-        "baselineVisualCaption", "retrievalText", "videoCompact",
-        "contextBeforeCompact", "contextAfterCompact", "windowSummary",
-    ),
-    "evidence.series_context": (
-        "seriesDescription", "importantExtraData", "characterBible",
-    ),
-}
-
-
-def _detail_sections(
-    hit: VideoChunkSearchHit, draft: DraftItem | None = None,
-) -> dict[str, str]:
-    evidence = hit.evidence.model_dump(mode="json", by_alias=True)
-    grouped = {
-        name: {field_name: evidence[field_name] for field_name in field_names}
-        for name, field_names in _EVIDENCE_SECTION_FIELDS.items()
-    }
-    grouped_fields = {
-        field_name
-        for field_names in _EVIDENCE_SECTION_FIELDS.values()
-        for field_name in field_names
-    }
-    grouped["evidence.metadata"] = {
-        name: value for name, value in evidence.items() if name not in grouped_fields
-    }
-    sections = {
-        "candidate": hit.candidate.model_dump(mode="json", by_alias=True),
-        "selection_reason": hit.selection_reason.model_dump(mode="json", by_alias=True),
-        **grouped,
-    }
-    if draft is not None:
-        sections = {"draft": draft.model_dump(mode="json"), **sections}
-    return {
-        name: json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        for name, value in sections.items()
-    }
 
 
 def _read_detail_section(
@@ -212,8 +205,8 @@ def _retrieval_card(hit: VideoChunkSearchHit) -> dict[str, Any]:
     }
 
 
-def _draft_card(workspace: AgentWorkspace, item: DraftItem) -> dict[str, Any]:
-    evidence = workspace.retrieval_item(item.video_chunk_id).evidence
+def _draft_card(canvas: VideoSearchContextCanvas, item: DraftItem) -> dict[str, Any]:
+    evidence = canvas.retrieval_item(item.video_chunk_id).evidence
     return {
         "video_chunk_id": item.video_chunk_id,
         "episode_order": evidence.episode_order,
