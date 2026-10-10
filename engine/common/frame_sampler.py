@@ -4,6 +4,7 @@ import math
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
+from time import monotonic
 
 
 def plan_frame_timestamps(
@@ -41,12 +42,23 @@ def extract_video_frames(
     *,
     output_dir: str | Path,
     max_height: int,
+    timeout_seconds: float | None = None,
 ) -> list[tuple[int, Path]]:
+    if timeout_seconds is not None and (
+        isinstance(timeout_seconds, bool)
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+    ):
+        raise ValueError("frame extraction timeout must be finite and positive")
+    deadline = None if timeout_seconds is None else monotonic() + timeout_seconds
     path = Path(video_path).expanduser().resolve()
     directory = Path(output_dir).expanduser().resolve()
     directory.mkdir(parents=True, exist_ok=True)
     frames: list[tuple[int, Path]] = []
     for index, timestamp_seconds in enumerate(timestamps_seconds):
+        remaining = None if deadline is None else deadline - monotonic()
+        if remaining is not None and remaining <= 0:
+            raise TimeoutError("video frame extraction exceeded its time budget")
         output = directory / f"frame-{index:03d}.jpg"
         try:
             subprocess.run(
@@ -69,6 +81,7 @@ def extract_video_frames(
                 ],
                 check=True,
                 capture_output=True,
+                timeout=remaining,
             )
         except FileNotFoundError as error:
             raise RuntimeError("ffmpeg is required for local frame fallback") from error

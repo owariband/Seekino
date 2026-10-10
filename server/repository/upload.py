@@ -469,12 +469,29 @@ class UploadRepository:
                 )
                 .order_by(VideoParseTask.version.desc())
                 .limit(1)
-                .with_for_update()
             )
             if latest is None:
                 raise UploadConflictError(
                     "upload session VideoParseTask no longer exists"
                 )
+            candidate_id = latest.id
+            candidate_runtime = latest.detail.get(RUNTIME_DETAIL_KEY, {})
+            realtime_only = isinstance(candidate_runtime, dict) and candidate_runtime.get("realtime_only") is True
+            realtime_chunks = []
+            if realtime_only:
+                # Match result commits and retries: Interval -> Chunk -> parent.
+                list(session.scalars(select(IntervalParseTask).where(
+                    IntervalParseTask.video_parse_task_id == candidate_id,
+                ).order_by(IntervalParseTask.start_sequence_no, IntervalParseTask.id).with_for_update()))
+                realtime_chunks = list(session.scalars(select(ChunkParseTask).where(
+                    ChunkParseTask.video_parse_task_id == candidate_id,
+                ).order_by(ChunkParseTask.id).with_for_update()))
+            latest = session.scalar(select(VideoParseTask).where(
+                VideoParseTask.video_id == upload.video_id,
+                VideoParseTask.is_deleted.is_(False),
+            ).order_by(VideoParseTask.version.desc()).limit(1).with_for_update().execution_options(populate_existing=True))
+            if latest is None or latest.id != candidate_id:
+                raise UploadConflictError("VideoParseTask changed; refresh before reparsing")
             if latest.version != expected_job_version:
                 raise UploadConflictError(
                     "VideoParseTask version changed; refresh before reparsing"
@@ -486,11 +503,15 @@ class UploadRepository:
             snapshot = latest.parse_config if video_parse_config is None else video_parse_config
             if snapshot_resolver is not None:
                 snapshot = snapshot_resolver(deepcopy(snapshot))
+            if realtime_only and snapshot != latest.parse_config:
+                raise UploadConflictError(
+                    "realtime base Parse freezes its configuration; promotion must use the same snapshot"
+                )
             runtime = latest.detail.get("_worker_runtime_v2", {})
             accepted = isinstance(runtime, dict) and runtime.get("accepted") is True
             if (
                 execution_mode == "v2"
-                and latest.status == VideoParseTaskStatus.PENDING.value
+                and (latest.status == VideoParseTaskStatus.PENDING.value or realtime_only)
                 and not accepted
             ):
                 video = session.get(Video, upload.video_id)
@@ -531,9 +552,38 @@ class UploadRepository:
                     **({"actor_user_id": actor_user_id} if actor_user_id is not None else {}),
                     "accepted": True,
                     "execution_mode": "v2",
+                    **({"realtime_only": False} if realtime_only else {}),
                 })
+                runtime.pop("failure_status", None)
                 detail["_worker_runtime_v2"] = runtime
                 latest.detail = detail
+                if realtime_only:
+                    for child in realtime_chunks:
+                        if child.status != ChunkParseTaskStatus.FAILED.value:
+                            continue
+                        child.status = ChunkParseTaskStatus.QUEUED.value
+                        child.retry_count = 0
+                        child.next_execute_time = now
+                        child.finish_time = None
+                        child.last_error = None
+                        child.lease_owner = None
+                        child.lease_expire_time = None
+                        child.update_time = now
+                    active_topology = (
+                        latest.lease_owner is not None
+                        and latest.lease_expire_time is not None
+                        and latest.lease_expire_time > now
+                    )
+                    latest.status = (VideoParseTaskStatus.PREPARING.value if active_topology
+                                     else VideoParseTaskStatus.PENDING.value)
+                    latest.finish_time = None
+                    latest.last_error = None
+                    # A live topology lease retains its fencing token. Once it
+                    # finishes it observes accepted=true and activates Parse.
+                    if latest.lease_expire_time is None or latest.lease_expire_time <= now:
+                        latest.lease_owner = None
+                        latest.lease_expire_time = None
+                        latest.heartbeat_time = None
                 latest.next_execute_time = now
                 latest.update_time = now
                 _invalidate_series_prefixes_for_reparse(

@@ -30,14 +30,14 @@ from server.model.agent import (
     AgentConversation,
     AgentMessage,
 )
-from server.model.video import Series, VideoChunkInfo
+from server.model.video import Series, Video, VideoChunkInfo
 from server.model.dto.agentDTO import AgentMessageTimingState, AgentStageTimingState
 from server.repository.agent import (
     AgentConflictError, AgentConversationNotFoundError, AgentMessageInProgressError,
     AgentRepository, AgentReferenceInvalidError, AgentMessageNotFoundError,
 )
-from server.repository.library import LibraryRepository
-from server.repository.video import VideoRepository
+from server.repository.library import LibraryRepository, SeriesNotFoundError
+from server.repository.video import SeriesNotReadyError, VideoRepository
 from server.schema import (
     AgentReply, SelectionReason, VideoChunkCandidate, VideoChunkSearchHit, VideoChunkSearchResult,
 )
@@ -240,7 +240,7 @@ def build_service(tmp_path):
     def build(
         *, query=None, evaluator=None, chat=None, runtime_kwargs=None,
         service_kwargs=None, enforce_foreign_keys=False, supervisor_model=None,
-        web_searcher=None,
+        web_searcher=None, realtime_runtime=None,
     ):
         engine = create_database_engine(
             f"sqlite+pysqlite:///{tmp_path / f'agent-{len(resources)}.sqlite'}",
@@ -267,6 +267,7 @@ def build_service(tmp_path):
                 max_web_results=5, web_timeout_seconds=12,
                 execution_timeout_seconds=60, max_tool_result_bytes=16_384,
                 max_prompt_chars=200_000,
+                realtime_runtime=realtime_runtime,
             )
             if supervisor_model is not None else video_runtime
         )
@@ -400,8 +401,8 @@ def test_chat_sql_capture_runs_in_executor_and_preserves_terminal_result(build_s
         assert len(rows) == 1
         row = rows[0]
         assert row.tenant_id == "local-default" and row.task_type == "chat_retrieval"
-        assert row.actor_user_id == "local-user"
         assert row.run_id == first.assistant_message.message_id
+        assert row.actor_user_id == "local-user"
         assert row.metadata_["status"] == ("failed" if failed else "completed")
         assert row.metadata_["context"]["conversation_id"] == conversation.conversation_id
         assert row.usage["tokens"]["total_tokens"] == 12
@@ -473,6 +474,116 @@ def test_supervisor_chat_without_ready_video_series(build_service):
     prompt_context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
     assert prompt_context["video_scope"] == []
     assert "没有可检索的视频系列" in prompt_context["video_scope_description"]
+
+
+@pytest.mark.parametrize("playback_change", [
+    None, "position", "series", "tenant", "negative_position", "float_position", "bool_position",
+])
+def test_current_video_scope_is_trusted_without_making_unready_series_retrievable(
+    build_service, playback_change,
+):
+    class CurrentVideoModel:
+        model_name = "current-video-test"
+        supports_vision_input = False
+
+        def run_agent_loop(self, _prompt, *, tools, handle_text, **_kwargs):
+            by_name = {tool.name: tool for tool in tools}
+            graph = json.loads(by_name["search_video_graph"].invoke({"query": "now"}))
+            assert graph["error"]["code"] == "NO_VIDEO_SCOPE"
+            handle_text("当前视频答疑可使用实时理解。")
+
+    service, conversation, _, repository, *_ = build_service(
+        supervisor_model=CurrentVideoModel(), realtime_runtime=object(),
+    )
+    video_id = str(uuid4())
+    with repository._session_factory.begin() as session:
+        series = session.query(Series).one()
+        series.status = "EMPTY"
+        series_id = series.series_id
+        if playback_change == "tenant":
+            series.tenant_id = "other-tenant"
+        session.add(Video(
+            video_id=video_id, series_id=series_id, episode_order=1, upload_sequence=1,
+            original_filename="lecture.mp4", original_source_uri="source/lecture.mp4",
+            content_hash="a" * 64, total_bytes=1, duration_seconds=300_000,
+            upload_status="UPLOADED", parse_status="PENDING",
+            upload_progress=100, parse_progress=0,
+        ))
+    playback = {
+        "seriesId": series_id, "videoId": video_id, "episodeOrder": 1,
+        "positionSeconds": 123_456,
+    }
+    if playback_change == "position":
+        playback["positionSeconds"] = 300_001
+    elif playback_change == "negative_position":
+        playback["positionSeconds"] = -1
+    elif playback_change == "float_position":
+        playback["positionSeconds"] = 123_456.0
+    elif playback_change == "bool_position":
+        playback["positionSeconds"] = True
+    elif playback_change == "series":
+        playback["seriesId"] = str(uuid4())
+    if playback_change is not None:
+        with pytest.raises(SeriesNotFoundError if playback_change == "tenant" else ValueError):
+            _send(service, conversation, series_ids=[series_id], extra_context={"playback": playback})
+        assert service.list_all_messages(conversation.conversation_id, tenant_id="local-default") == []
+        return
+    completed = _send(
+        service, conversation, series_ids=[series_id], extra_context={"playback": playback},
+    )
+    assert completed.user_message.series_ids == ()
+    assert completed.user_message.extra_context["playback"]["positionSeconds"] == 123_456
+    assert completed.assistant_message.content == "当前视频答疑可使用实时理解。"
+    with pytest.raises(SeriesNotReadyError):
+        _send(service, conversation, key="without-playback", series_ids=[series_id])
+
+
+@pytest.mark.parametrize("include_other_unready", [False, True])
+def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
+    build_service, include_other_unready,
+):
+    class CurrentVideoModel:
+        model_name = "current-video-test"
+
+        def run_agent_loop(self, _prompt, *, tools, handle_text, **_kwargs):
+            by_name = {tool.name: tool for tool in tools}
+            by_name["search_video_graph"].invoke({"query": "what was explained"})
+            handle_text("Answer from the available evidence.")
+
+    service, conversation, retrieval, repository, *_ = build_service(
+        supervisor_model=CurrentVideoModel(), realtime_runtime=object(),
+    )
+    ready = service._library.create_series(tenant_id="local-default", name="Ready course")
+    other = service._library.create_series(tenant_id="local-default", name="Other pending course")
+    video_id = str(uuid4())
+    with repository._session_factory.begin() as session:
+        current = session.query(Series).filter(Series.name == "Test Series").one()
+        current.status = "EMPTY"
+        current_id = current.series_id
+        session.get(Series, ready.series_id).status = "READY"
+        session.add(Video(
+            video_id=video_id, series_id=current_id, episode_order=1, upload_sequence=1,
+            original_filename="lecture.mp4", original_source_uri="source/lecture.mp4",
+            content_hash="a" * 64, total_bytes=1, duration_seconds=300_000,
+            upload_status="UPLOADED", parse_status="PENDING",
+            upload_progress=100, parse_progress=0,
+        ))
+    scope = [current_id, ready.series_id]
+    if include_other_unready:
+        scope.append(other.series_id)
+    kwargs = dict(series_ids=scope, extra_context={"playback": {
+        "seriesId": current_id, "videoId": video_id, "episodeOrder": 1,
+        "positionSeconds": 123_456,
+    }})
+    if include_other_unready:
+        with pytest.raises(SeriesNotReadyError):
+            _send(service, conversation, **kwargs)
+        assert retrieval.calls == []
+        assert service.list_all_messages(conversation.conversation_id, tenant_id="local-default") == []
+    else:
+        result = _send(service, conversation, **kwargs)
+        assert result.user_message.series_ids == (ready.series_id,)
+        assert retrieval.calls and all(call[1] == [ready.series_id] for call in retrieval.calls)
 
 
 def test_extra_context_is_persisted_injected_and_part_of_idempotency(build_service):
@@ -667,6 +778,53 @@ def test_reference_uses_saved_same_version_evidence_with_ordered_history(evidenc
     changed = {**reference, "videoChunkId": hits[0]["candidate"]["videoChunkId"]}
     with pytest.raises(AgentConflictError):
         _send(service, conversation, key="reference", content="这段的前文呢？", reference=changed)
+
+
+@pytest.mark.parametrize("legacy_key", ["workspaceId", "workspace_id"])
+def test_historical_message_evidence_scope_is_read_without_changing_json(evidence_service, legacy_key):
+    service, conversation, _, repository, query, *_ = evidence_service
+    source = _send(service, conversation)
+    assistant_id = source.assistant_message.message_id
+    with repository._session_factory.begin() as session:
+        record = session.get(AgentMessage, assistant_id)
+        stored = json.loads(json.dumps(record.search_result))
+        for hit in stored["hits"]:
+            evidence = hit["evidence"]
+            evidence[legacy_key] = evidence.pop("tenantId")
+            evidence["importantExtraData"] = {"workspaceId": "unrelated-metadata"}
+        record.search_result = stored
+    restored = service.get_message(conversation.conversation_id, tenant_id="local-default", message_id=assistant_id)
+    assert all(hit["evidence"]["tenantId"] == "local-default" for hit in restored.assistant_message.search_result["hits"])
+    assert restored.assistant_message.search_result["hits"][0]["evidence"]["importantExtraData"] == {"workspaceId": "unrelated-metadata"}
+    reference = {"messageId": assistant_id, "videoChunkId": restored.assistant_message.search_result["hits"][0]["candidate"]["videoChunkId"]}
+    _send(service, conversation, key="legacy-reference", reference=reference)
+    context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
+    assert context["reference_context"]["evidence"]["videoChunkId"] == reference["videoChunkId"]
+    with repository._session_factory() as session:
+        assert session.get(AgentMessage, assistant_id).search_result == stored
+
+
+@pytest.mark.parametrize("conflicting_new_key", [None, "tenantId", "tenant_id"])
+def test_historical_evidence_scope_rejects_cross_tenant_or_conflicting_aliases(evidence_service, conflicting_new_key):
+    service, conversation, _, repository, *_ = evidence_service
+    source = _send(service, conversation)
+    assistant_id = source.assistant_message.message_id
+    with repository._session_factory.begin() as session:
+        record = session.get(AgentMessage, assistant_id)
+        stored = json.loads(json.dumps(record.search_result))
+        evidence = stored["hits"][0]["evidence"]
+        evidence["workspaceId"] = "other-tenant"
+        evidence.pop("tenantId")
+        if conflicting_new_key is not None:
+            evidence[conflicting_new_key] = "local-default"
+        record.search_result = stored
+    if conflicting_new_key is not None:
+        with pytest.raises(AgentReferenceInvalidError, match="资源范围冲突"):
+            service.get_message(conversation.conversation_id, tenant_id="local-default", message_id=assistant_id)
+    else:
+        reference = {"messageId": assistant_id, "videoChunkId": stored["hits"][0]["candidate"]["videoChunkId"]}
+        with pytest.raises(AgentReferenceInvalidError, match="不属于本次检索范围"):
+            _send(service, conversation, key="cross-tenant-legacy", reference=reference)
 
 
 @pytest.mark.parametrize("blocks", [
@@ -1671,56 +1829,6 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
             conversation.conversation_id, tenant_id="another-workspace"
         )
 
-
-@pytest.mark.parametrize("legacy_key", ["workspaceId", "workspace_id"])
-def test_historical_message_evidence_scope_is_read_without_changing_json(evidence_service, legacy_key):
-    service, conversation, _, repository, query, *_ = evidence_service
-    source = _send(service, conversation)
-    assistant_id = source.assistant_message.message_id
-    with repository._session_factory.begin() as session:
-        record = session.get(AgentMessage, assistant_id)
-        stored = json.loads(json.dumps(record.search_result))
-        for hit in stored["hits"]:
-            evidence = hit["evidence"]
-            evidence[legacy_key] = evidence.pop("tenantId")
-            evidence["importantExtraData"] = {"workspaceId": "unrelated-metadata"}
-        record.search_result = stored
-    restored = service.get_message(conversation.conversation_id, tenant_id="local-default", message_id=assistant_id)
-    assert all(hit["evidence"]["tenantId"] == "local-default" for hit in restored.assistant_message.search_result["hits"])
-    assert restored.assistant_message.search_result["hits"][0]["evidence"]["importantExtraData"] == {"workspaceId": "unrelated-metadata"}
-    reference = {"messageId": assistant_id, "videoChunkId": restored.assistant_message.search_result["hits"][0]["candidate"]["videoChunkId"]}
-    _send(service, conversation, key="legacy-reference", reference=reference)
-    context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
-    assert context["reference_context"]["evidence"]["videoChunkId"] == reference["videoChunkId"]
-    with repository._session_factory() as session:
-        assert session.get(AgentMessage, assistant_id).search_result == stored
-
-
-
-@pytest.mark.parametrize("conflicting_new_key", [None, "tenantId", "tenant_id"])
-def test_historical_evidence_scope_rejects_cross_tenant_or_conflicting_aliases(evidence_service, conflicting_new_key):
-    service, conversation, _, repository, *_ = evidence_service
-    source = _send(service, conversation)
-    assistant_id = source.assistant_message.message_id
-    with repository._session_factory.begin() as session:
-        record = session.get(AgentMessage, assistant_id)
-        stored = json.loads(json.dumps(record.search_result))
-        evidence = stored["hits"][0]["evidence"]
-        evidence["workspaceId"] = "other-tenant"
-        evidence.pop("tenantId")
-        if conflicting_new_key is not None:
-            evidence[conflicting_new_key] = "local-default"
-        record.search_result = stored
-    if conflicting_new_key is not None:
-        with pytest.raises(AgentReferenceInvalidError, match="资源范围冲突"):
-            service.get_message(conversation.conversation_id, tenant_id="local-default", message_id=assistant_id)
-    else:
-        reference = {"messageId": assistant_id, "videoChunkId": stored["hits"][0]["candidate"]["videoChunkId"]}
-        with pytest.raises(AgentReferenceInvalidError, match="不属于本次检索范围"):
-            _send(service, conversation, key="cross-tenant-legacy", reference=reference)
-
-
-
 def test_public_tenant_conversations_are_private_per_owner(build_service):
     service, _, _, repository, *_ = build_service()
     first = service.create_conversation(
@@ -1759,7 +1867,6 @@ def test_public_tenant_conversations_are_private_per_owner(build_service):
     for check in checks:
         with pytest.raises(AgentConversationNotFoundError):
             check()
-
 
 
 def test_private_conversation_can_use_one_public_source_and_replay_checks_source(build_service):

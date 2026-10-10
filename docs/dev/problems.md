@@ -1,6 +1,6 @@
 # 项目问题清单
 
-更新日期：2026-09-23。依据当前源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。
+更新日期：2026-10-09。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。本次仅补充 B07 的 ParseV2 真实性能与失败恢复问题；其余条目保留原有历史状态，未作为当前工作区的全量复核。
 
 ## frontend
 
@@ -242,7 +242,133 @@ return completed
 
 优先级：高。类型：解析性能、单位经济性与失败止损问题。状态：已由本地开发库和运行日志实测确认，待优化。
 
-#### 实测数据与统计口径
+#### 2026-10-09：ParseV2 的 90 秒视频耗时 37 分钟
+
+状态：功能及相对 ASR 的秒级时间链路已通过；人物名单校验已按用户明确规则缩小至 `DIALOGUE`。理解/精修输出预算与思考控制已完成源码、兼容性、离线和同片真实通路验证，约100.3秒完成；ASR 保持原设置。视觉事件输出变少，完整语义质量未验收。失败恢复、总时限和退避配置仍待处理。以下37分钟耗时与失败记录对应修复前冻结源码。
+
+本次使用同一 90132ms 原片、原默认配置，在隔离 namespace `anivag_asr_reparse_20261009_081508_test` 重跑 task `d3046375-9d70-4a8d-972d-98fd6429f519`。服务运行开工时 `c8c5d2c + dirty` 的 539 文件冻结源码，模型、fps、重试和 fallback 没有临时调整；后续并行工作区变化未加载到该服务，以下根因严格对应本次运行。
+
+**并行已经生效，但最慢 Chunk 的连续失败重试决定了总耗时。** 两段几乎同时开始，第二段约 9 分 57 秒完成，第一段因三次主模型失败及恢复花了 30 分 46 秒。唯一 Interval 需要两段均成功，随后才执行跨段精修；增加并发槽位不能缩短同一 Chunk 内依次发生的失败尝试。
+
+| 关键路径 | 耗时 | 实际结果或依赖 |
+| --- | ---: | --- |
+| 第一段首次 Pro 理解 | 574.969 秒，约 9 分 35 秒 | Provider 返回 JSON，程序人物引用校验失败 |
+| 第一段第二次 Pro 理解 | 653.048 秒，约 10 分 53 秒 | Provider 返回 `length` 不完整终态 |
+| 第一段第三次 Pro 理解 | 397.302 秒，约 6 分 37 秒 | Provider 返回 `content_filter` 不完整终态 |
+| 同轮 DeepSeek fallback | 7.276 秒 | 成功提交第一段 |
+| 第一段 ASR、退避及准备 | 约 213.454 秒 | ASR 执行三次，另有两次退避 |
+| 跨段精修模型 | 343.738 秒，约 5 分 44 秒 | 等待两段成功后执行并提交 |
+| 其余领取、阶段交接、发布及轮询 | 约 23.211 秒 | 两段向量和 ES 发布完成 |
+| **总墙钟时间** | **2212.998 秒，36 分 53 秒** | **08:16:08.318–08:53:01.315 UTC，最终 COMPLETE** |
+
+第二段的理解与第一段首轮重叠，不能把全部模型请求耗时相加作为墙钟时间。完整关系是 `max(两段各自耗时) + 跨段精修 + 索引发布`，再计入准备与交接。第一段三次 Pro 失败合计约 27 分 5 秒；当时校验规则下均没有被接收的完整业务结果。
+
+本轮 SQL/API 为 **14 次调用、443098 Token、missing0**，三次失败保留 **167520 Token，占本轮约 37.8%**；其中 failure output 为 85314、reasoning 为 75101。Token 按供应商实际用量保存，业务校验或供应商终态失败不会撤销已消耗的 Token。本节不估算金额，不混入前轮 99 条账本或下述 ParseV1 费用快照。
+
+#### 三次长调用为何最后失败
+
+1. **首轮是完整 JSON 的业务引用失败。** `persons` 已登记 `Kaname Raana`，但 `timeline[17]`、`[22]`、`[29]` 的 `visible_persons` 分别写成 `Kaname Raana (hand)`、`Kaname Raana (hand/guitar)`、`Kaname Raana (guitar)`。模型把身体/道具附注放进了人物引用字段，顶层 validator 在第一处未知引用立即抛错；供应商的 JSON Schema 结构约束没有保证跨字段引用一致。只在内存副本修复第17条再校验，仍暴露第22条，所以不能描述为“只有一个错误”。本次没有更改 raw 或历史结果，未证明其余内容都高质量。
+2. **第二轮是供应商输出预算耗尽。** 实际 output32768，其中 reasoning29016、其余3752；供应商返回 `length`，没有可供业务接收的完整成功 JSON。Responses 的输出上限同时计入回答和思维链，思考占掉约88.5%的预算；不是程序拿到完整合法结果后随意拒绝。依据：[官方 Responses 参数说明](https://docs.volcengine.com/docs/ark/create-model-responses-api?lang=zh)。
+3. **第三轮是供应商内容过滤终态。** 实际 output19829，其中 reasoning19581；Provider 返回 `content_filter`，程序按失败处理并调用已有 DeepSeek fallback。没有完整 raw JSON 用来判定具体触发内容，不能把它追认为本地人物校验失败或猜测过滤原因。
+
+三次都在请求结束后才能确认最终结果。本次可定位到远程请求耗时和大量 reasoning Token，但没有供应商内部指标来分摊排队、推理与生成时间，不能把全部耗时都声称为本地校验或网络等待。
+
+#### 本次确认的执行策略缺口
+
+- **该冻结轮尚未接入 Ark 思考控制。** 五次 Pro 请求（理解与精修）output140100，其中 reasoning122954，约87.8%。当时 Ark 多模态适配器不接收或发送 `thinking` / `reasoning`，主路也未显式设置结果输出上限。下节源码已接入控制；实际关闭使用 `thinking.type=disabled`，不能仅在配置中填写字段就声称已控制推理预算，具体质量影响须同片验证。[官方说明](https://docs.volcengine.com/docs/ark/deep-thinking?lang=zh)
+- **理解失败重跑整个 Chunk。** ASR 结果仅在单次 graph 内存中，重新领取失败 Chunk 后重跑 ASR、媒体准备与理解。本次两次额外 ASR 合计74.30秒，没有阶段成果复用。
+- **fallback 只接住 `ContentFilterError`。** 人物引用校验失败和 `length` 不进入备用路径，而是先重试整个 Chunk；第三次 `content_filter` 才在同一次尝试中切换到 DeepSeek。程序缺少按结果错误类型选择定向修复、阶段重试或 fallback 的恢复策略。
+- **600秒不是请求总墙钟上限。** 该值传给 SDK 网络 timeout，SSE 循环没有独立总 deadline；本次653.048秒请求没有在600秒结束，最终仍为 `length`。后续实现总时限时须沿用既有 cancellation/client close，并等待线程收尾，不能只取消 asyncio 等待而让底层请求继续消费 Token。
+- **任务退避配置没有用于 Chunk consumer。** 快照为初始1秒、最大30秒；实际 consumer 使用 MQ 初始30秒、最大900秒，因此两次退避为30/60秒，加调度准备后间隙35.69/66.34秒。Prefix 的任务级退避与 Chunk consumer 的队列级退避不能混称为同一有效策略。
+
+#### 人物引用校验修复与离线验证（2026-10-09）
+
+用户明确：只有 `event_type=DIALOGUE` 时，人物引用需要匹配当次 `persons`；其余六种事件不受人物名单限制。仅看到吉他或手部不能据此判断人物归属。实现已在所有事件共用的时间排序检查后，仅对 `DialogueEvent` 执行名单校验；非对白的 `participants` / `visible_persons` 原文保留，不删括号、不补人物、不推断物体归属。对白的 `speaker=null`、非空 speaker 属于 participants、人物名单引用，以及所有事件的结构、时间和顺序检查继续生效，静态 JSON Schema 未变。
+
+回归验证：新增六种非对白事件 × 两个人物引用字段的12项原文保留/JSON往返用例，另有1项混合事件排序用例；13项在旧实现下均失败。修改后 `.venv/bin/pytest -q tests/engine/parsev2 tests/agent/video_parse_v2/test_framework.py` 为82项通过，`.venv/bin/pytest -q tests/engine/test_index_projection.py` 为17项通过，合计99项通过；独立只读审阅通过。
+
+使用首轮调用 `84a7dc7a-7031-48f0-b241-d1966e833328` 的未修改 raw JSON 离线重放：38条事件通过完整 `VideoParseResult` 校验及 `[0,60000)` 时间范围检查；第17、22、29条均为 `ACTION`，原附注及全部正文/时间完整保留。原始证据文件内容不变，没有新模型调用或数据库写入。验证记录为 `/private/tmp/anivag-dialogue-persons-20261009/raw-replay-verification.json`；本项结果说明旧名单阻断已解除，不代表重新完成真实全流程或确认模型描述中的人物归属。
+
+#### 理解/精修默认预算与思考控制修复（2026-10-09）
+
+用户明确批准仅执行理解和精修接线，ASR 保持原设置。`models.vision` 新任务默认为 `max_output_tokens=65536`、`reasoning_effort=none`，经 Gateway 配置、Server profile 和固定 V2 任务快照进入实际 Ark 请求；未单独配置的 refine 继续复用 understanding binding。Vision 配置校验允许更大的显式预算，默认值与最大可配置值分开。没有调整 ASR、Chat、备用模型、并发、重试或数据库 Schema。
+
+Ark 结构化与流式路径均处理控制值：`none` 显式发送 `thinking={"type":"disabled"}`；`None` 完全省略控制参数，保留旧任务原行为；其它支持的值发送 `reasoning.effort`。旧固定任务不会回读新默认值。新增 Server Vision 可选字段未设置时，仅省略其 snake/camel 序列化键，保护旧显式上传请求的幂等指纹，其它 nullable 字段保持；V2 任务的原有 reasoning 字段仍正常持久化。OpenAI Vision 对不支持的非 `none` 值在 YAML 边界拒绝，备用模型保留独立配置。
+
+离线验证覆盖配置传播、旧快照恢复、实际 SDK 请求参数、refine 继承与上传幂等兼容：`.venv/bin/pytest -q tests/gateway/test_config.py tests/gateway/test_model_config_v2.py tests/gateway/test_models.py tests/gateway/test_usage.py tests/server/test_config.py tests/server/test_video_parse_worker.py tests/server/test_upload_service.py tests/engine/parsev1/test_model_sources.py tests/engine/parsev2 tests/agent/video_parse_v2/test_framework.py --tb=short`，**573 passed**；仅有既有 Starlette/AnyIO 弃用警告。修复后的独立只读源码复核通过。
+
+第一次实测 namespace `anivag_parse_budget_20261009_121056_test`、task `75501ba3-6d8d-410c-a653-bc2dc134c4b6` 在 ASR 供应商连接阶段即失败；恢复时数据库只保留4条 failed candidate_transcript，tokens 均缺失，父任务仍为 PARSING。进程及临时目录已消失，不能把该轮作为性能或端到端通过证据，也不能将缺失用量当零。已恢复原 MySQL/ES 数据目录；按原第6集680秒起点与相同 ffmpeg 参数重建素材，大小9999051、SHA256 `ddbecf396cb32193e99c5168428adf97b6cdd6627103d534a69dc0da36f2e4b5`、精确时长90.131708秒与原记录完全一致，取整为90132ms。恢复后的新一轮证据保存到持久目录 `outputs/verification/vision-controls-20261009-resumed/`。
+
+恢复后 task `f8e59ff7-1c05-4ec4-b788-c742353aa6eb`、namespace `anivag_parse_budget_resume_20261009_132118_test` 使用 `29b8051 + dirty` 的542文件冻结源码、原 Series 元数据和字节相同的素材。新旧 profile 与固定任务快照只差 Vision 的两个控制值；没有请求级配置覆盖。父任务、两 Chunk 和唯一 Interval 全部 COMPLETE，Chunk/Interval retry均0。提交到轮询观测终态为 **100.285秒**（13:22:03–13:23:44 UTC），其中 coordinator 观测时长95.470秒；轮询时间与处理时间分别保留，数据库 `processing_duration_ms=0` 不用作有效耗时。
+
+| 同片观测 | 修复前冻结轮 | 本轮 |
+| --- | ---: | ---: |
+| 总墙钟时间（含终态轮询） | 2212.998秒 | 100.285秒 |
+| 模型调用 | 14 | 10 |
+| Total Token | 443098 | 193985 |
+| 失败调用 / Token | 3 / 167520 | 1 / 27885 |
+| 主路理解/精修 reasoning Token | 122954（5次） | 0（3次均明确报告0） |
+
+本轮墙钟减少约95.5%、Token减少约56.2%，是一次实测对照，不保证未来请求时长，也不是只切换一个参数的因果实验：源码还包含已完成的人物校验及宿主改动，模型输出和精修工作量不同。两段仍并行：ASR远程请求分别37.468/18.540秒；第一段 Ark理解17.965秒后返回 `content_filter`，同次尝试的既有 DeepSeek fallback 成功，理解合计25.261秒；第二段 Ark理解32.736秒成功。精修远程请求3.048秒，索引发布16.392秒。本轮没有 `length`、人物校验失败或整个Chunk重跑。
+
+实际 SDK 白名单证明三次 Ark理解/精修均发送65536和 `thinking.type=disabled`，ASR两次仍省略这两项控制。10条SQL用量均来自供应商，input187142、output6843、total193985，API逐项一致、missing0；内容过滤失败的27885 Token同样保留。ASR reasoning分别418/311，四次embedding未报告reasoning，因此全局reasoning聚合仍为null，不将未知当0。10个used call ID与账本集合相同，active调用与全部执行租约均0；model_usage八列保持原设计。两内容version1/generation1、Interval input/indexed_versions、ES两文档及四个1024维有限float32向量全部对应。两媒体DTO的0–60000/60000–90132ms范围、字幕/事件边界和播放READY通过；真实Range请求HTTP206，bytes0–1023/9999051。
+
+ASR原始17/11条秒制估计全部精确等于独立计算的 `round(seconds*1000)`、片段裁剪及一次offset后的实际返回；第二段首条4.5–5.1秒正确存为64500–65100ms。最终28句对白均与ASR原文标准化对应，27句起止一致，1句开始提前400ms、结束一致；第二段11句横跨25632ms，未重现26ms压缩。这里只验证程序换算及最终结果与观察到的ASR一致，不认证音轨毫秒真值。
+
+**本轮不作高质量解析验收。** 精修raw为 `{}`、output仅2 Token，意味着没有内容修改提案，不能与旧343.738秒的精修工作量等同。旧SQL当前内容为第一段14对白+1场景、第二段13对白+14动作+1场景；本轮为第一段17对白、第二段11对白+1动作。第二段非对白事件由15条变为1条，视觉信息输出明显更少；事件数量本身不能判定真值或归因于单独关闭reasoning，但必须作为质量对照保留。字幕、统计、存储、检索发布与播放通路通过，不等于人物/动作/场景描述全部准确完整。
+
+前端兼容已按追加批准的三文件修改树补齐：Vision最大输出输入框与JS校验均为262144，接受新65536默认值；ASR及备用模型仍限制32768。新增7项预算边界回归，`npm test -- src/features/uploads/upload-types.test.ts src/features/uploads/UploadProvider.test.tsx`，23项通过；`npm run typecheck`通过。前端不新增reasoning编辑控件，取得的有效配置通过原有对象复制和请求路径保留该附加字段。
+
+独立终态复核31/31项通过，结论仅为参数、统计、秒级时间、存储索引及播放通路通过，保留上述质量资格。已对本轮隔离API PID14346核实身份后发SIGTERM，9622关闭；恢复的3306/9200依赖与新旧测试数据保留。未执行commit、push或业务库迁移；新增测试库按现有Schema初始化，不改变model_usage八列设计。
+
+收尾时当前ROOT出现并行ORM类及仓储引用改名，相关源码和共享测试中的改动完整保留。本轮配置及四个模型控制生产文件与实测冻结版字节相同；最新工作区在这些并行改动后再次运行相同离线命令，573项通过（11.78秒）。真实模型、SQL/API和播放验收仍以13:21冻结的542文件为证，不把后来的整个ROOT版本追认为同一次实测。
+
+本轮本地证据：[配置核对](../../outputs/verification/vision-controls-20261009-resumed/default-verification.json)、[实际请求与最终账本审计](../../outputs/verification/vision-controls-20261009-resumed/audit-result.json)、[ASR时间审计](../../outputs/verification/vision-controls-20261009-resumed/asr-timestamp-audit.json)、[同片耗时及质量资格](../../outputs/verification/vision-controls-20261009-resumed/performance-comparison.json)、[媒体验证](../../outputs/verification/vision-controls-20261009-resumed/media-verification.json)。源代码、输入素材与原始payload保存在同一持久输出目录；旧临时目录证据已消失，本轮旧耗时沿用已记录的历史文档，旧SQL快照只读恢复，未补造历史raw或更改旧账本。
+
+#### 同片轻推理对照与精修覆盖回归（2026-10-09）
+
+用户要求理解和精修改用轻推理对照。新轮只复制上一轮 `none` 的542文件冻结源码，将测试副本 `models.vision.reasoning_effort` 改为 `low`；其余541文件字节相同。视频仍为同一SHA256、9999051字节、90132ms，Series prompt元数据、65536输出预算、ASR、备用模型、并发和重试配置均保持；普通上传无请求级覆盖，ROOT默认仍为 `none`。两轮实际ASR分句与文字存在差异，因此只证明配置单项变化，不能宣称逐字prompt相同的严格A/B或仅由reasoning造成全部差异。
+
+本轮 namespace `anivag_parse_budget_resume_20261009_135022_test`，task `5940fbfb-439f-4a66-b066-68d8bc97c91d`；13:56:47–14:07:48 UTC提交至终态轮询 **661.334秒**。之前的沙箱本地连接拒绝发生在提交前，没有创建第二个任务或消耗模型Token，不计入解析墙钟。父任务、两Chunk和唯一Interval均COMPLETE，Chunk/Interval retry均0；这只表示执行通路结束，**本轮语义质量验收失败**。
+
+| 同片对照 | 关闭推理 none | 轻推理 low |
+| --- | ---: | ---: |
+| 总墙钟时间（含终态轮询） | 100.285秒 | 661.334秒 |
+| 模型调用 | 10 | 10 |
+| 总Token | 193985 | 232369 |
+| 主路理解/精修reasoning Token | 0 | 37332 |
+| 失败调用 / Token | 1 / 27885 | 1 / 35474 |
+| 精修生成阶段耗时 | 3.073秒 | 454.095秒 |
+| 理解初稿事件总数 | 29 | 36 |
+| 最终保存事件总数 | 29 | **2** |
+
+low耗时约为none的6.59倍，Token增加约19.8%。两段理解仍并行：第一段主路129.374秒后内容过滤，既有DeepSeek备用模型接续，理解合计136.672秒；第二段主路161.829秒成功，理解合计161.855秒。精修远程454.069秒、完整生成阶段454.095秒，索引17.710秒；没有length或整个Chunk重跑。三次真实Ark请求均发送 `reasoning.effort=low`、65536，供应商reasoning分别6731、6638、23963；最后一项来自精修，占精修24253输出Token的大部分。ASR设置不变，reasoning仍真实报告477/311，embedding未知字段继续为null；reasoning属于output的组成部分，不重复累加到total。
+
+**精修将完整时间线覆盖成局部修改，必须先修复该契约问题。** low初稿第一段17事件（10对白、7场景），第二段19事件（11对白、4动作、2情绪、1场景、1画面文字）。精修只返回两段各一条修改参与者的对白，未携带其余事件。现有提示要求仅返回变化的成员/字段，但未明确强调一旦提供timeline必须给完整替换数组；Engine与Repository按整字段替换执行，结构、人物和时间校验均放行。两段最终version2各1条对白，36条事件降为2条，净减少34条事件、19条对白；SQL、API与ES都保存了这个缩减结果。精修有更新、版本一致或任务COMPLETE不能作为内容可用的依据。none轮精修为空，保留29条，未触发这个覆盖路径；问题属于已有精修协议/校验缺口，不能归因于低推理参数本身，也与秒转毫秒无关。
+
+离线使用未修改的冻结Engine重放本轮raw精修提案，现有校验接受两份单条timeline，`apply_chunk_update`得到1+1条，精确等于最终SQL；没有新增模型调用或数据库写入。应先明确并落实精修timeline的全量替换或事件级修改语义，防止局部纠正丢弃未修改事件；不以人物登记表或简单数量阈值代替更新契约。
+
+六张代表帧10/35/55/65/75/85秒已独立核对：low初稿增加部分场景和可见人物覆盖，但35秒画面没有其声称可见的白发少女，且「やらないの？」比本轮ASR提前4.2秒。精修没有证明修正该问题，该事件随其余内容被替换掉。none的对白description也含视觉观察，不能把独立ACTION/SCENE数量直接等同视觉理解准确率；音箱开/关等动作单凭代表帧不能裁决。最终ASR秒到毫秒程序转换仍正确，精修丢失的对白属于内容覆盖失败，不能靠换算通过代替验收。
+
+用量与工程证据复核34/34通过：10个唯一call_id与预算used集合一致、missing0，input186595/output45774/total232369与API逐项相等，失败用量保留；全部执行租约释放，两文档最终version2及索引回执对应，四个1024维有限float32向量一致，Range播放206。顶层验收明确为 `failed_semantic_quality`，不将这些工程检查宣传为解析质量通过。仅启动本轮隔离API和初始化现有Schema的独立测试资源；API PID27755已核对身份后停止，MySQL/ES与新旧测试数据保留。ROOT生产源码/默认配置、八列model_usage和并行工作区改动保持；本轮只追加本问题文档与忽略目录内测试证据，未commit或push。
+
+本轮证据：[准备单变量核对](../../outputs/verification/vision-controls-low-20261009/independent-preparation-review.json)、[统计与终态审计](../../outputs/verification/vision-controls-low-20261009/final-reviewed.json)、[独立内容对照](../../outputs/verification/vision-controls-low-20261009/none-low-independent-quality-comparison.json)、[精修覆盖离线重放](../../outputs/verification/vision-controls-low-20261009/refine-replacement-replay.json)、[ASR时间换算](../../outputs/verification/vision-controls-low-20261009/asr-timestamp-audit.json)。原始素材、manifest、SDK请求、raw响应、版本与索引快照保存在同一持久目录，none轮证据未改。
+
+#### 处理方向与验收条件
+
+- 理解/精修的思考策略与输出预算接线及同片真实请求核对已通过，关闭思考与65,536预算已生效；视觉事件减少与精修空提案必须纳入质量对照，尚未完成高质量语义验收。
+- 人物名单约束仅适用于 `DIALOGUE`，源码修复及离线验证已完成；后续真实联调核对非对白观察可直接保留，对白归属不确定时允许 `speaker=null`，所有事件仍须满足结构、时间范围和任务/lease 边界。观察到吉他、手部或附注不触发人物名单阻断，也不自动清洗名字或推断人物归属。
+- 按 schema 引用失败、输出预算耗尽、内容过滤、网络故障分别确定阶段恢复和 fallback；复用有效 ASR 成果所需的身份、配置、provenance 与租约边界必须保持，不能为了省 Token 把不完整/过滤结果当成成功。
+- 使总请求耗时和 Chunk 退避遵循真正有效的配置；以能持续输出超过总预算的流式故障验证取消、用量保留、线程收尾及不再启动后续调用，不新增逐阶段高频计时表。
+- 用同一90132ms原片报告墙钟、调用次数、reasoning/总Token、失败用量及并发重叠；定向修复应保留已完成工作，重试不再无区别重复 ASR。字幕/动作时间、人物引用、内容覆盖和播放范围需要共同验收，结构通过不能代替原片语义质量评测。
+
+用户提出“约15分钟完成高质量解析”的预期。**在修复前冻结轮去掉失败重试、沿用该轮首次理解和精修耗时，曾粗估约16分钟**（理解约10分钟、精修约6分钟、准备和索引），该历史估算不是本轮100.3秒的实测结果。最新默认配置未保证固定时限，也没有由完成时长证明高质量；视觉信息变少和空精修已留证。既有验收只确认新Parse通路与相对ASR的秒级时间一致性，未认证毫秒音轨真值或全部人物/动作/对白语义；ASR输出秒、程序保存毫秒的修复继续有效。
+
+依据：[模型适配器](../../gateway/ark/multimodal.py)、[SSE 终态处理](../../gateway/ark/sse.py)、[引用校验](../../engine/parsev2/schemas.py)、[Chunk Workflow](../../agent/video_parse_v2/understanding/workflow.py)、[宿主与 fallback](../../server/service/video_parse.py)、[Consumer 退避](../../server/mq/video_parse_consumer.py)、[最新运行证据索引](../../server/report_docs/model-token-usage-stages-evidence.md)。原始证据 `/private/tmp/anivag-asr-reparse-20261009/` 的 `source/`、`environment.json`、`stage-observations.jsonl`、`understanding-schema-diagnosis.json`、`state-latest.json`、`audit-parse-timing-final.json` 与 `acceptance-final.json`；装配/持久层有后续ROOT变化，根因以该冻结源码及实际调用记录为准。
+
+#### 2026-09-23：ParseV1 历史实测数据与统计口径
+
+以下实测、结构性原因、处理方向和验收条件保留该日期的 ParseV1 语境，不把历史“Understanding 按 Context 串行”或价格统计套到上面的 ParseV2 运行。
 
 以下数据取自 2026-09-23 的本地开发库 `series_parse_job`、`parse_usage_attempt`、`parse_model_call`，共 7 个 Job、17 个 Attempt 和 675 次已记录模型调用；EP07 仍为 QUEUED 且没有消耗，未列入下表。表中“Worker 耗时”是 Consumer 使用单调时钟累计的活跃处理时间，不是视频时长；“已知预估费用”按每次调用保存的本地人民币价格快照计算。它只是当前配置单价估算中已经能够计价的部分，不等同于 Provider 最终账单，也不包含赠金、资源包或折扣；未计价调用和不完整 Attempt 会让配置单价估算缺少一部分，不能据此反推实际账单下界。
 

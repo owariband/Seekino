@@ -34,6 +34,8 @@ models:
   vision:
     source: ark_default
     model: doubao-seed-2-1-pro-260628
+    max_output_tokens: 65536
+    reasoning_effort: none
   vision_fallback:
     source: deepseek_api
     model: deepseek-flash

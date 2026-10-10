@@ -107,6 +107,119 @@ def test_direct_chat_never_loads_video_context_or_uses_search():
     assert "Course" not in model.prompts[0]
 
 
+@pytest.mark.parametrize("vision", [False, True])
+@pytest.mark.parametrize("image_available", [False, True])
+@pytest.mark.parametrize("summary_repeat", [1, 1000])
+def test_current_video_uses_frozen_original_question_and_native_images(
+    tmp_path, vision, image_available, summary_repeat,
+):
+    path = tmp_path / "frame.png"
+    if image_available:
+        path.write_bytes(b"\x89PNG\r\n\x1a\nframe")
+    inputs = _inputs()
+    inputs["user_message"] = "What does lambda mean in the current formula?"
+    inputs["extra_context"] = {"playback": {
+        "seriesId": "course", "videoId": "source-video", "episodeOrder": 1,
+        "positionSeconds": 123456,
+    }}
+    calls = []
+
+    class Realtime:
+        def kick(self, runtime_inputs, **kwargs):
+            calls.append((runtime_inputs, kwargs))
+            return SimpleNamespace(
+                as_dict=lambda **kwargs: {
+                    "summary": "Lambda is a coefficient." * summary_repeat,
+                    "chunks": [], "frames": [], "visual_summary": "", "partial": False,
+                },
+                context=SimpleNamespace(request=SimpleNamespace(anchor_ms=123456)),
+                frames=[SimpleNamespace(image_path=path, timestamp_ms=123456, caption="Formula", artifact_uri="artifact://frame")],
+            )
+
+    class Model:
+        model_name = "configured-model"
+        supports_vision_input = vision
+
+        def run_agent_loop(self, prompt, *, tools, handle_text, **kwargs):
+            available = {tool.name: tool for tool in tools}
+            assert "understand_current_video" in available
+            # A later browser snapshot cannot overwrite this turn's frozen input.
+            inputs["extra_context"]["playback"]["positionSeconds"] = 999999
+            for call_id in ("current-1", "current-2"):
+                output = available["understand_current_video"].invoke({
+                    "type": "tool_call", "id": call_id, "name": "understand_current_video",
+                    "args": {"query": "a shorter model query"},
+                })
+                payload = json.loads(output.content)
+                assert payload["summary"].startswith("Lambda is a coefficient.")
+                assert len(output.content.encode("utf-8")) <= 4096
+                assert bool(output.artifact) is (vision and image_available)
+                assert payload["supervisor_has_images"] is (vision and image_available)
+                if vision and not image_available:
+                    assert "text evidence" in payload["visual_input_warning"]
+                if summary_repeat > 1:
+                    assert payload["omitted_evidence"]
+            handle_text("Here lambda is the coefficient shown in the formula.")
+
+    runtime = SupervisorRuntime(
+        FakeVideoRuntime(), Model(), FakeWebSearcher(), realtime_runtime=Realtime(),
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+        max_tool_result_bytes=4096, max_prompt_chars=10000,
+    )
+    result = runtime.kick(inputs, load_video_context=lambda: [])
+    assert result.content.startswith("Here lambda")
+    assert result.video_result is None
+    assert len(calls) == 1
+    assert calls[0][0]["user_message"] == inputs["user_message"]
+    assert calls[0][0]["extra_context"]["playback"]["positionSeconds"] == 123456
+    assert calls[0][1]["deadline"] > 0
+
+
+@pytest.mark.parametrize("order", [
+    ("search_video_graph", "understand_current_video", "search_web"),
+    ("understand_current_video", "search_web", "search_video_graph"),
+])
+def test_three_tools_preserve_approved_answer_and_current_video_explanation(order):
+    class Realtime:
+        def kick(self, runtime_inputs, **kwargs):
+            return SimpleNamespace(
+                frames=(),
+                as_dict=lambda **kwargs: {
+                    "summary": "Lambda is a coefficient.", "chunks": [], "frames": [],
+                    "visual_summary": "", "partial": False,
+                },
+            )
+
+    class Model:
+        model_name = "configured-model"
+
+        def run_agent_loop(self, prompt, *, tools, handle_text, **kwargs):
+            assert "最终文本必须包含根据其证据组织的当前视频解释" in prompt
+            assert "不复述或改写其批准答案，网页信息另作补充" in prompt
+            assert "最终文本只写网页补充" not in prompt
+            available = {tool.name: tool for tool in tools}
+            for name in order:
+                payload = json.loads(available[name].invoke({"query": "lambda"}))
+                assert "error" not in payload
+            handle_text(
+                "Current-video explanation: lambda is the coefficient.\n\n"
+                "Web supplement [source](https://example.org/source)."
+            )
+
+    runtime = SupervisorRuntime(
+        FakeVideoRuntime(), Model(), FakeWebSearcher(), realtime_runtime=Realtime(),
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+        max_tool_result_bytes=4096, max_prompt_chars=10000,
+    )
+    result = runtime.kick(_inputs(series_ids=["series"]), load_video_context=lambda: [])
+    assert result.content.startswith("Approved video explanation.\n\n")
+    assert result.content.count("Approved video explanation.") == 1
+    assert "Current-video explanation: lambda is the coefficient." in result.content
+    assert "Web supplement" in result.content
+    assert result.video_result is not None
+    assert result.web_sources[0].url == "https://example.org/source"
+
+
 def test_supervisor_treats_extra_context_as_untrusted_data():
     model = FakeSupervisorModel()
     inputs = _inputs()

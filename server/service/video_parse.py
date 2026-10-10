@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
@@ -187,7 +189,7 @@ class VideoParseRuntimeService:
         self._model_manager: ContextVar[VideoParseModelCallManager | None] = ContextVar(
             "video_parse_v2_model_manager", default=None
         )
-        self._change_events: dict[str, asyncio.Event] = {}
+        self._change_events: dict[str, threading.Event] = {}
         self.agent = ParseAgent(runtime=self)
 
     # Consumer entry points -------------------------------------------------
@@ -405,14 +407,51 @@ class VideoParseRuntimeService:
     async def wait_for_video_change(
         self, video_parse_task_id: str, *, timeout_seconds: float
     ) -> None:
-        event = self._change_events.setdefault(video_parse_task_id, asyncio.Event())
+        event = self._change_events.setdefault(video_parse_task_id, threading.Event())
         try:
-            await asyncio.wait_for(event.wait(), timeout=timeout_seconds)
-        except TimeoutError:
-            pass
+            await asyncio.to_thread(event.wait, timeout_seconds)
         finally:
             event.clear()
 
+    async def generate_realtime(
+        self,
+        binding: GenerativeModelConfig,
+        inputs: Sequence[ImageInput | VideoInput | TextInput],
+        *,
+        schema_name: str,
+        result_type: type[_Result],
+        deadline: float,
+        check_control: Callable[[], None],
+    ) -> _Result:
+        """Reuse Gateway adapters for Chat's derived output under its own budget.
+
+        Base understanding uses ``understand`` and the durable model-call
+        manager. This entry point only produces question-dependent Chat output.
+        """
+
+        async def invoke(selected) -> _Result:
+            check_control()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("realtime model call reached the Chat deadline")
+            bounded = selected.model_copy(update={
+                "request_timeout_seconds": min(selected.request_timeout_seconds, remaining),
+            })
+            result = await asyncio.wait_for(asyncio.to_thread(
+                self._invoke_multimodal, bounded, inputs,
+                schema_name=schema_name, result_type=result_type,
+            ), timeout=remaining)
+            check_control()
+            if time.monotonic() >= deadline:
+                raise TimeoutError("realtime model call reached the Chat deadline")
+            return result
+
+        try:
+            return await invoke(binding)
+        except ContentFilterError:
+            if binding.fallback is None:
+                raise
+            return await invoke(binding.fallback)
 
     async def advance_video_task(
         self, video_parse_task_id: str, lease: LeaseToken

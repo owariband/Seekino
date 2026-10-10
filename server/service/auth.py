@@ -240,3 +240,4 @@ class AuthService:
     @staticmethod
     def _limited(retry: int) -> AuthError:
         return AuthError("请求过于频繁，请稍后重试", status_code=429, code="AUTH_RATE_LIMITED", retry_after_seconds=max(1, int(retry)))
+

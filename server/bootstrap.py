@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 
 from agent.chat.supervisor import SupervisorRuntime
+from agent.chat.realtime_understanding import RealtimeUnderstandingRuntime
 from agent.chat.video_search.runtime import AgentRuntime
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.factory import AgentModelFactory
@@ -40,6 +41,7 @@ from .service.job import ParseJobService
 from .service.library import LibraryService
 from .service.media import MediaService
 from .service.parse_usage import ParseUsageService
+from .service.realtime_understanding import RealtimeUnderstandingService
 from .service.upload import UploadService
 from .service.video_parse import VideoParseRuntimeService
 from .service.video_parse_media import VideoParseMediaService
@@ -58,6 +60,7 @@ class ApplicationServices:
     parse_usage: ParseUsageService | None = None
     agent_model_factory: AgentModelFactory | None = None
     tracing: LangfuseTracing | None = None
+    realtime_understanding: RealtimeUnderstandingService | None = None
     auth: AuthService | None = None
     _closed: bool = field(default=False, init=False, repr=False)
 
@@ -78,6 +81,8 @@ class ApplicationServices:
                 cleanup.callback(self.tracing.close)
             if self.agent_model_factory is not None:
                 cleanup.callback(self.agent_model_factory.close)
+            if self.realtime_understanding is not None:
+                cleanup.callback(self.realtime_understanding.close)
             cleanup.callback(self.agent.close)
             if self.parse_consumer is not None:
                 cleanup.callback(self.parse_consumer.close)
@@ -211,6 +216,15 @@ def _build_application_services(
         parse_usage=parse_usage,
         tracing=tracing,
     )
+    realtime_service = RealtimeUnderstandingService(
+        v2_repository, v2_queue, v2_runtime, artifact_store,
+        gateway_config=gateway_config,
+        default_parse_config=parse_defaults.to_video_parse_v2(),
+        worker_id=settings.mq.consumer_id,
+        lease_duration=settings.mq.lease_duration,
+        heartbeat_interval=settings.mq.heartbeat_interval,
+    )
+    construction_cleanup.callback(realtime_service.close)
     query_model_name = settings.agent_query_model or agent_model_config.model
     evaluator_model_name = settings.agent_evaluator_model or agent_model_config.model
     chat_model_name = settings.agent_chat_model or agent_model_config.model
@@ -308,6 +322,11 @@ def _build_application_services(
                 reasoning_effort=agent_config.supervisor_reasoning_effort,
             ),
             WebSearcher(),
+            realtime_runtime=RealtimeUnderstandingRuntime(
+                host=realtime_service,
+                execution_timeout_seconds=agent_config.execution_timeout_seconds,
+                max_prompt_chars=agent_config.max_prompt_chars,
+            ),
             max_web_results=agent_config.web_search_max_results,
             web_timeout_seconds=agent_config.web_search_timeout_seconds,
             execution_timeout_seconds=agent_config.execution_timeout_seconds,
@@ -369,5 +388,6 @@ def _build_application_services(
         parse_usage=parse_usage,
         agent_model_factory=agent_model_factory,
         tracing=tracing,
+        realtime_understanding=realtime_service,
         auth=auth,
     )

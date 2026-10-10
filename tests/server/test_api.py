@@ -65,9 +65,9 @@ from server.service.upload import UploadService, UploadServiceConfig
 from server.storage.artifact import LocalArtifactStore
 
 
-def _read_all(tool, video_chunk_id: str, *, collection: str) -> dict:
+def _read_all(tool, video_chunk_id: str) -> dict:
     overview = json.loads(tool.invoke({
-        "collection": collection, "reference": video_chunk_id,
+        "video_chunk_id": video_chunk_id,
         "section": "overview",
     }))
     sections = {}
@@ -79,7 +79,7 @@ def _read_all(tool, video_chunk_id: str, *, collection: str) -> dict:
             end = total
             while True:
                 page = json.loads(tool.invoke({
-                    "collection": collection, "reference": video_chunk_id,
+                    "video_chunk_id": video_chunk_id,
                     "section": name,
                     "start": start,
                     "end": end,
@@ -95,17 +95,6 @@ def _read_all(tool, video_chunk_id: str, *, collection: str) -> dict:
             start = end
         sections[name] = json.loads("".join(content))
     return sections
-
-
-def _write_canvas(tools_by_name, operation: str, fields: dict) -> dict:
-    collection = "draft" if "draft" in operation else "approved"
-    current = json.loads(tools_by_name["get_context_canvas"].invoke({"collection": collection}))
-    receipt = json.loads(tools_by_name["write_context_canvas"].invoke({
-        "batch_id": uuid4().hex, "expected_revision": current["revision"],
-        "operations": [{"operation": operation, **fields}],
-    }))
-    assert "error" not in receipt
-    return receipt["results"][0]
 
 
 @dataclass
@@ -280,18 +269,9 @@ class _AgentModelStub:
     ):
         tools_by_name = {tool.name: tool for tool in tools}
         if "action" in result_type.model_fields:
-            cursor = None
-            item_ids = []
-            while True:
-                catalog = json.loads(tools_by_name["get_context_canvas"].invoke({
-                    "collection": "draft", "cursor": cursor,
-                }))
-                item_ids.extend(item["video_chunk_id"] for item in catalog["items"])
-                cursor = catalog["next_cursor"]
-                if cursor is None:
-                    break
-            for video_chunk_id in item_ids:
-                _read_all(tools_by_name["get_context_canvas"], video_chunk_id, collection="draft")
+            catalog = json.loads(tools_by_name["get_draft_catelog"].invoke({}))
+            for item in catalog["items"]:
+                _read_all(tools_by_name["read_draft_item"], item["video_chunk_id"])
             return result_type.model_validate({
                 "action": "complete", "advice": "回答与证据一致，可以交付。",
             })
@@ -314,11 +294,8 @@ class _AgentModelStub:
     ):
         import json
 
-        tools_by_name = {tool.name: tool for tool in tools}
-        assert set(tools_by_name) == {"get_context_canvas", "write_context_canvas"}
-        assert set(tools_by_name["write_context_canvas"].args_schema.model_fields) == {
-            "batch_id", "expected_revision", "operations",
-        }
+        update_video_item = next(tool for tool in tools if tool.name == "update_video_item")
+        assert set(update_video_item.args_schema.model_fields) == {"video_chunk_id", "claim"}
         assert max_model_calls is None or (type(max_model_calls) is int and max_model_calls > 0)
         assert request_timeout_seconds is not None
         assert request_timeout_seconds > 0
@@ -332,7 +309,7 @@ class _AgentModelStub:
         handle_text("以下片段支持这个结论。")
         for video_chunk_id in chunk_ids:
             check_control and check_control()
-            _write_canvas(tools_by_name, "upsert_video_item", {
+            update_video_item.invoke({
                 "video_chunk_id": video_chunk_id,
                 "claim": f"片段 {video_chunk_id} 支持结论。",
             })
@@ -2200,8 +2177,8 @@ def test_joined_chunk_evidence_in_json_and_sse_always_contains_series_id(
                 },
             }))
             for item in result["items"]:
-                _read_all(tools_by_name["get_context_canvas"], item["video_chunk_id"], collection="retrieval")
-                _write_canvas(tools_by_name, "upsert_draft_item", {
+                _read_all(tools_by_name["read_trieve_item"], item["video_chunk_id"])
+                tools_by_name["update_draft_item"].invoke({
                     "video_chunk_id": item["video_chunk_id"],
                     "start_seconds": item["start_seconds"],
                     "end_seconds": item["end_seconds"],

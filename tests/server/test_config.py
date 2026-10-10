@@ -10,7 +10,7 @@ import yaml
 from gateway.config import ArkModelSourceConfig, load_config
 from server.config import ServerSettings
 from server.config.elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
-from server.config.parse_profile import ParseConfig, resolve_embedding_config
+from server.config.parse_profile import ParseConfig, ParseVisionConfig, resolve_embedding_config
 from server.config.retrieval import RetrievalConfig, resolve_retrieval_model_limits
 from server.config.settings import (
     resolve_agent_request_timeout_seconds,
@@ -531,6 +531,57 @@ def test_parse_defaults_preserve_settings_snapshot_after_embedding_environment_c
     )
     assert defaults.embedding.model == gateway.multimodal_embedding.model
     assert defaults.embedding.video_fps == gateway.multimodal_embedding.fps
+
+
+def test_vision_controls_reach_frozen_task_without_changing_asr(monkeypatch):
+    _clean_anivag_environment(monkeypatch)
+    settings = ServerSettings.from_environment()
+    gateway = load_config()
+    defaults = ParseConfig.from_defaults(
+        runtime=settings.parse, gateway=gateway, upload=settings.upload, images=settings.images,
+        embedding_model=settings.video_embedding_model,
+        embedding_dimensions=settings.text_vector_dimensions,
+        embedding_fps=settings.video_embedding_fps,
+    )
+    frozen = defaults.to_video_parse_v2()
+    assert frozen.models.understanding.max_output_tokens == (
+        65536 if gateway.config_version == 2 else None
+    )
+    assert frozen.models.understanding.reasoning_effort == (
+        "none" if gateway.config_version == 2 else None
+    )
+    assert frozen.models.asr.reasoning_effort is None
+    assert frozen.models.asr.max_output_tokens is None
+
+    historical = frozen.model_dump(mode="json")
+    historical["models"]["understanding"].pop("reasoning_effort")
+    historical["models"]["understanding"]["max_output_tokens"] = 8192
+    restored = type(frozen).model_validate(historical)
+    assert restored.models.understanding.reasoning_effort is None
+    assert restored.models.understanding.max_output_tokens == 8192
+
+
+@pytest.mark.parametrize("by_alias", [False, True])
+def test_unset_vision_reasoning_preserves_legacy_request_shape(by_alias):
+    legacy = {
+        "source": "ark_default", "model": "legacy-vision", "input_mode": "video",
+        "fps": 1.0, "max_frames_per_window": None, "max_output_tokens": None,
+    }
+    expected = {
+        (ParseVisionConfig.model_fields[key].alias if by_alias else key): value
+        for key, value in legacy.items()
+    }
+    for payload in (legacy, {**legacy, "reasoning_effort": None}):
+        config = ParseVisionConfig.model_validate(payload)
+        assert config.model_dump(mode="json", by_alias=by_alias) == expected
+        assert ParseVisionConfig.model_validate_json(
+            config.model_dump_json(by_alias=by_alias)
+        ) == config
+    configured = ParseVisionConfig.model_validate({**legacy, "reasoning_effort": "none"})
+    key = "reasoningEffort" if by_alias else "reasoning_effort"
+    assert configured.model_dump(mode="json", by_alias=by_alias) == {
+        **expected, key: "none",
+    }
 
 
 def test_retrieval_model_limits_reuse_yaml_runtime_precedence(monkeypatch):

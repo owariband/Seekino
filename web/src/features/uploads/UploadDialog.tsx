@@ -202,7 +202,7 @@ function ParseConfigFields({ value, defaults, onChange }: {
         })}><option value="video">直传视频</option><option value="ordered_frames">逐帧图片</option></select></label>
         <ConfigNumber label="取帧 FPS" value={value.vision.fps} min={0.2} max={5} step="any" onChange={(v) => update("vision", { fps: v ?? 0 })} />
         {value.vision.inputMode === "ordered_frames" ? <ConfigNumber label="每段最多帧数" value={value.vision.maxFramesPerWindow} min={1} max={600} onChange={(v) => update("vision", { maxFramesPerWindow: v ?? 0 })} /> : null}
-        <ConfigNumber label="最大输出 Token" value={value.vision.maxOutputTokens} min={256} max={32768} optional onChange={(v) => update("vision", { maxOutputTokens: v })} />
+        <ConfigNumber label="最大输出 Token" value={value.vision.maxOutputTokens} min={256} max={262144} optional onChange={(v) => update("vision", { maxOutputTokens: v })} />
       </div>
     </details>
     <details className={styles.configGroup}>

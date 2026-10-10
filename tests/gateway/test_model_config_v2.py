@@ -16,7 +16,7 @@ def payload():
     return yaml.safe_load((ROOT / "config.yaml").read_text())
 
 
-def test_migrated_default_preserves_every_existing_setting():
+def test_default_changes_only_vision_controls_and_preserves_other_settings():
     old = load_config(LEGACY)
     new = load_config(ROOT / "config.yaml")
     old_data, new_data = old.model_dump(), new.model_dump()
@@ -24,11 +24,42 @@ def test_migrated_default_preserves_every_existing_setting():
     old_data["config_version"] = 2
     old_data["video_parser"]["transcription_source"] = "ark_default"
     old_data["video_parser"]["vision_source"] = "ark_default"
+    assert old_data["video_parser"]["vision_max_output_tokens"] is None
+    assert old_data["video_parser"]["vision_reasoning_effort"] is None
+    old_data["video_parser"]["vision_max_output_tokens"] = 65536
+    old_data["video_parser"]["vision_reasoning_effort"] = "none"
     assert not old_data["tracing"]["enabled"] and not new_data["tracing"]["enabled"]
     assert new_data == old_data
     assert required_api_key_env_names(new) == required_api_key_env_names(old)
     for stage in ("transcription", "vision"):
         assert new.stage_source(stage) == old.stage_source(stage)
+
+
+def test_vision_controls_accept_larger_budget_and_preserve_explicit_reasoning():
+    data = payload()
+    data["models"]["vision"].update(max_output_tokens=131072, reasoning_effort="low")
+    config = GatewayConfig.model_validate(data)
+    assert config.video_parser.vision_max_output_tokens == 131072
+    assert config.video_parser.vision_reasoning_effort == "low"
+    assert GatewayConfig.model_validate(config.model_dump()) == config
+
+
+def test_vision_reasoning_conflict_is_rejected_before_runtime():
+    data = payload()
+    data["video_parser"]["vision_reasoning_effort"] = "high"
+    with pytest.raises(ValidationError, match="configure only"):
+        GatewayConfig.model_validate(data)
+
+
+def test_unsupported_vision_adapter_rejects_reasoning_controls():
+    data = payload()
+    data["model_sources"]["external_vision"] = {
+        "adapter": "openai_vision", "provider": "vision_vendor",
+        "base_url": "https://vision.example/v1", "api_key_env": "VISION_KEY",
+    }
+    data["models"]["vision"].update(source="external_vision", reasoning_effort="low")
+    with pytest.raises(ValidationError, match="openai_vision does not support reasoning_effort"):
+        GatewayConfig.model_validate(data)
 
 
 def test_old_parsing_keeps_implicit_ark_credentials_independent_of_agent_sources():

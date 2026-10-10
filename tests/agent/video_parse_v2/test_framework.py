@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from agent.common.chunk_understanding import understand_chunk
 from agent.video_parse_v2 import ParseAgent
 from agent.video_parse_v2.timelineEvent_canvas import CanvasCompletion
 from agent.video_parse_v2.prompts import build_canvas_understanding_prompt
@@ -377,8 +378,109 @@ def test_chunk_workflow_failure_never_notifies_and_always_cleans_media(failure) 
     runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
 
 
+def test_shared_chunk_understanding_prepares_asr_and_visual_concurrently() -> None:
+    async def run():
+        visual_started = asyncio.Event()
+        asr_started = asyncio.Event()
+        asr_result = {"transcript": []}
+        ocr_result = OCRResult.model_validate({"lines": []})
+
+        async def prepare_visual():
+            visual_started.set()
+            await asr_started.wait()
+
+        async def transcribe():
+            asr_started.set()
+            await visual_started.wait()
+            return asr_result
+
+        read_text = AsyncMock(return_value=ocr_result)
+        understand = AsyncMock(return_value=_result(offset_ms=60_000))
+        result = await asyncio.wait_for(understand_chunk(
+            start_ms=60_000,
+            end_ms=80_000,
+            ocr_enabled=True,
+            understanding_enabled=True,
+            prepare_visual=prepare_visual,
+            transcribe=transcribe,
+            read_text=read_text,
+            understand=understand,
+        ), timeout=1)
+        assert result == _result(offset_ms=60_000)
+        read_text.assert_awaited_once()
+        understand.assert_awaited_once()
+        assert understand.await_args.kwargs["asr_result"] is asr_result
+        assert understand.await_args.kwargs["ocr_result"] is ocr_result
+
+    asyncio.run(run())
 
 
+@pytest.mark.parametrize("failure", ["visual", "asr", "cancel"])
+def test_chunk_preparation_failure_finishes_both_branches_before_cleanup(failure) -> None:
+    async def run():
+        execution = ChunkExecution(
+            "chunk-task-0", "video-task-1", 0, 0, 20_000, 0, 20_000,
+            _inputs(), _lease(),
+        )
+        visual_started = asyncio.Event()
+        asr_started = asyncio.Event()
+        finished: set[str] = set()
+        original_error = RuntimeError("preparation failed")
+
+        async def prepare_visual(loaded):
+            visual_started.set()
+            try:
+                await asr_started.wait()
+                if failure == "visual":
+                    raise original_error
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                finished.add("visual")
+
+        async def transcribe(loaded):
+            asr_started.set()
+            try:
+                await visual_started.wait()
+                if failure == "asr":
+                    raise original_error
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                finished.add("asr")
+
+        async def cleanup(loaded):
+            assert loaded is execution
+            assert finished == {"visual", "asr"}
+
+        runtime = SimpleNamespace(
+            load_chunk_execution=AsyncMock(return_value=execution),
+            prepare_chunk_visual=prepare_visual,
+            transcribe_chunk=transcribe,
+            understand_chunk=AsyncMock(),
+            commit_chunk_result=AsyncMock(),
+            notify_chunk_committed=AsyncMock(),
+            cleanup_chunk_execution=AsyncMock(side_effect=cleanup),
+        )
+        task = asyncio.create_task(
+            ChunkUnderstandingWorkflow(runtime=runtime).run("chunk-task-0")
+        )
+        await asyncio.wait_for(asyncio.gather(
+            visual_started.wait(), asr_started.wait(),
+        ), timeout=1)
+        if failure == "cancel":
+            task.cancel()
+        expected_error = asyncio.CancelledError if failure == "cancel" else RuntimeError
+        with pytest.raises(expected_error) as captured:
+            await asyncio.wait_for(task, timeout=1)
+        if failure != "cancel":
+            assert captured.value is original_error
+        runtime.understand_chunk.assert_not_awaited()
+        runtime.commit_chunk_result.assert_not_awaited()
+        runtime.notify_chunk_committed.assert_not_awaited()
+        runtime.cleanup_chunk_execution.assert_awaited_once_with(execution)
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("offset_ms", [0, 60_000], ids=["first-chunk", "second-chunk"])

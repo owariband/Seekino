@@ -47,6 +47,8 @@ from ..model.job import (
     IntervalParseContent,
     IntervalParseTask,
     IntervalParseTaskStatus,
+    ParseJobStatus,
+    SeriesParseJob,
     VideoParseTask,
     VideoParseTaskStatus,
     interval_full_ready_mask,
@@ -127,6 +129,20 @@ class HydratedRetrievalCandidate:
     facts: ChunkRetrievalFacts
     evidence: VideoChunkEvidence
     contexts: tuple[ChunkRetrievalFacts, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RealtimeChunkState:
+    chunk_parse_task_id: str
+    video_chunk_id: str
+    sequence_no: int
+    start_ms: int
+    end_ms: int
+    status: str
+    content: VideoParseResult | None
+    content_version: int | None
+    last_error: dict | None
+    parent_error: str | None = None
 
 
 def invalidate_series_prefixes_from(
@@ -249,6 +265,166 @@ class VideoParseRepository:
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+
+    def ensure_realtime_task(
+        self,
+        *,
+        tenant_id: str,
+        video_id: str,
+        default_parse_config: ParseConfig,
+        now: datetime | None = None,
+    ) -> VideoParseTaskInputState:
+        """Reuse the latest frozen V2 task, or create an unaccepted base task.
+
+        Existing tasks use parent -> Video lock order. New task creation locks
+        the Video and retries if a parent appeared while acquiring that lock.
+        Unaccepted tasks remain outside the full Parse delivery queues.
+        """
+
+        created_at = now if now is not None else now_utc()
+        while True:
+            with self._session_factory() as session:
+                candidate_id = _latest_video_task_id(session, video_id)
+            with self._session_factory.begin() as session:
+                task = None
+                if candidate_id is not None:
+                    task = session.scalar(select(VideoParseTask).where(
+                        VideoParseTask.id == candidate_id,
+                        VideoParseTask.is_deleted.is_(False),
+                    ).with_for_update())
+                    if task is None:
+                        continue
+                video = session.scalar(select(Video).where(
+                    Video.video_id == video_id,
+                ).with_for_update())
+                series = session.get(Series, video.series_id) if video is not None else None
+                if video is None or series is None or series.tenant_id != tenant_id or video.upload_status != "COMPLETED":
+                    raise VideoParseTaskNotFoundError("Video does not exist in this workspace")
+                if _latest_video_task_id(session, video_id) != candidate_id:
+                    # Release the Video lock before locking a newly observed
+                    # parent so parent -> Video remains consistent everywhere.
+                    continue
+                runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY] if task else {}
+                is_placeholder = task is not None and (
+                    not runtime.get("accepted")
+                    and task.status == VideoParseTaskStatus.PENDING.value
+                    and runtime.get("execution_mode") in {None, "v1"}
+                )
+                is_v2 = task is not None and (
+                    runtime.get("execution_mode") == "v2"
+                    or (runtime.get("execution_mode") is None and task.pipeline_version == "v2")
+                    or is_placeholder
+                )
+                if is_placeholder and session.scalar(select(SeriesParseJob.job_id).where(
+                    SeriesParseJob.video_id == video_id,
+                    SeriesParseJob.status.in_([
+                        ParseJobStatus.QUEUED.value, ParseJobStatus.RUNNING.value,
+                        ParseJobStatus.RETRY_WAIT.value,
+                    ]),
+                ).limit(1)) is not None:
+                    raise VideoParseConflictError("Video has an active legacy Parse worker")
+                if is_v2:
+                    config = ParseConfig.model_validate(task.parse_config)
+                    if task.chunk_count != math.ceil(video.duration_seconds / (config.chunk_duration * 1000)):
+                        raise VideoParseConflictError("VideoParseTask has an incompatible Chunk count")
+                    if not runtime.get("accepted"):
+                        detail = _ensure_runtime(task.detail)
+                        detail[RUNTIME_DETAIL_KEY].update({"execution_mode": "v2", "realtime_only": True})
+                        task.detail = detail
+                else:
+                    if task is not None and task.status not in {
+                        VideoParseTaskStatus.COMPLETE.value,
+                        VideoParseTaskStatus.PARSING_FAILED.value,
+                        VideoParseTaskStatus.INDEXING_FAILED.value,
+                    }:
+                        raise VideoParseConflictError("Video has an active task from another Parse pipeline")
+                    config = default_parse_config
+                    task = VideoParseTask(
+                        id=str(uuid4()), video_id=video_id, pipeline_version="v2",
+                        status=VideoParseTaskStatus.PENDING.value,
+                        parse_config=config.model_dump(mode="json"),
+                        chunk_count=math.ceil(video.duration_seconds / (config.chunk_duration * 1000)),
+                        version=1 if task is None else task.version + 1,
+                        next_execute_time=created_at, attempt_count=0,
+                        max_attempts=config.execution.max_retry_count + 1,
+                        lease_version=0, processing_duration_ms=0,
+                        processing_timing_complete=True, is_test=False, is_deleted=False,
+                        detail={RUNTIME_DETAIL_KEY: {
+                            "accepted": False, "execution_mode": "v2", "realtime_only": True,
+                        }}, create_time=created_at, update_time=created_at,
+                    )
+                    session.add(task)
+                session.flush()
+                return _task_input_state(task, video, tenant_id=tenant_id, series=series)
+
+    def load_realtime_chunks(
+        self,
+        video_parse_task_id: str,
+        *,
+        tenant_id: str,
+        video_id: str,
+        task_version: int,
+    ) -> tuple[RealtimeChunkState, ...]:
+        """Read current durable base evidence without requiring an index receipt."""
+
+        with self._session_factory() as session:
+            task = session.scalar(
+                select(VideoParseTask)
+                .join(Video, Video.video_id == VideoParseTask.video_id)
+                .join(Series, Series.series_id == Video.series_id)
+                .where(
+                    VideoParseTask.id == video_parse_task_id,
+                    VideoParseTask.video_id == video_id,
+                    VideoParseTask.version == task_version,
+                    VideoParseTask.is_deleted.is_(False),
+                    Series.tenant_id == tenant_id,
+                )
+            )
+            if task is None or _latest_video_task_id(session, video_id) != task.id:
+                raise VideoParseConflictError("Realtime Parse task changed; retry with the latest task")
+            runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY]
+            parent_error = None
+            if runtime.get("accepted") is True:
+                parent_error = _video_failure_status(task)
+                if task.status in {VideoParseTaskStatus.PARSING_FAILED.value, VideoParseTaskStatus.INDEXING_FAILED.value}:
+                    parent_error = task.status
+            rows = session.execute(
+                select(ChunkParseTask, VideoChunk, ChunkParseContent)
+                .join(VideoChunk, VideoChunk.video_chunk_id == ChunkParseTask.video_chunk_id)
+                .outerjoin(ChunkParseContent, ChunkParseContent.chunk_parse_task_id == ChunkParseTask.id)
+                .where(ChunkParseTask.video_parse_task_id == task.id)
+                .order_by(VideoChunk.sequence_no)
+            )
+            return tuple(RealtimeChunkState(
+                chunk_parse_task_id=child.id, video_chunk_id=chunk.video_chunk_id,
+                sequence_no=chunk.sequence_no, start_ms=chunk.start_seconds,
+                end_ms=chunk.end_seconds, status=child.status,
+                content=(VideoParseResult.model_validate(content.content)
+                         if child.status == ChunkParseTaskStatus.COMPLETE.value and content is not None else None),
+                content_version=content.version if content is not None else None,
+                last_error=deepcopy(child.last_error),
+                parent_error=parent_error,
+            ) for child, chunk, content in rows)
+
+    def finish_realtime_preparation(
+        self, lease: VideoParseLease, *, now: datetime | None = None,
+    ) -> None:
+        """Release topology preparation; only accepted tasks enter full Parse."""
+
+        finished_at = now if now is not None else now_utc()
+        with self._session_factory.begin() as session:
+            task = _locked_video_lease(session, lease, finished_at)
+            runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY]
+            task.status = (VideoParseTaskStatus.PARSING.value if runtime.get("accepted")
+                           else VideoParseTaskStatus.PENDING.value)
+            task.lease_owner = None
+            task.lease_expire_time = None
+            task.heartbeat_time = None
+            task.next_execute_time = finished_at
+            task.update_time = finished_at
+            video = session.get(Video, task.video_id)
+            if video is not None:
+                video.parse_status = task.status
 
     def get_chunk_evidence(
         self, video_chunk_id: str, *, tenant_id: str,
@@ -1925,7 +2101,6 @@ class VideoParseRepository:
                 raise VideoParseConflictError("Prefix target no longer exists")
             return _content_state(*row)
 
-
     def commit_prefix(
         self,
         lease: PrefixParseLease,
@@ -2161,6 +2336,7 @@ def _video_chunk_state(chunk: VideoChunk) -> VideoChunkState:
 def _task_state(task: VideoParseTask) -> VideoParseTaskState:
     return VideoParseTaskState(
         video_parse_task_id=task.id,
+        created_by_user_id=task.created_by_user_id,
         video_id=task.video_id,
         pipeline_version=task.pipeline_version,
         status=task.status,
@@ -2183,7 +2359,6 @@ def _task_state(task: VideoParseTask) -> VideoParseTaskState:
         detail=deepcopy(dict(task.detail)),
         create_time=task.create_time,
         update_time=task.update_time,
-        created_by_user_id=task.created_by_user_id,
     )
 
 
@@ -2419,6 +2594,21 @@ def _aggregate_video_task(
         raise VideoParseTaskNotFoundError(
             f"VideoParseTask {video_parse_task_id!r} does not exist"
         )
+    runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY]
+    if runtime.get("realtime_only") is True and runtime.get("accepted") is not True:
+        # Base-only requests have independent target failures. They must never
+        # enter the full Parse drain state and block unrelated missing Chunks.
+        detail = _ensure_runtime(task.detail)
+        detail[RUNTIME_DETAIL_KEY].pop("failure_status", None)
+        task.detail = detail
+        task.status = (VideoParseTaskStatus.PREPARING.value
+                       if task.lease_owner is not None else VideoParseTaskStatus.PENDING.value)
+        task.finish_time = None
+        task.update_time = now
+        video = session.get(Video, task.video_id)
+        if video is not None:
+            video.parse_status = task.status
+        return task
     previous_status = task.status
     chunks = list(session.scalars(
         select(ChunkParseTask).where(

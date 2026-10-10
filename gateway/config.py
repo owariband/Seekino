@@ -167,6 +167,7 @@ class AgentFallbackConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: _NonEmptyString
+    supports_vision_input: bool = False
     model: _NonEmptyString
     request_timeout_seconds: float | None = Field(default=None, gt=0)
     max_output_tokens: int | None = Field(default=None, ge=256, le=32_768)
@@ -177,6 +178,7 @@ class AgentModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: _NonEmptyString
+    supports_vision_input: bool = False
     model: _NonEmptyString
     max_output_tokens: int = Field(ge=256, le=32_768)
     request_timeout_seconds: float = Field(gt=0)
@@ -232,7 +234,8 @@ class VideoParseConfig(BaseModel):
     transcription_timeout_seconds: float | None = Field(default=None, gt=0)
     vision_timeout_seconds: float | None = Field(default=None, gt=0)
     transcription_max_output_tokens: int | None = Field(default=None, ge=256, le=32768)
-    vision_max_output_tokens: int | None = Field(default=None, ge=256, le=32768)
+    vision_max_output_tokens: int | None = Field(default=None, ge=256, le=262144)
+    vision_reasoning_effort: Literal["none", "low", "high", "max"] | None = None
     max_frames_per_window: int = Field(default=32, ge=1, le=600)
 
 
@@ -325,6 +328,11 @@ class GatewayConfig(BaseModel):
             source = self.stage_source(stage)
             if not isinstance(source, allowed):
                 raise ValueError(f"{stage} does not support adapter {source.adapter!r}")
+        if (
+            isinstance(self.stage_source("vision"), OpenAIVisionSourceConfig)
+            and self.video_parser.vision_reasoning_effort not in (None, "none")
+        ):
+            raise ValueError("openai_vision does not support reasoning_effort")
         parse_fallback = self.video_parser.fallback.deepseek
         if parse_fallback.protocol == "openai_chat":
             if not isinstance(
@@ -413,10 +421,14 @@ class ParseModelBinding(BaseModel):
     source: _NonEmptyString
     model: _NonEmptyString
     request_timeout_seconds: float | None = Field(default=None, gt=0)
-    max_output_tokens: int | None = Field(default=None, ge=256, le=32768)
+    max_output_tokens: int | None = Field(default=None, ge=256, le=262144)
 
 
-class FallbackModelBinding(ParseModelBinding):
+class VisionModelBinding(ParseModelBinding):
+    reasoning_effort: Literal["none", "low", "high", "max"] | None = None
+
+
+class FallbackModelBinding(VisionModelBinding):
     reasoning_effort: Literal["none", "low", "high", "max"] = "none"
 
 
@@ -452,7 +464,8 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
     for stage, legacy in (("transcription", "transcript"), ("vision", "video")):
         if stage not in models:
             continue
-        binding = ParseModelBinding.model_validate(models[stage])
+        binding_type = VisionModelBinding if stage == "vision" else ParseModelBinding
+        binding = binding_type.model_validate(models[stage])
         if any(
             key in parser
             for key in (
@@ -460,6 +473,7 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
                 f"{stage}_source",
                 f"{stage}_timeout_seconds",
                 f"{stage}_max_output_tokens",
+                f"{stage}_reasoning_effort",
             )
         ):
             raise ValueError(
@@ -469,6 +483,8 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
         parser[f"{stage}_source"] = binding.source
         parser[f"{stage}_timeout_seconds"] = binding.request_timeout_seconds
         parser[f"{stage}_max_output_tokens"] = binding.max_output_tokens
+        if isinstance(binding, VisionModelBinding):
+            parser["vision_reasoning_effort"] = binding.reasoning_effort
     if "vision_fallback" in models:
         if not isinstance(parser.get("fallback", {}), Mapping):
             raise ValueError("video_parser.fallback must be a mapping")

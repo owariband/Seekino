@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 
 from engine.common.config import VideoParseRuntimeConfig
 from agent.video_parse_v2.input import (
@@ -52,7 +52,17 @@ class ParseVisionConfig(ContractModel):
     input_mode: Literal["video", "ordered_frames"] = "video"
     fps: float = Field(ge=0.2, le=5.0)
     max_frames_per_window: int | None = Field(default=None, ge=1, le=600)
-    max_output_tokens: int | None = Field(default=None, ge=256, le=32_768)
+    max_output_tokens: int | None = Field(default=None, ge=256, le=262_144)
+    reasoning_effort: Literal["none", "low", "high", "max"] | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_vision(self, handler: Any) -> dict[str, Any]:
+        vision = handler(self)
+        # Preserve request fingerprints made before this optional field existed.
+        if self.reasoning_effort is None:
+            vision.pop("reasoning_effort", None)
+            vision.pop("reasoningEffort", None)
+        return vision
 
     @model_validator(mode="after")
     def validate_frame_mode(self) -> "ParseVisionConfig":
@@ -149,6 +159,7 @@ class ParseConfig(ContractModel):
                     model=self.vision.model,
                     request_timeout_seconds=self.execution.request_timeout_seconds,
                     max_output_tokens=self.vision.max_output_tokens,
+                    reasoning_effort=self.vision.reasoning_effort,
                     fallback=(
                         VideoParseV2FallbackModelConfig(
                             source=self.fallback.source,
@@ -253,6 +264,7 @@ class ParseConfig(ContractModel):
                 input_mode=vision_input_mode,
                 max_frames_per_window=vision_max_frames,
                 max_output_tokens=runtime.video_max_output_tokens or parser.vision_max_output_tokens,
+                reasoning_effort=parser.vision_reasoning_effort,
             ),
             context=ParseContextConfig(
                 max_events=runtime.max_context_events,
@@ -388,7 +400,8 @@ def default_video_parse_v2_config() -> VideoParseV2Config:
                 source="ark_default",
                 model="doubao-seed-2-1-pro-260628",
                 request_timeout_seconds=600,
-                max_output_tokens=8192,
+                max_output_tokens=65536,
+                reasoning_effort="none",
             ),
             refine=None,
             ocr=None,

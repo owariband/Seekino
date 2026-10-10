@@ -1,7 +1,33 @@
 import { describe, expect, it } from "vitest";
 
+import type { ParseConfig } from "../../api/contracts";
 import type { UploadTask } from "./upload-types";
-import { mediaTypeForFile, taskProgress, taskStatusLabel } from "./upload-types";
+import { mediaTypeForFile, taskProgress, taskStatusLabel, validateParseConfig } from "./upload-types";
+
+const parseDefaults: ParseConfig = {
+  version: 2,
+  window: { chunkDurationSeconds: 60, contextOverlapSeconds: 3, analysisMaxHeight: 720, canonicalMaxHeight: 720 },
+  asr: { mode: "lite", model: "lite", fps: 1, maxOutputTokens: null, concurrency: 4 },
+  vision: { model: "pro", inputMode: "video", fps: 1, maxFramesPerWindow: null, maxOutputTokens: 65536 },
+  context: { maxEvents: 8, maxChars: 2000, backgroundTextEnabled: true, backgroundTextMaxChars: null,
+    backgroundImagesEnabled: true, maxBackgroundImages: null, backgroundImageMaxEdge: 1024 },
+  fallback: { enabled: true, model: "flash", frameFps: 0.5, groupDurationSeconds: 30, maxFramesPerGroup: 15,
+    maxHeight: 720, reasoningEffort: "none", maxOutputTokens: 8192, requestTimeoutSeconds: 1200 },
+  embedding: { model: "embedding", dimensions: 1024, videoFps: 1 },
+  execution: { requestTimeoutSeconds: 600, maxAttempts: 3 },
+};
+
+it.each([
+  ["vision", 65536, null], ["vision", 262144, null],
+  ["vision", 262145, "主解析最大输出 Token"],
+  ["asr", 32768, null], ["asr", 32769, "ASR 最大输出 Token"],
+  ["fallback", 32768, null], ["fallback", 32769, "兜底最大输出 Token"],
+] as const)("validates %s output budget %s without changing other stage limits", (stage, budget, error) => {
+  const config = { ...parseDefaults, [stage]: { ...parseDefaults[stage], maxOutputTokens: budget } };
+  const problem = validateParseConfig(config, parseDefaults);
+  if (error === null) expect(problem).toBeNull();
+  else expect(problem).toContain(error);
+});
 
 function task(overrides: Partial<UploadTask> = {}): UploadTask {
   return {

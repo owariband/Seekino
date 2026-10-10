@@ -35,6 +35,7 @@ from ..repository.video_parse import (
     _error_detail,
     _execution_config,
     _indexed_versions,
+    _latest_video_task_id,
     _positive_int,
     _submitted_intervals_by_member,
     _video_failure_status,
@@ -48,6 +49,103 @@ class MySqlVideoParseQueue:
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+
+    def claim_realtime_preparation(
+        self, video_parse_task_id: str, worker_id: str, *,
+        lease_duration: timedelta, now: datetime | None = None,
+    ) -> VideoParseLease | None:
+        """Claim one fixed topology without accepting the full Parse pipeline."""
+
+        worker = require_nonempty_text(worker_id, "worker_id")
+        _require_lease_duration(lease_duration)
+        claimed_at = now if now is not None else now_utc()
+        with self._session_factory.begin() as session:
+            task = session.scalar(select(VideoParseTask).where(
+                VideoParseTask.id == video_parse_task_id,
+                VideoParseTask.is_deleted.is_(False),
+                VideoParseTask.status.in_([
+                    VideoParseTaskStatus.PENDING.value, VideoParseTaskStatus.PREPARING.value,
+                ]),
+                (VideoParseTask.lease_owner.is_(None)
+                 | (VideoParseTask.lease_expire_time <= claimed_at)),
+            ).with_for_update(skip_locked=True))
+            if task is None or _latest_video_task_id(session, task.video_id) != task.id:
+                return None
+            runtime = _ensure_runtime(task.detail)[RUNTIME_DETAIL_KEY]
+            if not _accepted(task) and runtime.get("realtime_only") is not True:
+                return None
+            task.status = VideoParseTaskStatus.PREPARING.value
+            task.lease_owner = worker
+            task.lease_version += 1
+            task.lease_expire_time = claimed_at + lease_duration
+            task.heartbeat_time = claimed_at
+            task.update_time = claimed_at
+            session.flush()
+            return VideoParseLease(
+                video_parse_task_id=task.id, video_id=task.video_id, worker_id=worker,
+                lease_version=task.lease_version, lease_expire_time=task.lease_expire_time,
+                attempt_count=task.attempt_count, max_attempts=task.max_attempts,
+                parse_config=deepcopy(task.parse_config),
+            )
+
+    def claim_realtime_chunk(
+        self, chunk_parse_task_id: str, worker_id: str, *,
+        lease_duration: timedelta, now: datetime | None = None,
+    ) -> ChunkParseLease | None:
+        """Prioritize the requested Chunk while sharing normal lease capacity.
+
+        Realtime bypasses the full scan's ordering gate, never its concurrency,
+        retry, latest-task or fencing rules.
+        """
+
+        worker = require_nonempty_text(worker_id, "worker_id")
+        _require_lease_duration(lease_duration)
+        claimed_at = now if now is not None else now_utc()
+        with self._session_factory.begin() as session:
+            child = session.scalar(select(ChunkParseTask).where(
+                ChunkParseTask.id == chunk_parse_task_id,
+                ChunkParseTask.status == ChunkParseTaskStatus.QUEUED.value,
+                ChunkParseTask.next_execute_time <= claimed_at,
+            ).with_for_update(skip_locked=True))
+            if child is None:
+                return None
+            parent = session.scalar(select(VideoParseTask).where(
+                VideoParseTask.id == child.video_parse_task_id,
+            ).with_for_update())
+            if parent is None or parent.is_deleted or _latest_video_task_id(session, parent.video_id) != parent.id:
+                return None
+            runtime = _ensure_runtime(parent.detail)[RUNTIME_DETAIL_KEY]
+            allowed = (
+                _accepted(parent) and parent.status == VideoParseTaskStatus.PARSING.value
+            ) or (
+                not _accepted(parent) and runtime.get("realtime_only") is True
+                and parent.status == VideoParseTaskStatus.PENDING.value
+            )
+            if not allowed or _video_failure_status(parent) is not None:
+                return None
+            active = int(session.scalar(select(func.count(ChunkParseTask.id)).where(
+                ChunkParseTask.video_parse_task_id == parent.id,
+                ChunkParseTask.status == ChunkParseTaskStatus.UNDERSTANDING.value,
+            )) or 0)
+            if active >= _positive_int(parent.parse_config.get("batch_max_size"), "batch_max_size"):
+                return None
+            child.status = ChunkParseTaskStatus.UNDERSTANDING.value
+            child.lease_owner = worker
+            child.lease_version += 1
+            child.lease_expire_time = claimed_at + lease_duration
+            child.start_time = child.start_time or claimed_at
+            child.finish_time = None
+            child.last_error = None
+            child.update_time = claimed_at
+            child.detail = _set_dispatch_requested(child.detail, False)
+            session.flush()
+            return ChunkParseLease(
+                chunk_parse_task_id=child.id, video_parse_task_id=parent.id,
+                video_chunk_id=child.video_chunk_id, worker_id=worker,
+                lease_version=child.lease_version, lease_expire_time=child.lease_expire_time,
+                retry_count=child.retry_count,
+                max_retry_count=_nonnegative_int(_execution_config(parent.parse_config).get("max_retry_count"), "max_retry_count"),
+            )
 
     def claim_video(
         self,

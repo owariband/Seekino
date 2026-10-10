@@ -25,6 +25,7 @@ from gateway.agent_model.tool_loop import (
 )
 from gateway.openai.structured import OpenAIStructuredToolAgentModel
 from gateway.usage import track_model_call
+from gateway.media import text_only_messages
 
 _logger = logging.getLogger(__name__)
 
@@ -143,6 +144,8 @@ class ArkFunctionCallingModel:
         context_window_policy: ContextWindowPolicy | None = None,
         client: Any | None = None,
         api_key: str | None = None,
+        supports_vision_input: bool = False,
+        fallback_supports_vision_input: bool = False,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -162,6 +165,8 @@ class ArkFunctionCallingModel:
                 "fallback_request_timeout_seconds must be greater than zero"
             )
         self.model_name = model
+        self.supports_vision_input = supports_vision_input
+        self._fallback_supports_vision_input = fallback_supports_vision_input
         self.primary_model_name = model
         self.fallback_provider_name = (
             ARK_PROVIDER
@@ -239,7 +244,10 @@ class ArkFunctionCallingModel:
                         model_name=model_name,
                         max_output_tokens=max_output_tokens,
                         tools=tools,
-                        messages=messages,
+                        messages=(messages if (
+                            self.supports_vision_input if model_name == self.model_name
+                            else self._fallback_supports_vision_input
+                        ) else text_only_messages(messages)),
                         tool_specs=tool_specs,
                         tool_choice=tool_choice,
                         timeout=request_timeout,
@@ -298,6 +306,7 @@ class ArkFunctionCallingModel:
                 context_window_policy=self.context_window_policy,
                 context_checkpoint=context_checkpoint,
                 initial_messages=initial_messages,
+                supports_vision_input=self.supports_vision_input,
                 provider_label="Ark",
                 error_type=ArkFunctionCallingError,
                 request_turn=request_turn,
@@ -322,10 +331,12 @@ class ArkFunctionCallingFallback:
         request_timeout_seconds: float,
         client: Any | None = None,
         api_key: str | None = None,
+        supports_vision_input: bool = False,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
         self.model_name = model
+        self.supports_vision_input = supports_vision_input
         self.max_output_tokens = max_output_tokens
         self.request_timeout_seconds = request_timeout_seconds
         self._client = client

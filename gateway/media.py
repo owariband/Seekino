@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -58,6 +59,23 @@ class ToolImageArtifact:
                 },
             })
         return content
+
+
+def text_only_messages(messages: list[dict]) -> list[dict]:
+    """Drop actual image blocks when a fallback cannot consume images."""
+    projected = deepcopy(messages)
+    for message in projected:
+        content = message.get("content")
+        if isinstance(content, list):
+            texts = [item.get("text", "") for item in content
+                     if isinstance(item, dict) and item.get("type") in {"text", "input_text"}]
+            had_images = any(isinstance(item, dict) and item.get("type") in {
+                "image_url", "input_image",
+            } for item in content)
+            if had_images:
+                texts.append("Images are unavailable to this model; answer from the supplied text evidence and state visual uncertainty.")
+            message["content"] = "\n".join(texts)
+    return projected
 
 
 def encode_media_file(

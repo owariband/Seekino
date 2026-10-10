@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext
@@ -507,6 +508,7 @@ class AgentChatService:
         source_tenant_id: str | None = None,
     ) -> AgentMessageExecution:
         runtime, config, executor = self._current_config()
+        extra_context = deepcopy(extra_context)
         normalized_workspace = require_nonempty_text(tenant_id, "tenant_id", maximum=64)
         owner_user_id = require_nonempty_text(owner_user_id, "owner_user_id", maximum=64)
         normalized_source = require_nonempty_text(
@@ -517,6 +519,18 @@ class AgentChatService:
         normalized_content = require_nonempty_text(content, "content", maximum=20_000)
         normalized_reference = _canonical_reference(reference)
         requested_scope = _canonical_scope([] if series_ids is None else series_ids)
+        playback_series_id = None
+        playback = extra_context.get("playback") if isinstance(extra_context, dict) else None
+        if isinstance(runtime, SupervisorRuntime) and runtime.realtime_enabled and isinstance(playback, dict):
+            video = self._library.get_video(playback.get("videoId"), tenant_id=normalized_source)
+            position = playback.get("positionSeconds")
+            if (
+                type(position) is not int or not 0 <= position <= video.duration_seconds
+                or playback.get("seriesId") != video.series_id
+                or playback.get("episodeOrder") != video.episode_order
+            ):
+                raise ValueError("playback context does not match the current video")
+            playback_series_id = video.series_id
         requested_top_k = config.default_top_k if top_k is None else top_k
         if (
             isinstance(requested_top_k, bool) or not isinstance(requested_top_k, int)
@@ -567,6 +581,7 @@ class AgentChatService:
                 scope = self._resolve_scope(
                     requested_scope, normalized_source,
                     allow_empty=isinstance(runtime, SupervisorRuntime),
+                    playback_series_id=playback_series_id,
                 )
                 reference_context = self._load_reference(
                     normalized_reference, normalized_conversation_id, normalized_workspace, scope,
@@ -682,14 +697,16 @@ class AgentChatService:
 
     def _resolve_scope(
         self, requested: list[str], tenant_id: str, *, allow_empty: bool,
+        playback_series_id: str | None = None,
     ) -> list[str]:
         if requested:
             series = [
                 self._library.get_series(series_id, tenant_id=tenant_id)
                 for series_id in requested
             ]
-            if any(item.status != "READY" for item in series):
+            if any(item.status != "READY" and item.series_id != playback_series_id for item in series):
                 raise SeriesNotReadyError("selected Series must be READY before retrieval")
+            series = [item for item in series if item.status == "READY"]
         else:
             series = [
                 item for item in self._library.list_series(tenant_id=tenant_id)

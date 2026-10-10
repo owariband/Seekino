@@ -10,6 +10,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from gateway.schema_normalization import inline_schema_refs
+from gateway.media import ToolImageArtifact
 
 
 class DynamicToolSpec(TypedDict):
@@ -24,8 +25,13 @@ class DynamicToolContentItem(TypedDict):
     text: str
 
 
+class DynamicToolImageItem(TypedDict):
+    type: Literal["inputImage"]
+    imageUrl: str
+
+
 class DynamicToolResponse(TypedDict):
-    contentItems: list[DynamicToolContentItem]
+    contentItems: list[DynamicToolContentItem | DynamicToolImageItem]
     success: bool
 
 
@@ -104,11 +110,23 @@ def _output_text(output: object) -> str:
     )
 
 
-def _tool_response(content: object, *, success: bool) -> DynamicToolResponse:
-    return {
+def _tool_response(
+    content: object, *, success: bool, artifact: object = None,
+) -> DynamicToolResponse:
+    response: DynamicToolResponse = {
         "contentItems": [{"type": "inputText", "text": _output_text(content)}],
         "success": success,
     }
+    if success and isinstance(artifact, ToolImageArtifact):
+        for image in artifact.images:
+            if image.description:
+                response["contentItems"].append({
+                    "type": "inputText", "text": image.description,
+                })
+            response["contentItems"].append({
+                "type": "inputImage", "imageUrl": image.data_url,
+            })
+    return response
 
 
 class CodexToolBridge:
@@ -242,6 +260,7 @@ class CodexToolBridge:
             response = _tool_response(
                 output.content,
                 success=output.status != "error",
+                artifact=output.artifact,
             )
         except Exception as exc:
             response = _tool_response(

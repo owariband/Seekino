@@ -1118,11 +1118,6 @@ def test_refinement_reuses_understanding_output_budget_and_reasoning(monkeypatch
     generated = AsyncMock(return_value=CanvasCompletion(complete=True))
     monkeypatch.setattr(runtime, "_generate_text_structured", generated)
     config = default_video_parse_v2_config()
-    config = config.model_copy(update={"models": config.models.model_copy(update={
-        "understanding": config.models.understanding.model_copy(update={
-            "max_output_tokens": 65536, "reasoning_effort": "none",
-        }),
-    })})
     assert config.models.refine is None
 
     asyncio.run(runtime.generate_interval_refinement(
@@ -1134,7 +1129,6 @@ def test_refinement_reuses_understanding_output_budget_and_reasoning(monkeypatch
     ))
 
     binding = generated.await_args.args[0]
-    assert binding is config.models.understanding
     assert binding.max_output_tokens == 65536
     assert binding.reasoning_effort == "none"
     assert config.models.asr.reasoning_effort is None

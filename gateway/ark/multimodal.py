@@ -148,6 +148,10 @@ class ArkMultimodalModel:
         }
         if self.max_output_tokens is not None:
             request["max_output_tokens"] = self.max_output_tokens
+        if self.reasoning_effort == "none":
+            request["thinking"] = {"type": "disabled"}
+        elif self.reasoning_effort is not None:
+            request["reasoning"] = {"effort": self.reasoning_effort}
         effective_timeout = request_timeout_seconds
         if self._request_timeout_seconds is not None:
             effective_timeout = min(
@@ -216,6 +220,10 @@ class ArkMultimodalModel:
         }
         if self.max_output_tokens is not None:
             request["max_output_tokens"] = self.max_output_tokens
+        if self.reasoning_effort == "none":
+            request["thinking"] = {"type": "disabled"}
+        elif self.reasoning_effort is not None:
+            request["reasoning"] = {"effort": self.reasoning_effort}
         client = self._client or self._new_client()
         try:
             with track_model_call(

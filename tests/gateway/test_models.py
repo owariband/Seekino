@@ -180,6 +180,41 @@ def test_ark_structured_model_honors_shorter_per_request_timeout() -> None:
     assert responses.calls[0]["timeout"] == 6.5
 
 
+@pytest.mark.parametrize("reasoning_effort", [None, "none", "low", "high", "max"])
+@pytest.mark.parametrize("streaming", [False, True])
+def test_ark_transmits_output_budget_and_optional_reasoning_controls(
+    reasoning_effort, streaming,
+) -> None:
+    responses = FakeResponses(_result())
+    model = ArkMultimodalModel(
+        "doubao-pro", max_output_tokens=65536, reasoning_effort=reasoning_effort,
+        client=SimpleNamespace(responses=responses),
+    )
+    if streaming:
+        responses.stream.events[0].sequence_number = 1
+        responses.stream.events.insert(0, SimpleNamespace(
+            type="response.output_text.delta", sequence_number=0,
+            delta=_result().model_dump_json(),
+        ))
+        assert "".join(model.stream_text([TextInput("理解片段")])) == _result().model_dump_json()
+    else:
+        assert model.generate(
+            [TextInput("理解片段")], schema_name="structured_result",
+            result_type=StructuredResult,
+        ) == _result()
+
+    call = responses.calls[0]
+    assert call["max_output_tokens"] == 65536
+    if reasoning_effort is None:
+        assert "thinking" not in call and "reasoning" not in call
+    elif reasoning_effort == "none":
+        assert call["thinking"] == {"type": "disabled"}
+        assert "reasoning" not in call
+    else:
+        assert call["reasoning"] == {"effort": reasoning_effort}
+        assert "thinking" not in call
+
+
 def test_ark_text_stream_preserves_original_deltas_and_output_budget() -> None:
     responses = FakeResponses(_result())
     responses.stream = FakeStream(

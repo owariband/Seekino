@@ -203,6 +203,7 @@ class AgentModelFactory:
                     max_output_tokens=max_output_tokens,
                 ),
                 context_window_policy=context_window_policy,
+                supports_vision_input=self._config.supports_vision_input,
             )
         if isinstance(source, ArkModelSourceConfig):
             return ArkFunctionCallingModel(
@@ -218,9 +219,14 @@ class AgentModelFactory:
                 ),
                 context_window_policy=context_window_policy,
                 api_key=self._required_key(self._config.source),
+                supports_vision_input=self._config.supports_vision_input,
+                fallback_supports_vision_input=(
+                    self._config.fallback.supports_vision_input
+                    if self._config.fallback is not None else False
+                ),
             )
         if isinstance(source, CodexModelSourceConfig):
-            return CodexAgentModel(
+            adapter = CodexAgentModel(
                 model=model,
                 reasoning_effort=reasoning_effort,
                 request_timeout_seconds=request_timeout_seconds,
@@ -231,8 +237,10 @@ class AgentModelFactory:
                 max_concurrency=source.max_concurrency,
                 executor=self._codex_executor,
             )
+            adapter.supports_vision_input = self._config.supports_vision_input
+            return adapter
         if isinstance(source, ClaudeCodeModelSourceConfig):
-            return ClaudeAgentModel(
+            adapter = ClaudeAgentModel(
                 model=model,
                 reasoning_effort=reasoning_effort,
                 request_timeout_seconds=request_timeout_seconds,
@@ -245,6 +253,8 @@ class AgentModelFactory:
                 max_concurrency=source.max_concurrency,
                 concurrency_gate=self._claude_concurrency_gate,
             )
+            adapter.supports_vision_input = self._config.supports_vision_input
+            return adapter
         raise TypeError(f"unsupported Agent source: {type(source).__name__}")
 
     def _loop_fallback(
@@ -264,6 +274,7 @@ class AgentModelFactory:
                 request_timeout_seconds
             ),
             api_key=self._required_key(self._config.fallback.source),
+            supports_vision_input=self._config.fallback.supports_vision_input,
         )
 
     def _structured_fallback(

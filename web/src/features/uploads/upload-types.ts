@@ -91,7 +91,7 @@ export function validateParseConfig(config: ParseConfig, defaults: ParseConfig):
     ["ASR 并发", config.asr.concurrency, 1, configuredMax(16, defaults.asr.concurrency), true],
     ["主解析 FPS", config.vision.fps, 0.2, 5],
     ["每段最多帧数", config.vision.maxFramesPerWindow, 1, 600, true],
-    ["主解析最大输出 Token", config.vision.maxOutputTokens, 256, 32768, true],
+    ["主解析最大输出 Token", config.vision.maxOutputTokens, 256, 262144, true],
     ["前序事件数", config.context.maxEvents, 1, configuredMax(100, defaults.context.maxEvents), true],
     ["前序上下文字数", config.context.maxChars, 256, configuredMax(100000, defaults.context.maxChars), true],
     ["背景文字最多字符", config.context.backgroundTextMaxChars, 256, 200000, true],

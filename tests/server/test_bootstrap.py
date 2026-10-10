@@ -744,6 +744,7 @@ def test_application_stops_consumer_before_agent_database_and_vector_store():
     services = ApplicationServices(
         library=None, uploads=None, jobs=None, media=None, retrieval=None,
         agent=SimpleNamespace(close=lambda: order.append("agent")),
+        realtime_understanding=SimpleNamespace(close=lambda: order.append("realtime")),
         parse_consumer=SimpleNamespace(close=lambda: order.append("consumer")),
         agent_model_factory=SimpleNamespace(close=lambda: order.append("model_factory")),
         tracing=SimpleNamespace(close=lambda: order.append("tracing")),
@@ -757,10 +758,10 @@ def test_application_stops_consumer_before_agent_database_and_vector_store():
     runtime = main_module.ApplicationRuntime(services=services, resources=resources)
     runtime.close()
     runtime.close()
-    assert order == ["consumer", "agent", "model_factory", "tracing", "usage_reader", "es", "redis", "database"]
+    assert order == ["consumer", "agent", "realtime", "model_factory", "tracing", "usage_reader", "es", "redis", "database"]
 
 
-@pytest.mark.parametrize("failure", ["consumer", "agent"])
+@pytest.mark.parametrize("failure", ["consumer", "agent", "realtime"])
 def test_application_closes_tracing_after_model_teardown_even_if_host_close_fails(failure):
     from types import SimpleNamespace
 
@@ -776,9 +777,15 @@ def test_application_closes_tracing_after_model_teardown_even_if_host_close_fail
         if failure == "consumer":
             raise RuntimeError("consumer close failed")
 
+    def close_realtime():
+        order.append("realtime")
+        if failure == "realtime":
+            raise RuntimeError("realtime close failed")
+
     services = bootstrap.ApplicationServices(
         library=None, uploads=None, jobs=None, media=None, retrieval=None,
         agent=SimpleNamespace(close=close_agent),
+        realtime_understanding=SimpleNamespace(close=close_realtime),
         parse_consumer=SimpleNamespace(close=close_consumer),
         agent_model_factory=SimpleNamespace(close=lambda: order.append("model_factory")),
         tracing=SimpleNamespace(close=lambda: order.append("tracing")),
@@ -792,7 +799,7 @@ def test_application_closes_tracing_after_model_teardown_even_if_host_close_fail
     with pytest.raises(RuntimeError, match=f"{failure} close failed"):
         runtime.close()
     runtime.close()
-    assert order == ["consumer", "agent", "model_factory", "tracing", "usage_reader", "es", "database"]
+    assert order == ["consumer", "agent", "realtime", "model_factory", "tracing", "usage_reader", "es", "database"]
 
 
 @pytest.mark.parametrize("method", ["embed_query", "embed_image", "embed_sparse"])

@@ -15,6 +15,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 
 from gateway.schema_normalization import inline_schema_refs
+from gateway.media import ToolImageArtifact
 
 _SERVER_NAME = "anivag"
 
@@ -85,6 +86,7 @@ def _build_sdk_tool(
             return _mcp_text_result(
                 _tool_output_text(result.content),
                 is_error=result.status == "error",
+                artifact=result.artifact,
             )
         return _mcp_text_result(_tool_output_text(result), is_error=False)
 
@@ -157,12 +159,23 @@ def _validate_tools(tools: Sequence[BaseTool]) -> None:
         raise ValueError("tool descriptions must not be empty")
 
 
-def _mcp_text_result(text: str, *, is_error: bool) -> dict[str, Any]:
+def _mcp_text_result(
+    text: str, *, is_error: bool, artifact: object = None,
+) -> dict[str, Any]:
     result: dict[str, Any] = {
         "content": [{"type": "text", "text": text}],
     }
     if is_error:
         result["is_error"] = True
+    elif isinstance(artifact, ToolImageArtifact):
+        for image in artifact.images:
+            if image.description:
+                result["content"].append({"type": "text", "text": image.description})
+            header, data = image.data_url.split(",", 1)
+            result["content"].append({
+                "type": "image", "mimeType": header[5:].split(";", 1)[0],
+                "data": data,
+            })
     return result
 
 

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from elasticsearch import Elasticsearch
+from engine.parsev2.validation import parse_content_fingerprint
 from engine.rag import (
     ChunkIndexingContract, EncoderContract, VIDEO_CLIP_PREPROCESS_REVISION,
     VideoClipInputContract,
@@ -34,7 +35,7 @@ from server.model.video import Series, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.agent import AgentRepository
 from server.repository.library import LibraryRepository
-from server.repository.video_parse import VideoParseRepository, parse_content_fingerprint
+from server.repository.video_parse import VideoParseRepository
 from server.service.agent_chat import AgentChatService
 from server.service.library import LibraryService
 from server.service.video_parse_index_coordinator import VideoParseIndexCoordinator

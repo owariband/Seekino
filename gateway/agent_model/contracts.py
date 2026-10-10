@@ -33,6 +33,7 @@ class StructuredToolAgentModel(Protocol):
 class AgentLoopModel(Protocol):
     provider_name: str
     model_name: str
+    supports_vision_input: bool
 
     def run_agent_loop(
         self,
