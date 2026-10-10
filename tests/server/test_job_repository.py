@@ -52,7 +52,7 @@ def _seed_job(
     with session_factory.begin() as session:
         session.add(
             Series(
-                series_id=series_id,
+                id=series_id,
                 tenant_id=tenant_id,
                 name=f"Series {series_id}",
                 description="description",
@@ -63,16 +63,16 @@ def _seed_job(
         )
         session.add(
             Video(
-                video_id=video_id,
+                id=video_id,
                 series_id=series_id,
                 episode_order=1,
                 upload_sequence=1,
-                original_filename="episode.mp4",
-                original_source_uri="artifact://test/media/episode.mp4",
-                inference_proxy_uri=None,
-                content_hash="a" * 64,
-                total_bytes=100,
-                duration_seconds=duration_seconds,
+                filename="episode.mp4",
+                source_uri="artifact://test/media/episode.mp4",
+                proxy_uri=None,
+                hash="a" * 64,
+                size_bytes=100,
+                duration_ms=duration_seconds,
                 upload_status="COMPLETED",
                 parse_status="QUEUED",
                 upload_progress=100,
@@ -81,7 +81,7 @@ def _seed_job(
         )
         session.add(
             SeriesParseJob(
-                job_id=job_id,
+                id=job_id,
                 series_id=series_id,
                 video_id=video_id,
                 pipeline_version="pipeline-v1",
@@ -90,7 +90,7 @@ def _seed_job(
                 progress=0,
                 attempt_count=0,
                 max_attempts=max_attempts,
-                available_at=now,
+                next_execute_time=now,
                 lease_version=0,
             )
         )
@@ -156,8 +156,8 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
                 processing_timing_complete=True,
                 last_error={"code": "MODEL_ERROR"},
                 detail={"source": "upload"},
-                create_time=first_time,
-                update_time=first_time,
+                create_time=datetime_to_unix_time_ms(first_time),
+                update_time=datetime_to_unix_time_ms(first_time),
             ),
             VideoParseTask(
                 id=second_id,
@@ -173,30 +173,30 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
                 processing_duration_ms=0,
                 processing_timing_complete=True,
                 detail={"source": "reparse"},
-                create_time=second_time,
-                update_time=second_time,
+                create_time=datetime_to_unix_time_ms(second_time),
+                update_time=datetime_to_unix_time_ms(second_time),
             ),
             UploadSession(
-                upload_session_id=upload_session_id,
+                id=upload_session_id,
                 tenant_id="local-default",
                 series_id=session.get(Video, video_id).series_id,
                 episode_order=1,
                 upload_sequence=1,
-                original_filename="episode.mp4",
+                filename="episode.mp4",
                 media_type="video/mp4",
-                total_size_bytes=100,
-                preferred_segment_size_bytes=100,
-                total_segments=1,
+                size_bytes=100,
+                segment_size_bytes=100,
+                segment_count=1,
                 version=1,
                 status=UploadSessionStatus.COMPLETED.value,
                 idempotency_key="v2-task-observation",
-                expires_at=second_time,
-                completed_at=first_time,
+                expire_time=second_time,
+                finish_time=first_time,
                 video_id=video_id,
                 job_id=job_id,
-                initial_video_parse_task_id=first_id,
-                created_at=first_time,
-                updated_at=first_time,
+                initial_task_id=first_id,
+                create_time=datetime_to_unix_time_ms(first_time),
+                update_time=datetime_to_unix_time_ms(first_time),
             ),
         ])
 
@@ -295,13 +295,13 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
         task.status = "PARSING_FAILED"
         task.detail = {"_worker_runtime_v2": {"accepted": True}}
         session.add(VideoChunk(
-            video_chunk_id=chunk_id,
+            id=chunk_id,
             video_id=video_id,
             sequence_no=0,
-            start_seconds=0,
-            end_seconds=10,
-            analysis_window_start_seconds=0,
-            analysis_window_end_seconds=10,
+            start_ms=0,
+            end_ms=10,
+            window_start_ms=0,
+            window_end_ms=10,
             chunk_media_ref="artifact://test/chunk.mp4",
             analysis_window_media_ref="artifact://test/window.mp4",
             transcript=[],
@@ -309,8 +309,8 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
         ))
         session.add(ChunkParseTask(
             id=chunk_task_id,
-            video_parse_task_id=second_id,
-            video_chunk_id=chunk_id,
+            video_task_id=second_id,
+            chunk_id=chunk_id,
             status="UNDERSTANDING",
             next_execute_time=second_time,
             retry_count=0,
@@ -352,15 +352,15 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
     with factory.begin() as session:
         series_id = session.get(Video, video_id).series_id
         session.add(Video(
-            video_id=later_video_id,
+            id=later_video_id,
             series_id=series_id,
             episode_order=2,
             upload_sequence=2,
-            original_filename="episode-2.mp4",
-            original_source_uri="artifact://test/media/episode-2.mp4",
-            content_hash="b" * 64,
-            total_bytes=100,
-            duration_seconds=60,
+            filename="episode-2.mp4",
+            source_uri="artifact://test/media/episode-2.mp4",
+            hash="b" * 64,
+            size_bytes=100,
+            duration_ms=60,
             upload_status="COMPLETED",
             parse_status="QUEUED",
             upload_progress=100,
@@ -394,8 +394,8 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
                     },
                 },
             },
-            create_time=second_time,
-            update_time=second_time,
+            create_time=datetime_to_unix_time_ms(second_time),
+            update_time=datetime_to_unix_time_ms(second_time),
         ))
 
     suffix_fenced = jobs.get_video_parse_task_detail(
@@ -445,7 +445,7 @@ def test_job_pages_and_summary_count_full_actual_scope(repository):
     engine, _video_repository = repository
     factory = create_session_factory(engine)
     with factory.begin() as session:
-        session.get(SeriesParseJob, foreign_job_id).available_at = now + timedelta_to_ms(timedelta(days=1))
+        session.get(SeriesParseJob, foreign_job_id).next_execute_time = now + timedelta_to_ms(timedelta(days=1))
     service = ParseJobService(jobs, LibraryService(LibraryRepository(factory)))
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(services=SimpleNamespace(jobs=service))))
     first = jobs_api.list_jobs(request, "local-default", None, "QUEUED", None, 1)

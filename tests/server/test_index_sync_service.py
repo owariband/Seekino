@@ -78,7 +78,7 @@ class _ImmediateLock:
 def _series_status(engine, series_id: str) -> str:
     with engine.connect() as connection:
         return connection.execute(
-            select(Series.status).where(Series.series_id == series_id)
+            select(Series.status).where(Series.id == series_id)
         ).scalar_one()
 
 
@@ -225,32 +225,32 @@ def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
     absolute_now = unix_time_ms_to_datetime(now)
     with create_session_factory(engine).begin() as session:
         session.add(UploadSession(
-            upload_session_id=str(uuid4()),
+            id=str(uuid4()),
             tenant_id=prepared.tenant_id,
             series_id=prepared.series_id,
             episode_order=prepared.episode_order,
             upload_sequence=prepared.upload_sequence,
-            original_filename=prepared.original_filename,
+            filename=prepared.original_filename,
             media_type="video/mp4",
-            total_size_bytes=prepared.total_bytes,
-            preferred_segment_size_bytes=prepared.total_bytes,
-            total_segments=1,
-            content_sha256=prepared.content_hash,
+            size_bytes=prepared.total_bytes,
+            segment_size_bytes=prepared.total_bytes,
+            segment_count=1,
+            sha256=prepared.content_hash,
             version=1,
             status=UploadSessionStatus.EXPIRED.value,
             idempotency_key="pending-delete-crash",
-            expires_at=absolute_now,
-            completed_at=absolute_now,
+            expire_time=absolute_now,
+            finish_time=absolute_now,
             video_id=prepared.video_id,
             last_error_code=UPLOAD_DELETION_PENDING_ERROR_CODE,
         ))
         intents = list(session.scalars(select(IndexSyncIntent)))
         generations = {
-            intent.video_chunk_id: intent.generation for intent in intents
+            intent.chunk_id: intent.generation for intent in intents
         }
         for intent in intents:
             intent.status = IndexSyncStatus.PENDING.value
-            intent.available_at = now
+            intent.next_execute_time = now
 
     assert index_repository.materialize_all() == 0
     assert index_repository.list_all() == []
@@ -267,7 +267,7 @@ def test_pending_upload_deletion_is_not_rematerialized_or_repaired(
     with create_session_factory(engine)() as session:
         raw_intents = list(session.scalars(select(IndexSyncIntent)))
         assert {
-            intent.video_chunk_id: intent.generation for intent in raw_intents
+            intent.chunk_id: intent.generation for intent in raw_intents
         } == generations
         assert all(
             intent.operation == "UPSERT"

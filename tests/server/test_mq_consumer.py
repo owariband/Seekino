@@ -46,7 +46,7 @@ def _seed(repository, *, max_attempts: int = 3):
     with session_factory.begin() as session:
         session.add(
             Series(
-                series_id=series_id,
+                id=series_id,
                 tenant_id="local-default",
                 name=f"Consumer Series {series_id}",
                 description=None,
@@ -57,16 +57,16 @@ def _seed(repository, *, max_attempts: int = 3):
         )
         session.add(
             Video(
-                video_id=video_id,
+                id=video_id,
                 series_id=series_id,
                 episode_order=1,
                 upload_sequence=1,
-                original_filename="episode.mp4",
-                original_source_uri="artifact://test/media/episode.mp4",
-                inference_proxy_uri=None,
-                content_hash="a" * 64,
-                total_bytes=10,
-                duration_seconds=20,
+                filename="episode.mp4",
+                source_uri="artifact://test/media/episode.mp4",
+                proxy_uri=None,
+                hash="a" * 64,
+                size_bytes=10,
+                duration_ms=20,
                 upload_status="COMPLETED",
                 parse_status="QUEUED",
                 upload_progress=100,
@@ -75,7 +75,7 @@ def _seed(repository, *, max_attempts: int = 3):
         )
         session.add(
             SeriesParseJob(
-                job_id=job_id,
+                id=job_id,
                 series_id=series_id,
                 video_id=video_id,
                 pipeline_version="pipeline-v1",
@@ -84,7 +84,7 @@ def _seed(repository, *, max_attempts: int = 3):
                 progress=0,
                 attempt_count=0,
                 max_attempts=max_attempts,
-                available_at=now,
+                next_execute_time=now,
                 lease_version=0,
             )
         )

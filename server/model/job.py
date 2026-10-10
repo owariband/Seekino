@@ -18,7 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ..database import Base
+from .base import BaseModel
 from ..utils.time import now_unix_time_ms, now_utc
 from .video import (
     ID_LENGTH,
@@ -83,7 +83,7 @@ class IntervalParseTaskStatus(StrEnum):
     INDEXING_FAILED = "INDEXING_FAILED"
 
 
-class SeriesParseJob(Base):
+class SeriesParseJob(BaseModel):
     __tablename__ = "series_parse_job"
     __table_args__ = (
         UniqueConstraint(
@@ -123,19 +123,19 @@ class SeriesParseJob(Base):
             name="ck_series_parse_job_processing_duration",
         ),
         CheckConstraint("version >= 1", name="ck_series_parse_job_version"),
-        Index("ix_series_parse_job_due", "status", "available_at"),
+        Index("ix_series_parse_job_due", "status", "next_execute_time"),
         MYSQL_TABLE_OPTIONS,
     )
 
-    job_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    created_by_user_id: Mapped[str | None] = mapped_column(String(64))
+    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    creator_id: Mapped[str | None] = mapped_column(String(64))
     series_id: Mapped[str] = mapped_column(
-        ForeignKey("series.series_id", ondelete="CASCADE"),
+        ForeignKey("series.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     video_id: Mapped[str] = mapped_column(
-        ForeignKey("video.video_id", ondelete="CASCADE"),
+        ForeignKey("video.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -147,17 +147,17 @@ class SeriesParseJob(Base):
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    available_at: Mapped[int] = mapped_column(
+    next_execute_time: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
         default=now_unix_time_ms,
     )
     lease_owner: Mapped[str | None] = mapped_column(String(128))
     lease_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    lease_expires_at: Mapped[int | None] = mapped_column(BigInteger)
-    heartbeat_at: Mapped[int | None] = mapped_column(BigInteger)
-    started_at: Mapped[int | None] = mapped_column(BigInteger)
-    completed_at: Mapped[int | None] = mapped_column(BigInteger)
+    lease_expire_time: Mapped[int | None] = mapped_column(BigInteger)
+    heartbeat_time: Mapped[int | None] = mapped_column(BigInteger)
+    start_time: Mapped[int | None] = mapped_column(BigInteger)
+    finish_time: Mapped[int | None] = mapped_column(BigInteger)
     processing_duration_ms: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
@@ -169,20 +169,9 @@ class SeriesParseJob(Base):
         default=True,
     )
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
-    created_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-    )
-    updated_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-        onupdate=now_unix_time_ms,
-    )
 
 
-class VideoChunkCheckpoint(Base):
+class VideoChunkCheckpoint(BaseModel):
     __tablename__ = "video_chunk_checkpoint"
     __table_args__ = (
         CheckConstraint(
@@ -195,9 +184,9 @@ class VideoChunkCheckpoint(Base):
             name="ck_video_chunk_checkpoint_stage",
         ),
         CheckConstraint(
-            "(chunk_start_seconds IS NULL AND chunk_end_seconds IS NULL) OR "
-            "(chunk_start_seconds IS NOT NULL AND chunk_end_seconds IS NOT NULL AND "
-            "chunk_start_seconds >= 0 AND chunk_end_seconds > chunk_start_seconds)",
+            "(start_ms IS NULL AND end_ms IS NULL) OR "
+            "(start_ms IS NOT NULL AND end_ms IS NOT NULL AND "
+            "start_ms >= 0 AND end_ms > start_ms)",
             name="ck_video_chunk_checkpoint_range",
         ),
         Index("ix_video_chunk_checkpoint_job_stage", "job_id", "stage"),
@@ -205,29 +194,23 @@ class VideoChunkCheckpoint(Base):
     )
 
     job_id: Mapped[str] = mapped_column(
-        ForeignKey("series_parse_job.job_id", ondelete="CASCADE"),
+        ForeignKey("series_parse_job.id", ondelete="CASCADE"),
         primary_key=True,
     )
     sequence_no: Mapped[int] = mapped_column(Integer, primary_key=True)
-    video_chunk_id: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
+    chunk_id: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
     stage: Mapped[str] = mapped_column(String(32), nullable=False)
-    chunk_start_seconds: Mapped[int | None] = mapped_column(BigInteger)
-    chunk_end_seconds: Mapped[int | None] = mapped_column(BigInteger)
+    start_ms: Mapped[int | None] = mapped_column(BigInteger)
+    end_ms: Mapped[int | None] = mapped_column(BigInteger)
     chunk_media_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     analysis_window_media_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     parse_artifact_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     text_embedding_artifact_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     vision_embedding_artifact_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
-    updated_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-        onupdate=now_unix_time_ms,
-    )
 
 
-class VideoParseTask(Base):
+class VideoParseTask(BaseModel):
     __tablename__ = "video_parse_task"
     __table_args__ = (
         UniqueConstraint(
@@ -288,9 +271,9 @@ class VideoParseTask(Base):
     )
 
     id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    created_by_user_id: Mapped[str | None] = mapped_column(String(64))
+    creator_id: Mapped[str | None] = mapped_column(String(64))
     video_id: Mapped[str] = mapped_column(
-        ForeignKey("video.video_id", ondelete="CASCADE"),
+        ForeignKey("video.id", ondelete="CASCADE"),
         nullable=False,
     )
     pipeline_version: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -325,31 +308,20 @@ class VideoParseTask(Base):
     is_test: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    create_time: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-    )
-    update_time: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-        onupdate=now_utc,
-    )
 
 
-class ChunkParseTask(Base):
+class ChunkParseTask(BaseModel):
     __tablename__ = "chunk_parse_task"
     __table_args__ = (
         UniqueConstraint(
-            "video_parse_task_id",
-            "video_chunk_id",
+            "video_task_id",
+            "chunk_id",
             name="uq_chunk_parse_task_parent_chunk",
         ),
         # MySQL requires a matching referenced key for Interval's composite FK.
         UniqueConstraint(
             "id",
-            "video_parse_task_id",
+            "video_task_id",
             name="uq_chunk_parse_task_id_parent",
         ),
         CheckConstraint(
@@ -385,20 +357,20 @@ class ChunkParseTask(Base):
         ),
         Index(
             "ix_chunk_parse_task_parent_status",
-            "video_parse_task_id",
+            "video_task_id",
             "status",
-            "video_chunk_id",
+            "chunk_id",
         ),
         MYSQL_TABLE_OPTIONS,
     )
 
     id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    video_parse_task_id: Mapped[str] = mapped_column(
+    video_task_id: Mapped[str] = mapped_column(
         ForeignKey("video_parse_task.id", ondelete="CASCADE"),
         nullable=False,
     )
-    video_chunk_id: Mapped[str] = mapped_column(
-        ForeignKey("video_chunk.video_chunk_id", ondelete="CASCADE"),
+    chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("video_chunk.id", ondelete="CASCADE"),
         nullable=False,
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -415,24 +387,13 @@ class ChunkParseTask(Base):
     finish_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
     last_error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    create_time: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-    )
-    update_time: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-        onupdate=now_utc,
-    )
 
 
-class ChunkParseContent(Base):
+class ChunkParseContent(BaseModel):
     __tablename__ = "chunk_parse_content"
     __table_args__ = (
         UniqueConstraint(
-            "chunk_parse_task_id",
+            "chunk_task_id",
             name="uq_chunk_parse_content_task",
         ),
         CheckConstraint("version > 0", name="ck_chunk_parse_content_version"),
@@ -440,37 +401,26 @@ class ChunkParseContent(Base):
     )
 
     id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    chunk_parse_task_id: Mapped[str] = mapped_column(
+    chunk_task_id: Mapped[str] = mapped_column(
         ForeignKey("chunk_parse_task.id", ondelete="CASCADE"),
         nullable=False,
     )
     content: Mapped[Any | None] = mapped_column(JSON)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    create_time: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-    )
-    update_time: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-        onupdate=now_utc,
-    )
 
 
-class IntervalParseTask(Base):
+class IntervalParseTask(BaseModel):
     __tablename__ = "interval_parse_task"
     __table_args__ = (
         ForeignKeyConstraint(
-            ["chunk_parse_task_id", "video_parse_task_id"],
-            ["chunk_parse_task.id", "chunk_parse_task.video_parse_task_id"],
+            ["chunk_task_id", "video_task_id"],
+            ["chunk_parse_task.id", "chunk_parse_task.video_task_id"],
             name="fk_interval_parse_task_anchor_parent",
             ondelete="CASCADE",
         ),
         UniqueConstraint(
-            "video_parse_task_id",
+            "video_task_id",
             "start_sequence_no",
             name="uq_interval_parse_task_parent_start",
         ),
@@ -521,7 +471,7 @@ class IntervalParseTask(Base):
         ),
         Index(
             "ix_interval_parse_task_parent_status",
-            "video_parse_task_id",
+            "video_task_id",
             "status",
             "start_sequence_no",
         ),
@@ -529,15 +479,15 @@ class IntervalParseTask(Base):
     )
 
     id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
-    chunk_parse_task_id: Mapped[str] = mapped_column(
+    chunk_task_id: Mapped[str] = mapped_column(
         String(ID_LENGTH),
         nullable=False,
     )
-    video_parse_task_id: Mapped[str] = mapped_column(
+    video_task_id: Mapped[str] = mapped_column(
         ForeignKey("video_parse_task.id", ondelete="CASCADE"),
         nullable=False,
     )
-    chunk_parse_task_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    chunk_task_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     start_sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
     ready_mask: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -554,40 +504,18 @@ class IntervalParseTask(Base):
     start_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
     finish_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
     last_error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    create_time: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-    )
-    update_time: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-        onupdate=now_utc,
-    )
 
 
-class IntervalParseContent(Base):
+class IntervalParseContent(BaseModel):
     __tablename__ = "interval_parse_content"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
-    interval_parse_task_id: Mapped[str] = mapped_column(
+    interval_task_id: Mapped[str] = mapped_column(
         ForeignKey("interval_parse_task.id", ondelete="CASCADE"),
         primary_key=True,
     )
     content: Mapped[Any] = mapped_column(JSON, nullable=False)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    create_time: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-    )
-    update_time: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-        onupdate=now_utc,
-    )
 
 
 def interval_sequence_range(start_sequence_no: int, chunk_count: int) -> range:
@@ -649,7 +577,7 @@ def validate_interval_parse_task_members(
     ):
         if member.id != member_ids[index]:
             raise ValueError("members must follow chunk_parse_task_ids order")
-        if member.video_parse_task_id != video_parse_task_id:
+        if member.video_task_id != video_parse_task_id:
             raise ValueError("every member must belong to video_parse_task_id")
         if sequence_no != expected_sequence_no:
             raise ValueError(

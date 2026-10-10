@@ -14,7 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     inspect,
 )
-from sqlalchemy.dialects.mysql import TIMESTAMP
+from sqlalchemy.dialects.mysql import DATETIME, TIMESTAMP
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -34,162 +34,272 @@ class SchemaUpgradeRequiredError(RuntimeError):
 
 
 _UNIX_TIME_MS_COLUMNS = {
-    "user": {"created_at", "updated_at"},
-    "tenant": {"created_at", "updated_at"},
-    "agent_conversation": {"last_message_at", "created_at", "updated_at"},
-    "agent_message": {"created_at", "updated_at"},
-    "context_snapshot": {"created_at"},
-    "index_sync_intent": {"available_at", "synced_at", "created_at", "updated_at"},
-    "series": {"created_at", "updated_at"},
-    "series_parse_job": {
-        "available_at",
-        "lease_expires_at",
-        "heartbeat_at",
-        "started_at",
-        "completed_at",
-        "created_at",
-        "updated_at",
-    },
-    "video_chunk_checkpoint": {"updated_at"},
-    "video_chunk_embedding": {"created_at", "updated_at"},
-    "video_chunk_info": {"parsed_at"},
-}
-
-_UTC_TIMESTAMP_COLUMNS = {
-    "video": {"created_at", "updated_at"},
-    "video_chunk": {"created_at", "updated_at"},
-    "upload_session": {
-        "completion_started_at",
-        "expires_at",
-        "completed_at",
-        "created_at",
-        "updated_at",
-    },
-    "upload_segment": {"created_at"},
-    "parse_usage_attempt": {"started_at"},
-    "video_parse_usage_attempt": {"started_at"},
-    "parse_model_call": {"started_at", "created_at", "updated_at"},
-    "model_usage": {"started_at", "created_at"},
-    "video_parse_task": {
-        "next_execute_time",
-        "lease_expire_time",
-        "heartbeat_time",
-        "start_time",
-        "finish_time",
-        "create_time",
-        "update_time",
-    },
-    "chunk_parse_task": {
-        "next_execute_time",
-        "lease_expire_time",
-        "start_time",
-        "finish_time",
-        "create_time",
-        "update_time",
-    },
+    "agent_conversation": {"create_time", "last_message_time", "update_time"},
+    "agent_message": {"create_time", "update_time"},
     "chunk_parse_content": {"create_time", "update_time"},
-    "interval_parse_task": {
-        "next_execute_time",
-        "lease_expire_time",
-        "start_time",
-        "finish_time",
+    "chunk_parse_task": {"create_time", "update_time"},
+    "context_snapshot": {"create_time", "update_time"},
+    "index_sync_intent": {
         "create_time",
+        "next_execute_time",
+        "sync_time",
         "update_time",
     },
     "interval_parse_content": {"create_time", "update_time"},
+    "interval_parse_task": {"create_time", "update_time"},
+    "model_usage": {"create_time", "update_time"},
+    "parse_model_call": {"create_time", "update_time"},
+    "parse_usage_attempt": {"create_time", "update_time"},
+    "series": {"create_time", "update_time"},
+    "series_parse_job": {
+        "create_time",
+        "finish_time",
+        "heartbeat_time",
+        "lease_expire_time",
+        "next_execute_time",
+        "start_time",
+        "update_time",
+    },
+    "tenant": {"create_time", "update_time"},
+    "upload_segment": {"create_time", "update_time"},
+    "upload_session": {"create_time", "update_time"},
+    "user": {"create_time", "update_time"},
+    "video": {"create_time", "update_time"},
+    "video_chunk": {"create_time", "update_time"},
+    "video_chunk_checkpoint": {"create_time", "update_time"},
+    "video_chunk_embedding": {"create_time", "update_time"},
+    "video_chunk_info": {"create_time", "parse_time", "update_time"},
+    "video_parse_task": {"create_time", "update_time"},
+    "video_parse_usage_attempt": {"create_time", "update_time"},
+}
+
+_UTC_TIMESTAMP_COLUMNS = {
+    "chunk_parse_task": {
+        "finish_time",
+        "lease_expire_time",
+        "next_execute_time",
+        "start_time",
+    },
+    "interval_parse_task": {
+        "finish_time",
+        "lease_expire_time",
+        "next_execute_time",
+        "start_time",
+    },
+    "model_usage": {"start_time"},
+    "parse_model_call": {"start_time"},
+    "parse_usage_attempt": {"start_time"},
+    "upload_session": {"completion_start_time", "expire_time", "finish_time"},
+    "video_parse_task": {
+        "finish_time",
+        "heartbeat_time",
+        "lease_expire_time",
+        "next_execute_time",
+        "start_time",
+    },
+    "video_parse_usage_attempt": {"start_time"},
 }
 
 _V2_TASK_COLUMNS = {
     "video_parse_task": {
-        "id",
-        "video_id",
-        "pipeline_version",
-        "status",
-        "parse_config",
-        "chunk_count",
-        "version",
-        "next_execute_time",
         "attempt_count",
-        "max_attempts",
+        "chunk_count",
+        "create_date",
+        "create_time",
+        "detail",
+        "finish_time",
+        "heartbeat_time",
+        "id",
+        "is_deleted",
+        "is_test",
+        "last_error",
+        "lease_expire_time",
         "lease_owner",
         "lease_version",
-        "lease_expire_time",
-        "heartbeat_time",
-        "start_time",
-        "finish_time",
+        "max_attempts",
+        "next_execute_time",
+        "parse_config",
+        "pipeline_version",
         "processing_duration_ms",
         "processing_timing_complete",
-        "last_error",
-        "is_test",
-        "is_deleted",
-        "detail",
-        "create_time",
+        "start_time",
+        "status",
+        "update_date",
         "update_time",
+        "version",
+        "video_id",
     },
     "chunk_parse_task": {
+        "chunk_id",
+        "create_date",
+        "create_time",
+        "detail",
+        "finish_time",
         "id",
-        "video_parse_task_id",
-        "video_chunk_id",
-        "status",
-        "next_execute_time",
-        "retry_count",
+        "last_error",
+        "lease_expire_time",
         "lease_owner",
         "lease_version",
-        "lease_expire_time",
+        "next_execute_time",
+        "retry_count",
         "start_time",
-        "finish_time",
-        "last_error",
-        "detail",
-        "create_time",
+        "status",
+        "update_date",
         "update_time",
+        "video_task_id",
     },
     "chunk_parse_content": {
-        "id",
-        "chunk_parse_task_id",
+        "chunk_task_id",
         "content",
-        "version",
-        "detail",
+        "create_date",
         "create_time",
+        "detail",
+        "id",
+        "update_date",
         "update_time",
+        "version",
     },
     "interval_parse_task": {
-        "id",
-        "chunk_parse_task_id",
-        "video_parse_task_id",
-        "chunk_parse_task_ids",
-        "start_sequence_no",
         "chunk_count",
-        "ready_mask",
-        "status",
-        "next_execute_time",
-        "retry_count",
+        "chunk_task_id",
+        "chunk_task_ids",
+        "create_date",
+        "create_time",
+        "finish_time",
+        "id",
+        "last_error",
+        "lease_expire_time",
         "lease_owner",
         "lease_version",
-        "lease_expire_time",
+        "next_execute_time",
+        "ready_mask",
+        "retry_count",
+        "start_sequence_no",
         "start_time",
-        "finish_time",
-        "last_error",
-        "create_time",
+        "status",
+        "update_date",
         "update_time",
+        "video_task_id",
     },
     "interval_parse_content": {
-        "interval_parse_task_id",
         "content",
-        "detail",
+        "create_date",
         "create_time",
+        "detail",
+        "interval_task_id",
+        "update_date",
         "update_time",
     },
 }
 
 _V2_LINK_COLUMNS = {
-    "upload_session": {
-        "video_parse_config",
-        "detail",
-        "initial_video_parse_task_id",
-    },
-    "parse_usage_attempt": {"video_parse_task_id"},
-    "parse_model_call": {"video_parse_task_id"},
+    "upload_session": {"detail", "initial_task_id", "video_parse_config"},
+    "parse_usage_attempt": {"video_task_id"},
+    "parse_model_call": {"video_task_id"},
 }
+
+_LEGACY_FIELD_NAMES = {
+    "agent_conversation": {
+        "conversation_id",
+        "created_at",
+        "last_message_at",
+        "owner_user_id",
+        "updated_at",
+    },
+    "agent_message": {"created_at", "message_id", "model_name", "updated_at"},
+    "chunk_parse_content": {"chunk_parse_task_id"},
+    "chunk_parse_task": {"video_chunk_id", "video_parse_task_id"},
+    "context_snapshot": {"created_at", "created_from_video_chunk_id", "snapshot_id"},
+    "index_sync_intent": {
+        "available_at",
+        "created_at",
+        "synced_at",
+        "updated_at",
+        "video_chunk_id",
+    },
+    "interval_parse_content": {"interval_parse_task_id"},
+    "interval_parse_task": {
+        "chunk_parse_task_id",
+        "chunk_parse_task_ids",
+        "video_parse_task_id",
+    },
+    "model_usage": {"actor_user_id", "call_id", "created_at", "started_at"},
+    "parse_model_call": {
+        "call_id",
+        "created_at",
+        "started_at",
+        "updated_at",
+        "video_chunk_id",
+        "video_parse_task_id",
+    },
+    "parse_usage_attempt": {"started_at", "video_parse_task_id"},
+    "series": {"created_at", "series_id", "updated_at"},
+    "series_parse_job": {
+        "available_at",
+        "completed_at",
+        "created_at",
+        "created_by_user_id",
+        "heartbeat_at",
+        "job_id",
+        "lease_expires_at",
+        "started_at",
+        "updated_at",
+    },
+    "tenant": {"created_at", "owner_user_id", "tenant_id", "updated_at"},
+    "upload_segment": {
+        "actual_size_bytes",
+        "checksum_sha256",
+        "created_at",
+        "upload_session_id",
+    },
+    "upload_session": {
+        "completed_at",
+        "completion_started_at",
+        "content_sha256",
+        "created_at",
+        "created_by_user_id",
+        "expires_at",
+        "initial_video_parse_task_id",
+        "original_filename",
+        "preferred_segment_size_bytes",
+        "total_segments",
+        "total_size_bytes",
+        "updated_at",
+        "upload_session_id",
+    },
+    "user": {"created_at", "is_guest", "role", "updated_at", "user_id"},
+    "video": {
+        "content_hash",
+        "created_at",
+        "duration_seconds",
+        "inference_proxy_uri",
+        "original_filename",
+        "original_source_uri",
+        "total_bytes",
+        "updated_at",
+        "video_id",
+    },
+    "video_chunk": {
+        "analysis_window_end_seconds",
+        "analysis_window_start_seconds",
+        "created_at",
+        "end_seconds",
+        "start_seconds",
+        "updated_at",
+        "video_chunk_id",
+    },
+    "video_chunk_checkpoint": {
+        "chunk_end_seconds",
+        "chunk_start_seconds",
+        "updated_at",
+        "video_chunk_id",
+    },
+    "video_chunk_embedding": {"created_at", "updated_at", "video_chunk_id"},
+    "video_chunk_info": {"model_name", "model_provider", "parsed_at", "video_chunk_id"},
+    "video_parse_task": {"created_by_user_id"},
+    "video_parse_usage_attempt": {"attempt_id", "started_at", "video_parse_task_id"},
+}
+
 
 def create_database_engine(
     database_url: str,
@@ -210,6 +320,17 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def create_schema(engine: Engine) -> None:
+    # Importing registers every table on Base.metadata without making the
+    # connection module depend on concrete repositories.
+    from .model import agent as _agent_models  # noqa: F401
+    from .model import index_sync as _index_sync_models  # noqa: F401
+    from .model import job as _job_models  # noqa: F401
+    from .model import parse_usage as _parse_usage_models  # noqa: F401
+    from .model import upload as _upload_models  # noqa: F401
+    from .model import video as _video_models  # noqa: F401
+    from .model import user as _user_models  # noqa: F401
+    from .model import tenant as _tenant_models  # noqa: F401
+
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     legacy_scope = {
@@ -225,13 +346,13 @@ def create_schema(engine: Engine) -> None:
     if engine.dialect.name == "mysql" and "video" in existing_tables:
         duration = next(
             (column for column in inspector.get_columns("video")
-             if column["name"] == "duration_seconds"),
+             if column["name"] in {"duration_seconds", "duration_ms"}),
             None,
         )
         if duration is not None and duration.get("comment") != "media_time_milliseconds":
             raise SchemaUpgradeRequiredError(
                 "media timeline requires 20261008_video_timeline_milliseconds.sql "
-                "before init-db; video.duration_seconds is not marked as milliseconds"
+                "before init-db; video.duration_ms is not marked as milliseconds"
             )
     legacy_schema = existing_tables.intersection(
         {
@@ -337,6 +458,19 @@ def create_schema(engine: Engine) -> None:
                     "idempotency index before init-db"
                 )
 
+    legacy_fields: set[str] = set()
+    for table_name in existing_tables.intersection(_LEGACY_FIELD_NAMES):
+        actual = {column["name"] for column in inspector.get_columns(table_name)}
+        legacy_fields.update(
+            f"{table_name}.{name}" for name in actual.intersection(_LEGACY_FIELD_NAMES[table_name])
+        )
+    if legacy_fields:
+        raise SchemaUpgradeRequiredError(
+            "field names require 20261010_base_model_field_names.sql before init-db; legacy: "
+            + ", ".join(sorted(legacy_fields))
+        )
+    _check_base_model_schema(inspector, existing_tables, engine.dialect.name)
+
     missing_view_columns: set[str] = set()
     for table_name, required_columns in {
         "series": {"transcript_language_hint"},
@@ -350,15 +484,15 @@ def create_schema(engine: Engine) -> None:
             "processing_duration_ms",
             "processing_timing_complete",
         },
-        "video": {"duration_seconds"},
+        "video": {"duration_ms"},
         "video_chunk": {
-            "start_seconds",
-            "end_seconds",
-            "analysis_window_start_seconds",
-            "analysis_window_end_seconds",
+            "start_ms",
+            "end_ms",
+            "window_start_ms",
+            "window_end_ms",
         },
-        "video_chunk_checkpoint": {"chunk_start_seconds", "chunk_end_seconds"},
-        "upload_session": {"content_sha256", "completion_stage", "version", "job_id", "last_error_code", "request_fingerprint"},
+        "video_chunk_checkpoint": {"start_ms", "end_ms"},
+        "upload_session": {"sha256", "completion_stage", "version", "job_id", "last_error_code", "request_fingerprint"},
     }.items():
         if table_name not in existing_tables:
             continue
@@ -441,7 +575,7 @@ def create_schema(engine: Engine) -> None:
                 incompatible_usage.add(f"{table.name}.collation")
         for column in inspector.get_columns(table.name):
             name, column_type = column["name"], column["type"]
-            if name in {"call_id", "tenant_id", "task_type", "run_id"}:
+            if name in {"id", "tenant_id", "task_type", "run_id"}:
                 expected = table.c[name].type
                 if not isinstance(column_type, String) or column_type.length != expected.length:
                     incompatible_usage.add(f"{table.name}.{name}.type")
@@ -530,18 +664,40 @@ def create_schema(engine: Engine) -> None:
 
     _check_identity_schema(inspector, existing_tables)
 
-    # Importing registers every table on Base.metadata without making the
-    # connection module depend on concrete repositories.
-    from .model import agent as _agent_models  # noqa: F401
-    from .model import index_sync as _index_sync_models  # noqa: F401
-    from .model import job as _job_models  # noqa: F401
-    from .model import parse_usage as _parse_usage_models  # noqa: F401
-    from .model import upload as _upload_models  # noqa: F401
-    from .model import video as _video_models  # noqa: F401
-    from .model import user as _user_models  # noqa: F401
-    from .model import tenant as _tenant_models  # noqa: F401
-
     Base.metadata.create_all(engine)
+
+
+def _check_base_model_schema(inspector: Inspector, existing_tables: set[str], dialect_name: str) -> None:
+    differences: set[str] = set()
+    for table_name in existing_tables.intersection(Base.metadata.tables):
+        columns = {column["name"]: column for column in inspector.get_columns(table_name)}
+        indexes = {
+            tuple(index.get("column_names") or ())
+            for index in inspector.get_indexes(table_name) if not index.get("unique")
+        }
+        for name in ("create_time", "create_date", "update_time", "update_date"):
+            column = columns.get(name)
+            if column is None:
+                differences.add(f"{table_name}.{name}.missing")
+                continue
+            value_type = column["type"]
+            if name.endswith("_time"):
+                valid = isinstance(value_type, BigInteger) and not getattr(value_type, "unsigned", False)
+            else:
+                valid = isinstance(value_type, DateTime)
+                if dialect_name == "mysql":
+                    valid = isinstance(value_type, DATETIME) and value_type.fsp == 3
+            if not valid:
+                differences.add(f"{table_name}.{name}.type")
+            if not column["nullable"]:
+                differences.add(f"{table_name}.{name}.nullable")
+            if (name,) not in indexes:
+                differences.add(f"{table_name}.{name}.index")
+    if differences:
+        raise SchemaUpgradeRequiredError(
+            "BaseModel schema requires 20261010_base_model_field_names.sql before init-db; incompatible: "
+            + ", ".join(sorted(differences))
+        )
 
 
 def _check_identity_schema(inspector: Inspector, existing_tables: set[str]) -> None:
@@ -550,12 +706,12 @@ def _check_identity_schema(inspector: Inspector, existing_tables: set[str]) -> N
 
     required = {
         "series": {"tenant_id", "is_published"},
-        "upload_session": {"tenant_id", "created_by_user_id"},
-        "agent_conversation": {"tenant_id", "owner_user_id"},
-        "model_usage": {"tenant_id", "actor_user_id"},
+        "upload_session": {"tenant_id", "creator_id"},
+        "agent_conversation": {"tenant_id", "owner_id"},
+        "model_usage": {"tenant_id", "user_id"},
         "parse_model_call": {"tenant_id"},
-        "series_parse_job": {"created_by_user_id"},
-        "video_parse_task": {"created_by_user_id"},
+        "series_parse_job": {"creator_id"},
+        "video_parse_task": {"creator_id"},
     }
     if not existing_tables.intersection({*required, "video", "user", "tenant"}):
         return
@@ -565,8 +721,8 @@ def _check_identity_schema(inspector: Inspector, existing_tables: set[str]) -> N
             actual = {column["name"] for column in inspector.get_columns(table_name)}
             differences.update(f"{table_name}.{name}" for name in columns - actual)
     for table_name, expected in {
-        "agent_conversation": ("tenant_id", "owner_user_id", "idempotency_key"),
-        "upload_session": ("tenant_id", "created_by_user_id", "idempotency_key"),
+        "agent_conversation": ("tenant_id", "owner_id", "idempotency_key"),
+        "upload_session": ("tenant_id", "creator_id", "idempotency_key"),
     }.items():
         if table_name not in existing_tables:
             continue
@@ -575,8 +731,13 @@ def _check_identity_schema(inspector: Inspector, existing_tables: set[str]) -> N
         if expected not in unique:
             differences.add(f"{table_name}.identity_idempotency")
     if differences:
+        migration = (
+            "20261010_base_model_field_names.sql"
+            if {"user", "tenant"}.issubset(existing_tables)
+            else "20261010_user_tenant_identity.sql"
+        )
         raise SchemaUpgradeRequiredError(
-            "user / tenant identity schema requires 20261010_user_tenant_identity.sql before init-db; incompatible: "
+            f"user / tenant identity schema requires {migration} before init-db; incompatible: "
             + ", ".join(sorted(differences))
         )
 

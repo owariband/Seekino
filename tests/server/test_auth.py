@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 import time
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -99,7 +100,7 @@ def _app(service: AuthService) -> FastAPI:
 def _conversation(sessions, owner_id: str, tenant_id: str) -> str:
     conversation_id = str(uuid4())
     with sessions.begin() as session:
-        session.add(AgentConversation(conversation_id=conversation_id, owner_user_id=owner_id, tenant_id=tenant_id, title="测试对话", idempotency_key=conversation_id))
+        session.add(AgentConversation(id=conversation_id, owner_id=owner_id, tenant_id=tenant_id, title="测试对话", idempotency_key=conversation_id))
     return conversation_id
 
 
@@ -158,7 +159,7 @@ def test_local_mode_bootstraps_fixed_identity_and_tenants(identities):
     assert service.permissions(identity).model_dump() == {"can_upload": True, "can_manage": True, "can_configure": True}
     with sessions() as session:
         tenants = list(session.scalars(select(Tenant)))
-        assert {(tenant.tenant_id, tenant.owner_user_id) for tenant in tenants} == {("platform-public", None), ("local-default", LOCAL_USER_ID)}
+        assert {(tenant.id, tenant.owner_id) for tenant in tenants} == {("platform-public", None), ("local-default", LOCAL_USER_ID)}
     with TestClient(_app(service)) as client:
         result = client.get("/api/auth/me")
     assert result.status_code == 200 and result.json()["csrfToken"]
@@ -173,7 +174,7 @@ def test_cloud_guest_is_stable_and_has_no_personal_tenant(cloud):
     assert credentials.identity.public_tenant_id == "platform-public"
     assert not any(service.permissions(credentials.identity).model_dump().values())
     with sessions() as session:
-        assert list(session.scalars(select(Tenant).where(Tenant.owner_user_id == credentials.identity.user_id))) == []
+        assert list(session.scalars(select(Tenant).where(Tenant.owner_id == credentials.identity.user_id))) == []
     assert not service.redis.closed
 
 
@@ -187,12 +188,12 @@ def test_tokens_expire_and_recheck_database_state(cloud, monkeypatch):
         service.authenticate(credentials.token)
     monkeypatch.undo()
     with sessions.begin() as session:
-        session.execute(update(User).where(User.user_id == credentials.identity.user_id).values(auth_version=2))
+        session.execute(update(User).where(User.id == credentials.identity.user_id).values(auth_version=2))
     with pytest.raises(AuthError):
         service.authenticate(credentials.token)
     fresh = service.issue_credentials(replace(credentials.identity, auth_version=2))
     with sessions.begin() as session:
-        session.execute(update(User).where(User.user_id == credentials.identity.user_id).values(status="DISABLED"))
+        session.execute(update(User).where(User.id == credentials.identity.user_id).values(status="DISABLED"))
     with pytest.raises(AuthError):
         service.authenticate(fresh.token)
 
@@ -220,7 +221,71 @@ def test_email_upgrade_keeps_user_and_conversations_but_revokes_guest(cloud):
         service.authenticate(guest.token)
     with sessions() as session:
         conversation = session.get(AgentConversation, conversation_id)
-        assert conversation.owner_user_id == signed_in.identity.user_id and conversation.tenant_id == "platform-public"
+        assert conversation.owner_id == signed_in.identity.user_id and conversation.tenant_id == "platform-public"
+
+
+def test_guest_profile_defaults_and_successful_login_record(cloud, monkeypatch):
+    import server.repository.identity as repository_module
+
+    service, _, _, sessions = cloud
+    guest = service.create_guest()
+    with sessions() as session:
+        user = session.get(User, guest.identity.user_id)
+        assert user.nickname == "游客"
+        assert (user.language, user.color_schema, user.timezone) == ("Chinese", "Bright", "Asia/Shanghai")
+        assert user.is_anonymous and not user.is_superuser
+        assert user.avatar is user.last_login_time is user.login_channel is None
+        public = session.get(Tenant, "platform-public")
+        assert public.description is public.avatar is None
+
+    instant = datetime(2026, 10, 10, 4, 30, 0, 123_000, tzinfo=UTC)
+    monkeypatch.setattr(repository_module, "now_utc", lambda: instant)
+    account = service.verify_email_code(guest.identity, "profile@example.com", "123456")
+    assert service.authenticate(account.token) == account.identity
+    with sessions() as session:
+        user = session.get(User, account.identity.user_id)
+        assert user.nickname == "profile"
+        assert not user.is_anonymous
+        assert user.last_login_time == instant and user.login_channel == "email"
+
+    service.logout(account.identity)
+    with sessions() as session:
+        assert session.get(User, account.identity.user_id).last_login_time == instant
+
+
+def test_invalid_email_code_does_not_record_a_login(cloud):
+    service, redis, _, sessions = cloud
+    guest = service.create_guest()
+    redis.results = [[0, 0]]
+    with pytest.raises(AuthError, match="验证码错误"):
+        service.verify_email_code(guest.identity, "failed@example.com", "123456")
+    with sessions() as session:
+        user = session.get(User, guest.identity.user_id)
+        assert user.is_anonymous
+        assert user.last_login_time is user.login_channel is None
+
+
+def test_existing_account_login_preserves_profile(cloud, monkeypatch):
+    import server.repository.identity as repository_module
+
+    service, _, _, sessions = cloud
+    first = service.create_guest()
+    account = service.verify_email_code(first.identity, "existing@example.com", "123456")
+    with sessions.begin() as session:
+        user = session.get(User, account.identity.user_id)
+        user.nickname, user.avatar = "我的昵称", "base64-content"
+        user.language, user.color_schema, user.timezone = "English", "Dark", "UTC"
+    instant = datetime(2026, 10, 10, 5, 0, 0, 456_000, tzinfo=UTC)
+    monkeypatch.setattr(repository_module, "now_utc", lambda: instant)
+    guest = service.create_guest()
+    signed_in = service.verify_email_code(guest.identity, "existing@example.com", "123456")
+    assert signed_in.identity.user_id == account.identity.user_id
+    with sessions() as session:
+        user = session.get(User, account.identity.user_id)
+        assert (user.nickname, user.avatar) == ("我的昵称", "base64-content")
+        assert (user.language, user.color_schema, user.timezone) == ("English", "Dark", "UTC")
+        assert user.last_login_time == instant and user.login_channel == "email"
+        assert session.get(User, guest.identity.user_id).last_login_time is None
 
 
 def test_existing_email_migrates_only_current_guest_conversations(cloud):
@@ -236,9 +301,9 @@ def test_existing_email_migrates_only_current_guest_conversations(cloud):
     assert signed_in.identity.user_id == account.identity.user_id
     assert signed_in.identity.tenant_id == account.identity.tenant_id
     with sessions() as session:
-        assert session.get(AgentConversation, guest_conversation).owner_user_id == account.identity.user_id
+        assert session.get(AgentConversation, guest_conversation).owner_id == account.identity.user_id
         assert session.get(AgentConversation, guest_conversation).tenant_id == "platform-public"
-        assert session.get(AgentConversation, other_conversation).owner_user_id == other_guest.identity.user_id
+        assert session.get(AgentConversation, other_conversation).owner_id == other_guest.identity.user_id
         assert session.get(AgentConversation, own_conversation).tenant_id == account.identity.tenant_id
         assert session.get(User, guest.identity.user_id).status == "DISABLED"
     with pytest.raises(AuthError):
@@ -262,7 +327,7 @@ def test_existing_account_login_preserves_both_conversations_when_request_keys_c
     with sessions() as session:
         original = session.get(AgentConversation, old_conversation)
         transferred = session.get(AgentConversation, guest_conversation)
-        assert original.owner_user_id == transferred.owner_user_id == account.identity.user_id
+        assert original.owner_id == transferred.owner_id == account.identity.user_id
         assert original.idempotency_key == "same-create-key"
         assert transferred.idempotency_key != original.idempotency_key
         assert original.tenant_id == transferred.tenant_id == "platform-public"
@@ -275,13 +340,13 @@ def test_account_permissions_and_tenant_status_are_read_from_database(cloud):
     guest = service.create_guest()
     account = service.verify_email_code(guest.identity, "permissions@example.com", "123456")
     with sessions.begin() as session:
-        session.execute(update(User).where(User.user_id == account.identity.user_id).values(role="admin"))
+        session.execute(update(User).where(User.id == account.identity.user_id).values(is_superuser=True))
     assert service.permissions(service.authenticate(account.token)).can_configure
     with sessions.begin() as session:
-        session.execute(update(User).where(User.user_id == account.identity.user_id).values(role="user"))
+        session.execute(update(User).where(User.id == account.identity.user_id).values(is_superuser=False))
     assert not service.permissions(service.authenticate(account.token)).can_configure
     with sessions.begin() as session:
-        session.execute(update(Tenant).where(Tenant.tenant_id == account.identity.tenant_id).values(status="DISABLED"))
+        session.execute(update(Tenant).where(Tenant.id == account.identity.tenant_id).values(status="DISABLED"))
     with pytest.raises(AuthError) as unavailable:
         service.authenticate(account.token)
     assert unavailable.value.code == "TENANT_UNAVAILABLE"
@@ -294,11 +359,11 @@ def test_repository_rejects_stale_upgrade_and_disabled_account(cloud):
         service.repository.login_email(guest_id=guest.identity.user_id, expected_version=2, email="a@example.com")
     account = service.verify_email_code(guest.identity, "a@example.com", "123456")
     with sessions.begin() as session:
-        session.execute(update(User).where(User.user_id == account.identity.user_id).values(status="DISABLED"))
+        session.execute(update(User).where(User.id == account.identity.user_id).values(status="DISABLED"))
     other = service.create_guest()
     with pytest.raises(AuthError):
         service.verify_email_code(other.identity, "a@example.com", "123456")
-    assert service.repository.get_user(other.identity.user_id).is_guest
+    assert service.repository.get_user(other.identity.user_id).is_anonymous
 
 
 def test_email_challenge_stores_only_hmac_digest_and_hashed_keys(cloud):
@@ -364,7 +429,7 @@ def test_logout_rolls_back_revocation_if_guest_insert_fails(cloud):
     account = service.verify_email_code(guest.identity, "rollback-logout@example.com", "123456")
 
     def fail_guest_insert(_, __, user):
-        if user.is_guest:
+        if user.is_anonymous:
             raise RuntimeError("simulated guest insertion failure")
 
     event.listen(User, "before_insert", fail_guest_insert)

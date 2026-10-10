@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 import re
 
-from sqlalchemy import BigInteger, CheckConstraint, inspect, text
+from sqlalchemy import BigInteger, CheckConstraint, String, inspect, text
 from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import CreateTable
@@ -46,6 +46,7 @@ from server.model.job import (
     interval_sequence_range,
     validate_interval_parse_task_members,
 )
+from server.utils.time import datetime_to_unix_time_ms
 
 
 def test_database_environment_requires_physically_separate_databases() -> None:
@@ -84,28 +85,33 @@ def test_database_environment_requires_physically_separate_databases() -> None:
         )
 
 
-def test_model_usage_mysql_ddl_has_the_nine_identity_aware_columns() -> None:
+def test_model_usage_mysql_ddl_has_identity_and_common_audit_columns() -> None:
     from sqlalchemy.schema import CreateIndex
 
     table = ModelUsage.__table__
     ddl = str(CreateTable(table).compile(dialect=mysql.dialect()))
     assert tuple(table.columns.keys()) == (
-        "call_id", "tenant_id", "actor_user_id", "task_type", "run_id", "started_at",
-        "usage", "metadata", "created_at",
+        "id", "tenant_id", "user_id", "task_type", "run_id", "start_time",
+        "usage", "metadata", "create_time", "create_date", "update_time", "update_date",
     )
-    assert table.c.actor_user_id.nullable
-    assert all(not column.nullable for column in table.columns if column.name != "actor_user_id")
+    nullable = {"user_id", "create_time", "create_date", "update_time", "update_date"}
+    assert {column.name for column in table.columns if column.nullable} == nullable
     assert not table.foreign_keys
-    assert "started_at TIMESTAMP(3) NOT NULL" in ddl
-    assert "created_at TIMESTAMP(3) NOT NULL" in ddl
+    assert "start_time TIMESTAMP(3) NOT NULL" in ddl
+    assert "create_time BIGINT" in ddl
+    assert "create_date DATETIME(3)" in ddl
     assert "`usage` JSON NOT NULL" in ddl and "metadata JSON NOT NULL" in ddl
     assert "COLLATE utf8mb4_bin" in ddl and "ENGINE=InnoDB" in ddl
     assert "ck_model_usage_task_type" in ddl
     indexes = {str(CreateIndex(index).compile(dialect=mysql.dialect())) for index in table.indexes}
     assert indexes == {
-        "CREATE INDEX ix_model_usage_tenant_started ON model_usage (tenant_id, started_at, call_id)",
-        "CREATE INDEX ix_model_usage_tenant_run_started ON model_usage (tenant_id, run_id, started_at)",
-        "CREATE INDEX ix_model_usage_tenant_actor_started ON model_usage (tenant_id, actor_user_id, started_at)",
+        "CREATE INDEX ix_model_usage_tenant_started ON model_usage (tenant_id, start_time, id)",
+        "CREATE INDEX ix_model_usage_tenant_run_started ON model_usage (tenant_id, run_id, start_time)",
+        "CREATE INDEX ix_model_usage_tenant_actor_started ON model_usage (tenant_id, user_id, start_time)",
+        *{
+            f"CREATE INDEX ix_model_usage_{name} ON model_usage ({name})"
+            for name in ("create_time", "create_date", "update_time", "update_date")
+        },
     }
 
 
@@ -115,6 +121,78 @@ def test_create_schema_registers_twenty_four_tables_and_identity_is_repeatable()
     create_schema(engine)
     tables = inspect(engine).get_table_names()
     assert len(tables) == 24 and {"user", "tenant"}.issubset(tables)
+
+
+@pytest.mark.parametrize("column_name", ["create_time", "create_date", "update_time", "update_date"])
+@pytest.mark.parametrize("difference", ["missing", "type", "nullable", "index"])
+def test_create_schema_rejects_common_audit_drift_without_mutating_rows(
+    monkeypatch, column_name: str, difference: str,
+) -> None:
+    import server.database as database
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(Series.__table__.insert().values(
+            id="kept", tenant_id="scope", name="kept", status="PENDING",
+        ))
+    inspector = inspect(engine)
+    before_tables = inspector.get_table_names()
+    original_columns = inspector.get_columns
+    original_indexes = inspector.get_indexes
+
+    def columns(table_name):
+        result = [dict(column) for column in original_columns(table_name)]
+        if table_name == "series":
+            if difference == "missing":
+                return [column for column in result if column["name"] != column_name]
+            target = next(column for column in result if column["name"] == column_name)
+            if difference == "type":
+                target["type"] = String(64)
+            elif difference == "nullable":
+                target["nullable"] = False
+        return result
+
+    def indexes(table_name):
+        result = original_indexes(table_name)
+        if table_name == "series" and difference == "index":
+            return [index for index in result if index["column_names"] != [column_name]]
+        return result
+
+    monkeypatch.setattr(inspector, "get_columns", columns)
+    monkeypatch.setattr(inspector, "get_indexes", indexes)
+    monkeypatch.setattr(database, "inspect", lambda _engine: inspector)
+    with pytest.raises(SchemaUpgradeRequiredError, match=rf"series\.{column_name}\.{difference}"):
+        create_schema(engine)
+    assert inspect(engine).get_table_names() == before_tables
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT id, name FROM series")).one() == ("kept", "kept")
+
+
+@pytest.mark.parametrize("reflected_type", [mysql.DATETIME(fsp=0), mysql.DATETIME(), mysql.TIMESTAMP(fsp=3)])
+def test_mysql_schema_rejects_audit_dates_without_datetime3(monkeypatch, reflected_type) -> None:
+    import server.database as database
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    Series.__table__.create(engine)
+    inspector = inspect(engine)
+    original_columns = inspector.get_columns
+
+    def columns(table_name):
+        result = [dict(column) for column in original_columns(table_name)]
+        for column in result:
+            if column["name"] == "create_date":
+                column["type"] = reflected_type
+            elif column["name"] == "update_date":
+                column["type"] = mysql.DATETIME(fsp=3)
+        return result
+
+    monkeypatch.setattr(inspector, "get_columns", columns)
+    monkeypatch.setattr(database, "inspect", lambda _engine: inspector)
+    monkeypatch.setattr(engine.dialect, "name", "mysql")
+    with pytest.raises(SchemaUpgradeRequiredError, match=r"series\.create_date\.type"):
+        create_schema(engine)
+    assert inspect(engine).get_table_names() == ["series"]
 
 
 def test_create_schema_rejects_old_twenty_two_tables_without_adding_identity() -> None:
@@ -131,6 +209,29 @@ def test_create_schema_rejects_old_twenty_two_tables_without_adding_identity() -
     assert len(inspect(engine).get_table_names()) == 22
 
 
+def test_create_schema_requires_new_migration_for_existing_identity_profile_drift(monkeypatch) -> None:
+    import server.database as database
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    inspector = inspect(engine)
+    original_columns = inspector.get_columns
+    before_tables = inspector.get_table_names()
+
+    def columns(table_name):
+        result = original_columns(table_name)
+        return [column for column in result if table_name != "user" or column["name"] != "nickname"]
+
+    monkeypatch.setattr(inspector, "get_columns", columns)
+    monkeypatch.setattr(database, "inspect", lambda _engine: inspector)
+    with pytest.raises(
+        SchemaUpgradeRequiredError,
+        match=r"20261010_base_model_field_names.sql.*user\.columns",
+    ):
+        create_schema(engine)
+    assert inspect(engine).get_table_names() == before_tables
+
+
 @pytest.mark.parametrize("table_name", ["series", "upload_session", "agent_conversation", "model_usage", "parse_model_call"])
 def test_create_schema_rejects_legacy_workspace_scope_before_mutation(table_name) -> None:
     engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
@@ -145,9 +246,9 @@ def test_create_schema_rejects_legacy_workspace_scope_before_mutation(table_name
 
 
 @pytest.mark.parametrize("table_name,column_name", [
-    ("series", "is_published"), ("agent_conversation", "owner_user_id"),
-    ("upload_session", "created_by_user_id"), ("series_parse_job", "created_by_user_id"),
-    ("video_parse_task", "created_by_user_id"),
+    ("series", "is_published"), ("agent_conversation", "owner_id"),
+    ("upload_session", "creator_id"), ("series_parse_job", "creator_id"),
+    ("video_parse_task", "creator_id"),
 ])
 def test_create_schema_requires_identity_business_columns(monkeypatch, table_name, column_name) -> None:
     import server.database as database
@@ -174,7 +275,7 @@ def test_create_schema_requires_owner_in_conversation_idempotency(monkeypatch) -
         values = [dict(item) for item in unique(table)]
         if table == "agent_conversation":
             for item in values:
-                item["column_names"] = [column for column in item["column_names"] if column != "owner_user_id"]
+                item["column_names"] = [column for column in item["column_names"] if column != "owner_id"]
         return values
 
     monkeypatch.setattr(inspector, "get_unique_constraints", old_unique)
@@ -192,7 +293,7 @@ def test_create_schema_adds_model_usage_to_existing_current_schema() -> None:
     create_schema(engine)
 
 
-@pytest.mark.parametrize("column_name", ["started_at", "created_at", "usage", "run_id"])
+@pytest.mark.parametrize("column_name", ["start_time", "create_time", "usage", "run_id"])
 def test_create_schema_rejects_model_usage_type_drift(monkeypatch, column_name) -> None:
     import server.database as database
     from sqlalchemy import String
@@ -220,9 +321,9 @@ def test_model_usage_database_rejects_unsupported_task_type() -> None:
     with pytest.raises(IntegrityError):
         with engine.begin() as connection:
             connection.execute(ModelUsage.__table__.insert().values(
-                call_id="00000000-0000-0000-0000-000000000001", tenant_id="w",
-                task_type="retrieval", run_id="r", started_at=datetime.now(UTC),
-                usage={}, metadata={}, created_at=datetime.now(UTC),
+                id="00000000-0000-0000-0000-000000000001", tenant_id="w",
+                task_type="retrieval", run_id="r", start_time=datetime.now(UTC),
+                usage={}, metadata={}, create_time=datetime_to_unix_time_ms(datetime.now(UTC)),
             ))
 
 
@@ -237,6 +338,11 @@ def test_existing_model_usage_rejects_case_insensitive_mysql_collation(monkeypat
 
     def columns(table_name):
         result = [dict(column) for column in original(table_name)]
+        for column in result:
+            if column["name"] in {"create_date", "update_date"}:
+                column["type"] = mysql.DATETIME(fsp=3)
+            elif column["name"] == "start_time":
+                column["type"] = mysql.TIMESTAMP(fsp=3)
         if table_name == "model_usage" and column_override:
             next(column for column in result if column["name"] == "tenant_id")["type"] = mysql.VARCHAR(64, collation="utf8mb4_general_ci")
         return result
@@ -271,14 +377,14 @@ def test_mysql_schema_uses_innodb_json_and_integer_media_milliseconds() -> None:
 
     assert "ENGINE=InnoDB" in chunk_ddl
     assert "CHARSET=utf8mb4" in chunk_ddl
-    assert "duration_seconds BIGINT" in video_ddl
+    assert "duration_ms BIGINT" in video_ddl
     assert "COMMENT 'media_time_milliseconds'" in video_ddl
-    assert "duration_ms" not in video_ddl
-    assert "start_seconds BIGINT" in chunk_ddl
+    assert "duration_seconds" not in video_ddl
+    assert "start_ms BIGINT" in chunk_ddl
     assert "all_time_events JSON" in info_ddl
     assert "video_compact LONGTEXT" in info_ddl
-    assert "chunk_start_seconds BIGINT" in checkpoint_ddl
-    assert "chunk_end_seconds BIGINT" in checkpoint_ddl
+    assert "start_ms BIGINT" in checkpoint_ddl
+    assert "end_ms BIGINT" in checkpoint_ddl
     assert "ck_video_chunk_checkpoint_range" in checkpoint_ddl
 
 
@@ -349,10 +455,10 @@ def test_mysql_video_parse_v2_schema_uses_timestamp_leases_and_task_scoped_conte
     assert "uq_chunk_parse_task_parent_chunk" in chunk_task_ddl
     assert "uq_chunk_parse_content_task" in chunk_content_ddl
     assert "ck_chunk_parse_content_version" in chunk_content_ddl
-    assert "chunk_parse_task_ids JSON NOT NULL" in interval_task_ddl
+    assert "chunk_task_ids JSON NOT NULL" in interval_task_ddl
     assert "fk_interval_parse_task_anchor_parent" in interval_task_ddl
-    assert "FOREIGN KEY(chunk_parse_task_id, video_parse_task_id)" in interval_task_ddl
-    assert "PRIMARY KEY (interval_parse_task_id)" in interval_content_ddl
+    assert "FOREIGN KEY(chunk_task_id, video_task_id)" in interval_task_ddl
+    assert "PRIMARY KEY (interval_task_id)" in interval_content_ddl
 
 
 def test_create_schema_does_not_create_or_require_es_publication_tables() -> None:
@@ -419,8 +525,8 @@ def test_interval_task_database_enforces_status_and_lease(status, lease, allowed
     )
     IntervalParseTask.__table__.create(engine)
     values = dict(
-        id="interval", video_parse_task_id="task", chunk_parse_task_id="chunk",
-        chunk_parse_task_ids=["chunk"], start_sequence_no=0, chunk_count=1,
+        id="interval", video_task_id="task", chunk_task_id="chunk",
+        chunk_task_ids=["chunk"], start_sequence_no=0, chunk_count=1,
         status=status, lease_owner="worker" if lease != "none" else None,
         lease_expire_time=datetime(2026, 9, 28, tzinfo=UTC) if lease == "full" else None,
     )
@@ -467,7 +573,7 @@ def test_task_indexing_migration_guards_scope_and_matches_model_checks() -> None
             assert "".join(match[1].split()) == "".join(str(constraint.sqltext).split())
 
 
-def test_mysql_timestamp_migration_scope_does_not_change_unrelated_models() -> None:
+def test_mysql_audit_columns_are_common_and_business_timestamp_types_are_preserved() -> None:
     video_ddl = str(
         CreateTable(Video.__table__).compile(dialect=mysql.dialect())
     )
@@ -500,15 +606,17 @@ def test_mysql_timestamp_migration_scope_does_not_change_unrelated_models() -> N
         CreateTable(SeriesParseJob.__table__).compile(dialect=mysql.dialect())
     )
 
-    assert "created_at TIMESTAMP(3) NOT NULL" in video_ddl
-    assert "updated_at TIMESTAMP(3) NOT NULL" in chunk_ddl
-    assert "expires_at TIMESTAMP(3) NOT NULL" in upload_ddl
-    assert "created_at TIMESTAMP(3) NOT NULL" in segment_ddl
-    assert "started_at TIMESTAMP(3) NOT NULL" in attempt_ddl
-    assert "started_at TIMESTAMP(3) NOT NULL" in video_attempt_ddl
-    assert "updated_at TIMESTAMP(3) NOT NULL" in call_ddl
-    assert "created_at BIGINT NOT NULL" in series_ddl
-    assert "available_at BIGINT NOT NULL" in legacy_job_ddl
+    for ddl in (video_ddl, chunk_ddl, upload_ddl, segment_ddl, attempt_ddl,
+                video_attempt_ddl, call_ddl, series_ddl, legacy_job_ddl):
+        assert "create_time BIGINT" in ddl
+        assert "update_time BIGINT" in ddl
+        assert "create_date DATETIME(3)" in ddl
+        assert "update_date DATETIME(3)" in ddl
+    assert "expire_time TIMESTAMP(3) NOT NULL" in upload_ddl
+    assert "start_time TIMESTAMP(3) NOT NULL" in attempt_ddl
+    assert "start_time TIMESTAMP(3) NOT NULL" in video_attempt_ddl
+    assert "start_time TIMESTAMP(3) NOT NULL" in call_ddl
+    assert "next_execute_time BIGINT NOT NULL" in legacy_job_ddl
 
 
 def test_utc_timestamp_bind_normalizes_timezone_and_millisecond_precision() -> None:
@@ -557,7 +665,7 @@ def test_interval_members_are_ordered_half_open_and_mask_bits_follow_list_order(
         (
             ChunkParseTask(
                 id=f"chunk-{sequence_no}",
-                video_parse_task_id="parse-task",
+                video_task_id="parse-task",
             ),
             sequence_no,
         )
@@ -595,7 +703,7 @@ def test_interval_member_validator_rejects_invalid_identity_lists(
         (
             ChunkParseTask(
                 id=f"chunk-{sequence_no}",
-                video_parse_task_id="parse-task",
+                video_task_id="parse-task",
             ),
             sequence_no,
         )
@@ -614,9 +722,9 @@ def test_interval_member_validator_rejects_invalid_identity_lists(
 
 def test_interval_member_validator_rejects_parent_order_and_sequence_mismatch() -> None:
     wrong_parent = [
-        (ChunkParseTask(id="chunk-3", video_parse_task_id="other"), 3),
-        (ChunkParseTask(id="chunk-4", video_parse_task_id="parse-task"), 4),
-        (ChunkParseTask(id="chunk-5", video_parse_task_id="parse-task"), 5),
+        (ChunkParseTask(id="chunk-3", video_task_id="other"), 3),
+        (ChunkParseTask(id="chunk-4", video_task_id="parse-task"), 4),
+        (ChunkParseTask(id="chunk-5", video_task_id="parse-task"), 5),
     ]
     with pytest.raises(ValueError, match="belong"):
         validate_interval_parse_task_members(
@@ -629,9 +737,9 @@ def test_interval_member_validator_rejects_parent_order_and_sequence_mismatch() 
         )
 
     wrong_sequence = [
-        (ChunkParseTask(id="chunk-3", video_parse_task_id="parse-task"), 3),
-        (ChunkParseTask(id="chunk-4", video_parse_task_id="parse-task"), 5),
-        (ChunkParseTask(id="chunk-5", video_parse_task_id="parse-task"), 6),
+        (ChunkParseTask(id="chunk-3", video_task_id="parse-task"), 3),
+        (ChunkParseTask(id="chunk-4", video_task_id="parse-task"), 5),
+        (ChunkParseTask(id="chunk-5", video_task_id="parse-task"), 6),
     ]
     with pytest.raises(ValueError, match="contiguous"):
         validate_interval_parse_task_members(
@@ -660,7 +768,7 @@ def test_mysql_agent_schema_persists_scope_messages_and_model_provenance() -> No
     assert "content LONGTEXT" in message_ddl
     assert "series_ids JSON NOT NULL" in message_ddl
     assert "requested_series_ids JSON" in message_ddl
-    assert "model_name VARCHAR(255)" in message_ddl
+    assert "model VARCHAR(255)" in message_ddl
     assert "search_result JSON" in message_ddl
     assert "requested_top_k INTEGER" in message_ddl
     assert "requested_run_options JSON" in message_ddl
@@ -1003,7 +1111,7 @@ def test_create_schema_rejects_v2_worker_runtime_structure_drift(
                     foreign_key
                     for foreign_key in foreign_keys
                     if foreign_key["constrained_columns"]
-                    == ["video_parse_task_id"]
+                    == ["video_task_id"]
                 )
                 target["options"]["ondelete"] = "SET NULL"
             return foreign_keys
@@ -1021,10 +1129,10 @@ def test_create_schema_rejects_v2_worker_runtime_structure_drift(
                 for index in indexes
                 if index["column_names"]
                 != [
-                    "video_parse_task_id",
+                    "video_task_id",
                     "execution_kind",
                     "execution_task_id",
-                    "started_at",
+                    "start_time",
                 ]
             ]
 
@@ -1090,7 +1198,7 @@ def test_create_schema_compares_v2_worker_runtime_structure_not_names_or_default
     create_schema(engine)
 
 
-def test_create_schema_checks_v2_usage_started_at_as_utc_timestamp(
+def test_create_schema_checks_v2_usage_start_time_as_utc_timestamp(
     monkeypatch,
 ) -> None:
     import server.database as database
@@ -1106,7 +1214,7 @@ def test_create_schema_checks_v2_usage_started_at_as_utc_timestamp(
         columns = [dict(column) for column in real_get_columns(table_name)]
         if table_name == "video_parse_usage_attempt":
             next(
-                column for column in columns if column["name"] == "started_at"
+                column for column in columns if column["name"] == "start_time"
             )["type"] = BigInteger()
         return columns
 
@@ -1114,7 +1222,7 @@ def test_create_schema_checks_v2_usage_started_at_as_utc_timestamp(
     monkeypatch.setattr(database, "inspect", lambda _engine: inspector)
     with pytest.raises(
         SchemaUpgradeRequiredError,
-        match="video_parse_usage_attempt.started_at",
+        match="video_parse_usage_attempt.start_time",
     ):
         create_schema(engine)
 
@@ -1152,6 +1260,8 @@ def test_create_schema_rejects_old_task_checks_with_current_columns(
     with engine.begin() as connection:
         connection.execute(text(f"DROP TABLE {table.name}"))
         connection.execute(text(old_ddl))
+        for index in table.indexes:
+            index.create(connection)
 
     with pytest.raises(SchemaUpgradeRequiredError, match=constraint_name):
         create_schema(engine)
@@ -1186,21 +1296,21 @@ def test_create_schema_accepts_mysql_check_reflection_format(monkeypatch) -> Non
     create_schema(engine)
 
 
-def test_create_schema_requires_ui_view_migration_and_preserves_existing_rows() -> None:
+def test_create_schema_rejects_old_upload_field_names_and_preserves_existing_rows() -> None:
     engine = create_database_engine(
         "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
     )
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE upload_session (upload_session_id TEXT, status TEXT)"))
         connection.execute(text("INSERT INTO upload_session VALUES ('existing-upload', 'COMPLETED')"))
-    with pytest.raises(SchemaUpgradeRequiredError, match="UI view schema requires a controlled migration"):
+    with pytest.raises(SchemaUpgradeRequiredError, match="field names.*upload_session.upload_session_id"):
         create_schema(engine)
     assert set(inspect(engine).get_table_names()) == {"upload_session"}
     with engine.connect() as connection:
         assert connection.execute(text("SELECT status FROM upload_session")).scalar_one() == "COMPLETED"
 
 
-def test_create_schema_requires_extra_context_migration_and_preserves_messages() -> None:
+def test_create_schema_rejects_old_message_fields_before_missing_extra_context() -> None:
     engine = create_database_engine(
         "sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST,
     )
@@ -1217,7 +1327,7 @@ def test_create_schema_requires_extra_context_migration_and_preserves_messages()
             "VALUES ('existing-message', '[]', '[]')"
         ))
 
-    with pytest.raises(SchemaUpgradeRequiredError, match="agent_message.extra_context"):
+    with pytest.raises(SchemaUpgradeRequiredError, match="field names.*agent_message.message_id"):
         create_schema(engine)
 
     with engine.connect() as connection:
@@ -1240,7 +1350,7 @@ def test_create_schema_requires_checkpoint_range_migration() -> None:
 
     with pytest.raises(
         SchemaUpgradeRequiredError,
-        match="video_chunk_checkpoint.chunk_end_seconds",
+        match="BaseModel schema.*video_chunk_checkpoint.create_time.missing",
     ):
         create_schema(engine)
 
@@ -1250,16 +1360,16 @@ def test_create_schema_requires_checkpoint_range_migration() -> None:
 @pytest.mark.parametrize(
     ("table_name", "legacy_columns", "required_column"),
     [
-        ("video", "video_id TEXT, duration_ms BIGINT", "video.duration_seconds"),
+        ("video", "video_id TEXT, duration_ms BIGINT", "video.video_id"),
         (
             "video_chunk",
             "video_chunk_id TEXT, start_ms BIGINT, end_ms BIGINT, "
             "analysis_window_start_ms BIGINT, analysis_window_end_ms BIGINT",
-            "video_chunk.start_seconds",
+            "video_chunk.video_chunk_id",
         ),
     ],
 )
-def test_create_schema_requires_media_seconds_migration(
+def test_create_schema_rejects_legacy_media_field_names(
     table_name: str,
     legacy_columns: str,
     required_column: str,
@@ -1290,7 +1400,7 @@ def test_create_schema_requires_series_language_hint_migration() -> None:
 
     with pytest.raises(
         SchemaUpgradeRequiredError,
-        match="series.transcript_language_hint",
+        match="field names.*series.series_id",
     ):
         create_schema(engine)
 

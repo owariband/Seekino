@@ -15,7 +15,7 @@ from gateway.usage import TokenUsage
 
 from ..model.dto.parseUsageDTO import ModelCallUsageBatch, ModelUsageState
 from ..model.parse_usage import ModelUsage
-from ..utils.time import require_utc_datetime
+from ..utils.time import datetime_to_unix_time_ms, require_utc_datetime
 from ..utils.validation import require_nonempty_text
 
 MAX_USAGE_RECORDS = 20_000
@@ -42,7 +42,7 @@ def _validate_tokens(value: Any) -> None:
 
 
 def _check_owner(record: ModelUsage, state: ModelUsageState) -> None:
-    if (record.tenant_id, record.task_type, record.run_id, record.actor_user_id) != (
+    if (record.tenant_id, record.task_type, record.run_id, record.user_id) != (
         state.tenant_id, state.task_type, state.run_id, state.actor_user_id,
     ):
         raise ModelUsageConflictError("call_id already belongs to a different tenant/task/run/actor")
@@ -51,7 +51,7 @@ def _check_owner(record: ModelUsage, state: ModelUsageState) -> None:
 def _duplicate_call_id(error: IntegrityError) -> bool:
     original = error.orig
     if getattr(original, "sqlite_errorcode", None) == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY:
-        return "model_usage.call_id" in str(original)
+        return "model_usage.id" in str(original)
     return bool(
         original.args and original.args[0] == 1062
         and "PRIMARY" in str(original.args[1:])
@@ -100,10 +100,10 @@ class ModelUsageRepository:
                     _check_owner(existing, state)
                     return self._state(existing)
                 record = ModelUsage(
-                    call_id=state.call_id, tenant_id=state.tenant_id,
-                    actor_user_id=state.actor_user_id,
+                    id=state.call_id, tenant_id=state.tenant_id,
+                    user_id=state.actor_user_id,
                     task_type=state.task_type, run_id=state.run_id,
-                    started_at=state.started_at, created_at=state.created_at,
+                    start_time=state.started_at, create_time=datetime_to_unix_time_ms(state.created_at),
                     usage=_json_values(state.usage), metadata_=_json_values(state.metadata),
                 )
                 session.add(record)
@@ -134,12 +134,12 @@ class ModelUsageRepository:
             raise ValueError("usage window must be positive")
         filters = [
             ModelUsage.tenant_id == tenant_id,
-            ModelUsage.started_at >= start,
-            ModelUsage.started_at < end,
+            ModelUsage.start_time >= start,
+            ModelUsage.start_time < end,
         ]
         if actor_user_id is not None:
             require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
-            filters.append(ModelUsage.actor_user_id == actor_user_id)
+            filters.append(ModelUsage.user_id == actor_user_id)
         if run_id is not None:
             require_nonempty_text(run_id, "run_id", maximum=256)
             filters.append(ModelUsage.run_id == run_id)
@@ -168,7 +168,7 @@ class ModelUsageRepository:
                 )
             filters.append(or_(scalar, matching))
         statement = select(ModelUsage).where(*filters).order_by(
-            ModelUsage.started_at, ModelUsage.call_id,
+            ModelUsage.start_time, ModelUsage.id,
         ).limit(MAX_USAGE_RECORDS + 1)
         with self._session_factory() as session:
             records = session.scalars(statement).all()
@@ -180,9 +180,9 @@ class ModelUsageRepository:
     @staticmethod
     def _state(record: ModelUsage) -> ModelUsageState:
         return ModelUsageState(
-            call_id=record.call_id, tenant_id=record.tenant_id,
-            actor_user_id=record.actor_user_id,
+            call_id=record.id, tenant_id=record.tenant_id,
+            actor_user_id=record.user_id,
             task_type=record.task_type, run_id=record.run_id,
-            started_at=record.started_at, usage=record.usage,
-            metadata=record.metadata_, created_at=record.created_at,
+            started_at=record.start_time, usage=record.usage,
+            metadata=record.metadata_, created_at=record.create_date,
         )

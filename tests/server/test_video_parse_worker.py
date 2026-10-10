@@ -88,6 +88,7 @@ from server.storage.elasticsearch import (
     VideoChunkIndexMatch,
     document_id,
 )
+from server.utils.time import datetime_to_unix_time_ms
 
 
 class _ArtifactResolver:
@@ -270,7 +271,7 @@ def _create_task(factory, source: Path) -> str:
     task_id = str(uuid4())
     with factory.begin() as session:
         session.add(Series(
-            series_id=series_id,
+            id=series_id,
             tenant_id="workspace-1",
             name="Worker fixture",
             description=None,
@@ -279,15 +280,15 @@ def _create_task(factory, source: Path) -> str:
             character_bible=[],
         ))
         session.add(Video(
-            video_id=video_id,
+            id=video_id,
             series_id=series_id,
             episode_order=1,
             upload_sequence=1,
-            original_filename="episode.mp4",
-            original_source_uri=str(source),
-            content_hash="a" * 64,
-            total_bytes=source.stat().st_size,
-            duration_seconds=10_000,
+            filename="episode.mp4",
+            source_uri=str(source),
+            hash="a" * 64,
+            size_bytes=source.stat().st_size,
+            duration_ms=10_000,
             upload_status="COMPLETED",
             parse_status="QUEUED",
             upload_progress=100,
@@ -310,8 +311,8 @@ def _create_task(factory, source: Path) -> str:
             is_test=True,
             is_deleted=False,
             detail={"_worker_runtime_v2": {"accepted": True}},
-            create_time=now,
-            update_time=now,
+            create_time=datetime_to_unix_time_ms(now),
+            update_time=datetime_to_unix_time_ms(now),
         ))
     return task_id
 
@@ -733,12 +734,12 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         assert index_detail["receipt"]["index_generation"] == 1
         assert index_detail["receipt"]["parse_task_id"] == task_id
         rows = session.scalars(select(ModelUsage)).all()
-        assert len(rows) == 4 and len({row.call_id for row in rows}) == 4
+        assert len(rows) == 4 and len({row.id for row in rows}) == 4
         assert all(row.task_type == "video_parse" and row.run_id == task_id for row in rows)
         assert sum(row.usage["tokens"]["total_tokens"] for row in rows) == 31
         assert {row.metadata_["context"]["stage"] for row in rows} == {"understand", "refine", "index"}
         model_calls = task.detail[RUNTIME_DETAIL_KEY]["model_calls"]
-        assert set(model_calls["used_call_ids"]) == {row.call_id for row in rows}
+        assert set(model_calls["used_call_ids"]) == {row.id for row in rows}
         assert model_calls["active"] == {}
     assert embedding.text_calls == 1
     assert embedding.video_calls == 1

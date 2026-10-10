@@ -135,20 +135,20 @@ def _course(api):
         row = session.get(Series, series.series_id)
         row.status, row.is_published = "READY", True
         session.add(Video(
-            video_id=video_id, series_id=series.series_id, episode_order=1, upload_sequence=1,
-            original_filename="course.mp4", original_source_uri=api.store.uri_for_path(source),
-            content_hash="a" * 64, total_bytes=source.stat().st_size, duration_seconds=10000,
+            id=video_id, series_id=series.series_id, episode_order=1, upload_sequence=1,
+            filename="course.mp4", source_uri=api.store.uri_for_path(source),
+            hash="a" * 64, size_bytes=source.stat().st_size, duration_ms=10000,
             upload_status="COMPLETED", parse_status="COMPLETED", upload_progress=100, parse_progress=100,
         ))
         session.flush()
         session.add(VideoChunk(
-            video_chunk_id=chunk_id, video_id=video_id, sequence_no=0,
-            start_seconds=0, end_seconds=10000, analysis_window_start_seconds=0, analysis_window_end_seconds=10000,
+            id=chunk_id, video_id=video_id, sequence_no=0,
+            start_ms=0, end_ms=10000, window_start_ms=0, window_end_ms=10000,
             chunk_media_ref=api.store.uri_for_path(source), analysis_window_media_ref=api.store.uri_for_path(source),
         ))
         session.flush()
-        session.add(VideoChunkEmbedding(video_chunk_id=chunk_id, text_input="测试课程片段", text_vector=[1.0], vision_vector=[1.0]))
-        session.add(IndexSyncIntent(video_chunk_id=chunk_id, operation="UPSERT", source_revision="a" * 64, status="SYNCED"))
+        session.add(VideoChunkEmbedding(chunk_id=chunk_id, text_input="测试课程片段", text_vector=[1.0], vision_vector=[1.0]))
+        session.add(IndexSyncIntent(chunk_id=chunk_id, operation="UPSERT", source_revision="a" * 64, status="SYNCED"))
     state = api.services.library.get_series(series.series_id, tenant_id=tenant_id)
     assert api.services.media.publication_ready(state)
     return series.series_id, video_id
@@ -278,7 +278,7 @@ def test_private_conversation_can_use_public_source_without_changing_owner(cloud
         assert cloud_api.runtime.calls[-1][0]["tenant_id"] == "platform-public"
         with cloud_api.sessions() as session:
             conversation = session.get(AgentConversation, conversation_id)
-            assert conversation.tenant_id == account["tenantId"] and conversation.owner_user_id == account["userId"]
+            assert conversation.tenant_id == account["tenantId"] and conversation.owner_id == account["userId"]
             messages = list(session.scalars(select(AgentMessage).where(AgentMessage.conversation_id == conversation_id)))
             assert len(messages) == 2 and all(message.detail.get("sourceTenantId") == "platform-public" for message in messages)
         assert client.get("/api/agent/messages/list", params={"conversationId": conversation_id, "tenantId": account["tenantId"]}).status_code == 200

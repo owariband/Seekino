@@ -18,9 +18,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.expression import Grouping
 
-from ..database import Base
+from .base import BaseModel
 from ..constants.identity import LOCAL_USER_ID
-from ..utils.time import now_unix_time_ms
 from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS
 
 
@@ -35,12 +34,12 @@ class AgentMessageStatus(StrEnum):
     FAILED = "FAILED"
 
 
-class AgentConversation(Base):
+class AgentConversation(BaseModel):
     __tablename__ = "agent_conversation"
     __table_args__ = (
         UniqueConstraint(
             "tenant_id",
-            "owner_user_id",
+            "owner_id",
             "idempotency_key",
             name="uq_agent_conversation_tenant_idempotency",
         ),
@@ -51,12 +50,12 @@ class AgentConversation(Base):
         MYSQL_TABLE_OPTIONS,
     )
 
-    conversation_id: Mapped[str] = mapped_column(
+    id: Mapped[str] = mapped_column(
         String(ID_LENGTH),
         primary_key=True,
     )
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    owner_user_id: Mapped[str] = mapped_column(
+    owner_id: Mapped[str] = mapped_column(
         String(64), nullable=False, default=LOCAL_USER_ID,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -67,21 +66,10 @@ class AgentConversation(Base):
         nullable=False,
         default=0,
     )
-    last_message_at: Mapped[int | None] = mapped_column(BigInteger)
-    created_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-    )
-    updated_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-        onupdate=now_unix_time_ms,
-    )
+    last_message_time: Mapped[int | None] = mapped_column(BigInteger)
 
 
-class AgentMessage(Base):
+class AgentMessage(BaseModel):
     __tablename__ = "agent_message"
     __table_args__ = (
         UniqueConstraint(
@@ -118,9 +106,9 @@ class AgentMessage(Base):
         MYSQL_TABLE_OPTIONS,
     )
 
-    message_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
     conversation_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_conversation.conversation_id", ondelete="CASCADE"),
+        ForeignKey("agent_conversation.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -134,7 +122,7 @@ class AgentMessage(Base):
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     content: Mapped[str | None] = mapped_column(LONG_TEXT)
     series_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
-    model_name: Mapped[str | None] = mapped_column(String(255))
+    model: Mapped[str | None] = mapped_column(String(255))
     requested_top_k: Mapped[int | None] = mapped_column(Integer)
     requested_run_options: Mapped[dict[str, int] | None] = mapped_column(JSON)
     requested_series_ids: Mapped[list[str] | None] = mapped_column(JSON)
@@ -142,17 +130,6 @@ class AgentMessage(Base):
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
     last_error_code: Mapped[str | None] = mapped_column(String(64))
     last_error_message: Mapped[str | None] = mapped_column(LONG_TEXT)
-    created_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-    )
-    updated_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-        onupdate=now_unix_time_ms,
-    )
 
 
 AGENT_MESSAGE_IDEMPOTENCY_KEY = cast(

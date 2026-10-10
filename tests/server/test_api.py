@@ -1208,16 +1208,16 @@ def test_video_episode_update_contract_and_conflict(tmp_path: Path) -> None:
             (second_video_id, 2, "b" * 64),
         ):
             session.add(Video(
-                video_id=video_id,
+                id=video_id,
                 series_id=series_id,
                 episode_order=episode_order,
                 upload_sequence=episode_order,
-                original_filename=f"episode-{episode_order}.mp4",
-                original_source_uri=f"artifact://test/{video_id}.mp4",
-                inference_proxy_uri=None,
-                content_hash=content_hash,
-                total_bytes=10,
-                duration_seconds=1,
+                filename=f"episode-{episode_order}.mp4",
+                source_uri=f"artifact://test/{video_id}.mp4",
+                proxy_uri=None,
+                hash=content_hash,
+                size_bytes=10,
+                duration_ms=1,
                 upload_status="COMPLETED",
                 parse_status="SUCCEEDED",
                 upload_progress=100,
@@ -1490,14 +1490,14 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
         job.progress = 100
         job.attempt_count = 1
         job.version = 6
-        job.completed_at = 1_789_639_200_000
+        job.finish_time = 1_789_639_200_000
         legacy_job_before = (
             job.status,
             job.stage,
             job.progress,
             job.attempt_count,
             job.version,
-            job.completed_at,
+            job.finish_time,
         )
         task = session.get(VideoParseTask, old_task_id)
         old_config = task.parse_config
@@ -1509,10 +1509,10 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
         session.add(VideoChunkCheckpoint(
             job_id=job_id,
             sequence_no=0,
-            video_chunk_id="reparse-checkpoint",
+            chunk_id="reparse-checkpoint",
             stage=VideoChunkCheckpointStage.INDEXED.value,
-            chunk_start_seconds=0,
-            chunk_end_seconds=12,
+            start_ms=0,
+            end_ms=12,
         ))
 
     params = {
@@ -1566,7 +1566,7 @@ def test_upload_full_reparse_creates_new_v2_task_and_retains_old_job(tmp_path):
             job.progress,
             job.attempt_count,
             job.version,
-            job.completed_at,
+            job.finish_time,
         ) == legacy_job_before
     duplicate = client.post("/api/uploads/reparse", params=params)
     assert duplicate.status_code == 409
@@ -1790,7 +1790,7 @@ def test_chunked_upload_complete_job_progress_and_video_range(tmp_path: Path) ->
     with jobs_repository._session_factory.begin() as session:
         task = session.get(VideoParseTask, video_parse_task_id)
         task.status = "COMPLETE"
-        task.finish_time = task.update_time
+        task.finish_time = task.update_date
     with client.stream(
         "GET",
         "/api/jobs/video-parse/events",

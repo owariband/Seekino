@@ -170,7 +170,7 @@ def invalidate_series_prefixes_from(
         )
         .join(
             Video,
-            Video.video_id == VideoParseTask.video_id,
+            Video.id == VideoParseTask.video_id,
         )
         .where(
             Video.series_id == series_id,
@@ -179,13 +179,13 @@ def invalidate_series_prefixes_from(
                 Video.episode_order > episode_order,
                 and_(
                     Video.episode_order == episode_order,
-                    Video.video_id >= video_id,
+                    Video.id >= video_id,
                 ),
             ),
         )
         .order_by(
             Video.episode_order,
-            Video.video_id,
+            Video.id,
             VideoParseTask.version.desc(),
             VideoParseTask.id.desc(),
         )
@@ -251,7 +251,7 @@ def invalidate_series_prefixes_from(
         runtime["prefix"] = prefix
         detail[RUNTIME_DETAIL_KEY] = runtime
         task.detail = detail
-        task.update_time = now
+        task.update_time = datetime_to_unix_time_ms(now)
         invalidated.append(task.id)
     return tuple(invalidated)
 
@@ -295,7 +295,7 @@ class VideoParseRepository:
                     if task is None:
                         continue
                 video = session.scalar(select(Video).where(
-                    Video.video_id == video_id,
+                    Video.id == video_id,
                 ).with_for_update())
                 series = session.get(Series, video.series_id) if video is not None else None
                 if video is None or series is None or series.tenant_id != tenant_id or video.upload_status != "COMPLETED":
@@ -315,7 +315,7 @@ class VideoParseRepository:
                     or (runtime.get("execution_mode") is None and task.pipeline_version == "v2")
                     or is_placeholder
                 )
-                if is_placeholder and session.scalar(select(SeriesParseJob.job_id).where(
+                if is_placeholder and session.scalar(select(SeriesParseJob.id.label("job_id")).where(
                     SeriesParseJob.video_id == video_id,
                     SeriesParseJob.status.in_([
                         ParseJobStatus.QUEUED.value, ParseJobStatus.RUNNING.value,
@@ -325,7 +325,7 @@ class VideoParseRepository:
                     raise VideoParseConflictError("Video has an active legacy Parse worker")
                 if is_v2:
                     config = ParseConfig.model_validate(task.parse_config)
-                    if task.chunk_count != math.ceil(video.duration_seconds / (config.chunk_duration * 1000)):
+                    if task.chunk_count != math.ceil(video.duration_ms / (config.chunk_duration * 1000)):
                         raise VideoParseConflictError("VideoParseTask has an incompatible Chunk count")
                     if not runtime.get("accepted"):
                         detail = _ensure_runtime(task.detail)
@@ -343,7 +343,7 @@ class VideoParseRepository:
                         id=str(uuid4()), video_id=video_id, pipeline_version="v2",
                         status=VideoParseTaskStatus.PENDING.value,
                         parse_config=config.model_dump(mode="json"),
-                        chunk_count=math.ceil(video.duration_seconds / (config.chunk_duration * 1000)),
+                        chunk_count=math.ceil(video.duration_ms / (config.chunk_duration * 1000)),
                         version=1 if task is None else task.version + 1,
                         next_execute_time=created_at, attempt_count=0,
                         max_attempts=config.execution.max_retry_count + 1,
@@ -351,7 +351,7 @@ class VideoParseRepository:
                         processing_timing_complete=True, is_test=False, is_deleted=False,
                         detail={RUNTIME_DETAIL_KEY: {
                             "accepted": False, "execution_mode": "v2", "realtime_only": True,
-                        }}, create_time=created_at, update_time=created_at,
+                        }}, create_time=datetime_to_unix_time_ms(created_at), update_time=datetime_to_unix_time_ms(created_at),
                     )
                     session.add(task)
                 session.flush()
@@ -370,8 +370,8 @@ class VideoParseRepository:
         with self._session_factory() as session:
             task = session.scalar(
                 select(VideoParseTask)
-                .join(Video, Video.video_id == VideoParseTask.video_id)
-                .join(Series, Series.series_id == Video.series_id)
+                .join(Video, Video.id == VideoParseTask.video_id)
+                .join(Series, Series.id == Video.series_id)
                 .where(
                     VideoParseTask.id == video_parse_task_id,
                     VideoParseTask.video_id == video_id,
@@ -390,15 +390,15 @@ class VideoParseRepository:
                     parent_error = task.status
             rows = session.execute(
                 select(ChunkParseTask, VideoChunk, ChunkParseContent)
-                .join(VideoChunk, VideoChunk.video_chunk_id == ChunkParseTask.video_chunk_id)
-                .outerjoin(ChunkParseContent, ChunkParseContent.chunk_parse_task_id == ChunkParseTask.id)
-                .where(ChunkParseTask.video_parse_task_id == task.id)
+                .join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id)
+                .outerjoin(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id)
+                .where(ChunkParseTask.video_task_id == task.id)
                 .order_by(VideoChunk.sequence_no)
             )
             return tuple(RealtimeChunkState(
-                chunk_parse_task_id=child.id, video_chunk_id=chunk.video_chunk_id,
-                sequence_no=chunk.sequence_no, start_ms=chunk.start_seconds,
-                end_ms=chunk.end_seconds, status=child.status,
+                chunk_parse_task_id=child.id, video_chunk_id=chunk.id,
+                sequence_no=chunk.sequence_no, start_ms=chunk.start_ms,
+                end_ms=chunk.end_ms, status=child.status,
                 content=(VideoParseResult.model_validate(content.content)
                          if child.status == ChunkParseTaskStatus.COMPLETE.value and content is not None else None),
                 content_version=content.version if content is not None else None,
@@ -421,7 +421,7 @@ class VideoParseRepository:
             task.lease_expire_time = None
             task.heartbeat_time = None
             task.next_execute_time = finished_at
-            task.update_time = finished_at
+            task.update_time = datetime_to_unix_time_ms(finished_at)
             video = session.get(Video, task.video_id)
             if video is not None:
                 video.parse_status = task.status
@@ -436,17 +436,17 @@ class VideoParseRepository:
         with self._session_factory() as session:
             row = session.execute(
                 select(Series, Video)
-                .join(Video, Video.series_id == Series.series_id)
-                .join(VideoChunk, VideoChunk.video_id == Video.video_id)
+                .join(Video, Video.series_id == Series.id)
+                .join(VideoChunk, VideoChunk.video_id == Video.id)
                 .where(
-                    VideoChunk.video_chunk_id == chunk_id,
+                    VideoChunk.id == chunk_id,
                     Series.tenant_id == workspace,
                 )
             ).one_or_none()
             if row is None:
                 raise VideoChunkNotFoundError("videoChunkId does not exist in this workspace")
             series, video = row
-            task_id = _latest_video_task_id(session, video.video_id)
+            task_id = _latest_video_task_id(session, video.id)
             if task_id is None:
                 raise VideoChunkNotFoundError("videoChunkId has no current V2 task")
             task = session.get(VideoParseTask, task_id)
@@ -458,11 +458,11 @@ class VideoParseRepository:
                 select(ChunkParseContent)
                 .join(
                     ChunkParseTask,
-                    ChunkParseTask.id == ChunkParseContent.chunk_parse_task_id,
+                    ChunkParseTask.id == ChunkParseContent.chunk_task_id,
                 )
                 .where(
-                    ChunkParseTask.video_parse_task_id == task_id,
-                    ChunkParseTask.video_chunk_id == chunk_id,
+                    ChunkParseTask.video_task_id == task_id,
+                    ChunkParseTask.chunk_id == chunk_id,
                     ChunkParseTask.status == ChunkParseTaskStatus.COMPLETE.value,
                 )
             )
@@ -471,8 +471,8 @@ class VideoParseRepository:
             receipt = _index_receipt(content, task_id, chunk_id)
             identity = VideoChunkRetrievalIdentity(
                 tenant_id=workspace,
-                series_id=series.series_id,
-                video_id=video.video_id,
+                series_id=series.id,
+                video_id=video.id,
                 parse_task_id=task_id,
                 content_version=content.version,
                 index_generation=receipt["index_generation"],
@@ -507,8 +507,8 @@ class VideoParseRepository:
 
         with self._session_factory() as session:
             existing_series_ids = set(session.scalars(
-                select(Series.series_id).where(
-                    Series.series_id.in_(ordered_series_ids),
+                select(Series.id.label("series_id")).where(
+                    Series.id.in_(ordered_series_ids),
                     Series.tenant_id == workspace,
                 )
             ))
@@ -528,7 +528,7 @@ class VideoParseRepository:
                 .where(Video.series_id.in_(ordered_series_ids))
                 .order_by(
                     Video.episode_order,
-                    Video.video_id,
+                    Video.id,
                 )
             ))
             if not videos:
@@ -536,7 +536,7 @@ class VideoParseRepository:
                     "selected Series have no COMPLETE Video Parse V2 task"
                 )
 
-            video_ids = [video.video_id for video in videos]
+            video_ids = [video.id for video in videos]
             latest_by_video: dict[str, VideoParseTask] = {}
             for task in session.scalars(
                 select(VideoParseTask)
@@ -553,10 +553,10 @@ class VideoParseRepository:
                 latest_by_video.setdefault(task.video_id, task)
 
             selected = [
-                (video, latest_by_video[video.video_id])
+                (video, latest_by_video[video.id])
                 for video in videos
-                if video.video_id in latest_by_video
-                and latest_by_video[video.video_id].status
+                if video.id in latest_by_video
+                and latest_by_video[video.id].status
                 == VideoParseTaskStatus.COMPLETE.value
             ]
             if not selected:
@@ -577,25 +577,25 @@ class VideoParseRepository:
                 )
                 .join(
                     VideoChunk,
-                    VideoChunk.video_chunk_id
-                    == ChunkParseTask.video_chunk_id,
+                    VideoChunk.id
+                    == ChunkParseTask.chunk_id,
                 )
                 .join(
                     ChunkParseContent,
-                    ChunkParseContent.chunk_parse_task_id
+                    ChunkParseContent.chunk_task_id
                     == ChunkParseTask.id,
                 )
                 .where(
-                    ChunkParseTask.video_parse_task_id.in_(task_ids),
+                    ChunkParseTask.video_task_id.in_(task_ids),
                     ChunkParseTask.status
                     == ChunkParseTaskStatus.COMPLETE.value,
                 )
                 .order_by(
-                    ChunkParseTask.video_parse_task_id,
+                    ChunkParseTask.video_task_id,
                     VideoChunk.sequence_no,
                 )
             ):
-                rows_by_task.setdefault(row[0].video_parse_task_id, []).append(row)
+                rows_by_task.setdefault(row[0].video_task_id, []).append(row)
 
             shared_contract: tuple[int, str, str, int, float, int] | None = None
             selected_config: ParseConfig | None = None
@@ -605,7 +605,7 @@ class VideoParseRepository:
                     len(rows) != task.chunk_count
                     or [chunk.sequence_no for _child, chunk, _content in rows]
                     != list(range(task.chunk_count))
-                    or any(chunk.video_id != video.video_id for _child, chunk, _content in rows)
+                    or any(chunk.video_id != video.id for _child, chunk, _content in rows)
                 ):
                     raise VideoParseConflictError(
                         "COMPLETE Video Parse V2 task has incomplete Chunk content"
@@ -618,7 +618,7 @@ class VideoParseRepository:
                     ) from exc
                 embedding = config.models.embedding
                 for _child, chunk, content in rows:
-                    receipt = _index_receipt(content, task.id, chunk.video_chunk_id)
+                    receipt = _index_receipt(content, task.id, chunk.id)
                     if require_sparse:
                         envelope = (content.detail or {}).get(INDEX_EMBEDDINGS_DETAIL_KEY)
                         representations = envelope.get("representations") if isinstance(envelope, Mapping) else None
@@ -656,12 +656,12 @@ class VideoParseRepository:
             )
             return VideoParseRetrievalScope(
                 series_ids=ordered_series_ids,
-                searched_video_ids=tuple(video.video_id for video, _task in selected),
+                searched_video_ids=tuple(video.id for video, _task in selected),
                 parse_tasks_by_video_id={
-                    video.video_id: task.id for video, task in selected
+                    video.id: task.id for video, task in selected
                 },
                 series_by_video_id={
-                    video.video_id: video.series_id for video, _task in selected
+                    video.id: video.series_id for video, _task in selected
                 },
                 parse_config=selected_config,
                 index_generation=shared_contract[0],
@@ -719,24 +719,24 @@ class VideoParseRepository:
                     ChunkParseTask,
                     ChunkParseContent,
                 )
-                .join(Video, Video.series_id == Series.series_id)
+                .join(Video, Video.series_id == Series.id)
                 .join(
                     VideoParseTask,
-                    VideoParseTask.video_id == Video.video_id,
+                    VideoParseTask.video_id == Video.id,
                 )
                 .join(
                     ChunkParseTask,
-                    ChunkParseTask.video_parse_task_id
+                    ChunkParseTask.video_task_id
                     == VideoParseTask.id,
                 )
                 .join(
                     VideoChunk,
-                    VideoChunk.video_chunk_id
-                    == ChunkParseTask.video_chunk_id,
+                    VideoChunk.id
+                    == ChunkParseTask.chunk_id,
                 )
                 .join(
                     ChunkParseContent,
-                    ChunkParseContent.chunk_parse_task_id
+                    ChunkParseContent.chunk_task_id
                     == ChunkParseTask.id,
                 )
                 .where(
@@ -749,10 +749,10 @@ class VideoParseRepository:
                 )
             )
             rows = session.execute(
-                query.where(VideoChunk.video_chunk_id.in_(chunk_ids))
+                query.where(VideoChunk.id.in_(chunk_ids))
             ).all()
             by_identity = {
-                (task.id, chunk.video_chunk_id): (
+                (task.id, chunk.id): (
                     series,
                     video,
                     chunk,
@@ -788,15 +788,15 @@ class VideoParseRepository:
                         "retrieval candidate is missing from COMPLETE V2 facts"
                     )
                 series, video, chunk, task, content = row
-                if chunk.video_id != video.video_id:
+                if chunk.video_id != video.id:
                     raise VideoParseConflictError(
                         "retrieval candidate Chunk belongs to a different Video"
                     )
-                if _latest_video_task_id(session, video.video_id) != task.id:
+                if _latest_video_task_id(session, video.id) != task.id:
                     raise VideoParseConflictError(
                         "retrieval candidate no longer belongs to the latest V2 task"
                     )
-                receipt = _index_receipt(content, task.id, chunk.video_chunk_id)
+                receipt = _index_receipt(content, task.id, chunk.id)
                 _require_matching_retrieval_identity(
                     identity,
                     video_chunk_id=video_chunk_id,
@@ -819,22 +819,22 @@ class VideoParseRepository:
                         (other_series, other_video, other_chunk,
                          _task, _child, other_content) = neighbor
                         if (
-                            other_video.video_id != video.video_id
-                            or other_chunk.video_id != video.video_id
+                            other_video.id != video.id
+                            or other_chunk.video_id != video.id
                             or (
                                 sequence < chunk.sequence_no
-                                and other_chunk.end_seconds != chunk.start_seconds
+                                and other_chunk.end_ms != chunk.start_ms
                             )
                             or (
                                 sequence > chunk.sequence_no
-                                and other_chunk.start_seconds != chunk.end_seconds
+                                and other_chunk.start_ms != chunk.end_ms
                             )
                         ):
                             raise VideoParseConflictError(
                                 "retrieval context is not a contiguous adjacent Chunk"
                             )
                         other_receipt = _index_receipt(
-                            other_content, task.id, other_chunk.video_chunk_id
+                            other_content, task.id, other_chunk.id
                         )
                         if other_receipt["index_generation"] != identity.index_generation:
                             raise VideoParseConflictError(
@@ -842,8 +842,8 @@ class VideoParseRepository:
                             )
                         other_identity = VideoChunkRetrievalIdentity(
                             tenant_id=other_series.tenant_id,
-                            series_id=other_series.series_id,
-                            video_id=other_video.video_id,
+                            series_id=other_series.id,
+                            video_id=other_video.id,
                             parse_task_id=task.id,
                             content_version=other_content.version,
                             index_generation=other_receipt["index_generation"],
@@ -853,8 +853,8 @@ class VideoParseRepository:
                         ))
                 projection = project_chunk_index(
                     fact.result,
-                    chunk_start_seconds=chunk.start_seconds,
-                    chunk_end_seconds=chunk.end_seconds,
+                    chunk_start_seconds=chunk.start_ms,
+                    chunk_end_seconds=chunk.end_ms,
                 )
                 hydrated.append(HydratedRetrievalCandidate(
                     facts=fact,
@@ -871,8 +871,8 @@ class VideoParseRepository:
         with self._session_factory() as session:
             row = session.execute(
                 select(VideoParseTask, Video, Series)
-                .join(Video, Video.video_id == VideoParseTask.video_id)
-                .join(Series, Series.series_id == Video.series_id)
+                .join(Video, Video.id == VideoParseTask.video_id)
+                .join(Series, Series.id == Video.series_id)
                 .where(
                     VideoParseTask.id == video_parse_task_id,
                     VideoParseTask.is_deleted.is_(False),
@@ -907,13 +907,13 @@ class VideoParseRepository:
                 raise VideoParseConflictError("VideoParseTask Video no longer exists")
             chunk_rows = list(session.scalars(
                 select(VideoChunk)
-                .where(VideoChunk.video_chunk_id.in_(ordered_chunk_ids))
+                .where(VideoChunk.id.in_(ordered_chunk_ids))
                 .order_by(VideoChunk.sequence_no)
                 .with_for_update()
             ))
             if (
                 len(chunk_rows) != len(ordered_chunk_ids)
-                or tuple(row.video_chunk_id for row in chunk_rows) != ordered_chunk_ids
+                or tuple(row.id for row in chunk_rows) != ordered_chunk_ids
                 or any(row.video_id != task.video_id for row in chunk_rows)
                 or [row.sequence_no for row in chunk_rows] != list(range(len(chunk_rows)))
                 or len(chunk_rows) != task.chunk_count
@@ -925,11 +925,11 @@ class VideoParseRepository:
 
             existing_chunks = list(session.scalars(
                 select(ChunkParseTask)
-                .where(ChunkParseTask.video_parse_task_id == task.id)
+                .where(ChunkParseTask.video_task_id == task.id)
                 .order_by(ChunkParseTask.id)
                 .with_for_update()
             ))
-            by_video_chunk = {item.video_chunk_id: item for item in existing_chunks}
+            by_video_chunk = {item.chunk_id: item for item in existing_chunks}
             if len(by_video_chunk) != len(existing_chunks):
                 raise VideoParseConflictError("duplicate ChunkParseTask topology")
             if set(by_video_chunk) - set(ordered_chunk_ids):
@@ -937,19 +937,19 @@ class VideoParseRepository:
 
             chunk_tasks: list[ChunkParseTask] = []
             for chunk in chunk_rows:
-                child = by_video_chunk.get(chunk.video_chunk_id)
+                child = by_video_chunk.get(chunk.id)
                 if child is None:
                     child = ChunkParseTask(
                         id=str(uuid4()),
-                        video_parse_task_id=task.id,
-                        video_chunk_id=chunk.video_chunk_id,
+                        video_task_id=task.id,
+                        chunk_id=chunk.id,
                         status=ChunkParseTaskStatus.QUEUED.value,
                         next_execute_time=prepared_at,
                         retry_count=0,
                         lease_version=0,
                         detail={},
-                        create_time=prepared_at,
-                        update_time=prepared_at,
+                        create_time=datetime_to_unix_time_ms(prepared_at),
+                        update_time=datetime_to_unix_time_ms(prepared_at),
                     )
                     session.add(child)
                     session.flush()
@@ -960,7 +960,7 @@ class VideoParseRepository:
             )
             existing_intervals = list(session.scalars(
                 select(IntervalParseTask)
-                .where(IntervalParseTask.video_parse_task_id == task.id)
+                .where(IntervalParseTask.video_task_id == task.id)
                 .order_by(IntervalParseTask.start_sequence_no)
                 .with_for_update()
             ))
@@ -982,9 +982,9 @@ class VideoParseRepository:
                             ready_mask |= interval_ready_mask_bit(index, count)
                     interval = IntervalParseTask(
                         id=str(uuid4()),
-                        chunk_parse_task_id=member_ids[0],
-                        video_parse_task_id=task.id,
-                        chunk_parse_task_ids=member_ids,
+                        chunk_task_id=member_ids[0],
+                        video_task_id=task.id,
+                        chunk_task_ids=member_ids,
                         start_sequence_no=start,
                         chunk_count=count,
                         ready_mask=ready_mask,
@@ -992,23 +992,23 @@ class VideoParseRepository:
                         next_execute_time=prepared_at,
                         retry_count=0,
                         lease_version=0,
-                        create_time=prepared_at,
-                        update_time=prepared_at,
+                        create_time=datetime_to_unix_time_ms(prepared_at),
+                        update_time=datetime_to_unix_time_ms(prepared_at),
                     )
                     session.add(interval)
                 else:
                     validate_interval_parse_task_members(
-                        chunk_parse_task_id=interval.chunk_parse_task_id,
+                        chunk_parse_task_id=interval.chunk_task_id,
                         video_parse_task_id=task.id,
                         start_sequence_no=start,
                         chunk_count=count,
-                        chunk_parse_task_ids=interval.chunk_parse_task_ids,
+                        chunk_parse_task_ids=interval.chunk_task_ids,
                         members=[
                             (member, chunk_rows[start + index].sequence_no)
                             for index, member in enumerate(members)
                         ],
                     )
-                    if tuple(interval.chunk_parse_task_ids) != tuple(member_ids):
+                    if tuple(interval.chunk_task_ids) != tuple(member_ids):
                         raise VideoParseConflictError(
                             "existing IntervalParseTask members are incompatible"
                         )
@@ -1017,7 +1017,7 @@ class VideoParseRepository:
             if _activate:
                 task.status = VideoParseTaskStatus.PARSING.value
                 task.last_error = None
-            task.update_time = prepared_at
+            task.update_time = datetime_to_unix_time_ms(prepared_at)
             task.detail = _ensure_runtime(task.detail)
             video.parse_status = (
                 VideoParseTaskStatus.PARSING.value if _activate else task.status
@@ -1055,7 +1055,7 @@ class VideoParseRepository:
             chunk_duration = _positive_int(task.parse_config.get("chunk_duration"), "chunk_duration") * 1000
             expected = [
                 (index, index * chunk_duration,
-                 min(video.duration_seconds, (index + 1) * chunk_duration))
+                 min(video.duration_ms, (index + 1) * chunk_duration))
                 for index in range(task.chunk_count)
             ]
             if list(normalized) != expected:
@@ -1064,7 +1064,7 @@ class VideoParseRepository:
                 item.sequence_no: item
                 for item in session.scalars(
                     select(VideoChunk)
-                    .where(VideoChunk.video_id == video.video_id)
+                    .where(VideoChunk.video_id == video.id)
                     .order_by(VideoChunk.sequence_no)
                     .with_for_update()
                 )
@@ -1075,25 +1075,25 @@ class VideoParseRepository:
             for sequence_no, start_seconds, end_seconds in normalized:
                 chunk = existing.get(sequence_no)
                 if chunk is None:
-                    source_ref = video.inference_proxy_uri or video.original_source_uri
+                    source_ref = video.proxy_uri or video.source_uri
                     chunk = VideoChunk(
-                        video_chunk_id=derive_video_chunk_id(video.video_id, sequence_no),
-                        video_id=video.video_id,
+                        id=derive_video_chunk_id(video.id, sequence_no),
+                        video_id=video.id,
                         sequence_no=sequence_no,
-                        start_seconds=start_seconds,
-                        end_seconds=end_seconds,
-                        analysis_window_start_seconds=start_seconds,
-                        analysis_window_end_seconds=end_seconds,
+                        start_ms=start_seconds,
+                        end_ms=end_seconds,
+                        window_start_ms=start_seconds,
+                        window_end_ms=end_seconds,
                         chunk_media_ref=source_ref,
                         analysis_window_media_ref=source_ref,
                         transcript=[],
                         baseline_visual_caption=None,
                         keyframe_uris=[],
-                        created_at=prepared_at,
-                        updated_at=prepared_at,
+                        create_time=datetime_to_unix_time_ms(prepared_at),
+                        update_time=datetime_to_unix_time_ms(prepared_at),
                     )
                     session.add(chunk)
-                elif (chunk.start_seconds, chunk.end_seconds) != (
+                elif (chunk.start_ms, chunk.end_ms) != (
                     start_seconds, end_seconds
                 ):
                     raise VideoParseConflictError(
@@ -1138,12 +1138,12 @@ class VideoParseRepository:
                 raise VideoParseConflictError("only PREPARING tasks can be activated")
             chunk_count = len(list(session.scalars(
                 select(ChunkParseTask.id).where(
-                    ChunkParseTask.video_parse_task_id == task.id
+                    ChunkParseTask.video_task_id == task.id
                 )
             )))
             interval_count = len(list(session.scalars(
                 select(IntervalParseTask.id).where(
-                    IntervalParseTask.video_parse_task_id == task.id
+                    IntervalParseTask.video_task_id == task.id
                 )
             )))
             if chunk_count != task.chunk_count or interval_count != len(
@@ -1152,7 +1152,7 @@ class VideoParseRepository:
                 raise VideoParseConflictError("VideoParseTask preparation is incomplete")
             task.status = VideoParseTaskStatus.PARSING.value
             task.last_error = None
-            task.update_time = activated_at
+            task.update_time = datetime_to_unix_time_ms(activated_at)
             video = session.get(Video, task.video_id)
             if video is not None:
                 video.parse_status = task.status
@@ -1177,17 +1177,17 @@ class VideoParseRepository:
                 session, lease.video_parse_task_id
             )
             task = _locked_chunk_lease(session, lease, committed_at)
-            chunk = session.get(VideoChunk, task.video_chunk_id)
+            chunk = session.get(VideoChunk, task.chunk_id)
             if chunk is None:
                 raise VideoParseConflictError("ChunkParseTask VideoChunk no longer exists")
             payload = validate_result_time_range(
                 VideoParseResult.model_validate(payload),
-                start_seconds=chunk.analysis_window_start_seconds,
-                end_seconds=chunk.analysis_window_end_seconds,
+                start_seconds=chunk.window_start_ms,
+                end_seconds=chunk.window_end_ms,
             ).model_dump(mode="json")
             result = session.scalar(
                 select(ChunkParseContent)
-                .where(ChunkParseContent.chunk_parse_task_id == task.id)
+                .where(ChunkParseContent.chunk_task_id == task.id)
                 .with_for_update()
             )
             result_detail = deepcopy(dict(detail or {}))
@@ -1195,12 +1195,12 @@ class VideoParseRepository:
             if result is None:
                 result = ChunkParseContent(
                     id=str(uuid4()),
-                    chunk_parse_task_id=task.id,
+                    chunk_task_id=task.id,
                     content=payload,
                     version=1,
                     detail=result_detail,
-                    create_time=committed_at,
-                    update_time=committed_at,
+                    create_time=datetime_to_unix_time_ms(committed_at),
+                    update_time=datetime_to_unix_time_ms(committed_at),
                 )
                 session.add(result)
             else:
@@ -1208,13 +1208,13 @@ class VideoParseRepository:
                 # recovered incomplete commit. Never replace a COMPLETE result.
                 result.content = payload
                 result.detail = result_detail
-                result.update_time = committed_at
+                result.update_time = datetime_to_unix_time_ms(committed_at)
 
             touched: list[str] = []
             for interval in intervals:
-                if task.id not in interval.chunk_parse_task_ids:
+                if task.id not in interval.chunk_task_ids:
                     continue
-                index = interval.chunk_parse_task_ids.index(task.id)
+                index = interval.chunk_task_ids.index(task.id)
                 was_ready = (
                     interval.ready_mask
                     == interval_full_ready_mask(interval.chunk_count)
@@ -1229,7 +1229,7 @@ class VideoParseRepository:
                     # ordering key. An Interval that becomes ready later must
                     # not be hidden behind old, incomplete windows.
                     interval.next_execute_time = committed_at
-                interval.update_time = committed_at
+                interval.update_time = datetime_to_unix_time_ms(committed_at)
                 touched.append(interval.id)
 
             task.status = ChunkParseTaskStatus.COMPLETE.value
@@ -1237,7 +1237,7 @@ class VideoParseRepository:
             task.lease_owner = None
             task.lease_expire_time = None
             task.last_error = None
-            task.update_time = committed_at
+            task.update_time = datetime_to_unix_time_ms(committed_at)
             session.flush()
             return tuple(touched)
 
@@ -1264,27 +1264,27 @@ class VideoParseRepository:
                 .select_from(VideoChunk)
                 .join(
                     VideoParseTask,
-                    VideoParseTask.id == task.video_parse_task_id,
+                    VideoParseTask.id == task.video_task_id,
                 )
-                .join(Video, Video.video_id == VideoParseTask.video_id)
-                .join(Series, Series.series_id == Video.series_id)
-                .where(VideoChunk.video_chunk_id == task.video_chunk_id)
+                .join(Video, Video.id == VideoParseTask.video_id)
+                .join(Series, Series.id == Video.series_id)
+                .where(VideoChunk.id == task.chunk_id)
             ).one_or_none()
             if row is None:
                 raise VideoParseConflictError("Chunk execution identity is incomplete")
             chunk, parent, video, series = row
             source_media_ref = (
-                video.inference_proxy_uri or video.original_source_uri
+                video.proxy_uri or video.source_uri
             )
             return ChunkExecutionState(
                 chunk_parse_task_id=task.id,
-                video_parse_task_id=task.video_parse_task_id,
-                video_chunk_id=chunk.video_chunk_id,
+                video_parse_task_id=task.video_task_id,
+                video_chunk_id=chunk.id,
                 sequence_no=chunk.sequence_no,
-                start_seconds=chunk.start_seconds,
-                end_seconds=chunk.end_seconds,
-                analysis_window_start_seconds=chunk.analysis_window_start_seconds,
-                analysis_window_end_seconds=chunk.analysis_window_end_seconds,
+                start_seconds=chunk.start_ms,
+                end_seconds=chunk.end_ms,
+                analysis_window_start_seconds=chunk.window_start_ms,
+                analysis_window_end_seconds=chunk.window_end_ms,
                 source_media_ref=source_media_ref,
                 chunk_media_ref=chunk.chunk_media_ref,
                 analysis_window_media_ref=chunk.analysis_window_media_ref,
@@ -1305,7 +1305,7 @@ class VideoParseRepository:
             rows = _member_content_rows(session, interval, for_update=False)
             return IntervalMemberSnapshot(
                 interval_parse_task_id=interval.id,
-                video_parse_task_id=interval.video_parse_task_id,
+                video_parse_task_id=interval.video_task_id,
                 start_sequence_no=interval.start_sequence_no,
                 chunk_count=interval.chunk_count,
                 members=tuple(_content_state(*row) for row in rows),
@@ -1334,12 +1334,12 @@ class VideoParseRepository:
             )
             if session.get(IntervalParseContent, interval.id) is not None:
                 raise VideoParseConflictError("Interval refinement was already committed")
-            unexpected = set(member_updates) - set(interval.chunk_parse_task_ids)
+            unexpected = set(member_updates) - set(interval.chunk_task_ids)
             if unexpected:
                 raise VideoParseConflictError("refinement updates a nonmember Chunk")
 
             rows = _member_content_rows(session, interval, for_update=True)
-            expected_members = set(interval.chunk_parse_task_ids)
+            expected_members = set(interval.chunk_task_ids)
             if set(input_versions) != expected_members or set(input_fingerprints) != expected_members:
                 raise VideoParseConflictError("refinement input identity must cover every Interval member")
             for chunk_task, _chunk, result in rows:
@@ -1352,7 +1352,7 @@ class VideoParseRepository:
                 consulted_scope = _ordered_int_union(
                     consulted_scope, _ordered_int_union(dict(result.detail or {}).get("scope"), [chunk.sequence_no]),
                 )
-            parent = session.get(VideoParseTask, interval.video_parse_task_id)
+            parent = session.get(VideoParseTask, interval.video_task_id)
             video = session.get(Video, parent.video_id) if parent is not None else None
             if video is None or consulted_scope[0] < 0 or consulted_scope[-1] >= parent.chunk_count:
                 raise VideoParseConflictError("refinement scope exceeds its fixed Video topology")
@@ -1361,7 +1361,7 @@ class VideoParseRepository:
                 raise VideoParseConflictError("frozen parse config has an invalid chunk_duration")
             chunk_duration_ms = chunk_duration * 1000
             start_ms = consulted_scope[0] * chunk_duration_ms
-            end_ms = min(video.duration_seconds, (consulted_scope[-1] + 1) * chunk_duration_ms)
+            end_ms = min(video.duration_ms, (consulted_scope[-1] + 1) * chunk_duration_ms)
             candidates = {}
             for chunk_task, _chunk, result in rows:
                 current = deepcopy(dict(result.content or {}))
@@ -1392,18 +1392,18 @@ class VideoParseRepository:
                     current_detail.get("scope"), member_scope
                 )
                 result.detail = current_detail
-                result.update_time = committed_at
+                result.update_time = datetime_to_unix_time_ms(committed_at)
 
             session.add(IntervalParseContent(
-                interval_parse_task_id=interval.id,
+                interval_task_id=interval.id,
                 content=deepcopy(dict(interval_content)),
                 detail={
                     **deepcopy(dict(detail or {})),
                     "indexed_versions": {},
                     "refinement_committed_lease_version": lease.lease_version,
                 },
-                create_time=committed_at,
-                update_time=committed_at,
+                create_time=datetime_to_unix_time_ms(committed_at),
+                update_time=datetime_to_unix_time_ms(committed_at),
             ))
             interval.status = IntervalParseTaskStatus.INDEXING.value
             interval.lease_owner = None
@@ -1411,11 +1411,11 @@ class VideoParseRepository:
             interval.last_error = None
             interval.finish_time = None
             interval.next_execute_time = committed_at
-            interval.update_time = committed_at
+            interval.update_time = datetime_to_unix_time_ms(committed_at)
 
             reset_intervals = _reset_indexing_for_changed_members(
                 session,
-                interval.video_parse_task_id,
+                interval.video_task_id,
                 changed_member_ids,
                 committed_at,
                 exclude_interval_id=interval.id,
@@ -1440,9 +1440,9 @@ class VideoParseRepository:
                 raise VideoParseConflictError("INDEXING Interval has no Refine result")
             indexed_versions = _indexed_versions(result.detail)
             submitted = _submitted_intervals_by_member(
-                session, interval.video_parse_task_id
+                session, interval.video_task_id
             )
-            parent = session.get(VideoParseTask, interval.video_parse_task_id)
+            parent = session.get(VideoParseTask, interval.video_task_id)
             video = session.get(Video, parent.video_id) if parent is not None else None
             series = session.get(Series, video.series_id) if video is not None else None
             if parent is None or video is None or series is None:
@@ -1450,7 +1450,7 @@ class VideoParseRepository:
 
             chunks: list[IndexableChunkState] = []
             source_media_ref = (
-                video.inference_proxy_uri or video.original_source_uri
+                video.proxy_uri or video.source_uri
             )
             for chunk_task, chunk, content in _member_content_rows(
                 session, interval, for_update=False
@@ -1460,7 +1460,7 @@ class VideoParseRepository:
                     continue
                 chunks.append(IndexableChunkState(
                     chunk_parse_task_id=chunk_task.id,
-                    video_chunk_id=chunk.video_chunk_id,
+                    video_chunk_id=chunk.id,
                     sequence_no=chunk.sequence_no,
                     content=deepcopy(dict(content.content or {})),
                     content_version=content.version,
@@ -1469,14 +1469,14 @@ class VideoParseRepository:
                     chunk_media_ref=chunk.chunk_media_ref,
                     analysis_window_media_ref=chunk.analysis_window_media_ref,
                     tenant_id=series.tenant_id,
-                    series_id=series.series_id,
-                    video_id=video.video_id,
-                    start_seconds=chunk.start_seconds,
-                    end_seconds=chunk.end_seconds,
+                    series_id=series.id,
+                    video_id=video.id,
+                    start_seconds=chunk.start_ms,
+                    end_seconds=chunk.end_ms,
                 ))
             return IntervalIndexingSnapshot(
                 interval_parse_task_id=interval.id,
-                video_parse_task_id=interval.video_parse_task_id,
+                video_parse_task_id=interval.video_task_id,
                 chunks=tuple(chunks),
                 indexed_versions=indexed_versions,
             )
@@ -1504,12 +1504,12 @@ class VideoParseRepository:
                 raise VideoParseConflictError("INDEXING Interval has no Refine result")
             recorded = _indexed_versions(result.detail)
             submitted = _submitted_intervals_by_member(
-                session, interval.video_parse_task_id, for_update=True
+                session, interval.video_task_id, for_update=True
             )
             rows = _member_content_rows(session, interval, for_update=True)
             current_versions = {task.id: content.version for task, _chunk, content in rows}
             for chunk_task_id, version in indexed_versions.items():
-                if chunk_task_id not in interval.chunk_parse_task_ids:
+                if chunk_task_id not in interval.chunk_task_ids:
                     raise VideoParseConflictError("indexed Chunk is not an Interval member")
                 covering = submitted.get(chunk_task_id, ())
                 if not covering or any(item.status not in _REFINE_SUBMITTED for item in covering):
@@ -1531,7 +1531,7 @@ class VideoParseRepository:
                     lease.lease_version
                 )
             result.detail = result_detail
-            result.update_time = completed_at
+            result.update_time = datetime_to_unix_time_ms(completed_at)
             interval.status = (
                 IntervalParseTaskStatus.COMPLETE.value
                 if all_current
@@ -1544,11 +1544,11 @@ class VideoParseRepository:
             interval.next_execute_time = (
                 completed_at if all_current else completed_at + dependency_poll_delay
             )
-            interval.update_time = completed_at
-            task = session.get(VideoParseTask, interval.video_parse_task_id)
+            interval.update_time = datetime_to_unix_time_ms(completed_at)
+            task = session.get(VideoParseTask, interval.video_task_id)
             if task is None:
                 raise VideoParseTaskNotFoundError(
-                    f"VideoParseTask {interval.video_parse_task_id!r} does not exist"
+                    f"VideoParseTask {interval.video_task_id!r} does not exist"
                 )
             session.flush()
             return _task_state(task)
@@ -1577,16 +1577,16 @@ class VideoParseRepository:
             interval = _locked_interval_lease(
                 session, lease, saved_at, IntervalParseTaskStatus.INDEXING.value
             )
-            if chunk_parse_task_id not in interval.chunk_parse_task_ids:
+            if chunk_parse_task_id not in interval.chunk_task_ids:
                 raise VideoParseConflictError("embedding target is not an Interval member")
             covering = _submitted_intervals_by_member(
-                session, interval.video_parse_task_id, for_update=True
+                session, interval.video_task_id, for_update=True
             ).get(chunk_parse_task_id, ())
             if not covering or any(item.status not in _REFINE_SUBMITTED for item in covering):
                 raise VideoParseConflictError("embedding target is not released")
             content = session.scalar(
                 select(ChunkParseContent)
-                .where(ChunkParseContent.chunk_parse_task_id == chunk_parse_task_id)
+                .where(ChunkParseContent.chunk_task_id == chunk_parse_task_id)
                 .with_for_update()
             )
             if content is None or content.version != content_version:
@@ -1597,14 +1597,14 @@ class VideoParseRepository:
             selected_receipt: dict[str, Any] | None = None
             if receipt is not None:
                 child = session.get(ChunkParseTask, chunk_parse_task_id)
-                if child is None or child.video_parse_task_id != lease.video_parse_task_id:
+                if child is None or child.video_task_id != lease.video_parse_task_id:
                     raise VideoParseConflictError("embedding target belongs to a different task")
                 selected_receipt = _validate_index_receipt(
-                    receipt, lease.video_parse_task_id, child.video_chunk_id, content_version
+                    receipt, lease.video_parse_task_id, child.chunk_id, content_version
                 )
                 try:
                     cached_receipt = _index_receipt(
-                        content, lease.video_parse_task_id, child.video_chunk_id
+                        content, lease.video_parse_task_id, child.chunk_id
                     )
                 except VideoParseConflictError:
                     cached_receipt = None
@@ -1624,7 +1624,7 @@ class VideoParseRepository:
                 envelope["receipt"] = selected_receipt
             detail[INDEX_EMBEDDINGS_DETAIL_KEY] = envelope
             content.detail = detail
-            content.update_time = saved_at
+            content.update_time = datetime_to_unix_time_ms(saved_at)
 
     def request_index_rebuild(
         self,
@@ -1666,7 +1666,7 @@ class VideoParseRepository:
                 or task.status != VideoParseTaskStatus.INDEXING_FAILED.value
                 or any(interval.lease_owner is not None for interval in intervals)
                 or session.scalar(select(ChunkParseTask.id).where(
-                    ChunkParseTask.video_parse_task_id == task.id,
+                    ChunkParseTask.video_task_id == task.id,
                     ChunkParseTask.lease_owner.is_not(None),
                 ).limit(1)) is not None
             ):
@@ -1675,8 +1675,8 @@ class VideoParseRepository:
                 )
 
             refined_interval_ids = set(session.scalars(
-                select(IntervalParseContent.interval_parse_task_id).where(
-                    IntervalParseContent.interval_parse_task_id.in_(
+                select(IntervalParseContent.interval_task_id.label("interval_parse_task_id")).where(
+                    IntervalParseContent.interval_task_id.in_(
                         tuple(interval.id for interval in intervals)
                     )
                 )
@@ -1696,7 +1696,7 @@ class VideoParseRepository:
                 interval.lease_expire_time = None
                 interval.finish_time = None
                 interval.last_error = None
-                interval.update_time = requested_at
+                interval.update_time = datetime_to_unix_time_ms(requested_at)
                 reset.append(interval.id)
 
             if reset and failure_status is not None:
@@ -1800,7 +1800,7 @@ class VideoParseRepository:
             runtime["model_calls"] = model_calls
             detail[RUNTIME_DETAIL_KEY] = runtime
             task.detail = detail
-            task.update_time = reserved_at
+            task.update_time = datetime_to_unix_time_ms(reserved_at)
             return ModelCallReservation(
                 video_parse_task_id=task.id,
                 call_id=call_id,
@@ -1855,7 +1855,7 @@ class VideoParseRepository:
             runtime["model_calls"] = model_calls
             detail[RUNTIME_DETAIL_KEY] = runtime
             task.detail = detail
-            task.update_time = renewed_at
+            task.update_time = datetime_to_unix_time_ms(renewed_at)
             return True
 
     def release_model_call(
@@ -1887,7 +1887,7 @@ class VideoParseRepository:
             runtime["model_calls"] = model_calls
             detail[RUNTIME_DETAIL_KEY] = runtime
             task.detail = detail
-            task.update_time = released_at
+            task.update_time = datetime_to_unix_time_ms(released_at)
             return True
 
     def claim_next_prefix(
@@ -1961,7 +1961,7 @@ class VideoParseRepository:
                 runtime["prefix"] = prefix
                 detail[RUNTIME_DETAIL_KEY] = runtime
                 task.detail = detail
-                task.update_time = claimed_at
+                task.update_time = datetime_to_unix_time_ms(claimed_at)
                 return None
             if cursor >= task.chunk_count or task.status not in {
                 VideoParseTaskStatus.PARSING.value,
@@ -1972,10 +1972,10 @@ class VideoParseRepository:
                 return None
             chunk_row = session.execute(
                 select(ChunkParseTask, VideoChunk, ChunkParseContent)
-                .join(VideoChunk, VideoChunk.video_chunk_id == ChunkParseTask.video_chunk_id)
-                .join(ChunkParseContent, ChunkParseContent.chunk_parse_task_id == ChunkParseTask.id)
+                .join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id)
+                .join(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id)
                 .where(
-                    ChunkParseTask.video_parse_task_id == task.id,
+                    ChunkParseTask.video_task_id == task.id,
                     VideoChunk.sequence_no == cursor,
                     ChunkParseTask.status == ChunkParseTaskStatus.COMPLETE.value,
                 )
@@ -1998,11 +1998,11 @@ class VideoParseRepository:
             runtime["prefix"] = prefix
             detail[RUNTIME_DETAIL_KEY] = runtime
             task.detail = detail
-            task.update_time = claimed_at
+            task.update_time = datetime_to_unix_time_ms(claimed_at)
             return PrefixParseLease(
                 video_parse_task_id=task.id,
                 chunk_parse_task_id=chunk_task.id,
-                video_chunk_id=chunk.video_chunk_id,
+                video_chunk_id=chunk.id,
                 sequence_no=chunk.sequence_no,
                 worker_id=worker_id,
                 lease_version=prefix["lease_version"],
@@ -2030,7 +2030,7 @@ class VideoParseRepository:
                 select(Video.series_id)
                 .join(
                     VideoParseTask,
-                    VideoParseTask.video_id == Video.video_id,
+                    VideoParseTask.video_id == Video.id,
                 )
                 .where(VideoParseTask.is_deleted.is_(False))
                 .distinct()
@@ -2079,7 +2079,7 @@ class VideoParseRepository:
             runtime["prefix"] = prefix
             detail[RUNTIME_DETAIL_KEY] = runtime
             task.detail = detail
-            task.update_time = heartbeat_at
+            task.update_time = datetime_to_unix_time_ms(heartbeat_at)
             return True
 
     def load_prefix_content(
@@ -2092,10 +2092,10 @@ class VideoParseRepository:
                 raise VideoParseLeaseLostError("Prefix lease is no longer current")
             row = session.execute(
                 select(ChunkParseTask, VideoChunk, ChunkParseContent)
-                .join(VideoChunk, VideoChunk.video_chunk_id == ChunkParseTask.video_chunk_id)
-                .join(ChunkParseContent, ChunkParseContent.chunk_parse_task_id == ChunkParseTask.id)
+                .join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id)
+                .join(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id)
                 .where(ChunkParseTask.id == lease.chunk_parse_task_id,
-                       ChunkParseTask.video_parse_task_id == lease.video_parse_task_id)
+                       ChunkParseTask.video_task_id == lease.video_parse_task_id)
             ).one_or_none()
             if row is None:
                 raise VideoParseConflictError("Prefix target no longer exists")
@@ -2121,7 +2121,7 @@ class VideoParseRepository:
                 select(ChunkParseTask)
                 .where(
                     ChunkParseTask.id == lease.chunk_parse_task_id,
-                    ChunkParseTask.video_parse_task_id
+                    ChunkParseTask.video_task_id
                     == lease.video_parse_task_id,
                 )
                 .with_for_update()
@@ -2129,7 +2129,7 @@ class VideoParseRepository:
             content = session.scalar(
                 select(ChunkParseContent)
                 .where(
-                    ChunkParseContent.chunk_parse_task_id
+                    ChunkParseContent.chunk_task_id
                     == lease.chunk_parse_task_id
                 )
                 .with_for_update()
@@ -2163,7 +2163,7 @@ class VideoParseRepository:
                         f"Prefix cannot add unknown field {field!r}"
                     )
                 updated[field] = deepcopy(value)
-            chunk = session.get(VideoChunk, chunk_task.video_chunk_id)
+            chunk = session.get(VideoChunk, chunk_task.chunk_id)
             if chunk is None:
                 raise VideoParseConflictError("Prefix target media identity is missing")
             scope = _ordered_int_union(dict(content.detail or {}).get("scope"), [chunk.sequence_no])
@@ -2179,7 +2179,7 @@ class VideoParseRepository:
             updated = validate_result_time_range(
                 VideoParseResult.model_validate(updated),
                 start_seconds=scope[0] * chunk_duration_ms,
-                end_seconds=min(video.duration_seconds, (scope[-1] + 1) * chunk_duration_ms),
+                end_seconds=min(video.duration_ms, (scope[-1] + 1) * chunk_duration_ms),
             ).model_dump(mode="json")
             changed = updated != current
             reset: tuple[str, ...] = ()
@@ -2196,7 +2196,7 @@ class VideoParseRepository:
             content_detail = deepcopy(dict(content.detail or {}))
             content_detail["compact"] = video_prefix_compact
             content.detail = content_detail
-            content.update_time = committed_at
+            content.update_time = datetime_to_unix_time_ms(committed_at)
 
             detail = _ensure_runtime(task.detail)
             runtime = deepcopy(detail[RUNTIME_DETAIL_KEY])
@@ -2218,7 +2218,7 @@ class VideoParseRepository:
             runtime["prefix"] = prefix
             detail[RUNTIME_DETAIL_KEY] = runtime
             task.detail = detail
-            task.update_time = committed_at
+            task.update_time = datetime_to_unix_time_ms(committed_at)
             _aggregate_video_task(session, task.id, committed_at)
             return reset
 
@@ -2256,7 +2256,7 @@ class VideoParseRepository:
             runtime["prefix"] = prefix
             detail[RUNTIME_DETAIL_KEY] = runtime
             task.detail = detail
-            task.update_time = failed_at
+            task.update_time = datetime_to_unix_time_ms(failed_at)
             return True
 
     def release_prefix(
@@ -2291,7 +2291,7 @@ class VideoParseRepository:
             runtime["prefix"] = prefix
             detail[RUNTIME_DETAIL_KEY] = runtime
             task.detail = detail
-            task.update_time = released_at
+            task.update_time = datetime_to_unix_time_ms(released_at)
             return True
 
 
@@ -2306,15 +2306,15 @@ def _task_input_state(
         task=_task_state(task),
         series_id=video.series_id,
         episode_order=video.episode_order,
-        original_filename=video.original_filename,
-        original_source_uri=video.original_source_uri,
-        inference_proxy_uri=video.inference_proxy_uri,
-        content_hash=video.content_hash,
-        total_bytes=video.total_bytes,
-        duration_seconds=video.duration_seconds,
+        original_filename=video.filename,
+        original_source_uri=video.source_uri,
+        inference_proxy_uri=video.proxy_uri,
+        content_hash=video.hash,
+        total_bytes=video.size_bytes,
+        duration_seconds=video.duration_ms,
         tenant_id=tenant_id,
         background=(
-            {"series_id": series.series_id, "description": series.description,
+            {"series_id": series.id, "description": series.description,
              "important_extra_data": deepcopy(series.important_extra_data),
              "character_bible": deepcopy(series.character_bible)}
             if series is not None else {}
@@ -2324,10 +2324,10 @@ def _task_input_state(
 
 def _video_chunk_state(chunk: VideoChunk) -> VideoChunkState:
     return VideoChunkState(
-        video_chunk_id=chunk.video_chunk_id,
+        video_chunk_id=chunk.id,
         sequence_no=chunk.sequence_no,
-        start_seconds=chunk.start_seconds,
-        end_seconds=chunk.end_seconds,
+        start_seconds=chunk.start_ms,
+        end_seconds=chunk.end_ms,
         chunk_media_ref=chunk.chunk_media_ref,
         analysis_window_media_ref=chunk.analysis_window_media_ref,
     )
@@ -2336,7 +2336,7 @@ def _video_chunk_state(chunk: VideoChunk) -> VideoChunkState:
 def _task_state(task: VideoParseTask) -> VideoParseTaskState:
     return VideoParseTaskState(
         video_parse_task_id=task.id,
-        created_by_user_id=task.created_by_user_id,
+        created_by_user_id=task.creator_id,
         video_id=task.video_id,
         pipeline_version=task.pipeline_version,
         status=task.status,
@@ -2357,8 +2357,8 @@ def _task_state(task: VideoParseTask) -> VideoParseTaskState:
         last_error=deepcopy(task.last_error),
         is_test=task.is_test,
         detail=deepcopy(dict(task.detail)),
-        create_time=task.create_time,
-        update_time=task.update_time,
+        create_time=task.create_date,
+        update_time=task.update_date,
     )
 
 
@@ -2401,8 +2401,8 @@ def _matching_chunk_lease(
 ) -> bool:
     return bool(
         task is not None
-        and task.video_parse_task_id == lease.video_parse_task_id
-        and task.video_chunk_id == lease.video_chunk_id
+        and task.video_task_id == lease.video_parse_task_id
+        and task.chunk_id == lease.video_chunk_id
         and task.status == ChunkParseTaskStatus.UNDERSTANDING.value
         and task.lease_owner == lease.worker_id
         and task.lease_version == lease.lease_version
@@ -2446,8 +2446,8 @@ def _matching_interval_lease(
 ) -> bool:
     return bool(
         interval is not None
-        and interval.video_parse_task_id == lease.video_parse_task_id
-        and tuple(interval.chunk_parse_task_ids) == lease.chunk_parse_task_ids
+        and interval.video_task_id == lease.video_parse_task_id
+        and tuple(interval.chunk_task_ids) == lease.chunk_parse_task_ids
         and interval.start_sequence_no == lease.start_sequence_no
         and interval.chunk_count == lease.chunk_count
         and interval.status == lease.phase
@@ -2466,9 +2466,9 @@ def _member_content_rows(
 ) -> list[tuple[ChunkParseTask, VideoChunk, ChunkParseContent]]:
     statement = (
         select(ChunkParseTask, VideoChunk, ChunkParseContent)
-        .join(VideoChunk, VideoChunk.video_chunk_id == ChunkParseTask.video_chunk_id)
-        .join(ChunkParseContent, ChunkParseContent.chunk_parse_task_id == ChunkParseTask.id)
-        .where(ChunkParseTask.id.in_(interval.chunk_parse_task_ids))
+        .join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id)
+        .join(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id)
+        .where(ChunkParseTask.id.in_(interval.chunk_task_ids))
         .order_by(VideoChunk.sequence_no)
     )
     if for_update:
@@ -2476,7 +2476,7 @@ def _member_content_rows(
     rows = list(session.execute(statement))
     if (
         len(rows) != interval.chunk_count
-        or tuple(row[0].id for row in rows) != tuple(interval.chunk_parse_task_ids)
+        or tuple(row[0].id for row in rows) != tuple(interval.chunk_task_ids)
     ):
         raise VideoParseConflictError("Interval member content is incomplete")
     return rows
@@ -2489,7 +2489,7 @@ def _content_state(
 ) -> ChunkParseContentState:
     return ChunkParseContentState(
         chunk_parse_task_id=task.id,
-        video_chunk_id=chunk.video_chunk_id,
+        video_chunk_id=chunk.id,
         sequence_no=chunk.sequence_no,
         content=deepcopy(dict(content.content or {})),
         version=content.version,
@@ -2502,7 +2502,7 @@ def _locked_parent_intervals(
 ) -> list[IntervalParseTask]:
     return list(session.scalars(
         select(IntervalParseTask)
-        .where(IntervalParseTask.video_parse_task_id == video_parse_task_id)
+        .where(IntervalParseTask.video_task_id == video_parse_task_id)
         .order_by(
             IntervalParseTask.start_sequence_no,
             IntervalParseTask.id,
@@ -2520,7 +2520,7 @@ def _submitted_intervals_by_member(
     intervals = _locked_parent_intervals(session, video_parse_task_id) if for_update else list(
         session.scalars(
             select(IntervalParseTask)
-            .where(IntervalParseTask.video_parse_task_id == video_parse_task_id)
+            .where(IntervalParseTask.video_task_id == video_parse_task_id)
             .order_by(
                 IntervalParseTask.start_sequence_no,
                 IntervalParseTask.id,
@@ -2529,7 +2529,7 @@ def _submitted_intervals_by_member(
     )
     grouped: dict[str, list[IntervalParseTask]] = {}
     for interval in intervals:
-        for task_id in interval.chunk_parse_task_ids:
+        for task_id in interval.chunk_task_ids:
             grouped.setdefault(task_id, []).append(interval)
     return {key: tuple(value) for key, value in grouped.items()}
 
@@ -2553,7 +2553,7 @@ def _reset_indexing_for_changed_members(
         else tuple(_locked_parent_intervals(session, video_parse_task_id))
     )
     for interval in intervals:
-        if interval.id == exclude_interval_id or not changed.intersection(interval.chunk_parse_task_ids):
+        if interval.id == exclude_interval_id or not changed.intersection(interval.chunk_task_ids):
             continue
         if interval.status not in _REFINE_SUBMITTED:
             continue
@@ -2562,7 +2562,7 @@ def _reset_indexing_for_changed_members(
         interval.lease_owner = None
         interval.lease_expire_time = None
         interval.next_execute_time = changed_at
-        interval.update_time = changed_at
+        interval.update_time = datetime_to_unix_time_ms(changed_at)
         reset.append(interval.id)
     return tuple(reset)
 
@@ -2604,7 +2604,7 @@ def _aggregate_video_task(
         task.status = (VideoParseTaskStatus.PREPARING.value
                        if task.lease_owner is not None else VideoParseTaskStatus.PENDING.value)
         task.finish_time = None
-        task.update_time = now
+        task.update_time = datetime_to_unix_time_ms(now)
         video = session.get(Video, task.video_id)
         if video is not None:
             video.parse_status = task.status
@@ -2612,12 +2612,12 @@ def _aggregate_video_task(
     previous_status = task.status
     chunks = list(session.scalars(
         select(ChunkParseTask).where(
-            ChunkParseTask.video_parse_task_id == video_parse_task_id
+            ChunkParseTask.video_task_id == video_parse_task_id
         )
     ))
     intervals = list(session.scalars(
         select(IntervalParseTask).where(
-            IntervalParseTask.video_parse_task_id == video_parse_task_id
+            IntervalParseTask.video_task_id == video_parse_task_id
         )
     ))
     if not chunks or len(chunks) != task.chunk_count or not intervals:
@@ -2692,7 +2692,7 @@ def _aggregate_video_task(
             task.finish_time = now
     else:
         task.finish_time = None
-    task.update_time = now
+    task.update_time = datetime_to_unix_time_ms(now)
     if release_terminal_lease and persisted_status in {
         VideoParseTaskStatus.COMPLETE.value,
         VideoParseTaskStatus.PARSING_FAILED.value,
@@ -2734,10 +2734,10 @@ def _validate_chunk_boundaries(
 ) -> None:
     duration = _positive_int(parse_config.get("chunk_duration"), "chunk_duration") * 1000
     expected = [
-        (sequence, sequence * duration, min(video.duration_seconds, (sequence + 1) * duration))
+        (sequence, sequence * duration, min(video.duration_ms, (sequence + 1) * duration))
         for sequence in range(len(chunks))
     ]
-    actual = [(item.sequence_no, item.start_seconds, item.end_seconds) for item in chunks]
+    actual = [(item.sequence_no, item.start_ms, item.end_ms) for item in chunks]
     if actual != expected:
         raise VideoParseConflictError("Video chunks do not match parse_config.chunk_duration")
 
@@ -2807,21 +2807,21 @@ def _series_prefix_frontier(
 
     rows = session.execute(
         select(VideoParseTask, Video)
-        .join(Video, Video.video_id == VideoParseTask.video_id)
+        .join(Video, Video.id == VideoParseTask.video_id)
         .where(
             Video.series_id == series_id,
             VideoParseTask.is_deleted.is_(False),
         )
         .order_by(
             Video.episode_order,
-            Video.video_id,
+            Video.id,
             VideoParseTask.version.desc(),
             VideoParseTask.id,
         )
     ).all()
     latest: dict[str, tuple[VideoParseTask, Video]] = {}
     for task, video in rows:
-        latest.setdefault(video.video_id, (task, video))
+        latest.setdefault(video.id, (task, video))
 
     previous_compact = ""
     for task, _video in latest.values():
@@ -2925,8 +2925,8 @@ def _require_matching_retrieval_identity(
     mismatches: list[str] = []
     for name, actual, expected in (
         ("tenantId", identity.tenant_id, series.tenant_id),
-        ("seriesId", identity.series_id, series.series_id),
-        ("videoId", identity.video_id, video.video_id),
+        ("seriesId", identity.series_id, series.id),
+        ("videoId", identity.video_id, video.id),
         ("parseTaskId", identity.parse_task_id, receipt["parse_task_id"]),
         ("videoChunkId", video_chunk_id, receipt["video_chunk_id"]),
         ("contentVersion", identity.content_version, content.version),
@@ -2948,11 +2948,11 @@ def _chunk_retrieval_facts(
 ) -> ChunkRetrievalFacts:
     try:
         return ChunkRetrievalFacts(
-            video_chunk_id=chunk.video_chunk_id,
+            video_chunk_id=chunk.id,
             retrieval_identity=identity,
             sequence_no=chunk.sequence_no,
-            start_seconds=chunk.start_seconds,
-            end_seconds=chunk.end_seconds,
+            start_seconds=chunk.start_ms,
+            end_seconds=chunk.end_ms,
             result=VideoParseResult.model_validate(content.content),
         )
     except ValueError as exc:
@@ -3011,28 +3011,28 @@ def _video_parse_evidence(
         understanding.get("model") if isinstance(understanding, Mapping) else None
     )
     return VideoChunkEvidence(
-        series_id=series.series_id,
+        series_id=series.id,
         tenant_id=series.tenant_id,
         series_name=series.name,
         series_description=series.description,
         series_status="READY",
         important_extra_data=series.important_extra_data,
         character_bible=series.character_bible,
-        video_id=video.video_id,
+        video_id=video.id,
         episode_order=video.episode_order,
-        original_filename=video.original_filename,
-        original_source_uri=video.original_source_uri,
-        inference_proxy_uri=video.inference_proxy_uri,
-        content_hash=video.content_hash,
-        duration_seconds=video.duration_seconds,
+        original_filename=video.filename,
+        original_source_uri=video.source_uri,
+        inference_proxy_uri=video.proxy_uri,
+        content_hash=video.hash,
+        duration_seconds=video.duration_ms,
         upload_status=video.upload_status,
         parse_status=task.status,
-        video_chunk_id=chunk.video_chunk_id,
+        video_chunk_id=chunk.id,
         sequence_no=chunk.sequence_no,
-        start_seconds=chunk.start_seconds,
-        end_seconds=chunk.end_seconds,
-        analysis_window_start_seconds=chunk.analysis_window_start_seconds,
-        analysis_window_end_seconds=chunk.analysis_window_end_seconds,
+        start_seconds=chunk.start_ms,
+        end_seconds=chunk.end_ms,
+        analysis_window_start_seconds=chunk.window_start_ms,
+        analysis_window_end_seconds=chunk.window_end_ms,
         chunk_media_ref=chunk.chunk_media_ref,
         analysis_window_media_ref=chunk.analysis_window_media_ref,
         transcript=transcript,
@@ -3056,7 +3056,7 @@ def _video_parse_evidence(
             "contentVersion": identity.content_version,
             "indexGeneration": identity.index_generation,
         },
-        parsed_at=datetime_to_unix_time_ms(content.update_time),
+        parsed_at=datetime_to_unix_time_ms(content.update_date),
     )
 
 
@@ -3126,7 +3126,7 @@ def _lock_model_execution_lease(
             select(ChunkParseTask)
             .where(
                 ChunkParseTask.id == lease.chunk_parse_task_id,
-                ChunkParseTask.video_parse_task_id
+                ChunkParseTask.video_task_id
                 == lease.video_parse_task_id,
             )
             .with_for_update()
@@ -3138,7 +3138,7 @@ def _lock_model_execution_lease(
             select(IntervalParseTask)
             .where(
                 IntervalParseTask.id == lease.interval_parse_task_id,
-                IntervalParseTask.video_parse_task_id
+                IntervalParseTask.video_task_id
                 == lease.video_parse_task_id,
             )
             .with_for_update()

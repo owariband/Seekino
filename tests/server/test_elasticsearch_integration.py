@@ -59,6 +59,7 @@ from server.storage.elasticsearch import (
     ElasticsearchVideoChunkStore,
     document_id,
 )
+from server.utils.time import datetime_to_unix_time_ms
 
 
 @pytest.fixture
@@ -173,15 +174,15 @@ def _indexing_case(tmp_path, store):
         config["models"]["embedding"]["dimensions"] = 2
         with factory.begin() as session:
             session.add(Series(
-                series_id=series_id, tenant_id="es-test-workspace",
+                id=series_id, tenant_id="es-test-workspace",
                 name="ES recovery", status="INDEXING", character_bible=[],
             ))
             session.flush()
             session.add(Video(
-                video_id=video_id, series_id=series_id, episode_order=1,
-                upload_sequence=1, original_filename="episode.mp4",
-                original_source_uri=str(source), content_hash="a" * 64,
-                total_bytes=source.stat().st_size, duration_seconds=20,
+                id=video_id, series_id=series_id, episode_order=1,
+                upload_sequence=1, filename="episode.mp4",
+                source_uri=str(source), hash="a" * 64,
+                size_bytes=source.stat().st_size, duration_ms=20,
                 upload_status="COMPLETED", parse_status="QUEUED",
                 upload_progress=100, parse_progress=0,
             ))
@@ -193,19 +194,19 @@ def _indexing_case(tmp_path, store):
                 lease_version=0, processing_duration_ms=0,
                 processing_timing_complete=True, is_test=True, is_deleted=False,
                 detail={"_worker_runtime_v2": {"accepted": True}},
-                create_time=now, update_time=now,
+                create_time=datetime_to_unix_time_ms(now), update_time=datetime_to_unix_time_ms(now),
             ))
             session.flush()
             session.add(UploadSession(
-                upload_session_id=upload_id, tenant_id="es-test-workspace",
+                id=upload_id, tenant_id="es-test-workspace",
                 series_id=series_id, episode_order=1, upload_sequence=1,
-                original_filename="episode.mp4", media_type="video/mp4",
-                total_size_bytes=source.stat().st_size,
-                preferred_segment_size_bytes=source.stat().st_size,
-                total_segments=1, version=1, status="COMPLETED",
-                idempotency_key=str(uuid4()), expires_at=now + timedelta(hours=1),
-                completed_at=now, video_id=video_id,
-                initial_video_parse_task_id=task_id,
+                filename="episode.mp4", media_type="video/mp4",
+                size_bytes=source.stat().st_size,
+                segment_size_bytes=source.stat().st_size,
+                segment_count=1, version=1, status="COMPLETED",
+                idempotency_key=str(uuid4()), expire_time=now + timedelta(hours=1),
+                finish_time=now, video_id=video_id,
+                initial_task_id=task_id,
             ))
         video_lease = queue.claim_video("prepare", lease_duration=timedelta(minutes=10))
         assert video_lease is not None

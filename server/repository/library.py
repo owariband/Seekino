@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..constants.identity import LOCAL_USER_ID
 
 from ..model.agent import AgentConversation, AgentMessage, AgentMessageRole
+from ..model.dto.jobDTO import VideoChunkCheckpointState
 from ..model.dto.libraryDTO import SeriesLastSearchState, SeriesState, VideoSummaryState
 from ..model.index_sync import IndexSyncIntent, IndexSyncOperation, IndexSyncStatus
 from ..model.job import (
@@ -85,7 +86,7 @@ class LibraryRepository:
                         )
                     if existing is not None:
                         if (
-                            existing.series_id != series_id
+                            existing.id != series_id
                             or existing.tenant_id != tenant_id
                             or existing.name.casefold() != name.casefold()
                             or existing.description != description
@@ -99,8 +100,8 @@ class LibraryRepository:
                                 "different fields"
                             )
                         video_count = session.scalar(
-                            select(func.count(Video.video_id)).where(
-                                Video.series_id == existing.series_id
+                            select(func.count(Video.id)).where(
+                                Video.series_id == existing.id
                             )
                         )
                         return self._state(
@@ -109,7 +110,7 @@ class LibraryRepository:
                         )
 
                     record = Series(
-                        series_id=series_id,
+                        id=series_id,
                         tenant_id=tenant_id,
                         name=name,
                         description=description,
@@ -130,7 +131,7 @@ class LibraryRepository:
         with self._session_factory.begin() as session:
             record = session.scalar(
                 select(Series).where(
-                    Series.series_id == series_id,
+                    Series.id == series_id,
                     Series.tenant_id == tenant_id,
                 ).with_for_update()
             )
@@ -162,12 +163,12 @@ class LibraryRepository:
                 uploads = list(session.scalars(
                     select(UploadSession)
                     .where(UploadSession.video_id == video_id)
-                    .order_by(UploadSession.upload_session_id)
+                    .order_by(UploadSession.id)
                     .with_for_update()
                 ))
                 video = session.scalar(
                     select(Video)
-                    .where(Video.video_id == video_id)
+                    .where(Video.id == video_id)
                     .with_for_update()
                 )
                 if video is None:
@@ -176,7 +177,7 @@ class LibraryRepository:
                     )
                 series_workspace = session.scalar(
                     select(Series.tenant_id).where(
-                        Series.series_id == video.series_id,
+                        Series.id == video.series_id,
                     )
                 )
                 if series_workspace != tenant_id:
@@ -185,22 +186,22 @@ class LibraryRepository:
                     )
 
                 occupied_video_id = session.scalar(
-                    select(Video.video_id)
+                    select(Video.id.label("video_id"))
                     .where(
                         Video.series_id == video.series_id,
                         Video.episode_order == episode_order,
-                        Video.video_id != video.video_id,
+                        Video.id != video.id,
                     )
                     .with_for_update()
                 )
                 active_slot_key = f"{video.series_id}:{episode_order}"
                 occupied_upload_id = session.scalar(
-                    select(UploadSession.upload_session_id)
+                    select(UploadSession.id.label("upload_session_id"))
                     .where(
                         UploadSession.active_slot_key == active_slot_key,
                         or_(
                             UploadSession.video_id.is_(None),
-                            UploadSession.video_id != video.video_id,
+                            UploadSession.video_id != video.id,
                         ),
                     )
                     .with_for_update()
@@ -235,7 +236,7 @@ class LibraryRepository:
                             session,
                             series_id=video.series_id,
                             episode_order=min(previous_episode_order, episode_order),
-                            video_id=video.video_id,
+                            video_id=video.id,
                             now=now_utc(),
                         )
                     except VideoParseConflictError as exc:
@@ -264,7 +265,7 @@ class LibraryRepository:
                     status=status if self._execution_mode == "v1" else None,
                     query=query,
                 ))
-                .order_by(Series.created_at, Series.series_id)
+                .order_by(Series.create_time, Series.id)
             )
             if published_only:
                 statement = statement.where(Series.is_published.is_(True))
@@ -293,7 +294,7 @@ class LibraryRepository:
             ))
         with self._session_factory() as session:
             return int(session.scalar(
-                select(func.count(Series.series_id)).where(
+                select(func.count(Series.id)).where(
                     *self._series_filters(tenant_id, status=status, query=query)
                 )
             ) or 0)
@@ -302,7 +303,7 @@ class LibraryRepository:
         with self._session_factory() as session:
             series = session.scalar(
                 select(Series).where(
-                    Series.series_id == series_id,
+                    Series.id == series_id,
                     Series.tenant_id == tenant_id,
                 )
             )
@@ -354,7 +355,7 @@ class LibraryRepository:
     ) -> list[SeriesState]:
         if not records:
             return []
-        series_ids = [record.series_id for record in records]
+        series_ids = [record.id for record in records]
         videos = self._video_states(
             session, tenant_id=records[0].tenant_id, series_ids=series_ids,
         )
@@ -368,13 +369,13 @@ class LibraryRepository:
             }
         )
         pending = dict(session.execute(
-            select(UploadSession.series_id, func.count(UploadSession.upload_session_id))
+            select(UploadSession.series_id, func.count(UploadSession.id))
             .where(
                 UploadSession.series_id.in_(series_ids),
                 UploadSession.tenant_id == records[0].tenant_id,
                 UploadSession.status.not_in({"COMPLETED", "EXPIRED", "CANCELLED"}),
                 (UploadSession.status != "UPLOADING")
-                | (UploadSession.expires_at > now_utc()),
+                | (UploadSession.expire_time > now_utc()),
             )
             .group_by(UploadSession.series_id)
         ).all())
@@ -384,17 +385,17 @@ class LibraryRepository:
             .join(AgentConversation)
             .where(
                 AgentConversation.tenant_id == records[0].tenant_id,
-                AgentConversation.owner_user_id == owner_user_id,
+                AgentConversation.owner_id == owner_user_id,
                 AgentMessage.role == AgentMessageRole.USER.value,
             )
-            .order_by(AgentMessage.created_at.desc(), AgentMessage.message_id.desc())
+            .order_by(AgentMessage.create_time.desc(), AgentMessage.id.desc())
         )
         for message in messages:
             for series_id in set(message.series_ids).intersection(series_ids):
                 last_searches.setdefault(series_id, SeriesLastSearchState(
                     conversation_id=message.conversation_id,
                     query=message.content or "",
-                    searched_at=message.created_at,
+                    searched_at=message.create_time,
                 ))
             if len(last_searches) == len(series_ids):
                 break
@@ -403,31 +404,31 @@ class LibraryRepository:
                 record,
                 status=(
                     _v2_series_status(
-                        [video for video in videos if video.series_id == record.series_id]
+                        [video for video in videos if video.series_id == record.id]
                     )
                     if self._execution_mode == "v2"
                     else record.status
                 ),
-                video_count=sum(video.series_id == record.series_id for video in videos),
-                videos=tuple(video for video in videos if video.series_id == record.series_id)
+                video_count=sum(video.series_id == record.id for video in videos),
+                videos=tuple(video for video in videos if video.series_id == record.id)
                 if include_videos else (),
                 ready_video_count=sum(
-                    video.series_id == record.series_id
+                    video.series_id == record.id
                     and video.video_id in ready_video_ids
                     for video in videos
                 ),
                 failed_video_count=sum(
-                    video.series_id == record.series_id
+                    video.series_id == record.id
                     and (
                         video.parse_status == "FAILED"
                         or video.parse_status.endswith("_FAILED")
                     )
                     for video in videos
                 ),
-                pending_upload_count=int(pending.get(record.series_id, 0)),
-                last_search=last_searches.get(record.series_id),
+                pending_upload_count=int(pending.get(record.id, 0)),
+                last_search=last_searches.get(record.id),
                 representative_video=next(
-                    (video for video in videos if video.series_id == record.series_id and video.keyframe_uris),
+                    (video for video in videos if video.series_id == record.id and video.keyframe_uris),
                     None,
                 ),
             )
@@ -451,30 +452,30 @@ class LibraryRepository:
             )
         latest = select(
             SeriesParseJob.video_id,
-            SeriesParseJob.job_id,
+            SeriesParseJob.id.label("job_id"),
             SeriesParseJob.status,
             SeriesParseJob.last_error,
             func.row_number().over(
                 partition_by=SeriesParseJob.video_id,
-                order_by=(SeriesParseJob.created_at.desc(), SeriesParseJob.job_id.desc()),
+                order_by=(SeriesParseJob.create_time.desc(), SeriesParseJob.id.desc()),
             ).label("position"),
         ).subquery()
         statement = (
             select(Video, latest.c.job_id, latest.c.status, latest.c.last_error)
-            .join(Series, Series.series_id == Video.series_id)
-            .outerjoin(latest, (latest.c.video_id == Video.video_id) & (latest.c.position == 1))
+            .join(Series, Series.id == Video.series_id)
+            .outerjoin(latest, (latest.c.video_id == Video.id) & (latest.c.position == 1))
             .where(Series.tenant_id == tenant_id)
-            .order_by(Video.episode_order, Video.video_id)
+            .order_by(Video.episode_order, Video.id)
         )
         if series_ids is not None:
             statement = statement.where(Video.series_id.in_(series_ids))
         if video_id is not None:
-            statement = statement.where(Video.video_id == video_id)
+            statement = statement.where(Video.id == video_id)
         rows = session.execute(statement).all()
         if not rows:
             return []
         latest_job_ids = [job_id for _, job_id, _, _ in rows if job_id is not None]
-        checkpoints_by_job: dict[str, list[VideoChunkCheckpoint]] = {}
+        checkpoints_by_job: dict[str, list[VideoChunkCheckpointState]] = {}
         if latest_job_ids:
             checkpoints = session.scalars(
                 select(VideoChunkCheckpoint)
@@ -485,7 +486,16 @@ class LibraryRepository:
                 )
             ).all()
             for checkpoint in checkpoints:
-                checkpoints_by_job.setdefault(checkpoint.job_id, []).append(checkpoint)
+                checkpoints_by_job.setdefault(checkpoint.job_id, []).append(
+                    VideoChunkCheckpointState(
+                        job_id=checkpoint.job_id,
+                        sequence_no=checkpoint.sequence_no,
+                        video_chunk_id=checkpoint.chunk_id,
+                        stage=checkpoint.stage,
+                        chunk_start_seconds=checkpoint.start_ms,
+                        chunk_end_seconds=checkpoint.end_ms,
+                    )
+                )
         chunks = session.execute(
             select(
                 VideoChunk.video_id,
@@ -497,9 +507,9 @@ class LibraryRepository:
                 IndexSyncIntent.last_error,
             )
             .select_from(VideoChunk)
-            .outerjoin(VideoChunkEmbedding, VideoChunkEmbedding.video_chunk_id == VideoChunk.video_chunk_id)
-            .outerjoin(IndexSyncIntent, IndexSyncIntent.video_chunk_id == VideoChunk.video_chunk_id)
-            .where(VideoChunk.video_id.in_([row[0].video_id for row in rows]))
+            .outerjoin(VideoChunkEmbedding, VideoChunkEmbedding.chunk_id == VideoChunk.id)
+            .outerjoin(IndexSyncIntent, IndexSyncIntent.chunk_id == VideoChunk.id)
+            .where(VideoChunk.video_id.in_([row[0].id for row in rows]))
             .order_by(VideoChunk.sequence_no)
         ).all()
         by_video: dict[str, list] = {}
@@ -507,7 +517,7 @@ class LibraryRepository:
             by_video.setdefault(chunk.video_id, []).append(chunk)
         states = []
         for video, job_id, job_status, error in rows:
-            video_chunks = by_video.get(video.video_id, [])
+            video_chunks = by_video.get(video.id, [])
             indexed = bool(video_chunks) and all(
                 chunk.text_vector and chunk.vision_vector
                 and chunk.operation == IndexSyncOperation.UPSERT.value
@@ -526,7 +536,7 @@ class LibraryRepository:
             parse_status = job_status or video.parse_status
             checkpoint_progress = calculate_checkpoint_progress(
                 checkpoints_by_job.get(job_id, ()),
-                video.duration_seconds,
+                video.duration_ms,
                 completed=parse_status in {"SUCCEEDED", "COMPLETED"},
             )
             states.append(self._video_state(
@@ -579,19 +589,19 @@ class LibraryRepository:
                 latest.c.status,
                 latest.c.last_error,
             )
-            .join(Series, Series.series_id == Video.series_id)
+            .join(Series, Series.id == Video.series_id)
             .outerjoin(
                 latest,
-                (latest.c.video_id == Video.video_id)
+                (latest.c.video_id == Video.id)
                 & (latest.c.position == 1),
             )
             .where(Series.tenant_id == tenant_id)
-            .order_by(Video.episode_order, Video.video_id)
+            .order_by(Video.episode_order, Video.id)
         )
         if series_ids is not None:
             statement = statement.where(Video.series_id.in_(series_ids))
         if video_id is not None:
-            statement = statement.where(Video.video_id == video_id)
+            statement = statement.where(Video.id == video_id)
         rows = session.execute(statement).all()
         if not rows:
             return []
@@ -599,7 +609,7 @@ class LibraryRepository:
         keyframes_by_video: dict[str, list[str]] = {}
         chunks = session.execute(
             select(VideoChunk.video_id, VideoChunk.keyframe_uris)
-            .where(VideoChunk.video_id.in_([row[0].video_id for row in rows]))
+            .where(VideoChunk.video_id.in_([row[0].id for row in rows]))
             .order_by(VideoChunk.video_id, VideoChunk.sequence_no)
         )
         for chunk in chunks:
@@ -634,7 +644,7 @@ class LibraryRepository:
                 ),
                 last_error=_v2_error_message(last_error),
                 keyframe_uris=tuple(dict.fromkeys(
-                    keyframes_by_video.get(video.video_id, ())
+                    keyframes_by_video.get(video.id, ())
                 )),
             ))
         return states
@@ -653,7 +663,7 @@ class LibraryRepository:
         representative_video: VideoSummaryState | None = None,
     ) -> SeriesState:
         return SeriesState(
-            series_id=record.series_id,
+            series_id=record.id,
             tenant_id=record.tenant_id,
             name=record.name,
             description=record.description,
@@ -666,8 +676,8 @@ class LibraryRepository:
             failed_video_count=failed_video_count,
             pending_upload_count=pending_upload_count,
             last_search=last_search,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
+            created_at=record.create_time,
+            updated_at=record.update_time,
             is_published=record.is_published,
             representative_video=representative_video,
             videos=videos,
@@ -686,17 +696,17 @@ class LibraryRepository:
         keyframe_uris: tuple[str, ...],
     ) -> VideoSummaryState:
         return VideoSummaryState(
-            video_id=record.video_id,
+            video_id=record.id,
             tenant_id=tenant_id,
             series_id=record.series_id,
             episode_order=record.episode_order,
             upload_sequence=record.upload_sequence,
-            original_filename=record.original_filename,
-            original_source_uri=record.original_source_uri,
-            inference_proxy_uri=record.inference_proxy_uri,
-            content_hash=record.content_hash,
-            total_bytes=record.total_bytes,
-            duration_seconds=record.duration_seconds,
+            original_filename=record.filename,
+            original_source_uri=record.source_uri,
+            inference_proxy_uri=record.proxy_uri,
+            content_hash=record.hash,
+            total_bytes=record.size_bytes,
+            duration_seconds=record.duration_ms,
             upload_status=record.upload_status,
             parse_status=parse_status,
             upload_progress=record.upload_progress,

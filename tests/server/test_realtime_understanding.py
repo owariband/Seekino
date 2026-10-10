@@ -78,12 +78,12 @@ def realtime(tmp_path, monkeypatch):
     source.write_bytes(b"fake-source")
     artifact = artifacts.publish_video_artifact(source, series_id=series_id, video_id=video_id, category="chunks", filename="source.mp4")
     with factory.begin() as session:
-        session.add(Series(series_id=series_id, tenant_id="mine", name="Realtime lesson", status="EMPTY", character_bible=[]))
+        session.add(Series(id=series_id, tenant_id="mine", name="Realtime lesson", status="EMPTY", character_bible=[]))
         session.add(Video(
-            video_id=video_id, series_id=series_id, episode_order=1, upload_sequence=1,
-            original_filename="source.mp4", original_source_uri=artifact.uri,
-            content_hash=artifact.sha256, total_bytes=artifact.size_bytes,
-            duration_seconds=45_000, upload_status="COMPLETED", parse_status="QUEUED",
+            id=video_id, series_id=series_id, episode_order=1, upload_sequence=1,
+            filename="source.mp4", source_uri=artifact.uri,
+            hash=artifact.sha256, size_bytes=artifact.size_bytes,
+            duration_ms=45_000, upload_status="COMPLETED", parse_status="QUEUED",
             upload_progress=100, parse_progress=0,
         ))
     config = default_video_parse_v2_config().model_copy(update={
@@ -132,12 +132,12 @@ def _upload(realtime, task_id):
     upload_id = str(uuid4())
     with realtime.factory.begin() as session:
         session.add(UploadSession(
-            upload_session_id=upload_id, tenant_id="mine", series_id=realtime.series_id,
-            episode_order=1, upload_sequence=1, original_filename="source.mp4",
-            media_type="video/mp4", total_size_bytes=11, preferred_segment_size_bytes=11,
-            total_segments=1, version=1, status="COMPLETED", idempotency_key=upload_id,
-            expires_at=now_utc() + timedelta(hours=1), completed_at=now_utc(),
-            video_id=realtime.video_id, initial_video_parse_task_id=task_id,
+            id=upload_id, tenant_id="mine", series_id=realtime.series_id,
+            episode_order=1, upload_sequence=1, filename="source.mp4",
+            media_type="video/mp4", size_bytes=11, segment_size_bytes=11,
+            segment_count=1, version=1, status="COMPLETED", idempotency_key=upload_id,
+            expire_time=now_utc() + timedelta(hours=1), finish_time=now_utc(),
+            video_id=realtime.video_id, initial_task_id=task_id,
         ))
     return upload_id
 
@@ -340,7 +340,7 @@ def test_generic_visual_events_still_require_exact_frame_observation(realtime):
     asyncio.run(complete())
     target = context.targets[1]
     with realtime.factory.begin() as session:
-        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_parse_task_id == target.chunk_parse_task_id))
+        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target.chunk_parse_task_id))
         content.content = VideoParseResult(persons=[], timeline=[ActionEvent(
             event_type="ACTION", start_seconds=24_000, end_seconds=26_000,
             description="老师指着投影上的公式", participants=[], visible_persons=[],

@@ -14,6 +14,7 @@ from server.database import DatabaseEnvironment, create_database_engine, create_
 from server.model.dto.parseUsageDTO import ModelUsageState
 from server.model.parse_usage import ModelUsage
 from server.repository.model_usage import MAX_USAGE_RECORDS, ModelUsageConflictError, ModelUsageRepository
+from server.utils.time import datetime_to_unix_time_ms
 
 TEST_DATABASE_URL = os.getenv("ANIVAG_TEST_DATABASE_URL")
 NOW = datetime(2026, 10, 8, 1, 2, 3, 456000, tzinfo=UTC)
@@ -144,9 +145,10 @@ def test_sql_filters_precede_the_real_20k_limit_and_extra_row_is_excluded(storag
     metadata["context"] = {"series_ids": ["series-AA"]}
     # These sort before the desired call. All SQL filters must run before LIMIT.
     rows = [dict(
-        call_id=str(UUID(int=i + 10)), tenant_id=workspace,
-        task_type="video_parse", run_id="run-A", started_at=NOW,
-        usage={"tokens": None, "sdk_model_usage": []}, metadata=metadata, created_at=NOW,
+        id=str(UUID(int=i + 10)), tenant_id=workspace,
+        task_type="video_parse", run_id="run-A", start_time=NOW,
+        usage={"tokens": None, "sdk_model_usage": []}, metadata=metadata,
+        create_time=datetime_to_unix_time_ms(NOW),
     ) for i in range(MAX_USAGE_RECORDS + 1)]
     with factory.begin() as session:
         session.execute(insert(ModelUsage.__table__), rows)
@@ -219,8 +221,9 @@ def test_mysql_real_schema_and_concurrent_call_id_replay(storage, conflict):
         pytest.skip("concurrent PK/UTC semantics require real TEST MySQL")
     columns = {column["name"]: column for column in inspect(engine).get_columns("model_usage")}
     assert set(columns) == set(ModelUsage.__table__.columns.keys())
-    assert all(not column["nullable"] for column in columns.values())
-    assert columns["started_at"]["type"].fsp == columns["created_at"]["type"].fsp == 3
+    nullable = {"user_id", "create_time", "create_date", "update_time", "update_date"}
+    assert all(column["nullable"] == (name in nullable) for name, column in columns.items())
+    assert columns["start_time"]["type"].fsp == columns["create_date"]["type"].fsp == 3
     original = call(workspace)
     other = replace(original, tenant_id=workspace + "-other") if conflict else original
     barrier = Barrier(2)

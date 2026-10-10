@@ -12,7 +12,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ..database import Base
+from .base import BaseModel
 from ..utils.time import now_unix_time_ms
 from .video import ID_LENGTH, LONG_TEXT, MYSQL_TABLE_OPTIONS
 
@@ -28,7 +28,7 @@ class IndexSyncStatus(StrEnum):
     SYNCED = "SYNCED"
 
 
-class IndexSyncIntent(Base):
+class IndexSyncIntent(BaseModel):
     __tablename__ = "index_sync_intent"
     __table_args__ = (
         CheckConstraint(
@@ -47,13 +47,13 @@ class IndexSyncIntent(Base):
             "generation > 0",
             name="ck_index_sync_intent_generation",
         ),
-        Index("ix_index_sync_intent_due", "status", "available_at"),
+        Index("ix_index_sync_intent_due", "status", "next_execute_time"),
         MYSQL_TABLE_OPTIONS,
     )
 
-    video_chunk_id: Mapped[str] = mapped_column(
+    chunk_id: Mapped[str] = mapped_column(
         String(ID_LENGTH),
-        ForeignKey("video_chunk.video_chunk_id", ondelete="CASCADE"),
+        ForeignKey("video_chunk.id", ondelete="CASCADE"),
         primary_key=True,
     )
     operation: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -65,21 +65,10 @@ class IndexSyncIntent(Base):
         nullable=False,
         default=0,
     )
-    available_at: Mapped[int] = mapped_column(
+    next_execute_time: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
         default=now_unix_time_ms,
     )
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
-    synced_at: Mapped[int | None] = mapped_column(BigInteger)
-    created_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-    )
-    updated_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-        onupdate=now_unix_time_ms,
-    )
+    sync_time: Mapped[int | None] = mapped_column(BigInteger)

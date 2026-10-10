@@ -30,6 +30,7 @@ from server.mq.video_parse_consumer import (
     VideoParseConsumerHandlers,
 )
 from server.repository.video_parse import VideoParseLeaseLostError, VideoParseRepository
+from server.utils.time import datetime_to_unix_time_ms
 
 
 NOW = datetime(2026, 9, 29, 4, 0, tzinfo=UTC)
@@ -50,16 +51,16 @@ def _task(factory, *, chunk_count: int, accepted: bool, batch_size: int = 10):
     series_id, video_id, task_id = str(uuid4()), str(uuid4()), str(uuid4())
     with factory.begin() as session:
         session.add(Series(
-            series_id=series_id, tenant_id="mine", name=f"Series {series_id}",
+            id=series_id, tenant_id="mine", name=f"Series {series_id}",
             description=None, status="INDEXING", important_extra_data=None,
             character_bible=[],
         ))
         session.add(Video(
-            video_id=video_id, series_id=series_id, episode_order=1,
-            upload_sequence=1, original_filename="episode.mp4",
-            original_source_uri="artifact://test/episode.mp4",
-            content_hash=(video_id.replace("-", "") * 2)[:64], total_bytes=10,
-            duration_seconds=chunk_count * 10000, upload_status="COMPLETED",
+            id=video_id, series_id=series_id, episode_order=1,
+            upload_sequence=1, filename="episode.mp4",
+            source_uri="artifact://test/episode.mp4",
+            hash=(video_id.replace("-", "") * 2)[:64], size_bytes=10,
+            duration_ms=chunk_count * 10000, upload_status="COMPLETED",
             parse_status="QUEUED", upload_progress=100, parse_progress=0,
         ))
         session.add(VideoParseTask(
@@ -69,7 +70,7 @@ def _task(factory, *, chunk_count: int, accepted: bool, batch_size: int = 10):
             lease_version=0, processing_duration_ms=0,
             processing_timing_complete=True, is_test=True, is_deleted=False,
             detail={"_worker_runtime_v2": {"accepted": accepted}},
-            create_time=NOW, update_time=NOW,
+            create_time=datetime_to_unix_time_ms(NOW), update_time=datetime_to_unix_time_ms(NOW),
         ))
     return task_id
 
@@ -330,7 +331,7 @@ def test_exhausted_coordinator_drains_and_a_new_consumer_finalizes_without_recla
         assert parent.lease_owner is None
         assert session.get(ChunkParseTask, child.chunk_parse_task_id).status == "COMPLETE"
         content = session.query(ChunkParseContent).filter_by(
-            chunk_parse_task_id=child.chunk_parse_task_id,
+            chunk_task_id=child.chunk_parse_task_id,
         ).one()
         assert content.content == {"persons": ["retained"], "timeline": []}
         assert content.version == 1
@@ -381,7 +382,7 @@ def test_failure_intent_blocks_each_delivery_but_not_existing_chunk_execution(
     with factory() as session:
         assert session.get(ChunkParseTask, in_flight.chunk_parse_task_id).status == "COMPLETE"
         content = session.query(ChunkParseContent).filter_by(
-            chunk_parse_task_id=in_flight.chunk_parse_task_id,
+            chunk_task_id=in_flight.chunk_parse_task_id,
         ).one()
         assert content.content["persons"] == ["existing"]
 

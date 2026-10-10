@@ -144,7 +144,7 @@ class UploadRepository:
                     existing = session.scalar(
                         select(UploadSession).where(
                             UploadSession.tenant_id == tenant_id,
-                            UploadSession.created_by_user_id == created_by_user_id,
+                            UploadSession.creator_id == created_by_user_id,
                             UploadSession.idempotency_key == idempotency_key,
                         ).with_for_update()
                     )
@@ -157,7 +157,7 @@ class UploadRepository:
                     # Lock before ordinary reads so MySQL's snapshot includes the
                     # preceding upload that released this Series lock.
                     series = session.scalar(select(Series).where(
-                        Series.series_id == series_id
+                        Series.id == series_id
                     ).with_for_update())
                     if series is None or series.tenant_id != tenant_id:
                         raise UploadSeriesNotFoundError(
@@ -166,7 +166,7 @@ class UploadRepository:
                     existing = session.scalar(
                         select(UploadSession).where(
                             UploadSession.tenant_id == tenant_id,
-                            UploadSession.created_by_user_id == created_by_user_id,
+                            UploadSession.creator_id == created_by_user_id,
                             UploadSession.idempotency_key == idempotency_key,
                         )
                     )
@@ -180,7 +180,7 @@ class UploadRepository:
                             UploadSession.series_id == series_id,
                             UploadSession.episode_order == episode_order,
                         )
-                        .order_by(UploadSession.upload_session_id)
+                        .order_by(UploadSession.id)
                         .with_for_update()
                     ).all()
                     for occupying_upload in occupying_uploads:
@@ -188,14 +188,14 @@ class UploadRepository:
                     session.flush()
                     occupied_upload_id = next(
                         (
-                            item.upload_session_id
+                            item.id
                             for item in occupying_uploads
                             if item.active_slot_key is not None
                         ),
                         None,
                     )
                     occupied_video_id = session.scalar(
-                        select(Video.video_id).where(
+                        select(Video.id.label("video_id")).where(
                             Video.series_id == series_id,
                             Video.episode_order == episode_order,
                         )
@@ -206,18 +206,18 @@ class UploadRepository:
                         )
 
                     record = UploadSession(
-                        upload_session_id=str(uuid4()),
+                        id=str(uuid4()),
                         tenant_id=tenant_id,
-                        created_by_user_id=created_by_user_id,
+                        creator_id=created_by_user_id,
                         series_id=series_id,
                         episode_order=episode_order,
                         upload_sequence=episode_order,
-                        original_filename=original_filename,
+                        filename=original_filename,
                         media_type=media_type,
-                        total_size_bytes=total_size_bytes,
-                        preferred_segment_size_bytes=preferred_segment_size_bytes,
-                        total_segments=total_segments,
-                        content_sha256=content_sha256,
+                        size_bytes=total_size_bytes,
+                        segment_size_bytes=preferred_segment_size_bytes,
+                        segment_count=total_segments,
+                        sha256=content_sha256,
                         parse_config=parse_config,
                         video_parse_config=video_parse_config,
                         detail={},
@@ -225,9 +225,9 @@ class UploadRepository:
                         idempotency_key=idempotency_key,
                         request_fingerprint=request_fingerprint,
                         active_slot_key=_active_slot_key(series_id, episode_order),
-                        expires_at=expires_at,
-                        created_at=now,
-                        updated_at=now,
+                        expire_time=expires_at,
+                        create_time=datetime_to_unix_time_ms(now),
+                        update_time=datetime_to_unix_time_ms(now),
                     )
                     session.add(record)
                     session.flush()
@@ -248,7 +248,7 @@ class UploadRepository:
             record = session.scalar(
                 select(UploadSession)
                 .where(
-                    UploadSession.upload_session_id == upload_session_id
+                    UploadSession.id == upload_session_id
                 )
                 .with_for_update()
             )
@@ -309,7 +309,7 @@ class UploadRepository:
             # still acquire their execution row before checking the parent.
             intervals = list(session.scalars(
                 select(IntervalParseTask)
-                .where(IntervalParseTask.video_parse_task_id == task_id)
+                .where(IntervalParseTask.video_task_id == task_id)
                 .order_by(
                     IntervalParseTask.start_sequence_no,
                     IntervalParseTask.id,
@@ -318,7 +318,7 @@ class UploadRepository:
             ))
             chunks = list(session.scalars(
                 select(ChunkParseTask)
-                .where(ChunkParseTask.video_parse_task_id == task_id)
+                .where(ChunkParseTask.video_task_id == task_id)
                 .order_by(ChunkParseTask.id)
                 .with_for_update()
             ))
@@ -363,9 +363,9 @@ class UploadRepository:
 
             chunk_rows = list(session.execute(
                 select(ChunkParseTask, VideoChunk)
-                .join(VideoChunk, VideoChunk.video_chunk_id
-                      == ChunkParseTask.video_chunk_id)
-                .where(ChunkParseTask.video_parse_task_id == task.id)
+                .join(VideoChunk, VideoChunk.id
+                      == ChunkParseTask.chunk_id)
+                .where(ChunkParseTask.video_task_id == task.id)
                 .order_by(VideoChunk.sequence_no)
             ))
             prepared = _parse_preparation_complete(
@@ -392,7 +392,7 @@ class UploadRepository:
                 child.finish_time = None
                 child.lease_owner = None
                 child.lease_expire_time = None
-                child.update_time = now
+                child.update_time = datetime_to_unix_time_ms(now)
 
             if not prepared:
                 task.status = VideoParseTaskStatus.PREPARING.value
@@ -423,7 +423,7 @@ class UploadRepository:
                 runtime["actor_user_id"] = actor_user_id
             detail[RUNTIME_DETAIL_KEY] = runtime
             task.detail = detail
-            task.update_time = now
+            task.update_time = datetime_to_unix_time_ms(now)
             session.flush()
             return self._task_snapshot(task)
 
@@ -481,10 +481,10 @@ class UploadRepository:
             if realtime_only:
                 # Match result commits and retries: Interval -> Chunk -> parent.
                 list(session.scalars(select(IntervalParseTask).where(
-                    IntervalParseTask.video_parse_task_id == candidate_id,
+                    IntervalParseTask.video_task_id == candidate_id,
                 ).order_by(IntervalParseTask.start_sequence_no, IntervalParseTask.id).with_for_update()))
                 realtime_chunks = list(session.scalars(select(ChunkParseTask).where(
-                    ChunkParseTask.video_parse_task_id == candidate_id,
+                    ChunkParseTask.video_task_id == candidate_id,
                 ).order_by(ChunkParseTask.id).with_for_update()))
             latest = session.scalar(select(VideoParseTask).where(
                 VideoParseTask.video_id == upload.video_id,
@@ -568,7 +568,7 @@ class UploadRepository:
                         child.last_error = None
                         child.lease_owner = None
                         child.lease_expire_time = None
-                        child.update_time = now
+                        child.update_time = datetime_to_unix_time_ms(now)
                     active_topology = (
                         latest.lease_owner is not None
                         and latest.lease_expire_time is not None
@@ -585,7 +585,7 @@ class UploadRepository:
                         latest.lease_expire_time = None
                         latest.heartbeat_time = None
                 latest.next_execute_time = now
-                latest.update_time = now
+                latest.update_time = datetime_to_unix_time_ms(now)
                 _invalidate_series_prefixes_for_reparse(
                     session,
                     video=video,
@@ -626,8 +626,8 @@ class UploadRepository:
                 )
             task = VideoParseTask(
                 id=str(uuid4()),
-                created_by_user_id=actor_user_id,
-                video_id=video.video_id,
+                creator_id=actor_user_id,
+                video_id=video.id,
                 pipeline_version=latest.pipeline_version,
                 status=VideoParseTaskStatus.PENDING.value,
                 parse_config=snapshot,
@@ -648,8 +648,8 @@ class UploadRepository:
                         "execution_mode": execution_mode,
                     }
                 },
-                create_time=now,
-                update_time=now,
+                create_time=datetime_to_unix_time_ms(now),
+                update_time=datetime_to_unix_time_ms(now),
             )
             session.add(task)
             session.flush()
@@ -669,7 +669,7 @@ class UploadRepository:
         with self._session_factory() as session:
             return list(session.execute(
                 select(
-                    UploadSession.upload_session_id,
+                    UploadSession.id.label("upload_session_id"),
                     UploadSession.tenant_id,
                 )
                 .where(
@@ -677,8 +677,8 @@ class UploadRepository:
                     == UPLOAD_DELETION_PENDING_ERROR_CODE,
                 )
                 .order_by(
-                    UploadSession.updated_at,
-                    UploadSession.upload_session_id,
+                    UploadSession.update_date,
+                    UploadSession.id,
                 )
                 .limit(limit)
             ))
@@ -692,7 +692,7 @@ class UploadRepository:
             records = session.scalars(
                 select(UploadSegment)
                 .where(
-                    UploadSegment.upload_session_id == upload_session_id
+                    UploadSegment.session_id == upload_session_id
                 )
                 .order_by(UploadSegment.segment_number)
             ).all()
@@ -716,9 +716,9 @@ class UploadRepository:
             job_id = upload.job_id
             if video_id is not None or job_id is not None:
                 shared_upload = session.scalar(
-                    select(UploadSession.upload_session_id)
+                    select(UploadSession.id.label("upload_session_id"))
                     .where(
-                        UploadSession.upload_session_id != upload_session_id,
+                        UploadSession.id != upload_session_id,
                         or_(
                             UploadSession.video_id == video_id
                             if video_id is not None else False,
@@ -738,13 +738,13 @@ class UploadRepository:
                 jobs = list(session.scalars(
                     select(SeriesParseJob)
                     .where(SeriesParseJob.video_id == video_id)
-                    .order_by(SeriesParseJob.job_id)
+                    .order_by(SeriesParseJob.id)
                     .with_for_update()
                 ))
             elif job_id is not None:
                 job = session.scalar(
                     select(SeriesParseJob)
-                    .where(SeriesParseJob.job_id == job_id)
+                    .where(SeriesParseJob.id == job_id)
                     .with_for_update()
                 )
                 if job is not None:
@@ -762,13 +762,13 @@ class UploadRepository:
                     # from claiming another pipeline for the deleting Video.
                     job.status = ParseJobStatus.FAILED.value
                     job.lease_owner = None
-                    job.lease_expires_at = None
-                    job.heartbeat_at = None
+                    job.lease_expire_time = None
+                    job.heartbeat_time = None
                     legacy_now = datetime_to_unix_time_ms(now)
-                    job.completed_at = legacy_now
+                    job.finish_time = legacy_now
                     job.last_error = "upload task deletion requested"
                     job.version += 1
-                    job.updated_at = legacy_now
+                    job.update_time = legacy_now
 
             v2_tasks: list[VideoParseTask] = []
             if video_id is not None:
@@ -784,7 +784,7 @@ class UploadRepository:
                     active_child_lease = session.scalar(
                         select(ChunkParseTask.id)
                         .where(
-                            ChunkParseTask.video_parse_task_id.in_(v2_task_ids),
+                            ChunkParseTask.video_task_id.in_(v2_task_ids),
                             ChunkParseTask.lease_owner.is_not(None),
                             ChunkParseTask.lease_expire_time > now,
                         )
@@ -792,7 +792,7 @@ class UploadRepository:
                     ) is not None or session.scalar(
                         select(IntervalParseTask.id)
                         .where(
-                            IntervalParseTask.video_parse_task_id.in_(v2_task_ids),
+                            IntervalParseTask.video_task_id.in_(v2_task_ids),
                             IntervalParseTask.lease_owner.is_not(None),
                             IntervalParseTask.lease_expire_time > now,
                         )
@@ -816,14 +816,14 @@ class UploadRepository:
                 # removes these rows through their existing cascade.
                 for task in v2_tasks:
                     task.is_deleted = True
-                    task.update_time = now
+                    task.update_time = datetime_to_unix_time_ms(now)
             if jobs and video_id is not None:
                 video = session.get(Video, video_id)
                 if video is not None:
                     video.parse_status = ParseJobStatus.FAILED.value
 
             job_ids = tuple(sorted(
-                {job.job_id for job in jobs}
+                {job.id for job in jobs}
                 | ({job_id} if job_id is not None else set())
             ))
 
@@ -831,34 +831,34 @@ class UploadRepository:
             video_parse_document_keys: set[tuple[str, str]] = set()
             if video_id is not None:
                 video_chunk_ids.update(session.scalars(
-                    select(VideoChunk.video_chunk_id).where(
+                    select(VideoChunk.id.label("video_chunk_id")).where(
                         VideoChunk.video_id == video_id
                     )
                 ))
             if v2_tasks:
                 video_parse_document_keys.update(session.execute(
                     select(
-                        ChunkParseTask.video_parse_task_id,
-                        ChunkParseTask.video_chunk_id,
+                        ChunkParseTask.video_task_id.label("video_parse_task_id"),
+                        ChunkParseTask.chunk_id.label("video_chunk_id"),
                     ).where(
-                        ChunkParseTask.video_parse_task_id.in_(
+                        ChunkParseTask.video_task_id.in_(
                             [task.id for task in v2_tasks]
                         )
                     )
                 ).all())
             if job_ids:
                 video_chunk_ids.update(session.scalars(
-                    select(VideoChunkCheckpoint.video_chunk_id).where(
+                    select(VideoChunkCheckpoint.chunk_id.label("video_chunk_id")).where(
                         VideoChunkCheckpoint.job_id.in_(job_ids)
                     )
                 ))
 
             changed = upload.status != UploadSessionStatus.EXPIRED.value
             # Retain the allocated order and idempotency key to fence late requests.
-            upload.expires_at = min(upload.expires_at, now)
+            upload.expire_time = min(upload.expire_time, now)
             upload.status = UploadSessionStatus.EXPIRED.value
             upload.completion_token = None
-            upload.completion_started_at = None
+            upload.completion_start_time = None
             upload.active_slot_key = None
             upload.completion_stage = None
             upload.last_error = None
@@ -866,11 +866,11 @@ class UploadRepository:
             # uploads (which have no Video/Job IDs) and completed ones.
             upload.last_error_code = UPLOAD_DELETION_PENDING_ERROR_CODE
             removed = session.execute(delete(UploadSegment).where(
-                UploadSegment.upload_session_id == upload_session_id
+                UploadSegment.session_id == upload_session_id
             ))
             if changed or removed.rowcount:
                 upload.version += 1
-                upload.updated_at = now
+                upload.update_time = datetime_to_unix_time_ms(now)
             session.flush()
             return UploadSessionDeletion(
                 session=self._snapshot(session, upload, segments=[]),
@@ -899,7 +899,7 @@ class UploadRepository:
             if (
                 upload.video_id is None
                 and upload.job_id is None
-                and upload.initial_video_parse_task_id is None
+                and upload.initial_task_id is None
             ):
                 upload.last_error_code = None
                 session.flush()
@@ -923,11 +923,11 @@ class UploadRepository:
                     VideoChunkCheckpoint.job_id.in_(deletion.job_ids)
                 ))
                 session.execute(delete(SeriesParseJob).where(
-                    SeriesParseJob.job_id.in_(deletion.job_ids)
+                    SeriesParseJob.id.in_(deletion.job_ids)
                 ))
             upload.job_id = None
             upload.video_id = None
-            upload.initial_video_parse_task_id = None
+            upload.initial_task_id = None
             session.flush()
             if deletion.video_id is not None:
                 session.execute(delete(ContextSnapshot).where(
@@ -936,27 +936,27 @@ class UploadRepository:
                 if deletion.video_chunk_ids:
                     chunk_ids = deletion.video_chunk_ids
                     session.execute(delete(IndexSyncIntent).where(
-                        IndexSyncIntent.video_chunk_id.in_(chunk_ids)
+                        IndexSyncIntent.chunk_id.in_(chunk_ids)
                     ))
                     session.execute(delete(VideoChunkInfo).where(
-                        VideoChunkInfo.video_chunk_id.in_(chunk_ids)
+                        VideoChunkInfo.chunk_id.in_(chunk_ids)
                     ))
                     session.execute(delete(VideoChunkEmbedding).where(
-                        VideoChunkEmbedding.video_chunk_id.in_(chunk_ids)
+                        VideoChunkEmbedding.chunk_id.in_(chunk_ids)
                     ))
                 session.execute(delete(VideoChunk).where(
                     VideoChunk.video_id == deletion.video_id
                 ))
                 session.execute(delete(Video).where(
-                    Video.video_id == deletion.video_id
+                    Video.id == deletion.video_id
                 ))
             upload.version += 1
-            upload.updated_at = now
+            upload.update_time = datetime_to_unix_time_ms(now)
             upload.last_error_code = None
             session.flush()
 
             remaining_video_count = int(session.scalar(
-                select(func.count(Video.video_id)).where(
+                select(func.count(Video.id)).where(
                     Video.series_id == upload.series_id
                 )
             ) or 0)
@@ -965,7 +965,7 @@ class UploadRepository:
             else:
                 series = session.scalar(
                     select(Series)
-                    .where(Series.series_id == upload.series_id)
+                    .where(Series.id == upload.series_id)
                     .with_for_update()
                 )
                 if series is not None:
@@ -1017,8 +1017,8 @@ class UploadRepository:
                     if (
                         existing.start_byte != start_byte
                         or existing.end_byte_exclusive != end_byte_exclusive
-                        or existing.actual_size_bytes != actual_size_bytes
-                        or existing.checksum_sha256 != checksum_sha256
+                        or existing.size_bytes != actual_size_bytes
+                        or existing.sha256 != checksum_sha256
                         or existing.artifact_uri != artifact_uri
                     ):
                         raise UploadConflictError(
@@ -1027,18 +1027,18 @@ class UploadRepository:
                     result = self._segment_snapshot(existing)
                 else:
                     record = UploadSegment(
-                        upload_session_id=upload_session_id,
+                        session_id=upload_session_id,
                         segment_number=segment_number,
                         start_byte=start_byte,
                         end_byte_exclusive=end_byte_exclusive,
-                        actual_size_bytes=actual_size_bytes,
-                        checksum_sha256=checksum_sha256,
+                        size_bytes=actual_size_bytes,
+                        sha256=checksum_sha256,
                         artifact_uri=artifact_uri,
-                        created_at=registered_at,
+                        create_time=datetime_to_unix_time_ms(registered_at),
                     )
                     session.add(record)
                     upload.version += 1
-                    upload.updated_at = registered_at
+                    upload.update_time = datetime_to_unix_time_ms(registered_at)
                     session.flush()
                     result = self._segment_snapshot(record)
         if expired:
@@ -1062,7 +1062,7 @@ class UploadRepository:
                 job_id = upload.job_id
                 if job_id is None and upload.video_id is not None:
                     job_id = session.scalar(
-                        select(SeriesParseJob.job_id).where(
+                        select(SeriesParseJob.id.label("job_id")).where(
                             SeriesParseJob.video_id == upload.video_id
                         )
                     )
@@ -1072,7 +1072,7 @@ class UploadRepository:
                     completion_token=None,
                     existing_job_id=job_id,
                     existing_video_parse_task_id=(
-                        upload.initial_video_parse_task_id
+                        upload.initial_task_id
                     ),
                 )
             elif self._expire_if_due(upload, claimed_at):
@@ -1081,7 +1081,7 @@ class UploadRepository:
                 if upload.status == UploadSessionStatus.EXPIRED.value:
                     expired = True
                 if upload.status == UploadSessionStatus.COMPLETING.value:
-                    started_at = upload.completion_started_at
+                    started_at = upload.completion_start_time
                     if (
                         started_at is not None
                         and started_at + stale_after > claimed_at
@@ -1091,11 +1091,11 @@ class UploadRepository:
                         )
 
                 segments = self._segment_snapshots(session, upload)
-                if len(segments) != upload.total_segments:
+                if len(segments) != upload.segment_count:
                     present = {item.segment_number for item in segments}
                     missing = [
                         number
-                        for number in range(upload.total_segments)
+                        for number in range(upload.segment_count)
                         if number not in present
                     ]
                     raise UploadStateError(
@@ -1105,12 +1105,12 @@ class UploadRepository:
                 completion_token = str(uuid4())
                 upload.status = UploadSessionStatus.COMPLETING.value
                 upload.completion_token = completion_token
-                upload.completion_started_at = claimed_at
+                upload.completion_start_time = claimed_at
                 upload.last_error = None
                 upload.completion_stage = UploadCompletionStage.VERIFYING.value
                 upload.last_error_code = None
                 upload.version += 1
-                upload.updated_at = claimed_at
+                upload.update_time = datetime_to_unix_time_ms(claimed_at)
                 session.flush()
                 result = UploadCompletionClaim(
                     session=self._snapshot(session, upload),
@@ -1147,12 +1147,12 @@ class UploadRepository:
             statement = select(UploadSession).where(UploadSession.tenant_id == tenant_id)
             if series_id is not None:
                 statement = statement.where(UploadSession.series_id == series_id)
-            records = session.scalars(statement.order_by(UploadSession.episode_order, UploadSession.created_at, UploadSession.upload_session_id).with_for_update()).all()
+            records = session.scalars(statement.order_by(UploadSession.episode_order, UploadSession.create_date, UploadSession.id).with_for_update()).all()
             segments_by_upload: dict[str, list[tuple[int, int]]] = {}
             if records:
                 for upload_id, number, size in session.execute(
-                    select(UploadSegment.upload_session_id, UploadSegment.segment_number, UploadSegment.actual_size_bytes)
-                    .where(UploadSegment.upload_session_id.in_([record.upload_session_id for record in records]))
+                    select(UploadSegment.session_id.label("upload_session_id"), UploadSegment.segment_number, UploadSegment.size_bytes.label("actual_size_bytes"))
+                    .where(UploadSegment.session_id.in_([record.id for record in records]))
                 ):
                     segments_by_upload.setdefault(upload_id, []).append((number, size))
             result = []
@@ -1160,7 +1160,7 @@ class UploadRepository:
             for record in records:
                 self._expire_if_due(record, checked_at)
                 if statuses is None or record.status in statuses:
-                    result.append(self._snapshot(session, record, segments=segments_by_upload.get(record.upload_session_id, [])))
+                    result.append(self._snapshot(session, record, segments=segments_by_upload.get(record.id, [])))
             return result
 
     def release_completion(
@@ -1176,7 +1176,7 @@ class UploadRepository:
             result = session.execute(
                 update(UploadSession)
                 .where(
-                    UploadSession.upload_session_id == upload_session_id,
+                    UploadSession.id == upload_session_id,
                     UploadSession.status
                     == UploadSessionStatus.COMPLETING.value,
                     UploadSession.completion_token == completion_token,
@@ -1184,7 +1184,7 @@ class UploadRepository:
                 .values(
                     status=UploadSessionStatus.UPLOADING.value,
                     completion_token=None,
-                    completion_started_at=None,
+                    completion_start_time=None,
                     last_error=summary,
                     last_error_code=error_code,
                     completion_stage=None,
@@ -1239,27 +1239,27 @@ class UploadRepository:
                     Video.series_id == upload.series_id,
                     or_(
                         Video.episode_order == upload.episode_order,
-                        Video.content_hash == content_hash,
+                        Video.hash == content_hash,
                     ),
                 )
             )
-            if conflict is not None and conflict.video_id != video_id:
+            if conflict is not None and conflict.id != video_id:
                 raise UploadConflictError(
                     "episode order or source content already belongs to another Video"
                 )
             video = session.get(Video, video_id)
             if video is None:
                 video = Video(
-                    video_id=video_id,
+                    id=video_id,
                     series_id=upload.series_id,
                     episode_order=upload.episode_order,
                     upload_sequence=upload.upload_sequence,
-                    original_filename=upload.original_filename,
-                    original_source_uri=original_source_uri,
-                    inference_proxy_uri=None,
-                    content_hash=content_hash,
-                    total_bytes=upload.total_size_bytes,
-                    duration_seconds=duration_seconds,
+                    filename=upload.filename,
+                    source_uri=original_source_uri,
+                    proxy_uri=None,
+                    hash=content_hash,
+                    size_bytes=upload.size_bytes,
+                    duration_ms=duration_seconds,
                     upload_status="COMPLETED",
                     parse_status=ParseJobStatus.QUEUED.value,
                     upload_progress=100,
@@ -1269,9 +1269,9 @@ class UploadRepository:
             elif (
                 video.series_id != upload.series_id
                 or video.episode_order != upload.episode_order
-                or video.content_hash != content_hash
-                or video.duration_seconds != duration_seconds
-                or video.original_source_uri != original_source_uri
+                or video.hash != content_hash
+                or video.duration_ms != duration_seconds
+                or video.source_uri != original_source_uri
             ):
                 raise UploadConflictError(
                     f"videoId {video_id!r} already identifies another Video"
@@ -1287,7 +1287,7 @@ class UploadRepository:
             video_parse_task_id = str(uuid4())
             video_parse_task = VideoParseTask(
                 id=video_parse_task_id,
-                created_by_user_id=upload.created_by_user_id,
+                creator_id=upload.creator_id,
                 video_id=video_id,
                 pipeline_version=pipeline_version,
                 status=VideoParseTaskStatus.PENDING.value,
@@ -1304,13 +1304,13 @@ class UploadRepository:
                 is_deleted=False,
                 detail={
                     "_worker_runtime_v2": {
-                        **({"actor_user_id": upload.created_by_user_id} if upload.created_by_user_id is not None else {}),
+                        **({"actor_user_id": upload.creator_id} if upload.creator_id is not None else {}),
                         "accepted": execution_mode == "v2",
                         "execution_mode": execution_mode,
                     }
                 },
-                create_time=completed_at,
-                update_time=completed_at,
+                create_time=datetime_to_unix_time_ms(completed_at),
+                update_time=datetime_to_unix_time_ms(completed_at),
             )
             session.add(video_parse_task)
             session.flush()
@@ -1319,8 +1319,8 @@ class UploadRepository:
                 job = session.get(SeriesParseJob, job_id)
                 if job is None:
                     job = SeriesParseJob(
-                        job_id=job_id,
-                        created_by_user_id=upload.created_by_user_id,
+                        id=job_id,
+                        creator_id=upload.creator_id,
                         series_id=upload.series_id,
                         video_id=video_id,
                         pipeline_version=pipeline_version,
@@ -1330,7 +1330,7 @@ class UploadRepository:
                         progress=0,
                         attempt_count=0,
                         max_attempts=max_job_attempts,
-                        available_at=legacy_completed_at,
+                        next_execute_time=legacy_completed_at,
                         lease_version=0,
                     )
                     session.add(job)
@@ -1342,18 +1342,18 @@ class UploadRepository:
                 )
             upload.status = UploadSessionStatus.COMPLETED.value
             upload.video_id = video_id
-            upload.completed_at = completed_at
+            upload.finish_time = completed_at
             upload.completion_token = None
-            upload.completion_started_at = None
+            upload.completion_start_time = None
             upload.last_error = None
             upload.last_error_code = None
-            upload.content_sha256 = content_hash
+            upload.sha256 = content_hash
             upload.job_id = job_id
-            upload.initial_video_parse_task_id = video_parse_task_id
+            upload.initial_task_id = video_parse_task_id
             upload.video_parse_config = video_parse_config
             upload.completion_stage = None
             upload.version += 1
-            upload.updated_at = completed_at
+            upload.update_time = datetime_to_unix_time_ms(completed_at)
             session.flush()
             if series.status != "READY":
                 refresh_series_statuses(session, {upload.series_id})
@@ -1371,7 +1371,7 @@ class UploadRepository:
     ) -> UploadSession:
         record = session.scalar(
             select(UploadSession)
-            .where(UploadSession.upload_session_id == upload_session_id)
+            .where(UploadSession.id == upload_session_id)
             .with_for_update()
         )
         if record is None:
@@ -1391,15 +1391,15 @@ class UploadRepository:
     def _expire_if_due(upload: UploadSession, now: datetime) -> bool:
         if (
             upload.status not in (UploadSessionStatus.COMPLETED.value, UploadSessionStatus.EXPIRED.value)
-            and upload.expires_at <= now
+            and upload.expire_time <= now
         ):
             upload.status = UploadSessionStatus.EXPIRED.value
             upload.completion_token = None
-            upload.completion_started_at = None
+            upload.completion_start_time = None
             upload.active_slot_key = None
             upload.completion_stage = None
             upload.version += 1
-            upload.updated_at = now
+            upload.update_time = datetime_to_unix_time_ms(now)
             return True
         return upload.status == UploadSessionStatus.EXPIRED.value
 
@@ -1408,10 +1408,10 @@ class UploadRepository:
         upload: UploadSession,
         segment_number: int,
     ) -> tuple[int, int]:
-        if segment_number < 0 or segment_number >= upload.total_segments:
+        if segment_number < 0 or segment_number >= upload.segment_count:
             raise UploadConflictError("segment number is outside the upload session")
-        start = segment_number * upload.preferred_segment_size_bytes
-        end = min(start + upload.preferred_segment_size_bytes, upload.total_size_bytes)
+        start = segment_number * upload.segment_size_bytes
+        end = min(start + upload.segment_size_bytes, upload.size_bytes)
         return start, end
 
     @classmethod
@@ -1424,40 +1424,40 @@ class UploadRepository:
     ) -> UploadSessionState:
         if segments is None:
             segments = session.execute(
-                select(UploadSegment.segment_number, UploadSegment.actual_size_bytes).where(
-                    UploadSegment.upload_session_id == upload.upload_session_id
+                select(UploadSegment.segment_number, UploadSegment.size_bytes.label("actual_size_bytes")).where(
+                    UploadSegment.session_id == upload.id
                 )
             ).all()
         present = {number for number, _size in segments}
         return UploadSessionState(
-            upload_session_id=upload.upload_session_id,
+            upload_session_id=upload.id,
             tenant_id=upload.tenant_id,
-            created_by_user_id=upload.created_by_user_id,
+            created_by_user_id=upload.creator_id,
             series_id=upload.series_id,
             episode_order=upload.episode_order,
             upload_sequence=upload.upload_sequence,
-            original_filename=upload.original_filename,
+            original_filename=upload.filename,
             media_type=upload.media_type,
-            total_size_bytes=upload.total_size_bytes,
-            preferred_segment_size_bytes=upload.preferred_segment_size_bytes,
-            total_segments=upload.total_segments,
+            total_size_bytes=upload.size_bytes,
+            preferred_segment_size_bytes=upload.segment_size_bytes,
+            total_segments=upload.segment_count,
             status=upload.status,
             uploaded_segment_count=len(segments),
             uploaded_size_bytes=sum(size for _number, size in segments),
-            expires_at=upload.expires_at,
+            expires_at=upload.expire_time,
             video_id=upload.video_id,
             last_error=upload.last_error,
-            created_at=upload.created_at,
-            updated_at=upload.updated_at,
-            content_sha256=upload.content_sha256,
+            created_at=upload.create_date,
+            updated_at=upload.update_date,
+            content_sha256=upload.sha256,
             completion_stage=upload.completion_stage,
             job_id=upload.job_id,
-            initial_video_parse_task_id=upload.initial_video_parse_task_id,
+            initial_video_parse_task_id=upload.initial_task_id,
             parse_config=upload.parse_config,
             video_parse_config=upload.video_parse_config,
             detail=upload.detail,
             version=upload.version,
-            missing_segment_numbers=tuple(n for n in range(upload.total_segments) if n not in present),
+            missing_segment_numbers=tuple(n for n in range(upload.segment_count) if n not in present),
             last_error_code=upload.last_error_code,
         )
 
@@ -1465,7 +1465,7 @@ class UploadRepository:
     def _task_snapshot(task: VideoParseTask) -> VideoParseTaskState:
         return VideoParseTaskState(
             video_parse_task_id=task.id,
-            created_by_user_id=task.created_by_user_id,
+            created_by_user_id=task.creator_id,
             video_id=task.video_id,
             pipeline_version=task.pipeline_version,
             status=task.status,
@@ -1486,8 +1486,8 @@ class UploadRepository:
             last_error=task.last_error,
             is_test=task.is_test,
             detail=dict(task.detail),
-            create_time=task.create_time,
-            update_time=task.update_time,
+            create_time=task.create_date,
+            update_time=task.update_date,
         )
 
     @classmethod
@@ -1499,8 +1499,8 @@ class UploadRepository:
         records = session.scalars(
             select(UploadSegment)
             .where(
-                UploadSegment.upload_session_id
-                == upload.upload_session_id
+                UploadSegment.session_id
+                == upload.id
             )
             .order_by(UploadSegment.segment_number)
         ).all()
@@ -1512,8 +1512,8 @@ class UploadRepository:
             segment_number=record.segment_number,
             start_byte=record.start_byte,
             end_byte_exclusive=record.end_byte_exclusive,
-            actual_size_bytes=record.actual_size_bytes,
-            checksum_sha256=record.checksum_sha256,
+            actual_size_bytes=record.size_bytes,
+            checksum_sha256=record.sha256,
             artifact_uri=record.artifact_uri,
         )
 
@@ -1546,8 +1546,15 @@ class UploadRepository:
                 if record.request_fingerprint == legacy_fingerprint:
                     return
             raise UploadConflictError("idempotency key was already used with different upload parameters")
+        attributes = {
+            "created_by_user_id": "creator_id",
+            "original_filename": "filename",
+            "total_size_bytes": "size_bytes",
+            "content_sha256": "sha256",
+        }
         mismatches = [
-            name for name, value in requested.items() if getattr(record, name) != value
+            name for name, value in requested.items()
+            if getattr(record, attributes.get(name, name)) != value
         ]
         if mismatches:
             raise UploadConflictError(
@@ -1571,7 +1578,7 @@ def _invalidate_series_prefixes_for_reparse(
             session,
             series_id=video.series_id,
             episode_order=video.episode_order,
-            video_id=video.video_id,
+            video_id=video.id,
             now=now,
         )
     except VideoParseConflictError as exc:
@@ -1626,15 +1633,15 @@ def _require_compatible_video_topology(
     *,
     allow_incomplete: bool = False,
 ) -> int:
-    chunk_count = _planned_chunk_count(video.duration_seconds, parse_config)
+    chunk_count = _planned_chunk_count(video.duration_ms, parse_config)
     chunk_duration = parse_config["chunk_duration"] * 1000
     topology = session.execute(
         select(
             VideoChunk.sequence_no,
-            VideoChunk.start_seconds,
-            VideoChunk.end_seconds,
+            VideoChunk.start_ms.label("start_seconds"),
+            VideoChunk.end_ms.label("end_seconds"),
         )
-        .where(VideoChunk.video_id == video.video_id)
+        .where(VideoChunk.video_id == video.id)
         .order_by(VideoChunk.sequence_no)
     ).all()
     if not topology:
@@ -1643,7 +1650,7 @@ def _require_compatible_video_topology(
         (
             sequence_no,
             sequence_no * chunk_duration,
-            min(video.duration_seconds, (sequence_no + 1) * chunk_duration),
+            min(video.duration_ms, (sequence_no + 1) * chunk_duration),
         )
         for sequence_no in range(chunk_count)
     ]
@@ -1692,11 +1699,11 @@ def _parse_preparation_complete(
             raise UploadConflictError("VideoParseTask has incompatible Interval preparation")
         try:
             validate_interval_parse_task_members(
-                chunk_parse_task_id=interval.chunk_parse_task_id,
+                chunk_parse_task_id=interval.chunk_task_id,
                 video_parse_task_id=task.id,
                 start_sequence_no=start,
                 chunk_count=expected_count,
-                chunk_parse_task_ids=interval.chunk_parse_task_ids,
+                chunk_parse_task_ids=interval.chunk_task_ids,
                 members=[
                     (child, chunk.sequence_no)
                     for child, chunk in chunk_rows[start:start + expected_count]

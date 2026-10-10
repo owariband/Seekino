@@ -22,11 +22,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
 from ..constants.database import ID_LENGTH, MYSQL_TABLE_OPTIONS
-from ..database import Base
+from .base import BaseModel
 from ..utils.time import (
     normalize_database_utc_datetime,
-    now_unix_time_ms,
-    now_utc,
     require_utc_datetime,
 )
 
@@ -79,14 +77,14 @@ class VideoIndexStatus(StrEnum):
     FAILED = "FAILED"
 
 
-class Series(Base):
+class Series(BaseModel):
     __tablename__ = "series"
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_series_tenant_name"),
         MYSQL_TABLE_OPTIONS,
     )
 
-    series_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(LONG_TEXT)
@@ -99,27 +97,16 @@ class Series(Base):
         nullable=False,
         default=list,
     )
-    created_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-    )
-    updated_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-        onupdate=now_unix_time_ms,
-    )
 
 
-class Video(Base):
+class Video(BaseModel):
     __tablename__ = "video"
     __table_args__ = (
         UniqueConstraint("series_id", "episode_order", name="uq_video_series_order"),
-        UniqueConstraint("series_id", "content_hash", name="uq_video_series_hash"),
+        UniqueConstraint("series_id", "hash", name="uq_video_series_hash"),
         CheckConstraint("episode_order > 0", name="ck_video_episode_order"),
-        CheckConstraint("duration_seconds > 0", name="ck_video_duration"),
-        CheckConstraint("total_bytes >= 0", name="ck_video_total_bytes"),
+        CheckConstraint("duration_ms > 0", name="ck_video_duration"),
+        CheckConstraint("size_bytes >= 0", name="ck_video_total_bytes"),
         CheckConstraint(
             "upload_progress BETWEEN 0 AND 100",
             name="ck_video_upload_progress",
@@ -131,41 +118,30 @@ class Video(Base):
         MYSQL_TABLE_OPTIONS,
     )
 
-    video_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
     series_id: Mapped[str] = mapped_column(
-        ForeignKey("series.series_id", ondelete="CASCADE"),
+        ForeignKey("series.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     episode_order: Mapped[int] = mapped_column(Integer, nullable=False)
     upload_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
-    original_filename: Mapped[str] = mapped_column(String(1024), nullable=False)
-    original_source_uri: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
-    inference_proxy_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    # Media durations and coordinates are integer milliseconds; legacy names remain.
-    duration_seconds: Mapped[int] = mapped_column(
+    filename: Mapped[str] = mapped_column(String(1024), nullable=False)
+    source_uri: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
+    proxy_uri: Mapped[str | None] = mapped_column(LONG_TEXT)
+    hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Media durations and coordinates are integer milliseconds.
+    duration_ms: Mapped[int] = mapped_column(
         BigInteger, nullable=False, comment="media_time_milliseconds",
     )
     upload_status: Mapped[str] = mapped_column(String(32), nullable=False)
     parse_status: Mapped[str] = mapped_column(String(32), nullable=False)
     upload_progress: Mapped[int] = mapped_column(Integer, nullable=False)
     parse_progress: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-        onupdate=now_utc,
-    )
 
 
-class VideoChunk(Base):
+class VideoChunk(BaseModel):
     __tablename__ = "video_chunk"
     __table_args__ = (
         UniqueConstraint(
@@ -175,31 +151,31 @@ class VideoChunk(Base):
         ),
         CheckConstraint("sequence_no >= 0", name="ck_video_chunk_sequence"),
         CheckConstraint(
-            "start_seconds >= 0 AND end_seconds > start_seconds",
+            "start_ms >= 0 AND end_ms > start_ms",
             name="ck_video_chunk_range",
         ),
         CheckConstraint(
-            "analysis_window_start_seconds <= start_seconds "
-            "AND analysis_window_end_seconds >= end_seconds",
+            "window_start_ms <= start_ms "
+            "AND window_end_ms >= end_ms",
             name="ck_video_chunk_analysis_range",
         ),
         MYSQL_TABLE_OPTIONS,
     )
 
-    video_chunk_id: Mapped[str] = mapped_column(
+    id: Mapped[str] = mapped_column(
         String(ID_LENGTH),
         primary_key=True,
     )
     video_id: Mapped[str] = mapped_column(
-        ForeignKey("video.video_id", ondelete="CASCADE"),
+        ForeignKey("video.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    start_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    end_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    analysis_window_start_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    analysis_window_end_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    window_start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    window_end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
     chunk_media_ref: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
     analysis_window_media_ref: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
     transcript: Mapped[list[dict[str, Any]]] = mapped_column(
@@ -216,25 +192,14 @@ class VideoChunk(Base):
         nullable=False,
         default=list,
     )
-    created_at: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-        onupdate=now_utc,
-    )
 
 
-class VideoChunkInfo(Base):
+class VideoChunkInfo(BaseModel):
     __tablename__ = "video_chunk_info"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
-    video_chunk_id: Mapped[str] = mapped_column(
-        ForeignKey("video_chunk.video_chunk_id", ondelete="CASCADE"),
+    chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("video_chunk.id", ondelete="CASCADE"),
         primary_key=True,
     )
     all_time_events: Mapped[list[dict[str, Any]]] = mapped_column(
@@ -246,18 +211,18 @@ class VideoChunkInfo(Base):
     context_before_compact: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
     context_after_compact: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
     window_summary: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
-    model_provider: Mapped[str | None] = mapped_column(String(64))
-    model_name: Mapped[str | None] = mapped_column(String(255))
+    provider: Mapped[str | None] = mapped_column(String(64))
+    model: Mapped[str | None] = mapped_column(String(255))
     pipeline_version: Mapped[str] = mapped_column(String(128), nullable=False)
     is_fallback: Mapped[bool] = mapped_column(Boolean, nullable=False)
     parse_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    parsed_at: Mapped[int] = mapped_column(
+    parse_time: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
     )
 
 
-class ContextSnapshot(Base):
+class ContextSnapshot(BaseModel):
     __tablename__ = "context_snapshot"
     __table_args__ = (
         UniqueConstraint(
@@ -272,39 +237,34 @@ class ContextSnapshot(Base):
         MYSQL_TABLE_OPTIONS,
     )
 
-    snapshot_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
     engine_snapshot_id: Mapped[str] = mapped_column(String(128), nullable=False)
     series_id: Mapped[str] = mapped_column(
-        ForeignKey("series.series_id", ondelete="CASCADE"),
+        ForeignKey("series.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     video_id: Mapped[str] = mapped_column(
-        ForeignKey("video.video_id", ondelete="CASCADE"),
+        ForeignKey("video.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     after_chunk_sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
     compact_text: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
     structured_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    created_from_video_chunk_id: Mapped[str] = mapped_column(
-        ForeignKey("video_chunk.video_chunk_id", ondelete="CASCADE"),
+    source_chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("video_chunk.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
     )
-    created_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-    )
 
 
-class VideoChunkEmbedding(Base):
+class VideoChunkEmbedding(BaseModel):
     __tablename__ = "video_chunk_embedding"
     __table_args__ = MYSQL_TABLE_OPTIONS
 
-    video_chunk_id: Mapped[str] = mapped_column(
-        ForeignKey("video_chunk.video_chunk_id", ondelete="CASCADE"),
+    chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("video_chunk.id", ondelete="CASCADE"),
         primary_key=True,
     )
     text_input: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
@@ -312,14 +272,3 @@ class VideoChunkEmbedding(Base):
     vision_vector: Mapped[list[float] | None] = mapped_column(JSON)
     text_embedding_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     vision_embedding_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-    )
-    updated_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=now_unix_time_ms,
-        onupdate=now_unix_time_ms,
-    )

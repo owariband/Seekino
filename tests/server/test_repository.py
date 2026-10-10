@@ -109,7 +109,7 @@ def test_import_is_idempotent_and_maps_video_compact(
     with engine.connect() as connection:
         video_compact = connection.execute(
             select(VideoChunkInfo.video_compact).where(
-                VideoChunkInfo.video_chunk_id
+                VideoChunkInfo.chunk_id
                 == first.video_chunk_ids[0]
             )
         ).scalar_one()
@@ -118,7 +118,7 @@ def test_import_is_idempotent_and_maps_video_compact(
                 VideoChunkEmbedding.text_vector,
                 VideoChunkEmbedding.vision_vector,
             ).where(
-                VideoChunkEmbedding.video_chunk_id
+                VideoChunkEmbedding.chunk_id
                 == first.video_chunk_ids[0]
             )
         ).one()
@@ -183,7 +183,7 @@ def test_import_preserves_complete_fallback_provenance(
     with engine.connect() as connection:
         stored = connection.execute(
             select(VideoChunkInfo.parse_provenance).where(
-                VideoChunkInfo.video_chunk_id == report.video_chunk_ids[0]
+                VideoChunkInfo.chunk_id == report.video_chunk_ids[0]
             )
         ).scalar_one()
     hydrated = video_repository.hydrate_video_chunks(
@@ -225,7 +225,7 @@ def test_import_persists_keyframes_with_original_video_offsets(
         connection.execute(
             update(VideoChunk)
             .where(
-                VideoChunk.video_chunk_id == report.video_chunk_ids[0]
+                VideoChunk.id == report.video_chunk_ids[0]
             )
             .values(keyframe_uris=[legacy_uri])
         )
@@ -571,7 +571,7 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
     with engine.begin() as connection:
         connection.execute(
             update(Series)
-            .where(Series.series_id == prepared_import.series_id)
+            .where(Series.id == prepared_import.series_id)
             .values(
                 description="curated description",
                 status="READY",
@@ -581,16 +581,16 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
         )
         connection.execute(
             update(Video)
-            .where(Video.video_id == prepared_import.video_id)
+            .where(Video.id == prepared_import.video_id)
             .values(
-                inference_proxy_uri="s3://artifacts/proxy.mp4",
+                proxy_uri="s3://artifacts/proxy.mp4",
                 upload_status="PUBLISHED",
                 upload_progress=73,
             )
         )
         connection.execute(
             update(VideoChunk)
-            .where(VideoChunk.video_chunk_id == first_chunk_id)
+            .where(VideoChunk.id == first_chunk_id)
             .values(
                 chunk_media_ref="s3://artifacts/chunk.mp4",
                 analysis_window_media_ref="s3://artifacts/window.mp4",
@@ -608,14 +608,14 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
                 Series.status,
                 Series.important_extra_data,
                 Series.character_bible,
-            ).where(Series.series_id == prepared_import.series_id)
+            ).where(Series.id == prepared_import.series_id)
         ).one()
         video = connection.execute(
             select(
-                Video.inference_proxy_uri,
+                Video.proxy_uri,
                 Video.upload_status,
                 Video.upload_progress,
-            ).where(Video.video_id == prepared_import.video_id)
+            ).where(Video.id == prepared_import.video_id)
         ).one()
         chunk_record = connection.execute(
             select(
@@ -623,7 +623,7 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
                 VideoChunk.analysis_window_media_ref,
                 VideoChunk.baseline_visual_caption,
                 VideoChunk.keyframe_uris,
-            ).where(VideoChunk.video_chunk_id == first_chunk_id)
+            ).where(VideoChunk.id == first_chunk_id)
         ).one()
         embedding = connection.execute(
             select(
@@ -632,7 +632,7 @@ def test_repeat_import_preserves_enrichment_metadata_and_cached_vectors(
                 VideoChunkEmbedding.text_embedding_metadata,
                 VideoChunkEmbedding.vision_embedding_metadata,
             ).where(
-                VideoChunkEmbedding.video_chunk_id == first_chunk_id
+                VideoChunkEmbedding.chunk_id == first_chunk_id
             )
         ).one()
 
@@ -710,7 +710,7 @@ def test_repeat_import_clears_a_stale_text_vector(
                 VideoChunkEmbedding.vision_vector,
                 VideoChunkEmbedding.vision_embedding_metadata,
             ).where(
-                VideoChunkEmbedding.video_chunk_id
+                VideoChunkEmbedding.chunk_id
                 == first_chunk.video_chunk_id
             )
         ).one()
@@ -733,7 +733,7 @@ def test_hydrate_preserves_candidate_order_with_one_select(
     with engine.begin() as connection:
         connection.execute(
             update(VideoChunk)
-            .where(VideoChunk.video_chunk_id == report.video_chunk_ids[1])
+            .where(VideoChunk.id == report.video_chunk_ids[1])
             .values(
                 transcript=[
                     {"text": "第二段对白", "start_seconds": 1, "end_seconds": 2}
@@ -806,7 +806,7 @@ def test_ready_series_scope_is_complete_ordered_and_deduplicated(
     with engine.begin() as connection:
         connection.execute(
             update(Series)
-            .where(Series.series_id == prepared_import.series_id)
+            .where(Series.id == prepared_import.series_id)
             .values(status="READY")
         )
     assert video_repository.require_ready_series(
@@ -837,12 +837,12 @@ def test_searchable_video_requires_every_chunk_and_transcripts_follow_video_scop
         )
         connection.execute(
             update(VideoChunk)
-            .where(VideoChunk.video_chunk_id == report.video_chunk_ids[0])
+            .where(VideoChunk.id == report.video_chunk_ids[0])
             .values(transcript=[{"text": "企鹅", "start_seconds": 1, "end_seconds": 2}])
         )
         connection.execute(
             update(IndexSyncIntent)
-            .where(IndexSyncIntent.video_chunk_id == report.video_chunk_ids[0])
+            .where(IndexSyncIntent.chunk_id == report.video_chunk_ids[0])
             .values(operation="UPSERT", status="SYNCED")
         )
 
@@ -852,7 +852,7 @@ def test_searchable_video_requires_every_chunk_and_transcripts_follow_video_scop
     with engine.begin() as connection:
         connection.execute(
             update(IndexSyncIntent)
-            .where(IndexSyncIntent.video_chunk_id == report.video_chunk_ids[1])
+            .where(IndexSyncIntent.chunk_id == report.video_chunk_ids[1])
             .values(operation="UPSERT", status="SYNCED")
         )
 

@@ -33,6 +33,7 @@ from server.service.library import LibraryService
 from server.service.media import MediaService
 from server.storage.artifact import LocalArtifactStore
 from server.utils.time import now_unix_time_ms, now_utc, timedelta_to_ms
+from server.utils.time import datetime_to_unix_time_ms
 
 
 def _library(repository):
@@ -87,8 +88,8 @@ def _add_prefix_task(
                 "unrelated": {"preserved": True},
             }
         },
-        create_time=now,
-        update_time=now,
+        create_time=datetime_to_unix_time_ms(now),
+        update_time=datetime_to_unix_time_ms(now),
     ))
     return task_id
 
@@ -106,7 +107,7 @@ def test_offline_video_views_use_actual_index_and_media_facts(repository, prepar
         original_filename="episode.mp4",
     )
     with factory.begin() as session:
-        session.get(Video, report.video_id).original_source_uri = original.uri
+        session.get(Video, report.video_id).source_uri = original.uri
     media = MediaService(library, store, probe_playback=lambda _path: True)
 
     initial = library.get_series(report.series_id, tenant_id="local-default")
@@ -217,10 +218,10 @@ def test_latest_job_failure_and_index_error_are_actual_and_workspace_scoped(repo
     job_id = str(uuid4())
     with factory.begin() as session:
         session.add(SeriesParseJob(
-            job_id=job_id, series_id=report.series_id, video_id=report.video_id,
+            id=job_id, series_id=report.series_id, video_id=report.video_id,
             pipeline_version="failure-pipeline", status="FAILED", stage="PARSING",
-            progress=42, attempt_count=3, max_attempts=3, available_at=now,
-            completed_at=now, last_error="private provider endpoint failure",
+            progress=42, attempt_count=3, max_attempts=3, next_execute_time=now,
+            finish_time=now, last_error="private provider endpoint failure",
         ))
         for intent in session.scalars(select(IndexSyncIntent)):
             intent.status = "RETRY_WAIT"
@@ -251,7 +252,7 @@ def test_ready_video_count_keeps_an_indexed_video_during_failed_reparse(
             intent.operation = "UPSERT"
             intent.status = "SYNCED"
         session.add(SeriesParseJob(
-            job_id=str(uuid4()),
+            id=str(uuid4()),
             series_id=report.series_id,
             video_id=report.video_id,
             pipeline_version="failed-reparse",
@@ -260,8 +261,8 @@ def test_ready_video_count_keeps_an_indexed_video_during_failed_reparse(
             progress=42,
             attempt_count=3,
             max_attempts=3,
-            available_at=now,
-            completed_at=now,
+            next_execute_time=now,
+            finish_time=now,
             last_error="reparse failed before replacing the indexed result",
         ))
 
@@ -281,7 +282,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
     job_id = str(uuid4())
     with factory.begin() as session:
         session.add(SeriesParseJob(
-            job_id=job_id,
+            id=job_id,
             series_id=report.series_id,
             video_id=report.video_id,
             pipeline_version="checkpoint-progress",
@@ -290,24 +291,24 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
             progress=34,
             attempt_count=1,
             max_attempts=3,
-            available_at=now,
+            next_execute_time=now,
         ))
         session.add_all([
             VideoChunkCheckpoint(
                 job_id=job_id,
                 sequence_no=0,
-                video_chunk_id=str(uuid4()),
+                chunk_id=str(uuid4()),
                 stage="PARSED",
-                chunk_start_seconds=0,
-                chunk_end_seconds=15,
+                start_ms=0,
+                end_ms=15,
             ),
             VideoChunkCheckpoint(
                 job_id=job_id,
                 sequence_no=1,
-                video_chunk_id=str(uuid4()),
+                chunk_id=str(uuid4()),
                 stage="SPLIT_READY",
-                chunk_start_seconds=15,
-                chunk_end_seconds=20,
+                start_ms=15,
+                end_ms=20,
             ),
         ])
 
@@ -318,7 +319,7 @@ def test_library_progress_uses_checkpoint_duration_instead_of_stored_job_percent
 
     with factory.begin() as session:
         checkpoint = session.get(VideoChunkCheckpoint, (job_id, 1))
-        checkpoint.chunk_start_seconds = 16
+        checkpoint.start_ms = 16
 
     assert (
         library.get_video(
@@ -371,7 +372,7 @@ def test_last_search_uses_each_message_scope_and_workspace(repository):
     with factory.begin() as session:
         for conversation_id, workspace in ((local_conversation, "local-default"), (foreign_conversation, "other")):
             session.add(AgentConversation(
-                conversation_id=conversation_id, tenant_id=workspace,
+                id=conversation_id, tenant_id=workspace,
                 title="Scope history", idempotency_key=conversation_id,
             ))
         session.flush()
@@ -381,9 +382,9 @@ def test_last_search_uses_each_message_scope_and_workspace(repository):
             (0, foreign_conversation, [first.series_id, second.series_id], "foreign secret", now),
         ):
             session.add(AgentMessage(
-                message_id=str(uuid4()), conversation_id=conversation, sequence_no=sequence,
+                id=str(uuid4()), conversation_id=conversation, sequence_no=sequence,
                 role="USER", status="COMPLETED", content=content, series_ids=scope,
-                requested_series_ids=scope, created_at=created_at,
+                requested_series_ids=scope, create_time=created_at,
             ))
     states = {state.series_id: state for state in library.list_series(tenant_id="local-default")}
     assert states[first.series_id].last_search.query == "first question"
@@ -442,39 +443,39 @@ def test_episode_edit_updates_linked_upload_without_changing_execution_order(
     with factory.begin() as session:
         session.add_all([
             UploadSession(
-                upload_session_id=upload_session_id,
+                id=upload_session_id,
                 tenant_id=prepared_import.tenant_id,
                 series_id=report.series_id,
                 episode_order=prepared_import.episode_order,
                 upload_sequence=prepared_import.upload_sequence,
-                original_filename=prepared_import.original_filename,
+                filename=prepared_import.original_filename,
                 media_type="video/mp4",
-                total_size_bytes=prepared_import.total_bytes,
-                preferred_segment_size_bytes=prepared_import.total_bytes,
-                total_segments=1,
+                size_bytes=prepared_import.total_bytes,
+                segment_size_bytes=prepared_import.total_bytes,
+                segment_count=1,
                 status="COMPLETED",
                 idempotency_key="episode-edit-linked-upload",
                 active_slot_key=f"{report.series_id}:{prepared_import.episode_order}",
-                expires_at=now + timedelta(days=1),
-                completed_at=now,
+                expire_time=now + timedelta(days=1),
+                finish_time=now,
                 video_id=report.video_id,
             ),
             UploadSession(
-                upload_session_id=inactive_upload_session_id,
+                id=inactive_upload_session_id,
                 tenant_id=prepared_import.tenant_id,
                 series_id=report.series_id,
                 episode_order=prepared_import.episode_order,
                 upload_sequence=prepared_import.upload_sequence,
-                original_filename=prepared_import.original_filename,
+                filename=prepared_import.original_filename,
                 media_type="video/mp4",
-                total_size_bytes=prepared_import.total_bytes,
-                preferred_segment_size_bytes=prepared_import.total_bytes,
-                total_segments=1,
+                size_bytes=prepared_import.total_bytes,
+                segment_size_bytes=prepared_import.total_bytes,
+                segment_count=1,
                 status="EXPIRED",
                 idempotency_key="episode-edit-inactive-upload",
                 active_slot_key=None,
-                expires_at=now,
-                completed_at=now,
+                expire_time=now,
+                finish_time=now,
                 video_id=report.video_id,
             ),
         ])
@@ -531,7 +532,7 @@ def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
     task_ids: list[str] = []
     with factory.begin() as session:
         session.add(Series(
-            series_id=series_id,
+            id=series_id,
             tenant_id="local-default",
             name=f"Episode move {target_index}-{episode_order}",
             description=None,
@@ -541,16 +542,16 @@ def test_episode_edit_atomically_invalidates_prefix_from_earliest_changed_order(
         ))
         for index, (video_id, order) in enumerate(zip(video_ids, (1, 3, 5))):
             session.add(Video(
-                video_id=video_id,
+                id=video_id,
                 series_id=series_id,
                 episode_order=order,
                 upload_sequence=order,
-                original_filename=f"episode-{order}.mp4",
-                original_source_uri=f"artifact://test/{video_id}.mp4",
-                inference_proxy_uri=None,
-                content_hash=(str(index + 1) * 64)[:64],
-                total_bytes=1,
-                duration_seconds=1,
+                filename=f"episode-{order}.mp4",
+                source_uri=f"artifact://test/{video_id}.mp4",
+                proxy_uri=None,
+                hash=(str(index + 1) * 64)[:64],
+                size_bytes=1,
+                duration_ms=1,
                 upload_status="COMPLETED",
                 parse_status="SUCCEEDED",
                 upload_progress=100,
@@ -620,7 +621,7 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
     now = now_utc()
     with factory.begin() as session:
         session.add(Series(
-            series_id=series_id,
+            id=series_id,
             tenant_id="local-default",
             name="Active Prefix episode move",
             description=None,
@@ -633,37 +634,37 @@ def test_episode_edit_rolls_back_when_affected_prefix_lease_is_active(
             (downstream_video_id, 3, "b" * 64),
         ):
             session.add(Video(
-                video_id=video_id,
+                id=video_id,
                 series_id=series_id,
                 episode_order=order,
                 upload_sequence=order,
-                original_filename=f"episode-{order}.mp4",
-                original_source_uri=f"artifact://test/{video_id}.mp4",
-                inference_proxy_uri=None,
-                content_hash=content_hash,
-                total_bytes=1,
-                duration_seconds=1,
+                filename=f"episode-{order}.mp4",
+                source_uri=f"artifact://test/{video_id}.mp4",
+                proxy_uri=None,
+                hash=content_hash,
+                size_bytes=1,
+                duration_ms=1,
                 upload_status="COMPLETED",
                 parse_status="SUCCEEDED",
                 upload_progress=100,
                 parse_progress=100,
             ))
         session.add(UploadSession(
-            upload_session_id=upload_session_id,
+            id=upload_session_id,
             tenant_id="local-default",
             series_id=series_id,
             episode_order=1,
             upload_sequence=1,
-            original_filename="episode-1.mp4",
+            filename="episode-1.mp4",
             media_type="video/mp4",
-            total_size_bytes=1,
-            preferred_segment_size_bytes=1,
-            total_segments=1,
+            size_bytes=1,
+            segment_size_bytes=1,
+            segment_count=1,
             status="COMPLETED",
             idempotency_key="active-prefix-episode-move",
             active_slot_key=f"{series_id}:1",
-            expires_at=now + timedelta(days=1),
-            completed_at=now,
+            expire_time=now + timedelta(days=1),
+            finish_time=now,
             video_id=target_video_id,
         ))
         session.flush()
@@ -714,50 +715,50 @@ def test_episode_edit_conflicts_roll_back_video_and_linked_upload(
     with factory.begin() as session:
         session.add_all([
             UploadSession(
-                upload_session_id=linked_upload_id,
+                id=linked_upload_id,
                 tenant_id=prepared_import.tenant_id,
                 series_id=report.series_id,
                 episode_order=prepared_import.episode_order,
                 upload_sequence=prepared_import.upload_sequence,
-                original_filename=prepared_import.original_filename,
+                filename=prepared_import.original_filename,
                 media_type="video/mp4",
-                total_size_bytes=prepared_import.total_bytes,
-                preferred_segment_size_bytes=prepared_import.total_bytes,
-                total_segments=1,
+                size_bytes=prepared_import.total_bytes,
+                segment_size_bytes=prepared_import.total_bytes,
+                segment_count=1,
                 status="COMPLETED",
                 idempotency_key="episode-edit-conflict-linked",
                 active_slot_key=f"{report.series_id}:{prepared_import.episode_order}",
-                expires_at=now + timedelta(days=1),
-                completed_at=now,
+                expire_time=now + timedelta(days=1),
+                finish_time=now,
                 video_id=report.video_id,
             ),
             UploadSession(
-                upload_session_id=reserved_upload_id,
+                id=reserved_upload_id,
                 tenant_id=prepared_import.tenant_id,
                 series_id=report.series_id,
                 episode_order=10,
                 upload_sequence=10,
-                original_filename="reserved.mp4",
+                filename="reserved.mp4",
                 media_type="video/mp4",
-                total_size_bytes=1,
-                preferred_segment_size_bytes=1,
-                total_segments=1,
+                size_bytes=1,
+                segment_size_bytes=1,
+                segment_count=1,
                 status="UPLOADING",
                 idempotency_key="episode-edit-reserved-slot",
                 active_slot_key=f"{report.series_id}:10",
-                expires_at=now + timedelta(days=1),
+                expire_time=now + timedelta(days=1),
             ),
             Video(
-                video_id=occupied_video_id,
+                id=occupied_video_id,
                 series_id=report.series_id,
                 episode_order=11,
                 upload_sequence=11,
-                original_filename="occupied.mp4",
-                original_source_uri="artifact://test/occupied.mp4",
-                inference_proxy_uri=None,
-                content_hash="f" * 64,
-                total_bytes=1,
-                duration_seconds=1,
+                filename="occupied.mp4",
+                source_uri="artifact://test/occupied.mp4",
+                proxy_uri=None,
+                hash="f" * 64,
+                size_bytes=1,
+                duration_ms=1,
                 upload_status="COMPLETED",
                 parse_status="SUCCEEDED",
                 upload_progress=100,

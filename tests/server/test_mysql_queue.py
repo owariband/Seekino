@@ -27,7 +27,7 @@ def _seed(repository, *, max_attempts: int = 3):
     with session_factory.begin() as session:
         session.add(
             Series(
-                series_id=series_id,
+                id=series_id,
                 tenant_id="local-default",
                 name=f"Queue Series {series_id}",
                 description=None,
@@ -38,16 +38,16 @@ def _seed(repository, *, max_attempts: int = 3):
         )
         session.add(
             Video(
-                video_id=video_id,
+                id=video_id,
                 series_id=series_id,
                 episode_order=1,
                 upload_sequence=1,
-                original_filename="episode.mp4",
-                original_source_uri="artifact://test/media/episode.mp4",
-                inference_proxy_uri=None,
-                content_hash="a" * 64,
-                total_bytes=10,
-                duration_seconds=20,
+                filename="episode.mp4",
+                source_uri="artifact://test/media/episode.mp4",
+                proxy_uri=None,
+                hash="a" * 64,
+                size_bytes=10,
+                duration_ms=20,
                 upload_status="COMPLETED",
                 parse_status=ParseJobStatus.QUEUED.value,
                 upload_progress=100,
@@ -56,7 +56,7 @@ def _seed(repository, *, max_attempts: int = 3):
         )
         session.add(
             SeriesParseJob(
-                job_id=job_id,
+                id=job_id,
                 series_id=series_id,
                 video_id=video_id,
                 pipeline_version="pipeline-v1",
@@ -65,7 +65,7 @@ def _seed(repository, *, max_attempts: int = 3):
                 progress=0,
                 attempt_count=0,
                 max_attempts=max_attempts,
-                available_at=now,
+                next_execute_time=now,
                 lease_version=0,
             )
         )
@@ -123,7 +123,7 @@ def test_claiming_new_episode_keeps_indexed_sibling_searchable(
         queued_video.episode_order = 2
         queued_video.upload_sequence = 2
         series = session.get(Series, queued_video.series_id)
-        series_id, series_name = series.series_id, series.name
+        series_id, series_name = series.id, series.name
 
     video_repository.import_video_parse(replace(
         prepared_import,
@@ -189,7 +189,7 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
         for series_id in (series_a, series_b):
             session.add(
                 Series(
-                    series_id=series_id,
+                    id=series_id,
                     tenant_id="local-default",
                     name=f"Series {series_id}",
                     description=None,
@@ -205,16 +205,16 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
         ):
             session.add(
                 Video(
-                    video_id=video_id,
+                    id=video_id,
                     series_id=series_id,
                     episode_order=episode_order,
                     upload_sequence=episode_order,
-                    original_filename=f"episode-{episode_order}.mp4",
-                    original_source_uri=f"artifact://test/{video_id}.mp4",
-                    inference_proxy_uri=None,
-                    content_hash=content_hash,
-                    total_bytes=100,
-                    duration_seconds=60,
+                    filename=f"episode-{episode_order}.mp4",
+                    source_uri=f"artifact://test/{video_id}.mp4",
+                    proxy_uri=None,
+                    hash=content_hash,
+                    size_bytes=100,
+                    duration_ms=60,
                     upload_status="COMPLETED",
                     parse_status=ParseJobStatus.QUEUED.value,
                     upload_progress=100,
@@ -228,7 +228,7 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
         ):
             session.add(
                 SeriesParseJob(
-                    job_id=job_id,
+                    id=job_id,
                     series_id=series_id,
                     video_id=video_id,
                     pipeline_version="pipeline-v1",
@@ -237,7 +237,7 @@ def test_claim_allows_parallel_series_but_serializes_each_series(repository) -> 
                     progress=0,
                     attempt_count=0,
                     max_attempts=3,
-                    available_at=now + timedelta_to_ms(timedelta(seconds=delay)),
+                    next_execute_time=now + timedelta_to_ms(timedelta(seconds=delay)),
                     lease_version=0,
                 )
             )
@@ -274,15 +274,15 @@ def test_later_upload_waits_for_earlier_video_and_its_retry(repository) -> None:
         first_video = session.get(Video, first_video_id)
         session.add(
             Video(
-                video_id=later_video_id,
+                id=later_video_id,
                 series_id=first_video.series_id,
                 episode_order=2,
                 upload_sequence=2,
-                original_filename="later.mp4",
-                original_source_uri="artifact://test/later.mp4",
-                content_hash="b" * 64,
-                total_bytes=100,
-                duration_seconds=60,
+                filename="later.mp4",
+                source_uri="artifact://test/later.mp4",
+                hash="b" * 64,
+                size_bytes=100,
+                duration_ms=60,
                 upload_status="COMPLETED",
                 parse_status="QUEUED",
                 upload_progress=100,
@@ -291,7 +291,7 @@ def test_later_upload_waits_for_earlier_video_and_its_retry(repository) -> None:
         )
         session.add(
             SeriesParseJob(
-                job_id=later_job_id,
+                id=later_job_id,
                 series_id=first_video.series_id,
                 video_id=later_video_id,
                 pipeline_version="pipeline-v1",
@@ -301,7 +301,7 @@ def test_later_upload_waits_for_earlier_video_and_its_retry(repository) -> None:
                 attempt_count=0,
                 max_attempts=3,
                 lease_version=0,
-                available_at=now - timedelta_to_ms(timedelta(minutes=1)),
+                next_execute_time=now - timedelta_to_ms(timedelta(minutes=1)),
             )
         )
 
@@ -343,15 +343,15 @@ def test_earlier_unfinished_video_without_due_job_blocks_later_parse(
         candidate.upload_sequence = 2
         session.add(
             Video(
-                video_id=str(uuid4()),
+                id=str(uuid4()),
                 series_id=candidate.series_id,
                 episode_order=1,
                 upload_sequence=1,
-                original_filename="earlier.mp4",
-                original_source_uri="artifact://test/earlier.mp4",
-                content_hash="b" * 64,
-                total_bytes=100,
-                duration_seconds=60,
+                filename="earlier.mp4",
+                source_uri="artifact://test/earlier.mp4",
+                hash="b" * 64,
+                size_bytes=100,
+                duration_ms=60,
                 upload_status="COMPLETED",
                 parse_status=earlier_status,
                 upload_progress=100,
@@ -381,19 +381,19 @@ def test_earlier_upload_without_job_blocks_later_parse_until_expired(
         candidate.upload_sequence = 2
         session.add(
             UploadSession(
-                upload_session_id=str(uuid4()),
+                id=str(uuid4()),
                 tenant_id="local-default",
                 series_id=candidate.series_id,
                 episode_order=1,
                 upload_sequence=1,
-                original_filename="earlier.mp4",
+                filename="earlier.mp4",
                 media_type="video/mp4",
-                total_size_bytes=100,
-                preferred_segment_size_bytes=100,
-                total_segments=1,
+                size_bytes=100,
+                segment_size_bytes=100,
+                segment_count=1,
                 status=upload_status.value,
                 idempotency_key="earlier-upload",
-                expires_at=unix_time_ms_to_datetime(
+                expire_time=unix_time_ms_to_datetime(
                     now + timedelta_to_ms(timedelta(minutes=1))
                 ),
             )

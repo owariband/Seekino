@@ -1,29 +1,36 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Integer, String
+from datetime import datetime
+
+from sqlalchemy import Boolean, CheckConstraint, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ..database import Base
 from ..constants.database import ID_LENGTH, MYSQL_TABLE_OPTIONS
-from ..utils.time import now_unix_time_ms
+from .base import BaseModel, UtcDateTime
 
 
-class User(Base):
+class User(BaseModel):
     __tablename__ = "user"
     __table_args__ = (
         CheckConstraint("auth_version >= 1", name="ck_user_auth_version"),
         CheckConstraint("status IN ('ACTIVE', 'DISABLED')", name="ck_user_status"),
-        CheckConstraint("role IN ('user', 'admin')", name="ck_user_role"),
-        CheckConstraint("is_guest = 0 OR email IS NULL", name="ck_guest_email"),
-        CheckConstraint("is_guest = 0 OR role = 'user'", name="ck_guest_role"),
+        CheckConstraint("is_superuser IN (0, 1)", name="ck_user_superuser"),
+        CheckConstraint("is_anonymous = 0 OR email IS NULL", name="ck_guest_email"),
+        CheckConstraint("is_anonymous = 0 OR is_superuser = 0", name="ck_guest_role"),
         MYSQL_TABLE_OPTIONS,
     )
 
-    user_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
     email: Mapped[str | None] = mapped_column(String(254), nullable=True, unique=True)
-    is_guest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_anonymous: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVE")
     auth_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    role: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
-    created_at: Mapped[int] = mapped_column(BigInteger, nullable=False, default=now_unix_time_ms)
-    updated_at: Mapped[int] = mapped_column(BigInteger, nullable=False, default=now_unix_time_ms, onupdate=now_unix_time_ms)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    nickname: Mapped[str] = mapped_column(String(100), nullable=False, default="", index=True)
+    avatar: Mapped[str | None] = mapped_column(Text)
+    language: Mapped[str | None] = mapped_column(String(32), default="Chinese")
+    color_schema: Mapped[str | None] = mapped_column(String(32), default="Bright")
+    timezone: Mapped[str | None] = mapped_column(String(64), default="Asia/Shanghai")
+    last_login_time: Mapped[datetime | None] = mapped_column(UtcDateTime(), index=True)
+    login_channel: Mapped[str | None] = mapped_column(String(32))

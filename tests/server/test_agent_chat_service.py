@@ -402,7 +402,7 @@ def test_chat_sql_capture_runs_in_executor_and_preserves_terminal_result(build_s
         row = rows[0]
         assert row.tenant_id == "local-default" and row.task_type == "chat_retrieval"
         assert row.run_id == first.assistant_message.message_id
-        assert row.actor_user_id == "local-user"
+        assert row.user_id == "local-user"
         assert row.metadata_["status"] == ("failed" if failed else "completed")
         assert row.metadata_["context"]["conversation_id"] == conversation.conversation_id
         assert row.usage["tokens"]["total_tokens"] == 12
@@ -499,13 +499,13 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
     with repository._session_factory.begin() as session:
         series = session.query(Series).one()
         series.status = "EMPTY"
-        series_id = series.series_id
+        series_id = series.id
         if playback_change == "tenant":
             series.tenant_id = "other-tenant"
         session.add(Video(
-            video_id=video_id, series_id=series_id, episode_order=1, upload_sequence=1,
-            original_filename="lecture.mp4", original_source_uri="source/lecture.mp4",
-            content_hash="a" * 64, total_bytes=1, duration_seconds=300_000,
+            id=video_id, series_id=series_id, episode_order=1, upload_sequence=1,
+            filename="lecture.mp4", source_uri="source/lecture.mp4",
+            hash="a" * 64, size_bytes=1, duration_ms=300_000,
             upload_status="UPLOADED", parse_status="PENDING",
             upload_progress=100, parse_progress=0,
         ))
@@ -559,12 +559,12 @@ def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
     with repository._session_factory.begin() as session:
         current = session.query(Series).filter(Series.name == "Test Series").one()
         current.status = "EMPTY"
-        current_id = current.series_id
+        current_id = current.id
         session.get(Series, ready.series_id).status = "READY"
         session.add(Video(
-            video_id=video_id, series_id=current_id, episode_order=1, upload_sequence=1,
-            original_filename="lecture.mp4", original_source_uri="source/lecture.mp4",
-            content_hash="a" * 64, total_bytes=1, duration_seconds=300_000,
+            id=video_id, series_id=current_id, episode_order=1, upload_sequence=1,
+            filename="lecture.mp4", source_uri="source/lecture.mp4",
+            hash="a" * 64, size_bytes=1, duration_ms=300_000,
             upload_status="UPLOADED", parse_status="PENDING",
             upload_progress=100, parse_progress=0,
         ))
@@ -1070,7 +1070,7 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
                 "timing": {"startedAt": started_at, "totalDurationMs": None, "stages": []}
             }
             initial_version = assistant.version
-            initial_updated_at = assistant.updated_at
+            initial_updated_at = assistant.update_time
 
         partial = AgentMessageTimingState(
             started_at=started_at, total_duration_ms=None,
@@ -1082,7 +1082,7 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
         with factory() as session:
             assistant = session.get(AgentMessage, assistant_id)
             assert assistant.version == initial_version
-            assert assistant.updated_at == initial_updated_at
+            assert assistant.update_time == initial_updated_at
             assert assistant.detail["timing"]["stages"] == [
                 {"phase": "QUEUED", "durationMs": 4}
             ]
@@ -1119,7 +1119,7 @@ def test_mysql_agent_timing_roundtrips_through_message_detail() -> None:
         if created:
             with factory.begin() as session:
                 session.execute(delete(AgentConversation).where(
-                    AgentConversation.conversation_id == conversation_id
+                    AgentConversation.id == conversation_id
                 ))
         engine.dispose()
 
@@ -1754,7 +1754,7 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
     with session_factory.begin() as db_session:
         db_session.add_all(
             AgentMessage(
-                message_id=str(uuid4()),
+                id=str(uuid4()),
                 conversation_id=conversation.conversation_id,
                 sequence_no=index,
                 role="USER" if index % 2 == 0 else "ASSISTANT",
@@ -1762,7 +1762,7 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
                 content=f"history {index}",
                 series_ids=[series.series_id],
                 requested_series_ids=[series.series_id] if index % 2 == 0 else None,
-                model_name=None if index % 2 == 0 else "historical-model",
+                model=None if index % 2 == 0 else "historical-model",
             )
             for index in range(500)
         )

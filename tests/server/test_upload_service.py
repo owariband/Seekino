@@ -92,7 +92,7 @@ def _upload_service(
     with engine.begin() as connection:
         connection.execute(
             Series.__table__.insert().values(
-                series_id="77285f16-3e5b-592e-ba15-8b224b619806",
+                id="77285f16-3e5b-592e-ba15-8b224b619806",
                 tenant_id="local-default",
                 name="Test Upload Series",
                 description=None,
@@ -169,7 +169,7 @@ def test_v2_upload_preserves_fractional_media_duration_with_seconds_configuratio
     with create_session_factory(engine)() as session:
         video = session.get(Video, completed.video_id)
         task = session.get(VideoParseTask, completed.video_parse_task_id)
-        assert video.duration_seconds == 8008
+        assert video.duration_ms == 8008
         assert task.chunk_count == expected_count
         assert task.parse_config["chunk_duration"] == chunk_duration
 
@@ -307,7 +307,7 @@ def test_upload_completion_rechecks_legacy_v2_dimensions_before_enqueue(
     with create_session_factory(engine)() as session:
         stored = session.get(UploadSession, upload.upload_session_id)
         assert stored.status == UploadSessionStatus.UPLOADING.value
-        assert stored.initial_video_parse_task_id is None
+        assert stored.initial_task_id is None
 
 
 def test_pending_takeover_rechecks_v2_dimensions_before_accepting(
@@ -855,7 +855,7 @@ def test_completion_rejects_a_missing_fixed_v2_config_snapshot(
     with session_factory() as session:
         persisted = session.get(UploadSession, upload.upload_session_id)
         assert persisted.status == UploadSessionStatus.UPLOADING.value
-        assert persisted.initial_video_parse_task_id is None
+        assert persisted.initial_task_id is None
         assert list(session.scalars(select(VideoParseTask))) == []
 
 
@@ -1013,7 +1013,7 @@ def test_delete_rejects_completing_and_running_parse(repository, tmp_path):
     with create_session_factory(engine)() as session:
         video = session.get(Video, completed.video_id)
         assert video is not None
-        assert store.resolve(video.original_source_uri).exists()
+        assert store.resolve(video.source_uri).exists()
         assert session.get(UploadSession, upload.upload_session_id).status == "COMPLETED"
 
 
@@ -1069,7 +1069,7 @@ def test_delete_rejects_active_v2_prefix_lease(repository, tmp_path):
         )
         assert task.is_deleted is False
         assert store.resolve(
-            session.get(Video, completed.video_id).original_source_uri
+            session.get(Video, completed.video_id).source_uri
         ).exists()
 
 
@@ -1306,13 +1306,13 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
         task.processing_duration_ms = 1234
         task.last_error = {"code": "MODEL_TIMEOUT", "message": "provider timed out"}
         session.add(VideoChunk(
-            video_chunk_id=video_chunk_id,
+            id=video_chunk_id,
             video_id=completed.video_id,
             sequence_no=0,
-            start_seconds=0,
-            end_seconds=12_000,
-            analysis_window_start_seconds=0,
-            analysis_window_end_seconds=12_000,
+            start_ms=0,
+            end_ms=12_000,
+            window_start_ms=0,
+            window_end_ms=12_000,
             chunk_media_ref="artifact://test/old-chunk.mp4",
             analysis_window_media_ref="artifact://test/old-window.mp4",
             transcript=[],
@@ -1321,8 +1321,8 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
         ))
         session.add(ChunkParseTask(
             id=chunk_task_id,
-            video_parse_task_id=completed.video_parse_task_id,
-            video_chunk_id=video_chunk_id,
+            video_task_id=completed.video_parse_task_id,
+            chunk_id=video_chunk_id,
             status="COMPLETE",
             next_execute_time=unix_time_ms_to_datetime(started_at),
             retry_count=0,
@@ -1333,7 +1333,7 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
         ))
         session.add(ChunkParseContent(
             id=content_id,
-            chunk_parse_task_id=chunk_task_id,
+            chunk_task_id=chunk_task_id,
             content={"persons": [], "timeline": []},
             version=1,
             detail={"compact": "retained compact context"},
@@ -1341,16 +1341,16 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
         session.add(VideoChunkCheckpoint(
             job_id=completed.job_id,
             sequence_no=0,
-            video_chunk_id=video_chunk_id,
+            chunk_id=video_chunk_id,
             stage=VideoChunkCheckpointStage.PARSED.value,
             parse_artifact_uri="artifact://test/jobs/parse.json",
         ))
         session.add(ParseUsageAttempt(
             job_id=completed.job_id,
-            video_parse_task_id=completed.video_parse_task_id,
+            video_task_id=completed.video_parse_task_id,
             attempt_count=3,
             lease_version=3,
-            started_at=unix_time_ms_to_datetime(started_at),
+            start_time=unix_time_ms_to_datetime(started_at),
             recording_complete=True,
         ))
     work_file = store.work_directory(completed.job_id) / "resume.json"
@@ -1377,7 +1377,7 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
     with create_session_factory(engine)() as session:
         assert session.get(ParseUsageAttempt, (completed.job_id, 3, 3)) is not None
         content = session.get(ChunkParseContent, content_id)
-        assert content.chunk_parse_task_id == chunk_task_id
+        assert content.chunk_task_id == chunk_task_id
         assert content.detail == {"compact": "retained compact context"}
         assert session.get(ChunkParseTask, chunk_task_id) is not None
         assert session.get(VideoChunkCheckpoint, (completed.job_id, 0)) is not None
@@ -1479,31 +1479,31 @@ def prepared_v2_retry(repository, tmp_path):
         for sequence, chunk_task_id in enumerate(chunk_ids):
             chunk_id = str(uuid4())
             session.add(VideoChunk(
-                video_chunk_id=chunk_id, video_id=completed.video_id,
-                sequence_no=sequence, start_seconds=sequence * 3000, end_seconds=(sequence + 1) * 3000,
-                analysis_window_start_seconds=sequence * 3000,
-                analysis_window_end_seconds=(sequence + 1) * 3000,
+                id=chunk_id, video_id=completed.video_id,
+                sequence_no=sequence, start_ms=sequence * 3000, end_ms=(sequence + 1) * 3000,
+                window_start_ms=sequence * 3000,
+                window_end_ms=(sequence + 1) * 3000,
                 chunk_media_ref="artifact://test/chunk.mp4",
                 analysis_window_media_ref="artifact://test/window.mp4",
             ))
             session.add(ChunkParseTask(
-                id=chunk_task_id, video_parse_task_id=task.id, video_chunk_id=chunk_id,
+                id=chunk_task_id, video_task_id=task.id, chunk_id=chunk_id,
                 status="COMPLETE", next_execute_time=before, retry_count=2,
                 lease_version=4, finish_time=before, last_error={"code": "PRIOR_ERROR"},
             ))
             session.add(ChunkParseContent(
-                id=str(uuid4()), chunk_parse_task_id=chunk_task_id,
+                id=str(uuid4()), chunk_task_id=chunk_task_id,
                 content={"persons": [], "timeline": []}, version=3,
             ))
         for start, interval_id in enumerate(interval_ids):
             session.add(IntervalParseTask(
-                id=interval_id, video_parse_task_id=task.id, chunk_parse_task_id=chunk_ids[start],
-                start_sequence_no=start, chunk_count=2, chunk_parse_task_ids=chunk_ids[start:start + 2],
+                id=interval_id, video_task_id=task.id, chunk_task_id=chunk_ids[start],
+                start_sequence_no=start, chunk_count=2, chunk_task_ids=chunk_ids[start:start + 2],
                 ready_mask=3, status="COMPLETE", next_execute_time=before, retry_count=2,
                 lease_version=5, finish_time=before, last_error={"code": "PRIOR_ERROR"},
             ))
             session.add(IntervalParseContent(
-                interval_parse_task_id=interval_id, content={"retained": start},
+                interval_task_id=interval_id, content={"retained": start},
             ))
     return service, upload, completed.video_parse_task_id, factory, chunk_ids, interval_ids, now
 
@@ -1517,7 +1517,7 @@ def prepared_short_v2_retry(prepared_v2_retry):
         task.status = "INDEXING_FAILED"
         short_interval = session.get(IntervalParseTask, interval_ids[0])
         short_interval.chunk_count = len(chunk_ids)
-        short_interval.chunk_parse_task_ids = chunk_ids
+        short_interval.chunk_task_ids = chunk_ids
         short_interval.ready_mask = (1 << len(chunk_ids)) - 1
         short_interval.status = "INDEXING_FAILED"
         for interval_id in interval_ids[1:]:
@@ -1559,14 +1559,14 @@ def test_indexing_retry_accepts_the_unique_short_interval_and_retains_results(
         assert (
             interval.start_sequence_no,
             interval.chunk_count,
-            interval.chunk_parse_task_ids,
+            interval.chunk_task_ids,
             interval.status,
             interval.next_execute_time,
         ) == (0, len(chunk_ids), chunk_ids, "INDEXING", now)
         assert [
             child.status for child in session.scalars(
                 select(ChunkParseTask)
-                .where(ChunkParseTask.video_parse_task_id == task_id)
+                .where(ChunkParseTask.video_task_id == task_id)
                 .order_by(ChunkParseTask.id)
             )
         ] == ["COMPLETE"] * len(chunk_ids)
@@ -1606,22 +1606,22 @@ def test_indexing_retry_rejects_invalid_short_window_without_mutation(
             interval.start_sequence_no = 1
         elif invalid == "wrong_count":
             interval.chunk_count = len(chunk_ids) - 1
-            interval.chunk_parse_task_ids = chunk_ids[:-1]
+            interval.chunk_task_ids = chunk_ids[:-1]
             interval.ready_mask = (1 << (len(chunk_ids) - 1)) - 1
         else:
-            interval.chunk_parse_task_ids = [*chunk_ids[1:], chunk_ids[0]]
+            interval.chunk_task_ids = [*chunk_ids[1:], chunk_ids[0]]
 
     def persisted_state():
         with factory() as session:
             parent = session.get(VideoParseTask, task_id)
             chunks = list(session.scalars(
                 select(ChunkParseTask)
-                .where(ChunkParseTask.video_parse_task_id == task_id)
+                .where(ChunkParseTask.video_task_id == task_id)
                 .order_by(ChunkParseTask.id)
             ))
             intervals = list(session.scalars(
                 select(IntervalParseTask)
-                .where(IntervalParseTask.video_parse_task_id == task_id)
+                .where(IntervalParseTask.video_task_id == task_id)
                 .order_by(IntervalParseTask.id)
             ))
             return (
@@ -1647,7 +1647,7 @@ def test_indexing_retry_rejects_invalid_short_window_without_mutation(
                         interval.id,
                         interval.start_sequence_no,
                         interval.chunk_count,
-                        interval.chunk_parse_task_ids,
+                        interval.chunk_task_ids,
                         interval.status,
                         interval.next_execute_time,
                         interval.finish_time,
@@ -1656,17 +1656,17 @@ def test_indexing_retry_rejects_invalid_short_window_without_mutation(
                     for interval in intervals
                 ],
                 [
-                    (row.id, row.chunk_parse_task_id, row.content, row.version, row.detail)
+                    (row.id, row.chunk_task_id, row.content, row.version, row.detail)
                     for row in session.scalars(
                         select(ChunkParseContent)
                         .order_by(ChunkParseContent.id)
                     )
                 ],
                 [
-                    (row.interval_parse_task_id, row.content, row.detail)
+                    (row.interval_task_id, row.content, row.detail)
                     for row in session.scalars(
                         select(IntervalParseContent)
-                        .order_by(IntervalParseContent.interval_parse_task_id)
+                        .order_by(IntervalParseContent.interval_task_id)
                     )
                 ],
             )
@@ -1866,7 +1866,7 @@ def test_indexing_retry_rejects_invalid_sources_without_resetting_children(prepa
         if invalid == "missing_refine":
             session.delete(session.get(IntervalParseContent, interval.id))
         elif invalid == "wrong_members":
-            interval.chunk_parse_task_ids = chunk_ids[1:3]
+            interval.chunk_task_ids = chunk_ids[1:3]
         else:
             session.delete(session.get(IntervalParseTask, interval_ids[-1]))
     with pytest.raises(UploadConflictError):
@@ -1887,13 +1887,13 @@ def test_parse_retry_resumes_partial_fixed_topology(prepared_v2_retry, conflicti
             session.delete(session.get(IntervalParseTask, interval_id))
         for child_id in chunk_ids[2:]:
             child = session.get(ChunkParseTask, child_id)
-            chunk = session.get(VideoChunk, child.video_chunk_id)
+            chunk = session.get(VideoChunk, child.chunk_id)
             session.delete(child)
             session.flush()
             session.delete(chunk)
         if conflicting_boundary:
             first = session.get(ChunkParseTask, chunk_ids[0])
-            session.get(VideoChunk, first.video_chunk_id).end_seconds = 2
+            session.get(VideoChunk, first.chunk_id).end_ms = 2
 
     if conflicting_boundary:
         with pytest.raises(UploadConflictError, match="fixed chunk topology"):
@@ -1944,8 +1944,8 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
         job.attempt_count = 3
         job.max_attempts = 3
         job.version = 7
-        job.started_at = reparsed_at - timedelta_to_ms(timedelta(hours=1))
-        job.completed_at = reparsed_at - timedelta_to_ms(timedelta(minutes=30))
+        job.start_time = reparsed_at - timedelta_to_ms(timedelta(hours=1))
+        job.finish_time = reparsed_at - timedelta_to_ms(timedelta(minutes=30))
         legacy_job_before = (
             job.status,
             job.stage,
@@ -1953,15 +1953,15 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
             job.attempt_count,
             job.max_attempts,
             job.version,
-            job.started_at,
-            job.completed_at,
+            job.start_time,
+            job.finish_time,
         )
         task = session.get(VideoParseTask, completed.video_parse_task_id)
         original_config = task.parse_config
         task.status = terminal_status
         task.attempt_count = 1
-        task.start_time = unix_time_ms_to_datetime(job.started_at)
-        task.finish_time = unix_time_ms_to_datetime(job.completed_at)
+        task.start_time = unix_time_ms_to_datetime(job.start_time)
+        task.finish_time = unix_time_ms_to_datetime(job.finish_time)
         task.processing_duration_ms = timedelta_to_ms(timedelta(minutes=30))
         task.detail = {"result": "published"}
         video = session.get(Video, completed.video_id)
@@ -1969,13 +1969,13 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
         video.parse_progress = 100
         session.get(Series, upload.series_id).status = "READY"
         session.add(VideoChunk(
-            video_chunk_id=video_chunk_id,
+            id=video_chunk_id,
             video_id=completed.video_id,
             sequence_no=0,
-            start_seconds=0,
-            end_seconds=12_000,
-            analysis_window_start_seconds=0,
-            analysis_window_end_seconds=12_000,
+            start_ms=0,
+            end_ms=12_000,
+            window_start_ms=0,
+            window_end_ms=12_000,
             chunk_media_ref="artifact://test/old-chunk.mp4",
             analysis_window_media_ref="artifact://test/old-window.mp4",
             transcript=[],
@@ -1984,53 +1984,53 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
         ))
         session.add(ChunkParseTask(
             id=chunk_task_id,
-            video_parse_task_id=completed.video_parse_task_id,
-            video_chunk_id=video_chunk_id,
+            video_task_id=completed.video_parse_task_id,
+            chunk_id=video_chunk_id,
             status="COMPLETE",
-            next_execute_time=unix_time_ms_to_datetime(job.started_at),
+            next_execute_time=unix_time_ms_to_datetime(job.start_time),
             retry_count=0,
             lease_version=1,
-            start_time=unix_time_ms_to_datetime(job.started_at),
-            finish_time=unix_time_ms_to_datetime(job.completed_at),
+            start_time=unix_time_ms_to_datetime(job.start_time),
+            finish_time=unix_time_ms_to_datetime(job.finish_time),
             detail={"attempt": 1},
         ))
         session.add(ChunkParseContent(
             id=chunk_content_id,
-            chunk_parse_task_id=chunk_task_id,
+            chunk_task_id=chunk_task_id,
             content={"persons": [], "timeline": []},
             version=1,
             detail={"compact": "old compact result"},
         ))
         session.add(VideoChunkEmbedding(
-            video_chunk_id=video_chunk_id,
+            chunk_id=video_chunk_id,
             text_input="old searchable facts",
             text_vector=[0.1],
             vision_vector=[0.2],
         ))
         session.add(IndexSyncIntent(
-            video_chunk_id=video_chunk_id,
+            chunk_id=video_chunk_id,
             operation=IndexSyncOperation.UPSERT.value,
             source_revision="old-revision",
             generation=1,
             status=IndexSyncStatus.SYNCED.value,
             attempt_count=0,
-            available_at=reparsed_at,
-            synced_at=reparsed_at,
+            next_execute_time=reparsed_at,
+            sync_time=reparsed_at,
         ))
         session.add(VideoChunkCheckpoint(
             job_id=completed.job_id,
             sequence_no=0,
-            video_chunk_id=video_chunk_id,
+            chunk_id=video_chunk_id,
             stage=VideoChunkCheckpointStage.INDEXED.value,
-            chunk_start_seconds=0,
-            chunk_end_seconds=12_000,
+            start_ms=0,
+            end_ms=12_000,
         ))
         session.add(ParseUsageAttempt(
             job_id=completed.job_id,
-            video_parse_task_id=completed.video_parse_task_id,
+            video_task_id=completed.video_parse_task_id,
             attempt_count=3,
             lease_version=3,
-            started_at=unix_time_ms_to_datetime(
+            start_time=unix_time_ms_to_datetime(
                 reparsed_at - timedelta_to_ms(timedelta(hours=1))
             ),
             recording_complete=True,
@@ -2090,7 +2090,7 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
         )
         assert session.get(VideoParseTask, reparsed.video_parse_task_id) is not None
         old_content = session.get(ChunkParseContent, chunk_content_id)
-        assert old_content.chunk_parse_task_id == chunk_task_id
+        assert old_content.chunk_task_id == chunk_task_id
         assert old_content.detail == {"compact": "old compact result"}
         assert session.get(ChunkParseTask, chunk_task_id) is not None
         assert session.get(VideoChunk, video_chunk_id) is not None
@@ -2113,8 +2113,8 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
             job.attempt_count,
             job.max_attempts,
             job.version,
-            job.started_at,
-            job.completed_at,
+            job.start_time,
+            job.finish_time,
         ) == legacy_job_before
         video = session.get(Video, completed.video_id)
         assert (video.parse_status, video.parse_progress) == (
@@ -2254,7 +2254,7 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
         job.status = ParseJobStatus.FAILED.value
         job.last_error = "fixture failure"
         session.add(SeriesParseJob(
-            job_id=second_job_id,
+            id=second_job_id,
             series_id=upload.series_id,
             video_id=completed.video_id,
             pipeline_version="pipeline-v2",
@@ -2264,24 +2264,24 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             attempt_count=1,
             max_attempts=3,
             version=1,
-            available_at=now,
+            next_execute_time=now,
             lease_version=0,
             last_error="second pipeline failure",
         ))
         session.add(VideoChunkCheckpoint(
             job_id=completed.job_id,
             sequence_no=0,
-            video_chunk_id=video_chunk_id,
+            chunk_id=video_chunk_id,
             stage=VideoChunkCheckpointStage.INDEXED.value,
         ))
         session.add(VideoChunk(
-            video_chunk_id=video_chunk_id,
+            id=video_chunk_id,
             video_id=completed.video_id,
             sequence_no=0,
-            start_seconds=0,
-            end_seconds=1000,
-            analysis_window_start_seconds=0,
-            analysis_window_end_seconds=1000,
+            start_ms=0,
+            end_ms=1000,
+            window_start_ms=0,
+            window_end_ms=1000,
             chunk_media_ref="artifact://test/chunk.mp4",
             analysis_window_media_ref="artifact://test/window.mp4",
             transcript=[],
@@ -2290,17 +2290,17 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
         ))
         session.add(ChunkParseTask(
             id=chunk_parse_task_id,
-            video_parse_task_id=completed.video_parse_task_id,
-            video_chunk_id=video_chunk_id,
+            video_task_id=completed.video_parse_task_id,
+            chunk_id=video_chunk_id,
             status="QUEUED",
             next_execute_time=unix_time_ms_to_datetime(now),
             retry_count=0,
             lease_version=0,
-            create_time=unix_time_ms_to_datetime(now),
-            update_time=unix_time_ms_to_datetime(now),
+            create_time=datetime_to_unix_time_ms(unix_time_ms_to_datetime(now)),
+            update_time=datetime_to_unix_time_ms(unix_time_ms_to_datetime(now)),
         ))
         session.add(VideoChunkInfo(
-            video_chunk_id=video_chunk_id,
+            chunk_id=video_chunk_id,
             all_time_events=[],
             all_time_event_text="",
             video_compact="compact",
@@ -2309,44 +2309,44 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             window_summary="summary",
             pipeline_version="pipeline-v1",
             is_fallback=False,
-            parsed_at=now,
+            parse_time=now,
         ))
         session.add(VideoChunkEmbedding(
-            video_chunk_id=video_chunk_id,
+            chunk_id=video_chunk_id,
             text_input="summary",
             text_vector=[0.1],
             vision_vector=[0.2],
         ))
         session.add(ContextSnapshot(
-            snapshot_id=snapshot_id,
+            id=snapshot_id,
             engine_snapshot_id="engine-snapshot",
             series_id=upload.series_id,
             video_id=completed.video_id,
             after_chunk_sequence_no=0,
             compact_text="compact",
             structured_state={},
-            created_from_video_chunk_id=video_chunk_id,
-            created_at=now,
+            source_chunk_id=video_chunk_id,
+            create_time=now,
         ))
         session.add(IndexSyncIntent(
-            video_chunk_id=video_chunk_id,
+            chunk_id=video_chunk_id,
             operation=IndexSyncOperation.UPSERT.value,
             source_revision="revision",
             generation=1,
             status=IndexSyncStatus.SYNCED.value,
             attempt_count=1,
-            available_at=now,
-            synced_at=now,
+            next_execute_time=now,
+            sync_time=now,
         ))
         session.add(ParseUsageAttempt(
             job_id=completed.job_id,
             attempt_count=1,
             lease_version=1,
-            started_at=unix_time_ms_to_datetime(now),
+            start_time=unix_time_ms_to_datetime(now),
             recording_complete=True,
         ))
         session.add(ParseModelCall(
-            call_id=call_id,
+            id=call_id,
             job_id=completed.job_id,
             attempt_count=1,
             lease_version=1,
@@ -2354,12 +2354,12 @@ def test_delete_completed_upload_removes_full_task_aggregate(repository, tmp_pat
             series_id=upload.series_id,
             video_id=completed.video_id,
             sequence_no=0,
-            video_chunk_id=video_chunk_id,
+            chunk_id=video_chunk_id,
             provider="test",
             model="test-model",
             category="parse",
             operation="parse",
-            started_at=unix_time_ms_to_datetime(now),
+            start_time=unix_time_ms_to_datetime(now),
             status="failed",
         ))
 
@@ -2497,23 +2497,23 @@ def test_delete_rejects_an_inconsistent_shared_video_reference(repository, tmp_p
     with create_session_factory(engine).begin() as session:
         original = session.get(UploadSession, upload.upload_session_id)
         session.add(UploadSession(
-            upload_session_id=shared_upload_id,
+            id=shared_upload_id,
             tenant_id=original.tenant_id,
             series_id=original.series_id,
             episode_order=original.episode_order + 1,
             upload_sequence=original.upload_sequence + 1,
-            original_filename=original.original_filename,
+            filename=original.filename,
             media_type=original.media_type,
-            total_size_bytes=original.total_size_bytes,
-            preferred_segment_size_bytes=original.preferred_segment_size_bytes,
-            total_segments=original.total_segments,
-            content_sha256=original.content_sha256,
+            size_bytes=original.size_bytes,
+            segment_size_bytes=original.segment_size_bytes,
+            segment_count=original.segment_count,
+            sha256=original.sha256,
             version=1,
             status=UploadSessionStatus.COMPLETED.value,
             idempotency_key="inconsistent-shared-video",
             request_fingerprint="shared",
-            expires_at=original.expires_at,
-            completed_at=original.completed_at,
+            expire_time=original.expire_time,
+            finish_time=original.finish_time,
             video_id=completed.video_id,
             job_id=completed.job_id,
         ))
@@ -2614,17 +2614,17 @@ def test_complete_creates_video_and_durable_parse_job_once(
         [video_parse_task] = list(session.scalars(select(VideoParseTask)))
     assert video is not None
     assert job is not None
-    assert video.original_filename == "episode-07.mp4"
+    assert video.filename == "episode-07.mp4"
     assert video.episode_order == video.upload_sequence == 7
-    assert video.content_hash == hashlib.sha256(b"abcdefghij").hexdigest()
-    assert video.duration_seconds == 12_000
+    assert video.hash == hashlib.sha256(b"abcdefghij").hexdigest()
+    assert video.duration_ms == 12_000
     assert video.parse_status == ParseJobStatus.QUEUED.value
-    assert store.resolve(video.original_source_uri).read_bytes() == b"abcdefghij"
-    assert job.video_id == video.video_id
+    assert store.resolve(video.source_uri).read_bytes() == b"abcdefghij"
+    assert job.video_id == video.id
     assert job.status == ParseJobStatus.QUEUED.value
     assert job.attempt_count == 0
     assert video_parse_task.id == first.video_parse_task_id
-    assert video_parse_task.video_id == video.video_id
+    assert video_parse_task.video_id == video.id
     assert video_parse_task.status == "PENDING"
     assert video_parse_task.version == 1
     assert video_parse_task.chunk_count == 1
@@ -2783,13 +2783,13 @@ def test_episode_order_conflicts_with_existing_video_in_the_same_series(
     engine, _store, _repo, service = _upload_service(repository, tmp_path)
     with create_session_factory(engine).begin() as session:
         session.add(Video(
-            video_id="5772855a-8c93-440c-aae1-91c9cf9eebf5",
+            id="5772855a-8c93-440c-aae1-91c9cf9eebf5",
             series_id="77285f16-3e5b-592e-ba15-8b224b619806",
             episode_order=9,
             upload_sequence=9,
-            original_filename="existing.mp4",
-            original_source_uri="artifact://test/existing.mp4",
-            content_hash="0" * 64, total_bytes=4, duration_seconds=1000,
+            filename="existing.mp4",
+            source_uri="artifact://test/existing.mp4",
+            hash="0" * 64, size_bytes=4, duration_ms=1000,
             upload_status="COMPLETED", parse_status="SUCCEEDED", upload_progress=100, parse_progress=100,
         ))
     with pytest.raises(UploadConflictError, match="episode"):
@@ -2875,10 +2875,10 @@ def test_upload_creator_stays_stable_while_retry_actor_is_persisted(repository, 
     factory = create_session_factory(engine)
     with factory.begin() as session:
         task = session.get(VideoParseTask, completed.video_parse_task_id)
-        assert task.created_by_user_id == "user-A"
+        assert task.creator_id == "user-A"
         assert task.detail["_worker_runtime_v2"]["actor_user_id"] == "user-A"
-        assert session.get(SeriesParseJob, completed.job_id).created_by_user_id == "user-A"
-        assert session.get(UploadSession, upload.upload_session_id).created_by_user_id == "user-A"
+        assert session.get(SeriesParseJob, completed.job_id).creator_id == "user-A"
+        assert session.get(UploadSession, upload.upload_session_id).creator_id == "user-A"
         task.status = "PARSING_FAILED"
     retried = service.retry_parse(
         upload.upload_session_id, tenant_id="local-default", expected_job_version=1, actor_user_id="user-B",
@@ -2896,5 +2896,5 @@ def test_upload_creator_stays_stable_while_retry_actor_is_persisted(repository, 
     assert reparsed.detail["_worker_runtime_v2"]["actor_user_id"] == "user-C"
     with factory() as session:
         old = session.get(VideoParseTask, completed.video_parse_task_id)
-        assert old.created_by_user_id == "user-A"
+        assert old.creator_id == "user-A"
         assert old.detail["_worker_runtime_v2"]["actor_user_id"] == "user-B"

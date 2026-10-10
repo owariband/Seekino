@@ -67,7 +67,7 @@ class AgentRepository:
                     existing = session.scalar(
                         select(AgentConversation).where(
                             AgentConversation.tenant_id == tenant_id,
-                            AgentConversation.owner_user_id == owner_user_id,
+                            AgentConversation.owner_id == owner_user_id,
                             AgentConversation.idempotency_key == idempotency_key,
                         )
                     )
@@ -80,21 +80,21 @@ class AgentRepository:
                                 "with different fields"
                             )
                         message_count = session.scalar(
-                            select(func.count(AgentMessage.message_id)).where(
+                            select(func.count(AgentMessage.id)).where(
                                 AgentMessage.conversation_id
-                                == existing.conversation_id
+                                == existing.id
                             )
                         )
                         return self._conversation_state(
                             existing,
                             message_count=int(message_count or 0),
-                            last_message_preview=session.scalar(self._preview_query(existing.conversation_id)),
+                            last_message_preview=session.scalar(self._preview_query(existing.id)),
                         )
 
                     record = AgentConversation(
-                        conversation_id=conversation_id,
+                        id=conversation_id,
                         tenant_id=tenant_id,
-                        owner_user_id=owner_user_id,
+                        owner_id=owner_user_id,
                         title=title,
                         title_is_auto=title_is_auto,
                         idempotency_key=idempotency_key,
@@ -122,20 +122,20 @@ class AgentRepository:
             rows = session.execute(
                 select(
                     AgentConversation,
-                    func.count(AgentMessage.message_id),
-                    self._preview_query(AgentConversation.conversation_id).scalar_subquery(),
+                    func.count(AgentMessage.id),
+                    self._preview_query(AgentConversation.id).scalar_subquery(),
                 )
                 .outerjoin(
                     AgentMessage,
                     AgentMessage.conversation_id
-                    == AgentConversation.conversation_id,
+                    == AgentConversation.id,
                 )
-                .where(AgentConversation.tenant_id == tenant_id, AgentConversation.owner_user_id == owner_user_id)
-                .group_by(AgentConversation.conversation_id)
+                .where(AgentConversation.tenant_id == tenant_id, AgentConversation.owner_id == owner_user_id)
+                .group_by(AgentConversation.id)
                 .order_by(
-                    AgentConversation.last_message_at.desc(),
-                    AgentConversation.created_at.desc(),
-                    AgentConversation.conversation_id.desc(),
+                    AgentConversation.last_message_time.desc(),
+                    AgentConversation.create_time.desc(),
+                    AgentConversation.id.desc(),
                 )
                 .limit(limit)
             ).all()
@@ -163,7 +163,7 @@ class AgentRepository:
                 owner_user_id=owner_user_id,
             )
             message_count = session.scalar(
-                select(func.count(AgentMessage.message_id)).where(
+                select(func.count(AgentMessage.id)).where(
                     AgentMessage.conversation_id == conversation_id
                 )
             )
@@ -191,7 +191,7 @@ class AgentRepository:
             # The Conversation row is the lifecycle mutex. Completion locks the
             # Message before this row, so deletion must not lock them in reverse.
             processing = session.scalar(
-                select(AgentMessage.message_id)
+                select(AgentMessage.id.label("message_id"))
                 .where(
                     AgentMessage.conversation_id == conversation_id,
                     AgentMessage.role == AgentMessageRole.ASSISTANT.value,
@@ -205,7 +205,7 @@ class AgentRepository:
                 )
             message_count = int(
                 session.scalar(
-                    select(func.count(AgentMessage.message_id)).where(
+                    select(func.count(AgentMessage.id)).where(
                         AgentMessage.conversation_id == conversation_id
                     )
                 )
@@ -228,7 +228,7 @@ class AgentRepository:
         owner_user_id: str = LOCAL_USER_ID,
     ) -> tuple[list[AgentConversationState], int]:
         filters = [AgentConversation.tenant_id == tenant_id,
-                   AgentConversation.owner_user_id == owner_user_id]
+                   AgentConversation.owner_id == owner_user_id]
         if query:
             filters.append(AgentConversation.title.contains(query, autoescape=True))
         if series_id:
@@ -237,19 +237,19 @@ class AgentRepository:
                 matching = select(values.c.value).where(values.c.value == series_id).exists()
             else:
                 matching = func.json_contains(AgentMessage.series_ids, json.dumps(series_id)) == 1
-            filters.append(select(AgentMessage.message_id).where(
-                AgentMessage.conversation_id == AgentConversation.conversation_id,
+            filters.append(select(AgentMessage.id.label("message_id")).where(
+                AgentMessage.conversation_id == AgentConversation.id,
                 matching,
             ).correlate(AgentConversation).exists())
         with self._session_factory() as session:
             total = int(session.scalar(select(func.count()).select_from(AgentConversation).where(*filters)) or 0)
             rows = session.execute(select(
-                AgentConversation, func.count(AgentMessage.message_id),
-                self._preview_query(AgentConversation.conversation_id).scalar_subquery(),
+                AgentConversation, func.count(AgentMessage.id),
+                self._preview_query(AgentConversation.id).scalar_subquery(),
             ).outerjoin(AgentMessage,
-                        AgentMessage.conversation_id == AgentConversation.conversation_id)
-              .where(*filters).group_by(AgentConversation.conversation_id)
-              .order_by(AgentConversation.updated_at.desc(), AgentConversation.conversation_id.desc())
+                        AgentMessage.conversation_id == AgentConversation.id)
+              .where(*filters).group_by(AgentConversation.id)
+              .order_by(AgentConversation.update_time.desc(), AgentConversation.id.desc())
               .offset(offset).limit(limit)).all()
             return [self._conversation_state(record, message_count=int(count), last_message_preview=preview)
                     for record, count, preview in rows], total
@@ -265,7 +265,7 @@ class AgentRepository:
                        AgentMessage.sequence_no > after_sequence_no]
             total = int(session.scalar(select(func.count()).select_from(AgentMessage).where(*filters)) or 0)
             records = session.scalars(select(AgentMessage).where(*filters)
-                .order_by(AgentMessage.sequence_no, AgentMessage.message_id)
+                .order_by(AgentMessage.sequence_no, AgentMessage.id)
                 .offset(offset).limit(limit)).all()
             return [self._message_state(record) for record in records], total
 
@@ -351,7 +351,7 @@ class AgentRepository:
     ) -> StartedAgentMessageState:
         with self._session_factory() as session:
             self._require_conversation(session, conversation_id, tenant_id, owner_user_id=owner_user_id)
-            identifier = (AgentMessage.message_id == message_id if message_id is not None
+            identifier = (AgentMessage.id == message_id if message_id is not None
                           else AGENT_MESSAGE_IDEMPOTENCY_KEY == idempotency_key)
             statement = select(AgentMessage).where(
                 AgentMessage.conversation_id == conversation_id,
@@ -409,13 +409,13 @@ class AgentRepository:
                 for name, value in changes.items():
                     setattr(record, name, value)
                 record.version += 1
-                record.updated_at = now
+                record.update_time = now
             if timing is not None:
                 self._apply_timing(record, timing)
                 if not changes:
                     # A timing-only checkpoint did not update the parent Message before
                     # timing moved into its JSON detail column.
-                    flag_modified(record, "updated_at")
+                    flag_modified(record, "update_time")
             if changes or timing is not None:
                 session.flush()
             return self._message_state(record)
@@ -464,7 +464,7 @@ class AgentRepository:
                 return existing
 
             processing = session.scalar(
-                select(AgentMessage.message_id).where(
+                select(AgentMessage.id.label("message_id")).where(
                     AgentMessage.conversation_id == conversation_id,
                     AgentMessage.role == AgentMessageRole.ASSISTANT.value,
                     AgentMessage.status == AgentMessageStatus.PROCESSING.value,
@@ -477,14 +477,14 @@ class AgentRepository:
 
             user_sequence = conversation.next_message_sequence
             user = AgentMessage(
-                message_id=user_message_id,
+                id=user_message_id,
                 conversation_id=conversation_id,
                 sequence_no=user_sequence,
                 role=AgentMessageRole.USER.value,
                 status=AgentMessageStatus.COMPLETED.value,
                 content=content,
                 series_ids=series_ids,
-                model_name=None,
+                model=None,
                 requested_top_k=requested_top_k,
                 requested_run_options=requested_run_options,
                 requested_series_ids=requested_series_ids,
@@ -495,7 +495,7 @@ class AgentRepository:
                 version=1,
             )
             assistant = AgentMessage(
-                message_id=assistant_message_id,
+                id=assistant_message_id,
                 conversation_id=conversation_id,
                 sequence_no=user_sequence + 1,
                 role=AgentMessageRole.ASSISTANT.value,
@@ -504,7 +504,7 @@ class AgentRepository:
                 version=1,
                 content=None,
                 series_ids=series_ids,
-                model_name=model_name,
+                model=model_name,
                 detail={
                     **({"sourceTenantId": source_tenant_id} if source_tenant_id is not None else {}),
                     "timing": {
@@ -517,7 +517,7 @@ class AgentRepository:
             conversation.next_message_sequence += 2
             if user_sequence == 0 and conversation.title_is_auto:
                 conversation.title = content.splitlines()[0][:40]
-            conversation.last_message_at = now
+            conversation.last_message_time = now
             session.add(user)
             session.flush()
             session.add(assistant)
@@ -571,7 +571,7 @@ class AgentRepository:
                 with_for_update=True,
             )
             assert conversation is not None
-            conversation.last_message_at = now
+            conversation.last_message_time = now
             session.flush()
             return self._message_state(record)
 
@@ -611,7 +611,7 @@ class AgentRepository:
                     with_for_update=True,
                 )
                 assert conversation is not None
-                conversation.last_message_at = now
+                conversation.last_message_time = now
                 session.flush()
             return self._message_state(record)
 
@@ -678,9 +678,9 @@ class AgentRepository:
         owner_user_id: str = LOCAL_USER_ID,
     ) -> AgentConversation:
         statement = select(AgentConversation).where(
-            AgentConversation.conversation_id == conversation_id,
+            AgentConversation.id == conversation_id,
             AgentConversation.tenant_id == tenant_id,
-                            AgentConversation.owner_user_id == owner_user_id,
+                            AgentConversation.owner_id == owner_user_id,
         )
         if for_update:
             statement = statement.with_for_update()
@@ -699,36 +699,36 @@ class AgentRepository:
         last_message_preview: str | None = None,
     ) -> AgentConversationState:
         return AgentConversationState(
-            conversation_id=record.conversation_id,
+            conversation_id=record.id,
             tenant_id=record.tenant_id,
-            owner_user_id=record.owner_user_id,
+            owner_user_id=record.owner_id,
             title=record.title,
             message_count=message_count,
-            last_message_at=record.last_message_at,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
+            last_message_at=record.last_message_time,
+            created_at=record.create_time,
+            updated_at=record.update_time,
             last_message_preview=last_message_preview,
         )
 
     @staticmethod
     def _message_state(record: AgentMessage) -> AgentMessageState:
         return AgentMessageState(
-            message_id=record.message_id,
+            message_id=record.id,
             conversation_id=record.conversation_id,
             sequence_no=record.sequence_no,
             role=record.role,
             status=record.status,
             content=record.content,
             series_ids=tuple(record.series_ids),
-            model_name=record.model_name,
+            model_name=record.model,
             search_result=AgentRepository._normalize_search_result_scope(record.search_result),
             last_error=(
                 AgentFailure(record.last_error_code or "PROCESSING_FAILED",
                              record.last_error_message or "这次对话未能完成，请稍后重试。")
                 if record.last_error is not None or record.last_error_code is not None else None
             ),
-            created_at=record.created_at,
-            updated_at=record.updated_at,
+            created_at=record.create_time,
+            updated_at=record.update_time,
             phase=AnswerPhase(record.phase) if record.phase is not None else None,
             version=record.version,
             reference=record.reference,

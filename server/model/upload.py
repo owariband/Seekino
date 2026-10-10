@@ -14,8 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ..database import Base
-from ..utils.time import now_utc
+from .base import BaseModel
 from .video import (
     ID_LENGTH,
     LONG_TEXT,
@@ -40,12 +39,12 @@ class UploadCompletionStage(StrEnum):
     CREATING_JOB = "CREATING_JOB"
 
 
-class UploadSession(Base):
+class UploadSession(BaseModel):
     __tablename__ = "upload_session"
     __table_args__ = (
         UniqueConstraint(
             "tenant_id",
-            "created_by_user_id",
+            "creator_id",
             "idempotency_key",
             name="uq_upload_session_tenant_idempotency",
         ),
@@ -59,15 +58,15 @@ class UploadSession(Base):
             name="ck_upload_session_upload_sequence",
         ),
         CheckConstraint(
-            "total_size_bytes > 0",
+            "size_bytes > 0",
             name="ck_upload_session_total_size",
         ),
         CheckConstraint(
-            "preferred_segment_size_bytes > 0",
+            "segment_size_bytes > 0",
             name="ck_upload_session_segment_size",
         ),
         CheckConstraint(
-            "total_segments > 0",
+            "segment_count > 0",
             name="ck_upload_session_total_segments",
         ),
         CheckConstraint("version > 0", name="ck_upload_session_version"),
@@ -82,28 +81,28 @@ class UploadSession(Base):
         MYSQL_TABLE_OPTIONS,
     )
 
-    upload_session_id: Mapped[str] = mapped_column(
+    id: Mapped[str] = mapped_column(
         String(ID_LENGTH),
         primary_key=True,
     )
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_by_user_id: Mapped[str | None] = mapped_column(String(64))
+    creator_id: Mapped[str | None] = mapped_column(String(64))
     series_id: Mapped[str] = mapped_column(
-        ForeignKey("series.series_id", ondelete="CASCADE"),
+        ForeignKey("series.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     episode_order: Mapped[int] = mapped_column(Integer, nullable=False)
     upload_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
-    original_filename: Mapped[str] = mapped_column(String(1024), nullable=False)
+    filename: Mapped[str] = mapped_column(String(1024), nullable=False)
     media_type: Mapped[str] = mapped_column(String(255), nullable=False)
-    total_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    preferred_segment_size_bytes: Mapped[int] = mapped_column(
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    segment_size_bytes: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
     )
-    total_segments: Mapped[int] = mapped_column(Integer, nullable=False)
-    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    segment_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str | None] = mapped_column(String(64))
     parse_config: Mapped[dict | None] = mapped_column(JSON)
     video_parse_config: Mapped[dict | None] = mapped_column(JSON)
     detail: Mapped[dict | None] = mapped_column(JSON)
@@ -114,39 +113,28 @@ class UploadSession(Base):
     request_fingerprint: Mapped[str | None] = mapped_column(String(64))
     active_slot_key: Mapped[str | None] = mapped_column(String(96))
     completion_token: Mapped[str | None] = mapped_column(String(ID_LENGTH))
-    completion_started_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
-    expires_at: Mapped[datetime] = mapped_column(
+    completion_start_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    expire_time: Mapped[datetime] = mapped_column(
         UTC_TIMESTAMP,
         nullable=False,
     )
-    completed_at: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
+    finish_time: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
     video_id: Mapped[str | None] = mapped_column(
-        ForeignKey("video.video_id", ondelete="SET NULL"),
+        ForeignKey("video.id", ondelete="SET NULL"),
         index=True,
     )
     last_error: Mapped[str | None] = mapped_column(LONG_TEXT)
     last_error_code: Mapped[str | None] = mapped_column(String(64))
     job_id: Mapped[str | None] = mapped_column(
-        ForeignKey("series_parse_job.job_id", ondelete="SET NULL"), index=True
+        ForeignKey("series_parse_job.id", ondelete="SET NULL"), index=True
     )
-    initial_video_parse_task_id: Mapped[str | None] = mapped_column(
+    initial_task_id: Mapped[str | None] = mapped_column(
         ForeignKey("video_parse_task.id", ondelete="SET NULL"),
         index=True,
     )
-    created_at: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-        onupdate=now_utc,
-    )
 
 
-class UploadSegment(Base):
+class UploadSegment(BaseModel):
     __tablename__ = "upload_segment"
     __table_args__ = (
         CheckConstraint(
@@ -158,24 +146,19 @@ class UploadSegment(Base):
             name="ck_upload_segment_range",
         ),
         CheckConstraint(
-            "actual_size_bytes = end_byte_exclusive - start_byte",
+            "size_bytes = end_byte_exclusive - start_byte",
             name="ck_upload_segment_size",
         ),
         MYSQL_TABLE_OPTIONS,
     )
 
-    upload_session_id: Mapped[str] = mapped_column(
-        ForeignKey("upload_session.upload_session_id", ondelete="CASCADE"),
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("upload_session.id", ondelete="CASCADE"),
         primary_key=True,
     )
     segment_number: Mapped[int] = mapped_column(Integer, primary_key=True)
     start_byte: Mapped[int] = mapped_column(BigInteger, nullable=False)
     end_byte_exclusive: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    actual_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
-    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     artifact_uri: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        UTC_TIMESTAMP,
-        nullable=False,
-        default=now_utc,
-    )

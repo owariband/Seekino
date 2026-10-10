@@ -114,9 +114,9 @@ class AuthService:
         if self.config.mode != "local":
             raise AuthError("本地身份仅在 local 模式可用")
         user = self.repository.get_user(LOCAL_USER_ID)
-        if user is None or user.status != "ACTIVE" or user.is_guest or user.role != "admin":
+        if user is None or user.status != "ACTIVE" or user.is_anonymous or not user.is_superuser:
             raise AuthError("本地身份不可用", status_code=503, code="AUTH_UNAVAILABLE")
-        return AuthIdentity(user.user_id, user.email, False, self.config.local_tenant_id, self.config.public_tenant_id, user.role, user.auth_version, "local", "local")
+        return AuthIdentity(user.id, user.email, False, self.config.local_tenant_id, self.config.public_tenant_id, ("admin" if user.is_superuser else "user"), user.auth_version, "local", "local")
 
     def authenticate(self, token: str | None) -> AuthIdentity:
         if self.config.mode == "local":
@@ -125,7 +125,7 @@ class AuthService:
         user = self.repository.get_user(payload["sub"])
         if user is None or user.status != "ACTIVE" or user.auth_version != payload["auth_version"]:
             raise AuthError("登录状态已失效", code="AUTH_EXPIRED")
-        if payload["auth_level"] != ("guest" if user.is_guest else "email"):
+        if payload["auth_level"] != ("guest" if user.is_anonymous else "email"):
             raise AuthError("登录状态已失效", code="AUTH_EXPIRED")
         return self._identity(user)
 
@@ -202,16 +202,16 @@ class AuthService:
         return AuthPermissions(can_upload=not identity.is_guest, can_manage=not identity.is_guest, can_configure=identity.role == "admin")
 
     def _identity(self, user: User) -> AuthIdentity:
-        tenant = None if user.is_guest else self.repository.get_owned_tenant(user.user_id)
-        if not user.is_guest and tenant is None:
+        tenant = None if user.is_anonymous else self.repository.get_owned_tenant(user.id)
+        if not user.is_anonymous and tenant is None:
             raise AuthError("个人资料空间不可用", status_code=403, code="TENANT_UNAVAILABLE")
-        return AuthIdentity(user.user_id, user.email, user.is_guest, tenant.tenant_id if tenant is not None else None, self.config.public_tenant_id, user.role, user.auth_version, "guest" if user.is_guest else "email", "cloud")
+        return AuthIdentity(user.id, user.email, user.is_anonymous, tenant.id if tenant is not None else None, self.config.public_tenant_id, ("admin" if user.is_superuser else "user"), user.auth_version, "guest" if user.is_anonymous else "email", "cloud")
 
     def _require_guest(self, identity: AuthIdentity) -> None:
         if self.config.mode != "cloud" or not identity.is_guest:
             raise AuthError("请使用游客身份进行邮箱登录", status_code=403, code="GUEST_REQUIRED")
         user = self.repository.get_user(identity.user_id)
-        if user is None or user.status != "ACTIVE" or not user.is_guest or user.auth_version != identity.auth_version:
+        if user is None or user.status != "ACTIVE" or not user.is_anonymous or user.auth_version != identity.auth_version:
             raise AuthError("登录状态已失效", code="AUTH_EXPIRED")
 
     def cache_key(self, purpose: str, kind: str, value: str) -> str:

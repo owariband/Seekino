@@ -47,7 +47,7 @@ class ParseUsageRepository:
                 if record is None:
                     session.add(ParseUsageAttempt(
                         job_id=lease.job_id, attempt_count=lease.attempt_count,
-                        lease_version=lease.lease_version, started_at=now, recording_complete=False,
+                        lease_version=lease.lease_version, start_time=now, recording_complete=False,
                     ))
                 else:
                     record.recording_complete = False
@@ -79,16 +79,16 @@ class ParseUsageRepository:
                 if existing is not None:
                     return self._state(existing)
                 record = ParseModelCall(
-                    call_id=call.call_id, job_id=lease.job_id,
-                    video_parse_task_id=None,
+                    id=call.call_id, job_id=lease.job_id,
+                    video_task_id=None,
                     execution_kind=None,
                     execution_task_id=None,
                     attempt_count=lease.attempt_count,
                     lease_version=lease.lease_version, tenant_id=lease.tenant_id,
                     series_id=lease.series_id, video_id=lease.video_id, sequence_no=event.sequence_no,
-                    video_chunk_id=derive_video_chunk_id(lease.video_id, event.sequence_no) if event.sequence_no is not None else None,
+                    chunk_id=derive_video_chunk_id(lease.video_id, event.sequence_no) if event.sequence_no is not None else None,
                     provider=call.provider, model=call.model, category=event.category, operation=call.operation,
-                    started_at=unix_time_ms_to_datetime(call.started_at),
+                    start_time=unix_time_ms_to_datetime(call.started_at),
                     request_id=call.request_id,
                     status=call.status,
                     tokens=asdict(call.usage) if call.usage is not None else None,
@@ -133,13 +133,13 @@ class ParseUsageRepository:
                 previously_complete = record is None or record.recording_complete
                 if record is None:
                     session.add(VideoParseUsageAttempt(
-                        attempt_id=attempt_id,
-                        video_parse_task_id=task_id,
+                        id=attempt_id,
+                        video_task_id=task_id,
                         execution_kind=execution_kind,
                         execution_task_id=execution_task_id,
                         attempt_count=attempt_count,
                         lease_version=lease_version,
-                        started_at=now,
+                        start_time=now,
                         recording_complete=False,
                     ))
                 else:
@@ -205,9 +205,9 @@ class ParseUsageRepository:
                 if existing is not None:
                     return self._state(existing)
                 record = ParseModelCall(
-                    call_id=call.call_id,
+                    id=call.call_id,
                     job_id=None,
-                    video_parse_task_id=task_id,
+                    video_task_id=task_id,
                     execution_kind=execution_kind,
                     execution_task_id=execution_id,
                     attempt_count=attempt_count,
@@ -216,7 +216,7 @@ class ParseUsageRepository:
                     series_id=series_id,
                     video_id=video_id,
                     sequence_no=event.sequence_no,
-                    video_chunk_id=(
+                    chunk_id=(
                         derive_video_chunk_id(video_id, event.sequence_no)
                         if event.sequence_no is not None else None
                     ),
@@ -224,7 +224,7 @@ class ParseUsageRepository:
                     model=call.model,
                     category=event.category,
                     operation=call.operation,
-                    started_at=unix_time_ms_to_datetime(call.started_at),
+                    start_time=unix_time_ms_to_datetime(call.started_at),
                     request_id=call.request_id,
                     status=call.status,
                     tokens=asdict(call.usage) if call.usage is not None else None,
@@ -254,10 +254,10 @@ class ParseUsageRepository:
             records = session.scalars(
                 select(ParseModelCall)
                 .where(
-                    ParseModelCall.video_parse_task_id == video_parse_task_id,
+                    ParseModelCall.video_task_id == video_parse_task_id,
                     ParseModelCall.tenant_id == tenant_id,
                 )
-                .order_by(ParseModelCall.started_at, ParseModelCall.call_id)
+                .order_by(ParseModelCall.start_time, ParseModelCall.id)
             ).all()
             return [self._state(record) for record in records]
 
@@ -265,7 +265,7 @@ class ParseUsageRepository:
         with self._session_factory() as session:
             records = session.scalars(select(ParseModelCall).where(
                 ParseModelCall.job_id == job_id, ParseModelCall.tenant_id == tenant_id,
-            ).order_by(ParseModelCall.started_at, ParseModelCall.call_id)).all()
+            ).order_by(ParseModelCall.start_time, ParseModelCall.id)).all()
             return [self._state(record) for record in records]
 
     def snapshot(self, job_id: str, *, tenant_id: str) -> ParseUsageLedgerState:
@@ -276,14 +276,14 @@ class ParseUsageRepository:
                 select(SeriesParseJob.attempt_count, SeriesParseJob.status,
                        ParseModelCall, ParseUsageAttempt)
                 .select_from(SeriesParseJob)
-                .join(Series, Series.series_id == SeriesParseJob.series_id)
+                .join(Series, Series.id == SeriesParseJob.series_id)
                 .outerjoin(ParseModelCall, and_(
-                    ParseModelCall.job_id == SeriesParseJob.job_id,
+                    ParseModelCall.job_id == SeriesParseJob.id,
                     ParseModelCall.tenant_id == tenant_id,
                 ))
-                .outerjoin(ParseUsageAttempt, ParseUsageAttempt.job_id == SeriesParseJob.job_id)
-                .where(SeriesParseJob.job_id == job_id, Series.tenant_id == tenant_id)
-                .order_by(ParseModelCall.started_at, ParseModelCall.call_id)
+                .outerjoin(ParseUsageAttempt, ParseUsageAttempt.job_id == SeriesParseJob.id)
+                .where(SeriesParseJob.id == job_id, Series.tenant_id == tenant_id)
+                .order_by(ParseModelCall.start_time, ParseModelCall.id)
             ).all()
             if not rows:
                 raise ParseJobNotFoundError(f"jobId {job_id!r} does not exist")
@@ -291,7 +291,7 @@ class ParseUsageRepository:
             attempts: dict[int, bool] = {}
             for _attempt_count, _status, call, attempt in rows:
                 if call is not None:
-                    calls.setdefault(call.call_id, self._state(call))
+                    calls.setdefault(call.id, self._state(call))
                 if attempt is not None:
                     attempts[attempt.attempt_count] = attempts.get(attempt.attempt_count, True) and attempt.recording_complete
             return ParseUsageLedgerState(rows[0][0], rows[0][1], tuple(calls.values()), attempts)
@@ -299,13 +299,13 @@ class ParseUsageRepository:
     @staticmethod
     def _state(record: ParseModelCall) -> ParseModelCallState:
         return ParseModelCallState(
-            call_id=record.call_id, job_id=record.job_id,
-            video_parse_task_id=record.video_parse_task_id,
+            call_id=record.id, job_id=record.job_id,
+            video_parse_task_id=record.video_task_id,
             attempt_count=record.attempt_count,
             lease_version=record.lease_version, tenant_id=record.tenant_id,
             series_id=record.series_id, video_id=record.video_id, sequence_no=record.sequence_no,
-            video_chunk_id=record.video_chunk_id, provider=record.provider, model=record.model,
-            category=record.category, operation=record.operation, started_at=record.started_at,
+            video_chunk_id=record.chunk_id, provider=record.provider, model=record.model,
+            category=record.category, operation=record.operation, started_at=record.start_time,
             request_id=record.request_id, status=record.status,
             usage=TokenUsage(**record.tokens) if record.tokens is not None else None,
             estimated_cost_cny=Decimal(record.estimated_cost_cny) if record.estimated_cost_cny is not None else None,

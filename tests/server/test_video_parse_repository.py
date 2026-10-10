@@ -37,6 +37,7 @@ from server.repository.video_parse import (
     invalidate_series_prefixes_from,
 )
 from server.repository.video import SeriesNotReadyError, VideoChunkNotFoundError
+from server.utils.time import datetime_to_unix_time_ms
 
 
 NOW = datetime(2026, 9, 29, 2, 0, tzinfo=UTC)
@@ -76,14 +77,14 @@ def test_refinement_checks_all_member_versions_before_any_write(repository):
     with factory() as session:
         assert session.get(IntervalParseContent, second.interval_parse_task_id) is None
         assert session.get(IntervalParseTask, second.interval_parse_task_id).status == "REFINING"
-        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_parse_task_id == target))
+        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
         assert row.version == 1 and row.content["persons"] == [] and row.detail["scope"] == [3]
     repo.commit_interval_refinement(
         second, **_refinement_inputs(repo, second, now=at), interval_content={},
         member_updates={target: {"persons": ["reviewed writer"]}}, now=at,
     )
     with factory() as session:
-        rows = {row.chunk_parse_task_id: row for row in session.scalars(select(ChunkParseContent))}
+        rows = {row.chunk_task_id: row for row in session.scalars(select(ChunkParseContent))}
         assert rows[overlap].content["persons"] == ["first writer"]
         assert rows[target].content["persons"] == ["reviewed writer"]
         assert sum(len(row.content["timeline"]) for row in rows.values()) == 4
@@ -98,7 +99,7 @@ def test_refinement_fingerprint_and_full_result_validation_are_atomic(repository
     stale = _refinement_inputs(repo, lease, now=at)
     target = prepared.chunk_parse_task_ids[0]
     with factory.begin() as session:
-        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_parse_task_id == target))
+        row = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == target))
         row.content = {**row.content, "persons": ["intervening fact"]}
     with pytest.raises(VideoParseSnapshotConflictError):
         repo.commit_interval_refinement(lease, **stale, interval_content={}, member_updates={}, now=at)
@@ -113,7 +114,7 @@ def test_refinement_fingerprint_and_full_result_validation_are_atomic(repository
     with factory() as session:
         rows = list(session.scalars(select(ChunkParseContent)))
         assert all(row.detail["scope"] == [index] for index, row in sorted(
-            ((prepared.chunk_parse_task_ids.index(row.chunk_parse_task_id), row) for row in rows),
+            ((prepared.chunk_parse_task_ids.index(row.chunk_task_id), row) for row in rows),
         ))
         assert session.get(IntervalParseContent, lease.interval_parse_task_id) is None
 
@@ -137,7 +138,7 @@ def test_successive_windows_preserve_previously_valid_cross_window_events(reposi
         member_updates={prepared.chunk_parse_task_ids[3]: {"persons": ["updated member"]}}, now=at,
     )
     with factory() as session:
-        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_parse_task_id == retained_target))
+        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == retained_target))
         assert content.content["timeline"] == history
         assert content.detail["scope"] == [0, 1, 2, 3]
         assert content.version == 2
@@ -151,7 +152,7 @@ def test_original_36_event_canvas_result_is_committed_without_losing_other_event
     with factory.begin() as session:
         task = session.get(VideoParseTask, task_id)
         task.parse_config = {**task.parse_config, "chunk_duration": 60, "interval_duration": 180}
-        session.get(Video, task.video_id).duration_seconds = 90132
+        session.get(Video, task.video_id).duration_ms = 90132
     queue, repo = MySqlVideoParseQueue(factory), VideoParseRepository(factory)
     lease = queue.claim_video("prepare", lease_duration=timedelta(minutes=10), now=NOW)
     chunks = repo.ensure_video_chunks(lease, [(0, 0, 60000), (1, 60000, 90132)], now=NOW)
@@ -180,7 +181,7 @@ def test_original_36_event_canvas_result_is_committed_without_losing_other_event
     ) for update in result.updates}
     repo.commit_interval_refinement(refine, **inputs, interval_content=result.model_dump(mode="json"), member_updates=updates, now=NOW)
     with factory() as session:
-        stored = {row.chunk_parse_task_id: row.content for row in session.scalars(select(ChunkParseContent))}
+        stored = {row.chunk_task_id: row.content for row in session.scalars(select(ChunkParseContent))}
         assert sum(len(content["timeline"]) for content in stored.values()) == 36
         for reference in members:
             assert stored[reference] == canvas.result(reference).model_dump(mode="json")
@@ -211,7 +212,7 @@ def _seed(repository, *, chunk_count: int = 4, accepted: bool = True, batch_size
     config = _config(chunk_count=chunk_count, batch_size=batch_size)
     with factory.begin() as session:
         session.add(Series(
-            series_id=series_id,
+            id=series_id,
             tenant_id="mine",
             name=f"Series {series_id}",
             description=None,
@@ -220,15 +221,15 @@ def _seed(repository, *, chunk_count: int = 4, accepted: bool = True, batch_size
             character_bible=[],
         ))
         session.add(Video(
-            video_id=video_id,
+            id=video_id,
             series_id=series_id,
             episode_order=1,
             upload_sequence=1,
-            original_filename="episode.mp4",
-            original_source_uri="artifact://test/episode.mp4",
-            content_hash="a" * 64,
-            total_bytes=100,
-            duration_seconds=chunk_count * 10_000,
+            filename="episode.mp4",
+            source_uri="artifact://test/episode.mp4",
+            hash="a" * 64,
+            size_bytes=100,
+            duration_ms=chunk_count * 10_000,
             upload_status="COMPLETED",
             parse_status="QUEUED",
             upload_progress=100,
@@ -251,8 +252,8 @@ def _seed(repository, *, chunk_count: int = 4, accepted: bool = True, batch_size
             is_test=True,
             is_deleted=False,
             detail={"_worker_runtime_v2": {"accepted": accepted}},
-            create_time=NOW,
-            update_time=NOW,
+            create_time=datetime_to_unix_time_ms(NOW),
+            update_time=datetime_to_unix_time_ms(NOW),
         ))
     return factory, task_id
 
@@ -287,7 +288,7 @@ def test_preparation_preserves_fractional_last_chunk_boundary(repository):
     factory, task_id = _seed(repository, chunk_count=1)
     with factory.begin() as session:
         task = session.get(VideoParseTask, task_id)
-        session.get(Video, task.video_id).duration_seconds = 8008
+        session.get(Video, task.video_id).duration_ms = 8008
     queue = MySqlVideoParseQueue(factory)
     repo = VideoParseRepository(factory)
     lease = queue.claim_video("prepare-ms", lease_duration=timedelta(minutes=10), now=NOW)
@@ -373,7 +374,7 @@ def test_compact_only_prefix_preserves_legal_cross_chunk_refinement_events(repos
     factory, _queue, repo, task_id = _prepare_two_chunk_prefix_chain(repository)
     with factory.begin() as session:
         row = session.scalar(select(ChunkParseContent).join(ChunkParseTask).join(VideoChunk).where(
-            ChunkParseTask.video_parse_task_id == task_id, VideoChunk.sequence_no == 0,
+            ChunkParseTask.video_task_id == task_id, VideoChunk.sequence_no == 0,
         ))
         row.content = {**row.content, "timeline": [*row.content["timeline"], _fixture_event("cross boundary", sequence_no=1)]}
         row.version += 1
@@ -396,7 +397,7 @@ def test_compact_only_prefix_preserves_legal_cross_chunk_refinement_events(repos
     repo.commit_prefix(prefix, content_updates={}, series_prefix_compact=result.series_compact,
                        video_prefix_compact=result.video_compact, now=at)
     with factory() as session:
-        stored = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_parse_task_id == prefix.chunk_parse_task_id))
+        stored = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == prefix.chunk_parse_task_id))
         assert stored.content == prefix.content
         assert stored.version == prefix.content_version
 
@@ -409,7 +410,7 @@ def test_prepare_is_idempotent_and_short_video_gets_one_interval(repository):
     with factory() as session:
         interval = session.get(IntervalParseTask, prepared.interval_parse_task_ids[0])
         assert (interval.start_sequence_no, interval.chunk_count) == (0, 2)
-        assert interval.chunk_parse_task_ids == list(prepared.chunk_parse_task_ids)
+        assert interval.chunk_task_ids == list(prepared.chunk_parse_task_ids)
     assert queue.claim_video(
         "another", lease_duration=timedelta(minutes=1), now=NOW
     ) is None
@@ -465,7 +466,7 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
     with factory() as session:
         cached = session.scalar(
             select(ChunkParseContent).where(
-                ChunkParseContent.chunk_parse_task_id
+                ChunkParseContent.chunk_task_id
                 == indexed_chunk.chunk_parse_task_id
             )
         ).detail["_index_embeddings_v2"]
@@ -494,7 +495,7 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
     )
     with factory() as session:
         current = session.scalar(select(ChunkParseContent).where(
-            ChunkParseContent.chunk_parse_task_id == indexed_chunk.chunk_parse_task_id
+            ChunkParseContent.chunk_task_id == indexed_chunk.chunk_parse_task_id
         ))
         assert current.detail[INDEX_EMBEDDINGS_DETAIL_KEY]["representations"] == {
             "semantic": {"vector": [3.0]},
@@ -525,10 +526,10 @@ def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(reposit
     with factory() as session:
         contents = list(session.scalars(
             select(ChunkParseContent).order_by(
-                ChunkParseContent.chunk_parse_task_id
+                ChunkParseContent.chunk_task_id
             )
         ))
-        by_id = {item.chunk_parse_task_id: item for item in contents}
+        by_id = {item.chunk_task_id: item for item in contents}
         overlap = by_id[prepared.chunk_parse_task_ids[1]]
         assert overlap.detail["scope"] == [0, 1, 2, 3]
         assert overlap.version == 3
@@ -698,7 +699,7 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
         assert runtime["model_calls"] == {"used_call_ids": ["call-1", "call-2"], "active": {}}
         if phase == "chunk":
             content = session.scalar(select(ChunkParseContent).where(
-                ChunkParseContent.chunk_parse_task_id == inflight.chunk_parse_task_id
+                ChunkParseContent.chunk_task_id == inflight.chunk_parse_task_id
             ))
             assert content.content["timeline"] == [_fixture_event("retained-inflight", sequence_no=1)]
         elif phase == "refine":
@@ -909,12 +910,12 @@ def test_index_rebuild_preserves_results_and_fences_the_old_index_lease(reposito
         )
         chunk_tasks = list(session.scalars(
             select(ChunkParseTask).where(
-                ChunkParseTask.video_parse_task_id == task_id
+                ChunkParseTask.video_task_id == task_id
             )
         ))
         chunk_content = session.scalar(
             select(ChunkParseContent).where(
-                ChunkParseContent.chunk_parse_task_id
+                ChunkParseContent.chunk_task_id
                 == first_chunk.chunk_parse_task_id
             )
         )
@@ -993,8 +994,8 @@ def test_index_rebuild_rejects_nonlatest_and_deleted_tasks(repository):
             is_test=True,
             is_deleted=False,
             detail={"_worker_runtime_v2": {"accepted": True}},
-            create_time=NOW + timedelta(seconds=1),
-            update_time=NOW + timedelta(seconds=1),
+            create_time=datetime_to_unix_time_ms(NOW + timedelta(seconds=1)),
+            update_time=datetime_to_unix_time_ms(NOW + timedelta(seconds=1)),
         ))
 
     with pytest.raises(VideoParseConflictError, match="latest"):
@@ -1021,7 +1022,7 @@ def test_index_rebuild_clears_only_settled_index_failure_intent(repository, has_
             runtime["failure_status"] = "INDEXING_FAILED"
         task.detail = {**task.detail, "_worker_runtime_v2": runtime}
         interval = session.scalar(select(IntervalParseTask).where(
-            IntervalParseTask.video_parse_task_id == task_id
+            IntervalParseTask.video_task_id == task_id
         ))
         interval.status = "INDEXING_FAILED"
         interval_id = interval.id
@@ -1063,7 +1064,7 @@ def test_index_rebuild_rejects_parsing_failure_and_unfinished_failure_drain(
             },
         }
         interval = session.scalar(select(IntervalParseTask).where(
-            IntervalParseTask.video_parse_task_id == task_id
+            IntervalParseTask.video_task_id == task_id
         ))
         interval.status = "INDEXING" if owner is not None else "INDEXING_FAILED"
         interval.lease_owner = owner
@@ -1277,7 +1278,7 @@ def test_v2_snapshots_always_expose_the_whole_video_media_source(repository):
     proxy_ref = "artifact://test/whole-video-proxy.mp4"
     with factory.begin() as session:
         video = session.get(Video, video_lease.video_id)
-        video.inference_proxy_uri = proxy_ref
+        video.proxy_uri = proxy_ref
         chunks = list(session.scalars(
             select(VideoChunk)
             .where(VideoChunk.video_id == video_lease.video_id)
@@ -1444,7 +1445,7 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
     with factory() as session:
         content = session.scalar(
             select(ChunkParseContent).where(
-                ChunkParseContent.chunk_parse_task_id
+                ChunkParseContent.chunk_task_id
                 == second.chunk_parse_task_id
             )
         )
@@ -1497,7 +1498,7 @@ def test_inflight_prefix_commit_preserves_published_failure_and_finish_time(repo
         assert prefix["video_prefix_compact"] == "retained-prefix"
         assert prefix["lease_owner"] is None
         content = session.scalar(select(ChunkParseContent).where(
-            ChunkParseContent.chunk_parse_task_id == prefix_lease.chunk_parse_task_id
+            ChunkParseContent.chunk_task_id == prefix_lease.chunk_parse_task_id
         ))
         assert content.content["persons"] == ["retained-prefix-update"]
         assert content.version == prefix_lease.content_version + 1
@@ -1571,8 +1572,8 @@ def test_prefix_frontier_never_falls_back_to_an_older_parse_version(repository):
             is_test=True,
             is_deleted=False,
             detail={"_worker_runtime_v2": {"accepted": True}},
-            create_time=NOW + timedelta(minutes=2),
-            update_time=NOW + timedelta(minutes=2),
+            create_time=datetime_to_unix_time_ms(NOW + timedelta(minutes=2)),
+            update_time=datetime_to_unix_time_ms(NOW + timedelta(minutes=2)),
         ))
         series_id = video.series_id
 
@@ -1596,7 +1597,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
     retained_content_id = str(uuid4())
     with factory.begin() as session:
         session.add(Series(
-            series_id=series_id,
+            id=series_id,
             tenant_id="mine",
             name="Prefix chain",
             description=None,
@@ -1609,15 +1610,15 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
             task_id = str(uuid4())
             task_ids.append(task_id)
             session.add(Video(
-                video_id=video_id,
+                id=video_id,
                 series_id=series_id,
                 episode_order=order,
                 upload_sequence=order,
-                original_filename=f"episode-{order}.mp4",
-                original_source_uri=f"artifact://test/{order}.mp4",
-                content_hash=(str(order) * 64)[:64],
-                total_bytes=100,
-                duration_seconds=10_000,
+                filename=f"episode-{order}.mp4",
+                source_uri=f"artifact://test/{order}.mp4",
+                hash=(str(order) * 64)[:64],
+                size_bytes=100,
+                duration_ms=10_000,
                 upload_status="COMPLETED",
                 parse_status="COMPLETE",
                 upload_progress=100,
@@ -1666,18 +1667,18 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                         "unrelated": {"preserved": True},
                     }
                 },
-                create_time=NOW,
-                update_time=NOW,
+                create_time=datetime_to_unix_time_ms(NOW),
+                update_time=datetime_to_unix_time_ms(NOW),
             ))
             if order == 3:
                 session.add(VideoChunk(
-                    video_chunk_id=stale_video_chunk_id,
+                    id=stale_video_chunk_id,
                     video_id=video_id,
                     sequence_no=0,
-                    start_seconds=0,
-                    end_seconds=10_000,
-                    analysis_window_start_seconds=0,
-                    analysis_window_end_seconds=10_000,
+                    start_ms=0,
+                    end_ms=10_000,
+                    window_start_ms=0,
+                    window_end_ms=10_000,
                     chunk_media_ref="artifact://test/chunk-3.mp4",
                     analysis_window_media_ref="artifact://test/window-3.mp4",
                     transcript=[],
@@ -1686,8 +1687,8 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                 ))
                 session.add(ChunkParseTask(
                     id=stale_chunk_task_id,
-                    video_parse_task_id=task_id,
-                    video_chunk_id=stale_video_chunk_id,
+                    video_task_id=task_id,
+                    chunk_id=stale_video_chunk_id,
                     status="COMPLETE",
                     next_execute_time=NOW,
                     retry_count=0,
@@ -1696,7 +1697,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                 ))
                 session.add(ChunkParseContent(
                     id=retained_content_id,
-                    chunk_parse_task_id=stale_chunk_task_id,
+                    chunk_task_id=stale_chunk_task_id,
                     content={"persons": ["retained"], "timeline": []},
                     version=1,
                     detail={"scope": [0], "compact": "retained child"},
@@ -1813,7 +1814,7 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
         task = session.get(VideoParseTask, task_id)
         video = session.get(Video, task.video_id)
         series_id = video.series_id
-        video_id = video.video_id
+        video_id = video.id
         episode_order = video.episode_order
 
     old_lease = repo.claim_next_prefix(
@@ -1895,13 +1896,13 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
             task = session.get(VideoParseTask, task_id)
             contents = session.scalars(
                 select(ChunkParseContent)
-                .where(ChunkParseContent.chunk_parse_task_id.in_(
+                .where(ChunkParseContent.chunk_task_id.in_(
                     [new_zero.chunk_parse_task_id, new_one.chunk_parse_task_id]
                 ))
                 .order_by(ChunkParseContent.id)
             )
-            return task.detail, task.update_time, [
-                (row.id, row.content, row.version, row.detail, row.update_time)
+            return task.detail, task.update_date, [
+                (row.id, row.content, row.version, row.detail, row.update_date)
                 for row in contents
             ]
 
@@ -1944,13 +1945,13 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
         prefix = task.detail["_worker_runtime_v2"]["prefix"]
         zero_content = session.scalar(
             select(ChunkParseContent).where(
-                ChunkParseContent.chunk_parse_task_id
+                ChunkParseContent.chunk_task_id
                 == new_zero.chunk_parse_task_id
             )
         )
         one_content = session.scalar(
             select(ChunkParseContent).where(
-                ChunkParseContent.chunk_parse_task_id
+                ChunkParseContent.chunk_task_id
                 == new_one.chunk_parse_task_id
             )
         )
@@ -1983,7 +1984,7 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
         committed = prefix["committed_leases"]
         one_content = session.scalar(
             select(ChunkParseContent).where(
-                ChunkParseContent.chunk_parse_task_id
+                ChunkParseContent.chunk_task_id
                 == new_one.chunk_parse_task_id
             )
         )
@@ -2046,13 +2047,13 @@ def _seed_retrieval_chunk(repository):
         video.parse_status = "COMPLETE"
         video.parse_progress = 100
         session.add(VideoChunk(
-            video_chunk_id=chunk_id,
+            id=chunk_id,
             video_id=task.video_id,
             sequence_no=0,
-            start_seconds=0,
-            end_seconds=10_000,
-            analysis_window_start_seconds=0,
-            analysis_window_end_seconds=10_000,
+            start_ms=0,
+            end_ms=10_000,
+            window_start_ms=0,
+            window_end_ms=10_000,
             chunk_media_ref="artifact://v2/chunk.mp4",
             analysis_window_media_ref="artifact://v2/window.mp4",
             transcript=[],
@@ -2061,19 +2062,19 @@ def _seed_retrieval_chunk(repository):
         ))
         session.add(ChunkParseTask(
             id=child_id,
-            video_parse_task_id=task_id,
-            video_chunk_id=chunk_id,
+            video_task_id=task_id,
+            chunk_id=chunk_id,
             status="COMPLETE",
             next_execute_time=NOW,
             retry_count=0,
             lease_version=0,
             detail=None,
-            create_time=NOW,
-            update_time=NOW,
+            create_time=datetime_to_unix_time_ms(NOW),
+            update_time=datetime_to_unix_time_ms(NOW),
         ))
         session.add(ChunkParseContent(
             id=str(uuid4()),
-            chunk_parse_task_id=child_id,
+            chunk_task_id=child_id,
             content=content.model_dump(mode="json"),
             version=1,
             detail={
@@ -2084,14 +2085,14 @@ def _seed_retrieval_chunk(repository):
                     "receipt": receipt,
                 },
             },
-            create_time=NOW,
-            update_time=NOW,
+            create_time=datetime_to_unix_time_ms(NOW),
+            update_time=datetime_to_unix_time_ms(NOW),
         ))
 
     identity = VideoChunkRetrievalIdentity(
         tenant_id="mine",
         series_id=video.series_id,
-        video_id=video.video_id,
+        video_id=video.id,
         parse_task_id=task_id,
         content_version=1,
         index_generation=2,
@@ -2105,9 +2106,9 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
     factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
     task_id = identity.parse_task_id
     scope = repo.resolve_retrieval_scope([video.series_id], tenant_id="mine")
-    assert scope.searched_video_ids == (video.video_id,)
-    assert scope.parse_tasks_by_video_id == {video.video_id: task_id}
-    assert scope.series_by_video_id == {video.video_id: video.series_id}
+    assert scope.searched_video_ids == (video.id,)
+    assert scope.parse_tasks_by_video_id == {video.id: task_id}
+    assert scope.series_by_video_id == {video.id: video.series_id}
     assert scope.index_generation == 2
     assert scope.embedding_model == scope.parse_config.models.embedding.model
     hydrated = repo.hydrate_retrieval_candidates([(chunk_id, identity)], include_context=True)
@@ -2132,7 +2133,7 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
     empty_series_id = str(uuid4())
     with factory.begin() as session:
         session.add(Series(
-            series_id=empty_series_id,
+            id=empty_series_id,
             tenant_id="mine",
             name="Empty Series",
             description=None,
@@ -2145,13 +2146,13 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         tenant_id="mine",
     )
     assert partial_scope.partial is True
-    assert partial_scope.searched_video_ids == (video.video_id,)
+    assert partial_scope.searched_video_ids == (video.id,)
     assert "没有视频" in partial_scope.warnings[0]
 
     with factory.begin() as session:
         session.add(VideoParseTask(
             id=str(uuid4()),
-            video_id=video.video_id,
+            video_id=video.id,
             pipeline_version="video-parse-v2",
             status="PENDING",
             parse_config=_config(chunk_count=1),
@@ -2166,8 +2167,8 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
             is_test=True,
             is_deleted=False,
             detail={"_worker_runtime_v2": {"accepted": True}},
-            create_time=NOW + timedelta(minutes=1),
-            update_time=NOW + timedelta(minutes=1),
+            create_time=datetime_to_unix_time_ms(NOW + timedelta(minutes=1)),
+            update_time=datetime_to_unix_time_ms(NOW + timedelta(minutes=1)),
         ))
 
     with pytest.raises(SeriesNotReadyError, match="no COMPLETE"):
@@ -2179,7 +2180,7 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
 
     with factory.begin() as session:
         newer = session.scalar(select(VideoParseTask).where(
-            VideoParseTask.video_id == video.video_id,
+            VideoParseTask.video_id == video.id,
             VideoParseTask.version == 2,
         ))
         newer.is_deleted = True
@@ -2196,8 +2197,8 @@ def test_sparse_scope_requires_a_completed_valid_representation(repository, weig
     if weights is not None:
         with factory.begin() as session:
             content = session.scalar(select(ChunkParseContent).join(ChunkParseTask,
-                ChunkParseTask.id == ChunkParseContent.chunk_parse_task_id).where(
-                ChunkParseTask.video_parse_task_id == identity.parse_task_id))
+                ChunkParseTask.id == ChunkParseContent.chunk_task_id).where(
+                ChunkParseTask.video_task_id == identity.parse_task_id))
             detail = dict(content.detail)
             envelope = dict(detail[INDEX_EMBEDDINGS_DETAIL_KEY])
             envelope["representations"] = {"sparse": {"channel": "sparse", "weights": weights}}
@@ -2208,7 +2209,7 @@ def test_sparse_scope_requires_a_completed_valid_representation(repository, weig
             repo.resolve_retrieval_scope([video.series_id], tenant_id="mine", require_sparse=True)
     else:
         scope = repo.resolve_retrieval_scope([video.series_id], tenant_id="mine", require_sparse=True)
-        assert scope.searched_video_ids == (video.video_id,)
+        assert scope.searched_video_ids == (video.id,)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -2259,7 +2260,7 @@ def test_v2_media_evidence_requires_complete_current_content(repository, issue):
     with factory.begin() as session:
         content = session.scalar(select(ChunkParseContent))
         if issue == "child_pending":
-            session.get(ChunkParseTask, content.chunk_parse_task_id).status = "QUEUED"
+            session.get(ChunkParseTask, content.chunk_task_id).status = "QUEUED"
         elif issue == "content_missing":
             session.delete(content)
         else:
@@ -2345,7 +2346,7 @@ def test_v2_scope_rejects_mixed_index_configuration_but_allows_understanding_cha
         }
         task.parse_config = config
     scope = repo.resolve_retrieval_scope([video.series_id, other.series_id], tenant_id="mine")
-    assert set(scope.searched_video_ids) == {video.video_id, other.video_id}
+    assert set(scope.searched_video_ids) == {video.id, other.id}
     with factory.begin() as session:
         task = session.get(VideoParseTask, other_identity.parse_task_id)
         config = dict(task.parse_config)
@@ -2413,10 +2414,10 @@ def test_v2_scope_compares_fixed_encoder_identity_without_changing_request_model
         return
 
     scope = repo.resolve_retrieval_scope([video.series_id, other.series_id], tenant_id="mine")
-    assert set(scope.searched_video_ids) == {video.video_id, other.video_id}
+    assert set(scope.searched_video_ids) == {video.id, other.id}
     assert scope.parse_tasks_by_video_id == {
-        video.video_id: identity.parse_task_id,
-        other.video_id: other_identity.parse_task_id,
+        video.id: identity.parse_task_id,
+        other.id: other_identity.parse_task_id,
     }
     assert scope.embedding_model == scope.parse_config.models.embedding.model
     assert scope.embedding_model in {first_model, other_model}
@@ -2430,11 +2431,11 @@ def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, is
     with factory.begin() as session:
         task = session.get(VideoParseTask, identity.parse_task_id)
         task.chunk_count = 3
-        session.get(Video, video.video_id).duration_seconds = 30_000
+        session.get(Video, video.id).duration_ms = 30_000
         chunk = session.get(VideoChunk, chunk_id)
         chunk.sequence_no = 1
-        chunk.start_seconds = chunk.analysis_window_start_seconds = 10_000
-        chunk.end_seconds = chunk.analysis_window_end_seconds = 20_000
+        chunk.start_ms = chunk.window_start_ms = 10_000
+        chunk.end_ms = chunk.window_end_ms = 20_000
         for sequence in (0, 2):
             other_chunk_id, child_id = str(uuid4()), str(uuid4())
             neighbors.append(other_chunk_id)
@@ -2451,26 +2452,26 @@ def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, is
                 elif issue == "receipt_version":
                     receipt["content_version"] = 99
             session.add(VideoChunk(
-                video_chunk_id=other_chunk_id, video_id=video.video_id, sequence_no=sequence,
-                start_seconds=start, end_seconds=end,
-                analysis_window_start_seconds=start, analysis_window_end_seconds=end,
+                id=other_chunk_id, video_id=video.id, sequence_no=sequence,
+                start_ms=start, end_ms=end,
+                window_start_ms=start, window_end_ms=end,
                 chunk_media_ref=f"artifact://v2/chunk-{sequence}.mp4",
                 analysis_window_media_ref=f"artifact://v2/window-{sequence}.mp4",
                 transcript=[], baseline_visual_caption=None, keyframe_uris=[],
             ))
             session.add(ChunkParseTask(
-                id=child_id, video_parse_task_id=task.id, video_chunk_id=other_chunk_id,
+                id=child_id, video_task_id=task.id, chunk_id=other_chunk_id,
                 status="QUEUED" if issue == "missing" and sequence == 2 else "COMPLETE",
                 next_execute_time=NOW, retry_count=0, lease_version=0,
-                detail=None, create_time=NOW, update_time=NOW,
+                detail=None, create_time=datetime_to_unix_time_ms(NOW), update_time=datetime_to_unix_time_ms(NOW),
             ))
             session.add(ChunkParseContent(
-                id=str(uuid4()), chunk_parse_task_id=child_id, version=sequence + 2,
+                id=str(uuid4()), chunk_task_id=child_id, version=sequence + 2,
                 content={"persons": [], "timeline": []},
                 detail={INDEX_EMBEDDINGS_DETAIL_KEY: {
                     "content_version": sequence + 2, "representations": {}, "receipt": receipt,
                 }},
-                create_time=NOW, update_time=NOW,
+                create_time=datetime_to_unix_time_ms(NOW), update_time=datetime_to_unix_time_ms(NOW),
             ))
     # Context is loaded only when explicitly requested.
     assert repo.hydrate_retrieval_candidates([(chunk_id, identity)])[0].contexts == ()

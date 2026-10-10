@@ -42,6 +42,7 @@ from server.service.video_parse_index_coordinator import VideoParseIndexCoordina
 from server.service.video_parse_media import VideoParseMediaService
 from server.service.video_retrieval import VideoParseRetrievalService
 from server.storage.elasticsearch import ElasticsearchVideoChunkStore
+from server.utils.time import datetime_to_unix_time_ms
 
 
 def _tool_map(tools: Sequence[BaseTool]) -> dict[str, BaseTool]:
@@ -221,15 +222,15 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
         )
         with session_factory.begin() as session:
             session.add(Series(
-                series_id=series_id, tenant_id=tenant_id,
+                id=series_id, tenant_id=tenant_id,
                 name="Agent ES integration", status="INDEXING", character_bible=[],
             ))
             session.flush()
             session.add(Video(
-                video_id=video_id, series_id=series_id, episode_order=1,
-                upload_sequence=1, original_filename="episode.mp4",
-                original_source_uri=str(source), content_hash="a" * 64,
-                total_bytes=source.stat().st_size, duration_seconds=10,
+                id=video_id, series_id=series_id, episode_order=1,
+                upload_sequence=1, filename="episode.mp4",
+                source_uri=str(source), hash="a" * 64,
+                size_bytes=source.stat().st_size, duration_ms=10,
                 upload_status="COMPLETED", parse_status="QUEUED",
                 upload_progress=100, parse_progress=0,
             ))
@@ -243,7 +244,7 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
                 heartbeat_time=now, start_time=now, processing_duration_ms=0,
                 processing_timing_complete=True, is_test=True, is_deleted=False,
                 detail={"_worker_runtime_v2": {"accepted": True}},
-                create_time=now, update_time=now,
+                create_time=datetime_to_unix_time_ms(now), update_time=datetime_to_unix_time_ms(now),
             ))
         repository = VideoParseRepository(session_factory)
         queue = MySqlVideoParseQueue(session_factory)
@@ -351,9 +352,9 @@ def test_agent_runs_over_mysql_and_es_retrieval_and_persists_the_answer(tmp_path
             with session_factory.begin() as session:
                 if conversation is not None:
                     session.execute(delete(AgentConversation).where(
-                        AgentConversation.conversation_id == conversation.conversation_id
+                        AgentConversation.id == conversation.conversation_id
                     ))
-                session.execute(delete(Series).where(Series.series_id == series_id))
+                session.execute(delete(Series).where(Series.id == series_id))
         finally:
             try:
                 if es_client.indices.exists(index=store.index_name):

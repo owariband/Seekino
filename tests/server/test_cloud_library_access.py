@@ -96,7 +96,7 @@ def cloud_library(prepared_import, tmp_path):
     frame.write_bytes(b"\x89PNG\r\n\x1a\nregistered-course-frame")
     with factory.begin() as session:
         session.get(Series, prepared.series_id).is_published = True
-        session.get(Video, prepared.video_id).original_source_uri = store.uri_for_path(source)
+        session.get(Video, prepared.video_id).source_uri = store.uri_for_path(source)
         session.get(VideoChunk, report.video_chunk_ids[0]).keyframe_uris = [
             {"uri": store.uri_for_path(frame), "at_seconds": 0},
         ]
@@ -148,11 +148,11 @@ def _course(fixture, name, *, tenant_id=PUBLIC, published=True, task_status="COM
     with fixture.factory.begin() as session:
         session.get(Series, state.series_id).is_published = published
         session.add(Video(
-            video_id=video_id, series_id=state.series_id, episode_order=1, upload_sequence=1,
-            original_filename="private-course.mp4",
-            original_source_uri=(fixture.media._artifact_store.uri_for_path(fixture.source)
+            id=video_id, series_id=state.series_id, episode_order=1, upload_sequence=1,
+            filename="private-course.mp4",
+            source_uri=(fixture.media._artifact_store.uri_for_path(fixture.source)
                                  if managed else "artifact://missing/course.mp4"),
-            content_hash="f" * 64, total_bytes=20, duration_seconds=20,
+            hash="f" * 64, size_bytes=20, duration_ms=20,
             upload_status="COMPLETED", parse_status="COMPLETED", upload_progress=100, parse_progress=100,
         ))
         session.add(VideoParseTask(
@@ -277,11 +277,11 @@ def test_pending_upload_hides_course_and_blocks_publication(cloud_library):
     f = cloud_library
     with f.factory.begin() as session:
         session.add(UploadSession(
-            upload_session_id=str(uuid4()), tenant_id=PUBLIC, series_id=f.prepared.series_id,
-            created_by_user_id="admin", episode_order=2, upload_sequence=2,
-            original_filename="future-private.mp4", media_type="video/mp4", total_size_bytes=20,
-            preferred_segment_size_bytes=20, total_segments=1, status="UPLOADING",
-            idempotency_key="pending-course", expires_at=now_utc() + timedelta(hours=1),
+            id=str(uuid4()), tenant_id=PUBLIC, series_id=f.prepared.series_id,
+            creator_id="admin", episode_order=2, upload_sequence=2,
+            filename="future-private.mp4", media_type="video/mp4", size_bytes=20,
+            segment_size_bytes=20, segment_count=1, status="UPLOADING",
+            idempotency_key="pending-course", expire_time=now_utc() + timedelta(hours=1),
         ))
     assert f.client.get("/api/series/list", params={"tenantId": PUBLIC}).json()["total"] == 0
     assert f.client.get("/api/series/get", params={"tenantId": PUBLIC, "seriesId": f.prepared.series_id}).status_code == 404
@@ -297,13 +297,13 @@ def test_last_search_is_scoped_to_user_within_public_tenant(cloud_library):
         for index, owner in enumerate(("guest", "guest-b", LOCAL_USER_ID)):
             conversation_id = str(uuid4())
             session.add(AgentConversation(
-                conversation_id=conversation_id, tenant_id=PUBLIC, owner_user_id=owner,
+                id=conversation_id, tenant_id=PUBLIC, owner_id=owner,
                 title=owner, idempotency_key=f"conversation-{owner}",
             ))
             session.add(AgentMessage(
-                message_id=str(uuid4()), conversation_id=conversation_id, sequence_no=0,
+                id=str(uuid4()), conversation_id=conversation_id, sequence_no=0,
                 role="USER", status="COMPLETED", content=f"private query by {owner}",
-                series_ids=[f.prepared.series_id], created_at=1000 + index,
+                series_ids=[f.prepared.series_id], create_time=1000 + index,
             ))
     for token in ("guest", "guest-b"):
         _login(f, token)

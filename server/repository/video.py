@@ -134,27 +134,27 @@ class VideoRepository:
         statement = (
             select(
                 Series.tenant_id,
-                Series.series_id,
-                Video.video_id,
+                Series.id.label("series_id"),
+                Video.id.label("video_id"),
                 Video.episode_order,
-                Video.duration_seconds,
-                VideoChunk.video_chunk_id,
+                Video.duration_ms.label("duration_seconds"),
+                VideoChunk.id.label("video_chunk_id"),
                 VideoChunk.sequence_no,
-                VideoChunk.start_seconds,
-                VideoChunk.end_seconds,
+                VideoChunk.start_ms.label("start_seconds"),
+                VideoChunk.end_ms.label("end_seconds"),
                 VideoChunk.chunk_media_ref,
                 VideoChunk.keyframe_uris,
             )
-            .join(Video, Video.series_id == Series.series_id)
+            .join(Video, Video.series_id == Series.id)
             .join(
                 VideoChunk,
-                VideoChunk.video_id == Video.video_id,
+                VideoChunk.video_id == Video.id,
             )
             .order_by(
-                Series.series_id,
+                Series.id,
                 Video.episode_order,
                 VideoChunk.sequence_no,
-                VideoChunk.video_chunk_id,
+                VideoChunk.id,
             )
         )
         if normalized_workspace is not None:
@@ -163,28 +163,28 @@ class VideoRepository:
             )
         if normalized_series is not None:
             statement = statement.where(
-                Series.series_id == normalized_series
+                Series.id == normalized_series
             )
         if normalized_video is not None:
-            statement = statement.where(Video.video_id == normalized_video)
+            statement = statement.where(Video.id == normalized_video)
         if after is not None:
             statement = statement.where(
                 or_(
-                    Series.series_id > after.series_id,
+                    Series.id > after.series_id,
                     and_(
-                        Series.series_id == after.series_id,
+                        Series.id == after.series_id,
                         Video.episode_order > after.episode_order,
                     ),
                     and_(
-                        Series.series_id == after.series_id,
+                        Series.id == after.series_id,
                         Video.episode_order == after.episode_order,
                         VideoChunk.sequence_no > after.sequence_no,
                     ),
                     and_(
-                        Series.series_id == after.series_id,
+                        Series.id == after.series_id,
                         Video.episode_order == after.episode_order,
                         VideoChunk.sequence_no == after.sequence_no,
-                        VideoChunk.video_chunk_id > after.video_chunk_id,
+                        VideoChunk.id > after.video_chunk_id,
                     ),
                 )
             )
@@ -224,14 +224,14 @@ class VideoRepository:
             chunk = session.scalar(
                 select(VideoChunk)
                 .where(
-                    VideoChunk.video_chunk_id == candidate.video_chunk_id
+                    VideoChunk.id == candidate.video_chunk_id
                 )
                 .with_for_update()
             )
             if chunk is None or (
                 chunk.video_id != candidate.video_id
-                or chunk.start_seconds != candidate.start_seconds
-                or chunk.end_seconds != candidate.end_seconds
+                or chunk.start_ms != candidate.start_seconds
+                or chunk.end_ms != candidate.end_seconds
                 or chunk.chunk_media_ref != candidate.chunk_media_ref
             ):
                 return False
@@ -240,8 +240,8 @@ class VideoRepository:
             chunk.keyframe_uris = merge_keyframe_uri_values(
                 [keyframe.model_dump(mode="json")],
                 chunk.keyframe_uris,
-                start_seconds=chunk.start_seconds,
-                end_seconds=chunk.end_seconds,
+                start_seconds=chunk.start_ms,
+                end_seconds=chunk.end_ms,
             )
             return True
 
@@ -331,13 +331,13 @@ class VideoRepository:
                 job = session.scalar(
                     select(SeriesParseJob)
                     .where(
-                        SeriesParseJob.job_id == lease.job_id,
+                        SeriesParseJob.id == lease.job_id,
                         SeriesParseJob.status
                         == ParseJobStatus.RUNNING.value,
                         SeriesParseJob.lease_owner == lease.worker_id,
                         SeriesParseJob.lease_version
                         == lease.lease_version,
-                        SeriesParseJob.lease_expires_at > checked_at,
+                        SeriesParseJob.lease_expire_time > checked_at,
                     )
                     .with_for_update()
                 )
@@ -367,7 +367,7 @@ class VideoRepository:
                     )
                 session.add(
                     Series(
-                        series_id=prepared.series_id,
+                        id=prepared.series_id,
                         tenant_id=prepared.tenant_id,
                         name=prepared.series_name,
                         description=prepared.series_description,
@@ -384,8 +384,8 @@ class VideoRepository:
                     lease is None
                     and existing_video.episode_order != prepared.episode_order
                 )
-                or existing_video.content_hash != prepared.content_hash
-                or existing_video.duration_seconds != prepared.parse_result.duration_seconds
+                or existing_video.hash != prepared.content_hash
+                or existing_video.duration_ms != prepared.parse_result.duration_seconds
             ):
                 raise ParseImportConflictError(
                     f"video_id {prepared.video_id!r} already identifies another Video"
@@ -396,7 +396,7 @@ class VideoRepository:
                         Video.series_id == prepared.series_id,
                         or_(
                             Video.episode_order == prepared.episode_order,
-                            Video.content_hash == prepared.content_hash,
+                            Video.hash == prepared.content_hash,
                         ),
                     )
                 )
@@ -405,16 +405,16 @@ class VideoRepository:
                         "episode order or source content already uses another video_id"
                     )
                 existing_video = Video(
-                    video_id=prepared.video_id,
+                    id=prepared.video_id,
                     series_id=prepared.series_id,
                     episode_order=prepared.episode_order,
                     upload_sequence=prepared.upload_sequence,
-                    original_filename=prepared.original_filename,
-                    original_source_uri=prepared.original_source_uri,
-                    inference_proxy_uri=None,
-                    content_hash=prepared.content_hash,
-                    total_bytes=prepared.total_bytes,
-                    duration_seconds=prepared.parse_result.duration_seconds,
+                    filename=prepared.original_filename,
+                    source_uri=prepared.original_source_uri,
+                    proxy_uri=None,
+                    hash=prepared.content_hash,
+                    size_bytes=prepared.total_bytes,
+                    duration_ms=prepared.parse_result.duration_seconds,
                     upload_status="COMPLETED",
                     parse_status=(
                         ParseJobStatus.RUNNING.value
@@ -441,10 +441,10 @@ class VideoRepository:
             if existing_chunks:
                 actual = {
                     (
-                        item.video_chunk_id,
+                        item.id,
                         item.sequence_no,
-                        item.start_seconds,
-                        item.end_seconds,
+                        item.start_ms,
+                        item.end_ms,
                     )
                     for item in existing_chunks
                 }
@@ -466,7 +466,7 @@ class VideoRepository:
             session.flush()
 
             existing_chunks_by_id = {
-                item.video_chunk_id: item for item in existing_chunks
+                item.id: item for item in existing_chunks
             }
             for item in prepared.chunks:
                 chunk = item.parse_result
@@ -477,10 +477,10 @@ class VideoRepository:
                 if existing_chunk is not None:
                     # Canonical media may already have been promoted from the
                     # transitional file URI into the Artifact Store.
-                    existing_chunk.analysis_window_start_seconds = (
+                    existing_chunk.window_start_ms = (
                         window.analysis_start_seconds
                     )
-                    existing_chunk.analysis_window_end_seconds = window.analysis_end_seconds
+                    existing_chunk.window_end_ms = window.analysis_end_seconds
                     existing_chunk.analysis_window_media_ref = (
                         item.analysis_window_media_ref
                     )
@@ -501,13 +501,13 @@ class VideoRepository:
                     continue
                 session.add(
                     VideoChunk(
-                        video_chunk_id=item.video_chunk_id,
+                        id=item.video_chunk_id,
                         video_id=prepared.video_id,
                         sequence_no=window.sequence_no,
-                        start_seconds=window.chunk_start_seconds,
-                        end_seconds=window.chunk_end_seconds,
-                        analysis_window_start_seconds=window.analysis_start_seconds,
-                        analysis_window_end_seconds=window.analysis_end_seconds,
+                        start_ms=window.chunk_start_seconds,
+                        end_ms=window.chunk_end_seconds,
+                        window_start_ms=window.analysis_start_seconds,
+                        window_end_ms=window.analysis_end_seconds,
                         chunk_media_ref=item.chunk_media_ref,
                         analysis_window_media_ref=item.analysis_window_media_ref,
                         transcript=[
@@ -525,10 +525,10 @@ class VideoRepository:
 
             chunk_ids = [item.video_chunk_id for item in prepared.chunks]
             embeddings_by_chunk_id = {
-                embedding.video_chunk_id: embedding
+                embedding.chunk_id: embedding
                 for embedding in session.scalars(
                     select(VideoChunkEmbedding).where(
-                        VideoChunkEmbedding.video_chunk_id.in_(
+                        VideoChunkEmbedding.chunk_id.in_(
                             chunk_ids
                         )
                     )
@@ -552,7 +552,7 @@ class VideoRepository:
                     model_name = None
                 session.merge(
                     VideoChunkInfo(
-                        video_chunk_id=item.video_chunk_id,
+                        chunk_id=item.video_chunk_id,
                         all_time_events=[
                             event.model_dump(mode="json") for event in chunk.events
                         ],
@@ -561,17 +561,17 @@ class VideoRepository:
                         context_before_compact=chunk.context_before_compact,
                         context_after_compact=chunk.context_after_compact,
                         window_summary=chunk.window_summary,
-                        model_provider=model_provider,
-                        model_name=model_name,
+                        provider=model_provider,
+                        model=model_name,
                         pipeline_version=prepared.pipeline_version,
                         is_fallback=chunk.is_fallback,
                         parse_provenance=provenance,
-                        parsed_at=prepared.parsed_at,
+                        parse_time=prepared.parsed_at,
                     )
                 )
                 session.merge(
                     ContextSnapshot(
-                        snapshot_id=item.snapshot_id,
+                        id=item.snapshot_id,
                         engine_snapshot_id=chunk.context_after.snapshot_id,
                         series_id=prepared.series_id,
                         video_id=prepared.video_id,
@@ -585,14 +585,14 @@ class VideoRepository:
                                 for event in chunk.context_after.recent_events
                             ]
                         },
-                        created_from_video_chunk_id=item.video_chunk_id,
+                        source_chunk_id=item.video_chunk_id,
                     )
                 )
                 embedding = embeddings_by_chunk_id.get(item.video_chunk_id)
                 if embedding is None:
                     session.add(
                         VideoChunkEmbedding(
-                            video_chunk_id=item.video_chunk_id,
+                            chunk_id=item.video_chunk_id,
                             text_input=item.retrieval_document.text,
                             text_vector=(
                                 item.text_embedding.vector
@@ -639,8 +639,8 @@ class VideoRepository:
             materialize_index_sync_intents(session, chunk_ids)
             if job is not None:
                 if (
-                    job.lease_expires_at is None
-                    or job.lease_expires_at <= now_unix_time_ms()
+                    job.lease_expire_time is None
+                    or job.lease_expire_time <= now_unix_time_ms()
                 ):
                     raise ParseJobLeaseLostError(
                         "parse job lease expired while facts were being persisted"
@@ -685,8 +685,8 @@ class VideoRepository:
 
         with self._session_factory() as session:
             rows = session.execute(
-                select(Series.series_id, Series.status).where(
-                    Series.series_id.in_(ordered_ids),
+                select(Series.id.label("series_id"), Series.status).where(
+                    Series.id.in_(ordered_ids),
                     Series.tenant_id == tenant_id,
                 )
             ).all()
@@ -712,9 +712,9 @@ class VideoRepository:
             return []
         with self._session_factory() as session:
             scoped_series_ids = list(session.scalars(
-                select(Series.series_id).where(
+                select(Series.id.label("series_id")).where(
                     Series.tenant_id == tenant_id,
-                    Series.series_id.in_(series_ids),
+                    Series.id.in_(series_ids),
                 )
             ))
             return list_ready_video_ids(session, scoped_series_ids)
@@ -742,30 +742,30 @@ class VideoRepository:
             return []
         statement = (
             select(
-                VideoChunk.video_chunk_id,
-                VideoChunk.start_seconds,
-                VideoChunk.end_seconds,
-                VideoChunk.analysis_window_start_seconds,
+                VideoChunk.id.label("video_chunk_id"),
+                VideoChunk.start_ms.label("start_seconds"),
+                VideoChunk.end_ms.label("end_seconds"),
+                VideoChunk.window_start_ms.label("analysis_window_start_seconds"),
                 VideoChunk.transcript,
             )
-            .join(Video, Video.video_id == VideoChunk.video_id)
-            .join(Series, Series.series_id == Video.series_id)
+            .join(Video, Video.id == VideoChunk.video_id)
+            .join(Series, Series.id == Video.series_id)
             .join(
                 IndexSyncIntent,
-                IndexSyncIntent.video_chunk_id
-                == VideoChunk.video_chunk_id,
+                IndexSyncIntent.chunk_id
+                == VideoChunk.id,
             )
             .where(
                 Series.tenant_id == normalized_workspace,
-                Series.series_id.in_(ordered_series_ids),
-                Video.video_id.in_(video_ids),
+                Series.id.in_(ordered_series_ids),
+                Video.id.in_(video_ids),
                 IndexSyncIntent.status == IndexSyncStatus.SYNCED.value,
                 IndexSyncIntent.operation == IndexSyncOperation.UPSERT.value,
             )
             .order_by(
                 Video.episode_order,
                 VideoChunk.sequence_no,
-                VideoChunk.video_chunk_id,
+                VideoChunk.id,
             )
         )
         with self._session_factory() as session:
@@ -851,27 +851,27 @@ class VideoRepository:
                 VideoChunkEmbedding,
                 IndexSyncIntent,
             )
-            .join(Video, Video.series_id == Series.series_id)
+            .join(Video, Video.series_id == Series.id)
             .join(
                 VideoChunk,
-                VideoChunk.video_id == Video.video_id,
+                VideoChunk.video_id == Video.id,
             )
             .join(
                 VideoChunkInfo,
-                VideoChunkInfo.video_chunk_id
-                == VideoChunk.video_chunk_id,
+                VideoChunkInfo.chunk_id
+                == VideoChunk.id,
             )
             .join(
                 VideoChunkEmbedding,
-                VideoChunkEmbedding.video_chunk_id
-                == VideoChunk.video_chunk_id,
+                VideoChunkEmbedding.chunk_id
+                == VideoChunk.id,
             )
             .outerjoin(
                 IndexSyncIntent,
-                IndexSyncIntent.video_chunk_id
-                == VideoChunk.video_chunk_id,
+                IndexSyncIntent.chunk_id
+                == VideoChunk.id,
             )
-            .where(VideoChunk.video_chunk_id.in_(ordered_ids))
+            .where(VideoChunk.id.in_(ordered_ids))
         )
         with self._session_factory() as session:
             rows = session.execute(statement).all()
@@ -881,32 +881,32 @@ class VideoRepository:
             transcript, _retained_count, _skipped_count = (
                 _soft_validated_transcript(
                     chunk.transcript,
-                    offset_ms=chunk.analysis_window_start_seconds,
+                    offset_ms=chunk.window_start_ms,
                 )
             )
             evidence = VideoChunkEvidence(
-                series_id=series.series_id,
+                series_id=series.id,
                 tenant_id=series.tenant_id,
                 series_name=series.name,
                 series_description=series.description,
                 series_status=series.status,
                 important_extra_data=series.important_extra_data,
                 character_bible=series.character_bible,
-                video_id=video.video_id,
+                video_id=video.id,
                 episode_order=video.episode_order,
-                original_filename=video.original_filename,
-                original_source_uri=video.original_source_uri,
-                inference_proxy_uri=video.inference_proxy_uri,
-                content_hash=video.content_hash,
-                duration_seconds=video.duration_seconds,
+                original_filename=video.filename,
+                original_source_uri=video.source_uri,
+                inference_proxy_uri=video.proxy_uri,
+                content_hash=video.hash,
+                duration_seconds=video.duration_ms,
                 upload_status=video.upload_status,
                 parse_status=video.parse_status,
-                video_chunk_id=chunk.video_chunk_id,
+                video_chunk_id=chunk.id,
                 sequence_no=chunk.sequence_no,
-                start_seconds=chunk.start_seconds,
-                end_seconds=chunk.end_seconds,
-                analysis_window_start_seconds=chunk.analysis_window_start_seconds,
-                analysis_window_end_seconds=chunk.analysis_window_end_seconds,
+                start_seconds=chunk.start_ms,
+                end_seconds=chunk.end_ms,
+                analysis_window_start_seconds=chunk.window_start_ms,
+                analysis_window_end_seconds=chunk.window_end_ms,
                 chunk_media_ref=chunk.chunk_media_ref,
                 analysis_window_media_ref=chunk.analysis_window_media_ref,
                 transcript=transcript,
@@ -919,14 +919,14 @@ class VideoRepository:
                 context_before_compact=info.context_before_compact,
                 context_after_compact=info.context_after_compact,
                 window_summary=info.window_summary,
-                model_provider=info.model_provider,
-                model_name=info.model_name,
+                model_provider=info.provider,
+                model_name=info.model,
                 pipeline_version=info.pipeline_version,
                 is_fallback=info.is_fallback,
                 parse_provenance=info.parse_provenance,
-                parsed_at=info.parsed_at,
+                parsed_at=info.parse_time,
             )
-            states_by_id[chunk.video_chunk_id] = HydratedVideoChunkState(
+            states_by_id[chunk.id] = HydratedVideoChunkState(
                 evidence=evidence,
                 source_revision=(
                     intent.source_revision if intent is not None else None

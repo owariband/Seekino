@@ -43,7 +43,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
     with session_factory.begin() as session:
         session.add(
             Series(
-                series_id=prepared.series_id,
+                id=prepared.series_id,
                 tenant_id=prepared.tenant_id,
                 name=prepared.series_name,
                 description=prepared.series_description,
@@ -54,16 +54,16 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
         )
         session.add(
             Video(
-                video_id=prepared.video_id,
+                id=prepared.video_id,
                 series_id=prepared.series_id,
                 episode_order=prepared.episode_order,
                 upload_sequence=prepared.upload_sequence,
-                original_filename=prepared.original_filename,
-                original_source_uri=prepared.original_source_uri,
-                inference_proxy_uri=None,
-                content_hash=prepared.content_hash,
-                total_bytes=prepared.total_bytes,
-                duration_seconds=prepared.parse_result.duration_seconds,
+                filename=prepared.original_filename,
+                source_uri=prepared.original_source_uri,
+                proxy_uri=None,
+                hash=prepared.content_hash,
+                size_bytes=prepared.total_bytes,
+                duration_ms=prepared.parse_result.duration_seconds,
                 upload_status="COMPLETED",
                 parse_status="QUEUED",
                 upload_progress=100,
@@ -72,7 +72,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
         )
         session.add(
             SeriesParseJob(
-                job_id=job_id,
+                id=job_id,
                 series_id=prepared.series_id,
                 video_id=prepared.video_id,
                 pipeline_version=prepared.pipeline_version,
@@ -81,7 +81,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
                 progress=0,
                 attempt_count=0,
                 max_attempts=3,
-                available_at=now,
+                next_execute_time=now,
                 lease_version=0,
             )
         )
@@ -118,7 +118,7 @@ def test_stale_worker_cannot_commit_parse_facts(repository, prepared_import) -> 
     with pytest.raises(ParseJobLeaseLostError):
         video_repository.import_video_parse_for_job(prepared, first)
     with session_factory() as session:
-        assert session.scalar(select(func.count(VideoChunk.video_chunk_id))) == 0
+        assert session.scalar(select(func.count(VideoChunk.id))) == 0
 
     report = VideoRepository(session_factory).import_video_parse_for_job(
         prepared,

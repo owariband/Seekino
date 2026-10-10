@@ -58,7 +58,7 @@ def _with_vectors(prepared_import, *, first_text: list[float] | None = None):
 def _series_status(engine, series_id: str) -> str:
     with engine.connect() as connection:
         return connection.execute(
-            select(Series.status).where(Series.series_id == series_id)
+            select(Series.status).where(Series.id == series_id)
         ).scalar_one()
 
 
@@ -73,7 +73,7 @@ def test_index_sync_intent_schema_is_mysql_compatible() -> None:
     assert "CHARSET=utf8mb4" in ddl
     assert "source_revision VARCHAR(64) NOT NULL" in ddl
     assert "generation INTEGER NOT NULL" in ddl
-    assert "FOREIGN KEY(video_chunk_id)" in ddl
+    assert "FOREIGN KEY(chunk_id)" in ddl
 
 
 def test_materialize_starts_with_a_mysql_current_read_of_facts() -> None:
@@ -100,7 +100,7 @@ def test_materialize_starts_with_a_mysql_current_read_of_facts() -> None:
     assert "FROM video_chunk INNER JOIN video" in sql
     assert "LEFT OUTER JOIN video_chunk_info" in sql
     assert "LEFT OUTER JOIN video_chunk_embedding" in sql
-    assert "ORDER BY video_chunk.video_chunk_id" in sql
+    assert "ORDER BY video_chunk.id" in sql
     assert sql.rstrip().endswith("FOR UPDATE")
     assert "index_sync_intent" not in sql
 
@@ -192,16 +192,16 @@ def test_unparsed_sibling_does_not_hide_ready_video(
     with session_factory.begin() as session:
         session.add(
             Video(
-                video_id=queued_video_id,
+                id=queued_video_id,
                 series_id=prepared_import.series_id,
                 episode_order=prepared_import.episode_order + 1,
                 upload_sequence=prepared_import.upload_sequence + 1,
-                original_filename="next-episode.mp4",
-                original_source_uri="artifact://test/media/next-episode.mp4",
-                inference_proxy_uri=None,
-                content_hash="f" * 64,
-                total_bytes=100,
-                duration_seconds=60,
+                filename="next-episode.mp4",
+                source_uri="artifact://test/media/next-episode.mp4",
+                proxy_uri=None,
+                hash="f" * 64,
+                size_bytes=100,
+                duration_ms=60,
                 upload_status="COMPLETED",
                 parse_status="QUEUED",
                 upload_progress=100,
@@ -442,7 +442,7 @@ def test_materialize_all_repairs_a_historical_database_without_intents(
         connection.execute(delete(IndexSyncIntent))
         connection.execute(
             update(Series)
-            .where(Series.series_id == prepared_import.series_id)
+            .where(Series.id == prepared_import.series_id)
             .values(status="READY")
         )
 
@@ -471,12 +471,12 @@ def test_incomplete_chunk_materializes_a_listable_delete_intent(
     with engine.begin() as connection:
         connection.execute(
             delete(VideoChunkInfo).where(
-                VideoChunkInfo.video_chunk_id == incomplete_id
+                VideoChunkInfo.chunk_id == incomplete_id
             )
         )
         connection.execute(
             delete(VideoChunkEmbedding).where(
-                VideoChunkEmbedding.video_chunk_id == incomplete_id
+                VideoChunkEmbedding.chunk_id == incomplete_id
             )
         )
 
