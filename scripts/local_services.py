@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 from urllib.error import URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from urllib.request import ProxyHandler, build_opener
 
 from sqlalchemy import text
@@ -32,6 +32,7 @@ from server.caller.mysql import (
     create_admin_database_engine, create_database_engine, close_database_engine,
 )
 from server.config import ServerSettings
+from server.config.auth import AuthConfig
 from server.database import create_schema
 from server.storage.elasticsearch import ElasticsearchVideoChunkStore
 
@@ -315,7 +316,8 @@ def api_ready(base: str) -> bool:
 
 
 def library_ready(base: str) -> bool:
-    payload = get(base + "/api/series/list?workspaceId=local-default")
+    query = urlencode({"tenantId": AuthConfig.from_environment().local_tenant_id})
+    payload = get(base + "/api/series/list?" + query)
     try:
         page = json.loads(payload) if payload is not None else None
         return isinstance(page, dict) and isinstance(page.get("items"), list) and isinstance(page.get("total"), int)

@@ -2,9 +2,11 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlencode, urlsplit
 
 import pytest
 import yaml
+from fastapi.testclient import TestClient
 
 from gateway.config import (
     ArkModelSourceConfig,
@@ -14,6 +16,8 @@ from gateway.config import (
 )
 from scripts import local_services
 from scripts.local_services import api_ready, config_digest, dotenv_variable_names
+from server.api.app import create_app
+from server.config.auth import AuthConfig
 
 
 def _model_config(
@@ -244,6 +248,42 @@ def test_api_ready_rejects_invalid_health_payload(monkeypatch, payload) -> None:
     monkeypatch.setattr(local_services, "get", lambda _url: payload)
 
     assert not api_ready("http://127.0.0.1:9621")
+
+
+@pytest.mark.parametrize("tenant_id", ["local-default", "local & test/+库"])
+def test_library_ready_uses_current_tenant_route(monkeypatch, tenant_id) -> None:
+    monkeypatch.setenv("ANIVAG_AUTH_MODE", "local")
+    monkeypatch.setenv("ANIVAG_LOCAL_TENANT_ID", tenant_id)
+    scopes = []
+
+    def list_series(**scope):
+        scopes.append(scope)
+        return []
+
+    services = SimpleNamespace(
+        library=SimpleNamespace(list_series=list_series, count_series=lambda **_scope: 0),
+        media=None,
+    )
+    app = create_app(services)
+    app.state.auth_config = AuthConfig.from_environment()
+    requested = []
+    with TestClient(app) as client:
+        assert client.get("/api/series/list?workspaceId=local-default").status_code == 422
+
+        def get(url: str) -> bytes | None:
+            requested.append(url)
+            parsed = urlsplit(url)
+            response = client.get(parsed.path + "?" + parsed.query)
+            return response.content if response.status_code == 200 else None
+
+        monkeypatch.setattr(local_services, "get", get)
+
+        assert local_services.library_ready("http://127.0.0.1:9621")
+
+    assert requested == [
+        "http://127.0.0.1:9621/api/series/list?" + urlencode({"tenantId": tenant_id})
+    ]
+    assert scopes[0]["tenant_id"] == tenant_id
 
 
 def test_start_requires_model_key_before_launching_server(monkeypatch) -> None:
