@@ -7,11 +7,12 @@ import json
 from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field
+import tiktoken
 
 from .context_canvas import ContextCanvas, canvas_json
 from .errors import AgentToolFeedbackError, AgentToolInvocationError, AgentToolOutputError
 from .tool import AgentTool, build_agent_tool
-from .tool_output import bounded_json, cursor_position, page_items, range_text
+from .tool_output import bounded_json, cursor_position, page_items, range_items, range_text
 from .tool_result import JsonToolResult, ToolResult
 
 
@@ -20,10 +21,15 @@ class ContextCanvasReadArguments(BaseModel):
 
     collection: Annotated[str, Field(min_length=1, max_length=100)]
     reference: Annotated[str, Field(min_length=1, max_length=256)] | None = None
+    references: list[Annotated[str, Field(min_length=1, max_length=256)]] | None = Field(
+        default=None, min_length=1,
+    )
     section: Annotated[str, Field(min_length=1, max_length=100)] = "overview"
     cursor: Annotated[str, Field(min_length=1, max_length=2000)] | None = None
-    start: int = Field(default=0, ge=0, strict=True)
-    end: int | None = Field(default=None, ge=0, strict=True)
+    start: int = Field(default=0, ge=0, strict=True,
+                       description="First item index for references; first character offset for reference.")
+    end: int | None = Field(default=None, ge=0, strict=True,
+                           description="Exclusive end item index for references, or character offset for reference.")
 
 
 def build_context_canvas_tools(
@@ -40,6 +46,7 @@ def build_context_canvas_tools(
     on_read: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[AgentTool]:
     allowed = frozenset(read_collections)
+    detail_encoding = tiktoken.get_encoding("o200k_base")
 
     def check() -> None:
         if check_control is not None:
@@ -48,6 +55,7 @@ def build_context_canvas_tools(
     def get_context_canvas(
         collection: str, reference: str | None = None, section: str = "overview",
         cursor: str | None = None, start: int = 0, end: int | None = None,
+        references: list[str] | None = None,
     ) -> ToolResult:
         check()
         if on_call is not None:
@@ -59,7 +67,43 @@ def build_context_canvas_tools(
             )
         with canvas._lock:
             revision = canvas.revision
-            if reference is None:
+            if references is not None:
+                if (
+                    reference is not None or section == "overview" or cursor is not None
+                    or not references or len(references) > maximum_catalog_items
+                    or len(set(references)) != len(references)
+                ):
+                    raise AgentToolFeedbackError(
+                        "INVALID_READ", "Batch detail reads require unique references and an explicit section.",
+                        f"Use at most {maximum_catalog_items} references, no reference/cursor, "
+                        "and an explicit section with a start/end item range.",
+                    )
+                stop = len(references) if end is None else end
+                if not 0 <= start < stop <= len(references):
+                    raise AgentToolFeedbackError(
+                        "INVALID_RANGE", "Batch start/end are outside the reference list.",
+                        f"Use 0 <= start < end <= {len(references)}; end is exclusive.",
+                    )
+                items = []
+                for ref in references[start:stop]:
+                    sections = canvas.sections(collection, ref, role=role)
+                    if section not in sections:
+                        raise AgentToolFeedbackError(
+                            "UNKNOWN_SECTION", f"Unknown section {section!r} for reference {ref!r}.",
+                            "Read that reference's overview to obtain its section names.",
+                        )
+                    content = sections[section]
+                    items.append({
+                        "collection": collection, "revision": revision, "reference": ref,
+                        "id": ref, "section": section, "start": 0, "end": len(content),
+                        "total_chars": len(content), "content": content,
+                    })
+                payload = json.loads(range_items(
+                    items, start=start, total=len(references), maximum_bytes=maximum_result_bytes,
+                    maximum_chars=maximum_read_chars, encoding=detail_encoding,
+                    metadata={"collection": collection, "revision": revision, "section": section},
+                ))
+            elif reference is None:
                 if section != "overview" or start != 0 or end is not None:
                     raise AgentToolFeedbackError(
                         "INVALID_READ", "Catalog reads accept collection and cursor only.",
@@ -117,15 +161,24 @@ def build_context_canvas_tools(
             bounded_json(payload, maximum_result_bytes)
             check()
             if on_read is not None:
-                on_read(payload)
+                for item in payload["items"] if references is not None else [payload]:
+                    if not item.get("truncated", False):
+                        on_read(item)
             return JsonToolResult(success=True, payload=payload)
 
     tools = [build_agent_tool(
         func=get_context_canvas, name="get_context_canvas",
         description=(
             f"Read the {role} Canvas catalog and exact entries. Allowed collections: "
-            f"{', '.join(sorted(allowed))}. Page catalogs with cursor; read an entry overview "
-            "and then every section with character ranges. Messages and checkpoints are navigation only."
+            f"{', '.join(sorted(allowed))}. Omit reference/references to page catalogs with cursor. "
+            f"Batch at most {maximum_catalog_items} references per request. "
+            "Use references=[...] and an explicit section to batch details with start/end item indices "
+            "(zero-based, end exclusive), without cursor. The complete JSON is limited to 8,000 o200k_base tokens. "
+            "If truncated, only items before complete_end are fully read; narrow the remaining item range. "
+            "Known sections can be read directly without overview. "
+            "Use single reference/start/end ranges for oversized entries; overview lists unknown sections. "
+            "Respect role-specific review requirements. "
+            "Messages and checkpoints are navigation only."
         ), args_schema=ContextCanvasReadArguments, maximum_result_bytes=maximum_result_bytes,
     )]
     if write_args_schema is not None:

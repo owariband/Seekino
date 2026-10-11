@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import tiktoken
 from pydantic import ValidationError
 
 from agent.utils.context_canvas import CanvasRevisionConflict, ContextCanvas
@@ -239,3 +240,88 @@ def test_conflict_refreshes_only_refinement_and_retains_intervening_events():
     runtime.transcribe_chunk.assert_not_awaited()
     runtime.understand_chunk.assert_not_awaited()
     runtime.notify_interval_committed.assert_awaited_once()
+
+
+@pytest.mark.parametrize("correct_events", [False, True], ids=["no-changes", "two-corrections"])
+def test_refine_batches_original_event_details_and_commits_once(correct_events):
+    fixture = json.loads((Path(__file__).parent / "fixtures/context_canvas_refine_36.json").read_text())
+    members = {f"member-{member['sequence_no']}": member for member in fixture["members"]}
+    snapshot = {
+        "interval_parse_task_id": "interval", "video_parse_task_id": "video",
+        "inputs": _inputs(), "lease": _lease(), "start_sequence_no": 0, "chunk_count": 2,
+        "member_sequence_nos": {ref: member["sequence_no"] for ref, member in members.items()},
+        "member_bounds": {ref: tuple(member["bounds"]) for ref, member in members.items()},
+        "member_scopes": {ref: [member["sequence_no"]] for ref, member in members.items()},
+        "member_contents": {ref: member["content"] for ref, member in members.items()},
+        "member_versions": {ref: 1 for ref in members},
+    }
+    calls = []
+
+    async def fake_provider(_snapshot, *, canvas, prompt):
+        assert "references=[...]" in prompt and "Skip overview" in prompt
+        assert "without cursor" in prompt and "brief items are not fully reviewed" in prompt
+        navigation = json.loads(prompt.splitlines()[-1])
+        references = [entry["reference"] for entry in navigation["collections"]["events"]]
+        tools = {tool.name: tool for tool in build_context_canvas_tools(
+            canvas, role="refine", read_collections=("members", "events"),
+            write_args_schema=ParseCanvasWrite, maximum_result_bytes=32_000,
+            maximum_read_chars=12_000, maximum_catalog_items=100, on_call=calls.append,
+        )}
+        start, reviewed = 0, {}
+        while True:
+            raw = tools["get_context_canvas"].invoke({
+                "collection": "events", "references": references, "section": "content",
+                "start": start, "end": len(references),
+            })
+            page = json.loads(raw)
+            assert "error" not in page and len(raw.encode("utf-8")) <= 32_000
+            assert len(tiktoken.get_encoding(page["token_encoding"]).encode(raw, disallowed_special=())) <= 8_000
+            assert sum(len(item.get("content", "")) for item in page["items"]) <= 12_000
+            assert page["revision"] == canvas.revision
+            assert "next_cursor" not in page and page["start"] == start
+            for item in page["items"]:
+                if item.get("truncated"):
+                    assert "content" not in item and "无法看到全量信息" in page["msg"]
+                    continue
+                body = json.loads(item["content"])
+                source = body["source"]
+                assert body["event"] == members[body["member_ref"]]["content"]["timeline"][source["position"]]
+                assert item["reference"] not in reviewed
+                reviewed[item["reference"]] = body
+            assert page["complete_end"] > start
+            start = page["complete_end"]
+            assert len(calls) < len(references)
+            if start == len(references):
+                break
+        assert len(reviewed) == 36
+        if correct_events:
+            issued = {(body["member_ref"], body["source"]["position"]): ref for ref, body in reviewed.items()}
+            receipt = json.loads(tools["write_context_canvas"].invoke({
+                "batch_id": "two-local-corrections", "expected_revision": page["revision"],
+                "operations": [{
+                    "op": "event_array", "event_ref": issued[(f"member-{change['sequence_no']}", change["position"])],
+                    "field": "participants", "action": "add", "values": change["participants_add"],
+                } for change in fixture["corrections"]],
+            }))
+            assert len(receipt["results"]) == 2
+        return CanvasCompletion(complete=True)
+
+    runtime = SimpleNamespace(
+        load_refine_input=AsyncMock(return_value=snapshot),
+        generate_interval_refinement=AsyncMock(side_effect=fake_provider),
+        commit_interval_refinement=AsyncMock(return_value=True), notify_interval_committed=AsyncMock(),
+    )
+    asyncio.run(IntervalRefine(runtime=runtime).run("interval"))
+    runtime.generate_interval_refinement.assert_awaited_once()
+    runtime.commit_interval_refinement.assert_awaited_once()
+    runtime.notify_interval_committed.assert_awaited_once()
+    result = runtime.commit_interval_refinement.await_args.args[1]
+    if not correct_events:
+        assert calls.count("write_context_canvas") == 0 and result.updates == []
+    else:
+        expected = {ref: deepcopy(member["content"]) for ref, member in members.items()}
+        for change in fixture["corrections"]:
+            expected[f"member-{change['sequence_no']}"]["timeline"][change["position"]] = change["expected_event"]
+        assert calls.count("write_context_canvas") == 1
+        for update in result.updates:
+            assert [event.model_dump(mode="json") for event in update.timeline] == expected[f"member-{update.sequence_no}"]["timeline"]

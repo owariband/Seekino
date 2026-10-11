@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 class _InputModel(BaseModel):
@@ -30,7 +30,26 @@ class PrefixContextConfig(_InputModel):
     max_tool_calls: int = Field(ge=0)
 
 
-class FallbackModelConfig(_InputModel):
+class _ModelPolicy(_InputModel):
+    """Optional controls keep historical snapshots readable without rewriting them."""
+
+    context_window_tokens: int | None = Field(default=None, gt=0)
+    context_safety_margin_tokens: int | None = Field(default=None, ge=0)
+    auto_compact_tokens: int | None = Field(default=None, gt=0)
+    compact_target_tokens: int | None = Field(default=None, gt=0)
+    max_input_chars: int | None = Field(default=None, gt=0)
+    supports_vision_input: bool | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_policy(self, handler):
+        values = handler(self)
+        for name in _ModelPolicy.model_fields:
+            if getattr(self, name) is None:
+                values.pop(name, None)
+        return values
+
+
+class FallbackModelConfig(_ModelPolicy):
     source: str = Field(min_length=1)
     model: str = Field(min_length=1)
     request_timeout_seconds: float = Field(gt=0)
@@ -38,7 +57,7 @@ class FallbackModelConfig(_InputModel):
     reasoning_effort: Literal["none", "low", "high", "max"] | None = None
 
 
-class GenerativeModelConfig(_InputModel):
+class GenerativeModelConfig(_ModelPolicy):
     """Credential-free identity and fixed request controls for one model stage."""
 
     source: str = Field(min_length=1)

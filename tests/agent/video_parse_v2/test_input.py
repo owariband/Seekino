@@ -86,6 +86,30 @@ def test_config_snapshot_round_trip_and_default_switches() -> None:
         inputs.parse_config.execution.max_model_calls = 200
 
 
+def test_legacy_model_snapshot_does_not_add_unset_policy_fields():
+    inputs = ParseInput.model_validate(_input_payload())
+    rendered = inputs.model_dump(mode="json")["parse_config"]["models"]["understanding"]
+    assert "context_window_tokens" not in rendered
+    assert "supports_vision_input" not in rendered
+    assert "max_input_chars" not in rendered
+
+
+def test_explicit_model_policy_is_frozen_and_round_trips():
+    payload = _input_payload()
+    policy = {
+        "context_window_tokens": 128000, "context_safety_margin_tokens": 2048,
+        "auto_compact_tokens": 90000, "compact_target_tokens": 60000,
+        "max_input_chars": 400000, "supports_vision_input": True,
+    }
+    payload["parse_config"]["models"]["understanding"].update(policy)
+    inputs = ParseInput.model_validate(payload)
+    restored = ParseInput.model_validate_json(inputs.model_dump_json())
+    model = restored.parse_config.models.understanding
+    assert {name: getattr(model, name) for name in policy} == policy
+    with pytest.raises(ValidationError, match="frozen"):
+        model.context_window_tokens = 256000
+
+
 def test_compact_requires_its_own_settings() -> None:
     payload = _input_payload()
     payload["parse_config"]["compact_enabled"] = True
