@@ -94,7 +94,7 @@ export function AppShell() {
     <div className={styles.shell}>
       <header className={styles.topbar} aria-label="全站导航">
         <NavLink className={styles.brand} to="/watch" aria-label="Seekino 首页">
-          <img src="/seekino-logo.png" alt="" /><strong>seekino</strong>
+          <img src="/assets/seekino-logo.png" alt="" /><strong>seekino</strong>
         </NavLink>
         <nav className={styles.navigation} aria-label="主导航">
           {visibleNavigation.map(({ to, label, icon: Icon }) => (
