@@ -18,8 +18,21 @@ const steps: AgentProgressEvent[] = ["RETRIEVING", "EVALUATING", "RETRIEVING", "
 }));
 
 describe("Agent execution timeline", () => {
+  it("shows only generic status and persisted total duration in release", () => {
+    const view = render(<AgentProgress message={{ ...message, timing: {
+      startedAt: Date.now(), totalDurationMs: 42_298,
+      stages: [{ phase: "QUEUED", durationMs: 13_308 }, { phase: "RETRIEVING", durationMs: 28_985 }],
+    } }} steps={steps} />);
+    expect(screen.getByRole("status", { name: "回答状态" })).toHaveTextContent("处理中 · 已用 42 秒");
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+    expect(screen.queryByText("查找资料")).not.toBeInTheDocument();
+    view.rerender(<AgentProgress message={{ ...message, status: "FAILED", phase: null }} steps={steps} />);
+    expect(screen.getByRole("status", { name: "回答状态" })).toHaveTextContent("回答未完成");
+    expect(screen.queryByText("已完成")).not.toBeInTheDocument();
+  });
+
   it("shows repeated real steps, lets the user collapse them, and collapses on durable completion", async () => {
-    const view = render(<AgentProgress message={message} steps={steps} />);
+    const view = render(<AgentProgress displayMode="debug" message={message} steps={steps} />);
     const card = screen.getByLabelText("回答过程").closest("details")!;
     expect(card).toHaveAttribute("open");
     const list = screen.getByRole("list", { name: "已同步的执行步骤" });
@@ -28,20 +41,20 @@ describe("Agent execution timeline", () => {
     expect(within(list).getByText("进行中")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("回答过程"));
     expect(card).not.toHaveAttribute("open");
-    view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={steps} />);
+    view.rerender(<AgentProgress displayMode="debug" message={{ ...message, status: "COMPLETED", phase: null }} steps={steps} />);
     expect(card).not.toHaveAttribute("open");
     expect(screen.getByText("已完成")).toBeInTheDocument();
   });
 
   it("restores only the known snapshot phase instead of inventing previous steps", () => {
-    render(<AgentProgress message={message} steps={[]} />);
+    render(<AgentProgress displayMode="debug" message={message} steps={[]} />);
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
     expect(screen.getByRole("listitem")).toHaveTextContent("核验资料");
     expect(screen.queryByText("查找资料")).not.toBeInTheDocument();
   });
 
   it("retains observed steps when a newer recovery snapshot supplies the current phase", () => {
-    render(<AgentProgress message={{ ...message, phase: "RESPONDING" }} steps={steps} />);
+    render(<AgentProgress displayMode="debug" message={{ ...message, phase: "RESPONDING" }} steps={steps} />);
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(5);
     expect(rows[4]).toHaveTextContent("生成回答");
@@ -49,18 +62,18 @@ describe("Agent execution timeline", () => {
   });
 
   it("does not show a failure or historical missing steps as successful work", async () => {
-    const view = render(<AgentProgress message={{ ...message, status: "FAILED", phase: null }} steps={steps} />);
+    const view = render(<AgentProgress displayMode="debug" message={{ ...message, status: "FAILED", phase: null }} steps={steps} />);
     expect(screen.getByText("回答未完成")).toBeInTheDocument();
     expect(screen.queryByText("已完成")).not.toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("回答过程"));
     expect(screen.getByText("未确认完成")).toBeInTheDocument();
-    view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
+    view.rerender(<AgentProgress displayMode="debug" message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
     expect(screen.getByText(/完整执行步骤暂不可回放/)).toBeInTheDocument();
   });
 
   it("shows persisted total timing and every repeated phase in order", () => {
-    render(<AgentProgress message={{
+    render(<AgentProgress displayMode="debug" message={{
       ...message,
       status: "COMPLETED",
       phase: null,
@@ -91,7 +104,7 @@ describe("Agent execution timeline", () => {
   it("shows live total and current phase duration from a reconnect snapshot", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-15T00:00:03.500Z"));
-    const view = render(<AgentProgress message={{
+    const view = render(<AgentProgress displayMode="debug" message={{
       ...message,
       phase: "EVALUATING",
       timing: {

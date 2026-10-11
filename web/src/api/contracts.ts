@@ -1,4 +1,6 @@
 export type RuntimeMode = "checking" | "live" | "offline";
+export type DisplayMode = "release" | "debug";
+export interface RuntimeConfig { displayMode: DisplayMode }
 
 export interface AuthIdentity {
   userId: string;

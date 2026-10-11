@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentConversationView, AgentGlobalSettings, AgentMessageOptions, AgentMessageView, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView, VideoEpisodeUpdateRequest, VideoSummary } from "../api/contracts";
+import type { AgentConversationView, AgentGlobalSettings, AgentMessageOptions, AgentMessageView, ParseConfig, SeriesCreateRequest, SeriesUpdateRequest, SeriesView, UploadSessionView, VideoEpisodeUpdateRequest, VideoSummary } from "../api/contracts";
 import { readVideoProgress } from "../features/player/playbackProgress";
 import { App } from "./App";
 import { ThemeProvider } from "./theme";
@@ -37,6 +37,19 @@ const initialMessageOptions: AgentMessageOptions = {
   maxLoopTurns: { defaultValue: 100, minimum: 1, maximum: 100 },
   maxModelCallsPerTurn: { defaultValue: 6, minimum: 1, maximum: 12 },
   maxToolCallsPerTurn: { defaultValue: 24, minimum: 1, maximum: 48 },
+};
+
+const parseDefaults: ParseConfig = {
+  version: 2,
+  window: { chunkDurationSeconds: 60, contextOverlapSeconds: 3, analysisMaxHeight: 720, canonicalMaxHeight: 720 },
+  asr: { mode: "lite", model: "lite", fps: 1, maxOutputTokens: null, concurrency: 4 },
+  vision: { model: "pro", inputMode: "video", fps: 1, maxFramesPerWindow: null, maxOutputTokens: null },
+  context: { maxEvents: 8, maxChars: 2000, backgroundTextEnabled: true, backgroundTextMaxChars: null,
+    backgroundImagesEnabled: true, maxBackgroundImages: null, backgroundImageMaxEdge: 1024 },
+  fallback: { enabled: true, model: "flash", frameFps: 0.5, groupDurationSeconds: 30, maxFramesPerGroup: 15,
+    maxHeight: 720, reasoningEffort: "none", maxOutputTokens: 8192, requestTimeoutSeconds: 1200 },
+  embedding: { model: "embedding", dimensions: 1024, videoFps: 1 },
+  execution: { requestTimeoutSeconds: 600, maxAttempts: 3 },
 };
 
 const initialGlobalSettings: AgentGlobalSettings = {
@@ -113,7 +126,7 @@ function HistoryControls() {
 
 function renderApp(
   availableSeries: SeriesView[] = [apiSeries],
-  options: { failAgentSend?: boolean; failConversationList?: boolean; failInitialConversationCreation?: boolean; failGlobalSettingsSave?: boolean; initialPath?: string; historyControls?: boolean } = {},
+  options: { failAgentSend?: boolean; failConversationList?: boolean; failInitialConversationCreation?: boolean; failGlobalSettingsSave?: boolean; initialPath?: string; historyControls?: boolean; runtimeConfig?: unknown; failRuntimeConfig?: boolean } = {},
 ) {
   let createdSeries: SeriesView | null = null;
   let finishAnswer: (() => void) | undefined;
@@ -134,6 +147,11 @@ function renderApp(
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/healthz")) return jsonResponse({ status: "ok" });
+    if (url.includes("/api/system/runtime-config")) {
+      if (options.failRuntimeConfig) return new Response(null, { status: 503 });
+      return jsonResponse(await (options.runtimeConfig ?? { displayMode: "release" }));
+    }
+    if (url.includes("/api/uploads/parse-config")) return jsonResponse(parseDefaults);
     if (url.includes("/api/series/list")) {
       const items = createdSeries ? [...availableSeries, createdSeries] : availableSeries;
       return jsonResponse({ items, total: items.length, hasMore: false, nextCursor: null });
@@ -329,6 +347,7 @@ describe("application shell", () => {
     expect(await screen.findByRole("dialog", { name: /把每一集/ })).toBeInTheDocument();
     expect(screen.getByText("还没有传输记录。把视频拖到上方即可开始。")).toBeInTheDocument();
     expect(screen.queryAllByRole("progressbar")).toHaveLength(0);
+    expect(screen.queryByRole("region", { name: "解析配置" })).not.toBeInTheDocument();
 
     const input = document.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
@@ -368,6 +387,84 @@ describe("application shell", () => {
 
     await user.click(screen.getByRole("button", { name: "切换至黑夜模式" }));
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+  });
+
+  it("keeps normal settings in release and hides internal configuration", async () => {
+    const { fetchMock, queryClient } = renderApp([apiSeries], { initialPath: "/settings" });
+    await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
+
+    expect(screen.getByRole("heading", { name: "外观" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
+    expect(screen.getByText("资料来源")).toBeInTheDocument();
+    expect(screen.getByText("本机资料")).toBeInTheDocument();
+    expect(screen.getByText("账号")).toBeInTheDocument();
+    expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
+    expect(screen.queryByText("资料空间")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "数据边界" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/agent/global-settings"))).toBe(false);
+
+    await userEvent.setup().click(screen.getByRole("radio", { name: "黑夜模式" }));
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    const runtimeRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/api/system/runtime-config"));
+    expect(new Headers(runtimeRequest?.[1]?.headers).has("x-use-ppe")).toBe(false);
+  });
+
+  it("defaults to release while runtime configuration is pending and enables debug only after success", async () => {
+    let resolveConfig!: (value: unknown) => void;
+    const runtimeConfig = new Promise<unknown>((resolve) => { resolveConfig = resolve; });
+    renderApp([apiSeries], { initialPath: "/settings", runtimeConfig });
+    expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
+    expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
+
+    await act(async () => { resolveConfig({ displayMode: "debug" }); });
+    expect(await screen.findByRole("heading", { name: "全局 Agent 配置" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "数据边界" })).toBeInTheDocument();
+    expect(screen.getByText("资料地址")).toBeInTheDocument();
+    expect(screen.getByText("资料空间")).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /并行传输/ }));
+    expect(await screen.findByRole("region", { name: "解析配置" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "当前默认配置" })).toBeInTheDocument();
+    const customConfig = screen.getByRole("radio", { name: "自定义" });
+    await waitFor(() => expect(customConfig).toBeEnabled());
+    await userEvent.setup().click(customConfig);
+    expect(screen.getByRole("textbox", { name: "Ark 主视觉模型 ID" })).toHaveValue("pro");
+    expect(screen.getByRole("spinbutton", { name: "取帧 FPS" })).toHaveValue(1);
+  });
+
+  it.each([
+    ["missing mode", {}],
+    ["unknown mode", { displayMode: "preview" }],
+    ["wrong case", { displayMode: "DEBUG" }],
+    ["wrong type", { displayMode: 1 }],
+  ])("keeps release when runtime configuration has %s", async (_name, runtimeConfig) => {
+    const { queryClient } = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig });
+    await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("success"));
+    expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
+    expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
+  });
+
+  it("keeps release and normal navigation when runtime configuration fails", async () => {
+    const { queryClient } = renderApp([apiSeries], { initialPath: "/settings", failRuntimeConfig: true });
+    await waitFor(() => expect(queryClient.getQueryState(["runtime-config"])?.status).toBe("error"));
+    expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getAllByRole("link", { name: /资料库/ })[0]!);
+    expect(await screen.findByRole("heading", { name: "资料库", level: 1 })).toBeInTheDocument();
+  });
+
+  it("returns to release after a failed runtime configuration refresh", async () => {
+    const { fetchMock, queryClient } = renderApp([apiSeries], { initialPath: "/settings", runtimeConfig: { displayMode: "debug" } });
+    await screen.findByRole("heading", { name: "全局 Agent 配置" });
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => String(input).includes("/api/system/runtime-config")
+      ? new Response(null, { status: 503 }) : original(input, init));
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["runtime-config"] }); });
+    expect(screen.queryByRole("heading", { name: "全局 Agent 配置" })).not.toBeInTheDocument();
+    expect(screen.queryByText("资料地址")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
   });
 
   it("returns from a video through the brand link without a duplicate watch navigation item", async () => {
@@ -466,7 +563,7 @@ describe("application shell", () => {
   });
 
   it("saves global Agent settings and shows saved versus active restart values", async () => {
-    const { fetchMock } = renderApp();
+    const { fetchMock } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
     await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
     const concurrency = await screen.findByRole("spinbutton", { name: /并行任务上限/ });
@@ -491,7 +588,7 @@ describe("application shell", () => {
   });
 
   it("saves the read tool character limit from global settings", async () => {
-    const { fetchMock } = renderApp();
+    const { fetchMock } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
     await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
     await user.click(screen.getByText("工具输出"));
@@ -515,7 +612,7 @@ describe("application shell", () => {
   });
 
   it("saves independent thinking modes for Query, Evaluator, and Chat", async () => {
-    const { fetchMock } = renderApp();
+    const { fetchMock } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
     await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
     await screen.findByRole("spinbutton", { name: /并行任务上限/ });
@@ -549,7 +646,7 @@ describe("application shell", () => {
   });
 
   it("preserves form edits and asks for a reload after a YAML revision conflict", async () => {
-    renderApp([apiSeries], { failGlobalSettingsSave: true });
+    renderApp([apiSeries], { failGlobalSettingsSave: true, runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
     await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
     const timeout = await screen.findByRole("spinbutton", { name: /审核阶段超时/ });
@@ -812,7 +909,7 @@ describe("application shell", () => {
     const { fetchMock, finishAnswer } = renderApp();
     const user = userEvent.setup();
 
-    expect(await screen.findByText("服务端默认")).toBeInTheDocument();
+    expect(screen.queryByLabelText("配置本次回答")).not.toBeInTheDocument();
     const composer = await screen.findByRole("textbox", {
       name: "向 Seekino 助手提问",
     });
@@ -854,7 +951,7 @@ describe("application shell", () => {
         maxToolCallsPerTurn: 36,
       },
     }));
-    const { fetchMock, finishAnswer } = renderApp();
+    const { fetchMock, finishAnswer } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
     await user.click(await screen.findByLabelText("配置本次回答"));
     expect(screen.getByRole("button", { name: "自动" })).toHaveAttribute("aria-pressed", "true");
@@ -900,7 +997,7 @@ describe("application shell", () => {
       maxModelCallsPerTurn: 9,
       maxToolCallsPerTurn: 36,
     }));
-    const { fetchMock, setMessageOptions, finishAnswer } = renderApp();
+    const { fetchMock, setMessageOptions, finishAnswer } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     expect(await screen.findByText("服务端默认")).toBeInTheDocument();
     await userEvent.setup().click(screen.getByLabelText("配置本次回答"));
     fireEvent.change(screen.getByRole("slider", { name: "单次检索候选片段数量" }), { target: { value: "7" } });
@@ -923,7 +1020,7 @@ describe("application shell", () => {
   });
 
   it("uses a refreshed server default when Chat has no override", async () => {
-    const { fetchMock, setMessageOptions, finishAnswer } = renderApp();
+    const { fetchMock, setMessageOptions, finishAnswer } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     expect(await screen.findByText("服务端默认")).toBeInTheDocument();
     setMessageOptions({
       ...initialMessageOptions,
@@ -941,7 +1038,7 @@ describe("application shell", () => {
   });
 
   it("keeps an in-flight Auto request unchanged when the next answer is set to custom turns", async () => {
-    const { fetchMock, finishAnswer } = renderApp();
+    const { fetchMock, finishAnswer } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
     const composer = await screen.findByRole("textbox", { name: "向 Seekino 助手提问" });
     await user.type(composer, "第一个问题");

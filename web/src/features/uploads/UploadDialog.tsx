@@ -22,6 +22,8 @@ import styles from "./upload-dialog.module.css";
 
 function TaskRow({ task }: { task: UploadTask }) {
   const { pause, resume, attachFile, retry, cancel } = useUploads();
+  const { displayMode } = useWorkspace();
+  const isDebug = displayMode === "debug";
   const replacementRef = useRef<HTMLInputElement>(null);
   const progress = taskProgress(task);
   const canPause = ["queued", "creating", "uploading"].includes(task.status);
@@ -67,21 +69,21 @@ function TaskRow({ task }: { task: UploadTask }) {
           <div className={styles.stageLine}>
             <span>
               {task.videoParseTask
-                ? `${taskStatusLabel(task)} · ${videoParsePosition}`
-                : `${publicParseStageLabel(task.job!.stage)} · ${parsePosition}`}
+                ? `${taskStatusLabel(task)}${isDebug ? ` · ${videoParsePosition}` : ""}`
+                : `${publicParseStageLabel(task.job!.stage)}${isDebug ? ` · ${parsePosition}` : ""}`}
             </span>
-            <span>
+            {isDebug ? <span>
               {(task.videoParseTask ?? task.job)!.attemptCount}/
               {(task.videoParseTask ?? task.job)!.maxAttempts} 次尝试
-            </span>
+            </span> : null}
           </div>
         ) : null}
-        {selectedConfig ? <p className={styles.taskConfig}>
+        {isDebug ? selectedConfig ? <p className={styles.taskConfig}>
           解析配置：{selectedConfig.window.analysisMaxHeight}p · {selectedConfig.vision.fps} FPS ·
           {selectedConfig.vision.inputMode === "ordered_frames"
             ? ` 每段最多 ${selectedConfig.vision.maxFramesPerWindow} 帧`
             : "直传视频"}
-        </p> : task.session ? <p className={styles.taskConfig}>历史任务未记录解析配置</p> : null}
+        </p> : task.session ? <p className={styles.taskConfig}>历史任务未记录解析配置</p> : null : null}
         {task.error ? <p className={styles.error}>{task.error}</p> : null}
       </div>
       <div className={styles.taskActions}>
@@ -263,7 +265,8 @@ export function UploadDialog() {
     overallProgress,
     dismissFinished,
   } = useUploads();
-  const { mode, selectedSeries } = useWorkspace();
+  const { mode, selectedSeries, displayMode } = useWorkspace();
+  const isDebug = displayMode === "debug";
   const [pending, setPending] = useState<UploadInput[]>([]);
   const [dragging, setDragging] = useState(false);
   const [parseDefaults, setParseDefaults] = useState<ParseConfig | null>(null);
@@ -277,7 +280,7 @@ export function UploadDialog() {
   }, [dialogOpen]);
 
   useEffect(() => {
-    if (!dialogOpen) return;
+    if (!dialogOpen || !isDebug) return;
     const controller = new AbortController();
     void getParseConfig(controller.signal).then((defaults) => {
       setParseDefaults(defaults);
@@ -287,7 +290,7 @@ export function UploadDialog() {
       if (!controller.signal.aborted) setParseConfigError(errorMessage(error));
     });
     return () => controller.abort();
-  }, [dialogOpen]);
+  }, [dialogOpen, isDebug]);
 
   if (!dialogOpen) return null;
 
@@ -319,12 +322,12 @@ export function UploadDialog() {
   };
 
   const start = () => {
-    if (customConfig && !parseConfig) {
+    if (isDebug && customConfig && !parseConfig) {
       setParseConfigError("解析配置尚未加载完成");
       return;
     }
     for (const item of pending) {
-      const selected = item.parseConfig ?? (customConfig ? parseConfig : null);
+      const selected = isDebug ? item.parseConfig ?? (customConfig ? parseConfig : null) : null;
       if (selected && parseDefaults) {
         const problem = validateParseConfig(selected, parseDefaults);
         if (problem) {
@@ -336,7 +339,7 @@ export function UploadDialog() {
     setParseConfigError(null);
     enqueue(pending.map((item) => ({
       ...item,
-      parseConfig: item.parseConfig ?? (customConfig ? parseConfig ?? undefined : undefined),
+      parseConfig: isDebug ? item.parseConfig ?? (customConfig ? parseConfig ?? undefined : undefined) : undefined,
     })));
     setPending([]);
   };
@@ -387,7 +390,7 @@ export function UploadDialog() {
           <input ref={inputRef} className="sr-only" type="file" accept=".mp4,.mov,.avi,video/mp4,video/quicktime,video/x-msvideo" multiple onChange={onInput} />
         </div>
 
-        <section className={styles.parseConfig} aria-label="解析配置">
+        {isDebug ? <section className={styles.parseConfig} aria-label="解析配置">
           <div className={styles.sectionTitle}>
             <span>解析配置</span>
             <small>上传前确定；任务重试沿用同一份参数</small>
@@ -404,7 +407,7 @@ export function UploadDialog() {
             <ParseConfigFields value={parseConfig} defaults={parseDefaults} onChange={setParseConfig} />
             <button className={styles.resetConfig} type="button" onClick={() => setParseConfig(structuredClone(parseDefaults))}>恢复当前默认值</button>
           </> : null}
-        </section>
+        </section> : null}
 
         {pending.length > 0 ? (
           <section className={styles.pending} aria-label="待上传文件">
@@ -437,12 +440,12 @@ export function UploadDialog() {
                     }
                   />
                 </label>
-                {customConfig && parseConfig ? <button className={styles.lockConfig} type="button"
+                {isDebug && customConfig && parseConfig ? <button className={styles.lockConfig} type="button"
                   onClick={() => setPending((current) => current.map((entry, entryIndex) =>
                     entryIndex === index ? { ...entry, parseConfig: structuredClone(parseConfig) } : entry,
                   ))}>
                   {item.parseConfig ? "已锁定本集配置" : "锁定本集配置"}
-                </button> : item.parseConfig ? <span className={styles.lockedConfig}>本集独立配置</span> : null}
+                </button> : isDebug && item.parseConfig ? <span className={styles.lockedConfig}>本集独立配置</span> : null}
                 <button
                   className={styles.iconButton}
                   type="button"

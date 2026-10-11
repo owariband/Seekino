@@ -7,6 +7,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UsageOverviewVO, UsageTotals } from "../../api/contracts";
 import { UsagePage } from "./UsagePage";
 
+const workspace = vi.hoisted(() => ({ displayMode: "debug" as "release" | "debug" }));
+
+vi.mock("../../app/workspace", () => ({
+  useWorkspace: () => workspace,
+}));
+
 function totals(overrides: Partial<UsageTotals> = {}): UsageTotals {
   return {
     callCount: 2, inputTokens: 1_000, outputTokens: 200, cachedInputTokens: 80, cacheWriteInputTokens: 40,
@@ -36,9 +42,48 @@ function renderPage(queryClient = new QueryClient({ defaultOptions: { queries: {
   return { queryClient, ...render(<QueryClientProvider client={queryClient}><MemoryRouter><UsagePage /></MemoryRouter></QueryClientProvider>) };
 }
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); workspace.displayMode = "debug"; vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("local Token usage page", () => {
+  it("keeps overall Tokens and completeness visible in release without internal call details", async () => {
+    workspace.displayMode = "release";
+    vi.stubGlobal("fetch", vi.fn(async () => response(overview({
+      totals: totals({ totalTokens: null, missingUsageCount: 1 }), truncated: true,
+    }))));
+    renderPage();
+
+    expect(await screen.findByText(/1 条调用记录缺少完整 Token 用量/)).toBeInTheDocument();
+    const summary = within(screen.getByLabelText("模型消耗概况"));
+    expect(summary.getByText("1,200")).toBeInTheDocument();
+    expect(summary.getByText("已知 Token 小计")).toBeInTheDocument();
+    expect(screen.getByText(/当前结果被截断/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刷新用量" })).toBeEnabled();
+    expect(screen.queryByLabelText("视频系列")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "用量统计方式" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByText(/provider-A|model-A|parse-A|chat-B|缓存输入|推理 Token/)).not.toBeInTheDocument();
+  });
+
+  it("returns to the complete overview when a debug series filter is hidden by release mode", async () => {
+    const filtered = overview({ totals: totals({ callCount: 1, totalTokens: 333, knownTokens: 333 }) });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => response(
+      new URL(String(input), "http://localhost").searchParams.get("seriesId") ? filtered : overview(),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const { queryClient, rerender } = renderPage();
+    await screen.findByText("model-A");
+    await userEvent.selectOptions(screen.getByLabelText("视频系列"), "series-A");
+    expect(await screen.findByText("1 条已记录调用")).toBeInTheDocument();
+
+    workspace.displayMode = "release";
+    rerender(<QueryClientProvider client={queryClient}><MemoryRouter><UsagePage /></MemoryRouter></QueryClientProvider>);
+    expect(screen.getByText("2 条已记录调用")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("模型消耗概况")).getByText("1,200")).toBeInTheDocument();
+    expect(screen.queryByLabelText("视频系列")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("reads one overview and displays server Token totals in both views", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL) => response(overview()));
     vi.stubGlobal("fetch", fetchMock);

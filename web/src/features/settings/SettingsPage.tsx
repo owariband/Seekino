@@ -214,7 +214,8 @@ function GlobalAgentSettings({ mode }: { mode: string }) {
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
-  const { mode } = useWorkspace();
+  const { mode, displayMode } = useWorkspace();
+  const isDebug = displayMode === "debug";
   const { activeSource, activeTenantId, accountIdentity, accountConnection, accountStatus, accountError, retryAccount } = useAuth();
   const shownApiUrl = new URL(activeSource.connection.baseUrl || "/", window.location.origin).href.replace(/\/$/, "");
   const accountLabel = accountStatus === "unconfigured" ? "未连接账号服务"
@@ -250,10 +251,10 @@ export function SettingsPage() {
           <dl className={styles.connectionList}>
             <div><dt><Database size={16} />资料来源</dt><dd>{activeSource.kind === "local" ? "本机资料" : activeSource.kind === "public" ? "公开资料" : "我的资料"}</dd></div>
             <div><dt><Server size={16} />资料连接</dt><dd data-mode={mode}><i />{mode === "live" ? "已连接" : mode === "offline" ? "不可用" : "正在检查"}</dd></div>
-            <div><dt><Database size={16} />资料地址</dt><dd>{shownApiUrl}</dd></div>
-            <div><dt><ShieldCheck size={16} />资料空间</dt><dd>{activeTenantId}</dd></div>
+            {isDebug ? <div><dt><Database size={16} />资料地址</dt><dd>{shownApiUrl}</dd></div> : null}
+            {isDebug ? <div><dt><ShieldCheck size={16} />资料空间</dt><dd>{activeTenantId}</dd></div> : null}
             <div><dt><ShieldCheck size={16} />账号</dt><dd>{accountLabel}</dd></div>
-            {accountConnection ? <div><dt><Server size={16} />账号地址</dt><dd>{new URL(accountConnection.baseUrl || "/", window.location.origin).href.replace(/\/$/, "")}</dd></div> : null}
+            {isDebug && accountConnection ? <div><dt><Server size={16} />账号地址</dt><dd>{new URL(accountConnection.baseUrl || "/", window.location.origin).href.replace(/\/$/, "")}</dd></div> : null}
           </dl>
           {accountStatus === "unavailable" ? <p className={styles.modeNote}>{accountError || "账号服务暂时不可用。"} <button className="button-secondary" type="button" onClick={retryAccount}>重新连接</button></p> : null}
           {mode === "offline" ? (
@@ -261,16 +262,16 @@ export function SettingsPage() {
           ) : null}
         </section>
 
-        <GlobalAgentSettings mode={mode} />
+        {isDebug ? <GlobalAgentSettings mode={mode} /> : null}
 
-        <section className={styles.settingsSection}>
+        {isDebug ? <section className={styles.settingsSection}>
           <div className={styles.sectionIntro}><span>04</span><div><h2>数据边界</h2><p>前端只通过公开 HTTP 接口访问媒体，不尝试读取内部 artifact URI。</p></div></div>
           <div className={styles.boundaries}>
             <article><strong>上传确认</strong><p>分片经过 SHA-256 校验，并由服务端确认后才进入已上传进度。</p></article>
             <article><strong>检索理由</strong><p>只根据 Evidence、召回通道与排名生成可核验摘要，不展示或伪造私有思维链。</p></article>
             <article><strong>断线恢复</strong><p>SSE 只负责通知；恢复后重新获取 MySQL 快照，并以服务端状态为准。</p></article>
           </div>
-        </section>
+        </section> : null}
       </div>
     </main>
   );

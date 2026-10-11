@@ -4,6 +4,7 @@ import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentMessageView, RetrievalChannelWeights, SeriesSummary, VideoChunkSearchHit } from "../../api/contracts";
+import * as api from "../../api/client";
 import { SearchPage, type SearchPageHandle } from "./SearchPage";
 
 const mocks = vi.hoisted(() => ({
@@ -140,8 +141,9 @@ function renderPage(
     captureExtraContext?: () => Record<string, unknown> | null;
     onOpenVideo?: (target: { seriesId: string; videoId: string; startSeconds: number }) => void;
   } = {},
+  displayMode: "release" | "debug" = "release",
 ) {
-  mocks.useWorkspace.mockReturnValue({ mode: "live", series: videoSeries, isLoading: false });
+  mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode, series: videoSeries, isLoading: false });
   mocks.useAgentConversation.mockReturnValue({
     conversationId: "conversation-1",
     messages: [message],
@@ -166,6 +168,36 @@ afterEach(() => {
 });
 
 describe("Search assistant presentation", () => {
+  it("keeps stored debug overrides available in debug and excludes them from release requests", async () => {
+    const key = api.identityStorageKey("anivag-agent-message-options");
+    const overrides = { topK: 3, maxLoopTurns: 9, maxModelCallsPerTurn: 4, maxToolCallsPerTurn: 8 };
+    localStorage.setItem(key, JSON.stringify({ overrides }));
+    vi.spyOn(api, "getAgentMessageOptions").mockResolvedValue({
+      topK: { defaultValue: 10, minimum: 1, maximum: 20 },
+      maxLoopTurns: { defaultValue: 100, minimum: 1, maximum: 100 },
+      maxModelCallsPerTurn: { defaultValue: 6, minimum: 1, maximum: 12 },
+      maxToolCallsPerTurn: { defaultValue: 24, minimum: 1, maximum: 48 },
+    });
+    try {
+      const view = renderPage(assistantMessage("可以提问"), [series], {}, "debug");
+      expect(await screen.findByText("每次检索 3 段 · 最多 9 轮")).toBeInTheDocument();
+      expect(screen.getByLabelText("配置本次回答")).toBeInTheDocument();
+      const user = userEvent.setup();
+      await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
+      await user.click(screen.getByRole("button", { name: "发送问题" }));
+      expect(mocks.send).toHaveBeenLastCalledWith("你好", [], null, overrides);
+      mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "release", series: [series], isLoading: false });
+      view.rerender(<SearchPage />);
+      expect(screen.queryByLabelText("配置本次回答")).not.toBeInTheDocument();
+      await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "继续");
+      await user.click(screen.getByRole("button", { name: "发送问题" }));
+      expect(mocks.send).toHaveBeenLastCalledWith("继续", [], null, {});
+      expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ overrides });
+    } finally {
+      localStorage.removeItem(key);
+    }
+  });
+
   it("uses the current ready series for an embedded conversation and opens evidence in the whole-video player", async () => {
     const hit = searchHit("chunk-1", 1, "片段首帧");
     const onOpenVideo = vi.fn();
@@ -302,7 +334,7 @@ describe("Search assistant presentation", () => {
     expect(screen.getByRole("heading", { name: "Seekino 助手", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "公开资料" })).toHaveAttribute("href", "https://example.com/source");
     expect(screen.queryByText(/可用视频范围/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText("回答过程")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "回答状态" })).toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 

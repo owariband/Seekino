@@ -6,6 +6,10 @@ from ...schema import ContractModel
 from .commonVO import UnixTimeMs
 
 
+class RuntimeConfigView(ContractModel):
+    display_mode: Literal["release", "debug"]
+
+
 class ParseConsumerHealthView(ContractModel):
     status: Literal["running", "failed", "stopped"]
     failure: str | None = None

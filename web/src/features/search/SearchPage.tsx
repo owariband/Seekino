@@ -136,7 +136,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   { embedded = false, initialSeriesId, captureExtraContext, onOpenVideo },
   ref,
 ) {
-  const { mode, series, isLoading: workspaceLoading } = useWorkspace();
+  const { mode, displayMode, series, isLoading: workspaceLoading } = useWorkspace();
   const [requestedConversationId, setRequestedConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<AgentConversationView[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
@@ -213,6 +213,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const activeConversation = conversations.find((item) => item.conversationId === conversationId) ?? null;
 
   useEffect(() => {
+    if (displayMode !== "debug") return;
     let active = true;
     const refresh = () => {
       const requestId = ++messageOptionsRequestRef.current;
@@ -236,8 +237,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     };
     refresh();
     window.addEventListener("focus", refresh);
-    return () => { active = false; };
-  }, []);
+    return () => { active = false; window.removeEventListener("focus", refresh); };
+  }, [displayMode]);
 
   useEffect(() => {
     if (!messageOptionOverrides) return;
@@ -324,7 +325,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     setPlaybackContextError(null);
     followThread.current = true;
     setConversationStatus("问题已发送，正在处理");
-    const options = messageOptionOverrides
+    const options = displayMode === "debug" && messageOptionOverrides
       ? { ...messageOptionOverrides, maxLoopTurns: messageOptionOverrides.maxLoopTurns || undefined }
       : {};
     if (extraContext === null) void send(query, selectedSeriesIds, reference, options);
@@ -572,7 +573,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                   </div>
                 ) : (
                   <div>
-                    <AgentProgress message={message} steps={progress[message.messageId] ?? []} />
+                    <AgentProgress message={message} steps={progress[message.messageId] ?? []} displayMode={displayMode} />
                     {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || "本次回答未完成"}</p> : null}
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>未生成回答</p> : null}
                     {message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
@@ -692,7 +693,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     {!series.length ? <p>资料库还没有视频系列</p> : null}
                   </div>
                 </details>
-                <details
+                {displayMode === "debug" ? <details
                   className={`${styles.scopePicker} ${styles.answerSettingsPicker}`}
                   ref={answerSettingsRef}
                   onToggle={(event) => {
@@ -780,7 +781,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                       </>
                     ) : <p role={messageOptionsError ? "alert" : "status"}>{messageOptionsError ? `暂时无法读取设置：${messageOptionsError}` : "正在读取服务端限制…"}</p>}
                   </div>
-                </details>
+                </details> : null}
               </div>
               <span className={styles.keyboardHint}>Enter 发送 · Shift + Enter 换行</span>
             </div>

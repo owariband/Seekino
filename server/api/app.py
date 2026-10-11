@@ -94,6 +94,7 @@ def build_app(
                 "If-None-Match",
                 "Last-Event-ID",
                 "X-CSRF-Token",
+                "X-Use-PPE",
             ],
             expose_headers=["Content-Range", "Content-Length", "Accept-Ranges", "ETag", "X-Request-Id"],
         )

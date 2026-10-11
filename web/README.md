@@ -74,6 +74,29 @@ VITE_TENANT_ID=local-default
 `VITE_API_BASE_URL` 留空时使用同源地址；`VITE_TENANT_ID` 未设置时遵循服务端默认值
 `local-default`。连接失败不会生成本地替代数据。
 
+## Release / Debug 展示模式
+
+同一套构建按请求头选择展示模式。后端公开接口 `GET /api/system/runtime-config`
+仅在 `x-use-ppe` 的值精确等于 `1` 时返回 `{"displayMode":"debug"}`，其他情况均
+返回 release。响应使用 `Cache-Control: private, no-store` 和 `Vary: x-use-ppe`。
+网关需同时向页面和后续 API 请求注入该头；前端不会自行补头，也不使用环境变量、
+URL 参数或本地存储启用 debug。
+
+工作区从当前资料来源的 API 读取模式。首次加载、接口失败或返回值未知时使用
+release；切换来源会取消旧请求，避免旧来源的 debug 结果影响新页面。
+
+- Release 保留状态、整体进度、总耗时、回答与视频证据、用量概况及正常操作。
+- Debug 额外展示解析切片 / 理解 / Refine / 完成单元、执行阶段明细、模型与预算
+  设置、内部连接信息及调用用量明细。
+
+Debug 中保存的 Chat 参数不会进入 release 请求，release 使用服务端默认限制。
+上传在 release 使用默认解析配置。日志、模型用量记录和权限判断不随展示模式改变。
+
+验收时分别通过网关注入与移除 `x-use-ppe: 1`，确认技术明细出现与隐藏，普通上传、
+Chat、错误提示和任务操作仍可使用。直接访问本地开发服务且不注入 header 时默认为
+release；也可用 `curl -H 'x-use-ppe: 1' http://127.0.0.1:9621/api/system/runtime-config`
+检查后端判定。
+
 本机资料不要求账号登录。若要在 localhost 登录远端账号、浏览远端公开或个人资料，
 在 `web/.env.local` 增加固定的远端服务地址，然后重启 Vite：
 

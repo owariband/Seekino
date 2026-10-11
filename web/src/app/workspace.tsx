@@ -13,6 +13,7 @@ import {
   identityStorageKey,
   createSeries as createSeriesRequest,
   getSeries,
+  getRuntimeConfig,
   listSeries,
   updateSeries as updateSeriesRequest,
   updateVideoEpisode as updateVideoEpisodeRequest,
@@ -20,6 +21,7 @@ import {
   TENANT_ID,
 } from "../api/client";
 import type {
+  DisplayMode,
   RuntimeMode,
   SeriesCreateRequest,
   SeriesUpdateRequest,
@@ -31,6 +33,7 @@ import type {
 
 interface WorkspaceContextValue {
   mode: RuntimeMode;
+  displayMode: DisplayMode;
   series: SeriesSummary[];
   selectedSeries: SeriesView | null;
   selectedSeriesId: string | null;
@@ -58,6 +61,15 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
     retry: shouldRetryApiRequest,
     refetchInterval: 15_000,
   });
+
+  const runtimeConfig = useQuery({
+    queryKey: ["runtime-config"],
+    queryFn: ({ signal }) => getRuntimeConfig(signal),
+    retry: false,
+    refetchInterval: 15_000,
+  });
+  const displayMode: DisplayMode = !runtimeConfig.isError && runtimeConfig.data?.displayMode === "debug"
+    ? "debug" : "release";
 
   const seriesQuery = useQuery({
     queryKey: ["series"],
@@ -121,6 +133,7 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
   const value = useMemo<WorkspaceContextValue>(
     () => ({
       mode,
+      displayMode,
       series,
       selectedSeries,
       selectedSeriesId,
@@ -161,6 +174,7 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
     }),
     [
       error,
+      displayMode,
       mode,
       queryClient,
       selectedSeries,

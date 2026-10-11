@@ -253,6 +253,10 @@
   margin-top: 16px;
 }
 
+.jobProgressRelease {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .pipeline {
   position: relative;
   display: grid;

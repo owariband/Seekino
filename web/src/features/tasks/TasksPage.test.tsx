@@ -14,6 +14,11 @@ const uploadActions = vi.hoisted(() => ({
   openDialog: vi.fn(),
   syncRequeuedParse: vi.fn(),
 }));
+const workspace = vi.hoisted(() => ({ displayMode: "debug" as "release" | "debug" }));
+
+vi.mock("../../app/workspace", () => ({
+  useWorkspace: () => workspace,
+}));
 
 vi.mock("../uploads/UploadProvider", () => ({
   useUploads: () => uploadActions,
@@ -80,6 +85,7 @@ function renderPage() {
 }
 
 afterEach(() => {
+  workspace.displayMode = "debug";
   vi.unstubAllGlobals();
   uploadActions.forgetDeletedSession.mockReset();
   uploadActions.openDialog.mockReset();
@@ -87,6 +93,35 @@ afterEach(() => {
 });
 
 describe("V2 task observation", () => {
+  it("hides internal parsing statistics in release while preserving progress, errors and actions", async () => {
+    workspace.displayMode = "release";
+    const failed: VideoParseTaskView = {
+      ...task("PARSING_FAILED"),
+      chunkCount: 24,
+      detail: {
+        progress: {
+          completedChunks: 24, totalChunks: 24, completedRefines: 8, totalRefines: 22,
+          completedUnits: 32, totalUnits: 46, percent: 32 / 46 * 100,
+          topologyReady: true, indexedIntervals: 0,
+        },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [failed], total: 1, hasMore: false, nextCursor: null,
+    })));
+    const { container } = renderPage();
+
+    expect(await screen.findByRole("heading", { name: "解析异常" })).toBeInTheDocument();
+    expect(screen.getByLabelText("解析进度")).toHaveTextContent("69.6%");
+    expect(screen.queryByLabelText("解析任务进度")).not.toBeInTheDocument();
+    expect(container).not.toHaveTextContent(/固定切片|理解|Refine|完成单元|有效解析时长/);
+    expect(screen.getByText("解析失败")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `重试解析 ${failed.originalFilename}` })).toBeEnabled();
+    expect(screen.getByRole("button", { name: `整集重新解析 ${failed.originalFilename}` })).toBeEnabled();
+    expect(screen.getByRole("button", { name: `删除任务 ${failed.originalFilename}` })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "管理上传" })).toBeEnabled();
+  });
+
   it("reads V2 tasks and filters each persisted status without adapting them to V1 jobs", async () => {
     const tasks = [
       task("PENDING"),

@@ -406,6 +406,7 @@ def test_api_paths_name_create_list_get_and_upload_actions(tmp_path: Path) -> No
 
     assert {
         "/healthz",
+        "/api/system/runtime-config",
         "/api/auth/me",
         "/api/auth/guest",
         "/api/auth/email/send",
@@ -2527,6 +2528,55 @@ def test_retrieval_domain_errors_keep_http_mapping_through_harness(tmp_path, fai
         service.close()
 
 
+@pytest.mark.parametrize(("header_value", "expected_mode"), [
+    (None, "release"),
+    ("", "release"),
+    ("0", "release"),
+    ("01", "release"),
+    ("true", "release"),
+    ("debug", "release"),
+    (" 1", "release"),
+    ("1 ", "release"),
+    ("1,0", "release"),
+    ("1", "debug"),
+])
+def test_runtime_config_requires_exact_ppe_header(tmp_path, header_value, expected_mode):
+    client, _, _ = _client(tmp_path)
+    try:
+        headers = {} if header_value is None else {"x-use-ppe": header_value}
+        response = client.get("/api/system/runtime-config", headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json() == {"displayMode": expected_mode}
+    finally:
+        client.app.state.services.agent.close()
+
+
+@pytest.mark.parametrize("auth_mode", ["local", "cloud"])
+def test_runtime_config_is_public_uncached_and_request_scoped(tmp_path, auth_mode):
+    from server.config.auth import AuthConfig
+
+    client, _, _ = _client(tmp_path)
+    client.app.state.auth_config = AuthConfig(
+        mode=auth_mode,
+        secret_key="runtime-config-test-secret-key-32",
+    )
+    try:
+        for headers, expected_mode in [
+            ({"X-Use-PPE": "1"}, "debug"),
+            ({}, "release"),
+            ({"X-Use-PPE": "0"}, "release"),
+            ({"X-Use-PPE": "1"}, "debug"),
+        ]:
+            response = client.get("/api/system/runtime-config", headers=headers)
+            assert response.status_code == 200, response.text
+            assert response.json() == {"displayMode": expected_mode}
+            assert response.headers["Cache-Control"] == "private, no-store"
+            assert response.headers["Vary"] == "x-use-ppe"
+            assert "Set-Cookie" not in response.headers
+    finally:
+        client.app.state.services.agent.close()
+
+
 def test_ui_error_and_time_contracts_require_explicit_workspace(tmp_path):
     client, _, _ = _client(tmp_path)
     try:
@@ -2741,5 +2791,20 @@ def test_ui_cors_allows_stream_and_media_headers(tmp_path, monkeypatch):
             "Access-Control-Request-Headers": "Content-Type",
         })
         assert settings_preflight.status_code == 200, settings_preflight.text
+        runtime_preflight = client.options("/api/system/runtime-config", headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "X-Use-PPE",
+        })
+        assert runtime_preflight.status_code == 200, runtime_preflight.text
+        runtime_config = client.get("/api/system/runtime-config", headers={
+            "Origin": "http://localhost:5173", "X-Use-PPE": "1",
+        })
+        assert runtime_config.json() == {"displayMode": "debug"}
+        assert runtime_config.headers["Cache-Control"] == "private, no-store"
+        assert runtime_config.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
+        assert {part.strip().lower() for part in runtime_config.headers["Vary"].split(",")} == {
+            "x-use-ppe", "origin",
+        }
     finally:
         service.close()

@@ -1,14 +1,23 @@
 from __future__ import annotations
 
-from fastapi import Request
+from fastapi import Request, Response
 
 from ..utils.time import now_unix_time_ms
 from ..model.vo.systemVO import (
     HealthComponentsView,
     HealthView,
     ParseConsumerHealthView,
+    RuntimeConfigView,
 )
 from .context import get_services
+
+
+def runtime_config(request: Request, response: Response) -> RuntimeConfigView:
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "x-use-ppe"
+    return RuntimeConfigView(
+        display_mode="debug" if request.headers.get("x-use-ppe") == "1" else "release",
+    )
 
 
 def health(request: Request) -> HealthView:

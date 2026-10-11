@@ -17,6 +17,7 @@ import type {
   Page,
   ParseConfig,
   ParseJobView,
+  RuntimeConfig,
   UsageOverviewOptions,
   UsageOverviewVO,
   SeriesCreateRequest,
@@ -237,6 +238,10 @@ export async function checkHealth(): Promise<boolean> {
   const payload = (await response.json()) as { status?: string };
   signal?.throwIfAborted();
   return payload.status === "ok";
+}
+
+export function getRuntimeConfig(signal?: AbortSignal): Promise<RuntimeConfig> {
+  return requestJson("/api/system/runtime-config", { signal, cache: "no-store" });
 }
 
 export function listSeries(cursor?: string, limit = 100): Promise<Page<SeriesSummary>> {

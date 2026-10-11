@@ -20,6 +20,7 @@ import {
   getAgentMessageOptions,
   getJob,
   getParseConfig,
+  getRuntimeConfig,
   getUsageOverview,
   getSeries,
   getUploadSession,
@@ -129,6 +130,40 @@ describe("independent account and data connections", () => {
   const source = (connection = remote, identity = member): DataSource => ({
     key: `${connection.id}:${identity.userId}:personal-id`, kind: "personal",
     connection, tenantId: "personal-id", identity,
+  });
+
+  it("reads display mode from the active API without manufacturing a PPE header", async () => {
+    configureDataSource(source());
+    const query = new AbortController();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ displayMode: "debug" })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getRuntimeConfig(query.signal)).resolves.toEqual({ displayMode: "debug" });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/remote/api/system/runtime-config");
+    expect(init).toMatchObject({ credentials: "include", cache: "no-store" });
+    expect(new Headers(init?.headers).has("x-use-ppe")).toBe(false);
+    query.abort();
+    expect(init?.signal?.aborted).toBe(true);
+  });
+
+  it("rejects a late debug config when the data source changes or its query is canceled", async () => {
+    configureDataSource(source());
+    let release!: (response: Response) => void;
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>((resolve) => { release = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    const stale = getRuntimeConfig();
+    const rejected = expect(stale).rejects.toMatchObject({ name: "AbortError" });
+    configureApiIdentity(localIdentity, "local-default");
+    expect(fetchMock.mock.calls[0]![1]?.signal?.aborted).toBe(true);
+    release(new Response(JSON.stringify({ displayMode: "debug" })));
+    await rejected;
+
+    const query = new AbortController();
+    const canceled = getRuntimeConfig(query.signal);
+    const canceledResult = expect(canceled).rejects.toMatchObject({ name: "AbortError" });
+    query.abort();
+    release(new Response(JSON.stringify({ displayMode: "debug" })));
+    await canceledResult;
   });
 
   it("keeps local requests and SSE alive while a remote account logs in or out", async () => {

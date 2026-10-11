@@ -24,6 +24,7 @@ import type {
   VideoParseTaskStatus,
   VideoParseTaskView,
 } from "../../api/contracts";
+import { useWorkspace } from "../../app/workspace";
 import { episodeLabel } from "../../shared/format";
 import { useUploads } from "../uploads/UploadProvider";
 import styles from "./tasks.module.css";
@@ -101,6 +102,8 @@ function mergeTaskProjection(
 }
 
 export function TasksPage() {
+  const { displayMode } = useWorkspace();
+  const isDebug = displayMode === "debug";
   const { forgetDeletedSession, openDialog, syncRequeuedParse } = useUploads();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<Filter>("all");
@@ -447,7 +450,7 @@ export function TasksPage() {
 
               {actionErrors[task.videoParseTaskId] ? <p className={styles.actionError} role="alert">{actionErrors[task.videoParseTaskId]}</p> : null}
 
-              <div className={styles.jobProgress}>
+              <div className={clsx(styles.jobProgress, !isDebug && styles.jobProgressRelease)}>
                 <div className={styles.pipeline}>
                   <div className={styles.pipelineLine}><span style={{ width: `${pipelineProgress}%` }} /></div>
                   {PIPELINE.map((stage, index) => (
@@ -460,20 +463,20 @@ export function TasksPage() {
                   ))}
                 </div>
 
-                <div className={styles.progressFacts} aria-label="解析任务进度">
+                {isDebug ? <div className={styles.progressFacts} aria-label="解析任务进度">
                   <span>固定切片 <strong>{task.chunkCount} 段</strong></span>
                   {progress ? <>
                     <span>理解 <strong>{progress.completedChunks} / {progress.totalChunks}</strong></span>
                     <span>Refine <strong>{progress.completedRefines} / {progress.totalRefines}</strong></span>
                     <span>完成单元 <strong>{progress.completedUnits} / {progress.totalUnits}</strong></span>
                   </> : null}
-                </div>
+                </div> : null}
               </div>
 
               <div className={styles.jobDetail}>
                 <dl>
                   <div><dt>文件</dt><dd title={filename}>{filename}</dd></div>
-                  <div title="仅统计实际解析时间，排队和停机不计入"><dt>有效解析时长</dt><dd>{processingDurationText(task)}</dd></div>
+                  {isDebug ? <div title="仅统计实际解析时间，排队和停机不计入"><dt>有效解析时长</dt><dd>{processingDurationText(task)}</dd></div> : null}
                   <div><dt>更新于</dt><dd>{new Date(task.updateTime).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</dd></div>
                 </dl>
               </div>

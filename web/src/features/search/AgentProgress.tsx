@@ -1,7 +1,7 @@
 import { Check, ChevronDown, CircleAlert, Clock3, LoaderCircle, MessageSquareText, ScanSearch, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { AgentMessageTiming, AgentMessageView, AnswerPhase } from "../../api/contracts";
+import type { AgentMessageTiming, AgentMessageView, AnswerPhase, DisplayMode } from "../../api/contracts";
 import type { AgentProgressEvent } from "./useAgentConversation";
 import styles from "./search.module.css";
 
@@ -34,7 +34,7 @@ function latestTiming(message: AgentMessageView, steps: AgentProgressEvent[]): A
   return message.timing ?? [...steps].reverse().find((step) => step.timing)?.timing ?? null;
 }
 
-export function AgentProgress({ message, steps }: { message: AgentMessageView; steps: AgentProgressEvent[] }) {
+export function AgentProgress({ message, steps, displayMode = "release" }: { message: AgentMessageView; steps: AgentProgressEvent[]; displayMode?: DisplayMode }) {
   const processing = message.status === "PROCESSING";
   const failed = message.status === "FAILED";
   const timing = latestTiming(message, steps);
@@ -69,10 +69,14 @@ export function AgentProgress({ message, steps }: { message: AgentMessageView; s
     });
   }
   const currentPhase = message.phase ?? visibleSteps.at(-1)?.phase ?? steps.at(-1)?.phase;
-  const status = failed ? "回答未完成" : processing ? currentPhase ? phases[currentPhase].label : "处理中" : "已完成";
+  const status = failed ? "回答未完成" : processing ? displayMode === "debug" && currentPhase ? phases[currentPhase].label : "处理中" : "已完成";
   const timingStatus = elapsedMs === null
     ? status
     : `${status} · ${processing ? "已用" : "总耗时"} ${formatDuration(elapsedMs)}`;
+
+  if (displayMode !== "debug") {
+    return <div className={styles.progressCard} role="status" aria-label="回答状态"><p className={failed ? styles.messageError : styles.progressNote}>{timingStatus}</p></div>;
+  }
 
   return (
     <details className={styles.progressCard} open={processing}>
