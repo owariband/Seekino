@@ -579,6 +579,20 @@ def test_deepseek_rejects_invalid_structured_responses(
         )
 
 
+def test_deepseek_no_tools_honors_shorter_caller_timeout() -> None:
+    responses = FakeDeepSeekResponses(_result().model_dump_json())
+    model = DeepSeekMultimodalModel(
+        "selected-model", base_url="https://provider.example", api_key="test-key",
+        max_output_tokens=1024, request_timeout_seconds=10,
+        client=SimpleNamespace(responses=responses),
+    )
+    model.generate(
+        [TextInput("describe")], schema_name="structured_result",
+        result_type=StructuredResult, request_timeout_seconds=2,
+    )
+    assert responses.calls[0]["timeout"] == 2
+
+
 def test_deepseek_structured_model_falls_back_to_injected_ark_after_response_error(
     caplog,
     monkeypatch,

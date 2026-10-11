@@ -9,8 +9,12 @@ import pytest
 
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
+from engine.parsev2.planning import interval_size, plan_intervals
 from server.model.job import (
+    ChunkParseContent,
     ChunkParseTask,
+    IntervalParseContent,
+    IntervalParseTask,
     ParseJobStage,
     ParseJobStatus,
     SeriesParseJob,
@@ -34,6 +38,74 @@ from server.model.dto.jobDTO import ParseJobDetail
 from server.service.job import ParseJobService
 from server.service.library import LibraryService
 from server.utils.time import datetime_to_unix_time_ms, timedelta_to_ms
+
+
+def _seed_v2_tracking(repository, *, chunk_count=2, completed_chunks=2, submitted_refines=0):
+    jobs, _, _, video_id, now_ms = _seed_job(repository)
+    factory = create_session_factory(repository[0])
+    config = default_video_parse_v2_config().model_dump(mode="json")
+    now = datetime.fromtimestamp(now_ms / 1000, tz=UTC)
+    task_id, chunk_ids, interval_ids = str(uuid4()), [], []
+    with factory.begin() as session:
+        session.add(VideoParseTask(
+            id=task_id, video_id=video_id, pipeline_version="video-parse-v2",
+            status="PARSING_FAILED", parse_config=config, chunk_count=chunk_count,
+            version=1, next_execute_time=now, attempt_count=1, max_attempts=3,
+            detail={"source": "upload"},
+        ))
+        for sequence in range(chunk_count):
+            chunk_id, child_id = str(uuid4()), str(uuid4())
+            chunk_ids.append(child_id)
+            session.add(VideoChunk(
+                id=chunk_id, video_id=video_id, sequence_no=sequence,
+                start_ms=sequence * 1000, end_ms=(sequence + 1) * 1000,
+                window_start_ms=sequence * 1000, window_end_ms=(sequence + 1) * 1000,
+                chunk_media_ref="artifact://test/clip.mp4",
+                analysis_window_media_ref="artifact://test/clip.mp4", keyframe_uris=[],
+            ))
+            complete = sequence < completed_chunks
+            session.add(ChunkParseTask(
+                id=child_id, video_task_id=task_id, chunk_id=chunk_id,
+                status="COMPLETE" if complete else "QUEUED", lease_version=int(complete),
+                next_execute_time=now, start_time=now if complete else None,
+            ))
+            if complete:
+                session.add(ChunkParseContent(id=str(uuid4()), chunk_task_id=child_id, content={"persons": [], "timeline": []}))
+        plans = plan_intervals(chunk_count=chunk_count, size=interval_size(
+            interval_duration=config["interval_duration"], chunk_duration=config["chunk_duration"],
+        ))
+        for index, plan in enumerate(plans):
+            interval_id = str(uuid4())
+            interval_ids.append(interval_id)
+            submitted = index < submitted_refines
+            session.add(IntervalParseTask(
+                id=interval_id, video_task_id=task_id, chunk_task_id=chunk_ids[plan.start_sequence_no],
+                chunk_task_ids=chunk_ids[plan.start_sequence_no:plan.end_sequence_no],
+                start_sequence_no=plan.start_sequence_no, chunk_count=plan.chunk_count,
+                status="INDEXING_FAILED" if submitted else "WAITING", lease_version=2 if submitted else 0,
+                next_execute_time=now, start_time=now if submitted else None,
+            ))
+            if submitted:
+                session.add(IntervalParseContent(
+                    interval_task_id=interval_id, content={"updates": []},
+                    detail={"refinement_committed_lease_version": 1},
+                ))
+    return jobs, factory, task_id, chunk_ids, interval_ids, now_ms
+
+
+def _timing_entry(phase, task_id, *, started=1000, elapsed=1000, version=1, finished=True):
+    return {
+        "phase": phase, "execution_kind": "chunk" if phase == "understand" else "interval",
+        "execution_task_id": task_id, "lease_version": version, "worker_id": "worker",
+        "started_at_ms": started, "elapsed_ms": elapsed,
+        "finished": finished, "outcome": "completed" if finished else "running",
+    }
+
+
+def _store_timing(factory, task_id, entries):
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        task.detail = {**task.detail, "_worker_runtime_v2": {"execution_timing": {"version": 1, "entries": entries}}}
 
 
 def _seed_job(
@@ -894,3 +966,158 @@ def test_retry_can_replay_earlier_stages_without_regressing_progress(repository)
     state = jobs.get(job_id)
     assert state.stage == ParseJobStage.INDEXING.value
     assert state.progress == 99
+
+
+def test_v2_progress_counts_submissions_and_batches_list_reads(repository):
+    from sqlalchemy import event
+
+    jobs, factory, task_id, _, _, _ = _seed_v2_tracking(
+        repository, chunk_count=24, completed_chunks=24, submitted_refines=8,
+    )
+    _, _, other_id, _, _, _ = _seed_v2_tracking(repository, completed_chunks=1)
+    statements = []
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement.lower())
+
+    event.listen(repository[0], "before_cursor_execute", capture)
+    try:
+        listed = {item.task.video_parse_task_id: item for item in jobs.list_video_parse_tasks_for_workspace("local-default")}
+    finally:
+        event.remove(repository[0], "before_cursor_execute", capture)
+    assert sum("chunk_parse_content" in statement for statement in statements) == 1
+    assert sum("interval_parse_content" in statement for statement in statements) == 1
+    assert all(statement.lstrip().startswith("select") for statement in statements)
+    detail = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default")
+    assert detail.task.detail == listed[task_id].task.detail
+    assert detail.task.detail["progress"] == {
+        "completedChunks": 24, "totalChunks": 24, "completedRefines": 8, "totalRefines": 22,
+        "completedUnits": 32, "totalUnits": 46, "percent": pytest.approx(32 * 100 / 46),
+        "topologyReady": True, "indexedIntervals": 0,
+    }
+    assert listed[other_id].task.detail["progress"]["completedChunks"] == 1
+    assert detail.task.detail["source"] == "upload"
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).detail == {"source": "upload"}
+
+
+@pytest.mark.parametrize("elapsed,expected", [(1000, 1500), (0, 0)])
+def test_v2_timing_unions_parallel_spans_and_preserves_zero(repository, elapsed, expected):
+    jobs, factory, task_id, chunks, _, _ = _seed_v2_tracking(repository)
+    entries = {f"understand:{child}:1": _timing_entry("understand", child, started=1000 + index * 500, elapsed=elapsed)
+               for index, child in enumerate(chunks)}
+    _store_timing(factory, task_id, entries)
+    detail = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default")
+    assert detail.task.detail["timing"] == {
+        "recorded": True, "complete": True, "activeExecutions": 0, "effectiveDurationMs": expected,
+    }
+    assert detail.task.processing_duration_ms == expected
+    assert detail.task.processing_timing_complete is True
+    assert "_worker_runtime_v2" not in project_video_parse_task(detail).detail
+    listed = jobs.list_video_parse_tasks_for_workspace("local-default")[0]
+    assert listed.task.detail == detail.task.detail
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).processing_duration_ms == 0
+
+
+def test_v2_old_attempts_have_unknown_timing_and_unready_topology_has_no_percent(repository):
+    jobs, factory, task_id, _, intervals, _ = _seed_v2_tracking(repository)
+    detail = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default")
+    assert detail.task.detail["timing"] == {
+        "recorded": False, "complete": False, "activeExecutions": 0, "effectiveDurationMs": None,
+    }
+    assert detail.task.processing_timing_complete is False
+    with factory.begin() as session:
+        session.delete(session.get(IntervalParseTask, intervals[0]))
+    progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
+    assert progress["completedUnits"] == progress["totalUnits"] == 2
+    assert progress["topologyReady"] is False and progress["percent"] is None
+
+
+@pytest.mark.parametrize("config", [None, {}, {"chunk_duration": 0, "interval_duration": 180}])
+def test_v2_pending_or_legacy_topology_is_safe_without_valid_config(repository, config):
+    factory = create_session_factory(repository[0])
+    record = SimpleNamespace(id=str(uuid4()), video_id=str(uuid4()), chunk_count=0, parse_config=config, detail={})
+    with factory() as session:
+        tracking = ParseJobRepository._video_parse_tracking(session, (record,), 1000)[record.id]
+    assert tracking["progress"]["totalUnits"] == 0
+    assert tracking["progress"]["topologyReady"] is False
+    assert tracking["progress"]["percent"] is None
+    assert tracking["timing"]["effectiveDurationMs"] is None
+
+
+def test_v2_progress_requires_chunk_content_and_the_frozen_sequence_topology(repository):
+    jobs, factory, task_id, chunks, _, _ = _seed_v2_tracking(repository)
+    with factory.begin() as session:
+        content = session.query(ChunkParseContent).filter_by(chunk_task_id=chunks[0]).one()
+        session.delete(content)
+        child = session.get(ChunkParseTask, chunks[1])
+        session.get(VideoChunk, child.chunk_id).sequence_no = 2
+    progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
+    assert progress["completedChunks"] == 1
+    assert progress["totalChunks"] == 2
+    assert progress["topologyReady"] is False and progress["percent"] is None
+
+
+def test_v2_timing_requires_retry_coverage_and_ignores_index_leases(repository):
+    jobs, factory, task_id, chunks, intervals, _ = _seed_v2_tracking(repository, submitted_refines=1)
+    entries = {f"understand:{child}:1": _timing_entry("understand", child) for child in chunks}
+    entries[f"refine:{intervals[0]}:1"] = _timing_entry("refine", intervals[0], started=3000)
+    _store_timing(factory, task_id, entries)
+    detail = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default")
+    assert detail.task.detail["timing"]["complete"] is True  # Index lease 2 needs no Refine span.
+    assert detail.task.detail["progress"]["completedRefines"] == 1  # The submitted updates list is empty.
+    with factory.begin() as session:
+        session.get(ChunkParseTask, chunks[0]).lease_version = 2
+    assert jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]["complete"] is False
+    entries[f"understand:{chunks[0]}:2"] = _timing_entry("understand", chunks[0], version=2, started=5000)
+    _store_timing(factory, task_id, entries)
+    assert jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]["complete"] is True
+    with factory.begin() as session:
+        session.get(IntervalParseContent, intervals[0]).detail = None
+    legacy = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail
+    assert legacy["progress"]["completedRefines"] == 1
+    assert legacy["timing"]["complete"] is False
+
+
+def test_v2_active_timing_is_recorded_prefix_without_clock_extrapolation(repository, monkeypatch):
+    jobs, factory, task_id, chunks, _, now_ms = _seed_v2_tracking(repository, completed_chunks=1)
+    monkeypatch.setattr("server.repository.job.now_unix_time_ms", lambda: now_ms)
+    with factory.begin() as session:
+        child = session.get(ChunkParseTask, chunks[1])
+        child.status, child.lease_version, child.lease_owner = "UNDERSTANDING", 1, "worker"
+        child.lease_expire_time = datetime.fromtimestamp(now_ms / 1000, tz=UTC) + timedelta(minutes=1)
+    entries = {f"understand:{chunks[0]}:1": _timing_entry("understand", chunks[0], started=now_ms - 2000),
+               f"understand:{chunks[1]}:1": _timing_entry("understand", chunks[1], started=now_ms - 500, elapsed=100, finished=False)}
+    _store_timing(factory, task_id, entries)
+    timing = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]
+    assert timing == {"recorded": True, "complete": True, "activeExecutions": 1, "effectiveDurationMs": 1100}
+    monkeypatch.setattr("server.repository.job.now_unix_time_ms", lambda: now_ms + 10_000)
+    assert jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"] == timing
+    monkeypatch.setattr("server.repository.job.now_unix_time_ms", lambda: now_ms + 60_000)
+    expired = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]
+    assert expired == {**timing, "complete": False, "activeExecutions": 0}
+
+
+@pytest.mark.parametrize("corruption", ["foreign_id", "bool_elapsed", "negative_elapsed", "wrong_kind", "wrong_key"])
+def test_v2_timing_rejects_malformed_or_foreign_entries(repository, corruption):
+    jobs, factory, task_id, chunks, _, _ = _seed_v2_tracking(repository)
+    _, _, _, foreign_chunks, _, _ = _seed_v2_tracking(repository)
+    entries = {f"understand:{child}:1": _timing_entry("understand", child) for child in chunks}
+    invalid = _timing_entry("understand", chunks[0], started=1, elapsed=10_000)
+    if corruption == "foreign_id":
+        invalid["execution_task_id"] = foreign_chunks[0]
+    elif corruption == "bool_elapsed":
+        invalid["elapsed_ms"] = True
+    elif corruption == "negative_elapsed":
+        invalid["elapsed_ms"] = -1
+    elif corruption == "wrong_kind":
+        invalid["execution_kind"] = "interval"
+    key = f"understand:{invalid['execution_task_id']}:1" if corruption != "wrong_key" else "not-a-trace-key"
+    entries[key] = invalid
+    _store_timing(factory, task_id, entries)
+    timing = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]
+    assert timing["complete"] is False
+    assert timing["effectiveDurationMs"] == 1000
+    with pytest.raises(ParseJobNotFoundError):
+        jobs.get_video_parse_task_detail(task_id, tenant_id="foreign")

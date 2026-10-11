@@ -708,6 +708,7 @@ class AgentRepository:
             created_at=record.create_time,
             updated_at=record.update_time,
             last_message_preview=last_message_preview,
+            detail=record.detail,
         )
 
     @staticmethod

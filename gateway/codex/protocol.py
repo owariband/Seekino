@@ -149,6 +149,7 @@ class CodexToolBridge:
         self._max_tool_calls = max_tool_calls
         self._before_tool_call = before_tool_call
         self._call_count = 0
+        self._successful_call_count = 0
         self._responses: dict[str, DynamicToolResponse] = {}
         self._lock = Lock()
 
@@ -156,6 +157,11 @@ class CodexToolBridge:
     def tool_call_count(self) -> int:
         with self._lock:
             return self._call_count
+
+    @property
+    def successful_tool_call_count(self) -> int:
+        with self._lock:
+            return self._successful_call_count
 
     def handle(
         self,
@@ -270,5 +276,7 @@ class CodexToolBridge:
 
         with self._lock:
             self._call_count += 1
+            if response["success"]:
+                self._successful_call_count += 1
             self._responses[call_id] = response
         return response

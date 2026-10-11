@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
+import re
 import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TypeVar
+
+from gateway.errors import SSEProxyError
 
 from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, VideoParseLease
 from ..utils.time import now_utc
@@ -27,6 +31,91 @@ class VideoParseConsumerHandlers:
 
 _Lease = TypeVar("_Lease", VideoParseLease, ChunkParseLease, IntervalParseLease)
 _logger = logging.getLogger(__name__)
+
+
+def _failure_log_text(value: object) -> str | int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        return None
+    # Provider messages may reflect credentials. Never inspect bodies or headers.
+    value = value[:8192]
+    value = re.sub(
+        r"(?is)[\"']?\b(?:authorization|proxy-authorization|cookie|set-cookie)[\"']?\s*[:=].*",
+        "[redacted_header]", value,
+    )
+    value = re.sub(
+        r"(?is)[\"']?\b(?:body|headers|payload|input|prompt|messages)[\"']?\s*[:=].*",
+        "[redacted_payload]", value,
+    )
+    value = re.sub(
+        r"(?i)([\"']?(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|"
+        r"password|passwd|secret|signature|credential)[\"']?\s*[:=]\s*)"
+        r"(?:\"[^\"]*\"|'[^']*'|[^\s,;&]+)",
+        r"\1[redacted]", value,
+    )
+    value = re.sub(
+        r"(?i)\b(?:bearer|basic)\s+\S+|\b(?:sk|ak)-[\w-]{8,}|\beyJ[\w-]+\.[\w-]+\.[\w-]+",
+        "[redacted]", value,
+    )
+    value = re.sub(
+        r"(?i)\bdata:[^,\s]*,[a-z0-9+/=]+|\b[a-z][a-z0-9+.-]*://[^\s<>\"']+",
+        "[redacted_url]", value,
+    )
+    return value[:2048]
+
+
+def _log_retry_failure(
+    lease: _Lease, *, phase: str, error: Exception,
+    recorded: bool, retry_at: datetime,
+) -> None:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen and len(chain) < 32:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    root = chain[-1]
+    message = None
+    for item in reversed(chain):
+        if isinstance(item, SSEProxyError):
+            message = str(item)
+        elif type(item).__module__.startswith(("arkruntime.", "openai.")):
+            message = getattr(item, "message", None)
+        if isinstance(message, str) and message:
+            break
+    fields = {
+        "video_parse_task_id": lease.video_parse_task_id,
+        "chunk_parse_task_id": getattr(lease, "chunk_parse_task_id", None),
+        "interval_parse_task_id": getattr(lease, "interval_parse_task_id", None),
+        "phase": phase,
+        "attempt": getattr(lease, "attempt_count", None)
+        or getattr(lease, "retry_count", 0) + 1,
+        "lease_version": lease.lease_version,
+        "retry_recorded": bool(recorded),
+        "retry_at": retry_at.isoformat(),
+        "error_type": type(error).__name__,
+        "reason": _failure_log_text(getattr(error, "reason", None)),
+        "root_error_type": type(root).__name__,
+        "root_error_message": _failure_log_text(message),
+    }
+    for field, attribute in (
+        ("root_error_code", "code"), ("root_status_code", "status_code"),
+        ("model_request_id", "request_id"), ("response_id", "response_id"),
+        ("partial_output_chars", "partial_output_chars"),
+    ):
+        fields[field] = next((
+            value for item in reversed(chain)
+            if (value := _failure_log_text(getattr(item, attribute, None))) is not None
+        ), None)
+    _logger.warning(
+        "event=video_parse_v2_retry %s",
+        " ".join(
+            f"{key}={json.dumps(value, ensure_ascii=False)}"
+            for key, value in fields.items()
+        ),
+    )
 
 
 class VideoParseConsumer:
@@ -312,11 +401,15 @@ class VideoParseConsumer:
             raise
         except Exception as exc:
             retry_at = now_utc() + self._retry_delay(lease.attempt_count)
-            await asyncio.to_thread(
+            recorded = await asyncio.to_thread(
                 self._queue.retry_video,
                 lease,
                 error=str(exc),
                 retry_at=retry_at,
+            )
+            _log_retry_failure(
+                lease, phase="prepare", error=exc,
+                recorded=recorded, retry_at=retry_at,
             )
 
     async def _run_chunk(self, lease: ChunkParseLease) -> None:
@@ -330,11 +423,15 @@ class VideoParseConsumer:
             raise
         except Exception as exc:
             retry_at = now_utc() + self._retry_delay(lease.retry_count + 1)
-            await asyncio.to_thread(
+            recorded = await asyncio.to_thread(
                 self._queue.retry_chunk,
                 lease,
                 error=str(exc),
                 retry_at=retry_at,
+            )
+            _log_retry_failure(
+                lease, phase="understand", error=exc,
+                recorded=recorded, retry_at=retry_at,
             )
 
     async def _run_interval(
@@ -352,11 +449,15 @@ class VideoParseConsumer:
             raise
         except Exception as exc:
             retry_at = now_utc() + self._retry_delay(lease.retry_count + 1)
-            await asyncio.to_thread(
+            recorded = await asyncio.to_thread(
                 self._queue.retry_interval,
                 lease,
                 error=str(exc),
                 retry_at=retry_at,
+            )
+            _log_retry_failure(
+                lease, phase="refine" if lease.phase == "REFINING" else "index",
+                error=exc, recorded=recorded, retry_at=retry_at,
             )
 
     async def _run_prefix(self) -> None:

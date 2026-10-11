@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import ExitStack
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
 import json
 import logging
 from time import monotonic
 from types import SimpleNamespace
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar
+from uuid import uuid4
 
 from arkruntime._exceptions import ArkError
 from langchain_core.tools import BaseTool
@@ -20,7 +21,8 @@ from gateway.constants import ARK_PROVIDER, DEEPSEEK_PROVIDER
 from gateway.errors import ContentFilterError, SSEProxyError
 from gateway.media import encode_media_file
 from gateway.multimodal import ImageInput, MultimodalInput, TextInput, VideoInput
-from gateway.usage import ModelCallControlError, track_model_call
+from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
+from gateway.usage import ModelCallControlError, model_call_context, track_model_call
 
 from .context import ContextCheckpoint, ContextWindowOverflow, ContextWindowPolicy, preflight_context
 from .errors import ModelFailureReason, ModelInputTooLargeError, QueryModelIncompleteError
@@ -41,10 +43,20 @@ class _Endpoint:
     model: str
     content: list[dict[str, Any]]
     protocol: str = "responses"
+    media_message_id: str | None = None
 
     @property
     def provider(self) -> str:
         return self.adapter.provider_name
+
+
+@dataclass(slots=True)
+class ToolModelSession(Generic[_Result]):
+    content: list[dict[str, Any]]
+    timeout: float
+    check_run: Callable[[], None]
+    request_turn: Callable[..., Any]
+    result: _Result | None = None
 
 
 def generate_with_tools(
@@ -61,6 +73,43 @@ def generate_with_tools(
     fallback_on_error: Callable[[BaseException], bool] | None,
 ) -> _Result:
     """Adapt Responses turns to the existing function loop and usage control."""
+    with tool_model_session(
+        adapter, content, schema_name=schema_name, result_type=result_type, tools=tools,
+        request_timeout_seconds=request_timeout_seconds, check_control=check_control,
+        context_window_policy=context_window_policy, max_input_chars=max_input_chars,
+        fallback_model=fallback_model, fallback_inputs=fallback_inputs,
+        fallback_on_error=fallback_on_error,
+    ) as session:
+        _run_function_calling_loop(
+            prompt="Complete the requested structured analysis using the available tools.",
+            tools=tools, max_model_calls=max_model_calls, handle_text=lambda text: None,
+            require_tool_call=True, stop_feedback=None, request_timeout_seconds=session.timeout,
+            check_control=session.check_run, max_input_chars=max_input_chars,
+            context_window_policy=context_window_policy, context_checkpoint=context_checkpoint,
+            initial_messages=[{"role": "user", "content": session.content}], supports_vision_input=True,
+            provider_label=adapter.provider_name, error_type=QueryModelIncompleteError,
+            request_turn=session.request_turn,
+        )
+        if session.result is None:
+            raise QueryModelIncompleteError("Multimodal tool loop returned no structured result")
+        return session.result
+
+
+@contextmanager
+def tool_model_session(
+    adapter: Any, content: list[dict[str, Any]], *,
+    schema_name: str, result_type: type[_Result], tools: Sequence[BaseTool],
+    request_timeout_seconds: float | None,
+    check_control: Callable[[], None] | None,
+    context_window_policy: ContextWindowPolicy | None,
+    max_input_chars: int | None,
+    fallback_model: Any | None,
+    fallback_inputs: Sequence[MultimodalInput] | None,
+    fallback_on_error: Callable[[BaseException], bool] | None,
+    enforce_final_schema: bool = True,
+    media_message_id: str | None = None,
+) -> Iterator[ToolModelSession[_Result]]:
+    """Share provider requests and controls across structured tool harnesses."""
     timeout = request_timeout_seconds if request_timeout_seconds is not None else adapter._request_timeout_seconds
     if timeout is None:
         raise ValueError("multimodal tools require request_timeout_seconds")
@@ -80,10 +129,14 @@ def generate_with_tools(
                 raise
 
     check_run()
-    result: _Result | None = None
     with ExitStack() as cleanup:
+        cleanup.enter_context(model_call_context({"agent_run_id": uuid4().hex}))
+        round_no = 0
         schema = result_type.model_json_schema()
-        primary = _endpoint(adapter, content, cleanup, schema)
+        primary = _endpoint(
+            adapter, content, cleanup, schema,
+            enforce_final_schema=enforce_final_schema, media_message_id=media_message_id,
+        )
         fallback_adapter = fallback_model or getattr(adapter, "_fallback_model", None)
         if fallback_adapter is not None:
             fallback_content = (
@@ -94,7 +147,10 @@ def generate_with_tools(
                 item.get("type") == "input_video" for item in fallback_content
             ):
                 raise ValueError("video fallback requires ordered ImageInput values")
-            fallback = _endpoint(fallback_adapter, fallback_content, cleanup, schema)
+            fallback = _endpoint(
+                fallback_adapter, fallback_content, cleanup, schema,
+                enforce_final_schema=enforce_final_schema, media_message_id=media_message_id,
+            )
         else:
             fallback_name = getattr(adapter, "fallback_model_name", None)
             fallback = (
@@ -109,15 +165,19 @@ def generate_with_tools(
             if context_window_policy.output_reserve_tokens < reserve:
                 raise ValueError("context output reserve must cover primary and fallback output budgets")
 
-        def request_turn(messages, specs, choice, remaining, seen, visible):
-            nonlocal active, result
+        def request_turn(messages, specs, choice, remaining, seen, visible, *, bound_tools=None):
+            nonlocal active, round_no
+            round_no += 1
             check_run()
             started = monotonic()
+            request_tools = tools if bound_tools is None else bound_tools
+            choice = "required" if choice == "any" else choice
             try:
                 turn, parsed, input_tokens = _request_turn(
                     active, messages, specs, choice, remaining, seen, visible,
-                    tools=tools, schema_name=schema_name, result_type=result_type,
+                    tools=request_tools, schema_name=schema_name, result_type=result_type,
                     check_control=check_run,
+                    round_no=round_no, enforce_final_schema=enforce_final_schema,
                 )
             except (ArkError, APIError, TimeoutError, SSEProxyError, QueryModelIncompleteError) as error:
                 if control_failure is not None and (error is control_failure or error.__cause__ is control_failure):
@@ -141,7 +201,8 @@ def generate_with_tools(
                     error=error,
                 )
                 active = fallback
-                messages[0]["content"] = deepcopy(fallback.content)
+                session.content = fallback.content
+                _media_message(messages, fallback)["content"] = deepcopy(fallback.content)
                 try:
                     preflight_context(
                         messages, specs, policy=context_window_policy,
@@ -151,29 +212,22 @@ def generate_with_tools(
                     raise ModelInputTooLargeError(str(overflow)) from overflow
                 turn, parsed, input_tokens = _request_turn(
                     active, messages, specs, choice, remaining, seen, visible,
-                    tools=tools, schema_name=schema_name, result_type=result_type,
+                    tools=request_tools, schema_name=schema_name, result_type=result_type,
                     check_control=check_run,
+                    round_no=round_no, enforce_final_schema=enforce_final_schema,
                 )
             if parsed is not None:
-                result = parsed
+                session.result = parsed
             return (*turn, input_tokens)
 
-        _run_function_calling_loop(
-            prompt="Complete the requested structured analysis using the available tools.",
-            tools=tools, max_model_calls=max_model_calls, handle_text=lambda text: None,
-            require_tool_call=True, stop_feedback=None, request_timeout_seconds=timeout,
-            check_control=check_run, max_input_chars=max_input_chars,
-            context_window_policy=context_window_policy, context_checkpoint=context_checkpoint,
-            initial_messages=[{"role": "user", "content": primary.content}], supports_vision_input=True,
-            provider_label=adapter.provider_name, error_type=QueryModelIncompleteError,
-            request_turn=request_turn,
-        )
-    if result is None:
-        raise QueryModelIncompleteError("Multimodal tool loop returned no structured result")
-    return result
+        session: ToolModelSession[_Result] = ToolModelSession(primary.content, timeout, check_run, request_turn)
+        yield session
 
 
-def _endpoint(adapter: Any, content: list[dict[str, Any]], cleanup: ExitStack, schema: dict) -> _Endpoint:
+def _endpoint(
+    adapter: Any, content: list[dict[str, Any]], cleanup: ExitStack, schema: dict, *,
+    enforce_final_schema: bool = True, media_message_id: str | None = None,
+) -> _Endpoint:
     protocol = getattr(adapter, "_tool_protocol", "responses")
     if protocol != "chat" and adapter.provider_name not in {ARK_PROVIDER, DEEPSEEK_PROVIDER}:
         raise TypeError("multimodal tools require a supported Responses or Vision adapter")
@@ -183,37 +237,83 @@ def _endpoint(adapter: Any, content: list[dict[str, Any]], cleanup: ExitStack, s
         cleanup.callback(client.close)
     if protocol == "chat":
         content = _chat_content(content)
-        if adapter._format == "json_object":
+        if enforce_final_schema and adapter._format == "json_object":
             content.append({"type": "text", "text": "Return only JSON matching this schema: " + json.dumps(schema, ensure_ascii=False)})
-    return _Endpoint(adapter, client, adapter.model_name, content, protocol)
+    return _Endpoint(adapter, client, adapter.model_name, content, protocol, media_message_id)
+
+
+def _log_multimodal_request(endpoint, call, request, *, schema_name, result_type):
+    if not _logger.isEnabledFor(logging.INFO):
+        return
+    inputs = request.get("input", request.get("messages", []))
+    blocks = [block for item in inputs if isinstance(item.get("content"), list)
+              for block in item["content"] if isinstance(block, Mapping)]
+    output_format = request.get("text", {}).get("format", request.get("response_format", {}))
+    summary = {
+        "provider": endpoint.provider[:128], "model": endpoint.model[:256],
+        "schema_name": schema_name[:128], "result_type": result_type.__name__[:128],
+        "response_format_type": output_format.get("type"),
+        "response_format_strict": output_format.get("json_schema", output_format).get("strict"),
+        "call_id": call.call_id, "protocol": endpoint.protocol,
+        "tool_choice": str(request["tool_choice"])[:128],
+        "tool_count": len(request["tools"]),
+        "tool_names": [str(_field(tool.get("function", tool), "name", ""))[:128]
+                       for tool in request["tools"][:32]],
+        "max_output_tokens": endpoint.adapter.max_output_tokens,
+        "token_parameter": (endpoint.adapter._token_parameter
+                            if endpoint.protocol == "chat" else "max_output_tokens"),
+        "thinking": _field(request.get("thinking"), "type"),
+        "reasoning_effort": _field(request.get("reasoning"), "effort"),
+        "timeout": request["timeout"], "input_item_count": len(inputs),
+        "content_block_count": len(blocks),
+        "text_chars": sum(len(item[key]) for item in inputs
+                          for key in ("content", "output", "arguments")
+                          if isinstance(item.get(key), str))
+                      + sum(len(block["text"]) for block in blocks
+                            if isinstance(block.get("text"), str)),
+        "media_item_count": sum(block.get("type") in {"input_image", "input_video", "image_url"}
+                                for block in blocks),
+        **{key: str(call.context[key])[:256] for key in (
+            "run_id", "video_parse_task_id", "chunk_parse_task_id",
+            "interval_parse_task_id", "video_chunk_id",
+        ) if isinstance(call.context.get(key), (str, int))},
+        **{key: call.context[key] for key in ("sequence_no", "lease_version")
+           if type(call.context.get(key)) is int},
+    }
+    _logger.info("event=multimodal_model_request summary=%s",
+                 json.dumps(summary, ensure_ascii=True, separators=(",", ":")))
 
 
 def _request_turn(
     endpoint: _Endpoint, messages, specs, choice, remaining, seen, visible, *,
     tools: Sequence[BaseTool], schema_name: str, result_type: type[_Result],
     check_control: Callable[[], None] | None,
+    round_no: int = 1,
+    enforce_final_schema: bool = True,
 ):
     if endpoint.protocol == "chat":
         return _request_chat_turn(
             endpoint, messages, specs, choice, remaining, seen, visible,
             tools=tools, schema_name=schema_name, result_type=result_type,
             check_control=check_control,
+            round_no=round_no, enforce_final_schema=enforce_final_schema,
         )
     adapter = endpoint.adapter
-    schema = result_type.model_json_schema()
-    if endpoint.provider == DEEPSEEK_PROVIDER:
-        from gateway.openai.multimodal import _deepseek_response_schema
-        from gateway.schema_normalization import inline_schema_refs
-        schema = _deepseek_response_schema(inline_schema_refs(schema))
     timeout = min(remaining, adapter._request_timeout_seconds or remaining)
     request = {
         "model": endpoint.model, "input": _response_input(messages, endpoint),
         "tools": [{"type": "function", **spec["function"]} for spec in specs],
         "tool_choice": choice, "timeout": timeout,
-        "text": {"format": {
-            "type": "json_schema", "name": schema_name, "schema": schema, "strict": True,
-        }},
     }
+    if enforce_final_schema:
+        schema = result_type.model_json_schema()
+        if endpoint.provider == DEEPSEEK_PROVIDER:
+            from gateway.openai.multimodal import _deepseek_response_schema
+            from gateway.schema_normalization import inline_schema_refs
+            schema = _deepseek_response_schema(inline_schema_refs(schema))
+        request["text"] = {"format": {
+            "type": "json_schema", "name": schema_name, "schema": schema, "strict": True,
+        }}
     if adapter.max_output_tokens is not None:
         request["max_output_tokens"] = adapter.max_output_tokens
     if endpoint.provider == ARK_PROVIDER and adapter.reasoning_effort == "none":
@@ -222,13 +322,16 @@ def _request_turn(
         request["reasoning"] = {"effort": adapter.reasoning_effort}
     if endpoint.provider == DEEPSEEK_PROVIDER:
         request["temperature"] = 0
-    with track_model_call(provider=endpoint.provider, model=endpoint.model, operation=schema_name) as call:
+    with model_call_context({"agent_round": round_no}), track_model_call(
+        provider=endpoint.provider, model=endpoint.model, operation=schema_name,
+    ) as call, capture_model_diagnostics(call, {**request, "stream": endpoint.provider == ARK_PROVIDER}):
         close = getattr(endpoint.client, "close", None)
         unregister = call.add_cancel_callback(close) if callable(close) else lambda: None
         try:
             call.raise_if_cancelled()
             if check_control is not None:
                 check_control()
+            _log_multimodal_request(endpoint, call, request, schema_name=schema_name, result_type=result_type)
             try:
                 if endpoint.provider == ARK_PROVIDER:
                     response, text = request_sse_response(
@@ -239,6 +342,7 @@ def _request_turn(
                     response = endpoint.client.responses.create(**request)
                     call.capture_response(response)
                     text = _response_text(response)
+                record_model_event("response", response)
             except Exception as error:
                 call.capture_response(error, include_usage=False)
                 if getattr(error, "code", None) in {"content_filter", "OutputTextSensitiveContentDetected"} and not isinstance(error, ContentFilterError):
@@ -288,10 +392,11 @@ def _request_turn(
                 completion, tools=tools, seen_tool_call_ids=seen,
                 provider_label=endpoint.provider, model_name=endpoint.model,
                 max_output_tokens=adapter.max_output_tokens, error_type=QueryModelIncompleteError,
-                require_tool_call=choice == "required", require_visible_text_on_stop=visible,
+                require_tool_call=enforce_final_schema and choice == "required",
+                require_visible_text_on_stop=enforce_final_schema and visible,
             )
             parsed = None
-            if turn[0] == "stop":
+            if enforce_final_schema and turn[0] == "stop":
                 try:
                     parsed = result_type.model_validate_json(text)
                 except ValueError as error:
@@ -307,23 +412,29 @@ def _request_chat_turn(
     endpoint: _Endpoint, messages, specs, choice, remaining, seen, visible, *,
     tools: Sequence[BaseTool], schema_name: str, result_type: type[_Result],
     check_control: Callable[[], None] | None,
+    round_no: int = 1,
+    enforce_final_schema: bool = True,
 ):
     adapter = endpoint.adapter
-    output_format = ({"type": "json_schema", "json_schema": {
-        "name": schema_name, "strict": True, "schema": result_type.model_json_schema(),
-    }} if adapter._format == "json_schema" else {"type": "json_object"})
     request = {
         "model": endpoint.model, "messages": _chat_input(messages, endpoint),
-        "tools": specs, "tool_choice": choice, "response_format": output_format,
+        "tools": specs, "tool_choice": choice,
         "stream": False, "timeout": min(remaining, adapter._request_timeout_seconds),
         adapter._token_parameter: adapter.max_output_tokens,
     }
-    with track_model_call(provider=endpoint.provider, model=endpoint.model, operation=schema_name) as call:
+    if enforce_final_schema:
+        request["response_format"] = ({"type": "json_schema", "json_schema": {
+            "name": schema_name, "strict": True, "schema": result_type.model_json_schema(),
+        }} if adapter._format == "json_schema" else {"type": "json_object"})
+    with model_call_context({"agent_round": round_no}), track_model_call(
+        provider=endpoint.provider, model=endpoint.model, operation=schema_name,
+    ) as call, capture_model_diagnostics(call, request):
         unregister = call.add_cancel_callback(endpoint.client.close)
         try:
             call.raise_if_cancelled()
             if check_control is not None:
                 check_control()
+            _log_multimodal_request(endpoint, call, request, schema_name=schema_name, result_type=result_type)
             try:
                 response = endpoint.client.chat.completions.create(**request)
             except APIError as error:
@@ -334,6 +445,7 @@ def _request_chat_turn(
                     "Vision tool request failed", reason=_failure_reason_for_exception(error),
                 ) from error
             call.capture_response(response)
+            record_model_event("response", response)
             call.raise_if_cancelled()
             if check_control is not None:
                 check_control()
@@ -341,10 +453,11 @@ def _request_chat_turn(
                 response, tools=tools, seen_tool_call_ids=seen,
                 provider_label=endpoint.provider, model_name=endpoint.model,
                 max_output_tokens=adapter.max_output_tokens, error_type=QueryModelIncompleteError,
-                require_tool_call=choice == "required", require_visible_text_on_stop=visible,
+                require_tool_call=enforce_final_schema and choice == "required",
+                require_visible_text_on_stop=enforce_final_schema and visible,
             )
             parsed = None
-            if turn[0] == "stop":
+            if enforce_final_schema and turn[0] == "stop":
                 try:
                     parsed = result_type.model_validate_json(turn[1])
                 except ValueError as error:
@@ -365,8 +478,9 @@ def _chat_content(content: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _chat_input(messages: Sequence[dict[str, Any]], endpoint: _Endpoint) -> list[dict[str, Any]]:
     inputs = []
-    for index, message in enumerate(messages):
-        content = endpoint.content if index == 0 else message.get("content")
+    media_message = _media_message(messages, endpoint)
+    for message in messages:
+        content = endpoint.content if message is media_message else message.get("content")
         item = {"role": message["role"], "content": _chat_content(content) if isinstance(content, list) else content}
         for key in ("tool_call_id", "tool_calls", "reasoning_content"):
             if key in message:
@@ -377,7 +491,8 @@ def _chat_input(messages: Sequence[dict[str, Any]], endpoint: _Endpoint) -> list
 
 def _response_input(messages: Sequence[dict[str, Any]], endpoint: _Endpoint) -> list[dict[str, Any]]:
     inputs = []
-    for index, message in enumerate(messages):
+    media_message = _media_message(messages, endpoint)
+    for message in messages:
         role = message["role"]
         if role == "tool":
             inputs.append({"type": "function_call_output", "call_id": message["tool_call_id"], "output": message["content"]})
@@ -385,7 +500,7 @@ def _response_input(messages: Sequence[dict[str, Any]], endpoint: _Endpoint) -> 
         if role == "assistant" and message.get("responses_provider") == (endpoint.provider, endpoint.model):
             inputs.extend(deepcopy(message["responses_output"]))
             continue
-        content = endpoint.content if index == 0 else message.get("content")
+        content = endpoint.content if message is media_message else message.get("content")
         if content:
             if isinstance(content, list):
                 content = [
@@ -398,6 +513,15 @@ def _response_input(messages: Sequence[dict[str, Any]], endpoint: _Endpoint) -> 
         for call in message.get("tool_calls", []):
             inputs.append({"type": "function_call", "call_id": call["id"], **call["function"]})
     return inputs
+
+
+def _media_message(messages: Sequence[dict[str, Any]], endpoint: _Endpoint) -> dict[str, Any]:
+    if endpoint.media_message_id is None:
+        return messages[0]
+    for message in messages:
+        if message.get("role") == "user" and message.get("id") == endpoint.media_message_id:
+            return message
+    raise ValueError("Multimodal message history lost its source media message")
 
 
 def _encode_inputs(inputs: Sequence[MultimodalInput], provider: str) -> list[dict[str, Any]]:

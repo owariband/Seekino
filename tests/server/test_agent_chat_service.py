@@ -414,22 +414,40 @@ class _DirectSupervisorModel:
 
     def __init__(self):
         self.prompts = []
+        self.turns = []
+        self.confirmed = []
+        self.discarded = []
+        self.deleted = []
 
-    def run_agent_loop(self, prompt, *, tools, handle_text, check_control, **_kwargs):
+    def run_agent(
+        self, prompt, *, thread_id, message_id, user_message, history,
+        tools, handle_text, check_control, **_kwargs,
+    ):
         self.prompts.append(prompt)
+        self.turns.append((thread_id, message_id, user_message, history))
         assert {tool.name for tool in tools} == {"search_web", "search_video_graph"}
         check_control()
         handle_text("你好，我可以直接回答。")
 
+    def confirm_turn(self, thread_id, message_id, content):
+        self.confirmed.append((thread_id, message_id, content))
 
-class _VideoSupervisorModel:
+    def discard_turn(self, thread_id, message_id):
+        self.discarded.append((thread_id, message_id))
+
+    def delete_thread(self, thread_id):
+        self.deleted.append(thread_id)
+
+
+class _VideoSupervisorModel(_DirectSupervisorModel):
     model_name = "supervisor-test"
     provider_name = "fake"
 
     def __init__(self, *, include_web: bool = False):
+        super().__init__()
         self.include_web = include_web
 
-    def run_agent_loop(self, _prompt, *, tools, handle_text, check_control, **_kwargs):
+    def run_agent(self, _prompt, *, tools, handle_text, check_control, **_kwargs):
         check_control()
         if self.include_web:
             web = json.loads(next(
@@ -482,11 +500,22 @@ def test_supervisor_chat_without_ready_video_series(build_service):
 def test_current_video_scope_is_trusted_without_making_unready_series_retrievable(
     build_service, playback_change,
 ):
-    class CurrentVideoModel:
+    background = {"format": "markdown", "content": "若叶睦是蓝发双马尾的乐队成员。" * 900}
+
+    class CurrentVideoModel(_DirectSupervisorModel):
         model_name = "current-video-test"
         supports_vision_input = False
 
-        def run_agent_loop(self, _prompt, *, tools, handle_text, **_kwargs):
+        def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
+            context = json.loads(_prompt.rsplit("\n\n", 1)[1])
+            assert context["video_scope"] == []
+            assert len(context["series_context"]) == 1
+            current = context["series_context"][0]
+            assert current["seriesId"] == series_id
+            assert current["description"] == "乐队人物资料"
+            assert current["transcriptLanguageHint"] == "ja"
+            assert current["importantExtraData"] == background
+            assert current["characterBible"] == [{"name": "若叶睦", "aliases": ["睦"]}]
             by_name = {tool.name: tool for tool in tools}
             graph = json.loads(by_name["search_video_graph"].invoke({"query": "now"}))
             assert graph["error"]["code"] == "NO_VIDEO_SCOPE"
@@ -499,6 +528,10 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
     with repository._session_factory.begin() as session:
         series = session.query(Series).one()
         series.status = "EMPTY"
+        series.description = "乐队人物资料"
+        series.transcript_language_hint = "ja"
+        series.important_extra_data = background
+        series.character_bible = [{"name": "若叶睦", "aliases": ["睦"]}]
         series_id = series.id
         if playback_change == "tenant":
             series.tenant_id = "other-tenant"
@@ -542,15 +575,18 @@ def test_current_video_scope_is_trusted_without_making_unready_series_retrievabl
 def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
     build_service, include_other_unready,
 ):
-    class CurrentVideoModel:
+    class CurrentVideoModel(_DirectSupervisorModel):
         model_name = "current-video-test"
 
-        def run_agent_loop(self, _prompt, *, tools, handle_text, **_kwargs):
+        def run_agent(self, _prompt, *, tools, handle_text, **_kwargs):
+            context = json.loads(_prompt.rsplit("\n\n", 1)[1])
+            assert [item["seriesId"] for item in context["video_scope"]] == [ready.series_id]
+            assert {item["seriesId"] for item in context["series_context"]} == {current_id, ready.series_id}
             by_name = {tool.name: tool for tool in tools}
             by_name["search_video_graph"].invoke({"query": "what was explained"})
             handle_text("Answer from the available evidence.")
 
-    service, conversation, retrieval, repository, *_ = build_service(
+    service, conversation, retrieval, repository, query, *_ = build_service(
         supervisor_model=CurrentVideoModel(), realtime_runtime=object(),
     )
     ready = service._library.create_series(tenant_id="local-default", name="Ready course")
@@ -584,6 +620,76 @@ def test_current_unready_video_exemption_keeps_other_retrieval_scope_rules(
         result = _send(service, conversation, **kwargs)
         assert result.user_message.series_ids == (ready.series_id,)
         assert retrieval.calls and all(call[1] == [ready.series_id] for call in retrieval.calls)
+        query_context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
+        assert [item["seriesId"] for item in query_context["series_context"]] == [ready.series_id]
+
+
+@pytest.mark.parametrize("with_playback", [False, True])
+def test_supervisor_and_video_search_share_one_background_snapshot_per_turn(
+    build_service, monkeypatch, with_playback,
+):
+    first_background = {"format": "markdown", "content": "人物原名与别名。"}
+    next_background = {"format": "markdown", "content": "更新后的人物介绍。"}
+    reads = []
+
+    class SnapshotModel(_DirectSupervisorModel):
+        def run_agent(self, prompt, *, tools, handle_text, **_kwargs):
+            self.prompts.append(prompt)
+            context = json.loads(prompt.rsplit("\n\n", 1)[1])
+            expected = first_background if len(self.prompts) == 1 else next_background
+            assert [item["seriesId"] for item in context["video_scope"]] == [series_id]
+            assert len(context["series_context"]) == 1
+            assert context["series_context"][0]["importantExtraData"] == expected
+            if len(self.prompts) == 1:
+                with repository._session_factory.begin() as session:
+                    session.get(Series, series_id).important_extra_data = next_background
+            reads_before_tool = len(reads)
+            next(tool for tool in tools if tool.name == "search_video_graph").invoke({"query": "核验人物"})
+            assert len(reads) == reads_before_tool
+            query_context = json.loads(query.prompts[-1].rsplit("\n\n", 1)[1])["inputs"]
+            assert len(query_context["series_context"]) == 1
+            assert query_context["series_context"][0]["importantExtraData"] == expected
+            handle_text("Answer from the available evidence.")
+
+    model = SnapshotModel()
+    service, conversation, _, repository, query, *_ = build_service(
+        supervisor_model=model, realtime_runtime=object() if with_playback else None,
+    )
+    video_id = str(uuid4())
+    with repository._session_factory.begin() as session:
+        series = session.query(Series).one()
+        series_id = series.id
+        series.important_extra_data = first_background
+        if with_playback:
+            session.add(Video(
+                id=video_id, series_id=series_id, episode_order=1, upload_sequence=1,
+                filename="lecture.mp4", source_uri="source/lecture.mp4",
+                hash="a" * 64, size_bytes=1, duration_ms=300_000,
+                upload_status="UPLOADED", parse_status="PENDING",
+                upload_progress=100, parse_progress=0,
+            ))
+    get_series = service._library.get_series
+
+    def record_read(*args, **kwargs):
+        reads.append(args[0])
+        return get_series(*args, **kwargs)
+
+    monkeypatch.setattr(service._library, "get_series", record_read)
+    extra_context = {"playback": {
+        "seriesId": series_id, "videoId": video_id, "episodeOrder": 1,
+        "positionSeconds": 123_456,
+    }} if with_playback else None
+    first = _send(service, conversation, series_ids=[series_id], extra_context=extra_context)
+    reads_after_first = len(reads)
+    assert _send(service, conversation, series_ids=[series_id], extra_context=extra_context) == first
+    assert len(reads) == reads_after_first
+    assert len(model.prompts) == 1
+    second = _send(
+        service, conversation, key="updated-background", series_ids=[series_id],
+        extra_context=extra_context,
+    )
+    assert first.assistant_message.status == second.assistant_message.status == "COMPLETED"
+    assert len(model.prompts) == 2
 
 
 def test_extra_context_is_persisted_injected_and_part_of_idempotency(build_service):
@@ -609,6 +715,8 @@ def test_extra_context_is_persisted_injected_and_part_of_idempotency(build_servi
     assert completed.assistant_message.extra_context is None
     prompt_context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
     assert prompt_context["extra_context"] == extra_context
+    assert len(prompt_context["series_context"]) == 1
+    assert prompt_context["series_context"][0]["seriesId"] != extra_context["playback"]["seriesId"]
     assert _send(
         service,
         conversation,
@@ -628,8 +736,9 @@ def test_extra_context_is_persisted_injected_and_part_of_idempotency(build_servi
 def test_supervisor_preserves_approved_video_answer(
     build_service, prepared_import, include_web,
 ):
+    model = _VideoSupervisorModel(include_web=include_web)
     service, conversation, retrieval, repository, query, *_ = build_service(
-        supervisor_model=_VideoSupervisorModel(include_web=include_web),
+        supervisor_model=model,
         web_searcher=_WebSearcherStub(),
     )
     videos = VideoRepository(repository._session_factory)
@@ -659,6 +768,11 @@ def test_supervisor_preserves_approved_video_answer(
         completed.assistant_message.search_result["agentReply"]["message"]
     )
     assert "未经视频审核" not in completed.assistant_message.content
+    assert model.confirmed == [(
+        conversation.conversation_id,
+        completed.assistant_message.message_id,
+        completed.assistant_message.content,
+    )]
     assert any(
         block["type"] == "video"
         for block in completed.assistant_message.search_result["renderBlocks"]
@@ -670,6 +784,206 @@ def test_supervisor_preserves_approved_video_answer(
         assert "https://example.org/source" in (
             completed.assistant_message.search_result["renderBlocks"][-1]["markdown"]
         )
+
+
+def test_supervisor_confirms_only_after_sql_commit_and_receives_full_history(
+    build_service, monkeypatch,
+):
+    model = _DirectSupervisorModel()
+    service, conversation, _, repository, *_ = build_service(supervisor_model=model)
+    confirm = model.confirm_turn
+
+    def confirm_saved(thread_id, message_id, content):
+        pair = repository.get_message_pair(
+            thread_id, "local-default", message_id=message_id,
+        )
+        assert pair.assistant_message.status == "COMPLETED"
+        assert pair.assistant_message.content == content
+        confirm(thread_id, message_id, content)
+
+    monkeypatch.setattr(model, "confirm_turn", confirm_saved)
+    question = "完整历史内容" * 1_000
+    first = _send(service, conversation, content=question)
+    assert _send(service, conversation, content=question) == first
+    second = _send(service, conversation, key="second", content="继续")
+
+    assert model.confirmed == [
+        (conversation.conversation_id, first.assistant_message.message_id, first.assistant_message.content),
+        (conversation.conversation_id, second.assistant_message.message_id, second.assistant_message.content),
+    ]
+    thread_id, message_id, user_message, history = model.turns[-1]
+    assert (thread_id, message_id, user_message) == (
+        conversation.conversation_id, second.assistant_message.message_id, "继续",
+    )
+    assert history[0]["content"] == question
+    assert history[1]["content"] == first.assistant_message.content
+    assert model.discarded == []
+
+
+def test_next_supervisor_turn_waits_for_previous_harness_confirmation(build_service, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+    model = _DirectSupervisorModel()
+    service, conversation, *_ = build_service(supervisor_model=model)
+    confirming, release, next_started = Event(), Event(), Event()
+    confirm = model.confirm_turn
+
+    def confirm_first(thread_id, message_id, content):
+        if not model.confirmed:
+            confirming.set()
+            assert release.wait(5), "test did not release confirmation"
+        confirm(thread_id, message_id, content)
+
+    def send_next():
+        next_started.set()
+        return _send(service, conversation, key="second", content="继续")
+
+    monkeypatch.setattr(model, "confirm_turn", confirm_first)
+    first = service.start_message(
+        conversation.conversation_id, tenant_id="local-default",
+        content="你好", idempotency_key="first",
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        try:
+            assert confirming.wait(5), "confirmation did not start"
+            second = executor.submit(send_next)
+            assert next_started.wait(5), "next request did not start"
+            with pytest.raises(TimeoutError):
+                second.result(timeout=0.05)
+            assert len(model.turns) == 1
+        finally:
+            release.set()
+        assert first.result().assistant_message.status == "COMPLETED"
+        assert second.result(timeout=5).assistant_message.status == "COMPLETED"
+    assert len(model.confirmed) == 2
+
+
+@pytest.mark.parametrize("failure", ["model", "commit", "cancel"])
+def test_supervisor_discards_uncommitted_or_cancelled_turn(
+    build_service, monkeypatch, failure,
+):
+    model = _DirectSupervisorModel()
+    service, conversation, _, repository, *_ = build_service(supervisor_model=model)
+    entered, release = Event(), Event()
+    run_agent = model.run_agent
+
+    def run(*args, **kwargs):
+        run_agent(*args, **kwargs)
+        if failure == "model":
+            raise AgentModelInvocationError("injected model failure")
+        if failure == "cancel":
+            entered.set()
+            assert release.wait(5), "test did not release provider"
+            kwargs["check_control"]()
+
+    monkeypatch.setattr(model, "run_agent", run)
+    if failure == "commit":
+        def fail_commit(*_args, **_kwargs):
+            raise RuntimeError("injected commit failure")
+        monkeypatch.setattr(repository, "complete_assistant_message", fail_commit)
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default",
+        content="你好", idempotency_key="failed-supervisor", stream=True,
+    )
+    if failure == "cancel":
+        try:
+            assert entered.wait(5), "provider did not start"
+            execution.cancellation.set()
+        finally:
+            release.set()
+    events = _collect(execution)
+    with pytest.raises((AgentModelInvocationError, RuntimeError)):
+        execution.result()
+
+    message_id = execution.initial.assistant_message.message_id
+    assert model.discarded == [(conversation.conversation_id, message_id)]
+    assert model.confirmed == []
+    assert events[-1]["type"] == "answer.failed"
+    saved = service.list_all_messages(conversation.conversation_id, tenant_id="local-default")[-1]
+    assert saved.status == "FAILED" and saved.content is None
+
+
+@pytest.mark.parametrize("failure", ["confirm", "event", "log"])
+def test_supervisor_post_commit_failure_keeps_completed_sql_answer(
+    build_service, monkeypatch, failure,
+):
+    from server.service.agent_chat import AgentMessageExecution
+
+    model = _DirectSupervisorModel()
+    service, conversation, _, repository, *_ = build_service(supervisor_model=model)
+    failed_writes = []
+    fail_message = repository.fail_assistant_message
+
+    def record_failure(*args, **kwargs):
+        failed_writes.append(args)
+        return fail_message(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "fail_assistant_message", record_failure)
+    if failure == "confirm":
+        def fail_confirm(*_args):
+            raise RuntimeError("injected confirmation failure")
+        monkeypatch.setattr(model, "confirm_turn", fail_confirm)
+    elif failure == "event":
+        publish = AgentMessageExecution.publish
+
+        def fail_completed_event(self, event):
+            if event["type"] == "answer.completed":
+                raise RuntimeError("injected event failure")
+            publish(self, event)
+
+        monkeypatch.setattr(AgentMessageExecution, "publish", fail_completed_event)
+    else:
+        def fail_log(*_args, **_kwargs):
+            raise RuntimeError("injected completion log failure")
+        monkeypatch.setattr("server.service.agent_chat._logger.info", fail_log)
+
+    completed = _send(service, conversation, content="你好")
+
+    assert completed.assistant_message.status == "COMPLETED"
+    assert service.get_message(
+        conversation.conversation_id, tenant_id="local-default",
+        message_id=completed.assistant_message.message_id,
+    ) == completed
+    assert failed_writes == []
+    assert model.discarded == []
+    assert model.deleted == ([conversation.conversation_id] if failure == "confirm" else [])
+
+
+def test_supervisor_thread_is_deleted_only_after_authorized_sql_delete(build_service):
+    entered, release = Event(), Event()
+
+    class BlockingModel(_DirectSupervisorModel):
+        def run_agent(self, *args, **kwargs):
+            super().run_agent(*args, **kwargs)
+            entered.set()
+            assert release.wait(5), "test did not release provider"
+            kwargs["check_control"]()
+
+    model = BlockingModel()
+    service, conversation, *_ = build_service(supervisor_model=model)
+    execution = service.start_message(
+        conversation.conversation_id, tenant_id="local-default",
+        content="你好", idempotency_key="pending-delete",
+    )
+    try:
+        assert entered.wait(5), "provider did not start"
+        with pytest.raises(AgentMessageInProgressError):
+            service.delete_conversation(conversation.conversation_id, tenant_id="local-default")
+        assert model.deleted == []
+    finally:
+        release.set()
+    execution.result()
+
+    for kwargs in [
+        {"tenant_id": "another-workspace"},
+        {"tenant_id": "local-default", "owner_user_id": "other-user"},
+    ]:
+        with pytest.raises(AgentConversationNotFoundError):
+            service.delete_conversation(conversation.conversation_id, **kwargs)
+    assert model.deleted == []
+    deleted = service.delete_conversation(conversation.conversation_id, tenant_id="local-default")
+    assert deleted.conversation_id == conversation.conversation_id
+    assert model.deleted == [conversation.conversation_id]
 
 
 @pytest.fixture
@@ -1828,6 +2142,37 @@ def test_agent_complete_snapshot_reads_after_500_and_same_sequence_updates(
         service.list_all_messages(
             conversation.conversation_id, tenant_id="another-workspace"
         )
+
+def test_conversation_detail_roundtrips_without_changing_message_detail_or_owner_scope(build_service):
+    service, conversation, _, repository, *_ = build_service()
+    assert conversation.detail is None
+    detail = {
+        "environment": "local",
+        "runtime": {"type": "codex", "threadId": "thread-1", "sessionId": "thread-1", "cwd": "/tmp/notes"},
+        "custom": {"label": "课程笔记"},
+    }
+    with repository._session_factory.begin() as session:
+        session.get(AgentConversation, conversation.conversation_id).detail = detail
+
+    state = service.get_conversation(conversation.conversation_id, tenant_id="local-default")
+    assert state.detail == detail
+    assert service.list_conversations(tenant_id="local-default")[0].detail == detail
+    assert service.page_conversations(tenant_id="local-default").items[0].detail == detail
+    assert service.create_conversation(
+        tenant_id="local-default", title="测试对话", idempotency_key="conversation",
+    ).detail == detail
+    with pytest.raises(AgentConversationNotFoundError):
+        service.get_conversation(conversation.conversation_id, tenant_id="local-default", owner_user_id="other-user")
+    with pytest.raises(AgentConversationNotFoundError):
+        service.get_conversation(conversation.conversation_id, tenant_id="other-tenant")
+
+    _send(service, conversation)
+    assert service.get_conversation(conversation.conversation_id, tenant_id="local-default").detail == detail
+    with repository._session_factory() as session:
+        messages = session.scalars(select(AgentMessage)).all()
+        assert messages and all("runtime" not in (message.detail or {}) for message in messages)
+    assert service.delete_conversation(conversation.conversation_id, tenant_id="local-default").detail == detail
+
 
 def test_public_tenant_conversations_are_private_per_owner(build_service):
     service, _, _, repository, *_ = build_service()

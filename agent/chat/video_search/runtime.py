@@ -140,7 +140,8 @@ class AgentRuntime:
         )
         builder.add_edge("chat", "output")
         builder.add_edge("output", END)
-        self._graph = builder.compile()
+        # Keep the per-call Canvas and controls out of Supervisor checkpoints.
+        self._graph = builder.compile(checkpointer=False)
 
     @property
     def model_name(self) -> str:

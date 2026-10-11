@@ -18,6 +18,7 @@ class RealtimeRequest:
     question: str
     deadline: float
     check_control: Callable[[], None] = field(repr=False, compare=False)
+    series_context: dict | None = None
 
     def __post_init__(self) -> None:
         if (not isinstance(self.tenant_id, str) or not self.tenant_id.strip()
@@ -98,19 +99,22 @@ class RealtimeResult:
     def frames(self) -> tuple[FrameEvidence, ...]:
         return self.visual.frames
 
-    def as_dict(self, *, events_per_chunk: int = 4) -> dict:
+    def as_dict(self, *, events_per_chunk: int | None = 4) -> dict:
         anchor = self.context.request.anchor_ms
         chunks = []
+        omitted_evidence = False
         for item in self.chunks:
             target = item.target
-            events = sorted(
-                item.result.timeline if item.result is not None else (),
+            timeline = item.result.timeline if item.result is not None else ()
+            events = list(timeline) if events_per_chunk is None else sorted(
+                timeline,
                 key=lambda event: (
-                    0 if event.start_seconds <= anchor < event.end_seconds else
-                    min(abs(event.start_seconds - anchor), abs(event.end_seconds - anchor))
+                    not (event.start_seconds <= anchor < event.end_seconds),
+                    min(abs(event.start_seconds - anchor), abs(event.end_seconds - anchor)),
                 ),
             )[:events_per_chunk]
             events.sort(key=lambda event: event.start_seconds)
+            omitted_evidence = omitted_evidence or len(events) < len(timeline)
             chunks.append({
                 "chunk_id": target.chunk_id,
                 "start_ms": target.start_ms,
@@ -119,6 +123,7 @@ class RealtimeResult:
                 "available": item.result is not None,
                 "error": item.error,
                 "after_anchor": target.start_ms > anchor,
+                "persons": list(item.result.persons) if item.result is not None else [],
                 "evidence": [{
                     **event.model_dump(mode="json"),
                     "after_anchor": event.start_seconds > anchor,
@@ -139,6 +144,7 @@ class RealtimeResult:
             } for frame in self.visual.frames],
             "visual_summary": self.visual.summary,
             "visual_error": self.visual.error,
+            "omitted_evidence": omitted_evidence,
             "partial": any(item.result is None for item in self.chunks)
                 or self.visual.error is not None,
         }

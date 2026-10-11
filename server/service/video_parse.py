@@ -14,7 +14,6 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Literal, TypeVar
 
-from arkruntime import Ark
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
@@ -25,7 +24,6 @@ from agent.video_parse_v2.timelineEvent_canvas import (
     CanvasCompletion, ParseCanvasWrite, ParseContextCanvas, PrefixCompactCompletion,
 )
 from agent.video_parse_v2.input import (
-    ASRModelConfig,
     GenerativeModelConfig,
     ParseInput,
 )
@@ -42,8 +40,7 @@ from agent.video_parse_v2.state import (
     VideoRunSnapshot,
     VideoTaskStatus,
 )
-from engine.common.model_factory import build_asr_agent, build_openai_vision
-from engine.common.transcription import TranscriptAnalysis, normalize_transcription
+from engine.common.transcription import TranscriptAnalysis, VideoASRAgent, normalize_transcription
 from engine.parsev2.observations import ASRResult, OCRResult
 from engine.parsev2.planning import ChunkPlan, IntervalPlan
 from engine.parsev2.schemas import VideoParseResult
@@ -60,24 +57,10 @@ from engine.rag import (
     VideoClipInputContract,
     VIDEO_CLIP_PREPROCESS_REVISION,
 )
-from gateway.agent_model.context import ContextWindowPolicy
-from gateway.ark.embedding import (
-    DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
-    DoubaoMultimodalEmbedder,
-)
-from gateway.ark.multimodal import ArkMultimodalModel
-from gateway.config import (
-    ArkModelSourceConfig,
-    GatewayConfig,
-    OpenAIAudioSourceConfig,
-    OpenAIModelSourceConfig,
-    OpenAIVisionSourceConfig,
-)
-from gateway.errors import ContentFilterError
-from gateway.model_sources import ModelReference, ark_options, source_key
+from gateway.config import EmbeddingModelBinding, GatewayConfig, ModelBinding
+from gateway.embedding import EmbeddingModel
+from gateway.model_factory import GatewayClient
 from gateway.multimodal import ImageInput, TextInput, VideoInput
-from gateway.openai.audio import transcribe_audio
-from gateway.openai.multimodal import DeepSeekMultimodalModel
 from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
@@ -144,6 +127,7 @@ class VideoParseRuntimeService:
         sparse_enabled: bool = False,
         parse_usage: ParseUsageService | None = None,
         tracing: LangfuseTracing | None = None,
+        gateway_client: GatewayClient | None = None,
     ) -> None:
         if not worker_id.strip():
             raise ValueError("worker_id must not be blank")
@@ -166,6 +150,7 @@ class VideoParseRuntimeService:
         self._artifact_store = artifact_store
         self._media_service = media_service
         self._gateway_config = gateway_config
+        self._gateway = gateway_client or GatewayClient(gateway_config)
         self._elasticsearch_store = elasticsearch_store
         self._worker_id = worker_id.strip()
         self._lease_duration = lease_duration
@@ -440,18 +425,14 @@ class VideoParseRuntimeService:
             result = await asyncio.wait_for(asyncio.to_thread(
                 self._invoke_multimodal, bounded, inputs,
                 schema_name=schema_name, result_type=result_type,
+                check_control=check_control,
             ), timeout=remaining)
             check_control()
             if time.monotonic() >= deadline:
                 raise TimeoutError("realtime model call reached the Chat deadline")
             return result
 
-        try:
-            return await invoke(binding)
-        except ContentFilterError:
-            if binding.fallback is None:
-                raise
-            return await invoke(binding.fallback)
+        return await invoke(binding)
 
     async def advance_video_task(
         self, video_parse_task_id: str, lease: LeaseToken
@@ -495,26 +476,22 @@ class VideoParseRuntimeService:
         if model.mode == "none":
             return {"transcript": []}
         duration = execution.allowed_end_seconds - execution.allowed_start_seconds
-        source = self._source(model.source)
-        if isinstance(source, OpenAIAudioSourceConfig):
-            payload = await self._run_blocking(
-                transcribe_audio,
-                media.audio_path,
-                model=model.model,
-                provider=source.provider,
-                base_url=source.base_url,
-                api_key=source_key(source),
-                timeout=model.request_timeout_seconds,
-                response_format=source.response_format,
-            )
-            analysis = normalize_transcription(payload, duration_seconds=duration)
-        else:
-            agent = self._build_asr(model)
-            analysis = await self._run_blocking(
-                agent.transcribe,
-                media.video_path,
-                duration_seconds=duration,
-            )
+        definition = ModelBinding.model_validate({
+            key: value for key, value in model.model_dump(exclude_none=True).items()
+            if key not in {"mode", "fps"}
+        }).model_copy(update={"kind": "transcription"})
+        transport = self._gateway.create_transcription_model(definition)
+        try:
+            if transport.input_mode == "audio":
+                payload = await self._run_blocking(transport.transcribe, media.audio_path)
+                analysis = normalize_transcription(payload, duration_seconds=duration)
+            else:
+                agent = VideoASRAgent(transport, fps=model.fps)
+                analysis = await self._run_blocking(
+                    agent.transcribe, media.video_path, duration_seconds=duration,
+                )
+        finally:
+            transport.close()
         if not isinstance(analysis, TranscriptAnalysis):
             analysis = TranscriptAnalysis.model_validate(analysis)
         return {
@@ -588,6 +565,7 @@ class VideoParseRuntimeService:
             result_type=CanvasCompletion,
             tools=self._canvas_tools(canvas), canvas=canvas,
             max_model_calls=execution.inputs.parse_config.execution.max_model_calls,
+            tool_harness="deepagents",
         )
         CanvasCompletion.model_validate(receipt)
         return canvas.result(execution.chunk_parse_task_id)
@@ -702,6 +680,7 @@ class VideoParseRuntimeService:
             tools=self._canvas_tools(canvas), canvas=canvas,
             result_type=CanvasCompletion,
             max_model_calls=snapshot["inputs"].parse_config.execution.max_model_calls,
+            tool_harness="deepagents",
         )
 
     async def commit_interval_refinement(
@@ -951,6 +930,39 @@ class VideoParseRuntimeService:
         manager_token = self._model_manager.set(manager)
         stopped = asyncio.Event()
         heartbeat_errors: list[BaseException] = []
+        track_execution = category == "parse" and (
+            isinstance(lease, ChunkParseLease)
+            or isinstance(lease, IntervalParseLease) and lease.phase == "REFINING"
+        )
+        timing_started_at = time.time_ns() // 1_000_000
+        timing_started = time.monotonic()
+
+        async def sample_timing(*, finished: bool = False, outcome: str = "running") -> None:
+            if not track_execution:
+                return
+            elapsed_ms = int((time.monotonic() - timing_started) * 1_000)
+            try:
+                recorded = await asyncio.to_thread(
+                    self._repository.record_execution_timing,
+                    lease, started_at_ms=timing_started_at, elapsed_ms=elapsed_ms,
+                    finished=finished, outcome=outcome,
+                )
+                if finished or elapsed_ms == 0:
+                    _logger.info(
+                        "event=video_parse_execution_trace task=%s phase=%s "
+                        "execution=%s lease=%s elapsed_ms=%s outcome=%s recorded=%s",
+                        lease.video_parse_task_id, context["stage"],
+                        context.get("chunk_parse_task_id") or context.get("interval_parse_task_id"),
+                        lease.lease_version, elapsed_ms, outcome, recorded,
+                    )
+            except Exception as error:
+                # Observability must not replace the business result or its error.
+                _logger.warning(
+                    "Video Parse execution timing append failed task=%s phase=%s "
+                    "lease=%s error=%s",
+                    lease.video_parse_task_id, context["stage"],
+                    lease.lease_version, type(error).__name__,
+                )
 
         async def heartbeat() -> None:
             try:
@@ -967,6 +979,7 @@ class VideoParseRuntimeService:
                         raise VideoParseLeaseLostError(
                             "model-call reservation heartbeat was lost"
                         )
+                    await sample_timing()
             except asyncio.CancelledError:
                 raise
             except BaseException as error:
@@ -983,6 +996,7 @@ class VideoParseRuntimeService:
                 manager.cancel()
 
         try:
+            await sample_timing()
             pulse = asyncio.create_task(heartbeat())
             body_error: BaseException | None = None
             try:
@@ -996,6 +1010,14 @@ class VideoParseRuntimeService:
                 stopped.set()
                 await asyncio.gather(pulse, return_exceptions=True)
                 manager.cancel()
+                await sample_timing(
+                    finished=True,
+                    outcome=(
+                        "cancelled" if isinstance(body_error, asyncio.CancelledError)
+                        else "failed" if body_error is not None or heartbeat_errors
+                        else "completed"
+                    ),
+                )
                 if body_error is None and heartbeat_errors:
                     raise RuntimeError(
                         "Video Parse V2 model-call heartbeat failed"
@@ -1070,19 +1092,6 @@ class VideoParseRuntimeService:
 
     # Model and indexing assembly ------------------------------------------
 
-    def _build_asr(self, binding: ASRModelConfig):
-        parser = self._gateway_config.video_parser.model_copy(update={
-            "transcription_source": binding.source,
-        })
-        config = self._gateway_config.model_copy(update={"video_parser": parser})
-        return build_asr_agent(
-            config,
-            model=binding.model,
-            fps=binding.fps,
-            timeout=binding.request_timeout_seconds,
-            max_output_tokens=binding.max_output_tokens,
-        )
-
     def _canvas_tools(self, canvas: ParseContextCanvas, *, on_call=None) -> list[BaseTool]:
         manager = self._model_manager.get()
         return as_langchain_tools(build_context_canvas_tools(
@@ -1105,9 +1114,10 @@ class VideoParseRuntimeService:
         tools: Sequence[BaseTool] = (),
         canvas: ParseContextCanvas | None = None,
         max_model_calls: int | None = None,
+        tool_harness: Literal["legacy", "deepagents"] = "legacy",
     ) -> _Result:
+        manager = self._model_manager.get()
         if tools:
-            manager = self._model_manager.get()
             return await self._run_blocking(
                 self._invoke_multimodal, binding, inputs,
                 schema_name=schema_name, result_type=result_type,
@@ -1115,19 +1125,14 @@ class VideoParseRuntimeService:
                 context_checkpoint=canvas.checkpoint if canvas is not None else None,
                 check_control=manager.check_active if manager is not None else None,
                 fallback_inputs=fallback_inputs,
+                tool_harness=tool_harness,
             )
-        try:
-            return await self._run_blocking(
-                self._invoke_multimodal, binding, inputs,
-                schema_name=schema_name, result_type=result_type,
-            )
-        except ContentFilterError:
-            if binding.fallback is None:
-                raise
-            return await self._run_blocking(
-                self._invoke_multimodal, binding.fallback, fallback_inputs or inputs,
-                schema_name=schema_name, result_type=result_type,
-            )
+        return await self._run_blocking(
+            self._invoke_multimodal, binding, inputs,
+            schema_name=schema_name, result_type=result_type,
+            fallback_inputs=fallback_inputs,
+            check_control=manager.check_active if manager is not None else None,
+        )
 
     async def _generate_text_structured(
         self,
@@ -1138,10 +1143,12 @@ class VideoParseRuntimeService:
         result_type: type[_Result],
         max_model_calls: int,
         canvas: ParseContextCanvas | None = None,
+        tool_harness: Literal["legacy", "deepagents"] = "legacy",
     ) -> _Result:
         return await self._generate_multimodal(
             binding, [TextInput(prompt)], schema_name=result_type.__name__,
             result_type=result_type, tools=tools, canvas=canvas, max_model_calls=max_model_calls,
+            tool_harness=tool_harness,
         )
 
     def _invoke_multimodal(
@@ -1156,133 +1163,95 @@ class VideoParseRuntimeService:
         context_checkpoint=None,
         check_control=None,
         fallback_inputs=None,
+        tool_harness: Literal["legacy", "deepagents"] = "legacy",
     ) -> _Result:
-        models = []
-
-        def build(selected):
-            source = self._source(selected.source)
-            if isinstance(source, ArkModelSourceConfig):
-                model = ArkMultimodalModel(
-                    selected.model, request_timeout_seconds=selected.request_timeout_seconds,
-                    max_output_tokens=selected.max_output_tokens,
-                    reasoning_effort=selected.reasoning_effort, **ark_options(source),
-                )
-            elif isinstance(source, OpenAIVisionSourceConfig):
-                model = build_openai_vision(
-                    source, model=selected.model, timeout=selected.request_timeout_seconds,
-                    max_output_tokens=selected.max_output_tokens,
-                )
-            elif isinstance(source, OpenAIModelSourceConfig):
-                model = DeepSeekMultimodalModel(
-                    selected.model, base_url=source.base_url, api_key=source_key(source),
-                    max_output_tokens=selected.max_output_tokens or 8192,
-                    request_timeout_seconds=selected.request_timeout_seconds,
-                    reasoning_effort=selected.reasoning_effort or "none",
-                )
-            else:
-                raise TypeError(f"model source {selected.source!r} cannot produce structured media output")
-            models.append(model)
-            return model
-
+        definition = ModelBinding.model_validate(binding.model_dump(exclude_none=True))
+        requires_vision = any(isinstance(item, (ImageInput, VideoInput)) for item in inputs)
+        definition = definition.model_copy(update={
+            "kind": "generative",
+            "supports_vision_input": (
+                requires_vision if binding.supports_vision_input is None
+                else definition.supports_vision_input
+            ),
+            "fallback": (
+                definition.fallback.model_copy(update={
+                    "kind": "generative",
+                    "supports_vision_input": (
+                        any(isinstance(item, (ImageInput, VideoInput))
+                            for item in (fallback_inputs or inputs))
+                        if binding.fallback.supports_vision_input is None
+                        else definition.fallback.supports_vision_input
+                    ),
+                }) if definition.fallback is not None else None
+            ),
+        })
+        model = self._gateway.create_generative_model(definition)
         try:
-            model = build(binding)
-            if not tools:
-                return model.generate(inputs, schema_name=schema_name, result_type=result_type)
-            fallback = build(binding.fallback) if binding.fallback is not None else None
-            output_reserve = max(
-                binding.max_output_tokens or 8192,
-                binding.fallback.max_output_tokens or 8192 if binding.fallback is not None else 0,
-            )
-            input_limit = 128_000 - output_reserve - 2048
-            policy = (ContextWindowPolicy(
-                context_window_tokens=128_000, output_reserve_tokens=output_reserve,
-                safety_margin_tokens=2048,
-                auto_compact_tokens=max(2, input_limit * 9 // 10),
-                compact_target_tokens=max(1, input_limit * 3 // 4),
-            ) if input_limit > 2 else None)
             return model.generate(
                 inputs, schema_name=schema_name, result_type=result_type,
-                tools=tools, max_model_calls=max_model_calls,
-                request_timeout_seconds=binding.request_timeout_seconds,
+                tools=tools,
+                # Existing task request budgets are enforced by the call manager.
+                max_model_calls=None,
                 check_control=check_control, context_checkpoint=context_checkpoint,
-                context_window_policy=policy, max_input_chars=400_000,
-                fallback_model=fallback, fallback_inputs=fallback_inputs,
-                fallback_on_error=lambda error: isinstance(error, ContentFilterError),
+                fallback_inputs=fallback_inputs, tool_harness=tool_harness,
             )
         finally:
-            for model in reversed(models):
-                close = getattr(model, "close", None)
-                if close is not None:
-                    close()
+            model.close()
 
     def _build_index_coordinator(
         self,
         inputs: ParseInput,
         *,
         check_active: Callable[[], None],
-    ) -> tuple[VideoParseIndexCoordinator, Ark]:
+    ) -> tuple[VideoParseIndexCoordinator, EmbeddingModel]:
         embedding = inputs.parse_config.models.embedding
-        reference = ModelReference.resolve(
-            embedding.model,
-            encoder_model=embedding.encoder_model,
-            default_encoder_model=self._gateway_config.multimodal_embedding.model,
-        )
-        source = self._source(embedding.source)
-        if not isinstance(source, ArkModelSourceConfig):
-            raise TypeError("Parse V2 multimodal embedding requires an Ark source")
-        client = Ark.volc(
-            timeout=embedding.request_timeout_seconds,
-            max_retries=0,
-            **ark_options(source),
-        )
-        embedder = DoubaoMultimodalEmbedder(
-            reference.request_model,
-            output_dimensionality=embedding.dimensions,
-            fps=embedding.video_fps,
-            request_timeout_seconds=embedding.request_timeout_seconds,
-            client=client,
-        )
-        provider = source.provider
-        dimensions = embedding.dimensions
-        coordinator = VideoParseIndexCoordinator(
-            self._repository,
-            self._elasticsearch_store,
-            embedder,
-            media_resolver=self._artifact_store.resolve,
-            media_service=self._media_service,
-            check_active=check_active,
-            contract=ChunkIndexingContract(
-                retrieval_contract_id=_RETRIEVAL_CONTRACT,
-                semantic_encoder=EncoderContract(
-                    provider=provider,
-                    model=reference.model,
-                    encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
-                    dimensions=dimensions,
-                ),
-                vision_encoder=EncoderContract(
-                    provider=provider,
-                    model=reference.model,
-                    encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
-                    dimensions=dimensions,
-                ),
-                visual_input_contract=VideoClipInputContract(
-                    fps=embedding.video_fps,
-                    max_height=inputs.parse_config.visual_input.max_height,
-                    mime_type="video/mp4",
-                    preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
-                ),
-                index_generation=self._index_generation,
-                sparse_encoder=(
-                    SparseEncoderContract(
+        definition = EmbeddingModelBinding.model_validate(embedding.model_dump(exclude_none=True))
+        embedder = self._gateway.create_embedding_model(definition)
+        provider = embedder.provider_name
+        dimensions = embedder.dimensions
+        try:
+            coordinator = VideoParseIndexCoordinator(
+                self._repository,
+                self._elasticsearch_store,
+                embedder,
+                media_resolver=self._artifact_store.resolve,
+                media_service=self._media_service,
+                check_active=check_active,
+                contract=ChunkIndexingContract(
+                    retrieval_contract_id=_RETRIEVAL_CONTRACT,
+                    semantic_encoder=EncoderContract(
                         provider=provider,
-                        model=reference.model,
-                        encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
-                    )
-                    if self._sparse_enabled else None
+                        model=embedder.encoder_model,
+                        encoder_revision=embedder.encoder_revision,
+                        dimensions=dimensions,
+                    ),
+                    vision_encoder=EncoderContract(
+                        provider=provider,
+                        model=embedder.encoder_model,
+                        encoder_revision=embedder.encoder_revision,
+                        dimensions=dimensions,
+                    ),
+                    visual_input_contract=VideoClipInputContract(
+                        fps=embedding.video_fps,
+                        max_height=inputs.parse_config.visual_input.max_height,
+                        mime_type="video/mp4",
+                        preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
+                    ),
+                    index_generation=self._index_generation,
+                    sparse_encoder=(
+                        SparseEncoderContract(
+                            provider=provider,
+                            model=embedder.encoder_model,
+                            encoder_revision=embedder.encoder_revision,
+                        )
+                        if self._sparse_enabled else None
+                    ),
                 ),
-            ),
-        )
-        return coordinator, client
+            )
+        except BaseException:
+            embedder.close()
+            raise
+        return coordinator, embedder
 
     # Lease and identity helpers -------------------------------------------
 
@@ -1388,14 +1357,6 @@ class VideoParseRuntimeService:
             lease, lease_duration=self._lease_duration
         ):
             raise VideoParseLeaseLostError("Prefix lease is no longer current")
-
-    def _source(self, name: str):
-        try:
-            return self._gateway_config.model_sources[name]
-        except KeyError as error:
-            raise ValueError(
-                f"fixed model source {name!r} is absent from the active Gateway config"
-            ) from error
 
     def _notify_change(self, video_parse_task_id: str) -> None:
         event = self._change_events.get(video_parse_task_id)

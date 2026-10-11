@@ -1,12 +1,29 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator
+import logging
+from collections import Counter
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
 from gateway.errors import ContentFilterError, SSEProxyError
+from gateway.model_diagnostics import capture_model_diagnostics, record_model_event
 from gateway.usage import ModelCallTracker, track_model_call
+
+_logger = logging.getLogger(__name__)
+_DIAGNOSTIC_EVENT_TYPES = frozenset({
+    "response.created", "response.in_progress", "response.completed",
+    "response.failed", "response.incomplete", "error",
+    "response.output_text.delta", "response.output_text.done",
+    "response.output_item.added", "response.output_item.done",
+    "response.function_call_arguments.delta", "response.function_call_arguments.done",
+    "response.content_part.added", "response.content_part.done",
+    "response.reasoning_text.delta", "response.reasoning_text.done",
+    "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done",
+})
+_DIAGNOSTIC_ITEM_TYPES = frozenset({"message", "function_call", "reasoning", "refusal"})
+_DIAGNOSTIC_CONTENT_TYPES = frozenset({"output_text", "reasoning_text", "refusal"})
 
 _OUTPUT_CONTENT_FILTER_CODES = frozenset(
     {
@@ -34,7 +51,7 @@ def request_sse_response(
 def request_sse_json(
     responses: Any, *, usage_call: ModelCallTracker | None = None, **request: Any
 ) -> dict[str, Any]:
-    with _usage_scope(usage_call, request) as call:
+    with _usage_scope(usage_call, request) as call, capture_model_diagnostics(call, {**request, "stream": True}):
         metadata: dict[str, Any] = {}
         for _ in _request_sse_text(
             responses, allow_terminal_text=True, metadata=metadata, usage_call=call, **request
@@ -62,7 +79,7 @@ def request_sse_text(
     responses: Any, *, usage_call: ModelCallTracker | None = None, **request: Any
 ) -> Iterator[str]:
     """Yield original provider deltas; exhaustion means completion was verified."""
-    with _usage_scope(usage_call, request) as call:
+    with _usage_scope(usage_call, request) as call, capture_model_diagnostics(call, {**request, "stream": True}):
         yield from _request_sse_text(responses, allow_terminal_text=False, usage_call=call, **request)
 
 
@@ -114,6 +131,8 @@ def _request_sse_text(
     completed_response: object | None = None
     response_id: str | None = None
     last_sequence = -1
+    event_counts: Counter[str] = Counter()
+    stream_item_counts: Counter[str] = Counter()
 
     try:
         for event in stream:
@@ -122,7 +141,15 @@ def _request_sse_text(
                 check_control()
             response = getattr(event, "response", None)
             event_type = getattr(event, "type", None)
+            event_kind = event_type if isinstance(event_type, str) and event_type in _DIAGNOSTIC_EVENT_TYPES else "other"
+            event_counts[event_kind] += 1
+            if event_type == "response.output_item.done":
+                item = getattr(event, "item", None)
+                kind = item.get("type") if isinstance(item, Mapping) else getattr(item, "type", None)
+                item_kind = kind if isinstance(kind, str) and kind in _DIAGNOSTIC_ITEM_TYPES else "other"
+                stream_item_counts[item_kind] += 1
             usage_call.capture_response(response, include_usage=event_type in {"response.completed", "response.failed", "response.incomplete"})
+            record_model_event("sse", event)
             sequence = getattr(event, "sequence_number", None)
             if isinstance(sequence, int):
                 if sequence <= last_sequence:
@@ -252,6 +279,89 @@ def _request_sse_text(
     ):
         return
     if not output_text:
+        output = completed_response.get("output") if isinstance(completed_response, Mapping) else getattr(completed_response, "output", None)
+        items = output if isinstance(output, (list, tuple)) else []
+        item_types: Counter[str] = Counter()
+        item_classes: Counter[str] = Counter()
+        content_types: Counter[str] = Counter()
+        content_classes: Counter[str] = Counter()
+        dict_count = int(isinstance(completed_response, Mapping)) + int(isinstance(output, Mapping))
+        text_fields = empty_text_fields = function_count = 0
+        refusal_present = False
+        truncated = len(items) > 32
+        for item in items[:32]:
+            dict_count += int(isinstance(item, Mapping))
+            item_classes[type(item).__name__[:64]] += 1
+            kind = item.get("type") if isinstance(item, Mapping) else getattr(item, "type", None)
+            item_kind = kind if isinstance(kind, str) and kind in _DIAGNOSTIC_ITEM_TYPES else "other"
+            item_types[item_kind] += 1
+            function_count += int(getattr(item, "type", None) == "function_call")
+            refusal_present |= kind == "refusal"
+            content = item.get("content") if isinstance(item, Mapping) else getattr(item, "content", None)
+            dict_count += int(isinstance(content, Mapping))
+            parts = content if isinstance(content, (list, tuple)) else []
+            truncated |= len(parts) > 32
+            for part in parts[:32]:
+                dict_count += int(isinstance(part, Mapping))
+                class_name = type(part).__name__[:64]
+                content_classes[class_name if len(content_classes) < 32 or class_name in content_classes else "other"] += 1
+                kind = part.get("type") if isinstance(part, Mapping) else getattr(part, "type", None)
+                content_kind = kind if isinstance(kind, str) and kind in _DIAGNOSTIC_CONTENT_TYPES else "other"
+                content_types[content_kind] += 1
+                refusal_present |= kind == "refusal"
+                if kind == "output_text":
+                    present = "text" in part if isinstance(part, Mapping) else hasattr(part, "text")
+                    text = part.get("text") if isinstance(part, Mapping) else getattr(part, "text", None)
+                    text_fields += int(present)
+                    empty_text_fields += int(present and text == "")
+        tools = completed_response.get("tools") if isinstance(completed_response, Mapping) else getattr(completed_response, "tools", None)
+        choice = completed_response.get("tool_choice") if isinstance(completed_response, Mapping) else getattr(completed_response, "tool_choice", None)
+        text_config = completed_response.get("text") if isinstance(completed_response, Mapping) else getattr(completed_response, "text", None)
+        status = completed_response.get("status") if isinstance(completed_response, Mapping) else getattr(completed_response, "status", None)
+        format_config = text_config.get("format") if isinstance(text_config, Mapping) else getattr(text_config, "format", None)
+        format_type = format_config.get("type") if isinstance(format_config, Mapping) else getattr(format_config, "type", None)
+        strict = format_config.get("strict") if isinstance(format_config, Mapping) else getattr(format_config, "strict", None)
+        summary = {
+            "call_id": usage_call.call_id, "provider": usage_call.provider[:160],
+            "model": usage_call.model[:160], "operation": usage_call.operation[:160],
+            "provider_request_id": usage_call.request_id[:160] if isinstance(usage_call.request_id, str) else None,
+            "response_id": response_id[:160] if isinstance(response_id, str) else None,
+            "terminal_status": status if status is None or status == "completed" else "other",
+            "event_types": dict(event_counts), "stream_item_types": dict(stream_item_counts),
+            "output_item_done_count": event_counts["response.output_item.done"],
+            "function_args_delta_count": event_counts["response.function_call_arguments.delta"],
+            "function_args_done_count": event_counts["response.function_call_arguments.done"],
+            "output_count": len(items), "output_container_type": type(output).__name__[:64],
+            "item_classes": dict(item_classes), "item_types": dict(item_types),
+            "content_classes": dict(content_classes), "content_types": dict(content_types),
+            "text_chars": len(output_text), "terminal_text_chars": len(response_text),
+            "streamed_text_chars": len(streamed_text), "function_count": function_count,
+            "text_field_count": text_fields, "empty_text_field_count": empty_text_fields,
+            "unknown_dict_structures": dict_count, "refusal_present": refusal_present,
+            "allow_function_calls": allow_function_calls, "output_rejected": True,
+            "summary_truncated": truncated,
+            "terminal_tool_count": len(tools) if isinstance(tools, (list, tuple)) else None,
+            "terminal_tool_choice": (
+                choice if isinstance(choice, str) and choice in {"auto", "none", "required"}
+                else "other" if choice is not None else None
+            ),
+            "terminal_format_type": (
+                format_type if isinstance(format_type, str) and format_type in {"text", "json_object", "json_schema"}
+                else "other" if format_type is not None else None
+            ),
+            "terminal_format_strict": strict if isinstance(strict, bool) else None,
+        }
+        for key in (
+            "video_parse_task_id", "run_id", "chunk_parse_task_id", "interval_parse_task_id",
+            "video_chunk_id", "sequence_no", "lease_version",
+        ):
+            value = usage_call.context.get(key)
+            if isinstance(value, (str, int)) or value is None:
+                summary[key] = value[:160] if isinstance(value, str) else value
+        _logger.warning(
+            "event=ark_sse_empty_output summary=%s",
+            json.dumps(summary, ensure_ascii=False, separators=(",", ":")),
+        )
         raise SSEProxyError(
             "Ark Responses SSE returned no output text",
             response_id=response_id,

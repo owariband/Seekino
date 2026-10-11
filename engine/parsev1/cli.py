@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import argparse
 import os
+from contextlib import ExitStack
 from pathlib import Path
 
 from engine.common.media_probe import probe_video_duration_seconds
 from engine.common.model_factory import build_asr_agent
-from gateway.ark.multimodal import ArkMultimodalModel
-from gateway.config import OpenAIVisionSourceConfig, load_config
-from gateway.openai.multimodal import DeepSeekMultimodalModel
+from gateway.config import load_config
 
 from .analysis_windows import (
     materialize_analysis_windows,
@@ -118,16 +117,21 @@ def main() -> None:
         raise RuntimeError(f"unsupported command: {args.command}")
 
     config = load_config(args.config)
+    with ExitStack() as resources:
+        _run_parse_video(args, config, resources)
+
+
+def _run_parse_video(args, config, resources: ExitStack) -> None:
     parser_config = config.video_parser
+    transcription = config.resolve_model_binding("transcription")
+    vision = config.resolve_model_binding("vision")
     transcript_model = (
         args.transcript_model
-        or os.getenv("ANIVAG_TRANSCRIPT_MODEL")
-        or parser_config.transcript_model
+        or transcription.model
     )
     video_model = (
         args.video_model
-        or os.getenv("ANIVAG_VIDEO_MODEL")
-        or parser_config.video_model
+        or vision.model
     )
     transcript_fps = args.transcript_fps
     if transcript_fps is None:
@@ -143,19 +147,15 @@ def main() -> None:
     fallback_config = parser_config.fallback
     fallback_enabled = args.fallback
     if fallback_enabled is None:
-        fallback_enabled = _environment_bool(
-            "ANIVAG_FALLBACK_ENABLED",
-            fallback_config.enabled,
-        )
-    deepseek_config = fallback_config.deepseek
-    deepseek_api_key: str | None = None
-    if fallback_enabled:
-        deepseek_api_key = os.getenv(deepseek_config.api_key_env)
-        if not deepseek_api_key:
-            raise RuntimeError(
-                "missing DeepSeek fallback credential in environment variable "
-                f"{deepseek_config.api_key_env}"
-            )
+        fallback_enabled = vision.fallback is not None
+    fallback_binding = config.normalized_models["vision"].fallback
+    if fallback_binding is not None:
+        fallback_binding = config.resolve_model_binding(fallback_binding)
+    elif "vision_fallback" in config.normalized_models:
+        fallback_binding = config.resolve_model_binding("vision_fallback")
+    if fallback_enabled and fallback_binding is None:
+        raise ValueError("enabled video fallback requires a configured fallback model")
+    fallback_provider = config.source(fallback_binding.source).provider if fallback_binding else None
 
     video_path = args.video.expanduser().resolve()
     output_dir = args.output_dir.expanduser().resolve()
@@ -182,33 +182,33 @@ def main() -> None:
             fps=transcript_fps,
             timeout=parser_config.transcription_timeout_seconds or args.request_timeout_seconds,
             max_output_tokens=parser_config.transcription_max_output_tokens,
-            ark_model_type=ArkMultimodalModel,
         )
+        resources.callback(asr_agent.close)
     video_model_client = build_vision_model(
         config, model=video_model,
         timeout=parser_config.vision_timeout_seconds or args.request_timeout_seconds,
         max_output_tokens=parser_config.vision_max_output_tokens,
-        ark_model_type=ArkMultimodalModel,
     )
+    resources.callback(video_model_client.close)
     understanding_agent: VideoUnderstandingAgentProtocol = (
         VideoUnderstandingAgent(
             video_model_client,
             fps=video_fps,
         )
     )
-    if isinstance(config.stage_source("vision"), OpenAIVisionSourceConfig):
+    if video_model_client.visual_input_mode == "ordered_frames":
         understanding_agent = OrderedFrameVideoUnderstandingAgent(
             video_model_client, frame_fps=video_fps,
             max_frames=parser_config.max_frames_per_window, max_height=args.max_height,
         )
     if fallback_enabled:
-        assert deepseek_api_key is not None
-        deepseek_model = build_fallback_model(
-            config, deepseek_config, deepseek_model_type=DeepSeekMultimodalModel,
+        fallback_model = build_fallback_model(
+            config, fallback_binding,
         )
+        resources.callback(fallback_model.close)
         fallback_agent = FrameFallbackVideoUnderstandingAgent(
-            deepseek_model,
-            deepseek_model,
+            fallback_model,
+            fallback_model,
             asr_model_name=(
                 transcript_model if args.asr_mode == "lite" else None
             ),
@@ -223,7 +223,7 @@ def main() -> None:
                 "Doubao output content filter triggered; "
                 f"code={error.code or 'content_filter'}; "
                 f"partial_output_chars={error.partial_output_chars}; "
-                f"using existing ASR and grouped {deepseek_config.model} "
+                f"using existing ASR and grouped {fallback_binding.model} "
                 "visual/refiner fallback once",
                 flush=True,
             )
@@ -236,7 +236,7 @@ def main() -> None:
         )
         print(
             "content-filter fallback enabled; "
-            f"provider={deepseek_config.provider}; model={deepseek_config.model}; "
+            f"provider={fallback_provider}; model={fallback_binding.model}; "
             f"input_mode=ordered_frames; fps={fallback_config.frame_fps}; "
             f"group_duration_seconds={fallback_config.group_duration_seconds}; "
             f"max_frames_per_group={fallback_config.max_frames_per_group}",
@@ -248,8 +248,8 @@ def main() -> None:
         transcript_model=transcript_model,
         transcript_source=args.asr_mode,
         video_model=video_model,
-        fallback_provider=deepseek_config.provider,
-        fallback_model=deepseek_config.model,
+        fallback_provider=fallback_provider,
+        fallback_model=fallback_binding.model if fallback_binding else None,
         fallback_transcript_model=(
             transcript_model if args.asr_mode == "lite" else None
         ),
@@ -318,9 +318,9 @@ def main() -> None:
         fallback=VideoFallbackModels(
             enabled=fallback_enabled,
             transcript_model=transcript_model,
-            provider=deepseek_config.provider,
-            visual_model=deepseek_config.model,
-            refiner_model=deepseek_config.model,
+            provider=fallback_provider,
+            visual_model=fallback_binding.model if fallback_binding else None,
+            refiner_model=fallback_binding.model if fallback_binding else None,
             input_mode="ordered_frames",
             frame_fps=fallback_config.frame_fps,
             group_duration_seconds=fallback_config.group_duration_seconds,
@@ -330,18 +330,6 @@ def main() -> None:
     )
     _write_json(result.model_copy(update={"models": models}), final_output)
     print(f"wrote {final_output}", flush=True)
-
-
-def _environment_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    normalized = value.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"{name} must be a boolean value")
 
 
 if __name__ == "__main__":

@@ -324,14 +324,20 @@ class VideoFallbackModels(BaseModel):
 
     enabled: bool
     transcript_model: str = Field(min_length=1)
-    provider: str = Field(min_length=1)
-    visual_model: str = Field(min_length=1)
-    refiner_model: str = Field(min_length=1)
+    provider: str | None = Field(default=None, min_length=1)
+    visual_model: str | None = Field(default=None, min_length=1)
+    refiner_model: str | None = Field(default=None, min_length=1)
     input_mode: Literal["ordered_frames"]
     frame_fps: float = Field(gt=0)
     group_duration_seconds: int = Field(gt=0)
     max_frames_per_group: int = Field(gt=0)
     max_height: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def require_enabled_model(self):
+        if self.enabled and any(value is None for value in (self.provider, self.visual_model, self.refiner_model)):
+            raise ValueError("enabled fallback requires provider, visual_model and refiner_model")
+        return self
 
 
 class VideoParseModels(BaseModel):

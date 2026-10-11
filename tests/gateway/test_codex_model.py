@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from langchain_core.tools import BaseTool, StructuredTool
+from openai_codex import ImageInput as CodexImageInput, TextInput as CodexTextInput
 from pydantic import BaseModel, ConfigDict
 
 from gateway.agent_model.errors import (
@@ -23,8 +24,10 @@ from gateway.codex import CodexAgentModel
 from gateway.codex.client import CodexModelCallLimitError
 from gateway.codex.agent import CodexAgentModelError
 from gateway.agent_model.context import ContextWindowPolicy
+from gateway.multimodal import ImageInput, TextInput, VideoInput
 from gateway.usage import (
-    capture_model_usage, control_model_calls, model_call_context, track_model_call,
+    ModelCallCancelledError, capture_model_usage, control_model_calls,
+    model_call_context, track_model_call,
 )
 
 
@@ -87,6 +90,7 @@ class _FakeSession:
         self._script = list(script)
         self.prompts: list[tuple[str, dict[str, Any] | None]] = []
         self.tool_call_count = 0
+        self.successful_tool_call_count = 0
         self.interrupted = False
         self.closed = False
 
@@ -536,6 +540,45 @@ def test_invocation_timeout_force_closes_without_waiting_for_interrupt() -> None
     assert session.closed is True
 
 
+def test_generate_usage_cancellation_closes_native_transport_without_tools() -> None:
+    started = Event()
+    calls = []
+    released = []
+    errors = []
+
+    class Session(_BlockingSession):
+        def run_turn(self, prompt, *, output_schema=None):
+            started.set()
+            return super().run_turn(prompt, output_schema=output_schema)
+
+    session = Session()
+    model = _model_for(session, request_timeout_seconds=5)
+    control = SimpleNamespace(acquire=calls.append, release=released.append)
+
+    def generate():
+        try:
+            with control_model_calls(control):
+                model.generate([TextInput("inspect")], schema_name="answer", result_type=Result)
+        except BaseException as error:
+            errors.append(error)
+
+    thread = Thread(target=generate)
+    try:
+        thread.start()
+        assert started.wait(timeout=1)
+        assert len(calls) == 1
+        calls[0].cancel()
+        thread.join(timeout=1)
+        assert not thread.is_alive()
+        assert session.closed
+        assert len(errors) == 1 and isinstance(errors[0], ModelCallCancelledError)
+        assert released == calls
+        assert not calls[0]._cancel_callbacks
+    finally:
+        model.close()
+        thread.join(timeout=1)
+
+
 def test_input_limit_is_enforced_before_starting_codex() -> None:
     session = _FakeSession([])
     model = _model_for(session, max_input_chars=4)
@@ -735,3 +778,159 @@ def test_internal_model_call_budget_exhaustion_has_loop_limit_reason() -> None:
         model.close()
 
     assert captured.value.reason == ModelFailureReason.LOOP_LIMIT
+
+
+def test_generate_preserves_image_order_and_uses_media_budget(tmp_path) -> None:
+    first, second = tmp_path / "first.png", tmp_path / "second.png"
+    first.write_bytes(b"a" * 50_000)
+    second.write_bytes(b"b" * 50_000)
+    session = _FakeSession([(_turn('{"answer":"observed"}'), 0)])
+    model = _model_for(session, max_input_chars=1_500)
+    records = []
+    try:
+        with capture_model_usage(records.append):
+            result = model.generate(
+                [TextInput("frame one"), ImageInput(first), TextInput("frame two"), ImageInput(second)],
+                schema_name="visual_evidence", result_type=Result,
+                context_window_policy=_context_policy(20_000), max_model_calls=1,
+            )
+    finally:
+        model.close()
+
+    assert result.answer == "observed"
+    inputs, schema = session.prompts[0]
+    assert [type(item) for item in inputs] == [CodexTextInput, CodexImageInput, CodexTextInput, CodexImageInput]
+    assert inputs[0].text == "frame one" and inputs[2].text == "frame two"
+    assert inputs[1].url.startswith("data:image/png;base64,")
+    assert inputs[1].url != inputs[3].url
+    assert schema["additionalProperties"] is False
+    assert session.closed
+    assert len(records) == 1 and records[0].operation == "visual_evidence"
+    assert records[0].usage.total_tokens == 14
+
+
+def test_generate_counts_image_tokens_before_starting_session(tmp_path) -> None:
+    image = tmp_path / "frame.png"
+    image.write_bytes(b"image")
+    session = _FakeSession([])
+    model = _model_for(session)
+    try:
+        with pytest.raises(ModelInputTooLargeError, match="initial context"):
+            model.generate(
+                [ImageInput(image)], schema_name="visual", result_type=Result,
+                context_window_policy=_context_policy(15_000),
+            )
+        assert session.prompts == []
+    finally:
+        model.close()
+
+
+def test_generate_keeps_per_call_context_policy_local() -> None:
+    instance_policy = _context_policy(30_000)
+    session = _FakeSession([(_turn('{"answer":"ok"}'), 0)])
+    model = _model_for(session, context_window_policy=instance_policy)
+    try:
+        with pytest.raises(ModelInputTooLargeError):
+            model.generate(
+                [TextInput("evidence")], schema_name="visual", result_type=Result,
+                context_window_policy=_context_policy(13_000),
+            )
+        assert model.context_window_policy is instance_policy
+        assert model.generate(
+            [TextInput("evidence")], schema_name="visual", result_type=Result,
+        ).answer == "ok"
+        assert model.context_window_policy is instance_policy
+    finally:
+        model.close()
+
+
+def test_generate_rejects_direct_video_before_starting_session(tmp_path) -> None:
+    session = _FakeSession([])
+    model = _model_for(session)
+    try:
+        with pytest.raises(ValueError, match="ordered ImageInput frames"):
+            model.generate(
+                [VideoInput(tmp_path / "clip.mp4", 1)], schema_name="visual", result_type=Result,
+            )
+    finally:
+        model.close()
+    assert session.prompts == []
+
+
+def test_generate_rejects_failed_business_tools_even_with_valid_json() -> None:
+    session = _FakeSession([(_turn('{"answer":"premature"}'), 1)])
+    model = _model_for(session)
+    tool = StructuredTool.from_function(lambda value: value, name="inspect", description="Inspect evidence.")
+    try:
+        with pytest.raises(MissingRequiredFunctionCallError) as failure:
+            model.generate(
+                [TextInput("evidence")], schema_name="visual", result_type=Result,
+                tools=[tool], max_model_calls=1,
+            )
+    finally:
+        model.close()
+    assert failure.value.reason == ModelFailureReason.LOOP_LIMIT
+    assert session.closed
+
+
+def test_generate_repairs_failed_tool_completion_in_same_session() -> None:
+    class Session(_FakeSession):
+        def run_turn(self, prompt, *, output_schema=None):
+            turn = super().run_turn(prompt, output_schema=output_schema)
+            if len(self.prompts) == 2:
+                self.successful_tool_call_count = 1
+            return turn
+
+    session = Session([
+        (_turn('{"answer":"premature"}'), 1),
+        (_turn('{"answer":"grounded"}'), 2),
+    ])
+    model = _model_for(session)
+    tool = StructuredTool.from_function(lambda value: value, name="inspect", description="Inspect evidence.")
+    records = []
+    try:
+        with capture_model_usage(records.append):
+            result = model.generate(
+                [TextInput("evidence")], schema_name="visual", result_type=Result,
+                tools=[tool], max_model_calls=4,
+            )
+    finally:
+        model.close()
+    assert result.answer == "grounded"
+    assert "do not repeat successful writes" in session.prompts[1][0]
+    assert session.prompts[0][1] == session.prompts[1][1]
+    assert session.closed
+    assert len(records) == 1
+
+
+def test_generate_fails_after_second_premature_tool_completion() -> None:
+    session = _FakeSession([
+        (_turn('{"answer":"premature"}'), 1),
+        (_turn('{"answer":"still premature"}'), 2),
+    ])
+    model = _model_for(session)
+    tool = StructuredTool.from_function(lambda value: value, name="inspect", description="Inspect evidence.")
+    try:
+        with pytest.raises(MissingRequiredFunctionCallError, match="twice"):
+            model.generate(
+                [TextInput("evidence")], schema_name="visual", result_type=Result,
+                tools=[tool], max_model_calls=4,
+            )
+    finally:
+        model.close()
+    assert len(session.prompts) == 2
+    assert session.closed
+
+
+def test_generate_timeout_closes_native_session() -> None:
+    session = _BlockingSession()
+    model = _model_for(session)
+    try:
+        with pytest.raises(AgentModelTimeoutError):
+            model.generate(
+                [TextInput("evidence")], schema_name="visual", result_type=Result,
+                request_timeout_seconds=0.03,
+            )
+    finally:
+        model.close()
+    assert session.closed

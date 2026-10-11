@@ -129,7 +129,14 @@ def test_default_config_uses_canonical_agent_sources() -> None:
     assert agent_api_key_env_names(config) == ("ARK_API_KEY", "DEEPSEEK_API_KEY")
 
     assert config.video_parser.transcript_model == "doubao-seed-2-0-lite-260428"
-    assert config.video_parser.video_model == "doubao-seed-2-1-pro-260628"
+    assert config.video_parser.vision_source == "codex_local"
+    assert config.video_parser.video_model == "gpt-6-astra"
+    assert config.video_parser.vision_max_output_tokens == 8192
+    assert config.video_parser.vision_reasoning_effort == "low"
+    resolved = config.resolve_model_binding("vision", environ={})
+    assert resolved.supports_vision_input
+    assert resolved.context_window_tokens == 128000
+    assert resolved.request_timeout_seconds == 600
     assert config.multimodal_embedding.model == "doubao-embedding-vision-250615"
     assert config.agent_runtime["stage_timeout_seconds"] == 480
 

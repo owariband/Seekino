@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any, Literal, Protocol, TypeVar
 
 from langchain_core.tools import BaseTool
+from openai_codex import ImageInput as CodexImageInput, RunInput, TextInput as CodexTextInput
 from pydantic import BaseModel, ValidationError
 
 from gateway.agent_model.errors import (
@@ -28,6 +29,10 @@ from gateway.agent_model.context import (
     preflight_context,
 )
 from gateway.usage import track_model_call
+from gateway.media import encode_media_file
+from gateway.multimodal import (
+    ImageInput, MultimodalInput, TextInput, VideoInput, validate_generate_request,
+)
 
 from .client import CodexModelCallLimitError, CodexSession
 from .protocol import dynamic_tool_specs, strict_output_schema
@@ -50,9 +55,12 @@ class SessionLike(Protocol):
     @property
     def tool_call_count(self) -> int: ...
 
+    @property
+    def successful_tool_call_count(self) -> int: ...
+
     def run_turn(
         self,
-        prompt: str,
+        prompt: RunInput,
         *,
         output_schema: dict[str, Any] | None = None,
     ) -> object: ...
@@ -143,6 +151,64 @@ class CodexAgentModel:
         self._closed = False
         self._lock = Lock()
 
+    def generate(
+        self,
+        inputs: Sequence[MultimodalInput],
+        *,
+        schema_name: str,
+        result_type: type[_ResultModel],
+        tools: Sequence[BaseTool] = (),
+        max_model_calls: int | None = None,
+        request_timeout_seconds: float | None = None,
+        check_control: Callable[[], None] | None = None,
+        context_checkpoint: ContextCheckpoint | None = None,
+        context_window_policy: ContextWindowPolicy | None = None,
+        max_input_chars: int | None = None,
+    ) -> _ResultModel:
+        """Run native Codex with real images and host-owned business tools."""
+        del context_checkpoint
+        validate_generate_request(inputs, schema_name)
+        self._validate_call_limit(max_model_calls)
+        if check_control is not None:
+            check_control()
+        sdk_inputs = []
+        content = []
+        for item in inputs:
+            if isinstance(item, VideoInput):
+                raise ValueError("Codex requires ordered ImageInput frames, not VideoInput")
+            if isinstance(item, TextInput):
+                sdk_inputs.append(CodexTextInput(item.text))
+                content.append({"type": "input_text", "text": item.text})
+            elif isinstance(item, ImageInput):
+                url, _ = encode_media_file(item.path, expected_kind="image")
+                sdk_inputs.append(CodexImageInput(url))
+                content.append({"type": "input_image", "image_url": url})
+            else:
+                raise TypeError(f"unsupported Codex input: {type(item).__name__}")
+        if max_input_chars is not None and (
+            isinstance(max_input_chars, bool)
+            or not isinstance(max_input_chars, int)
+            or max_input_chars <= 0
+        ):
+            raise ValueError("max_input_chars must be positive when provided")
+        input_limit = (
+            min(self.max_input_chars, max_input_chars)
+            if self.max_input_chars is not None and max_input_chars is not None
+            else self.max_input_chars or max_input_chars
+        )
+        output_schema = strict_output_schema(result_type.model_json_schema())
+        self._preflight_context(
+            "", tools=tools, output_schema=output_schema, content=content,
+            policy=context_window_policy, max_input_chars=input_limit,
+        )
+        return self._run_structured_invocation(
+            sdk_inputs, tools=tools, result_type=result_type,
+            output_schema=output_schema, max_model_calls=max_model_calls,
+            timeout=self._effective_timeout(request_timeout_seconds),
+            check_control=check_control, require_successful_tool=bool(tools),
+            operation=self._operation(schema_name, tools),
+        )
+
     def run_structured(
         self,
         prompt: str,
@@ -170,6 +236,25 @@ class CodexAgentModel:
         )
         self._validate_call_limit(max_model_calls)
         timeout = self._effective_timeout(request_timeout_seconds)
+        return self._run_structured_invocation(
+            rendered_prompt, tools=tools, result_type=result_type,
+            output_schema=output_schema, max_model_calls=max_model_calls,
+            timeout=timeout, check_control=check_control,
+        )
+
+    def _run_structured_invocation(
+        self,
+        prompt: RunInput,
+        *,
+        tools: Sequence[BaseTool],
+        result_type: type[_ResultModel],
+        output_schema: dict[str, Any],
+        max_model_calls: int | None,
+        timeout: float,
+        check_control: Callable[[], None] | None,
+        require_successful_tool: bool = False,
+        operation: str | None = None,
+    ) -> _ResultModel:
         if check_control is not None:
             check_control()
         session = self._new_session(
@@ -183,10 +268,27 @@ class CodexAgentModel:
             nonlocal latest_turn
             try:
                 turn = session.run_turn(
-                    rendered_prompt,
+                    prompt,
                     output_schema=output_schema,
                 )
                 latest_turn = turn
+                if require_successful_tool and session.successful_tool_call_count == 0:
+                    if max_model_calls is not None and max_model_calls <= 1:
+                        raise MissingRequiredFunctionCallError(
+                            "Codex completed before a business tool succeeded",
+                            reason=ModelFailureReason.LOOP_LIMIT,
+                        )
+                    turn = session.run_turn(
+                        "Successfully use the supplied business tools before completing. "
+                        "Inspect failed receipts and correct recoverable errors; do not "
+                        "repeat successful writes. Then return the structured result.",
+                        output_schema=output_schema,
+                    )
+                    latest_turn = turn
+                    if session.successful_tool_call_count == 0:
+                        raise MissingRequiredFunctionCallError(
+                            "Codex completed twice without a successful business tool"
+                        )
                 response = _turn_field(turn, "final_response")
                 if not isinstance(response, str) or not response.strip():
                     raise MissingStructuredQueryDraftError(
@@ -209,7 +311,7 @@ class CodexAgentModel:
             execute,
             timeout=timeout,
             check_control=check_control,
-            operation=self._operation("structured", tools),
+            operation=operation or self._operation("structured", tools),
             latest_turn=lambda: latest_turn,
         )
         del turn
@@ -351,7 +453,7 @@ class CodexAgentModel:
         latest_turn: Callable[[], object | None],
     ) -> Any:
         deadline = monotonic() + timeout
-        future: Future[Any] = self._executor.submit(copy_context().run, execute)
+        future: Future[Any] | None = None
         try:
             with track_model_call(
                 provider=self.provider_name,
@@ -360,8 +462,13 @@ class CodexAgentModel:
                 granularity="sdk_turn_run",
                 usage_source="codex_thread_total",
             ) as usage_call:
+                future = self._executor.submit(copy_context().run, execute)
+                unregister_cancel = usage_call.add_cancel_callback(
+                    lambda: self._cancel_session(session, future),
+                )
                 try:
                     while True:
+                        usage_call.raise_if_cancelled()
                         if check_control is not None:
                             try:
                                 check_control()
@@ -391,8 +498,10 @@ class CodexAgentModel:
                                 f"Codex request failed for model {self.model_name}",
                                 reason=_failure_reason(exc),
                             ) from exc
+                    usage_call.raise_if_cancelled()
                     return result
                 finally:
+                    unregister_cancel()
                     turn = latest_turn()
                     if turn is not None:
                         usage_call.capture_response(SimpleNamespace(
@@ -400,6 +509,8 @@ class CodexAgentModel:
                             usage=self._turn_usage(turn),
                         ))
         finally:
+            if future is None:
+                session.close()
             with self._lock:
                 self._sessions.discard(session)
 
@@ -488,6 +599,9 @@ class CodexAgentModel:
         *,
         tools: Sequence[BaseTool],
         output_schema: dict[str, Any] | None = None,
+        content: list[dict[str, Any]] | None = None,
+        policy: ContextWindowPolicy | None = None,
+        max_input_chars: int | None = None,
     ) -> None:
         contract: dict[str, Any] = {
             "dynamicTools": dynamic_tool_specs(tools),
@@ -496,10 +610,10 @@ class CodexAgentModel:
             contract["outputSchema"] = output_schema
         try:
             preflight_context(
-                [{"role": "user", "content": prompt}],
+                [{"role": "user", "content": content if content is not None else prompt}],
                 contract,
-                policy=self.context_window_policy,
-                maximum_input_characters=None,
+                policy=policy if policy is not None else self.context_window_policy,
+                maximum_input_characters=max_input_chars,
                 fixed_input_tokens=_CODEX_BASE_INPUT_RESERVE_TOKENS,
                 label="Codex Agent",
             )

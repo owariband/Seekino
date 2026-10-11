@@ -1,5 +1,4 @@
 from dataclasses import replace
-import json
 
 import pytest
 
@@ -9,29 +8,29 @@ from engine.rag.retrieval.contracts import (
 )
 from engine.rag.retrieval.fusion import VersionedFusedVideoChunkRanking
 from engine.rag.retrieval.rerank import RerankItem, RerankRequest
-from gateway.multimodal import TextInput
+from gateway.rerank import RerankScore
 from server.service.retrieval_rerank import StructuredTextReranker
 from gateway.usage import capture_model_usage, track_model_call
 
 
 class FakeTextModel:
-    provider_name = "deepseek"
-    model_name = "deepseek-flash"
+    provider_name = "selected-provider"
+    model_name = "selected-scorer"
 
     def __init__(self, scores=None, error=None):
         self.scores = scores if scores is not None else [
-            {"video_chunk_id": "first", "score": 0.2},
-            {"video_chunk_id": "last", "score": 0.9},
+            {"index": 0, "score": 0.2},
+            {"index": 1, "score": 0.9},
         ]
         self.error = error
         self.calls = []
 
-    def generate(self, inputs, *, schema_name, result_type):
-        self.calls.append((inputs, schema_name, result_type))
-        with track_model_call(provider=self.provider_name, model=self.model_name, operation=schema_name):
+    def rerank(self, query, documents):
+        self.calls.append((query, documents))
+        with track_model_call(provider=self.provider_name, model=self.model_name, operation="rerank"):
             if self.error:
                 raise self.error
-            return result_type.model_validate({"scores": self.scores})
+            return tuple(RerankScore(**item) for item in self.scores)
 
 
 def _request(adapter):
@@ -55,32 +54,28 @@ def _request(adapter):
 def test_explicit_text_scorer_uses_selected_delegate_and_one_complete_structured_call():
     delegate = FakeTextModel()
     adapter = StructuredTextReranker(delegate)
-    assert adapter.model_name == adapter.contract.model == "deepseek-flash"
-    assert adapter.provider_name == "deepseek"
+    assert adapter.model_name == adapter.contract.model == "selected-scorer"
+    assert adapter.provider_name == "selected-provider"
     assert adapter.contract.query_modalities == ("text",) and adapter.contract.candidate_input == "text"
     request = _request(adapter)
     usage = []
     with capture_model_usage(usage.append):
         result = adapter.score(request)
-    assert result.request is request and result.model == "deepseek-flash"
+    assert result.request is request and result.model == "selected-scorer"
     assert result.scores == (("first", 0.2), ("last", 0.9))
     assert len(delegate.calls) == len(usage) == 1
-    inputs, schema_name, _ = delegate.calls[0]
-    assert len(inputs) == 1 and isinstance(inputs[0], TextInput) and schema_name == "rerank"
-    payload = json.loads(inputs[0].text.split("\n", 1)[1])
-    assert payload == {"query": "query", "candidates": [
-        {"video_chunk_id": "first", "text": "formal text first"},
-        {"video_chunk_id": "last", "text": "formal text last"},
-    ]}
+    assert delegate.calls == [("query", ["formal text first", "formal text last"])]
     assert request.items[0].candidate.candidate.ranking.retrieval_identity.content_version == 2
 
 
 @pytest.mark.parametrize("scores", [
-    [{"video_chunk_id": "first", "score": 0.2}],
-    [{"video_chunk_id": "first", "score": 0.2}, {"video_chunk_id": "first", "score": 0.9}],
-    [{"video_chunk_id": "first", "score": 0.2}, {"video_chunk_id": "extra", "score": 0.9}],
-    [{"video_chunk_id": "first", "score": True}, {"video_chunk_id": "last", "score": 0.9}],
-    [{"video_chunk_id": "first", "score": float("nan")}, {"video_chunk_id": "last", "score": 0.9}],
+    [{"index": 0, "score": 0.2}],
+    [{"index": 0, "score": 0.2}, {"index": 0, "score": 0.9}],
+    [{"index": 0, "score": 0.2}, {"index": 2, "score": 0.9}],
+    [{"index": -1, "score": 0.2}, {"index": 0, "score": 0.9}],
+    [{"index": False, "score": 0.2}, {"index": 1, "score": 0.9}],
+    [{"index": 0, "score": True}, {"index": 1, "score": 0.9}],
+    [{"index": 0, "score": float("nan")}, {"index": 1, "score": 0.9}],
 ])
 def test_text_scorer_does_not_accept_partial_duplicate_unknown_or_invalid_scores(scores):
     adapter = StructuredTextReranker(FakeTextModel(scores=scores))

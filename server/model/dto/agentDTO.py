@@ -121,6 +121,7 @@ class AgentConversationState:
     updated_at: int
     last_message_preview: str | None = None
     owner_user_id: str = LOCAL_USER_ID
+    detail: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)

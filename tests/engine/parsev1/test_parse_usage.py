@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from engine.common.config import VideoParseRuntimeConfig
+from engine.common.transcription import VideoASRAgent
 from engine.common.usage import capture_parse_usage, parse_chunk_scope
 from engine.parsev1.checkpoints import (
     prepare_candidate_transcripts,
@@ -202,7 +203,16 @@ def test_runtime_single_chunk_calls_preserve_the_chunk_usage_scope(
                     return result_type.model_validate({"transcript": []})
                 return VideoTimeline(summary="summary", events=[])
 
-    monkeypatch.setattr("engine.parsev1.runtime.ArkMultimodalModel", Model)
+    def vision(_config, *, model, timeout, max_output_tokens=None):
+        delegate = Model(model)
+        delegate.visual_input_mode = "video"
+        return delegate
+
+    def asr(config, *, model, fps, timeout, max_output_tokens=None):
+        return VideoASRAgent(vision(config, model=model, timeout=timeout), fps=fps)
+
+    monkeypatch.setattr("engine.parsev1.runtime.build_vision_model", vision)
+    monkeypatch.setattr("engine.parsev1.runtime.build_asr_agent", asr)
     runtime = EngineVideoParseRuntime(
         config=VideoParseRuntimeConfig(
             fallback_enabled=False,

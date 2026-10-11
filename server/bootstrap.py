@@ -10,6 +10,7 @@ from agent.chat.video_search.runtime import AgentRuntime
 from gateway.agent_model.context import ContextWindowPolicy
 from gateway.agent_model.factory import AgentModelFactory
 from gateway.config import GatewayConfig, load_config
+from gateway.model_factory import GatewayClient
 from gateway.tracing import LangfuseTracing
 from gateway.web_search import WebSearcher
 
@@ -59,6 +60,7 @@ class ApplicationServices:
     parse_consumer: VideoParseConsumer | None = None
     parse_usage: ParseUsageService | None = None
     agent_model_factory: AgentModelFactory | None = None
+    gateway_client: GatewayClient | None = None
     tracing: LangfuseTracing | None = None
     realtime_understanding: RealtimeUnderstandingService | None = None
     auth: AuthService | None = None
@@ -81,6 +83,8 @@ class ApplicationServices:
                 cleanup.callback(self.tracing.close)
             if self.agent_model_factory is not None:
                 cleanup.callback(self.agent_model_factory.close)
+            if self.gateway_client is not None:
+                cleanup.callback(self.gateway_client.close)
             if self.realtime_understanding is not None:
                 cleanup.callback(self.realtime_understanding.close)
             cleanup.callback(self.agent.close)
@@ -138,12 +142,23 @@ def _build_application_services(
         settings.agent_fallback_model
         or (configured_fallback.model if configured_fallback is not None else None)
     )
-    agent_model_factory = AgentModelFactory(
-        agent_model_config,
-        gateway_config.model_sources,
-        fallback_model=fallback_agent_model,
+    gateway_client = GatewayClient(gateway_config)
+    construction_cleanup.callback(gateway_client.close)
+    agent_binding = gateway_config.resolve_model_binding("agent")
+    if fallback_agent_model is not None and agent_binding.fallback is not None:
+        agent_binding = agent_binding.model_copy(update={
+            "fallback": agent_binding.fallback.model_copy(update={"model": fallback_agent_model}),
+        })
+    agent_model_factory = gateway_client.create_agent_factory(agent_binding)
+    independent_supervisor = "supervisor" in gateway_config.normalized_models
+    supervisor_binding = (
+        gateway_config.resolve_model_binding("supervisor")
+        if independent_supervisor else agent_binding
     )
-    construction_cleanup.callback(agent_model_factory.close)
+    supervisor_model_factory = (
+        gateway_client.create_agent_factory(supervisor_binding)
+        if independent_supervisor else agent_model_factory
+    )
     auth = AuthService(
         IdentityRepository(session_factory), settings.auth,
         redis=resources.redis_client,
@@ -186,6 +201,7 @@ def _build_application_services(
             settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
         ),
         max_output_tokens=settings.agent.max_output_tokens, tracing=tracing,
+        gateway_client=gateway_client,
     )
     uploads = UploadService(
         UploadRepository(session_factory),
@@ -193,6 +209,7 @@ def _build_application_services(
         config=settings.upload,
         video_parse_index_store=elasticsearch_store,
         parse_defaults=parse_defaults,
+        parse_defaults_loader=lambda: prepare_service_configuration(settings)[1],
         execution_mode=settings.parse_execution_mode,
         video_parse_query_encoder=video_parse_query_encoder,
         video_parse_query_encoder_source=parse_defaults.embedding.source,
@@ -215,6 +232,7 @@ def _build_application_services(
         heartbeat_interval=settings.mq.heartbeat_interval,
         parse_usage=parse_usage,
         tracing=tracing,
+        gateway_client=gateway_client,
     )
     realtime_service = RealtimeUnderstandingService(
         v2_repository, v2_queue, v2_runtime, artifact_store,
@@ -298,11 +316,11 @@ def _build_application_services(
         request_timeout = min(
             settings.agent_request_timeout_seconds,
             agent_config.execution_timeout_seconds,
-            agent_model_config.request_timeout_seconds,
+            supervisor_binding.request_timeout_seconds,
         )
         max_output_tokens = min(
             agent_config.max_output_tokens,
-            agent_model_config.max_output_tokens,
+            supervisor_binding.max_output_tokens,
         )
         context_window_policy = ContextWindowPolicy(
             context_window_tokens=agent_config.context_window_tokens,
@@ -313,13 +331,18 @@ def _build_application_services(
         )
         return SupervisorRuntime(
             video_runtime,
-            agent_model_factory.build_loop(
-                model=chat_model_name,
+            supervisor_model_factory.build_supervisor(
+                harness=gateway_config.supervisor_harness,
+                model=supervisor_binding.model if independent_supervisor else chat_model_name,
                 request_timeout_seconds=request_timeout,
                 max_output_tokens=max_output_tokens,
                 max_input_chars=agent_config.max_prompt_chars,
                 context_window_policy=context_window_policy,
-                reasoning_effort=agent_config.supervisor_reasoning_effort,
+                reasoning_effort=(
+                    supervisor_binding.reasoning_effort
+                    if independent_supervisor and supervisor_binding.reasoning_effort is not None
+                    else agent_config.supervisor_reasoning_effort
+                ),
             ),
             WebSearcher(),
             realtime_runtime=RealtimeUnderstandingRuntime(
@@ -387,6 +410,7 @@ def _build_application_services(
         parse_consumer=parse_consumer,
         parse_usage=parse_usage,
         agent_model_factory=agent_model_factory,
+        gateway_client=gateway_client,
         tracing=tracing,
         realtime_understanding=realtime_service,
         auth=auth,

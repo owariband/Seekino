@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.tools import StructuredTool
+from openai_codex import ImageInput, TextInput
 from openai_codex.generated.v2_all import ReasoningEffort
 
 from gateway.codex.client import (
@@ -186,3 +187,36 @@ def test_reader_tools_keep_host_identity_and_isolate_concurrent_contexts() -> No
 def test_none_reasoning_effort_is_sent_explicitly() -> None:
     assert codex_reasoning_effort("none") is ReasoningEffort.none
     assert codex_reasoning_effort("high") is ReasoningEffort.high
+
+
+def test_codex_session_passes_real_ordered_images_to_sdk(monkeypatch) -> None:
+    captured = {}
+    result = SimpleNamespace(final_response='{"answer":"ok"}')
+
+    class FakeThread:
+        def __init__(self, client, thread_id):
+            assert thread_id == "thread-1"
+
+        def turn(self, inputs, **kwargs):
+            captured["inputs"] = inputs
+            captured["kwargs"] = kwargs
+            return SimpleNamespace(run=lambda: result)
+
+    monkeypatch.setattr("gateway.codex.client.Thread", FakeThread)
+    fake = _FakeClient()
+    session = CodexSession(
+        model="vision-model", tools=[], reasoning_effort="high", codex_bin=None,
+        cwd=None, max_tool_calls=None, check_control=None,
+        client_factory=lambda *_args: fake,
+    )
+    inputs = [TextInput("first"), ImageInput("data:image/png;base64,YQ=="), TextInput("last")]
+    schema = {"type": "object"}
+    try:
+        assert session.run_turn(inputs, output_schema=schema) is result
+        assert session.successful_tool_call_count == 0
+    finally:
+        session.close()
+
+    assert captured["inputs"] is inputs
+    assert captured["kwargs"]["output_schema"] == schema
+    assert fake.closed

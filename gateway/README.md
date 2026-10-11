@@ -11,8 +11,8 @@ Conversation 或 Parse Job 等领域语义。
 
 ## 目录边界
 
-- `agent_model/`：Provider 无关的 Agent Model 协议、上下文治理、Tool Loop 与错误；其中
-  `factory.py` 是选择具体 Adapter 的组装入口；
+- `agent_model/`：Provider 无关的 Agent Model 协议、上下文治理、Tool Loop 与错误；
+  `deepagents.py` 接入内部 Supervisor 的 Deep Agents SDK，`factory.py` 负责组装；
 - `openai/`：OpenAI 兼容协议及其 profile，DeepSeek 通过这里接入；
 - `ark/`：Ark SDK、原生 Responses SSE、多模态、Agent 和 Embedding；
 - `codex/`：Codex app-server 会话与 Agent Adapter；
@@ -21,8 +21,41 @@ Conversation 或 Parse Job 等领域语义。
 - 根目录的 `multimodal.py`、`embedding.py`、`media.py`、`schema_normalization.py`
   提供共享协议和纯工具，`config.py` 只描述来源与模型选择。
 
-业务层依赖共享协议并由 `agent_model.factory.AgentModelFactory` 选择 Adapter。模型名、
-Provider 来源和连接协议分别配置，避免为某个具体模型复制一套运行框架。
+业务层通过 `model_factory.GatewayClient` 获取模型。`create(kind, ref)` 按外部配置
+创建 `generative`、`embedding`、`rerank`、`transcription` 四类模型，也提供对应的
+`create_*_model()` 类型入口。视觉理解使用生成接口和显式图片能力声明；来源适配器
+支持图片，并不表示该来源下的每个模型都能理解图片。
+
+`create_agent_factory()` 保留现有 Agent 的循环和 Supervisor 接口。模型名、来源、
+连接、预算和回退从配置解析，供应商实例创建与关闭均在 Gateway 内完成。Engine
+和 Server 保留抽帧、转写提示词、时间戳归一、检索候选身份与任务状态等业务职责。
+
+当前配置由本地 YAML 提供。未来云端配置存储将向同一配置合同提供有效定义；
+数据库、租户权限和配置管理 API 属于 Server 配置管理，不进入模型工厂。
+
+```python
+from pydantic import BaseModel
+
+from gateway.config import load_config
+from gateway.model_factory import GatewayClient
+from gateway.multimodal import ImageInput, TextInput
+
+
+class Description(BaseModel):
+    description: str
+
+
+client = GatewayClient(load_config())
+model = client.create_generative_model("vision")
+try:
+    result = model.generate(
+        [ImageInput("/absolute/path/to/frame.jpg"), TextInput("描述可见内容")],
+        schema_name="description", result_type=Description,
+    )
+finally:
+    model.close()
+    client.close()
+```
 
 ## 多模态模型接口
 
@@ -32,7 +65,7 @@ Provider 来源和连接协议分别配置，避免为某个具体模型复制�
 - `ImageInput(path, detail="high")`：本地 JPEG、PNG 或 WebP 图片；
 - `VideoInput(path, fps)`：本地 MP4、MOV 或 AVI 视频。
 
-四个实现共享 `MultimodalModel.generate(...)` 接口：
+底层适配器共享 `MultimodalModel.generate(...)` 接口：
 
 - `ArkMultimodalModel` 支持文本、图片和视频，通过 Ark Responses SSE 返回结构化结果；
 - `DeepSeekMultimodalModel` 支持文本和按输入顺序排列的图片，通过 DeepSeek 官方
@@ -49,36 +82,31 @@ payload、网络请求和结果 Schema 校验。Prompt、视频时长探测、�
 `agent_model/` 的执行协议。
 
 ```python
-import os
-
 from pydantic import BaseModel
 
 from gateway.config import load_config
+from gateway.model_factory import GatewayClient
 from gateway.multimodal import ImageInput, TextInput
-from gateway.openai.multimodal import DeepSeekMultimodalModel
 
 
 class Description(BaseModel):
     description: str
 
 
-deepseek = load_config().video_parser.fallback.deepseek
-model = DeepSeekMultimodalModel(
-    deepseek.model,
-    base_url=deepseek.base_url,
-    api_key=os.environ[deepseek.api_key_env],
-    reasoning_effort=deepseek.reasoning_effort,
-    max_output_tokens=deepseek.max_output_tokens,
-    request_timeout_seconds=deepseek.request_timeout_seconds,
-)
-result = model.generate(
-    [
-        TextInput("只描述图片中可见的内容"),
-        ImageInput("/absolute/path/to/frame.jpg"),
-    ],
-    schema_name="description",
-    result_type=Description,
-)
+client = GatewayClient(load_config())
+model = client.create_generative_model("vision_fallback")
+try:
+    result = model.generate(
+        [
+            TextInput("只描述图片中可见的内容"),
+            ImageInput("/absolute/path/to/frame.jpg"),
+        ],
+        schema_name="description",
+        result_type=Description,
+    )
+finally:
+    model.close()
+    client.close()
 ```
 
 直接视频模式使用同一个接口：
@@ -124,9 +152,26 @@ Lite ASR、compact 和背景资料整理最终 Schema。协议与启动参数见
 
 `model_sources` 描述连接方式，`agent_model.source` 选择其中一个来源。`adapter`
 决定协议实现，`provider` 只用于 provenance、用量和价格归属，OpenAI 兼容协议的
-`profile` 处理不同 API 方言。Query、Evaluator、Chat 与 Supervisor 共用所选 source；
+`profile` 处理不同 API 方言。Query、Evaluator、Chat 与内部 Supervisor 共用所选 source；
 `ANIVAG_AGENT_QUERY_MODEL`、`ANIVAG_AGENT_EVALUATOR_MODEL` 和
 `ANIVAG_AGENT_CHAT_MODEL` 仍可覆盖各角色的模型名。
+
+内部 Supervisor 默认通过 `AgentModelFactory.build_deep_agent()` 使用 Deep Agents
+0.7.23。SDK 负责模型／工具循环、摘要和工具结果卸载；Gateway 将已有 OpenAI 兼容
+或 Ark Adapter 的单次请求接入 SDK，继续使用配置中的模型、推理参数、超时、fallback、
+用量及追踪。视频 Query／Evaluator／Chat 的审核流程仍作为业务工具执行。
+
+SDK 使用 `StateBackend` 虚拟文件和进程内 `InMemorySaver`。一个 Conversation 对应
+一个 thread；配置重建共享同一状态存储。只暴露虚拟 `read_file` 以读取卸载内容，关闭
+默认通用 subagent。业务工具每轮保留原始问题和范围，串行执行以复用核验结果。AniVAG
+成功保存最终回答后才确认 SDK 状态；失败、取消或保存失败会清理该 thread，下一轮
+从数据库中已完成的历史恢复。删除 Conversation 同时清理 SDK 状态。重启进程后也从
+数据库恢复文本历史，虚拟文件和中间工具状态不会持久化。
+
+当前内部 Supervisor 要求 OpenAI 兼容或 Ark API source。下方 Codex／Claude 配置
+描述已有原子 Agent Adapter；把它们作为当前 Server 的全局 source 会在 Supervisor
+组装时报配置错误。用户自带 Codex／Claude 的完整本机会话计划通过 ACP Bridge 接入，
+该路径的设计见 [Bridge TRD](bridge/design/codex-bridge-trd.md)，本批尚未实现。
 
 DeepSeek 使用 OpenAI Adapter 的 DeepSeek profile，并显式配置 Ark fallback：
 

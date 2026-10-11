@@ -12,6 +12,7 @@ from engine.parsev1.analysis_windows import plan_analysis_windows
 from engine.parsev1.background import BackgroundImage
 from engine.parsev1.checkpoints import write_json
 from engine.common.config import VideoParseRuntimeConfig
+from engine.common.transcription import VideoASRAgent
 from engine.parsev1.runtime import EngineVideoParseRuntime
 from engine.parsev1.video_chunk_parse import OrderedFrameVideoUnderstandingAgent
 from engine.parsev1.schemas import (
@@ -22,6 +23,23 @@ from engine.parsev1.schemas import (
     VideoParseProvenance,
     VideoTimeline,
 )
+
+
+def _patch_model_builders(monkeypatch, model_type):
+    def vision(_config, *, model, timeout, max_output_tokens=None):
+        delegate = model_type(
+            model, request_timeout_seconds=timeout, max_output_tokens=max_output_tokens,
+        )
+        delegate.visual_input_mode = "video"
+        return delegate
+
+    def asr(config, *, model, fps, timeout, max_output_tokens=None):
+        return VideoASRAgent(vision(
+            config, model=model, timeout=timeout, max_output_tokens=max_output_tokens,
+        ), fps=fps)
+
+    monkeypatch.setattr("engine.parsev1.runtime.build_vision_model", vision)
+    monkeypatch.setattr("engine.parsev1.runtime.build_asr_agent", asr)
 
 
 def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
@@ -55,7 +73,7 @@ def test_runtime_single_chunk_contract_is_lazy_and_reuses_model_clients(
             assert result_type is VideoTimeline
             return VideoTimeline(summary="片段完成", events=[])
 
-    monkeypatch.setattr("engine.parsev1.runtime.ArkMultimodalModel", Model)
+    _patch_model_builders(monkeypatch, Model)
     runtime = EngineVideoParseRuntime(
         config=VideoParseRuntimeConfig(
             fallback_enabled=False,
@@ -112,7 +130,7 @@ def test_runtime_uses_ordered_frames_when_a_real_frame_cap_is_selected(monkeypat
             self.model_name = model
             constructed.append(kwargs)
 
-    monkeypatch.setattr("engine.parsev1.runtime.ArkMultimodalModel", Model)
+    _patch_model_builders(monkeypatch, Model)
     runtime = EngineVideoParseRuntime(config=VideoParseRuntimeConfig(
         fallback_enabled=False,
         video_model="test-vision",
@@ -197,8 +215,8 @@ def test_runtime_resumes_a_fully_parsed_video_without_model_credentials(
         "engine.parsev1.runtime.materialize_analysis_windows",
         materialize,
     )
-    monkeypatch.setattr(
-        "engine.parsev1.runtime.ArkMultimodalModel",
+    _patch_model_builders(
+        monkeypatch,
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("a completed resume must not construct model clients")
         ),
@@ -212,6 +230,7 @@ def test_runtime_resumes_a_fully_parsed_video_without_model_credentials(
             context_overlap_seconds=0,
             asr_mode="none",
             fallback_enabled=True,
+            video_model=checkpoint.video_model,
         )
     ).run(
         source,
@@ -253,7 +272,7 @@ def test_runtime_passes_background_images_to_each_video_model_call(
             window.media_path.parent.mkdir(parents=True, exist_ok=True)
             window.media_path.write_bytes(b"analysis fixture")
 
-    monkeypatch.setattr("engine.parsev1.runtime.ArkMultimodalModel", Model)
+    _patch_model_builders(monkeypatch, Model)
     monkeypatch.setattr(
         "engine.parsev1.runtime.materialize_analysis_windows", materialize
     )
@@ -322,7 +341,7 @@ def test_runtime_pipelines_candidate_asr_ahead_of_serial_parse(
             window.media_path.parent.mkdir(parents=True, exist_ok=True)
             window.media_path.write_bytes(b"analysis fixture")
 
-    monkeypatch.setattr("engine.parsev1.runtime.ArkMultimodalModel", Model)
+    _patch_model_builders(monkeypatch, Model)
     monkeypatch.setattr(
         "engine.parsev1.runtime.materialize_analysis_windows",
         materialize,
@@ -384,7 +403,7 @@ def test_runtime_resumes_each_stage_after_later_asr_failure(
             window.media_path.parent.mkdir(parents=True, exist_ok=True)
             window.media_path.write_bytes(b"analysis fixture")
 
-    monkeypatch.setattr("engine.parsev1.runtime.ArkMultimodalModel", Model)
+    _patch_model_builders(monkeypatch, Model)
     monkeypatch.setattr(
         "engine.parsev1.runtime.materialize_analysis_windows",
         materialize,

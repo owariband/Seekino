@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
+
+from engine.parsev2.planning import interval_size, plan_intervals
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import aliased, Session, sessionmaker
 
@@ -13,7 +17,9 @@ from ..model.dto.jobDTO import (
     VideoChunkCheckpointState,
 )
 from ..model.job import (
+    ChunkParseContent,
     ChunkParseTask,
+    IntervalParseContent,
     IntervalParseTask,
     ParseJobStage,
     ParseJobStatus,
@@ -24,9 +30,9 @@ from ..model.job import (
 )
 from ..model.job_progress import calculate_checkpoint_progress
 from ..model.upload import UploadSession, UploadSessionStatus
-from ..model.video import Series, Video
+from ..model.video import Series, Video, VideoChunk
 from ..mq.contracts import ParseJobLeaseLostError
-from ..utils.time import now_unix_time_ms, unix_time_ms_to_datetime
+from ..utils.time import datetime_to_unix_time_ms, now_unix_time_ms, unix_time_ms_to_datetime
 from ..utils.validation import require_nonempty_text
 
 
@@ -277,8 +283,10 @@ class ParseJobRepository:
                 (row[0].video_id,),
                 observed_at_ms=observed_at_ms,
             )
+            tracking = self._video_parse_tracking(session, (row[0],), observed_at_ms)
             return self._video_parse_task_detail(
                 row,
+                tracking=tracking[row[0].id],
                 active_prefix_max_episode=active_prefix_max.get(row[2]),
                 has_active_execution_lease=row[0].id in active_execution_task_ids,
                 has_active_deletion_lease=(
@@ -351,9 +359,11 @@ class ParseJobRepository:
                 tuple({row[0].video_id for row in rows}),
                 observed_at_ms=observed_at_ms,
             )
+            tracking = self._video_parse_tracking(session, [row[0] for row in rows], observed_at_ms)
             return [
                 self._video_parse_task_detail(
                     row,
+                    tracking=tracking[row[0].id],
                     active_prefix_max_episode=active_prefix_max.get(row[2]),
                     has_active_execution_lease=(
                         row[0].id in active_execution_task_ids
@@ -975,6 +985,7 @@ class ParseJobRepository:
         has_active_execution_lease: bool = False,
         has_active_deletion_lease: bool = False,
         observed_at_ms: int | None = None,
+        tracking: dict | None = None,
     ) -> VideoParseTaskDetail:
         (
             record,
@@ -987,8 +998,15 @@ class ParseJobRepository:
             upload_session_id,
             is_latest,
         ) = row
+        task = cls._video_parse_task_state(record)
+        if tracking is not None:
+            task = replace(
+                task, detail={**deepcopy(task.detail), **tracking},
+                processing_duration_ms=tracking["timing"]["effectiveDurationMs"] or 0,
+                processing_timing_complete=tracking["timing"]["complete"],
+            )
         return VideoParseTaskDetail(
-            task=cls._video_parse_task_state(record),
+            task=task,
             tenant_id=tenant_id,
             series_id=series_id,
             series_name=series_name,
@@ -1008,6 +1026,103 @@ class ParseJobRepository:
             has_active_execution_lease=has_active_execution_lease,
             has_active_deletion_lease=has_active_deletion_lease,
         )
+
+    @staticmethod
+    def _video_parse_tracking(session: Session, records, observed_at_ms: int) -> dict[str, dict]:
+        task_ids = [record.id for record in records]
+        if not task_ids:
+            return {}
+        chunks, intervals = {}, {}
+        for child, content_id, sequence, video_id in session.execute(select(
+            ChunkParseTask, ChunkParseContent.chunk_task_id, VideoChunk.sequence_no, VideoChunk.video_id)
+            .join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id)
+            .outerjoin(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id)
+            .where(ChunkParseTask.video_task_id.in_(task_ids))):
+            chunks.setdefault(child.video_task_id, []).append((child, content_id is not None, sequence, video_id))
+        for child, content_id, content_detail in session.execute(select(
+            IntervalParseTask, IntervalParseContent.interval_task_id, IntervalParseContent.detail)
+            .outerjoin(IntervalParseContent, IntervalParseContent.interval_task_id == IntervalParseTask.id)
+            .where(IntervalParseTask.video_task_id.in_(task_ids))):
+            intervals.setdefault(child.video_task_id, []).append((child, content_id is not None, content_detail))
+        result = {}
+        for record in records:
+            chunk_rows, interval_rows = chunks.get(record.id, []), intervals.get(record.id, [])
+            try:
+                expected = plan_intervals(chunk_count=record.chunk_count, size=interval_size(
+                    interval_duration=record.parse_config["interval_duration"],
+                    chunk_duration=record.parse_config["chunk_duration"],
+                ))
+            except (KeyError, TypeError, ValueError):
+                expected = None
+            topology_ready = (expected is not None and
+                sorted(sequence for _, _, sequence, _ in chunk_rows) == list(range(record.chunk_count)) and
+                all(video_id == record.video_id for _, _, _, video_id in chunk_rows) and
+                sorted((child.start_sequence_no, child.chunk_count) for child, _, _ in interval_rows)
+                == [(plan.start_sequence_no, plan.chunk_count) for plan in expected])
+            completed_chunks = sum(child.status == "COMPLETE" and submitted for child, submitted, _, _ in chunk_rows)
+            completed_refines = sum(submitted for _, submitted, _ in interval_rows)
+            completed_units, total_units = completed_chunks + completed_refines, len(chunk_rows) + len(interval_rows)
+            progress = {
+                "completedChunks": completed_chunks, "totalChunks": len(chunk_rows),
+                "completedRefines": completed_refines, "totalRefines": len(interval_rows),
+                "completedUnits": completed_units, "totalUnits": total_units,
+                "percent": completed_units * 100 / total_units if topology_ready and total_units else None,
+                "topologyReady": topology_ready,
+                "indexedIntervals": sum(child.status == "COMPLETE" for child, _, _ in interval_rows),
+            }
+            runtime = (record.detail or {}).get("_worker_runtime_v2", {})
+            ledger = runtime.get("execution_timing", {}) if isinstance(runtime, dict) else {}
+            entries = ledger.get("entries", {}) if isinstance(ledger, dict) else {}
+            valid_ledger = (isinstance(ledger, dict) and type(ledger.get("version")) is int
+                            and ledger["version"] == 1 and isinstance(entries, dict))
+            children = {("understand", child.id): (child, child.lease_version) for child, _, _, _ in chunk_rows}
+            covered = valid_ledger
+            for child, submitted, detail in interval_rows:
+                bound = detail.get("refinement_committed_lease_version") if isinstance(detail, dict) else None
+                if not submitted:
+                    bound = child.lease_version
+                elif type(bound) is not int or not 1 <= bound <= child.lease_version:
+                    covered, bound = False, 0
+                children[("refine", child.id)] = (child, bound)
+            spans, seen, active = [], set(), 0
+            fields = {"phase", "execution_kind", "execution_task_id", "lease_version", "worker_id",
+                      "started_at_ms", "elapsed_ms", "finished", "outcome"}
+            for key, entry in entries.items() if valid_ledger else ():
+                if not isinstance(entry, dict) or set(entry) != fields:
+                    covered = False
+                    continue
+                phase, execution_id, version = entry["phase"], entry["execution_task_id"], entry["lease_version"]
+                identity = children.get((phase, execution_id)) if isinstance(phase, str) and isinstance(execution_id, str) else None
+                if (identity is None or type(version) is not int or not 1 <= version <= identity[1]
+                    or key != f"{phase}:{execution_id}:{version}"
+                    or entry["execution_kind"] != ("chunk" if phase == "understand" else "interval")
+                    or not isinstance(entry["worker_id"], str) or not entry["worker_id"].strip()
+                    or type(entry["started_at_ms"]) is not int or entry["started_at_ms"] < 0
+                    or type(entry["elapsed_ms"]) is not int or entry["elapsed_ms"] < 0
+                    or type(entry["finished"]) is not bool or not isinstance(entry["outcome"], str)
+                    or not entry["outcome"].strip()):
+                    covered = False
+                    continue
+                child = identity[0]
+                if not entry["finished"]:
+                    live = (child.lease_version == version and child.lease_owner == entry["worker_id"]
+                        and child.status == ("UNDERSTANDING" if phase == "understand" else "REFINING")
+                        and child.lease_expire_time is not None
+                        and datetime_to_unix_time_ms(child.lease_expire_time) > observed_at_ms)
+                    covered = covered and live
+                    active += int(live)
+                seen.add((phase, execution_id, version))
+                spans.append((entry["started_at_ms"], entry["started_at_ms"] + entry["elapsed_ms"]))
+            covered = covered and all((phase, child_id, version) in seen
+                for (phase, child_id), (_, bound) in children.items() for version in range(1, bound + 1))
+            elapsed, previous_end = 0, 0
+            for start, end in sorted(spans):
+                elapsed += max(0, end - max(start, previous_end))
+                previous_end = max(previous_end, end)
+            timing = {"recorded": bool(spans), "complete": bool(spans) and covered,
+                      "activeExecutions": active, "effectiveDurationMs": elapsed if spans else None}
+            result[record.id] = {"progress": progress, "timing": timing}
+        return result
 
     @staticmethod
     def _checkpoint_state(

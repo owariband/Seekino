@@ -160,14 +160,17 @@ def _log_incomplete_model_response(
 
 
 def _function_tool_spec(tool: BaseTool) -> dict[str, Any]:
+    schema = (
+        tool.args_schema
+        if isinstance(tool.args_schema, dict)
+        else tool.get_input_schema().model_json_schema()
+    )
     return {
         "type": "function",
         "function": {
             "name": tool.name,
             "description": tool.description,
-            "parameters": inline_schema_refs(
-                tool.get_input_schema().model_json_schema()
-            ),
+            "parameters": inline_schema_refs(schema),
         },
     }
 
@@ -608,11 +611,22 @@ def _validated_agent_turn(
             ))
             continue
         try:
-            result = tool.get_input_schema().model_validate_json(arguments)
-        except ValidationError as error:
-            details = "; ".join(
-                f"{'.'.join(map(str, issue['loc'])) or 'arguments'}: {issue['msg']}"
-                for issue in error.errors(include_input=False, include_url=False)[:3]
+            if isinstance(tool.args_schema, dict):
+                # Structured-output tools validate their schema in ToolStrategy.
+                result = json.loads(arguments)
+                if not isinstance(result, dict):
+                    raise ValueError("provide a JSON object matching the tool schema")
+            else:
+                result = tool.get_input_schema().model_validate_json(arguments)
+                result = result.model_dump(mode="python", exclude_unset=True)
+        except (ValidationError, ValueError) as error:
+            details = (
+                "; ".join(
+                    f"{'.'.join(map(str, issue['loc'])) or 'arguments'}: {issue['msg']}"
+                    for issue in error.errors(include_input=False, include_url=False)[:3]
+                )
+                if isinstance(error, ValidationError)
+                else str(error)
             )[:400]
             validated_calls.append((
                 tool_call_id,
@@ -630,7 +644,7 @@ def _validated_agent_turn(
         validated_calls.append((
             tool_call_id,
             tool,
-            result.model_dump(mode="python", exclude_unset=True),
+            result,
         ))
 
     seen_tool_call_ids.update(new_tool_call_ids)

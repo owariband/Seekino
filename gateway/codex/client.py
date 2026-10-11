@@ -6,7 +6,7 @@ from threading import Lock
 from typing import Any, Protocol
 
 from langchain_core.tools import BaseTool
-from openai_codex import ApprovalMode, CodexConfig, Sandbox, Thread, TurnResult
+from openai_codex import ApprovalMode, CodexConfig, RunInput, Sandbox, Thread, TurnResult
 from openai_codex.client import CodexClient
 from openai_codex.generated.v2_all import ReasoningEffort as CodexReasoningEffort
 
@@ -175,6 +175,10 @@ class CodexSession:
     def tool_call_count(self) -> int:
         return self._tool_bridge.tool_call_count
 
+    @property
+    def successful_tool_call_count(self) -> int:
+        return self._tool_bridge.successful_tool_call_count
+
     def __enter__(self) -> CodexSession:
         self.open()
         return self
@@ -223,7 +227,7 @@ class CodexSession:
 
     def run_turn(
         self,
-        prompt: str,
+        prompt: RunInput,
         *,
         output_schema: dict[str, Any] | None = None,
     ) -> TurnResult:

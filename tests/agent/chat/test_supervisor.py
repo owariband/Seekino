@@ -1,17 +1,32 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+from dataclasses import replace
+from threading import Barrier, Event
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.messages import AIMessage, ToolMessage
 
+from gateway.agent_model.deepagents import DeepAgentSessionStore, DeepAgentsSupervisorModel
 from gateway.web_search import WebSearchError, WebSearchHit
 from gateway.errors import ContentFilterError
-from agent.chat.common.errors import AgentModelInvocationError, AgentToolInvocationError
+from gateway.openai.agent import OpenAIAgentModel
+from agent.chat.common.errors import (
+    AgentContextBudgetError, AgentModelInvocationError, AgentToolInvocationError,
+)
 from agent.chat.supervisor import SupervisorRuntime
+from agent.chat.realtime_understanding.runtime import RealtimeUnderstandingRuntime
+from agent.chat.realtime_understanding.state import ChunkEvidence, FrameEvidence, VisualEvidence
+from agent.chat.video_search.runtime import AgentRuntime
 from agent.chat.video_search.errors import (
     VideoSearchFailure, VideoSearchFailureCode, VideoSearchFailurePhase,
 )
+from tests.agent.chat.test_realtime_understanding import _context, _evidence, _host
+from tests.agent.chat.test_runtime import Chat, Evaluator, Query, Retrieval
+from tests.gateway.test_deepagents import FakeClient, ScriptedModel, _completion
 
 
 def _inputs(*, series_ids=None):
@@ -62,12 +77,16 @@ class FakeSupervisorModel:
         self.prompts = []
         self.model_call_limits = []
         self.request_timeouts = []
+        self.runs = []
+        self.lifecycle = []
 
-    def run_agent_loop(
+    def run_agent(
         self, prompt, *, tools, max_model_calls, handle_text,
         request_timeout_seconds, check_control, max_input_chars,
+        thread_id, message_id, user_message, history,
     ):
         self.prompts.append(prompt)
+        self.runs.append((thread_id, message_id, user_message, history))
         self.model_call_limits.append(max_model_calls)
         self.request_timeouts.append(request_timeout_seconds)
         assert request_timeout_seconds > 0
@@ -79,6 +98,15 @@ class FakeSupervisorModel:
             query = self.queries[index] if self.queries is not None else "question"
             self.tool_results.append(json.loads(available[name].invoke({"query": query})))
         handle_text(self.answer)
+
+    def confirm_turn(self, thread_id, message_id, content):
+        self.lifecycle.append(("confirm", thread_id, message_id, content))
+
+    def discard_turn(self, thread_id, message_id):
+        self.lifecycle.append(("discard", thread_id, message_id))
+
+    def delete_thread(self, thread_id):
+        self.lifecycle.append(("delete", thread_id))
 
 
 def _runtime(
@@ -105,6 +133,78 @@ def test_direct_chat_never_loads_video_context_or_uses_search():
     assert result.video_result is None
     assert result.web_sources == ()
     assert "Course" not in model.prompts[0]
+
+
+def test_supervisor_passes_complete_history_as_sdk_messages():
+    inputs = _inputs()
+    inputs["history"] = [
+        {"messageId": f"history-{index}", "role": "USER", "content": "x" * 2500}
+        for index in range(14)
+    ]
+    model = FakeSupervisorModel()
+
+    _runtime(model).kick(inputs, load_video_context=lambda: [])
+
+    assert model.runs == [(
+        inputs["conversation_id"], inputs["assistant_message_id"],
+        inputs["user_message"], inputs["history"],
+    )]
+    context = json.loads(model.prompts[0].rsplit("\n\n", 1)[1])
+    assert "history" not in context
+    assert all(len(item["content"]) == 2500 for item in model.runs[0][3])
+
+
+def test_background_context_does_not_expand_video_search_scope():
+    inputs = _inputs(series_ids=["series"])
+    inputs["series_context"].append({
+        "seriesId": "playing-series", "name": "Still parsing",
+        "description": "人物与作品资料", "characterBible": [{"name": "若叶睦"}],
+    })
+    model = FakeSupervisorModel()
+    _runtime(model).kick(inputs, load_video_context=lambda: [])
+
+    instructions, raw_context = model.prompts[0].rsplit("\n\n", 1)
+    context = json.loads(raw_context)
+    assert context["series_context"] == inputs["series_context"]
+    assert context["video_scope"] == [{"seriesId": "series", "name": "Course"}]
+    assert "Still parsing" not in context["video_scope_description"]
+    assert "人物、作品和术语背景资料" in instructions
+    assert "当前片段发生了什么仍须结合视频证据核验" in instructions
+
+
+def test_supervisor_rejects_background_over_budget_before_model_call():
+    inputs = _inputs(series_ids=["series"])
+    inputs["series_context"][0]["importantExtraData"] = {"content": "x" * 10000}
+    model = FakeSupervisorModel()
+    with pytest.raises(AgentContextBudgetError, match="Supervisor prompt"):
+        _runtime(model).kick(inputs, load_video_context=lambda: pytest.fail("unexpected search"))
+    assert model.prompts == []
+
+
+def test_parallel_video_tool_calls_share_one_approved_result():
+    class ParallelModel(FakeSupervisorModel):
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            available = {tool.name: tool for tool in tools}
+            ready = Barrier(2)
+
+            def invoke(query):
+                ready.wait(timeout=5)
+                return json.loads(available["search_video_graph"].invoke({"query": query}))
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(invoke, ("first part", "second part")))
+            assert sorted(item["reused"] for item in results) == [False, True]
+            handle_text("Rewritten video answer.")
+
+    video = FakeVideoRuntime()
+    loads = []
+    result = _runtime(ParallelModel(), video=video).kick(
+        _inputs(series_ids=["series"]),
+        load_video_context=lambda: loads.append(True) or [],
+    )
+
+    assert len(video.calls) == len(loads) == 1
+    assert result.content == "Approved video explanation."
 
 
 @pytest.mark.parametrize("vision", [False, True])
@@ -140,7 +240,7 @@ def test_current_video_uses_frozen_original_question_and_native_images(
         model_name = "configured-model"
         supports_vision_input = vision
 
-        def run_agent_loop(self, prompt, *, tools, handle_text, **kwargs):
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
             available = {tool.name: tool for tool in tools}
             assert "understand_current_video" in available
             # A later browser snapshot cannot overwrite this turn's frozen input.
@@ -175,6 +275,89 @@ def test_current_video_uses_frozen_original_question_and_native_images(
     assert calls[0][1]["deadline"] > 0
 
 
+@pytest.mark.parametrize("coverage", ["complete", "partial", "too_large"])
+@pytest.mark.parametrize("anchor", [60_000, 90_123])
+def test_realtime_budget_preserves_anchor_facts_captions_and_missing_coverage(tmp_path, coverage, anchor):
+    host = _host()
+
+    def ensure(context, target):
+        if coverage == "partial" and target.sequence_no == 1:
+            return ChunkEvidence(target, error="parse unavailable")
+        evidence = _evidence(target)
+        timeline = [evidence.result.timeline[0].model_copy(update={
+            "start_seconds": target.start_ms + index * 1000,
+            "end_seconds": target.start_ms + (index + 1) * 1000,
+            "description": (
+                "anchor original fact " + "当前事实。" * (3500 if coverage == "too_large" else 600)
+                if target.sequence_no == 1 and index == (anchor - target.start_ms) // 1000
+                else "remote original fact " + "其他事实。" * 600
+            ),
+            "participants": ["Alice"], "visible_persons": ["Alice"],
+        }) for index in range(40)]
+        parsed = evidence.result.model_copy(update={"persons": ["Alice", "Bob"], "timeline": timeline})
+        return replace(evidence, result=parsed)
+
+    host.ensure_chunk.side_effect = ensure
+    host.observe_frames.return_value = VisualEvidence(
+        frames=tuple(FrameEvidence(
+            timestamp_ms=anchor + index * 1000, chunk_id="video-chunk-1",
+            artifact_uri=f"artifact://frame-{index}", image_path=tmp_path / f"frame-{index}.png",
+            caption=f"frame {index} caption " + "字幕事实。" * 300,
+        ) for index in range(8)),
+        summary="visual summary " + "画面事实。" * 500,
+    )
+
+    class Model:
+        model_name = "text-model"
+        supports_vision_input = False
+
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
+            assert "绝对毫秒" in prompt and "omitted_evidence" in prompt
+            assert "persons 是整个 Chunk" in prompt
+            available = {tool.name: tool for tool in tools}
+            output = available["understand_current_video"].invoke({"query": "what happened?"})
+            assert len(output.encode("utf-8")) <= 16384
+            payload = json.loads(output)
+            assert payload["omitted_evidence"] is True
+            assert payload["partial"] is (coverage == "partial")
+            assert [item["content_version"] for item in payload["chunks"]] == (
+                [3, None, 3] if coverage == "partial" else [3, 3, 3]
+            )
+            assert len(payload["frames"]) == 8
+            assert payload["frames"][0]["timestamp_ms"] == anchor
+            assert payload["frames"][0]["caption"].startswith("frame 0 caption ")
+            assert all(0 < len(item["caption"]) <= 150 for item in payload["frames"])
+            assert all("after_anchor" in item for item in payload["frames"])
+            if coverage == "partial":
+                assert payload["chunks"][1]["available"] is False
+                assert payload["chunks"][1]["error"] == "parse unavailable"
+                assert any(item["evidence"] for item in payload["chunks"])
+            else:
+                active = payload["chunks"][1]["evidence"]
+                assert len(active) == 1
+                assert active[0]["description"].startswith("anchor original fact ")
+                assert active[0]["start_seconds"] == anchor // 1000 * 1000
+                assert active[0]["after_anchor"] is False
+                assert payload["chunks"][1]["persons"] == ["Alice"]
+            handle_text("Answer from the retained original evidence.")
+
+    runtime = SupervisorRuntime(
+        FakeVideoRuntime(), Model(), FakeWebSearcher(),
+        realtime_runtime=RealtimeUnderstandingRuntime(host=host),
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+        max_tool_result_bytes=16384, max_prompt_chars=10000,
+    )
+    inputs = _inputs()
+    inputs["extra_context"] = {"playback": {"videoId": "video", "positionSeconds": anchor}}
+    if coverage == "too_large":
+        with pytest.raises(AgentToolInvocationError, match="output budget"):
+            runtime.kick(inputs, load_video_context=lambda: [])
+    else:
+        result = runtime.kick(inputs, load_video_context=lambda: [])
+        assert result.content == "Answer from the retained original evidence."
+    host.compose_context.assert_not_awaited()
+
+
 @pytest.mark.parametrize("order", [
     ("search_video_graph", "understand_current_video", "search_web"),
     ("understand_current_video", "search_web", "search_video_graph"),
@@ -193,7 +376,7 @@ def test_three_tools_preserve_approved_answer_and_current_video_explanation(orde
     class Model:
         model_name = "configured-model"
 
-        def run_agent_loop(self, prompt, *, tools, handle_text, **kwargs):
+        def run_agent(self, prompt, *, tools, handle_text, **kwargs):
             assert "最终文本必须包含根据其证据组织的当前视频解释" in prompt
             assert "不复述或改写其批准答案，网页信息另作补充" in prompt
             assert "最终文本只写网页补充" not in prompt
@@ -436,3 +619,234 @@ def test_video_tool_without_scope_returns_feedback():
     assert prompt_context["video_scope"] == []
     assert "没有可检索的视频系列" in prompt_context["video_scope_description"]
     assert "先告知" in prompt_context["video_scope_description"]
+
+
+@pytest.mark.parametrize("tool_name", ["understand_current_video", "search_video_graph"])
+def test_deepagents_calls_real_video_runtimes_and_preserves_confirmed_turn(tool_name):
+    script = ScriptedModel(responses=[
+        AIMessage(content="", tool_calls=[{
+            "name": tool_name, "args": {"query": "a shortened query"}, "id": "video-tool",
+        }]),
+        AIMessage(content="Current-video explanation from the verified evidence."),
+        AIMessage(content="Second turn answer."),
+    ])
+    store = DeepAgentSessionStore()
+    model = DeepAgentsSupervisorModel(
+        session_store=store, model="fake", provider_name="fake",
+        request_timeout_seconds=30, max_input_chars=120_000,
+        context_window_policy=None, chat_model=script,
+    )
+    host = _host()
+    query, evaluator, chat, retrieval = Query(), Evaluator(), Chat(), Retrieval()
+    video = AgentRuntime(query, evaluator, chat, retrieval.search, retrieval_channel="lexical")
+    runtime = SupervisorRuntime(
+        video, model, FakeWebSearcher(),
+        realtime_runtime=RealtimeUnderstandingRuntime(host=host),
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+        max_tool_result_bytes=4096, max_prompt_chars=10000,
+    )
+    inputs = _inputs(series_ids=["series"])
+    inputs["extra_context"] = {"playback": {"videoId": "video", "positionSeconds": 90_123}}
+
+    first = runtime.kick(inputs, load_video_context=lambda: [])
+
+    receipt = next(message for message in script._calls[1]["messages"] if isinstance(message, ToolMessage))
+    payload = json.loads(receipt.content)
+    assert "error" not in payload
+    if tool_name == "understand_current_video":
+        host.prepare_context.assert_awaited_once()
+        request = host.prepare_context.await_args.args[0]
+        assert request.question == inputs["user_message"]
+        assert request.video_id == "video" and request.anchor_ms == 90_123
+        host.ensure_chunk.assert_awaited()
+        host.observe_frames.assert_awaited_once()
+        host.compose_context.assert_not_awaited()
+        assert payload["summary"] and "Chunk" in payload["summary"]
+        assert payload["partial"] is False
+        assert all(item["evidence"] for item in payload["chunks"])
+        assert first.content == "Current-video explanation from the verified evidence."
+        assert first.video_result is None
+        assert retrieval.calls == []
+    else:
+        assert len(query.contexts) == len(evaluator.contexts) == len(chat.contexts) == 1
+        assert len(retrieval.calls) == 1
+        assert payload["result_count"] == 1
+        assert first.content == first.video_result.agent_reply.message == "## Final answer\n\nGrounded answer."
+        assert first.video_result.hits[0].evidence.video_chunk_id == "chunk-1"
+        assert first.video_result.render_blocks[1].start_seconds == 11
+        assert first.video_result.render_blocks[1].end_seconds == 19
+        host.prepare_context.assert_not_awaited()
+
+    config = {"configurable": {"thread_id": inputs["conversation_id"]}}
+    assert store.checkpointer.get_tuple(config) is not None
+    assert store.pending[inputs["conversation_id"]].message_id == inputs["assistant_message_id"]
+    graph = store.pending[inputs["conversation_id"]].graph
+    runtime.confirm_turn(inputs["conversation_id"], inputs["assistant_message_id"], first.content)
+    assert store.pending == {}
+    assert graph.get_state(config).values["messages"][-1].content == first.content
+
+    second_inputs = {**inputs, "assistant_message_id": "second-answer", "user_message": "Explain it again."}
+    second = runtime.kick(second_inputs, load_video_context=lambda: [])
+    received = [message.text for message in script._calls[-1]["messages"]]
+    assert received.count(first.content) == 1
+    assert received[-1] == second_inputs["user_message"]
+    assert second.content == "Second turn answer."
+    graph = store.pending[inputs["conversation_id"]].graph
+    runtime.confirm_turn(inputs["conversation_id"], "second-answer", second.content)
+    assert store.pending == {}
+    assert store.checkpointer.get_tuple(config) is not None
+    assert graph.get_state(config).values["messages"][-1].content == second.content
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_provider_gets_initial_background_captions_and_updated_warm_turn(tmp_path, partial):
+    client = FakeClient([
+        _completion(content="", calls=[("current", "understand_current_video", {"query": "who?"})], finish="tool_calls"),
+        _completion(content="Current-video explanation."),
+        _completion(content="Next turn explanation."),
+    ])
+    adapter = OpenAIAgentModel(
+        "text-model", base_url="https://unused.invalid", api_key="test", client=client,
+        request_timeout_seconds=30, provider_name="test", max_output_tokens=1000,
+    )
+    model = DeepAgentsSupervisorModel(
+        session_store=DeepAgentSessionStore(), model="text-model", provider_name="test",
+        request_timeout_seconds=30, max_input_chars=120_000,
+        context_window_policy=None, agent_model=adapter, supports_vision_input=False,
+    )
+    host = _host()
+    def ensure(context, target):
+        if partial:
+            return ChunkEvidence(target, error="parse unavailable")
+        evidence = _evidence(target)
+        if target.sequence_no == 1:
+            parsed = evidence.result.model_copy(update={
+                "persons": ["若叶睦"],
+                "timeline": [evidence.result.timeline[0].model_copy(update={
+                    "start_seconds": target.start_ms + 1000 * index,
+                    "end_seconds": target.start_ms + 1000 * (index + 1),
+                    "description": f"原始事实 sentinel {index}",
+                    "visible_persons": ["若叶睦"],
+                }) for index in range(7)],
+            })
+            return replace(evidence, result=parsed)
+        return evidence
+
+    host.ensure_chunk.side_effect = ensure
+    host.observe_frames.return_value = VisualEvidence(
+        frames=(FrameEvidence(
+            timestamp_ms=90_123, chunk_id="video-chunk-1", artifact_uri="artifact://frame",
+            image_path=tmp_path / "frame.png", caption="若叶睦的单帧 caption sentinel",
+        ),),
+        summary="visual summary sentinel",
+    )
+    runtime = SupervisorRuntime(
+        FakeVideoRuntime(), model, FakeWebSearcher(),
+        realtime_runtime=RealtimeUnderstandingRuntime(host=host),
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+        max_tool_result_bytes=16384, max_prompt_chars=120_000,
+    )
+    inputs = _inputs(series_ids=["ready-series"])
+    inputs["series_context"] = [
+        {"seriesId": "ready-series", "name": "Searchable course"},
+        {
+            "seriesId": "series", "name": "Playing work", "description": "作品背景 first",
+            "transcriptLanguageHint": "ja",
+            "importantExtraData": {"format": "markdown", "content": "背景 sentinel first"},
+            "characterBible": [{"name": "若叶睦", "aliases": ["Mutsumi"]}],
+            "videos": [{"episodeOrder": 1, "parseStatus": "PARSING_FAILED"}],
+        },
+    ]
+    inputs["extra_context"] = {"playback": {
+        "seriesId": "series", "videoId": "video", "episodeOrder": 1, "positionSeconds": 90_123,
+    }}
+
+    first = runtime.kick(inputs, load_video_context=lambda: pytest.fail("unexpected video search"))
+
+    system = client.calls[0]["messages"][0]
+    assert system["role"] == "system"
+    assert json.dumps(inputs["series_context"], ensure_ascii=False, separators=(",", ":")) in system["content"]
+    request = host.prepare_context.await_args.args[0]
+    assert request.series_context == inputs["series_context"][1]
+    observation = host.observe_frames.await_args.kwargs["prompt"]
+    host.compose_context.assert_not_awaited()
+    assert "背景 sentinel first" in observation
+    assert "Searchable course" not in observation
+    tool_message = next(item for item in client.calls[1]["messages"] if item["role"] == "tool")
+    payload = json.loads(tool_message["content"])
+    assert payload["frames"][0]["caption"] == "若叶睦的单帧 caption sentinel"
+    assert payload["frames"][0]["timestamp_ms"] == 90_123
+    assert payload["visual_summary"] == "visual summary sentinel"
+    assert payload["summary"] and payload["summary"] != payload["visual_summary"]
+    assert payload["partial"] is partial
+    assert payload["omitted_evidence"] is False
+    if not partial:
+        assert payload["chunks"][1]["persons"] == ["若叶睦"]
+        assert [item["description"] for item in payload["chunks"][1]["evidence"]] == [
+            f"原始事实 sentinel {index}" for index in range(7)
+        ]
+    assert payload["supervisor_has_images"] is False
+    assert all(isinstance(item["content"], (str, type(None))) for item in client.calls[1]["messages"])
+
+    runtime.confirm_turn(inputs["conversation_id"], inputs["assistant_message_id"], first.content)
+    next_inputs = deepcopy(inputs)
+    next_inputs["assistant_message_id"] = "next-answer"
+    next_inputs["series_context"][1]["importantExtraData"]["content"] = "背景 sentinel updated"
+    second = runtime.kick(next_inputs, load_video_context=lambda: pytest.fail("unexpected video search"))
+
+    next_system = client.calls[2]["messages"][0]
+    assert next_system["role"] == "system"
+    assert "背景 sentinel updated" in next_system["content"]
+    assert "背景 sentinel first" not in next_system["content"]
+    assert any(item["content"] == first.content for item in client.calls[2]["messages"])
+    assert second.content == "Next turn explanation."
+    runtime.confirm_turn(next_inputs["conversation_id"], "next-answer", second.content)
+    runtime.close()
+
+
+@pytest.mark.parametrize("failure", ["cancelled", "host_error"])
+def test_deepagents_real_realtime_failure_propagates_and_clears_checkpoint(failure):
+    script = ScriptedModel(responses=[AIMessage(content="", tool_calls=[{
+        "name": "understand_current_video", "args": {"query": "current scene"}, "id": "video-tool",
+    }])])
+    store = DeepAgentSessionStore()
+    model = DeepAgentsSupervisorModel(
+        session_store=store, model="fake", provider_name="fake",
+        request_timeout_seconds=30, max_input_chars=120_000,
+        context_window_policy=None, chat_model=script,
+    )
+    cancellation = Event()
+    host = _host()
+    host_error = RuntimeError("realtime host failed")
+
+    async def prepare(request):
+        if failure == "host_error":
+            raise host_error
+        cancellation.set()
+        return _context(request)
+
+    host.prepare_context.side_effect = prepare
+    retrieval = Retrieval()
+    video = AgentRuntime(Query(), Evaluator(), Chat(), retrieval.search, retrieval_channel="lexical")
+    runtime = SupervisorRuntime(
+        video, model, FakeWebSearcher(),
+        realtime_runtime=RealtimeUnderstandingRuntime(host=host),
+        max_web_results=5, web_timeout_seconds=12, execution_timeout_seconds=60,
+        max_tool_result_bytes=4096, max_prompt_chars=10000,
+    )
+    inputs = _inputs(series_ids=["series"])
+    inputs["extra_context"] = {"playback": {"videoId": "video", "positionSeconds": 90_123}}
+
+    with pytest.raises(AgentModelInvocationError, match="cancelled" if failure == "cancelled" else "Supervisor model") as raised:
+        runtime.kick(inputs, load_video_context=lambda: [], cancellation=cancellation)
+
+    host.prepare_context.assert_awaited_once()
+    host.ensure_chunk.assert_not_awaited()
+    host.observe_frames.assert_not_awaited()
+    host.compose_context.assert_not_awaited()
+    assert len(script._calls) == 1
+    assert retrieval.calls == []
+    assert store.pending == {}
+    assert store.checkpointer.get_tuple({"configurable": {"thread_id": inputs["conversation_id"]}}) is None
+    if failure == "host_error":
+        assert raised.value.__cause__ is host_error

@@ -17,17 +17,22 @@ from agent.video_parse_v2.input import (
     ParseConfig as VideoParseV2Config,
     VisualInputConfig as VideoParseV2VisualInputConfig,
 )
-from gateway.config import (
-    ArkModelSourceConfig,
-    GatewayConfig,
-    OpenAIModelSourceConfig,
-    OpenAIVisionSourceConfig,
-)
-from gateway.model_sources import ModelReference, ModelReferenceType
+from gateway.config import GatewayConfig
+from gateway.multimodal import adapter_capabilities
 
 from ..schema import ContractModel
 from .media import ImageUploadConfig
 from .upload import UploadServiceConfig
+
+
+_MODEL_POLICY_FIELDS = (
+    "context_window_tokens", "context_safety_margin_tokens", "auto_compact_tokens",
+    "compact_target_tokens", "max_input_chars",
+)
+
+
+def _model_policy(model) -> dict[str, Any]:
+    return {name: getattr(model, name) for name in _MODEL_POLICY_FIELDS}
 
 
 class ParseWindowConfig(ContractModel):
@@ -42,8 +47,9 @@ class ParseASRConfig(ContractModel):
     mode: Literal["lite", "none"]
     model: str = Field(min_length=1)
     fps: float = Field(ge=0.2, le=5.0)
-    max_output_tokens: int | None = Field(default=None, ge=256, le=32_768)
+    max_output_tokens: int | None = Field(default=None, ge=256, le=262_144)
     concurrency: int = Field(ge=1)
+    request_timeout_seconds: float | None = Field(default=None, gt=0)
 
 
 class ParseVisionConfig(ContractModel):
@@ -54,6 +60,12 @@ class ParseVisionConfig(ContractModel):
     max_frames_per_window: int | None = Field(default=None, ge=1, le=600)
     max_output_tokens: int | None = Field(default=None, ge=256, le=262_144)
     reasoning_effort: Literal["none", "low", "high", "max"] | None = None
+    request_timeout_seconds: float | None = Field(default=None, gt=0)
+    context_window_tokens: int | None = Field(default=None, gt=0)
+    context_safety_margin_tokens: int | None = Field(default=None, ge=0)
+    auto_compact_tokens: int | None = Field(default=None, gt=0)
+    compact_target_tokens: int | None = Field(default=None, gt=0)
+    max_input_chars: int | None = Field(default=None, gt=0)
 
     @model_serializer(mode="wrap")
     def serialize_vision(self, handler: Any) -> dict[str, Any]:
@@ -62,6 +74,12 @@ class ParseVisionConfig(ContractModel):
         if self.reasoning_effort is None:
             vision.pop("reasoning_effort", None)
             vision.pop("reasoningEffort", None)
+        for name in _MODEL_POLICY_FIELDS + ("request_timeout_seconds",):
+            if getattr(self, name) is None:
+                vision.pop(name, None)
+                alias = self.__class__.model_fields[name].alias
+                if alias is not None:
+                    vision.pop(alias, None)
         return vision
 
     @model_validator(mode="after")
@@ -94,8 +112,24 @@ class ParseFallbackConfig(ContractModel):
     max_frames_per_group: int = Field(ge=1, le=128)
     max_height: int = Field(ge=64, le=2160)
     reasoning_effort: Literal["none", "low", "high", "max"]
-    max_output_tokens: int = Field(ge=256, le=32_768)
+    max_output_tokens: int = Field(ge=256, le=262_144)
     request_timeout_seconds: float = Field(gt=0)
+    context_window_tokens: int | None = Field(default=None, gt=0)
+    context_safety_margin_tokens: int | None = Field(default=None, ge=0)
+    auto_compact_tokens: int | None = Field(default=None, gt=0)
+    compact_target_tokens: int | None = Field(default=None, gt=0)
+    max_input_chars: int | None = Field(default=None, gt=0)
+
+    @model_serializer(mode="wrap")
+    def serialize_policy(self, handler):
+        values = handler(self)
+        for name in _MODEL_POLICY_FIELDS:
+            if getattr(self, name) is None:
+                values.pop(name, None)
+                alias = self.__class__.model_fields[name].alias
+                if alias is not None:
+                    values.pop(alias, None)
+        return values
 
 
 class ParseEmbeddingConfig(ContractModel):
@@ -104,6 +138,7 @@ class ParseEmbeddingConfig(ContractModel):
     encoder_model: str | None = Field(default=None, min_length=1)
     dimensions: int = Field(ge=1, le=2048)
     video_fps: float = Field(ge=0.2, le=5.0)
+    request_timeout_seconds: float | None = Field(default=None, gt=0)
 
 
 class ParseExecutionConfig(ContractModel):
@@ -149,7 +184,7 @@ class ParseConfig(ContractModel):
                 asr=VideoParseV2ASRModelConfig(
                     source=self.asr.source,
                     model=self.asr.model,
-                    request_timeout_seconds=self.execution.request_timeout_seconds,
+                    request_timeout_seconds=self.asr.request_timeout_seconds or self.execution.request_timeout_seconds,
                     max_output_tokens=self.asr.max_output_tokens,
                     mode=self.asr.mode,
                     fps=self.asr.fps,
@@ -157,8 +192,10 @@ class ParseConfig(ContractModel):
                 understanding=VideoParseV2GenerativeModelConfig(
                     source=self.vision.source,
                     model=self.vision.model,
-                    request_timeout_seconds=self.execution.request_timeout_seconds,
+                    request_timeout_seconds=self.vision.request_timeout_seconds or self.execution.request_timeout_seconds,
                     max_output_tokens=self.vision.max_output_tokens,
+                    supports_vision_input=True,
+                    **_model_policy(self.vision),
                     reasoning_effort=self.vision.reasoning_effort,
                     fallback=(
                         VideoParseV2FallbackModelConfig(
@@ -169,6 +206,8 @@ class ParseConfig(ContractModel):
                             ),
                             max_output_tokens=self.fallback.max_output_tokens,
                             reasoning_effort=self.fallback.reasoning_effort,
+                            supports_vision_input=True,
+                            **_model_policy(self.fallback),
                         )
                         if self.fallback.enabled
                         else None
@@ -183,7 +222,7 @@ class ParseConfig(ContractModel):
                     encoder_model=self.embedding.encoder_model,
                     dimensions=self.embedding.dimensions,
                     video_fps=self.embedding.video_fps,
-                    request_timeout_seconds=self.execution.request_timeout_seconds,
+                    request_timeout_seconds=self.embedding.request_timeout_seconds or self.execution.request_timeout_seconds,
                 ),
             ),
             visual_input=VideoParseV2VisualInputConfig(
@@ -231,15 +270,27 @@ class ParseConfig(ContractModel):
     ) -> "ParseConfig":
         parser = gateway.video_parser
         fallback = parser.fallback
-        deepseek = fallback.deepseek
+        asr_binding = gateway.resolve_model_binding("transcription")
+        vision_binding = gateway.resolve_model_binding("vision")
+        if not vision_binding.supports_vision_input:
+            raise ValueError("configured vision model must declare image input support")
+        embedding_binding = gateway.resolve_embedding_binding(environ={})
         fallback_enabled = (
             runtime.fallback_enabled
             if runtime.fallback_enabled is not None
-            else _environment_bool("ANIVAG_FALLBACK_ENABLED", fallback.enabled)
+            else vision_binding.fallback is not None
         )
+        fallback_binding = vision_binding.fallback
+        if fallback_binding is None and "vision_fallback" in gateway.normalized_models:
+            fallback_binding = gateway.resolve_model_binding("vision_fallback")
+        if fallback_enabled and fallback_binding is None:
+            raise ValueError("enabled visual fallback requires a configured model")
+        # Disabled fallbacks carry harmless shape defaults and are omitted from the task.
+        fallback_binding = fallback_binding or vision_binding
         vision_input_mode = runtime.video_input_mode
         vision_max_frames = runtime.video_max_frames_per_window
-        if isinstance(gateway.stage_source("vision"), OpenAIVisionSourceConfig):
+        capabilities = adapter_capabilities(gateway.source(vision_binding.source).adapter)
+        if capabilities.visual_input_mode == "ordered_frames":
             vision_input_mode = "ordered_frames"
             vision_max_frames = vision_max_frames or parser.max_frames_per_window
         return cls(
@@ -250,21 +301,24 @@ class ParseConfig(ContractModel):
                 canonical_max_height=runtime.max_height,
             ),
             asr=ParseASRConfig(
-                source=_stage_source_name(gateway, "transcription"),
+                source=asr_binding.source,
                 mode=runtime.asr_mode,
-                model=runtime.transcript_model or os.getenv("ANIVAG_TRANSCRIPT_MODEL") or parser.transcript_model,
+                model=runtime.transcript_model or asr_binding.model,
                 fps=runtime.transcript_fps or float(os.getenv("ANIVAG_TRANSCRIPT_FPS") or parser.transcript_fps),
                 concurrency=runtime.asr_concurrency,
-                max_output_tokens=runtime.transcript_max_output_tokens or parser.transcription_max_output_tokens,
+                max_output_tokens=runtime.transcript_max_output_tokens or asr_binding.max_output_tokens,
+                request_timeout_seconds=asr_binding.request_timeout_seconds,
             ),
             vision=ParseVisionConfig(
-                source=_stage_source_name(gateway, "vision"),
-                model=runtime.video_model or os.getenv("ANIVAG_VIDEO_MODEL") or parser.video_model,
+                source=vision_binding.source,
+                model=runtime.video_model or vision_binding.model,
                 fps=runtime.video_fps or float(os.getenv("ANIVAG_VIDEO_FPS") or parser.video_fps),
                 input_mode=vision_input_mode,
                 max_frames_per_window=vision_max_frames,
-                max_output_tokens=runtime.video_max_output_tokens or parser.vision_max_output_tokens,
-                reasoning_effort=parser.vision_reasoning_effort,
+                max_output_tokens=runtime.video_max_output_tokens or vision_binding.max_output_tokens,
+                reasoning_effort=vision_binding.reasoning_effort,
+                request_timeout_seconds=vision_binding.request_timeout_seconds,
+                **_model_policy(vision_binding),
             ),
             context=ParseContextConfig(
                 max_events=runtime.max_context_events,
@@ -272,29 +326,23 @@ class ParseConfig(ContractModel):
                 background_image_max_edge=images.model_max_edge,
             ),
             fallback=ParseFallbackConfig(
-                # A disabled fallback is not part of the frozen execution path,
-                # so an otherwise valid deployment need not configure its
-                # provider as a named model source.
-                source=(
-                    _fallback_source_name(gateway)
-                    if fallback_enabled
-                    else "deepseek_api"
-                ),
+                source=fallback_binding.source,
                 enabled=fallback_enabled,
-                model=deepseek.model,
+                model=fallback_binding.model,
                 frame_fps=fallback.frame_fps,
                 group_duration_seconds=fallback.group_duration_seconds,
                 max_frames_per_group=fallback.max_frames_per_group,
                 max_height=fallback.max_height,
-                reasoning_effort=deepseek.reasoning_effort,
-                max_output_tokens=deepseek.max_output_tokens,
-                request_timeout_seconds=deepseek.request_timeout_seconds,
+                reasoning_effort=fallback_binding.reasoning_effort or "none",
+                max_output_tokens=fallback_binding.max_output_tokens or 8192,
+                request_timeout_seconds=fallback_binding.request_timeout_seconds,
+                **_model_policy(fallback_binding),
             ),
             embedding=resolve_embedding_config(
                 gateway,
-                model=embedding_model if embedding_model is not None else gateway.multimodal_embedding.model,
+                model=embedding_model if embedding_model is not None else embedding_binding.model,
                 dimensions=embedding_dimensions,
-                video_fps=embedding_fps if embedding_fps is not None else gateway.multimodal_embedding.fps,
+                video_fps=embedding_fps if embedding_fps is not None else embedding_binding.video_fps,
             ),
             execution=ParseExecutionConfig(
                 request_timeout_seconds=runtime.request_timeout_seconds,
@@ -307,128 +355,39 @@ def resolve_embedding_config(
     gateway: GatewayConfig, *, dimensions: int,
     model: str | None = None, video_fps: float | None = None,
 ) -> ParseEmbeddingConfig:
-    configured_model = (
-        model if model is not None
-        else os.getenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "").strip() or gateway.multimodal_embedding.model
-    )
-    configured_fps = video_fps
-    if configured_fps is None:
-        raw_fps = os.getenv("ANIVAG_VIDEO_EMBEDDING_FPS", "").strip()
-        configured_fps = float(raw_fps) if raw_fps else gateway.multimodal_embedding.fps
-    reference = ModelReference.resolve(
-        configured_model, default_encoder_model=gateway.multimodal_embedding.model,
-    )
+    environment = dict(os.environ)
+    if model is not None:
+        environment.pop("ANIVAG_VIDEO_EMBEDDING_MODEL", None)
+    if video_fps is not None:
+        environment.pop("ANIVAG_VIDEO_EMBEDDING_FPS", None)
+    definition = gateway.resolve_embedding_binding(environ=environment)
+    updates = {"dimensions": dimensions}
+    if model is not None:
+        updates["model"] = model
+    if video_fps is not None:
+        updates["video_fps"] = video_fps
+    definition = gateway.resolve_embedding_binding(definition.model_copy(update=updates))
     return ParseEmbeddingConfig(
-        source=_embedding_source_name(gateway), model=reference.request_model,
-        encoder_model=reference.model if reference.type == ModelReferenceType.ENDPOINT else None,
-        dimensions=dimensions, video_fps=configured_fps,
+        source=definition.source, model=definition.model,
+        encoder_model=definition.encoder_model, dimensions=definition.dimensions,
+        video_fps=definition.video_fps,
+        request_timeout_seconds=definition.request_timeout_seconds,
     )
 
 
-def _environment_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    normalized = value.strip().casefold()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"{name} must be a boolean value")
+def default_video_parse_v2_config(gateway: GatewayConfig | None = None) -> VideoParseV2Config:
+    """Freeze local external model configuration when no server profile was injected."""
+    if gateway is None:
+        from gateway.config import load_config
 
-
-def _stage_source_name(gateway: GatewayConfig, stage: str) -> str:
-    configured = (
-        gateway.video_parser.transcription_source
-        if stage == "transcription"
-        else gateway.video_parser.vision_source
-    )
-    if configured is not None:
-        return configured
-    effective = gateway.stage_source(stage)
-    for name, source in gateway.model_sources.items():
-        if source == effective:
-            return name
-    raise ValueError(f"effective {stage} model source has no stable configured name")
-
-
-def _embedding_source_name(gateway: GatewayConfig) -> str:
-    for name, source in gateway.model_sources.items():
-        if isinstance(source, ArkModelSourceConfig):
-            return name
-    raise ValueError("multimodal embedding requires a configured Ark model source")
-
-
-def _fallback_source_name(gateway: GatewayConfig) -> str:
-    fallback = gateway.video_parser.fallback.deepseek
-    if fallback.vision_source is not None:
-        return fallback.vision_source
-    for name, source in gateway.model_sources.items():
-        if (
-            isinstance(source, OpenAIModelSourceConfig)
-            and source.provider == fallback.provider
-            and source.base_url == fallback.base_url
-            and source.api_key_env == fallback.api_key_env
-        ):
-            return name
-    raise ValueError("enabled parse fallback has no stable configured model source")
-
-
-def default_video_parse_v2_config() -> VideoParseV2Config:
-    """Return the explicit V2 fallback used when no V1 profile was injected.
-
-    Production bootstrap supplies an effective server ParseConfig. This
-    fallback gives a newly created upload without an injected V1 profile a
-    complete snapshot; it is never used to restore an existing task.
-    """
-
-    return VideoParseV2Config(
-        chunk_duration=60,
-        interval_duration=180,
-        batch_max_size=10,
-        dispatch_interval_seconds=0,
-        models=VideoParseV2ModelSnapshot(
-            asr=VideoParseV2ASRModelConfig(
-                source="ark_default",
-                model="doubao-seed-2-0-lite-260428",
-                request_timeout_seconds=600,
-                max_output_tokens=8192,
-                mode="lite",
-                fps=1.0,
-            ),
-            understanding=VideoParseV2GenerativeModelConfig(
-                source="ark_default",
-                model="doubao-seed-2-1-pro-260628",
-                request_timeout_seconds=600,
-                max_output_tokens=65536,
-                reasoning_effort="none",
-            ),
-            refine=None,
-            ocr=None,
-            prefix_context=None,
-            embedding=VideoParseV2EmbeddingModelConfig(
-                source="ark_default",
-                model="doubao-embedding-vision-250615",
-                dimensions=1024,
-                video_fps=1.0,
-                request_timeout_seconds=600,
-            ),
-        ),
-        visual_input=VideoParseV2VisualInputConfig(
-            mode="video",
-            fps=1.0,
-            max_frames_per_chunk=60,
-            max_height=720,
-        ),
-        ocr_enabled=False,
-        understanding_enabled=True,
-        compact_enabled=False,
-        prefix_context=None,
-        execution=VideoParseV2ExecutionConfig(
-            max_concurrent_model_calls=8,
-            max_retry_count=2,
-            retry_initial_delay_seconds=1,
-            retry_max_delay_seconds=30,
-            max_model_calls=100,
-        ),
-    )
+        gateway = load_config()
+    embedding = gateway.resolve_embedding_binding()
+    return ParseConfig.from_defaults(
+        runtime=VideoParseRuntimeConfig(asr_concurrency=8),
+        gateway=gateway,
+        upload=UploadServiceConfig(),
+        images=ImageUploadConfig(),
+        embedding_model=None,
+        embedding_dimensions=embedding.dimensions,
+        embedding_fps=None,
+    ).to_video_parse_v2()

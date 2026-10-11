@@ -4,15 +4,20 @@ import os
 import subprocess
 import sys
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config, ParseInput
 from engine.common.config import VideoParseRuntimeConfig
 from engine.rag.nlp.query import accept_query_vector
 from engine.rag.retrieval.contracts import QueryEncodingRequest
-from gateway.config import ArkModelSourceConfig, OpenAIModelSourceConfig, load_config
-from gateway.openai.structured import OpenAIStructuredToolAgentModel
+from gateway.config import (
+    ArkModelSourceConfig, EmbeddingModelBinding, ModelBinding,
+    OpenAIAudioSourceConfig, OpenAIModelSourceConfig, load_config,
+)
+from gateway.rerank import RerankScore
 
 from server import bootstrap, main as main_module
 from server.caller import CallerResources
@@ -224,6 +229,7 @@ def test_parse_defaults_accept_existing_runtime_values_beyond_ui_recommendations
     assert config.execution.max_attempts == 12
 
 
+@pytest.mark.parametrize("supervisor_backend", ["legacy", "deepagents", "codex"])
 @pytest.mark.parametrize(
     ("configured_models", "expected_models"),
     [
@@ -246,6 +252,7 @@ def test_process_assembly_receives_runtime_configuration(
     tmp_path,
     configured_models,
     expected_models,
+    supervisor_backend,
 ):
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
@@ -261,6 +268,28 @@ def test_process_assembly_receives_runtime_configuration(
     monkeypatch.setenv("ANIVAG_ELASTICSEARCH_API_KEY", "test-key")
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    configuration = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
+    if supervisor_backend == "legacy":
+        configuration.pop("supervisor_harness", None)
+        configuration["models"].pop("supervisor", None)
+    else:
+        configuration["supervisor_harness"] = supervisor_backend
+        configuration["models"]["supervisor"] = {
+            "source": "codex_local" if supervisor_backend == "codex" else "deepseek_api",
+            "model": "independent-supervisor-model",
+            "supports_vision_input": supervisor_backend == "codex",
+            "reasoning_effort": "low",
+            "request_timeout_seconds": 75,
+            "max_output_tokens": 1024,
+            "max_input_chars": 80_000,
+            "context_window_tokens": 32_000,
+            "context_safety_margin_tokens": 2048,
+            "auto_compact_tokens": 22_000,
+            "compact_target_tokens": 12_000,
+        }
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(yaml.safe_dump(configuration, allow_unicode=True))
+    monkeypatch.setenv("ANIVAG_MODEL_CONFIG", str(config_path))
     settings = replace(
         ServerSettings.from_environment(),
         sse=SSEConfig(poll_interval_seconds=0.5, keepalive_interval_seconds=9),
@@ -282,6 +311,7 @@ def test_process_assembly_receives_runtime_configuration(
             query_reasoning_effort="low",
             evaluator_reasoning_effort="high",
             chat_reasoning_effort="max",
+            supervisor_reasoning_effort="high",
             max_output_tokens=2048,
             max_prompt_chars=120_000,
             stage_timeout_seconds=45,
@@ -312,6 +342,14 @@ def test_process_assembly_receives_runtime_configuration(
         return real_retrieval(*args, **kwargs)
 
     monkeypatch.setattr(retrieval_builder, "VideoParseRetrievalService", create_retrieval)
+    supervisor_builds = []
+    real_build_supervisor = bootstrap.AgentModelFactory.build_supervisor
+
+    def build_supervisor(factory, **kwargs):
+        supervisor_builds.append({**kwargs, "binding": factory._binding})
+        return real_build_supervisor(factory, **kwargs)
+
+    monkeypatch.setattr(bootstrap.AgentModelFactory, "build_supervisor", build_supervisor)
     application = main_module.init_application(settings)
     services = application.services
     try:
@@ -327,9 +365,9 @@ def test_process_assembly_receives_runtime_configuration(
         assert services.tracing is None
         assert services.agent._parse_usage is services.parse_usage
         embedder = received["query_embedder"]
-        assert embedder._model == settings.video_embedding_model
-        assert embedder._fps == settings.video_embedding_fps
-        assert embedder._request_timeout_seconds == 90
+        assert embedder._binding.model == settings.video_embedding_model
+        assert embedder._binding.video_fps == settings.video_embedding_fps
+        assert embedder._binding.request_timeout_seconds == 90
         defaults = services.uploads.parse_defaults
         assert defaults is not None
         assert defaults.embedding.model == settings.video_embedding_model
@@ -347,16 +385,30 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._query_model.request_timeout_seconds == 90
         assert runtime._evaluator_model.request_timeout_seconds == 90
         assert runtime._chat_model._request_timeout_seconds == 90
-        assert isinstance(
-            runtime._evaluator_model,
-            OpenAIStructuredToolAgentModel,
-        )
+        assert callable(runtime._evaluator_model.run_structured)
         assert runtime._query_model.provider_name == "deepseek"
         assert runtime._evaluator_model.provider_name == "deepseek"
         assert runtime._chat_model.provider_name == "deepseek"
         assert runtime._query_model.reasoning_effort == "low"
         assert runtime._evaluator_model.reasoning_effort == "high"
         assert runtime._chat_model.reasoning_effort == "max"
+        supervisor_model = services.agent._supervisor_runtime._model
+        assert callable(supervisor_model.run_agent)
+        assert callable(supervisor_model.confirm_turn)
+        assert callable(supervisor_model.discard_turn)
+        assert supervisor_model.model_name == (
+            expected_models[2] if supervisor_backend == "legacy" else "independent-supervisor-model"
+        )
+        assert supervisor_model.provider_name == ("codex" if supervisor_backend == "codex" else "deepseek")
+        assert supervisor_builds[0]["harness"] == ("deepagents" if supervisor_backend == "legacy" else supervisor_backend)
+        assert supervisor_builds[0]["reasoning_effort"] == ("high" if supervisor_backend == "legacy" else "low")
+        assert supervisor_builds[0]["request_timeout_seconds"] == (90 if supervisor_backend == "legacy" else 75)
+        assert supervisor_builds[0]["max_output_tokens"] == (2048 if supervisor_backend == "legacy" else 1024)
+        assert supervisor_builds[0]["max_input_chars"] == 120_000
+        if supervisor_backend != "legacy":
+            assert supervisor_builds[0]["binding"].max_input_chars == 80_000
+            assert supervisor_builds[0]["binding"].context_window_tokens == 32_000
+            assert supervisor_builds[0]["binding"].fallback is None
         assert runtime._query_model.fallback_provider_name == "ark"
         assert runtime._evaluator_model.fallback_provider_name == "ark"
         assert runtime._chat_model.fallback_provider_name == "ark"
@@ -367,10 +419,10 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._query_model.max_input_chars == 120_000
         assert runtime._query_model.context_window_policy.maximum_input_tokens == 57_856
         assert runtime._query_model.context_window_policy.auto_compact_tokens == 48_000
-        assert runtime._evaluator_model.context_window_policy is (
+        assert runtime._evaluator_model.context_window_policy == (
             runtime._query_model.context_window_policy
         )
-        assert runtime._chat_model.context_window_policy is (
+        assert runtime._chat_model.context_window_policy == (
             runtime._query_model.context_window_policy
         )
         assert runtime._chat_model.max_output_tokens == 2048
@@ -392,9 +444,11 @@ def test_process_assembly_receives_runtime_configuration(
             max_tool_result_bytes=8_192, max_read_chars_per_call=4_096,
             query_reasoning_effort="max", evaluator_reasoning_effort="none",
             chat_reasoning_effort="low",
+            supervisor_reasoning_effort="none",
             maximum_concurrent_kicks=5,
         )
         replacement = services.agent._runtime_factory(updated)
+        replacement_supervisor = None
         try:
             assert replacement._evaluator_stage_timeout == 240
             assert replacement._max_tool_result_bytes == 8_192
@@ -402,9 +456,17 @@ def test_process_assembly_receives_runtime_configuration(
             assert replacement._query_model.reasoning_effort == "max"
             assert replacement._evaluator_model.reasoning_effort == "none"
             assert replacement._chat_model.reasoning_effort == "low"
+            replacement_supervisor = services.agent._supervisor_factory(replacement, updated)
+            assert callable(replacement_supervisor._model.run_agent)
+            if supervisor_backend != "codex":
+                assert replacement_supervisor._model.session_store is supervisor_model.session_store
+            assert supervisor_builds[1]["reasoning_effort"] == ("none" if supervisor_backend == "legacy" else "low")
             assert services.agent.active_maximum_concurrent_kicks == 2
         finally:
-            replacement.close()
+            if replacement_supervisor is not None:
+                replacement_supervisor.close()
+            else:
+                replacement.close()
         app = create_app(services, settings=settings)
         assert app.state.sse_config == settings.sse
     finally:
@@ -500,17 +562,17 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert isinstance(runtime._elasticsearch_store, ElasticsearchVideoChunkStore)
         assert runtime._elasticsearch_store._client is application.resources.elasticsearch_client
         assert isinstance(services.retrieval, VideoParseRetrievalService)
-        assert services.retrieval._embedder._model == "selected-task-embedding"
-        assert services.retrieval._embedder._dimensions == 512
-        assert services.retrieval._embedder._fps == 2
-        assert isinstance(services.retrieval._embedder._source, ArkModelSourceConfig)
+        assert services.retrieval._embedder._binding.model == "selected-task-embedding"
+        assert services.retrieval._embedder._binding.dimensions == 512
+        assert services.retrieval._embedder._binding.video_fps == 2
+        assert services.retrieval._embedder._binding.source == services.uploads.parse_defaults.embedding.source
         assert received["candidate_budget"] == settings.retrieval.candidate_budget
         assert received["sparse_weight"] == settings.retrieval.sparse_weight
         assert received["expected_embedding_source"] == services.uploads.parse_defaults.embedding.source
         assert runtime._sparse_enabled is advanced_retrieval
         if advanced_retrieval:
             assert isinstance(received["reranker"], StructuredTextReranker)
-            assert received["reranker"].model_name == load_config().agent_model.model
+            assert received["reranker"].model_name == load_config().resolve_model_binding("rerank").model
         else:
             assert received["reranker"] is None
         assert services.retrieval._store is runtime._elasticsearch_store
@@ -537,6 +599,28 @@ def test_v2_mode_wires_durable_worker_and_elasticsearch(
         assert runtime._media_service.base_directory == (
             tmp_path / "artifacts" / "test" / "work" / "video-parse-v2"
         )
+        initial_defaults = services.uploads.parse_defaults
+        initial_config = runtime._gateway_config
+        updated_config = initial_config.model_copy(update={"normalized_models": {
+            **initial_config.normalized_models,
+            "vision": initial_config.normalized_models["vision"].model_copy(
+                update={"model": "updated-vision-model"},
+            ),
+        }})
+        reload_paths = []
+        def reload_config(path):
+            reload_paths.append(path)
+            return updated_config
+        monkeypatch.setattr(bootstrap, "load_config", reload_config)
+        assert callable(services.uploads._parse_defaults_loader)
+        refreshed_defaults = services.uploads._parse_defaults_loader()
+        assert reload_paths == [settings.model_config_path]
+        assert refreshed_defaults.vision.model == "updated-vision-model"
+        assert refreshed_defaults.vision.source == initial_defaults.vision.source
+        assert refreshed_defaults.embedding == initial_defaults.embedding
+        assert services.uploads.parse_defaults is initial_defaults
+        assert initial_defaults.vision.model != refreshed_defaults.vision.model
+        assert runtime._gateway_config is initial_config
     finally:
         application.close()
 
@@ -592,8 +676,7 @@ def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
         clients.append(client)
         return client
 
-    monkeypatch.setattr(retrieval_builder, "Ark", SimpleNamespace(volc=create_client))
-    monkeypatch.setattr("server.service.video_parse.Ark", SimpleNamespace(volc=create_client))
+    monkeypatch.setattr("arkruntime.Ark.volc", create_client)
     application = main_module.init_application(settings)
     services = application.services
     try:
@@ -804,101 +887,147 @@ def test_application_closes_tracing_after_model_teardown_even_if_host_close_fail
 
 @pytest.mark.parametrize("method", ["embed_query", "embed_image", "embed_sparse"])
 def test_query_embedder_uses_a_client_per_call_and_always_closes(monkeypatch, method):
-    from types import SimpleNamespace
-    clients = []
-    def create_client(**kwargs):
-        client = SimpleNamespace(options=kwargs, closed=False)
-        def close():
-            client.closed = True
-        client.close = close
-        clients.append(client)
-        return client
+    models = []
+    bindings = []
+    binding = EmbeddingModelBinding(
+        source="selected-embedding", model="embedding", dimensions=1024,
+        video_fps=1, request_timeout_seconds=30, kind="embedding",
+    )
     class Embedder:
-        def __init__(self, _model, **kwargs):
-            self.client = kwargs["client"]
+        def __init__(self):
+            self.closed = False
         def execute(self, query):
             if query == "fail":
                 raise RuntimeError("embedding failed")
-            return self.client
+            return self
         embed_query = execute
         embed_image = execute
         embed_sparse = execute
-    monkeypatch.setattr(retrieval_builder, "Ark", SimpleNamespace(volc=create_client))
-    monkeypatch.setattr("gateway.ark.embedding.DoubaoMultimodalEmbedder", Embedder)
-    embedder = retrieval_builder._LazyQueryEmbedder(model="embedding", dimensions=1024, fps=1, request_timeout_seconds=30)
-    assert clients == []
+        def close(self):
+            self.closed = True
+    def create_model(selected):
+        bindings.append(selected)
+        model = Embedder()
+        models.append(model)
+        return model
+    client = SimpleNamespace(create_embedding_model=create_model)
+    embedder = retrieval_builder._LazyQueryEmbedder(gateway_client=client, binding=binding)
+    assert models == []
     invoke = getattr(embedder, method)
     assert invoke("first") is not invoke("second")
     with pytest.raises(RuntimeError, match="embedding failed"):
         invoke("fail")
-    assert len(clients) == 3 and all(client.closed for client in clients)
-    assert all(client.options == {"timeout": 30, "max_retries": 0} for client in clients)
+    assert len(models) == 3 and all(model.closed for model in models)
+    assert bindings == [binding] * 3
 
 
-def test_query_embedder_uses_the_selected_ark_source_key(monkeypatch):
-    from types import SimpleNamespace
+def test_retrieval_uses_gateway_encoder_metadata_and_independent_rerank_binding():
+    from gateway.embedding import EmbeddingModelInfo
+    from server.config.parse_profile import ParseEmbeddingConfig
+
+    config = load_config()
+    config = config.model_copy(update={
+        "model_sources": {**config.model_sources, "third-party": OpenAIModelSourceConfig(
+            provider="third-party", base_url="https://scorer.example/v1", api_key_env="SCORER_KEY",
+        )},
+        "normalized_models": {**config.normalized_models, "rerank": ModelBinding(
+            source="third-party", model="independent-scorer", kind="rerank",
+            request_timeout_seconds=30, max_output_tokens=1024,
+        )},
+    })
+    descriptions = []
+
+    def describe(binding):
+        descriptions.append(binding)
+        return EmbeddingModelInfo(
+            provider_name="external-encoder", model_name=binding.model,
+            encoder_model="actual-encoder", encoder_revision="external-revision", dimensions=512,
+        )
+
+    def forbidden_create(*args, **kwargs):
+        raise AssertionError("retrieval construction must not allocate model clients")
+
+    client = SimpleNamespace(
+        config=config, describe_embedding=describe,
+        create_embedding_model=forbidden_create, create_rerank_model=forbidden_create,
+    )
+    service, encoder = retrieval_builder.build_retrieval_service(
+        SimpleNamespace(), SimpleNamespace(semantic_dimensions=512, vision_dimensions=512),
+        gateway_config=config, gateway_client=client,
+        embedding_config=ParseEmbeddingConfig(
+            source="explicit-encoder", model="encoder-endpoint", dimensions=512, video_fps=2,
+            request_timeout_seconds=11,
+        ),
+        retrieval_config=RetrievalConfig(rerank_enabled=True), index_generation=7,
+        request_timeout_seconds=17, max_output_tokens=512,
+    )
+    assert encoder.provider == "external-encoder"
+    assert encoder.model == "actual-encoder" and encoder.encoder_revision == "external-revision"
+    assert encoder.dimensions == 512
+    assert descriptions == [service._embedder._binding]
+    assert descriptions[0].source == "explicit-encoder" and descriptions[0].model == "encoder-endpoint"
+    assert descriptions[0].request_timeout_seconds == 11
+    assert service._reranker.provider_name == "third-party"
+    assert service._reranker.model_name == "independent-scorer"
+    binding = service._reranker._delegate._binding
+    assert binding.request_timeout_seconds == 17 and binding.max_output_tokens == 512
+
+
+def test_query_embedder_preserves_frozen_binding_without_business_environment_overrides(monkeypatch):
     received = {}
-    monkeypatch.setenv("SELECTED_EMBEDDING_KEY", "selected-key")
-    class Client:
+    monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "new-default")
+    binding = EmbeddingModelBinding(
+        source="selected-connection", model="frozen-embedding", dimensions=512,
+        video_fps=2, request_timeout_seconds=30, kind="embedding",
+    )
+    class Model:
         def close(self):
             received["closed"] = True
-    def create_client(**kwargs):
-        received["options"] = kwargs
-        return Client()
-    class Embedder:
-        def __init__(self, _model, **kwargs):
-            received["delegate"] = kwargs
         def embed_sparse(self, text):
             return text
-    monkeypatch.setattr(retrieval_builder, "Ark", SimpleNamespace(volc=create_client))
-    monkeypatch.setattr("gateway.ark.embedding.DoubaoMultimodalEmbedder", Embedder)
+    def create_model(selected):
+        received["binding"] = selected
+        return Model()
     embedder = retrieval_builder._LazyQueryEmbedder(
-        model="embedding", dimensions=512, fps=2, request_timeout_seconds=30,
-        source=ArkModelSourceConfig(api_key_env="SELECTED_EMBEDDING_KEY"),
+        gateway_client=SimpleNamespace(create_embedding_model=create_model), binding=binding,
     )
     assert embedder.embed_sparse("query") == "query"
-    assert received["options"] == {"timeout": 30, "max_retries": 0, "api_key": "selected-key"}
+    assert received["binding"] is binding
     assert received["closed"] is True
 
 
 @pytest.mark.parametrize("fails", [False, True])
 def test_text_reranker_uses_one_selected_model_and_closes_each_call(monkeypatch, fails):
-    from pydantic import BaseModel
-    from gateway.multimodal import TextInput
     events = []
-    monkeypatch.setenv("SELECTED_RERANK_KEY", "selected-key")
-    class Output(BaseModel):
-        score: int
+    binding = ModelBinding(
+        source="selected-connection", model="selected-scorer", kind="rerank",
+        max_output_tokens=512, request_timeout_seconds=30,
+    )
     class Model:
-        def __init__(self, model, **kwargs):
-            events.append(("open", model, kwargs))
-        def generate(self, inputs, *, schema_name, result_type):
-            assert inputs == [TextInput("candidate")]
-            assert schema_name == "rerank" and result_type is Output
+        def rerank(self, query, documents):
+            assert query == "query" and documents == ["candidate"]
             if fails:
                 raise RuntimeError("scorer failed")
-            return Output(score=1)
+            return (RerankScore(0, 1),)
         def close(self):
             events.append(("close",))
-    monkeypatch.setattr("gateway.openai.multimodal.DeepSeekMultimodalModel", Model)
-    delegate = retrieval_builder._LazyTextRerankModel(
-        source=OpenAIModelSourceConfig(
-            provider="deepseek", profile="deepseek", base_url="https://api.deepseek.com",
-            api_key_env="SELECTED_RERANK_KEY",
-        ),
-        model="selected-scorer", max_output_tokens=512, request_timeout_seconds=30,
+    def create_model(selected):
+        events.append(("open", selected))
+        return Model()
+    client = SimpleNamespace(
+        config=SimpleNamespace(source=lambda source: SimpleNamespace(provider="selected-provider")),
+        create_rerank_model=create_model,
     )
+    delegate = retrieval_builder._LazyTextRerankModel(
+        gateway_client=client, binding=binding,
+    )
+    assert delegate.provider_name == "selected-provider"
     if fails:
         with pytest.raises(RuntimeError, match="scorer failed"):
-            delegate.generate([TextInput("candidate")], schema_name="rerank", result_type=Output)
+            delegate.rerank("query", ["candidate"])
     else:
-        assert delegate.generate(
-            [TextInput("candidate")], schema_name="rerank", result_type=Output,
-        ).score == 1
-    assert events == [("open", "selected-scorer", {
-        "base_url": "https://api.deepseek.com", "api_key": "selected-key",
-        "max_output_tokens": 512, "request_timeout_seconds": 30,
-    }), ("close",)]
+        assert delegate.rerank("query", ["candidate"]) == (RerankScore(0, 1),)
+    assert events == [("open", binding), ("close",)]
 
 
 @pytest.mark.parametrize("option", ["sparse", "rerank", "unsupported_source"])
@@ -906,9 +1035,14 @@ def test_unsupported_retrieval_options_fail_before_allocating_services(monkeypat
     from types import SimpleNamespace
     config = load_config()
     if option == "unsupported_source":
-        config = config.model_copy(update={"agent_model": config.agent_model.model_copy(update={
-            "source": "ark_default",
-        })})
+        config = config.model_copy(update={
+            "model_sources": {**config.model_sources, "audio": OpenAIAudioSourceConfig(
+                provider="speech", base_url="https://speech.example/v1", api_key_env="KEY",
+            )},
+            "normalized_models": {**config.normalized_models, "rerank": ModelBinding(
+                source="audio", model="speech", kind="rerank",
+            )},
+        })
     monkeypatch.setattr(bootstrap, "load_config", lambda _path: config)
     def forbidden_database(*args, **kwargs):
         raise AssertionError("invalid retrieval must fail before allocating services")
@@ -922,7 +1056,7 @@ def test_unsupported_retrieval_options_fail_before_allocating_services(monkeypat
             rerank_enabled=option != "sparse",
         ),
     )
-    with pytest.raises(ValueError, match="requires a DeepSeek" if option == "unsupported_source" else "supports only Video Parse V2"):
+    with pytest.raises(ValueError, match="does not support adapter" if option == "unsupported_source" else "supports only Video Parse V2"):
         main_module.init_application(settings)
 
 

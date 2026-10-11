@@ -1734,6 +1734,112 @@ class VideoParseRepository:
             session.flush()
             return _task_state(task)
 
+    def record_execution_timing(
+        self,
+        lease: ChunkParseLease | IntervalParseLease,
+        *,
+        started_at_ms: int,
+        elapsed_ms: int,
+        finished: bool = False,
+        outcome: str = "running",
+        now: datetime | None = None,
+    ) -> bool:
+        """Sample one fenced parsing execution without changing its task state."""
+
+        for name, value in (("started_at_ms", started_at_ms), ("elapsed_ms", elapsed_ms)):
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{name} must be a nonnegative integer")
+        if type(finished) is not bool:
+            raise ValueError("finished must be a boolean")
+        if not isinstance(outcome, str) or not outcome.strip():
+            raise ValueError("outcome must be nonempty text")
+        if isinstance(lease, ChunkParseLease):
+            phase, kind, task_id = "understand", "chunk", lease.chunk_parse_task_id
+            model = ChunkParseTask
+        elif isinstance(lease, IntervalParseLease) and lease.phase == "REFINING":
+            phase, kind, task_id = "refine", "interval", lease.interval_parse_task_id
+            model = IntervalParseTask
+        else:
+            raise ValueError("timing supports only Chunk Understanding and Interval Refine")
+
+        sampled_at = now if now is not None else now_utc()
+        identity = {
+            "phase": phase, "execution_kind": kind, "execution_task_id": task_id,
+            "lease_version": lease.lease_version, "worker_id": lease.worker_id,
+            "started_at_ms": started_at_ms,
+        }
+        key = f"{phase}:{task_id}:{lease.lease_version}"
+        with self._session_factory.begin() as session:
+            # Match the model-call writer's child -> parent locking order.
+            child = session.scalar(
+                select(model).where(model.id == task_id).with_for_update()
+            )
+            if child is None or child.video_task_id != lease.video_parse_task_id:
+                return False
+            if isinstance(lease, ChunkParseLease):
+                active = _matching_chunk_lease(child, lease, sampled_at)
+                committed = (
+                    child.chunk_id == lease.video_chunk_id
+                    and child.status == ChunkParseTaskStatus.COMPLETE.value
+                    and child.lease_version == lease.lease_version
+                )
+            else:
+                active = _matching_interval_lease(child, lease, sampled_at)
+                content = session.get(IntervalParseContent, task_id) if finished else None
+                committed = bool(
+                    content is not None
+                    and isinstance(content.detail, dict)
+                    and content.detail.get("refinement_committed_lease_version")
+                    == lease.lease_version
+                    and tuple(child.chunk_task_ids) == lease.chunk_parse_task_ids
+                    and child.start_sequence_no == lease.start_sequence_no
+                    and child.chunk_count == lease.chunk_count
+                )
+            if not active and not (finished and committed):
+                return False
+            parent = session.scalar(
+                select(VideoParseTask)
+                .where(VideoParseTask.id == lease.video_parse_task_id)
+                .with_for_update()
+            )
+            if parent is None or parent.is_deleted:
+                return False
+            detail = deepcopy(dict(parent.detail or {}))
+            runtime = detail.get(RUNTIME_DETAIL_KEY, {})
+            if not isinstance(runtime, dict):
+                return False
+            timing = runtime.get("execution_timing", {"version": 1, "entries": {}})
+            if not isinstance(timing, dict) or timing.get("version") != 1:
+                return False
+            entries = timing.get("entries")
+            if not isinstance(entries, dict):
+                return False
+            entry = entries.get(key)
+            if entry is None:
+                # A completion receipt may close an existing sample, never
+                # invent a start for work that was not observed while active.
+                if not active:
+                    return False
+                entry = {**identity, "elapsed_ms": 0, "finished": False, "outcome": "running"}
+            elif not isinstance(entry, dict) or any(
+                entry.get(name) != value for name, value in identity.items()
+            ):
+                return False
+            if entry.get("finished") is True:
+                return True
+            if type(entry.get("elapsed_ms")) is not int or entry["elapsed_ms"] < 0:
+                return False
+            entries[key] = {
+                **entry, "elapsed_ms": max(entry["elapsed_ms"], elapsed_ms),
+                "finished": finished, "outcome": outcome,
+            }
+            timing["entries"] = entries
+            runtime["execution_timing"] = timing
+            detail[RUNTIME_DETAIL_KEY] = runtime
+            parent.detail = detail
+            parent.update_time = datetime_to_unix_time_ms(sampled_at)
+            return True
+
     def reserve_model_call(
         self,
         lease: VideoParseLease | ChunkParseLease | IntervalParseLease | PrefixParseLease,
@@ -1778,10 +1884,8 @@ class VideoParseRepository:
                 first = False
             else:
                 first = call_id not in used
-                if first and len(used) >= max_calls:
-                    raise ModelCallBudgetExhaustedError(
-                        "VideoParseTask model-call budget is exhausted"
-                    )
+                # Legacy snapshots retain max_model_calls; only concurrency
+                # limits admission, while request history continues to grow.
                 if len(active) >= max_concurrent:
                     raise ModelCallConcurrencyBusyError(
                         "VideoParseTask model-call concurrency is full"

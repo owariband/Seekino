@@ -544,6 +544,33 @@ def test_video_parse_task_actions_wait_for_active_prefix_lease() -> None:
     assert executing_view.can_reparse is True
 
 
+def test_video_parse_task_sse_emits_progress_and_confirmed_timing_changes(monkeypatch):
+    clock = _Clock()
+    _patch_runtime(monkeypatch, jobs_api, clock)
+    initial = _video_parse_task_detail()
+    heartbeat = replace(initial, task=replace(initial.task,
+        heartbeat_time=initial.task.heartbeat_time + timedelta(seconds=1)))
+    progress = replace(heartbeat, task=replace(heartbeat.task, detail={
+        **heartbeat.task.detail,
+        "progress": {"completedUnits": 1, "totalUnits": 3, "percent": 100 / 3},
+    }))
+    timing = replace(progress, task=replace(progress.task,
+        processing_duration_ms=2_000, detail={**progress.task.detail,
+            "timing": {"recorded": True, "complete": True,
+                "activeExecutions": 1, "effectiveDurationMs": 2_000},
+        }))
+    service = _VideoParseTaskService([heartbeat, progress, timing])
+    events = asyncio.run(_collect(jobs_api._video_parse_task_events(
+        _Request(4), service, initial.task.video_parse_task_id, _TENANT_ID,
+        initial, SSEConfig(poll_interval_seconds=0.5, keepalive_interval_seconds=15),
+    )))
+    assert len(events) == 3
+    assert _payload(events[1])["detail"]["progress"]["completedUnits"] == 1
+    assert _payload(events[2])["processingDurationMs"] == 2_000
+    assert _payload(events[2])["detail"]["timing"]["activeExecutions"] == 1
+    assert all("_worker_runtime_v2" not in _payload(event)["detail"] for event in events)
+
+
 def test_unaccepted_pending_video_parse_task_can_be_taken_over() -> None:
     pending = replace(
         _video_parse_task_detail(status="PENDING"),

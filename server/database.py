@@ -664,6 +664,12 @@ def create_schema(engine: Engine) -> None:
 
     _check_identity_schema(inspector, existing_tables)
 
+    if "agent_conversation" in existing_tables and "detail" not in conversation_columns:
+        raise SchemaUpgradeRequiredError(
+            "agent_conversation missing detail; apply "
+            "20261010_agent_conversation_detail.sql before init-db"
+        )
+
     Base.metadata.create_all(engine)
 
 

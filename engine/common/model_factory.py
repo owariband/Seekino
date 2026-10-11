@@ -2,25 +2,10 @@
 
 from __future__ import annotations
 
-from gateway.ark.multimodal import ArkMultimodalModel
-from gateway.config import GatewayConfig, OpenAIAudioSourceConfig
-from gateway.model_sources import ark_options, source_key
-from gateway.openai.vision import OpenAIVisionModel
+from gateway.config import GatewayConfig
+from gateway.model_factory import GatewayClient
 
 from .transcription import AudioTranscriptionAgent, VideoASRAgent
-
-
-def build_openai_vision(source, *, model, timeout, max_output_tokens=None):
-    return OpenAIVisionModel(
-        model,
-        provider=source.provider,
-        base_url=source.base_url,
-        api_key=source_key(source),
-        request_timeout_seconds=timeout,
-        max_output_tokens=max_output_tokens or 8192,
-        token_parameter=source.token_parameter,
-        response_format=source.response_format,
-    )
 
 
 def build_asr_agent(
@@ -30,24 +15,20 @@ def build_asr_agent(
     fps,
     timeout,
     max_output_tokens=None,
-    ark_model_type=ArkMultimodalModel,
 ):
-    source = config.stage_source("transcription")
-    if isinstance(source, OpenAIAudioSourceConfig):
-        return AudioTranscriptionAgent(
-            model,
-            provider=source.provider,
-            base_url=source.base_url,
-            api_key=source_key(source),
-            request_timeout_seconds=timeout,
-            response_format=source.response_format,
-        )
-    return VideoASRAgent(
-        ark_model_type(
-            model,
-            request_timeout_seconds=timeout,
-            max_output_tokens=max_output_tokens,
-            **ark_options(source),
-        ),
-        fps=fps,
-    )
+    binding = config.resolve_model_binding("transcription")
+    updates = {"model": model, "request_timeout_seconds": timeout}
+    if max_output_tokens is not None:
+        updates["max_output_tokens"] = max_output_tokens
+    binding = config.resolve_model_binding(binding.model_copy(update=updates))
+    client = GatewayClient(config)
+    try:
+        delegate = client.create_transcription_model(binding)
+        if delegate.input_mode == "audio":
+            return AudioTranscriptionAgent(delegate, request_timeout_seconds=binding.request_timeout_seconds)
+        if delegate.input_mode == "video":
+            return VideoASRAgent(delegate, fps=fps)
+        raise ValueError(f"unsupported transcription input mode {delegate.input_mode!r}")
+    except BaseException:
+        client.close()
+        raise

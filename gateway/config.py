@@ -13,6 +13,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    model_serializer,
     model_validator,
 )
 
@@ -28,12 +29,14 @@ from gateway.constants import (
     OPENAI_DEEPSEEK_PROFILE,
     OPENAI_STANDARD_PROFILE,
 )
+from gateway.multimodal import adapter_capabilities
 
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 _DEFAULT_PRIMARY_SOURCE = "deepseek_api"
 _DEFAULT_FALLBACK_SOURCE = "ark_default"
 _DEFAULT_AGENT_MODEL = "deepseek-flash"
 _DEFAULT_ARK_MODEL = "doubao-seed-2-0-lite-260428"
+_LEGACY_PARSE_ARK_SOURCE = "legacy_parse_ark_source"
 
 
 def _https_base_url(value: str) -> str:
@@ -76,7 +79,7 @@ class DeepSeekModelConfig(BaseModel):
     base_url: _HttpsBaseUrl
     api_key_env: _NonEmptyString
     reasoning_effort: Literal["none", "low", "high", "max"] = "none"
-    max_output_tokens: int = Field(ge=256, le=32_768)
+    max_output_tokens: int = Field(ge=256, le=262_144)
     request_timeout_seconds: float = Field(gt=0)
 
 
@@ -163,6 +166,32 @@ _ModelSourceConfigField = Annotated[
 ]
 
 
+class ModelBinding(BaseModel):
+    """Canonical model selection, independent from its business caller."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    source: _NonEmptyString
+    model: _NonEmptyString
+    kind: Literal["generative", "rerank", "transcription", "embedding"] | None = None
+    request_timeout_seconds: float | None = Field(default=None, gt=0)
+    max_output_tokens: int | None = Field(default=None, ge=256, le=262144)
+    reasoning_effort: Literal["none", "low", "high", "max"] | None = None
+    supports_vision_input: bool = False
+    fallback: ModelBinding | None = None
+    context_window_tokens: int | None = Field(default=None, ge=2)
+    context_safety_margin_tokens: int | None = Field(default=None, ge=1)
+    auto_compact_tokens: int | None = Field(default=None, ge=1)
+    compact_target_tokens: int | None = Field(default=None, ge=1)
+    max_input_chars: int | None = Field(default=None, ge=1)
+
+
+class EmbeddingModelBinding(ModelBinding):
+    kind: Literal["embedding"] = "embedding"
+    dimensions: int = Field(ge=1, le=2048)
+    video_fps: float = Field(ge=0.2, le=5.0)
+    encoder_model: _NonEmptyString | None = None
+
+
 class AgentFallbackConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -170,7 +199,7 @@ class AgentFallbackConfig(BaseModel):
     supports_vision_input: bool = False
     model: _NonEmptyString
     request_timeout_seconds: float | None = Field(default=None, gt=0)
-    max_output_tokens: int | None = Field(default=None, ge=256, le=32_768)
+    max_output_tokens: int | None = Field(default=None, ge=256, le=262_144)
     reasoning_effort: Literal["none", "low", "high", "max"] | None = None
 
 
@@ -180,7 +209,7 @@ class AgentModelConfig(BaseModel):
     source: _NonEmptyString
     supports_vision_input: bool = False
     model: _NonEmptyString
-    max_output_tokens: int = Field(ge=256, le=32_768)
+    max_output_tokens: int = Field(ge=256, le=262_144)
     request_timeout_seconds: float = Field(gt=0)
     fallback: AgentFallbackConfig | None = None
 
@@ -218,7 +247,7 @@ class VideoFallbackConfig(BaseModel):
     group_duration_seconds: int = Field(ge=1, le=120)
     max_frames_per_group: int = Field(ge=1, le=128)
     max_height: int = Field(ge=64, le=2160)
-    deepseek: DeepSeekModelConfig
+    deepseek: DeepSeekModelConfig | None = None
 
 
 class VideoParseConfig(BaseModel):
@@ -280,6 +309,7 @@ class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     config_version: Literal[1, 2] = 1
+    supervisor_harness: Literal["deepagents", "codex"] = "deepagents"
 
     model_sources: dict[_NonEmptyString, _ModelSourceConfigField] = Field(
         default_factory=_default_model_sources
@@ -290,6 +320,9 @@ class GatewayConfig(BaseModel):
     tracing: TracingConfig = Field(default_factory=TracingConfig)
     # Runtime tuning is validated by the Server, which owns its constraints.
     agent_runtime: dict[str, object] = Field(default_factory=dict)
+    normalized_models: dict[str, EmbeddingModelBinding | ModelBinding] = Field(
+        default_factory=dict
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -297,6 +330,13 @@ class GatewayConfig(BaseModel):
         if not isinstance(value, Mapping):
             return value
         return _normalize_gateway_payload(_normalize_model_bindings(value))
+
+    @model_serializer(mode="wrap")
+    def serialize_supervisor_selection(self, handler):
+        values = handler(self)
+        if "supervisor_harness" not in self.model_fields_set:
+            values.pop("supervisor_harness", None)
+        return values
 
     @model_validator(mode="after")
     def validate_agent_sources(self) -> GatewayConfig:
@@ -311,43 +351,261 @@ class GatewayConfig(BaseModel):
                 f"agent_model.fallback.source {fallback.source!r} is not present "
                 "in model_sources"
             )
-        if fallback is not None and fallback.source == self.agent_model.source:
+        if fallback is not None and fallback.source == self.agent_model.source and "agent" not in self.normalized_models:
             raise ValueError(
                 "agent_model.fallback.source must differ from agent_model.source"
             )
-        for name in (self.agent_model.source, fallback.source if fallback else None):
-            if name and isinstance(
-                self.model_sources[name],
-                (OpenAIAudioSourceConfig, OpenAIVisionSourceConfig),
-            ):
-                raise ValueError(f"source {name!r} does not support Agent calls")
-        for stage, allowed in (
-            ("transcription", (ArkModelSourceConfig, OpenAIAudioSourceConfig)),
-            ("vision", (ArkModelSourceConfig, OpenAIVisionSourceConfig)),
-        ):
-            source = self.stage_source(stage)
-            if not isinstance(source, allowed):
-                raise ValueError(f"{stage} does not support adapter {source.adapter!r}")
-        if (
-            isinstance(self.stage_source("vision"), OpenAIVisionSourceConfig)
-            and self.video_parser.vision_reasoning_effort not in (None, "none")
-        ):
-            raise ValueError("openai_vision does not support reasoning_effort")
-        parse_fallback = self.video_parser.fallback.deepseek
-        if parse_fallback.protocol == "openai_chat":
-            if not isinstance(
-                self.model_sources.get(parse_fallback.vision_source),
-                OpenAIVisionSourceConfig,
-            ):
-                raise ValueError("parse fallback requires an openai_vision source")
-            if parse_fallback.reasoning_effort != "none":
-                raise ValueError("openai_vision does not support reasoning_effort")
-        if (
-            isinstance(self.stage_source("transcription"), OpenAIAudioSourceConfig)
-            and self.video_parser.transcription_max_output_tokens is not None
-        ):
-            raise ValueError("openai_audio does not support max_output_tokens")
+        self._normalize_canonical_models()
+        for ref, binding in self.normalized_models.items():
+            self._validate_binding(binding, ref=ref)
+        self._validate_supervisor_binding()
         return self
+
+    def _validate_supervisor_binding(self) -> None:
+        binding = self.normalized_models.get("supervisor")
+        if binding is None:
+            # Legacy model-component configurations keep their existing
+            # validation; the internal Deep Agents builder checks its source.
+            if "supervisor_harness" not in self.model_fields_set:
+                return
+            binding = self.normalized_models["agent"]
+        if isinstance(binding, EmbeddingModelBinding) or binding.kind not in {None, "generative"}:
+            raise ValueError("models.supervisor must be a generative model binding")
+        source = self.source(binding.source)
+        if self.supervisor_harness == "codex":
+            if not isinstance(source, CodexModelSourceConfig):
+                raise ValueError("codex supervisor_harness requires a codex_app_server source")
+            if binding.fallback is not None:
+                raise ValueError("codex supervisor_harness does not support fallback")
+            return
+        if not isinstance(source, (OpenAIModelSourceConfig, ArkModelSourceConfig)):
+            raise ValueError("deepagents supervisor_harness requires an OpenAI-compatible or Ark API source")
+        if binding.fallback is not None:
+            if binding.fallback.kind not in {None, "generative"}:
+                raise ValueError("Supervisor fallback must be a generative model binding")
+            if not isinstance(self.source(binding.fallback.source), ArkModelSourceConfig):
+                raise ValueError("deepagents Supervisor fallback requires an Ark API source")
+            if binding.fallback.fallback is not None:
+                raise ValueError("Supervisor models support one configured fallback")
+
+    def source(self, name: str) -> ModelSourceConfig:
+        try:
+            return self.model_sources[name]
+        except KeyError as error:
+            raise ValueError(f"model source {name!r} is not present in model_sources") from error
+
+    def _legacy_ark_source_name(self) -> str:
+        implicit = ArkModelSourceConfig()
+        if self.model_sources.get("ark_default") == implicit:
+            return "ark_default"
+        configured = self.model_sources.get(_LEGACY_PARSE_ARK_SOURCE)
+        if configured is not None and configured != implicit:
+            raise ValueError(f"{_LEGACY_PARSE_ARK_SOURCE} conflicts with legacy Ark credentials")
+        self.model_sources[_LEGACY_PARSE_ARK_SOURCE] = implicit
+        return _LEGACY_PARSE_ARK_SOURCE
+
+    def _normalize_canonical_models(self) -> None:
+        """Keep old configuration dialects at this boundary only."""
+        bindings = dict(self.normalized_models)
+        bindings.setdefault("agent", ModelBinding.model_validate({
+            **self.agent_model.model_dump(), "kind": "generative",
+        }))
+        parser = self.video_parser
+        for ref, model, source_name in (
+            ("transcription", parser.transcript_model, parser.transcription_source),
+            ("vision", parser.video_model, parser.vision_source),
+        ):
+            if ref in bindings:
+                continue
+            bindings[ref] = ModelBinding(
+                source=source_name or self._legacy_ark_source_name(), model=model,
+                kind="transcription" if ref == "transcription" else "generative",
+                supports_vision_input=ref == "vision",
+                request_timeout_seconds=getattr(parser, f"{ref}_timeout_seconds"),
+                max_output_tokens=getattr(parser, f"{ref}_max_output_tokens"),
+                reasoning_effort=parser.vision_reasoning_effort if ref == "vision" else None,
+            )
+        if "vision_fallback" not in bindings and parser.fallback.deepseek is not None:
+            fallback = parser.fallback.deepseek
+            source_name = fallback.vision_source
+            if source_name is None:
+                source_name = "legacy_vision_fallback"
+                source = OpenAIModelSourceConfig(
+                    provider=fallback.provider, profile=OPENAI_DEEPSEEK_PROFILE,
+                    base_url=fallback.base_url, api_key_env=fallback.api_key_env,
+                )
+                configured = self.model_sources.get(source_name)
+                if configured is not None and configured != source:
+                    raise ValueError("legacy_vision_fallback conflicts with legacy fallback configuration")
+                self.model_sources[source_name] = source
+            bindings["vision_fallback"] = ModelBinding(
+                source=source_name, model=fallback.model, kind="generative",
+                supports_vision_input=True,
+                request_timeout_seconds=fallback.request_timeout_seconds,
+                max_output_tokens=fallback.max_output_tokens,
+                reasoning_effort=fallback.reasoning_effort,
+            )
+        if "embedding" not in bindings:
+            embedding = self.multimodal_embedding
+            bindings["embedding"] = EmbeddingModelBinding(
+                source=self._legacy_ark_source_name(), model=embedding.model,
+                dimensions=embedding.dimensions, video_fps=embedding.fps,
+            )
+        if "rerank" not in bindings:
+            bindings["rerank"] = bindings["agent"].model_copy(update={
+                "kind": "rerank", "fallback": None,
+            })
+        vision = bindings["vision"]
+        if "fallback" not in vision.model_fields_set:
+            bindings["vision"] = vision.model_copy(update={
+                "fallback": bindings.get("vision_fallback"),
+            })
+        self.normalized_models = bindings
+
+    def _validate_binding(self, binding: ModelBinding, *, ref: str) -> None:
+        source = self.source(binding.source)
+        capabilities = adapter_capabilities(source.adapter)
+        kind = "embedding" if isinstance(binding, EmbeddingModelBinding) else binding.kind or "generative"
+        if kind in {"embedding", "transcription"} and binding.fallback is not None:
+            raise ValueError(f"{ref} {kind} does not support fallback")
+        if kind == "embedding" and binding.supports_vision_input:
+            raise ValueError(f"{ref} embedding does not use generative supports_vision_input")
+        if not getattr(capabilities, kind):
+            raise ValueError(f"{ref} does not support adapter {source.adapter!r} for {kind}")
+        if kind == "embedding" and not isinstance(binding, EmbeddingModelBinding):
+            raise ValueError(f"{ref} embedding binding requires dimensions and video_fps")
+        if binding.supports_vision_input and capabilities.visual_input_mode is None:
+            raise ValueError(f"adapter {source.adapter!r} does not support image input")
+        supports_reasoning = capabilities.supports_reasoning_effort and not (
+            isinstance(source, OpenAIModelSourceConfig) and source.profile == OPENAI_STANDARD_PROFILE
+        )
+        if not supports_reasoning and binding.reasoning_effort not in (None, "none"):
+            raise ValueError(f"{source.adapter} does not support reasoning_effort")
+        if not capabilities.supports_output_limit and binding.max_output_tokens is not None:
+            raise ValueError(f"{source.adapter} does not support max_output_tokens")
+        if binding.fallback is not None:
+            self._validate_binding(binding.fallback, ref=f"{ref}.fallback")
+
+    def _complete_binding(self, binding: ModelBinding) -> ModelBinding:
+        capabilities = adapter_capabilities(self.source(binding.source).adapter)
+        runtime = self.agent_runtime
+        values = binding.model_dump()
+        defaults = {
+            "request_timeout_seconds": 600,
+            "context_window_tokens": 128_000 if binding.supports_vision_input else runtime.get("context_window_tokens", 128_000),
+            "context_safety_margin_tokens": 2048 if binding.supports_vision_input else runtime.get("context_safety_margin_tokens", 2048),
+            "max_input_chars": 400_000 if binding.supports_vision_input else runtime.get("max_prompt_chars", 400_000),
+        }
+        if (
+            not isinstance(binding, EmbeddingModelBinding)
+            and binding.kind != "transcription" and capabilities.supports_output_limit
+        ):
+            defaults["max_output_tokens"] = runtime.get("max_output_tokens", self.agent_model.max_output_tokens)
+        for key, value in defaults.items():
+            if values[key] is None:
+                values[key] = value
+        if binding.fallback is not None:
+            values["fallback"] = self._complete_binding(binding.fallback).model_dump()
+        output_reserve = values["max_output_tokens"] or 0
+        fallback = values["fallback"]
+        while fallback is not None:
+            output_reserve = max(output_reserve, fallback["max_output_tokens"] or 0)
+            fallback = fallback["fallback"]
+        available = values["context_window_tokens"] - output_reserve - values["context_safety_margin_tokens"]
+        if available <= 1:
+            raise ValueError("context_window_tokens must exceed the output budget and safety margin")
+        if values["auto_compact_tokens"] is None:
+            values["auto_compact_tokens"] = (
+                max(2, available * 9 // 10) if binding.supports_vision_input
+                else runtime.get("auto_compact_tokens", max(2, available * 9 // 10))
+            )
+        if values["compact_target_tokens"] is None:
+            values["compact_target_tokens"] = (
+                max(1, available * 3 // 4) if binding.supports_vision_input
+                else runtime.get("compact_target_tokens", max(1, available * 3 // 4))
+            )
+        if not 0 < values["compact_target_tokens"] < values["auto_compact_tokens"] < available:
+            raise ValueError("context compaction budgets must satisfy target < trigger < available input tokens")
+        return type(binding).model_validate(values)
+
+    def resolve_model_binding(
+        self, ref: str | ModelBinding, *, environ: Mapping[str, str] | None = None,
+    ) -> ModelBinding:
+        """Resolve configured references; frozen bindings never reapply environment overrides."""
+        if isinstance(ref, ModelBinding):
+            self._validate_binding(ref, ref="frozen model")
+            return self._complete_binding(ref)
+        aliases = {"query": "agent", "evaluator": "agent", "chat": "agent", "supervisor": "agent"}
+        configured_ref = ref if ref in self.normalized_models else aliases.get(ref, ref)
+        if configured_ref == "agent_fallback" and ref not in self.normalized_models:
+            binding = self.normalized_models["agent"].fallback
+            if binding is None:
+                raise ValueError("agent fallback is not configured")
+        else:
+            try:
+                binding = self.normalized_models[configured_ref]
+            except KeyError as error:
+                raise ValueError(f"model binding {ref!r} is not configured") from error
+        environment = os.environ if environ is None else environ
+        model_keys = {
+            "transcription": ("ANIVAG_TRANSCRIPT_MODEL",),
+            "vision": ("ANIVAG_VIDEO_MODEL",),
+            "agent": ("ANIVAG_AGENT_CHAT_MODEL", "ANIVAG_DEEPSEEK_CHAT_MODEL"),
+            "chat": ("ANIVAG_AGENT_CHAT_MODEL", "ANIVAG_DEEPSEEK_CHAT_MODEL"),
+            "query": ("ANIVAG_AGENT_QUERY_MODEL",),
+            "evaluator": ("ANIVAG_AGENT_EVALUATOR_MODEL",),
+            "agent_fallback": ("ANIVAG_AGENT_FALLBACK_MODEL",),
+            "rerank": ("ANIVAG_RERANK_MODEL",),
+        }
+        selected = next((environment[key].strip() for key in model_keys.get(ref, ()) if environment.get(key, "").strip()), None)
+        updates = {"model": selected} if selected else {}
+        if configured_ref == "agent" and binding.fallback is not None:
+            fallback_model = environment.get("ANIVAG_AGENT_FALLBACK_MODEL", "").strip()
+            if fallback_model:
+                updates["fallback"] = binding.fallback.model_copy(update={"model": fallback_model})
+        if configured_ref == "vision":
+            enabled = environment.get("ANIVAG_FALLBACK_ENABLED")
+            fallback_enabled = self.video_parser.fallback.enabled
+            if enabled is not None:
+                normalized = enabled.strip().lower()
+                if normalized not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
+                    raise ValueError("ANIVAG_FALLBACK_ENABLED must be a boolean value")
+                fallback_enabled = normalized in {"1", "true", "yes", "on"}
+            updates["fallback"] = (
+                binding.fallback if "fallback" in binding.model_fields_set
+                else self.normalized_models.get("vision_fallback")
+            ) if fallback_enabled else None
+        binding = binding.model_copy(update=updates)
+        self._validate_binding(binding, ref=ref)
+        return self._complete_binding(binding)
+
+    def resolve_embedding_binding(
+        self, ref: str | EmbeddingModelBinding = "embedding", *,
+        environ: Mapping[str, str] | None = None,
+    ) -> EmbeddingModelBinding:
+        binding = self.resolve_model_binding(ref, environ=environ)
+        if not isinstance(binding, EmbeddingModelBinding):
+            raise ValueError(f"model binding {ref!r} is not an embedding binding")
+        environment = os.environ if environ is None else environ
+        selected = environment.get("ANIVAG_VIDEO_EMBEDDING_MODEL", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
+        fps = environment.get("ANIVAG_VIDEO_EMBEDDING_FPS", "").strip() if isinstance(ref, str) and ref == "embedding" else ""
+        # Import only after config types are initialized: model_sources consumes them.
+        from gateway.model_sources import ModelReference, ModelReferenceType
+        configured = self.normalized_models["embedding"]
+        default_encoder = configured.encoder_model or configured.model
+        if ModelReferenceType.for_model(default_encoder) == ModelReferenceType.ENDPOINT:
+            default_encoder = None
+        reference = ModelReference.resolve(
+            selected or binding.model, encoder_model=binding.encoder_model,
+            default_encoder_model=default_encoder,
+        )
+        values = binding.model_dump()
+        values.update(
+            model=reference.request_model,
+            encoder_model=reference.model if reference.type == ModelReferenceType.ENDPOINT else None,
+            video_fps=float(fps) if fps else binding.video_fps,
+        )
+        return EmbeddingModelBinding.model_validate(values)
 
     def stage_source(self, stage: str) -> ModelSourceConfig:
         names = {
@@ -364,7 +622,15 @@ class GatewayConfig(BaseModel):
 
     def selected_agent_sources(self) -> tuple[ModelSourceConfig, ...]:
         """Return only sources referenced by the active Agent configuration."""
-
+        binding = self.normalized_models.get("agent")
+        if binding is not None:
+            selected = []
+            while binding is not None:
+                source = self.source(binding.source)
+                if source not in selected:
+                    selected.append(source)
+                binding = binding.fallback
+            return tuple(selected)
         selected = [self.model_sources[self.agent_model.source]]
         fallback = self.agent_model.fallback
         if fallback is not None and fallback.source != self.agent_model.source:
@@ -391,6 +657,19 @@ def source_api_key_env_name(source: ModelSourceConfig) -> str | None:
     return None
 
 
+def resolve_source_api_key(
+    source: ModelSourceConfig, *, environ: Mapping[str, str] | None = None,
+) -> str | None:
+    name = source_api_key_env_name(source)
+    if name is None:
+        return None
+    environment = os.environ if environ is None else environ
+    key = environment.get(name, "").strip()
+    if not key:
+        raise RuntimeError(f"model source requires API key environment variable {name!r}")
+    return key
+
+
 def agent_api_key_env_names(config: GatewayConfig) -> tuple[str, ...]:
     """Return credentials used by the selected primary/fallback sources only."""
 
@@ -405,31 +684,22 @@ def agent_api_key_env_names(config: GatewayConfig) -> tuple[str, ...]:
 def required_api_key_env_names(config: GatewayConfig) -> tuple[str, ...]:
     """Credentials for active sources, including the enabled parse fallback."""
     names = set(agent_api_key_env_names(config))
-    # Multimodal embeddings retain their original Ark client and credential.
-    names.add("ARK_API_KEY")
-    for stage in ("transcription", "vision"):
-        name = source_api_key_env_name(config.stage_source(stage))
+    supervisor = config.normalized_models.get("supervisor")
+    while supervisor is not None:
+        name = source_api_key_env_name(config.source(supervisor.source))
         if name:
             names.add(name)
-    if config.video_parser.fallback.enabled:
-        names.add(config.video_parser.fallback.deepseek.api_key_env)
+        supervisor = supervisor.fallback
+    for ref in ("transcription", "vision", "embedding", "rerank"):
+        binding = config.normalized_models[ref]
+        while binding is not None:
+            name = source_api_key_env_name(config.source(binding.source))
+            if name:
+                names.add(name)
+            if ref == "vision" and not config.video_parser.fallback.enabled:
+                break
+            binding = binding.fallback
     return tuple(sorted(names))
-
-
-class ParseModelBinding(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    source: _NonEmptyString
-    model: _NonEmptyString
-    request_timeout_seconds: float | None = Field(default=None, gt=0)
-    max_output_tokens: int | None = Field(default=None, ge=256, le=262144)
-
-
-class VisionModelBinding(ParseModelBinding):
-    reasoning_effort: Literal["none", "low", "high", "max"] | None = None
-
-
-class FallbackModelBinding(VisionModelBinding):
-    reasoning_effort: Literal["none", "low", "high", "max"] = "none"
 
 
 def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, object]:
@@ -442,30 +712,54 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
     models = result.pop("models")
     if not isinstance(models, Mapping):
         raise ValueError("models must be a mapping")
-    unknown = set(models) - {
-        "agent",
-        "transcription",
-        "vision",
-        "vision_fallback",
-    }
-    if unknown:
-        raise ValueError(f"unknown models entries: {sorted(unknown)}")
     if "model_sources" not in result:
         raise ValueError("models requires model_sources")
+    if "normalized_models" in result:
+        raise ValueError("configure only models or normalized_models")
+    bindings = {}
+    for ref, raw in models.items():
+        if not isinstance(ref, str) or not ref.strip():
+            raise ValueError("model references must be non-empty strings")
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"models.{ref} must be a model binding")
+        values = dict(raw)
+        if ref == "transcription":
+            values.setdefault("kind", "transcription")
+        elif ref == "rerank":
+            values.setdefault("kind", "rerank")
+        if ref in {"vision", "vision_fallback"}:
+            # Preserve pre-capability YAML; arbitrary references must declare images.
+            values.setdefault("supports_vision_input", True)
+        binding_type = (
+            EmbeddingModelBinding if values.get("kind") == "embedding" or ref == "embedding"
+            else ModelBinding
+        )
+        bindings[ref] = binding_type.model_validate(values)
+    result["normalized_models"] = bindings
     if "agent" in models:
         if "agent_model" in result or "agent_chat" in result:
             raise ValueError(
                 "configure only models.agent or legacy agent_model/agent_chat"
             )
-        result["agent_model"] = models["agent"]
+        binding = bindings["agent"]
+        # These DTOs remain a projection for callers migrating from the old API.
+        fields = set(AgentModelConfig.model_fields)
+        projected = {key: value for key, value in binding.model_dump().items() if key in fields}
+        projected["max_output_tokens"] = binding.max_output_tokens or 8192
+        projected["request_timeout_seconds"] = binding.request_timeout_seconds or 180
+        if binding.fallback is not None:
+            projected["fallback"] = {
+                key: value for key, value in binding.fallback.model_dump().items()
+                if key in AgentFallbackConfig.model_fields
+            }
+        result["agent_model"] = projected
     if not isinstance(result.get("video_parser", {}), Mapping):
         raise ValueError("video_parser must be a mapping")
     parser = dict(result.get("video_parser", {}))
     for stage, legacy in (("transcription", "transcript"), ("vision", "video")):
         if stage not in models:
             continue
-        binding_type = VisionModelBinding if stage == "vision" else ParseModelBinding
-        binding = binding_type.model_validate(models[stage])
+        binding = bindings[stage]
         if any(
             key in parser
             for key in (
@@ -483,7 +777,7 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
         parser[f"{stage}_source"] = binding.source
         parser[f"{stage}_timeout_seconds"] = binding.request_timeout_seconds
         parser[f"{stage}_max_output_tokens"] = binding.max_output_tokens
-        if isinstance(binding, VisionModelBinding):
+        if stage == "vision":
             parser["vision_reasoning_effort"] = binding.reasoning_effort
     if "vision_fallback" in models:
         if not isinstance(parser.get("fallback", {}), Mapping):
@@ -493,7 +787,7 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
             raise ValueError(
                 "configure only models.vision_fallback or video_parser.fallback.deepseek"
             )
-        binding = FallbackModelBinding.model_validate(models["vision_fallback"])
+        binding = bindings["vision_fallback"]
         sources = result["model_sources"]
         source = sources.get(binding.source) if isinstance(sources, Mapping) else None
         if not isinstance(source, Mapping):
@@ -501,28 +795,32 @@ def _normalize_model_bindings(value: Mapping[object, object]) -> dict[object, ob
                 "models.vision_fallback.source is not present in model_sources"
             )
         adapter = source.get("adapter")
-        if adapter != "openai_vision" and not (
+        # Only represent compatible legacy dialects; canonical models carry every adapter.
+        if adapter == "openai_vision" or (
             adapter == "openai" and source.get("profile") == "deepseek"
         ):
-            raise ValueError(
-                "vision_fallback requires openai_vision or the deepseek profile"
-            )
-        # Preserve source dialect fields for the factory via an explicit source reference.
-        fallback["deepseek"] = {
-            "provider": source.get("provider"),
-            "protocol": "openai_chat"
-            if adapter == "openai_vision"
-            else "deepseek_responses",
-            "model": binding.model,
-            "base_url": source.get("base_url"),
-            "api_key_env": source.get("api_key_env"),
-            "max_output_tokens": binding.max_output_tokens or 8192,
-            "request_timeout_seconds": binding.request_timeout_seconds or 1200,
-            "reasoning_effort": binding.reasoning_effort,
-        }
-        if adapter == "openai_vision":
-            fallback["deepseek"]["vision_source"] = binding.source
+            fallback["deepseek"] = {
+                "provider": source.get("provider"),
+                "protocol": "openai_chat" if adapter == "openai_vision" else "deepseek_responses",
+                "vision_source": binding.source,
+                "model": binding.model,
+                "base_url": source.get("base_url"),
+                "api_key_env": source.get("api_key_env"),
+                "max_output_tokens": binding.max_output_tokens or 8192,
+                "request_timeout_seconds": binding.request_timeout_seconds or 1200,
+                "reasoning_effort": binding.reasoning_effort or "none",
+            }
+        else:
+            fallback["deepseek"] = None
         parser["fallback"] = fallback
+    if "embedding" in bindings:
+        if "multimodal_embedding" in result:
+            raise ValueError("configure only models.embedding or legacy multimodal_embedding")
+        embedding = bindings["embedding"]
+        result["multimodal_embedding"] = {
+            "model": embedding.model, "dimensions": embedding.dimensions,
+            "fps": embedding.video_fps,
+        }
     result["video_parser"] = parser
     return result
 

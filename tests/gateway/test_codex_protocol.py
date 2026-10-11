@@ -163,6 +163,7 @@ def test_tool_bridge_preserves_tool_call_identity_and_caches_retries() -> None:
         "args": {"video_id": "video-1"},
     }]
     assert bridge.tool_call_count == 1
+    assert bridge.successful_tool_call_count == 1
 
 
 def test_tool_bridge_returns_tool_message_errors_to_codex() -> None:
@@ -178,6 +179,22 @@ def test_tool_bridge_returns_tool_message_errors_to_codex() -> None:
 
     assert response["success"] is False
     assert "received" in response["contentItems"][0]["text"]
+    assert bridge.tool_call_count == 1
+    assert bridge.successful_tool_call_count == 0
+
+
+def test_tool_bridge_does_not_count_tool_exceptions_as_success() -> None:
+    class FailingTool(_RecordingTool):
+        def invoke(self, call):
+            raise RuntimeError("recoverable failure")
+
+    bridge = CodexToolBridge([FailingTool()])  # type: ignore[list-item]
+    response = bridge.handle("item/tool/call", {
+        "callId": "call-failed", "tool": "record_item", "arguments": {},
+    })
+    assert response["success"] is False
+    assert bridge.tool_call_count == 1
+    assert bridge.successful_tool_call_count == 0
 
 
 @pytest.mark.parametrize(

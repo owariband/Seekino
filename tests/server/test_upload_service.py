@@ -4,9 +4,11 @@ import hashlib
 import json
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
+import yaml
 from sqlalchemy import event, select
 
 from agent.video_parse_v2.input import ParseConfig as VideoParseV2Config
@@ -1508,6 +1510,134 @@ def prepared_v2_retry(repository, tmp_path):
     return service, upload, completed.video_parse_task_id, factory, chunk_ids, interval_ids, now
 
 
+@pytest.mark.parametrize("parent_state", ["PARSING_FAILED", "INDEXING_FAILED"])
+def test_parse_retry_reads_changed_yaml_and_refreshes_only_analysis_binding(
+    prepared_v2_retry, tmp_path, monkeypatch, parent_state,
+):
+    service, upload, task_id, factory, chunk_ids, interval_ids, _now = prepared_v2_retry
+    monkeypatch.delenv("ANIVAG_VIDEO_MODEL", raising=False)
+    config_path = tmp_path / "retry-models.yaml"
+    payload = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
+    payload["models"]["vision"].update(
+        source="ark_default", model="doubao-seed-2-1-pro-260628", max_output_tokens=65536,
+    )
+    for field in ("auto_compact_tokens", "compact_target_tokens"):
+        payload["models"]["vision"].pop(field, None)
+    config_path.write_text(yaml.safe_dump(payload))
+
+    def load_defaults():
+        return ParseConfig.from_defaults(
+            runtime=VideoParseRuntimeConfig(
+                chunk_duration_seconds=90, asr_concurrency=2,
+                transcript_model="changed-current-asr", request_timeout_seconds=45,
+            ),
+            gateway=load_config(config_path), upload=_config(), images=ImageUploadConfig(),
+            embedding_model="changed-current-embedding", embedding_dimensions=512,
+            embedding_fps=2.0,
+        )
+
+    monkeypatch.setattr(service, "_parse_defaults_loader", load_defaults)
+    assert load_defaults().vision.model == "doubao-seed-2-1-pro-260628"
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        parent.status = parent_state
+        old = VideoParseV2Config.model_validate(parent.parse_config)
+        pro = old.models.understanding.model_copy(update={
+            "source": "ark_default", "model": "doubao-seed-2-1-pro-260628",
+            "max_output_tokens": 65536, "reasoning_effort": "none",
+        })
+        parent.parse_config = old.model_copy(update={
+            "models": old.models.model_copy(update={"understanding": pro, "refine": pro}),
+            "visual_input": old.visual_input.model_copy(update={"mode": "video"}),
+        }).model_dump(mode="json")
+        before_config = parent.parse_config
+        session.get(ChunkParseTask, chunk_ids[-1]).status = "FAILED"
+        session.get(IntervalParseTask, interval_ids[0]).status = "PARSING_FAILED"
+        chunk_results = [(row.id, row.content, row.version, row.detail)
+                         for row in session.scalars(select(ChunkParseContent).order_by(ChunkParseContent.id))]
+        interval_results = [(row.interval_task_id, row.content, row.detail)
+                            for row in session.scalars(select(IntervalParseContent).order_by(IntervalParseContent.interval_task_id))]
+        topology = [(row.id, row.start_sequence_no, row.chunk_count, row.chunk_task_ids)
+                    for row in session.scalars(select(IntervalParseTask).order_by(IntervalParseTask.id))]
+
+    payload["models"]["vision"].update(
+        source="deepseek_api", model="deepseek-flash", max_output_tokens=8192,
+        reasoning_effort="none",
+    )
+    config_path.write_text(yaml.safe_dump(payload))
+    retried = service.retry_parse(
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
+    )
+
+    assert (retried.video_parse_task_id, retried.version, retried.status) == (task_id, 1, "PARSING")
+    expected = load_defaults().to_video_parse_v2()
+    assert retried.parse_config == {
+        **before_config,
+        "models": {
+            **before_config["models"],
+            "understanding": expected.models.understanding.model_dump(mode="json"),
+            "refine": None,
+        },
+        "visual_input": expected.visual_input.model_dump(mode="json"),
+    }
+    assert retried.parse_config["visual_input"]["mode"] == "ordered_frames"
+    with factory() as session:
+        assert [session.get(ChunkParseTask, task_id).status for task_id in chunk_ids] == [
+            "COMPLETE", "COMPLETE", "COMPLETE", "QUEUED",
+        ]
+        assert session.get(IntervalParseTask, interval_ids[0]).status == "WAITING"
+        assert [(row.id, row.content, row.version, row.detail)
+                for row in session.scalars(select(ChunkParseContent).order_by(ChunkParseContent.id))] == chunk_results
+        assert [(row.interval_task_id, row.content, row.detail)
+                for row in session.scalars(select(IntervalParseContent).order_by(IntervalParseContent.interval_task_id))] == interval_results
+        assert [(row.id, row.start_sequence_no, row.chunk_count, row.chunk_task_ids)
+                for row in session.scalars(select(IntervalParseTask).order_by(IntervalParseTask.id))] == topology
+
+
+def test_parse_retry_bad_yaml_does_not_restore_failed_work(
+    prepared_v2_retry, tmp_path, monkeypatch,
+):
+    service, upload, task_id, factory, chunk_ids, interval_ids, _now = prepared_v2_retry
+    config_path = tmp_path / "invalid-retry-models.yaml"
+    config_path.write_text("models: [")
+    monkeypatch.setattr(service, "_parse_defaults_loader", lambda: load_config(config_path))
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        parent.detail = {**parent.detail, "_worker_runtime_v2": {
+            **parent.detail["_worker_runtime_v2"], "failure_status": "PARSING_FAILED",
+        }}
+        before = (parent.parse_config, parent.detail, parent.next_execute_time,
+                  parent.finish_time, parent.last_error)
+        session.get(ChunkParseTask, chunk_ids[-1]).status = "FAILED"
+        session.get(IntervalParseTask, interval_ids[0]).status = "PARSING_FAILED"
+
+    with pytest.raises(ValueError, match="invalid YAML"):
+        service.retry_parse(upload.upload_session_id, tenant_id="local-default", expected_job_version=1)
+    with factory() as session:
+        parent = session.get(VideoParseTask, task_id)
+        assert parent.status == "PARSING_FAILED"
+        assert (parent.parse_config, parent.detail, parent.next_execute_time,
+                parent.finish_time, parent.last_error) == before
+        assert session.get(ChunkParseTask, chunk_ids[-1]).status == "FAILED"
+        assert session.get(IntervalParseTask, interval_ids[0]).status == "PARSING_FAILED"
+
+
+def test_parse_retry_rejects_stale_version_before_loading_defaults(prepared_v2_retry, monkeypatch):
+    service, upload, task_id, factory, _chunk_ids, _interval_ids, _now = prepared_v2_retry
+
+    def forbidden_loader():
+        raise AssertionError("stale retry must not load new model defaults")
+
+    monkeypatch.setattr(service, "_parse_defaults_loader", forbidden_loader)
+    with factory() as session:
+        before = session.get(VideoParseTask, task_id).parse_config
+    with pytest.raises(UploadConflictError, match="version changed"):
+        service.retry_parse(upload.upload_session_id, tenant_id="local-default", expected_job_version=2)
+    with factory() as session:
+        parent = session.get(VideoParseTask, task_id)
+        assert parent.status == "PARSING_FAILED" and parent.parse_config == before
+
+
 @pytest.fixture
 def prepared_short_v2_retry(prepared_v2_retry):
     service, upload, task_id, factory, chunk_ids, interval_ids, now = prepared_v2_retry
@@ -1526,11 +1656,16 @@ def prepared_short_v2_retry(prepared_v2_retry):
 
 
 def test_indexing_retry_accepts_the_unique_short_interval_and_retains_results(
-    prepared_short_v2_retry,
+    prepared_short_v2_retry, monkeypatch,
 ):
     service, upload, task_id, factory, chunk_ids, interval_id, now = (
         prepared_short_v2_retry
     )
+
+    def forbidden_loader():
+        raise AssertionError("index retry must preserve its frozen analysis binding")
+
+    monkeypatch.setattr(service, "_parse_defaults_loader", forbidden_loader)
     with factory() as session:
         task = session.get(VideoParseTask, task_id)
         frozen_config = task.parse_config
@@ -1814,10 +1949,16 @@ def test_manual_retry_rejects_active_execution_lease_without_partial_reset(
     prepared_v2_retry,
     model,
     status,
+    monkeypatch,
 ):
     service, upload, task_id, factory, chunk_ids, interval_ids, now = (
         prepared_v2_retry
     )
+
+    def forbidden_loader():
+        raise AssertionError("active execution must be rejected before loading defaults")
+
+    monkeypatch.setattr(service, "_parse_defaults_loader", forbidden_loader)
     target_id = (
         chunk_ids[0]
         if model is ChunkParseTask

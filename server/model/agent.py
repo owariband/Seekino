@@ -67,6 +67,7 @@ class AgentConversation(BaseModel):
         default=0,
     )
     last_message_time: Mapped[int | None] = mapped_column(BigInteger)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
 class AgentMessage(BaseModel):

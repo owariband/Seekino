@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import asyncio
+import json
+import logging
 import time
 from uuid import uuid4
 
 import pytest
+import httpx
+from arkruntime._exceptions import ArkAPIError
+from gateway.agent_model.errors import ModelFailureReason, QueryModelIncompleteError
+from gateway.errors import SSEProxyError
 
 from tests.server.test_video_parse_repository import _refinement_inputs
 
@@ -16,7 +22,7 @@ from server.database import (
     create_schema,
     create_session_factory,
 )
-from server.model.dto.jobDTO import VideoParseLease
+from server.model.dto.jobDTO import ChunkParseLease, IntervalParseLease, VideoParseLease
 from server.model.job import (
     ChunkParseContent,
     ChunkParseTask,
@@ -28,6 +34,7 @@ from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.mq.video_parse_consumer import (
     VideoParseConsumer,
     VideoParseConsumerHandlers,
+    _failure_log_text,
 )
 from server.repository.video_parse import VideoParseLeaseLostError, VideoParseRepository
 from server.utils.time import datetime_to_unix_time_ms
@@ -541,6 +548,161 @@ def test_consumer_heartbeat_interval_is_bounded_by_lease(repository):
             lease_duration=timedelta(seconds=5),
             maintenance_interval=timedelta(0),
         )
+
+
+@pytest.mark.parametrize("phase", ["prepare", "understand", "refine", "index"])
+@pytest.mark.parametrize("recorded", [True, False])
+@pytest.mark.parametrize("failure_kind", ["sdk", "sdk_nested", "sse", "private", "cancel"])
+def test_consumer_logs_retry_cause_without_sensitive_payloads(
+    phase, recorded, failure_kind, monkeypatch, caplog,
+):
+    monkeypatch.setattr("server.mq.video_parse_consumer.now_utc", lambda: NOW)
+    caplog.set_level(logging.WARNING, logger="server.mq.video_parse_consumer")
+    common = dict(
+        video_parse_task_id="video-task", worker_id="worker", lease_version=4,
+        lease_expire_time=NOW + timedelta(minutes=1),
+    )
+    if phase == "prepare":
+        lease = VideoParseLease(
+            **common, video_id="video", attempt_count=2, max_attempts=3,
+            parse_config={},
+        )
+    elif phase == "understand":
+        lease = ChunkParseLease(
+            **common, chunk_parse_task_id="chunk-task", video_chunk_id="chunk",
+            retry_count=1, max_retry_count=2,
+        )
+    else:
+        lease = IntervalParseLease(
+            **common, interval_parse_task_id="interval-task",
+            chunk_parse_task_ids=("chunk-task",), start_sequence_no=0, chunk_count=1,
+            phase="REFINING" if phase == "refine" else "INDEXING",
+            retry_count=1, max_retry_count=2,
+        )
+    calls = []
+
+    class Queue:
+        @staticmethod
+        def heartbeat_video(*_args, **_kwargs):
+            return True
+
+        heartbeat_chunk = heartbeat_video
+        heartbeat_interval = heartbeat_video
+
+        @staticmethod
+        def retry_video(actual, **kwargs):
+            calls.append((actual, kwargs))
+            return recorded
+
+        retry_chunk = retry_video
+        retry_interval = retry_video
+
+    if failure_kind.startswith("sdk"):
+        root = ArkAPIError(
+            "Provider unavailable\nAuthorization: Bearer private-auth\n"
+            '"Cookie": "session=private-cookie"\n'
+            "api_key='private-api' password=private-password token=private-token\n"
+            "https://name:private-userinfo@host/path?signature=private-signature\n"
+            "body: private-body\ninput: private-model-input\n"
+            "sk-privateapikey123 eyJprivate.private.private\n",
+            body={"code": "server_error", "input": "private-body-object"},
+            request_id="provider-request",
+        )
+    elif failure_kind == "sse":
+        root = SSEProxyError(
+            "Ark Responses SSE ended without a terminal event",
+            code="stream_incomplete", response_id="provider-response",
+            partial_output_chars=7,
+        )
+        root.request_id = "provider-request"
+    else:
+        root = RuntimeError("private arbitrary exception text")
+    root.status_code = 502
+    root.headers = {"authorization": "private-header-object"}
+    error = QueryModelIncompleteError(
+        "Multimodal Responses request failed", reason=ModelFailureReason.MODEL_TIMEOUT,
+    )
+    if failure_kind == "sse":
+        error.__context__ = root
+    else:
+        error.__cause__ = root
+    root.__context__ = error  # Malformed chains must not hang diagnostics.
+    deepest = root
+    if failure_kind == "sdk_nested":
+        deepest = httpx.ReadTimeout("private transport exception text")
+        root.__cause__ = deepest
+        deepest.__context__ = error
+
+    async def fail(_lease):
+        if failure_kind == "cancel":
+            raise asyncio.CancelledError("private cancellation text")
+        raise error
+
+    consumer = VideoParseConsumer(
+        Queue(), VideoParseConsumerHandlers(fail, fail, fail, fail), worker_id="worker",
+    )
+    if phase == "prepare":
+        run = consumer._run_video(lease)
+    elif phase == "understand":
+        run = consumer._run_chunk(lease)
+    else:
+        run = consumer._run_interval(lease, fail)
+    if failure_kind == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(run)
+        assert calls == [] and caplog.records == []
+        return
+    asyncio.run(run)
+    retry_at = NOW + timedelta(seconds=10)
+    assert calls == [(lease, {"error": str(error), "retry_at": retry_at})]
+    assert consumer.failure is None
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    message = record.getMessage()
+    assert record.levelno == logging.WARNING and record.exc_info is None
+    assert len(message.splitlines()) == 1
+    for key, value in {
+        "video_parse_task_id": "video-task", "phase": phase, "attempt": 2,
+        "lease_version": 4, "retry_recorded": recorded, "retry_at": retry_at.isoformat(),
+        "error_type": "QueryModelIncompleteError", "reason": "model_timeout",
+        "root_error_type": type(deepest).__name__, "root_status_code": 502,
+    }.items():
+        assert f"{key}={json.dumps(value)}" in message
+    if phase == "understand":
+        assert 'chunk_parse_task_id="chunk-task"' in message
+    elif phase != "prepare":
+        assert 'interval_parse_task_id="interval-task"' in message
+    if failure_kind.startswith("sdk"):
+        assert 'root_error_code="server_error"' in message
+        assert 'model_request_id="provider-request"' in message
+        assert "Provider unavailable" in message and "[redacted" in message
+    elif failure_kind == "sse":
+        assert 'root_error_code="stream_incomplete"' in message
+        assert 'response_id="provider-response"' in message
+        assert "partial_output_chars=7" in message
+        assert "ended without a terminal event" in message
+    else:
+        assert "root_error_message=null" in message
+    assert "private" not in message
+
+
+@pytest.mark.parametrize("sensitive", [
+    "Authorization: Bearer private-auth\nprivate-header-continuation",
+    '"Cookie": "session=private-cookie"\nprivate-header-continuation',
+    "api_key='private-api' password=private-password token=private-token",
+    '"access_token": "private-access-token"; refresh_token=private-refresh',
+    "https://name:private-userinfo@host/path?signature=private-signature",
+    "body: {\nprivate-body-on-another-line\n}",
+    "input: {\nprivate-model-input\n}",
+    "data:video/mp4;base64,cHJpdmF0ZS1tZWRpYQ==",
+    "sk-privateapikey123 eyJprivate.private.private",
+])
+def test_provider_failure_message_redacts_credentials_and_payloads(sensitive):
+    safe = _failure_log_text("Provider request rejected: " + sensitive)
+    assert safe.startswith("Provider request rejected: ")
+    assert "[redacted" in safe and "private" not in safe
+    assert "cHJpdmF0ZS1tZWRpYQ==" not in safe
+    assert len(_failure_log_text("x" * 10000)) == 2048
 
 
 def test_run_once_sync_finishes_the_task_it_claimed():

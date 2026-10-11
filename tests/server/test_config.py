@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from gateway.config import ArkModelSourceConfig, load_config
+from gateway.config import ArkModelSourceConfig, GatewayConfig, load_config
 from server.config import ServerSettings
 from server.config.elasticsearch import ElasticsearchConfig, resolve_vector_dimensions
 from server.config.parse_profile import ParseConfig, ParseVisionConfig, resolve_embedding_config
@@ -544,14 +544,16 @@ def test_vision_controls_reach_frozen_task_without_changing_asr(monkeypatch):
         embedding_fps=settings.video_embedding_fps,
     )
     frozen = defaults.to_video_parse_v2()
-    assert frozen.models.understanding.max_output_tokens == (
-        65536 if gateway.config_version == 2 else None
-    )
-    assert frozen.models.understanding.reasoning_effort == (
-        "none" if gateway.config_version == 2 else None
-    )
+    resolved = gateway.resolve_model_binding("vision")
+    assert frozen.models.understanding.max_output_tokens == resolved.max_output_tokens
+    assert frozen.models.understanding.request_timeout_seconds == resolved.request_timeout_seconds
+    assert frozen.models.understanding.context_window_tokens == resolved.context_window_tokens
+    assert frozen.models.understanding.auto_compact_tokens == resolved.auto_compact_tokens
+    assert frozen.models.understanding.compact_target_tokens == resolved.compact_target_tokens
+    assert frozen.models.understanding.max_input_chars == resolved.max_input_chars
+    assert frozen.models.understanding.reasoning_effort == resolved.reasoning_effort
     assert frozen.models.asr.reasoning_effort is None
-    assert frozen.models.asr.max_output_tokens is None
+    assert frozen.models.asr.max_output_tokens == gateway.resolve_model_binding("transcription").max_output_tokens
 
     historical = frozen.model_dump(mode="json")
     historical["models"]["understanding"].pop("reasoning_effort")
@@ -559,6 +561,52 @@ def test_vision_controls_reach_frozen_task_without_changing_asr(monkeypatch):
     restored = type(frozen).model_validate(historical)
     assert restored.models.understanding.reasoning_effort is None
     assert restored.models.understanding.max_output_tokens == 8192
+
+
+@pytest.mark.parametrize("source,model,budget,input_mode", [
+    ("deepseek_api", "deepseek-flash", 8192, "ordered_frames"),
+    ("ark_default", "doubao-seed-2-1-pro-260628", 65536, "video"),
+])
+def test_parse_vision_source_freezes_compatible_media_without_changing_other_bindings(
+    monkeypatch, source, model, budget, input_mode,
+):
+    _clean_anivag_environment(monkeypatch)
+    settings = ServerSettings.from_environment()
+    gateway = load_config()
+    payload = yaml.safe_load(Path(os.environ["ANIVAG_MODEL_CONFIG"]).read_text())
+    if gateway.config_version == 2:
+        payload["models"]["vision"].update(
+            source=source, model=model, max_output_tokens=budget, reasoning_effort="none",
+        )
+        for field in ("auto_compact_tokens", "compact_target_tokens"):
+            payload["models"]["vision"].pop(field, None)
+    else:
+        payload["video_parser"].update(
+            vision_source=source, video_model=model,
+            vision_max_output_tokens=budget, vision_reasoning_effort="none",
+        )
+    selected = GatewayConfig.model_validate(payload)
+
+    def freeze(config):
+        return ParseConfig.from_defaults(
+            runtime=settings.parse, gateway=config, upload=settings.upload, images=settings.images,
+            embedding_model=settings.video_embedding_model,
+            embedding_dimensions=settings.text_vector_dimensions,
+            embedding_fps=settings.video_embedding_fps,
+        ).to_video_parse_v2()
+
+    previous, frozen = freeze(gateway), freeze(selected)
+    understanding = frozen.models.understanding
+    assert (understanding.source, understanding.model) == (source, model)
+    assert understanding.max_output_tokens == budget
+    assert understanding.reasoning_effort == "none"
+    assert frozen.models.refine is None
+    assert frozen.visual_input.mode == input_mode
+    if input_mode == "ordered_frames":
+        assert frozen.visual_input.max_frames_per_chunk == selected.video_parser.max_frames_per_window
+    assert frozen.models.asr == previous.models.asr
+    assert frozen.models.embedding == previous.models.embedding
+    assert selected.normalized_models["agent"] == gateway.normalized_models["agent"]
 
 
 @pytest.mark.parametrize("by_alias", [False, True])

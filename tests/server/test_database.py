@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 import re
 
-from sqlalchemy import BigInteger, CheckConstraint, String, inspect, text
+from sqlalchemy import BigInteger, CheckConstraint, JSON, String, inspect, text
 from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import CreateTable
@@ -121,6 +121,37 @@ def test_create_schema_registers_twenty_four_tables_and_identity_is_repeatable()
     create_schema(engine)
     tables = inspect(engine).get_table_names()
     assert len(tables) == 24 and {"user", "tenant"}.issubset(tables)
+
+
+def test_conversation_detail_is_nullable_json() -> None:
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    detail = next(column for column in inspect(engine).get_columns("agent_conversation")
+                  if column["name"] == "detail")
+    assert detail["nullable"] is True
+    assert isinstance(detail["type"], JSON)
+    ddl = str(CreateTable(AgentConversation.__table__).compile(dialect=mysql.dialect()))
+    assert "detail JSON" in ddl and "detail JSON NOT NULL" not in ddl
+
+
+def test_create_schema_requires_conversation_detail_migration_without_changing_rows() -> None:
+    engine = create_database_engine("sqlite+pysqlite:///:memory:", environment=DatabaseEnvironment.TEST)
+    create_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(AgentConversation.__table__.insert().values(
+            id="existing-conversation", tenant_id="local-default", title="Existing conversation",
+            title_is_auto=False, idempotency_key="existing-conversation", next_message_sequence=0,
+        ))
+        connection.execute(text("ALTER TABLE agent_conversation DROP COLUMN detail"))
+
+    with pytest.raises(SchemaUpgradeRequiredError, match="20261010_agent_conversation_detail.sql"):
+        create_schema(engine)
+
+    assert "detail" not in {column["name"] for column in inspect(engine).get_columns("agent_conversation")}
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT id, title FROM agent_conversation")).all() == [
+            ("existing-conversation", "Existing conversation"),
+        ]
 
 
 @pytest.mark.parametrize("column_name", ["create_time", "create_date", "update_time", "update_date"])

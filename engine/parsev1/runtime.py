@@ -11,14 +11,12 @@ from engine.common.config import VideoParseRuntimeConfig
 from engine.common.model_factory import build_asr_agent
 from engine.common.transcription import TranscriptAnalysis, VideoASRAgentProtocol
 from engine.common.usage import parse_chunk_scope
-from gateway.ark.multimodal import ArkMultimodalModel
 from gateway.config import (
     GatewayConfig,
-    OpenAIVisionSourceConfig,
+    ModelBinding,
     VideoFallbackConfig,
     load_config,
 )
-from gateway.openai.multimodal import DeepSeekMultimodalModel
 
 from .analysis_windows import materialize_analysis_windows, plan_analysis_windows
 from .background import BackgroundImage
@@ -60,6 +58,7 @@ class _ResolvedRuntimeConfig:
     video_fps: float
     fallback_enabled: bool
     fallback: VideoFallbackConfig
+    fallback_model: ModelBinding | None
 
 
 class EngineASRAgent:
@@ -141,8 +140,22 @@ class EngineVideoParseRuntime:
         self._asr_agent: VideoASRAgentProtocol | None = None
         self._understanding_agent: VideoUnderstandingAgentProtocol | None = None
         self._understand_stage: UnderstandStage | None = None
+        self._models: list[object] = []
+        self._closed = False
         self._server_asr_agent = EngineASRAgent(self)
         self._server_understanding_agent = EngineVideoUnderstandingAgent(self)
+
+    def close(self) -> None:
+        with self._assembly_lock:
+            if self._closed:
+                return
+            self._closed = True
+            resources = [self._asr_agent, *self._models]
+            self._models = []
+        for resource in reversed(resources):
+            close = getattr(resource, "close", None)
+            if callable(close):
+                close()
 
     @property
     def server_asr_agent(self) -> EngineASRAgent:
@@ -171,9 +184,9 @@ class EngineVideoParseRuntime:
             fallback=VideoFallbackModels(
                 enabled=resolved.fallback_enabled,
                 transcript_model=resolved.transcript_model,
-                provider=fallback.deepseek.provider,
-                visual_model=fallback.deepseek.model,
-                refiner_model=fallback.deepseek.model,
+                provider=(resolved.gateway.source(resolved.fallback_model.source).provider if resolved.fallback_model else None),
+                visual_model=resolved.fallback_model.model if resolved.fallback_model else None,
+                refiner_model=resolved.fallback_model.model if resolved.fallback_model else None,
                 input_mode="ordered_frames",
                 frame_fps=fallback.frame_fps,
                 group_duration_seconds=fallback.group_duration_seconds,
@@ -273,15 +286,15 @@ class EngineVideoParseRuntime:
         if on_windows_ready is not None:
             on_windows_ready(windows)
 
-        deepseek = fallback_config.deepseek
+        fallback_binding = resolved.fallback_model
         completed_chunks = load_completed_chunks(
             windows,
             output_dir=work_directory,
             transcript_model=transcript_model,
             transcript_source=self._config.asr_mode,
             video_model=video_model,
-            fallback_provider=deepseek.provider,
-            fallback_model=deepseek.model,
+            fallback_provider=resolved.gateway.source(fallback_binding.source).provider if fallback_binding else None,
+            fallback_model=fallback_binding.model if fallback_binding else None,
             fallback_transcript_model=(
                 transcript_model if self._config.asr_mode == "lite" else None
             ),
@@ -367,23 +380,40 @@ class EngineVideoParseRuntime:
             if self._resolved is None:
                 gateway_config = load_config(self._model_config_path)
                 parser_config = gateway_config.video_parser
+                transcription = gateway_config.resolve_model_binding("transcription")
+                vision = gateway_config.resolve_model_binding("vision")
                 fallback_enabled = self._config.fallback_enabled
                 if fallback_enabled is None:
-                    fallback_enabled = _environment_bool(
-                        "ANIVAG_FALLBACK_ENABLED",
-                        parser_config.fallback.enabled,
-                    )
+                    fallback_enabled = vision.fallback is not None
+                fallback_binding = gateway_config.normalized_models["vision"].fallback
+                if fallback_binding is not None:
+                    fallback_binding = gateway_config.resolve_model_binding(fallback_binding)
+                elif "vision_fallback" in gateway_config.normalized_models:
+                    fallback_binding = gateway_config.resolve_model_binding("vision_fallback")
+                if fallback_enabled and fallback_binding is None:
+                    raise ValueError("enabled video fallback requires a configured fallback model")
+                if self._config.fallback_config is not None and self._config.fallback_config.deepseek is not None:
+                    legacy_fallback = self._config.fallback_config.deepseek
+                    updates = {
+                        "model": legacy_fallback.model,
+                        "request_timeout_seconds": legacy_fallback.request_timeout_seconds,
+                        "max_output_tokens": legacy_fallback.max_output_tokens,
+                        "reasoning_effort": legacy_fallback.reasoning_effort,
+                    }
+                    if legacy_fallback.vision_source is not None:
+                        updates["source"] = legacy_fallback.vision_source
+                    if fallback_binding is None:
+                        raise ValueError("runtime fallback override requires a configured model source")
+                    fallback_binding = gateway_config.resolve_model_binding(fallback_binding.model_copy(update=updates))
                 self._resolved = _ResolvedRuntimeConfig(
                     gateway=gateway_config,
                     transcript_model=(
                         self._config.transcript_model
-                        or os.getenv("ANIVAG_TRANSCRIPT_MODEL")
-                        or parser_config.transcript_model
+                        or transcription.model
                     ),
                     video_model=(
                         self._config.video_model
-                        or os.getenv("ANIVAG_VIDEO_MODEL")
-                        or parser_config.video_model
+                        or vision.model
                     ),
                     transcript_fps=(
                         self._config.transcript_fps
@@ -401,12 +431,15 @@ class EngineVideoParseRuntime:
                     ),
                     fallback_enabled=fallback_enabled,
                     fallback=self._config.fallback_config or parser_config.fallback,
+                    fallback_model=fallback_binding,
                 )
             return self._resolved
 
     def _get_asr_agent(self) -> VideoASRAgentProtocol:
         resolved = self._resolve_config()
         with self._assembly_lock:
+            if self._closed:
+                raise RuntimeError("Video parse runtime is closed")
             if self._asr_agent is None:
                 parser = resolved.gateway.video_parser
                 self._asr_agent = build_asr_agent(
@@ -414,13 +447,14 @@ class EngineVideoParseRuntime:
                     fps=resolved.transcript_fps,
                     timeout=parser.transcription_timeout_seconds or self._config.request_timeout_seconds,
                     max_output_tokens=self._config.transcript_max_output_tokens or parser.transcription_max_output_tokens,
-                    ark_model_type=ArkMultimodalModel,
                 )
             return self._asr_agent
 
     def _get_understanding_agent(self) -> VideoUnderstandingAgentProtocol:
         resolved = self._resolve_config()
         with self._assembly_lock:
+            if self._closed:
+                raise RuntimeError("Video parse runtime is closed")
             if self._understanding_agent is not None:
                 return self._understanding_agent
 
@@ -429,9 +463,9 @@ class EngineVideoParseRuntime:
                 resolved.gateway, model=resolved.video_model,
                 timeout=parser.vision_timeout_seconds or self._config.request_timeout_seconds,
                 max_output_tokens=self._config.video_max_output_tokens or parser.vision_max_output_tokens,
-                ark_model_type=ArkMultimodalModel,
             )
-            if self._config.video_input_mode == "ordered_frames" or isinstance(resolved.gateway.stage_source("vision"), OpenAIVisionSourceConfig):
+            self._models.append(video_client)
+            if self._config.video_input_mode == "ordered_frames" or video_client.visual_input_mode == "ordered_frames":
                 understanding_agent: VideoUnderstandingAgentProtocol = OrderedFrameVideoUnderstandingAgent(
                     video_client,
                     frame_fps=resolved.video_fps,
@@ -444,10 +478,13 @@ class EngineVideoParseRuntime:
                     fps=resolved.video_fps,
                 )
             if resolved.fallback_enabled:
-                deepseek = resolved.fallback.deepseek
-                fallback_model = build_fallback_model(
-                    resolved.gateway, deepseek, deepseek_model_type=DeepSeekMultimodalModel,
-                )
+                try:
+                    fallback_model = build_fallback_model(resolved.gateway, resolved.fallback_model)
+                except BaseException:
+                    self._models.remove(video_client)
+                    video_client.close()
+                    raise
+                self._models.append(fallback_model)
                 fallback_agent = FrameFallbackVideoUnderstandingAgent(
                     fallback_model,
                     fallback_model,
@@ -485,15 +522,3 @@ class EngineVideoParseRuntime:
                     max_context_chars=self._config.max_context_chars,
                 )
             return self._understand_stage
-
-
-def _environment_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    normalized = value.strip().casefold()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"{name} must be a boolean value")

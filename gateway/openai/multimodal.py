@@ -160,6 +160,11 @@ class DeepSeekMultimodalModel:
             inline_schema_refs(result_type.model_json_schema())
         )
         request_started_at = monotonic()
+        effective_timeout = self._request_timeout_seconds
+        if request_timeout_seconds is not None:
+            if request_timeout_seconds <= 0:
+                raise ValueError("request_timeout_seconds must be greater than zero")
+            effective_timeout = min(effective_timeout, request_timeout_seconds)
         try:
             with track_model_call(
                 provider=self.provider_name,
@@ -181,7 +186,7 @@ class DeepSeekMultimodalModel:
                         reasoning={"effort": self.reasoning_effort},
                         temperature=0,
                         max_output_tokens=self.max_output_tokens,
-                        timeout=self._request_timeout_seconds,
+                        timeout=effective_timeout,
                     )
                 except APIError as error:
                     call.capture_response(error)
@@ -209,7 +214,7 @@ class DeepSeekMultimodalModel:
         except DeepSeekModelError as error:
             if self._fallback_model is None:
                 raise
-            fallback_timeout = self._request_timeout_seconds - (
+            fallback_timeout = effective_timeout - (
                 monotonic() - request_started_at
             )
             if fallback_timeout <= 0:

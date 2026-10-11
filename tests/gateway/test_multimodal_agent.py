@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import logging
 from types import SimpleNamespace
 from time import monotonic
 
@@ -18,7 +19,7 @@ from gateway.media import ToolImageArtifact
 from gateway.multimodal import ImageInput, TextInput, VideoInput
 from gateway.openai.multimodal import DeepSeekMultimodalModel
 from gateway.openai.vision import OpenAIVisionModel
-from gateway.usage import ModelCallCancelledError, capture_model_usage, control_model_calls
+from gateway.usage import ModelCallCancelledError, capture_model_usage, control_model_calls, model_call_context
 
 
 class Completion(BaseModel):
@@ -527,3 +528,206 @@ def test_real_canvas_partial_updates_keep_omitted_fields_through_model_validatio
             "video_chunk_id": "chunk-1", "start_seconds": 11, "end_seconds": 19, "claim": "corrected",
         }
         assert canvas.draft_item("chunk-2").claim == "chunk-2"
+
+
+@pytest.mark.parametrize("provider", ["ark", "deepseek", "chat"])
+@pytest.mark.parametrize("reasoning", ["none", "high"])
+def test_multimodal_request_log_correlates_controls_without_logging_payloads(
+    caplog, monkeypatch, tmp_path, provider, reasoning,
+):
+    inputs, frames = _inputs(tmp_path, provider)
+    secret = "PROMPT_SECRET_DO_NOT_LOG"
+    inputs = [*inputs, TextInput(secret)]
+    if provider == "chat":
+        inputs = [*frames, TextInput(secret)]
+        responses = ChatCompletions([_chat_response("read"), _chat_response()])
+        monkeypatch.setattr("gateway.openai.vision.OpenAI", lambda **kwargs: SimpleNamespace(
+            chat=SimpleNamespace(completions=responses), close=lambda: None,
+        ))
+        model = OpenAIVisionModel(
+            "portable-vision", provider="portable", base_url="https://offline.invalid",
+            api_key="API_KEY_SECRET", max_output_tokens=4096,
+            token_parameter="max_completion_tokens", request_timeout_seconds=30,
+        )
+    else:
+        responses = Responses([_response("read"), _response()])
+        model = _model(provider, responses, budget=4096, reasoning=reasoning)
+    context = {
+        "video_parse_task_id": "task\nforged=1" + "t" * 300,
+        "chunk_parse_task_id": "chunk-123", "interval_parse_task_id": "interval-456",
+        "video_chunk_id": "video-chunk-789", "run_id": "run-123",
+        "sequence_no": 7, "lease_version": 3,
+        "authorization": "AUTH_SECRET_DO_NOT_LOG",
+    }
+    usage = []
+    with caplog.at_level(logging.INFO, logger="gateway.agent_model.multimodal"):
+        with model_call_context(context), capture_model_usage(usage.append):
+            assert model.generate(
+                inputs, schema_name="schema\nforged=1" + "s" * 200, result_type=Completion,
+                tools=_tools({}, []), max_model_calls=2,
+            ).done
+    messages = [record.getMessage() for record in caplog.records
+                if record.name == "gateway.agent_model.multimodal"
+                and record.getMessage().startswith("event=multimodal_model_request ")]
+    summaries = [json.loads(message.split(" summary=", 1)[1]) for message in messages]
+    assert len(summaries) == len(responses.requests) == 2
+    assert [summary["call_id"] for summary in summaries] == [call.call_id for call in usage]
+    first = summaries[0]
+    assert first["provider"] == ("portable" if provider == "chat" else provider)
+    assert first["model"] == model.model_name and first["result_type"] == "Completion"
+    assert first["response_format_type"] == "json_schema"
+    assert first["response_format_strict"] is True
+    assert first["schema_name"] == ("schema\nforged=1" + "s" * 200)[:128]
+    for key in context.keys() - {"authorization"}:
+        assert first[key] == (context[key][:256] if isinstance(context[key], str) else context[key])
+    assert first["protocol"] == ("chat" if provider == "chat" else "responses")
+    assert [summary["tool_choice"] for summary in summaries] == ["required", "auto"]
+    assert first["tool_count"] == 2
+    assert first["tool_names"] == ["get_context_canvas", "write_context_canvas"]
+    assert first["max_output_tokens"] == 4096 and 0 < first["timeout"] <= 30
+    assert first["token_parameter"] == ("max_completion_tokens" if provider == "chat" else "max_output_tokens")
+    assert first["thinking"] == ("disabled" if provider == "ark" and reasoning == "none" else None)
+    assert first["reasoning_effort"] == (None if provider == "chat" or provider == "ark" and reasoning == "none" else reasoning)
+    assert first["input_item_count"] == 1 and first["content_block_count"] == len(inputs)
+    assert first["text_chars"] == sum(len(item.text) for item in inputs if isinstance(item, TextInput))
+    assert first["media_item_count"] == sum(not isinstance(item, TextInput) for item in inputs)
+    assert all("\n" not in message for message in messages)
+    assert all(value not in "".join(messages) for value in (
+        secret, context["authorization"], "API_KEY_SECRET", "data:image/", "data:video/", "observed",
+    ))
+
+
+@pytest.mark.parametrize("provider", ["ark", "deepseek"])
+def test_parse_diagnostics_restore_each_round_and_exclude_chat(monkeypatch, tmp_path, provider):
+    from gateway.model_diagnostics import restore_diagnostic_media
+
+    root = tmp_path / "model-traces"
+    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(root))
+    inputs, _frames = _inputs(tmp_path, provider)
+    prompt = "Preserve the full prompt, schemas, and exact tool feedback."
+    inputs.append(TextInput(prompt))
+    responses = Responses([_response("read"), _response("write", "write_context_canvas"), _response()])
+    context = {"video_parse_task_id": "task-1", "chunk_parse_task_id": "chunk-1",
+               "stage": "understand", "sequence_no": 4, "lease_version": 3}
+    state, calls, usage, saved = {}, [], [], []
+    with model_call_context(context), capture_model_usage(usage.append):
+        assert _model(provider, responses).generate(
+            inputs, schema_name="canvas_completion", result_type=Completion,
+            tools=_tools(state, calls), max_model_calls=3,
+        ).done
+    assert state == {"note": "observed"} and calls == [("get", "observed"), ("write", "observed")]
+    assert len(usage) == 3 and {call.status for call in usage} == {"completed"}
+    for round_no, (call, actual_request) in enumerate(zip(usage, responses.requests), 1):
+        directory = root / call.call_id
+        events = [json.loads(line) for line in (directory / "events.jsonl").read_text().splitlines()]
+        assert events[0]["event"] == "request" and events[-1]["event"] == "completed"
+        assert {event["call_id"] for event in events} == {call.call_id}
+        payload = events[0]["payload"]
+        assert payload["events_format"] == "sdk_parsed"
+        assert payload["context"] == dict(call.context)
+        assert all(payload["context"][key] == value for key, value in context.items())
+        assert payload["context"]["agent_round"] == round_no
+        restored = restore_diagnostic_media(payload["request"], directory)
+        assert restored == {**actual_request, "stream": provider == "ark"}
+        assert restored["tools"][0]["parameters"]["properties"]["value"]["type"] == "string"
+        assert restored["text"]["format"]["schema"] == Completion.model_json_schema()
+        assert restored["input"][0]["content"][-1]["text"] == prompt
+        assert any(event["event"] == "response" for event in events)
+        assert any(event["event"] == "sse" for event in events) == (provider == "ark")
+        saved.append(restored)
+    assert len({call.context["agent_run_id"] for call in usage}) == 1
+    second = saved[1]["input"]
+    assert json.loads(next(item["arguments"] for item in second
+                           if item.get("type") == "function_call" and item["call_id"] == "read")) == {"value": "observed"}
+    assert json.loads(next(item["output"] for item in second
+                           if item.get("type") == "function_call_output" and item["call_id"] == "read")) == {"note": ""}
+    final = saved[2]["input"]
+    assert json.loads(next(item["arguments"] for item in final
+                           if item.get("type") == "function_call" and item["call_id"] == "write")) == {"value": "observed"}
+    assert json.loads(next(item["output"] for item in final
+                           if item.get("type") == "function_call_output" and item["call_id"] == "write")) == {"written": True}
+    assert len(list(root.glob("*/events.jsonl"))) == 3
+    chat = ChatCompletions([_chat_response("read"), _chat_response()])
+    monkeypatch.setattr("gateway.openai.vision.OpenAI", lambda **kwargs: SimpleNamespace(
+        chat=SimpleNamespace(completions=chat), close=lambda: None,
+    ))
+    vision = OpenAIVisionModel(
+        "portable-vision", provider="portable", base_url="https://offline.invalid", api_key="offline",
+        request_timeout_seconds=30,
+    )
+    assert vision.generate([TextInput("Ordinary Chat.")], schema_name="completion", result_type=Completion,
+                           tools=_tools({}, []), max_model_calls=2).done
+    assert len(list(root.glob("*/events.jsonl"))) == 3
+
+
+def test_parse_diagnostics_preserve_empty_sdk_response_error_chain_and_request_id(monkeypatch, tmp_path):
+    from arkruntime._models import construct_type
+    from arkruntime.types.responses.response_stream_event import ResponseStreamEvent
+
+    root = tmp_path / "model-traces"
+    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(root))
+    event = construct_type(type_=ResponseStreamEvent, value={
+        "type": "response.completed", "sequence_number": 0, "response": {
+            "id": "sdk-empty-response", "object": "response", "created_at": 1,
+            "model": "ark-vision", "status": "completed", "output": [{
+                "id": "empty-message", "type": "message", "role": "assistant", "status": "completed",
+                "content": [{"type": "output_text", "text": "", "annotations": []}],
+            }],
+        },
+    })
+
+    class SDKStream(Stream):
+        def __iter__(self):
+            yield event
+
+    class SDKResponses(Responses):
+        def create(self, **kwargs):
+            self.requests.append(deepcopy(kwargs))
+            stream = SDKStream(event.response)
+            stream.response = SimpleNamespace(headers={"x-request-id": "provider-empty-request"})
+            self.streams.append(stream)
+            return stream
+
+    responses, usage, calls = SDKResponses([]), [], []
+    with model_call_context({"video_parse_task_id": "task-empty"}), capture_model_usage(usage.append):
+        with pytest.raises(QueryModelIncompleteError, match="Multimodal Responses request failed") as caught:
+            _model("ark", responses).generate(
+                [TextInput("Diagnose an empty completion.")], schema_name="canvas_completion",
+                result_type=Completion, tools=_tools({}, calls), max_model_calls=2,
+            )
+    assert len(usage) == 1 and usage[0].status == "failed"
+    assert caught.value.request_id == usage[0].request_id == "provider-empty-request"
+    assert calls == [] and len(responses.streams) == 1 and responses.streams[0].closed
+    events = [json.loads(line) for line in (root / usage[0].call_id / "events.jsonl").read_text().splitlines()]
+    terminal = next(item for item in events if item["event"] == "sse")
+    assert terminal["provider_request_id"] == "provider-empty-request"
+    assert terminal["payload"] == event.model_dump(mode="json", exclude_unset=True)
+    assert terminal["payload"]["response"]["output"][0]["content"][0]["text"] == ""
+    error = events[-1]
+    assert error["event"] == "error" and error["call_id"] == usage[0].call_id
+    assert error["provider_request_id"] == "provider-empty-request"
+    chain = error["payload"]["chain"]
+    assert [item["type"] for item in chain] == ["QueryModelIncompleteError", "SSEProxyError"]
+    assert chain[1]["response_id"] == "sdk-empty-response" and chain[1]["partial_output_chars"] == 0
+
+
+def test_parse_diagnostics_keep_response_when_final_schema_validation_fails(monkeypatch, tmp_path):
+    root = tmp_path / "model-traces"
+    monkeypatch.setenv("ANIVAG_MODEL_TRACE_DIR", str(root))
+    invalid = _response()
+    invalid.output[0].content[0].text = '{"done":"not-a-boolean"}'
+    responses, usage = Responses([_response("read"), invalid]), []
+    with model_call_context({"video_parse_task_id": "task-invalid"}), capture_model_usage(usage.append):
+        with pytest.raises(QueryModelIncompleteError, match="final output does not match its schema"):
+            _model("ark", responses).generate(
+                [TextInput("Validate the final completion.")], schema_name="canvas_completion",
+                result_type=Completion, tools=_tools({}, []), max_model_calls=2,
+            )
+    assert [call.status for call in usage] == ["completed", "failed"]
+    assert all(stream.closed for stream in responses.streams)
+    events = [json.loads(line) for line in (root / usage[-1].call_id / "events.jsonl").read_text().splitlines()]
+    receipt = next(item["payload"] for item in events if item["event"] == "response")
+    assert receipt["output"][0]["content"][0]["text"] == '{"done":"not-a-boolean"}'
+    assert events[0]["payload"]["context"]["agent_round"] == 2
+    assert events[-1]["event"] == "error"
+    assert [item["type"] for item in events[-1]["payload"]["chain"]] == ["QueryModelIncompleteError", "ValidationError"]

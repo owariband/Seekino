@@ -5,14 +5,16 @@ description = "Event-level multimodal video retrieval application"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "agent-client-protocol==0.12.1",
     "arkruntime>=0.6,<1",
     "claude-agent-sdk==0.2.158",
     "ddgs>=9.16,<10",
+    "deepagents==0.7.23",
     "elasticsearch>=8.19,<9",
     "fastapi>=0.115,<1",
     "httpx[socks]>=0.28,<1",
-    "langchain>=1.2,<2",
-    "langchain-core>=1.6,<2",
+    "langchain>=1.4.4,<2",
+    "langchain-core>=1.6.7,<2",
     "langchain-openai>=1.1,<2",
     "langgraph>=1.2,<2",
     "openai>=1.66,<3",

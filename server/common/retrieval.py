@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Literal, cast
 
-from arkruntime import Ark
 from engine.rag import EncoderContract
-from gateway.config import ArkModelSourceConfig, GatewayConfig, OpenAIModelSourceConfig
-from gateway.constants import DEEPSEEK_PROVIDER, OPENAI_DEEPSEEK_PROFILE
+from gateway.config import EmbeddingModelBinding, GatewayConfig, ModelBinding
 from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
-from gateway.model_sources import ModelReference, ark_options, source_key
-from gateway.multimodal import MultimodalInput
+from gateway.multimodal import adapter_capabilities
+from gateway.rerank import RerankScore
 from gateway.tracing import LangfuseTracing
-from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from gateway.model_factory import GatewayClient
 
 from ..config.parse_profile import ParseEmbeddingConfig
 from ..config.retrieval import RetrievalConfig
@@ -21,20 +21,17 @@ from ..service.retrieval_rerank import StructuredTextReranker
 from ..service.video_retrieval import VideoParseRetrievalService
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
 
-_ResultModel = TypeVar("_ResultModel", bound=BaseModel)
-
 
 def validate_rerank_source(
     gateway_config: GatewayConfig, retrieval_config: RetrievalConfig,
-) -> OpenAIModelSourceConfig | None:
+) -> ModelBinding | None:
     if not retrieval_config.rerank_enabled:
         return None
-    source = gateway_config.model_sources[gateway_config.agent_model.source]
-    if (not isinstance(source, OpenAIModelSourceConfig)
-            or source.provider != DEEPSEEK_PROVIDER
-            or source.profile != OPENAI_DEEPSEEK_PROFILE):
-        raise ValueError("structured text reranking requires a DeepSeek model source")
-    return source
+    binding = gateway_config.resolve_model_binding("rerank")
+    source = gateway_config.source(binding.source)
+    if binding.kind != "rerank" or not adapter_capabilities(source.adapter).rerank:
+        raise ValueError("configured model binding does not support reranking")
+    return binding
 
 
 def build_retrieval_service(
@@ -43,34 +40,37 @@ def build_retrieval_service(
     retrieval_config: RetrievalConfig, index_generation: int,
     request_timeout_seconds: float, max_output_tokens: int | None = None,
     exact: bool = False, tracing: LangfuseTracing | None = None,
+    gateway_client: GatewayClient | None = None,
 ) -> tuple[VideoParseRetrievalService, EncoderContract]:
-    from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
+    from gateway.model_factory import GatewayClient
 
-    source = gateway_config.model_sources.get(embedding_config.source)
-    if not isinstance(source, ArkModelSourceConfig):
-        raise ValueError("Video Parse V2 embedding requires an Ark source")
+    client = gateway_client if gateway_client is not None else GatewayClient(gateway_config)
+    embedding_binding = EmbeddingModelBinding(
+        source=embedding_config.source, model=embedding_config.model,
+        encoder_model=embedding_config.encoder_model,
+        dimensions=embedding_config.dimensions, video_fps=embedding_config.video_fps,
+        request_timeout_seconds=min(
+            request_timeout_seconds,
+            embedding_config.request_timeout_seconds or request_timeout_seconds,
+        ),
+        kind="embedding",
+    )
+    metadata = client.describe_embedding(embedding_binding)
     encoder = EncoderContract(
-        provider=source.provider,
-        model=ModelReference.resolve(
-            embedding_config.model, encoder_model=embedding_config.encoder_model,
-        ).model,
-        encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
-        dimensions=embedding_config.dimensions,
+        provider=metadata.provider_name, model=metadata.encoder_model,
+        encoder_revision=metadata.encoder_revision, dimensions=metadata.dimensions,
     )
-    embedder = _LazyQueryEmbedder(
-        model=embedding_config.model, dimensions=embedding_config.dimensions,
-        fps=embedding_config.video_fps, source=source,
-        request_timeout_seconds=request_timeout_seconds,
-    )
-    rerank_source = validate_rerank_source(gateway_config, retrieval_config)
+    embedder = _LazyQueryEmbedder(gateway_client=client, binding=embedding_binding)
+    rerank_binding = validate_rerank_source(gateway_config, retrieval_config)
     reranker = None
-    if rerank_source is not None:
-        model = gateway_config.agent_model
+    if rerank_binding is not None:
+        updates = {"request_timeout_seconds": min(
+            request_timeout_seconds, rerank_binding.request_timeout_seconds,
+        )}
+        if max_output_tokens is not None:
+            updates["max_output_tokens"] = min(max_output_tokens, rerank_binding.max_output_tokens)
         reranker = StructuredTextReranker(_LazyTextRerankModel(
-            source=rerank_source, model=model.model,
-            max_output_tokens=(model.max_output_tokens if max_output_tokens is None
-                               else min(max_output_tokens, model.max_output_tokens)),
-            request_timeout_seconds=min(request_timeout_seconds, model.request_timeout_seconds),
+            gateway_client=client, binding=rerank_binding.model_copy(update=updates),
         ))
     service = VideoParseRetrievalService(
         repository, store, embedder, semantic_encoder=encoder,
@@ -87,18 +87,13 @@ def build_retrieval_service(
 
 
 class _LazyQueryEmbedder:
-    """Create one short-lived SDK client for each query embedding call."""
+    """Obtain and close one configured Gateway model per embedding call."""
 
     def __init__(
-        self, *, model: str, dimensions: int, fps: float,
-        request_timeout_seconds: float,
-        source: ArkModelSourceConfig | None = None,
+        self, *, gateway_client: GatewayClient, binding: EmbeddingModelBinding,
     ) -> None:
-        self._model = model
-        self._dimensions = dimensions
-        self._fps = fps
-        self._request_timeout_seconds = request_timeout_seconds
-        self._source = source
+        self._gateway_client = gateway_client
+        self._binding = binding
 
     def embed_query(self, query: str) -> EmbeddingResult:
         return cast(EmbeddingResult, self._embed("embed_query", query))
@@ -112,50 +107,27 @@ class _LazyQueryEmbedder:
     def _embed(
         self, method: Literal["embed_query", "embed_image", "embed_sparse"], value: str | Path,
     ) -> EmbeddingResult | SparseEmbeddingResult:
-        from gateway.ark.embedding import DoubaoMultimodalEmbedder
-
-        options = ark_options(self._source) if self._source is not None else {}
-        client = Ark.volc(
-            timeout=self._request_timeout_seconds, max_retries=0, **options,
-        )
+        model = self._gateway_client.create_embedding_model(self._binding)
         try:
-            delegate = DoubaoMultimodalEmbedder(
-                self._model, output_dimensionality=self._dimensions,
-                fps=self._fps, client=client,
-            )
-            return getattr(delegate, method)(value)
+            return getattr(model, method)(value)
         finally:
-            client.close()
+            model.close()
 
 
 class _LazyTextRerankModel:
     """Use the selected text model with a client owned by each scoring call."""
 
-    provider_name = DEEPSEEK_PROVIDER
-
     def __init__(
-        self, *, source: OpenAIModelSourceConfig, model: str,
-        max_output_tokens: int, request_timeout_seconds: float,
+        self, *, gateway_client: GatewayClient, binding: ModelBinding,
     ) -> None:
-        self.model_name = model
-        self._source = source
-        self._max_output_tokens = max_output_tokens
-        self._request_timeout_seconds = request_timeout_seconds
+        self.model_name = binding.model
+        self.provider_name = gateway_client.config.source(binding.source).provider
+        self._gateway_client = gateway_client
+        self._binding = binding
 
-    def generate(
-        self, inputs: Sequence[MultimodalInput], *, schema_name: str,
-        result_type: type[_ResultModel],
-    ) -> _ResultModel:
-        from gateway.openai.multimodal import DeepSeekMultimodalModel
-
-        delegate = DeepSeekMultimodalModel(
-            self.model_name,
-            base_url=self._source.base_url,
-            api_key=source_key(self._source),
-            max_output_tokens=self._max_output_tokens,
-            request_timeout_seconds=self._request_timeout_seconds,
-        )
+    def rerank(self, query: str, documents: Sequence[str]) -> tuple[RerankScore, ...]:
+        model = self._gateway_client.create_rerank_model(self._binding)
         try:
-            return delegate.generate(inputs, schema_name=schema_name, result_type=result_type)
+            return model.rerank(query, documents)
         finally:
-            delegate.close()
+            model.close()

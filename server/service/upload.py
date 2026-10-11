@@ -64,6 +64,7 @@ class UploadService:
         clock: Callable[[], datetime | int] | None = None,
         video_parse_index_store: ElasticsearchVideoChunkStore | None = None,
         parse_defaults: ParseConfig | None = None,
+        parse_defaults_loader: Callable[[], ParseConfig] | None = None,
         execution_mode: Literal["v1", "v2"] = "v1",
         video_parse_query_encoder: EncoderContract | None = None,
         video_parse_query_encoder_source: str | None = None,
@@ -92,6 +93,7 @@ class UploadService:
         self._clock = clock or now_utc
         self._video_parse_index_store = video_parse_index_store
         self._parse_defaults = parse_defaults
+        self._parse_defaults_loader = parse_defaults_loader
         self._execution_mode = execution_mode
         self._video_parse_query_encoder = video_parse_query_encoder
         self._video_parse_query_encoder_source = video_parse_query_encoder_source
@@ -268,11 +270,30 @@ class UploadService:
         session_id = canonical_uuid(upload_session_id, "upload_session_id")
         if actor_user_id is not None:
             actor_user_id = require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
+
+        def resolve_snapshot(snapshot: dict) -> dict:
+            current = self._parse_defaults_loader().to_video_parse_v2()
+            saved = VideoParseV2Config.model_validate(snapshot)
+            # Keep prepared topology, evidence and the active index contract.
+            models = saved.models.model_copy(update={
+                "understanding": current.models.understanding,
+                "refine": current.models.refine,
+            })
+            refreshed = saved.model_copy(update={
+                "models": models, "visual_input": current.visual_input,
+            })
+            return self._require_video_parse_index_compatibility(
+                refreshed
+            ).model_dump(mode="json")
+
         task = self._repository.retry_parse(
             session_id,
             tenant_id=require_nonempty_text(tenant_id, "tenant_id"),
             expected_job_version=expected_job_version,
             actor_user_id=actor_user_id,
+            snapshot_resolver=(
+                resolve_snapshot if self._parse_defaults_loader is not None else None
+            ),
             now=self._now(),
         )
         _logger.info(

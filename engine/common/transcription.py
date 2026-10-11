@@ -9,7 +9,6 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from gateway.multimodal import MultimodalModel, TextInput, VideoInput
-from gateway.openai.audio import transcribe_audio
 
 from .media_probe import probe_video_duration_seconds
 
@@ -74,24 +73,54 @@ class AudioTranscriptionAgent:
 
     def __init__(
         self,
-        model: str,
+        model,
         *,
-        provider: str,
-        base_url: str,
-        api_key: str,
+        provider: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
         request_timeout_seconds: float,
         response_format: str = "verbose_json",
     ) -> None:
-        self.model_name = model
-        self.provider_name = provider
-        self._base_url = base_url
-        self._api_key = api_key
+        if isinstance(model, str):
+            # Legacy callers provide a connection directly; creation still belongs to Gateway.
+            from gateway.config import ModelBinding, OpenAIAudioSourceConfig, load_config
+            from gateway.model_factory import GatewayClient
+            if provider is None or base_url is None or api_key is None:
+                raise ValueError("legacy audio transcription requires provider, base_url and api_key")
+            config = load_config()
+            source_name = "legacy_audio_transcription"
+            source = OpenAIAudioSourceConfig(
+                provider=provider, base_url=base_url, api_key_env="LEGACY_ASR_API_KEY",
+                response_format=response_format,
+            )
+            config = config.model_copy(update={
+                "model_sources": {**config.model_sources, source_name: source},
+            })
+            client = GatewayClient(config, environ={"LEGACY_ASR_API_KEY": api_key})
+            try:
+                model = client.create_transcription_model(ModelBinding(
+                    source=source_name, model=model, kind="transcription",
+                    request_timeout_seconds=request_timeout_seconds,
+                ))
+            except BaseException:
+                client.close()
+                raise
+        self.model_name = model.model_name
+        self.provider_name = model.provider_name
+        self._delegate = model
         self._timeout = request_timeout_seconds
-        self._response_format = response_format
+        self._closed = False
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._delegate.close()
 
     def transcribe(
         self, video_path: str | Path, *, duration_seconds: int | None = None
     ) -> TranscriptAnalysis:
+        if self._closed:
+            raise RuntimeError("Audio transcription agent is closed")
         path = Path(video_path).resolve(strict=True)
         duration = (
             duration_seconds
@@ -122,15 +151,7 @@ class AudioTranscriptionAgent:
                 capture_output=True,
                 timeout=self._timeout,
             )
-            payload = transcribe_audio(
-                audio_path,
-                model=self.model_name,
-                provider=self.provider_name,
-                base_url=self._base_url,
-                api_key=self._api_key,
-                timeout=self._timeout,
-                response_format=self._response_format,
-            )
+            payload = self._delegate.transcribe(audio_path)
         return normalize_transcription(payload, duration_seconds=duration)
 
 
@@ -148,6 +169,14 @@ class VideoASRAgent:
         self.model_name = model.model_name
         self.fps = fps
         self._model = model
+        self._closed = False
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            close = getattr(self._model, "close", None)
+            if callable(close):
+                close()
 
     def transcribe(
         self,
@@ -155,6 +184,8 @@ class VideoASRAgent:
         *,
         duration_seconds: int | None = None,
     ) -> TranscriptAnalysis:
+        if self._closed:
+            raise RuntimeError("Video transcription agent is closed")
         path = Path(video_path).expanduser().resolve()
         if not path.is_file():
             raise FileNotFoundError(f"video file does not exist: {path}")

@@ -271,6 +271,7 @@ class UploadRepository:
         expected_job_version: int,
         now: datetime,
         actor_user_id: str | None = None,
+        snapshot_resolver: Callable[[dict], dict] | None = None,
     ) -> VideoParseTaskState:
         """Retry the latest failed V2 task without changing its identity."""
 
@@ -373,6 +374,20 @@ class UploadRepository:
             )
             if task.status == VideoParseTaskStatus.INDEXING_FAILED.value and not prepared:
                 raise UploadConflictError("indexing retry requires complete preparation")
+
+            if (
+                snapshot_resolver is not None
+                and (
+                    not prepared
+                    or any(child.status != ChunkParseTaskStatus.COMPLETE.value for child in chunks)
+                    or any(child.status in {
+                        IntervalParseTaskStatus.WAITING.value,
+                        IntervalParseTaskStatus.REFINING.value,
+                        IntervalParseTaskStatus.PARSING_FAILED.value,
+                    } for child in intervals)
+                )
+            ):
+                task.parse_config = snapshot_resolver(deepcopy(dict(task.parse_config)))
 
             # Restore each failed child at its own phase, including mixed failures.
             for child in [*chunks, *intervals]:

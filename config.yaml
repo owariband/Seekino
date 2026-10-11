@@ -2,6 +2,9 @@
 # Legacy config files remain supported. See docs/model-config.md.
 config_version: 2
 
+# Select the primary chat harness at startup; model bindings stay independent.
+supervisor_harness: codex
+
 # Server records Token usage locally; optional tracing stays disabled.
 tracing:
   enabled: false
@@ -18,6 +21,10 @@ model_sources:
     adapter: ark
     provider: ark
     api_key_env: ARK_API_KEY
+  codex_local:
+    adapter: codex_app_server
+    provider: codex
+    max_concurrency: 4
 
 models:
   agent:
@@ -28,20 +35,53 @@ models:
     fallback:
       source: ark_default
       model: doubao-seed-2-0-lite-260428
+  supervisor:
+    source: codex_local
+    model: gpt-6-astra
+    supports_vision_input: true
+    reasoning_effort: low
+    max_output_tokens: 8192
+    request_timeout_seconds: 600
+    context_window_tokens: 128000
+    context_safety_margin_tokens: 2048
+    auto_compact_tokens: 90000
+    compact_target_tokens: 60000
+    max_input_chars: 400000
   transcription:
     source: ark_default
     model: doubao-seed-2-0-lite-260428
   vision:
-    source: ark_default
-    model: doubao-seed-2-1-pro-260628
-    max_output_tokens: 65536
-    reasoning_effort: none
+    source: codex_local
+    model: gpt-6-astra
+    supports_vision_input: true
+    max_output_tokens: 8192
+    reasoning_effort: low
+    request_timeout_seconds: 600
+    context_window_tokens: 128000
+    context_safety_margin_tokens: 2048
+    auto_compact_tokens: 90000
+    compact_target_tokens: 60000
+    max_input_chars: 400000
   vision_fallback:
     source: deepseek_api
     model: deepseek-flash
     reasoning_effort: none
     max_output_tokens: 8192
     request_timeout_seconds: 1200
+  embedding:
+    kind: embedding
+    source: ark_default
+    model: doubao-embedding-vision-250615
+    dimensions: 1024
+    video_fps: 1.0
+    request_timeout_seconds: 600
+  rerank:
+    kind: rerank
+    source: deepseek_api
+    model: deepseek-flash
+    reasoning_effort: none
+    max_output_tokens: 8192
+    request_timeout_seconds: 180
 
 # Global Chat Agent settings. Changes to these values apply to new messages,
 # except maximum_concurrent_kicks, which takes effect after restarting Server.
@@ -87,8 +127,3 @@ video_parser:
     group_duration_seconds: 30
     max_frames_per_group: 15
     max_height: 720
-
-multimodal_embedding:
-  model: doubao-embedding-vision-250615
-  dimensions: 1024
-  fps: 1.0

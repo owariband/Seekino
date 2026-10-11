@@ -27,7 +27,6 @@ from server.model.video import Series, VideoChunk, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.video_parse import (
     INDEX_EMBEDDINGS_DETAIL_KEY,
-    ModelCallBudgetExhaustedError,
     ModelCallConcurrencyBusyError,
     VideoParseConflictError,
     VideoParseLeaseLostError,
@@ -55,6 +54,161 @@ def _fixture_event(value, *, sequence_no=0):
     return {"event_type": "ACTION", "start_seconds": sequence_no * 10_000 + 1000,
             "end_seconds": sequence_no * 10_000 + 4000, "description": str(value),
             "participants": [], "visible_persons": []}
+
+
+def test_execution_timing_is_monotonic_frozen_and_preserves_runtime(repository):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
+    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
+    lease = queue.claim_chunk("timed", lease_duration=timedelta(minutes=5), now=NOW)
+    started = datetime_to_unix_time_ms(NOW)
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        parent.detail = {**parent.detail, "unrelated": {"keep": True}}
+        parent.detail["_worker_runtime_v2"]["prefix"]["session_extension"] = {"keep": "prefix"}
+        parent.detail["_worker_runtime_v2"]["model_calls"]["session_extension"] = ["keep"]
+        flag_modified(parent, "detail")
+        original = json.loads(json.dumps(parent.detail))
+    for elapsed in (0, 1200, 1200, 800):
+        assert repo.record_execution_timing(
+            lease, started_at_ms=started, elapsed_ms=elapsed, now=NOW,
+        )
+    assert not repo.record_execution_timing(
+        lease, started_at_ms=started + 1, elapsed_ms=2000, now=NOW,
+    )
+    assert not repo.record_execution_timing(
+        replace(lease, worker_id="another-worker"),
+        started_at_ms=started, elapsed_ms=2000, now=NOW,
+    )
+    assert repo.record_execution_timing(
+        lease, started_at_ms=started, elapsed_ms=1400,
+        finished=True, outcome="failed", now=NOW,
+    )
+    assert repo.record_execution_timing(
+        lease, started_at_ms=started, elapsed_ms=9900, now=NOW,
+    )
+    with factory() as session:
+        parent = session.get(VideoParseTask, task_id)
+        timing = parent.detail["_worker_runtime_v2"]["execution_timing"]
+        assert timing == {"version": 1, "entries": {
+            f"understand:{lease.chunk_parse_task_id}:{lease.lease_version}": {
+                "phase": "understand", "execution_kind": "chunk",
+                "execution_task_id": lease.chunk_parse_task_id,
+                "lease_version": lease.lease_version, "worker_id": lease.worker_id,
+                "started_at_ms": started, "elapsed_ms": 1400,
+                "finished": True, "outcome": "failed",
+            },
+        }}
+        remaining = json.loads(json.dumps(parent.detail))
+        del remaining["_worker_runtime_v2"]["execution_timing"]
+        assert remaining == original
+        assert parent.processing_duration_ms == 0
+
+
+def test_execution_timing_rejects_expired_and_replaced_lease_samples(repository):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
+    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
+    first = queue.claim_chunk("first", lease_duration=timedelta(seconds=10), now=NOW)
+    started = datetime_to_unix_time_ms(NOW)
+    assert repo.record_execution_timing(first, started_at_ms=started, elapsed_ms=5000, now=NOW)
+    assert not repo.record_execution_timing(
+        first, started_at_ms=started, elapsed_ms=12000,
+        finished=True, outcome="cancelled", now=NOW + timedelta(seconds=12),
+    )
+    assert queue.reap_expired_chunks(
+        retry_delay=timedelta(0), now=NOW + timedelta(seconds=12),
+    ) == 1
+    assert queue.dispatch_chunk(
+        prepared.chunk_parse_task_ids[0], video_lease, now=NOW + timedelta(seconds=12),
+    )
+    second = queue.claim_chunk("second", lease_duration=timedelta(minutes=5), now=NOW + timedelta(seconds=12))
+    assert second is not None and second.lease_version > first.lease_version
+    assert repo.record_execution_timing(
+        second, started_at_ms=started + 12000, elapsed_ms=300, now=NOW + timedelta(seconds=12),
+    )
+    assert not repo.record_execution_timing(
+        first, started_at_ms=started, elapsed_ms=13000,
+        finished=True, outcome="completed", now=NOW + timedelta(seconds=13),
+    )
+    with factory() as session:
+        entries = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["execution_timing"]["entries"]
+        assert entries[f"understand:{first.chunk_parse_task_id}:{first.lease_version}"]["elapsed_ms"] == 5000
+        assert entries[f"understand:{second.chunk_parse_task_id}:{second.lease_version}"]["elapsed_ms"] == 300
+
+
+def test_execution_timing_closes_only_an_observed_successful_chunk(repository):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=2)
+    first = _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=1)[0]
+    started = datetime_to_unix_time_ms(NOW)
+    assert not repo.record_execution_timing(
+        first, started_at_ms=started, elapsed_ms=1000,
+        finished=True, outcome="completed", now=NOW + timedelta(seconds=3),
+    )
+    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[1], video_lease, now=NOW + timedelta(seconds=3))
+    second = queue.claim_chunk("second", lease_duration=timedelta(minutes=5), now=NOW + timedelta(seconds=3))
+    assert second is not None
+    assert repo.record_execution_timing(second, started_at_ms=started, elapsed_ms=0, now=NOW + timedelta(seconds=3))
+    repo.commit_chunk_result(second, content={"persons": [], "timeline": []}, now=NOW + timedelta(seconds=4))
+    assert not repo.record_execution_timing(second, started_at_ms=started, elapsed_ms=4000, now=NOW + timedelta(seconds=4))
+    assert repo.record_execution_timing(
+        second, started_at_ms=started, elapsed_ms=4000,
+        finished=True, outcome="completed", now=NOW + timedelta(seconds=4),
+    )
+    with factory() as session:
+        entry = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["execution_timing"]["entries"][
+            f"understand:{second.chunk_parse_task_id}:{second.lease_version}"
+        ]
+        assert entry["finished"] and entry["elapsed_ms"] == 4000
+
+
+def test_execution_timing_refine_final_survives_the_next_index_lease(repository):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=2)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=2)
+    at = NOW + timedelta(minutes=1)
+    refine = queue.claim_interval_refine("refiner", lease_duration=timedelta(minutes=5), now=at)
+    started = datetime_to_unix_time_ms(at)
+    assert repo.record_execution_timing(refine, started_at_ms=started, elapsed_ms=100, now=at)
+    repo.commit_interval_refinement(
+        refine, **_refinement_inputs(repo, refine, now=at),
+        interval_content={"updates": []}, member_updates={}, now=at,
+    )
+    index = queue.claim_interval_index("indexer", lease_duration=timedelta(minutes=5), now=at)
+    assert index is not None and index.lease_version > refine.lease_version
+    assert not repo.record_execution_timing(refine, started_at_ms=started, elapsed_ms=200, now=at)
+    assert repo.record_execution_timing(
+        refine, started_at_ms=started, elapsed_ms=300,
+        finished=True, outcome="completed", now=at,
+    )
+    assert not repo.record_execution_timing(
+        replace(refine, worker_id="stale-other-worker"), started_at_ms=started,
+        elapsed_ms=9900, finished=True, outcome="completed", now=at,
+    )
+    assert not repo.record_execution_timing(
+        replace(refine, lease_version=refine.lease_version + 20), started_at_ms=started,
+        elapsed_ms=9900, finished=True, outcome="completed", now=at,
+    )
+    with pytest.raises(ValueError, match="only Chunk Understanding"):
+        repo.record_execution_timing(index, started_at_ms=started, elapsed_ms=100, now=at)
+    with factory() as session:
+        entries = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["execution_timing"]["entries"]
+        assert list(entries) == [f"refine:{refine.interval_parse_task_id}:{refine.lease_version}"]
+        assert next(iter(entries.values()))["elapsed_ms"] == 300
+        current = session.get(IntervalParseTask, index.interval_parse_task_id)
+        assert current.lease_version == index.lease_version and current.lease_owner == "indexer"
+
+
+@pytest.mark.parametrize("values", [
+    {"started_at_ms": True}, {"started_at_ms": -1}, {"started_at_ms": 1.5},
+    {"elapsed_ms": True}, {"elapsed_ms": -1}, {"elapsed_ms": 1.5},
+    {"finished": 1}, {"outcome": None}, {"outcome": " "},
+])
+def test_execution_timing_rejects_invalid_sample_parameters(repository, values):
+    _factory, queue, repo, _task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
+    assert queue.dispatch_chunk(prepared.chunk_parse_task_ids[0], video_lease, now=NOW)
+    lease = queue.claim_chunk("timed", lease_duration=timedelta(minutes=5), now=NOW)
+    with pytest.raises(ValueError):
+        repo.record_execution_timing(
+            lease, **{"started_at_ms": 0, "elapsed_ms": 0, **values}, now=NOW,
+        )
 
 
 def test_refinement_checks_all_member_versions_before_any_write(repository):
@@ -1086,10 +1240,16 @@ def test_index_rebuild_rejects_parsing_failure_and_unfinished_failure_drain(
         ) == before
 
 
-def test_model_call_budget_and_concurrency_survive_worker_reentry(repository):
-    _factory, _queue, repo, task_id, video_lease, _prepared = _prepare(
+def test_model_call_history_and_concurrency_survive_worker_reentry(repository):
+    factory, _queue, repo, task_id, video_lease, _prepared = _prepare(
         repository, chunk_count=2
     )
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, task_id)
+        task.parse_config = {
+            **task.parse_config,
+            "execution": {**task.parse_config["execution"], "max_model_calls": 100},
+        }
     first = repo.reserve_model_call(
         video_lease,
         "call-1",
@@ -1120,7 +1280,7 @@ def test_model_call_budget_and_concurrency_survive_worker_reentry(repository):
         task_id, "call-1", video_lease.worker_id, now=NOW + timedelta(minutes=2)
     )
 
-    # Reusing the stable Gateway call_id does not consume budget again.
+    # Reusing the stable Gateway call_id does not duplicate request history.
     repeated = repo.reserve_model_call(
         video_lease,
         "call-1",
@@ -1131,23 +1291,46 @@ def test_model_call_budget_and_concurrency_survive_worker_reentry(repository):
     assert repo.release_model_call(
         task_id, "call-1", video_lease.worker_id, now=NOW + timedelta(minutes=2)
     )
-    for call_id in ("call-2", "call-3"):
-        repo.reserve_model_call(
+    for call_no in range(2, 102):
+        call_id = f"call-{call_no}"
+        reservation = repo.reserve_model_call(
             video_lease,
             call_id,
             lease_duration=timedelta(minutes=1),
             now=NOW + timedelta(minutes=2),
         )
+        assert (reservation.used_calls, reservation.active_calls) == (call_no, 1)
         assert repo.release_model_call(
             task_id, call_id, video_lease.worker_id, now=NOW + timedelta(minutes=2)
         )
-    with pytest.raises(ModelCallBudgetExhaustedError):
+    repeated = repo.reserve_model_call(
+        video_lease, "call-101", lease_duration=timedelta(minutes=1),
+        now=NOW + timedelta(minutes=2),
+    )
+    assert repeated.used_calls == 101 and not repeated.first_reservation
+    with pytest.raises(ModelCallConcurrencyBusyError):
         repo.reserve_model_call(
             video_lease,
-            "call-4",
+            "call-102",
             lease_duration=timedelta(minutes=1),
             now=NOW + timedelta(minutes=2),
         )
+    with pytest.raises(VideoParseLeaseLostError):
+        repo.reserve_model_call(
+            replace(video_lease, worker_id="stale-worker"), "call-102",
+            lease_duration=timedelta(minutes=1), now=NOW + timedelta(minutes=2),
+        )
+    assert repo.renew_model_call(
+        video_lease, "call-101", lease_duration=timedelta(minutes=1),
+        now=NOW + timedelta(seconds=150),
+    )
+    assert repo.release_model_call(
+        task_id, "call-101", video_lease.worker_id, now=NOW + timedelta(seconds=150)
+    )
+    with factory() as session:
+        calls = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["model_calls"]
+        assert calls["used_call_ids"] == [f"call-{call_no}" for call_no in range(1, 102)]
+        assert calls["active"] == {}
 
 
 def test_chunk_and_interval_model_slots_fence_the_actual_execution_lease(repository):

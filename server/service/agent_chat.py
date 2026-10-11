@@ -391,11 +391,22 @@ class AgentChatService:
             maximum=64,
         )
         with self._lock:
-            return self._repository.delete_conversation(
+            deleted = self._repository.delete_conversation(
                 normalized_conversation_id,
                 normalized_workspace,
                 owner_user_id=owner_user_id,
             )
+            runtime = self._supervisor_runtime or self._runtime
+            if isinstance(runtime, SupervisorRuntime):
+                try:
+                    runtime.delete_thread(normalized_conversation_id)
+                except Exception:
+                    _logger.warning(
+                        "Could not delete Supervisor thread conversation_id=%s",
+                        normalized_conversation_id,
+                        exc_info=True,
+                    )
+            return deleted
 
     def page_conversations(
         self, *, tenant_id: str, cursor: str | None = None, limit: int = 50,
@@ -631,6 +642,7 @@ class AgentChatService:
                     self._execute, execution, normalized_source, requested_top_k,
                     run_options, max_loop_turns, runtime, config,
                     owner_user_id=owner_user_id, conversation_tenant_id=normalized_workspace,
+                    playback_series_id=playback_series_id,
                 )
             except Exception:
                 self._executions.pop(started.assistant_message.message_id, None)
@@ -723,6 +735,7 @@ class AgentChatService:
         *,
         owner_user_id: str = LOCAL_USER_ID,
         conversation_tenant_id: str | None = None,
+        playback_series_id: str | None = None,
     ) -> AgentMessageSendState:
         initial = execution.initial
         assistant_id = initial.assistant_message.message_id
@@ -733,6 +746,7 @@ class AgentChatService:
         timer = execution.timing
         assert timer is not None
         terminal_timing: AgentMessageTimingState | None = None
+        committed_result: AgentMessageSendState | None = None
 
         def publish_runtime(event):
             nonlocal last_phase
@@ -756,23 +770,31 @@ class AgentChatService:
                 limit=config.history_message_limit,
                 owner_user_id=owner_user_id,
             )
+            context_series_ids = list(initial.user_message.series_ids)
+            if playback_series_id is not None and playback_series_id not in context_series_ids:
+                context_series_ids.append(playback_series_id)
+            series = [
+                self._library.get_series(series_id, tenant_id=tenant_id)
+                for series_id in context_series_ids
+            ]
+            series_context = deepcopy([{
+                "seriesId": item.series_id, "name": item.name,
+                "description": item.description,
+                "transcriptLanguageHint": item.transcript_language_hint,
+                "importantExtraData": item.important_extra_data,
+                "characterBible": item.character_bible,
+                "videos": [{
+                    "episodeOrder": video.episode_order,
+                    "originalFilename": video.original_filename,
+                    "parseStatus": video.parse_status,
+                } for video in item.videos],
+            } for item in series])
+
             def load_video_context() -> list[dict]:
-                series = [
-                    self._library.get_series(series_id, tenant_id=tenant_id)
-                    for series_id in initial.user_message.series_ids
-                ]
-                return [{
-                    "seriesId": item.series_id, "name": item.name,
-                    "description": item.description,
-                    "transcriptLanguageHint": item.transcript_language_hint,
-                    "importantExtraData": item.important_extra_data,
-                    "characterBible": item.character_bible,
-                    "videos": [{
-                        "episodeOrder": video.episode_order,
-                        "originalFilename": video.original_filename,
-                        "parseStatus": video.parse_status,
-                    } for video in item.videos],
-                } for item in series]
+                return deepcopy([
+                    item for item in series_context
+                    if item["seriesId"] in initial.user_message.series_ids
+                ])
 
             inputs = RunInputs(
                 conversation_id=conversation_id, assistant_message_id=assistant_id,
@@ -788,16 +810,7 @@ class AgentChatService:
                 } for item in history],
                 reference_context=execution.reference_context,
                 extra_context=initial.user_message.extra_context,
-                series_context=(
-                    [{
-                        "seriesId": series_id,
-                        "name": self._library.get_series(
-                            series_id, tenant_id=tenant_id,
-                        ).name,
-                    } for series_id in initial.user_message.series_ids]
-                    if isinstance(runtime, SupervisorRuntime)
-                    else load_video_context()
-                ),
+                series_context=series_context,
             )
             try:
                 run_kwargs = {
@@ -860,11 +873,32 @@ class AgentChatService:
             else:
                 content = final.agent_reply.message
                 search_result = final.model_dump(mode="json", by_alias=True)
-            assistant = self._repository.complete_assistant_message(
-                assistant_id, content=content,
-                search_result=search_result, now=self._clock(),
-                timing=terminal_timing,
-            )
+            # Keep a new turn or deletion behind SQL and harness confirmation.
+            with self._lock:
+                assistant = self._repository.complete_assistant_message(
+                    assistant_id, content=content,
+                    search_result=search_result, now=self._clock(),
+                    timing=terminal_timing,
+                )
+                committed_result = AgentMessageSendState(initial.user_message, assistant)
+                if isinstance(runtime, SupervisorRuntime):
+                    try:
+                        runtime.confirm_turn(conversation_id, assistant_id, content)
+                    except Exception:
+                        _logger.warning(
+                            "Could not confirm Supervisor turn conversation_id=%s message_id=%s",
+                            conversation_id, assistant_id,
+                            exc_info=True,
+                        )
+                        # SQL owns the completed answer; rebuild from it next turn.
+                        try:
+                            runtime.delete_thread(conversation_id)
+                        except Exception:
+                            _logger.warning(
+                                "Could not clear Supervisor thread conversation_id=%s",
+                                conversation_id,
+                                exc_info=True,
+                            )
             for event in pending_answer_events if search_result is not None else ():
                 if event["type"] == "answer.evidence":
                     hits = event["searchResult"].get("hits")
@@ -881,10 +915,24 @@ class AgentChatService:
                 run_options.max_model_calls_per_turn,
                 run_options.max_tool_calls_per_turn,
             )
-            result = AgentMessageSendState(initial.user_message, assistant)
-            execution.publish(_terminal_event(result))
-            return result
+            execution.publish(_terminal_event(committed_result))
+            return committed_result
         except Exception as exc:
+            if committed_result is not None:
+                _logger.exception(
+                    "Could not publish completed Agent answer conversation_id=%s message_id=%s",
+                    conversation_id, assistant_id,
+                )
+                return committed_result
+            if isinstance(runtime, SupervisorRuntime):
+                try:
+                    runtime.discard_turn(conversation_id, assistant_id)
+                except Exception:
+                    _logger.warning(
+                        "Could not discard Supervisor turn conversation_id=%s message_id=%s",
+                        conversation_id, assistant_id,
+                        exc_info=True,
+                    )
             if isinstance(exc, AgentContextBudgetError):
                 public_code = "AGENT_CONTEXT_BUDGET_EXCEEDED"
                 public_message = (

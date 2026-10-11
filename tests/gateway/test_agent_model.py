@@ -983,6 +983,78 @@ def test_invalid_local_tool_call_builds_error_tool_message(bad_call) -> None:
     assert message.status == "error"
 
 
+def test_function_tool_spec_preserves_json_schema_completion_constraints() -> None:
+    schema = {
+        "type": "object",
+        "$defs": {"Complete": {"type": "boolean", "const": True}},
+        "properties": {"complete": {"$ref": "#/$defs/Complete"}},
+        "required": ["complete"],
+        "additionalProperties": False,
+    }
+    tool = StructuredTool.from_function(
+        lambda complete: complete,
+        name="CanvasCompletion",
+        description="Finish after verifying the Canvas.",
+        args_schema=schema,
+    )
+
+    spec = tool_loop_module._function_tool_spec(tool)
+
+    assert spec["function"]["parameters"] == {
+        "type": "object",
+        "properties": {"complete": {"type": "boolean", "const": True}},
+        "required": ["complete"],
+        "additionalProperties": False,
+    }
+    assert schema["properties"]["complete"] == {"$ref": "#/$defs/Complete"}
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error_text"),
+    [
+        ({"complete": False}, None),
+        ("not-json", "Invalid arguments for CanvasCompletion"),
+        ("[]", "provide a JSON object"),
+        ("null", "provide a JSON object"),
+    ],
+)
+def test_json_schema_tool_arguments_reach_structured_output_validation(
+    arguments, error_text
+) -> None:
+    tool = StructuredTool.from_function(
+        lambda complete: complete,
+        name="CanvasCompletion",
+        description="Finish after verifying the Canvas.",
+        args_schema={
+            "type": "object",
+            "properties": {"complete": {"type": "boolean", "const": True}},
+            "required": ["complete"],
+            "additionalProperties": False,
+        },
+    )
+
+    _, _, _, calls = tool_loop_module._validated_agent_turn(
+        _agent_response(
+            calls=[_tool_call(arguments, tool_name="CanvasCompletion")],
+            finish_reason="tool_calls",
+        ),
+        tools=[tool],
+        seen_tool_call_ids=set(),
+    )
+
+    call_id, validated_tool, result = calls[0]
+    assert call_id == "call-1"
+    if error_text is None:
+        assert validated_tool is tool
+        assert result == {"complete": False}
+    else:
+        assert validated_tool is None
+        assert isinstance(result, ToolMessage)
+        assert result.tool_call_id == "call-1"
+        assert result.status == "error"
+        assert error_text in result.content
+
+
 def test_agent_loop_invokes_tool_with_complete_tool_call() -> None:
     model, _ = _function_model(
         _agent_response(
