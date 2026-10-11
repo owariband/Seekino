@@ -19,8 +19,8 @@ const queryClient = new QueryClient({
 });
 
 function IdentityApp() {
-  const { scopeKey, identity, activeTenantId } = useAuth();
-  const ownerScope = `${identity.userId}:${activeTenantId}`;
+  const { scopeKey, activeSource } = useAuth();
+  const ownerScope = `${activeSource.key}:${activeSource.identity.userId}:${activeSource.tenantId}`;
   const previousScope = useRef(ownerScope);
   const location = useLocation();
   const navigate = useNavigate();

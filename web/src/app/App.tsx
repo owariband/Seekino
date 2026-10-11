@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { LibraryPage } from "../features/library/LibraryPage";
 import { WatchHomePage } from "../features/player/WatchHomePage";
 import { WatchPage } from "../features/player/WatchPage";
+import { SeriesPage } from "../features/player/SeriesPage";
 import { SearchPage } from "../features/search/SearchPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { TasksPage } from "../features/tasks/TasksPage";
@@ -20,6 +21,7 @@ export function App() {
         <Route element={<AppShell />}>
           <Route index element={<Navigate to="/watch" replace />} />
           <Route path="watch" element={<WatchHomePage />} />
+          <Route path="series/:seriesId" element={<SeriesPage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="library" element={canManage ? <LibraryPage /> : <Navigate to="/watch" replace />} />
           <Route path="watch/:seriesId/:videoId" element={<WatchPage />} />

@@ -71,7 +71,6 @@
     --radius-large: 24px;
     --radius-medium: 16px;
     --radius-small: 10px;
-    --sidebar-width: 220px;
   }
 
   :root[data-theme="dark"] {
@@ -257,7 +256,7 @@
 
   @media (max-width: 760px) {
     .page {
-      padding: 28px 18px 106px;
+      padding: 28px 18px 40px;
     }
   }
 

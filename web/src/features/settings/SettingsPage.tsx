@@ -1,10 +1,11 @@
 import { Check, Database, Moon, Server, ShieldCheck, Sun } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 
-import { API_BASE_URL, ApiClientError, errorMessage, getAgentGlobalSettings, updateAgentGlobalSettings, TENANT_ID } from "../../api/client";
+import { ApiClientError, errorMessage, getAgentGlobalSettings, updateAgentGlobalSettings } from "../../api/client";
 import type { AgentGlobalSettings, AgentGlobalSettingsValues, AgentReasoningEffort } from "../../api/contracts";
 import { useTheme } from "../../app/theme";
 import { useWorkspace } from "../../app/workspace";
+import { useAuth } from "../auth/AuthProvider";
 import styles from "./settings.module.css";
 
 type ReasoningSettingKey = "query_reasoning_effort" | "evaluator_reasoning_effort" | "chat_reasoning_effort";
@@ -214,7 +215,12 @@ function GlobalAgentSettings({ mode }: { mode: string }) {
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { mode } = useWorkspace();
-  const shownApiUrl = API_BASE_URL || "同源 / Vite 代理 → http://127.0.0.1:9621";
+  const { activeSource, activeTenantId, accountIdentity, accountConnection, accountStatus, accountError, retryAccount } = useAuth();
+  const shownApiUrl = new URL(activeSource.connection.baseUrl || "/", window.location.origin).href.replace(/\/$/, "");
+  const accountLabel = accountStatus === "unconfigured" ? "未连接账号服务"
+    : accountStatus === "checking" ? "正在连接"
+    : accountStatus === "unavailable" ? "连接不可用"
+    : accountIdentity && !accountIdentity.isGuest ? accountIdentity.email : "未登录";
 
   return (
     <main className="page">
@@ -240,14 +246,18 @@ export function SettingsPage() {
         </section>
 
         <section className={styles.settingsSection}>
-          <div className={styles.sectionIntro}><span>02</span><div><h2>连接</h2><p>页面始终请求真实 anivag API；服务不可用时展示错误和空态，不注入演示数据。</p></div></div>
+          <div className={styles.sectionIntro}><span>02</span><div><h2>连接</h2><p>账号登录和资料来源分别管理，登录不会移动本机资料。</p></div></div>
           <dl className={styles.connectionList}>
-            <div><dt><Server size={16} />API 状态</dt><dd data-mode={mode}><i />{mode === "live" ? "已连接" : mode === "offline" ? "不可用" : "正在检查"}</dd></div>
-            <div><dt><Database size={16} />API 地址</dt><dd>{shownApiUrl}</dd></div>
-            <div><dt><ShieldCheck size={16} />Workspace</dt><dd>{TENANT_ID}</dd></div>
+            <div><dt><Database size={16} />资料来源</dt><dd>{activeSource.kind === "local" ? "本机资料" : activeSource.kind === "public" ? "公开资料" : "我的资料"}</dd></div>
+            <div><dt><Server size={16} />资料连接</dt><dd data-mode={mode}><i />{mode === "live" ? "已连接" : mode === "offline" ? "不可用" : "正在检查"}</dd></div>
+            <div><dt><Database size={16} />资料地址</dt><dd>{shownApiUrl}</dd></div>
+            <div><dt><ShieldCheck size={16} />资料空间</dt><dd>{activeTenantId}</dd></div>
+            <div><dt><ShieldCheck size={16} />账号</dt><dd>{accountLabel}</dd></div>
+            {accountConnection ? <div><dt><Server size={16} />账号地址</dt><dd>{new URL(accountConnection.baseUrl || "/", window.location.origin).href.replace(/\/$/, "")}</dd></div> : null}
           </dl>
+          {accountStatus === "unavailable" ? <p className={styles.modeNote}>{accountError || "账号服务暂时不可用。"} <button className="button-secondary" type="button" onClick={retryAccount}>重新连接</button></p> : null}
           {mode === "offline" ? (
-            <p className={styles.modeNote}>当前无法连接 API。请确认 anivag Server 已启动；恢复连接后页面会重新读取真实 Series 和任务状态。</p>
+            <p className={styles.modeNote}>当前资料连接不可用。请检查服务和网络；恢复连接后会重新读取资料和任务状态。</p>
           ) : null}
         </section>
 

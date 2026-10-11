@@ -1,12 +1,14 @@
-import { ChevronLeft, ChevronRight, ListVideo, MessageCircle, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clapperboard, ListVideo, MessageCircle, PanelRightClose, Play, X } from "lucide-react";
 import { type CSSProperties, type KeyboardEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
-import { errorMessage, getSeries, shouldRetryApiRequest } from "../../api/client";
+import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
 import { episodeLabel, formatTimecode } from "../../shared/format";
 import { SearchPage, type SearchPageHandle } from "../search/SearchPage";
 import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
+import { PlaybackFrame } from "./PlaybackFrame";
 import styles from "./watch.module.css";
 
 function watchPath(seriesId: string, videoId: string): string {
@@ -43,12 +45,13 @@ export function WatchPage() {
   const layoutRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<VideoPlayerHandle>(null);
   const chatRef = useRef<SearchPageHandle>(null);
+  const panelToggleRef = useRef<HTMLButtonElement>(null);
   const playbackContextRef = useRef<PlaybackExtraContext | null>(null);
   const previousVideoId = useRef(videoId);
   const draggingRef = useRef(false);
   const pendingChatFocusRef = useRef(false);
   const resumeAfterChatRef = useRef(false);
-  const [panelOpen, setPanelOpen] = useState(() => window.innerWidth > 800);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<"chat" | "episodes">("chat");
   const [panelWidth, setPanelWidth] = useState(savedPanelWidth);
   const [pageFullscreen, setPageFullscreen] = useState(false);
@@ -64,6 +67,8 @@ export function WatchPage() {
   );
   const selectedIndex = episodes.findIndex((item) => item.videoId === videoId);
   const selected = selectedIndex >= 0 ? episodes[selectedIndex]! : null;
+  const followingEpisodes = selectedIndex >= 0 ? episodes.slice(selectedIndex + 1) : episodes;
+  const suggestedEpisodes = followingEpisodes.length ? followingEpisodes : episodes;
   const searchParams = new URLSearchParams(search);
   const rawAtSeconds = searchParams.get("atSeconds");
   const parsedAtSeconds = rawAtSeconds !== null && /^\d+$/.test(rawAtSeconds) ? Number(rawAtSeconds) : undefined;
@@ -119,6 +124,12 @@ export function WatchPage() {
     playerRef.current?.resume();
   };
 
+  const closePanel = () => {
+    pendingChatFocusRef.current = false;
+    setPanelOpen(false);
+    panelToggleRef.current?.focus();
+  };
+
   const switchPaneOnTab = (event: KeyboardEvent<HTMLElement>, destination: "chat" | "player") => {
     if (event.key !== "Tab") return;
     event.preventDefault();
@@ -129,6 +140,10 @@ export function WatchPage() {
   useEffect(() => {
     playbackContextRef.current = null;
   }, [atSeconds, selected?.episodeOrder, selected?.seriesId, selected?.videoId]);
+
+  useEffect(() => {
+    if (selected) layoutRef.current?.scrollIntoView?.({ block: "start", behavior: "instant" });
+  }, [atSeconds, selected?.seriesId, selected?.videoId]);
 
   useEffect(() => {
     if (rawAtMs === null) return;
@@ -189,36 +204,19 @@ export function WatchPage() {
   if (seriesQuery.isError) return <main className={`page ${styles.page}`}><p role="alert">读取视频系列失败：{errorMessage(seriesQuery.error)}</p></main>;
   if (!series) return <main className={`page ${styles.page}`}><p role="alert">视频系列不存在。</p></main>;
 
+  const headerActions = !pageFullscreen ? document.getElementById("watch-header-actions") : null;
+  const panelToggle = <button ref={panelToggleRef} className={styles.panelToggle} type="button" onClick={() => { if (panelOpen) closePanel(); else focusChat(); }} aria-expanded={panelOpen} aria-controls="watch-side-panel" aria-label={panelOpen ? "收起观看侧栏" : "打开观看侧栏"} title={panelOpen ? "收起对话" : "与 Seekino 对话"}>
+    {panelOpen ? <PanelRightClose size={21} aria-hidden="true" /> : <MessageCircle size={21} aria-hidden="true" />}
+  </button>;
+
   return (
     <main ref={pageRef} className={`page ${styles.page}`}>
-      <header className={styles.header}>
-        <div className={styles.headerTitle}>
-          <Link to="/watch" className={styles.back}><ChevronLeft size={16} />返回视频</Link>
-          <span className={styles.headerDivider} aria-hidden="true" />
-          <h1>{series.name}</h1>
-          {selected ? <span className={styles.headerEpisode}>{episodeLabel(selected.episodeOrder)}</span> : null}
-        </div>
-        <button className={styles.panelToggle} type="button" onClick={() => { if (panelOpen) setPanelOpen(false); else focusChat(); }} aria-expanded={panelOpen} aria-controls="watch-side-panel" aria-label={panelOpen ? "收起观看侧栏" : "打开观看侧栏"}>
-          {panelOpen ? <PanelRightClose size={18} aria-hidden="true" /> : <PanelRightOpen size={18} aria-hidden="true" />}
-          <span>{panelOpen ? "收起侧栏" : "打开 Chat"}</span>
-        </button>
-      </header>
-
       <div ref={layoutRef} className={styles.layout} data-panel-open={panelOpen} style={{ "--watch-panel-width": `${panelWidth}px` } as CSSProperties}>
+        {headerActions ? createPortal(panelToggle, headerActions) : <div className={styles.floatingTools}>{panelToggle}</div>}
         <section className={styles.viewer} aria-label="视频播放器" onKeyDownCapture={(event) => switchPaneOnTab(event, "chat")}>
           {episodes.length === 0 ? <p className={styles.unavailable} role="status">这个系列还没有视频。</p> : !selected ? (
-            <p className={styles.unavailable} role="alert">找不到这集视频，请在右侧选集重新选择。</p>
+            <p className={styles.unavailable} role="alert">找不到这集视频，请在下方选集重新选择。</p>
           ) : <VideoPlayer ref={playerRef} key={`${selected.videoId}:${atSeconds ?? "resume"}`} video={selected} atSeconds={atSeconds} fullscreen={pageFullscreen} onToggleFullscreen={togglePageFullscreen} onPlaybackPositionChange={updatePlaybackContext} />}
-          {selected ? <>
-            <div className={styles.videoMeta}>
-              <div><strong>{episodeLabel(selected.episodeOrder)}</strong><span>{selected.originalFilename}</span></div>
-              <span>{formatTimecode(selected.durationSeconds)}</span>
-            </div>
-            <nav className={styles.neighbors} aria-label="切换集数">
-              {selectedIndex > 0 ? <Link to={watchPath(seriesId, episodes[selectedIndex - 1]!.videoId)}><ChevronLeft size={16} />上一集</Link> : <span />}
-              {selectedIndex < episodes.length - 1 ? <Link to={watchPath(seriesId, episodes[selectedIndex + 1]!.videoId)}>下一集<ChevronRight size={16} /></Link> : <span />}
-            </nav>
-          </> : null}
         </section>
 
         {panelOpen ? <div
@@ -247,7 +245,8 @@ export function WatchPage() {
           }}
         /> : null}
 
-        <aside id="watch-side-panel" className={styles.sidePanel} aria-label="观看侧栏" hidden={!panelOpen}>
+        <aside id="watch-side-panel" className={styles.sidePanel} aria-label="观看侧栏" hidden={!panelOpen} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.stopPropagation(); closePanel(); } }}>
+          <div className={styles.panelHeader}><strong>边看边聊</strong><button type="button" onClick={closePanel} aria-label="关闭对话面板"><X size={20} aria-hidden="true" /></button></div>
           <div className={styles.sideTabs} role="tablist" aria-label="观看侧栏内容">
             <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={focusChat}><MessageCircle size={15} aria-hidden="true" />Chat</button>
             <button type="button" role="tab" id="watch-episodes-tab" aria-controls="watch-episodes-panel" aria-selected={panelTab === "episodes"} onClick={() => setPanelTab("episodes")}><ListVideo size={15} aria-hidden="true" />选集</button>
@@ -280,6 +279,34 @@ export function WatchPage() {
             </ol>
           </div>
         </aside>
+      </div>
+      <div className={styles.watchDetails}>
+        <section className={styles.watchSynopsis} aria-label="视频简介">
+          <Link className={styles.seriesName} to={`/series/${encodeURIComponent(seriesId)}`}>{series.name}<ChevronRight size={18} aria-hidden="true" /></Link>
+          <h1>{selected ? `${episodeLabel(selected.episodeOrder)} · ${selected.originalFilename}` : series.name}</h1>
+          <div className={styles.videoMeta}><span>{selected ? formatTimecode(selected.durationSeconds) : null}</span><span>共 {episodes.length} 集</span></div>
+          {series.description ? <p>{series.description}</p> : null}
+          {selected ? <nav className={styles.neighbors} aria-label="切换集数">
+            {selectedIndex > 0 ? <Link to={watchPath(seriesId, episodes[selectedIndex - 1]!.videoId)}><ChevronLeft size={16} />上一集</Link> : null}
+            {selectedIndex < episodes.length - 1 ? <Link to={watchPath(seriesId, episodes[selectedIndex + 1]!.videoId)}>下一集<ChevronRight size={16} /></Link> : null}
+          </nav> : null}
+        </section>
+        <section className={styles.upNext} aria-label="后续集数">
+          <h2>{followingEpisodes.length ? "接下来" : "本系列选集"}</h2>
+          <ol className={styles.nextEpisodes}>
+            {suggestedEpisodes.map((episode) => <li key={episode.videoId}>
+              <Link to={watchPath(seriesId, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
+                <span className={styles.nextPreview} aria-hidden="true">
+                  <Clapperboard size={24} strokeWidth={1} />
+                  {episode.thumbnail ? <img src={mediaUrl(episode.thumbnail.url) ?? undefined} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />
+                    : episode.playbackStatus === "READY" && episode.playbackUrl ? <PlaybackFrame className={styles.seriesFrame} src={mediaUrl(episode.playbackUrl)} positionSeconds={episode.durationSeconds * 0.1} /> : null}
+                  <span className={styles.nextPlay}><Play size={17} fill="currentColor" /></span>
+                </span>
+                <span className={styles.nextTitle}><small>{episodeLabel(episode.episodeOrder)}{episode.videoId === selected?.videoId ? " · 当前集" : ""}</small><strong>{episode.originalFilename}</strong><span>{formatTimecode(episode.durationSeconds)}{episode.playbackStatus !== "READY" ? " · 播放未就绪" : ""}</span></span>
+              </Link>
+            </li>)}
+          </ol>
+        </section>
       </div>
     </main>
   );

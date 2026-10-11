@@ -10,6 +10,19 @@ export interface AuthIdentity {
   csrfToken: string;
   permissions: { canUpload: boolean; canManage: boolean; canConfigure: boolean };
 }
+
+export interface ApiConnection {
+  id: string;
+  baseUrl: string;
+}
+
+export interface DataSource {
+  key: string;
+  kind: "local" | "public" | "personal";
+  connection: ApiConnection;
+  tenantId: string;
+  identity: AuthIdentity;
+}
 export type ThemeMode = "light" | "dark";
 
 export type SeriesStatus = "EMPTY" | "INDEXING" | "PARTIAL" | "READY" | "FAILED";
@@ -315,7 +328,26 @@ export interface VideoParseTaskView {
   processingTimingComplete: boolean;
   lastError: Failure | null;
   isTest: boolean;
-  detail: Record<string, unknown>;
+  detail: Record<string, unknown> & {
+    progress?: {
+      completedChunks: number;
+      totalChunks: number;
+      completedRefines: number;
+      totalRefines: number;
+      completedUnits: number;
+      totalUnits: number;
+      percent: number | null;
+      topologyReady: boolean;
+      indexedIntervals: number;
+    };
+    timing?: {
+      recorded: boolean;
+      complete: boolean;
+      activeExecutions: number;
+      /** Union of confirmed understanding and Refine execution spans. */
+      effectiveDurationMs: number | null;
+    };
+  };
   createTime: UnixTimeMs;
   updateTime: UnixTimeMs;
   /** Null on retry/reparse action responses; list/get/events always include this context. */

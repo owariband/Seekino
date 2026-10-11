@@ -2,8 +2,9 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { VideoSummary } from "../../api/contracts";
-import { readVideoProgress, saveVideoProgress } from "./playbackProgress";
+import { configureDataSource, PRIMARY_CONNECTION } from "../../api/client";
+import type { AuthIdentity, DataSource, VideoSummary } from "../../api/contracts";
+import { playbackProgressStorageKey, readVideoProgress, readWatchHistory, saveVideoProgress } from "./playbackProgress";
 import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
 
 function video(videoId = "video-1", playbackStatus: VideoSummary["playbackStatus"] = "READY"): VideoSummary {
@@ -22,14 +23,35 @@ function metadata(media: HTMLVideoElement) {
   fireEvent.loadedMetadata(media);
 }
 
+const localIdentity: AuthIdentity = {
+  userId: "local-user", email: null, isGuest: false, tenantId: "local-default",
+  publicTenantId: "public-courses", mode: "local", csrfToken: "",
+  permissions: { canUpload: true, canManage: true, canConfigure: true },
+};
+const localSource: DataSource = {
+  key: `${PRIMARY_CONNECTION.id}:local`, kind: "local", connection: PRIMARY_CONNECTION,
+  tenantId: "local-default", identity: localIdentity,
+};
+
+function personalSource(userId: string): DataSource {
+  return {
+    key: "remote:personal", kind: "personal", connection: { id: "remote", baseUrl: "/remote" },
+    tenantId: "personal-tenant", identity: {
+      ...localIdentity, userId, email: `${userId}@example.com`, mode: "cloud",
+      tenantId: "personal-tenant", csrfToken: `${userId}-csrf`,
+    },
+  };
+}
+
 let play: ReturnType<typeof vi.spyOn>;
 let pause: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   localStorage.clear();
+  configureDataSource(localSource);
   play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); configureDataSource(localSource); vi.restoreAllMocks(); });
 
 describe("VideoPlayer", () => {
   it("keeps millisecond duration and seek precision while rounding only the displayed time", () => {
@@ -148,6 +170,61 @@ describe("VideoPlayer", () => {
     expect(readVideoProgress("video-1")?.positionSeconds).toBe(8_000);
     view.unmount();
     expect(readVideoProgress("video-1")?.positionSeconds).toBe(8_000);
+  });
+
+  it("keeps legacy local reads and final writes local after the active source changes", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
+    localStorage.setItem("anivag-watch-progress:v2", JSON.stringify([
+      { seriesId: "series-1", videoId: "video-1", positionSeconds: 12, durationSeconds: 120, updatedAt: 100 },
+    ]));
+    const localKey = playbackProgressStorageKey();
+    const view = render(<VideoPlayer video={video()} />);
+    const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
+    act(() => {
+      configureDataSource(personalSource("user-a"));
+      metadata(media);
+      expect(media.currentTime).toBe(12);
+      expect(localStorage.getItem("anivag-watch-progress:v2")).toBeNull();
+      expect(readWatchHistory()).toEqual([]);
+
+      media.currentTime = 18;
+      fireEvent.timeUpdate(media);
+      window.dispatchEvent(new Event("pagehide"));
+      expect(readVideoProgress("video-1", localKey)?.positionSeconds).toBe(18_000);
+      expect(readWatchHistory()).toEqual([]);
+      media.currentTime = 19;
+      fireEvent.timeUpdate(media);
+      view.unmount();
+    });
+    expect(readVideoProgress("video-1", localKey)?.positionSeconds).toBe(19_000);
+    expect(readWatchHistory()).toEqual([]);
+    expect(localStorage.getItem(playbackProgressStorageKey())).toBeNull();
+  });
+
+  it("preserves separate progress for equal video IDs when switching accounts before unmount", () => {
+    configureDataSource(personalSource("user-a"));
+    const firstKey = playbackProgressStorageKey();
+    saveVideoProgress({ seriesId: "series-1", videoId: "video-1", positionSeconds: 12_000, durationSeconds: 120_000 });
+    configureDataSource(personalSource("user-b"));
+    saveVideoProgress({ seriesId: "series-1", videoId: "video-1", positionSeconds: 70_000, durationSeconds: 120_000 });
+    configureDataSource(personalSource("user-a"));
+    const view = render(<VideoPlayer video={video()} />);
+    const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
+    metadata(media);
+    expect(media.currentTime).toBe(12);
+
+    configureDataSource(personalSource("user-b"));
+    media.currentTime = 32;
+    fireEvent.timeUpdate(media);
+    fireEvent.pause(media);
+    view.unmount();
+    expect(readVideoProgress("video-1", firstKey)?.positionSeconds).toBe(32_000);
+    expect(readVideoProgress("video-1")?.positionSeconds).toBe(70_000);
+
+    render(<VideoPlayer video={video()} />);
+    const next = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
+    metadata(next);
+    expect(next.currentTime).toBe(70);
   });
 
   it("pauses and reads the integer media position through its imperative handle", () => {

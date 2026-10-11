@@ -104,7 +104,7 @@ describe("V2 task observation", () => {
       nextCursor: null,
     }));
     vi.stubGlobal("fetch", fetchMock);
-    renderPage();
+    const { container } = renderPage();
     const user = userEvent.setup();
 
     await screen.findByText("pending.mp4");
@@ -112,7 +112,9 @@ describe("V2 task observation", () => {
       "/api/jobs/video-parse/list?tenantId=local-default&limit=100",
     );
     expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中3");
-    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("固定切片35");
+    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("已完成1");
+    expect(screen.getByRole("region", { name: "任务概况" })).not.toHaveTextContent("固定切片");
+    expect(container).not.toHaveTextContent(/任务身份|租约版本|V2 任务状态|持久状态|尝试次数|流水线/);
 
     for (const [label, filename] of [
       ["排队中", "pending.mp4"],
@@ -128,7 +130,7 @@ describe("V2 task observation", () => {
     }
   });
 
-  it("shows only state-backed V2 progress instead of inventing exact chunk progress", async () => {
+  it("keeps the persisted-status fallback for responses without progress statistics", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => response({
       items: [task("PARSING")],
       total: 1,
@@ -140,13 +142,157 @@ describe("V2 task observation", () => {
     expect(await screen.findByRole("heading", { name: "正在解析画面与对白" })).toBeInTheDocument();
     expect(screen.getByText("—")).toBeInTheDocument();
     expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("固定切片 5 段");
-    expect(screen.getByText("321 毫秒（进行中）")).toBeInTheDocument();
+    expect(screen.getByText("321 毫秒")).toBeInTheDocument();
     expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: "0%" });
+  });
+
+  it("shows combined persisted progress and gains one unit on the next snapshot", async () => {
+    let serverTask: VideoParseTaskView = {
+      ...task("PARSING_FAILED"),
+      chunkCount: 24,
+      detail: {
+        progress: {
+          completedChunks: 24, totalChunks: 24,
+          completedRefines: 8, totalRefines: 22,
+          completedUnits: 32, totalUnits: 46,
+          percent: 32 / 46 * 100, topologyReady: true, indexedIntervals: 0,
+        },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [serverTask], total: 1, hasMore: false, nextCursor: null,
+    })));
+    const { container } = renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByRole("heading", { name: "解析异常" });
+    expect(screen.getByLabelText("解析进度")).toHaveTextContent("69.6%");
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("理解 24 / 24");
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("Refine 8 / 22");
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("完成单元 32 / 46");
+    expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: `${32 / 46 * 100}%` });
+
+    serverTask = {
+      ...serverTask,
+      detail: {
+        progress: {
+          ...serverTask.detail.progress!,
+          completedRefines: 9, completedUnits: 33, percent: 33 / 46 * 100,
+        },
+      },
+    };
+    await user.click(screen.getByRole("button", { name: "同步状态" }));
+    await waitFor(() => expect(screen.getByLabelText("解析进度")).toHaveTextContent("71.7%"));
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("Refine 9 / 22");
+  });
+
+  it("shows preparation instead of a percentage before the topology is ready", async () => {
+    const preparing: VideoParseTaskView = {
+      ...task("PREPARING"),
+      detail: {
+        progress: {
+          completedChunks: 0, totalChunks: 0,
+          completedRefines: 0, totalRefines: 0,
+          completedUnits: 0, totalUnits: 0,
+          percent: null, topologyReady: false, indexedIntervals: 0,
+        },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [preparing], total: 1, hasMore: false, nextCursor: null,
+    })));
+    renderPage();
+
+    await screen.findByText(preparing.originalFilename!);
+    expect(screen.getByLabelText("解析进度")).toHaveTextContent("准备中");
+    expect(screen.getByLabelText("解析进度")).not.toHaveTextContent("%");
+  });
+
+  it("keeps indexing in progress when all parsing units are complete", async () => {
+    const indexing: VideoParseTaskView = {
+      ...task("INDEXING"),
+      detail: {
+        progress: {
+          completedChunks: 5, totalChunks: 5,
+          completedRefines: 3, totalRefines: 3,
+          completedUnits: 8, totalUnits: 8,
+          percent: 100, topologyReady: true, indexedIntervals: 1,
+        },
+        timing: { recorded: true, complete: true, activeExecutions: 0, effectiveDurationMs: 2_000 },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [indexing], total: 1, hasMore: false, nextCursor: null,
+    })));
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "正在发布检索结果" })).toBeInTheDocument();
+    expect(screen.getByLabelText("解析进度")).toHaveTextContent("100%");
+    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中1");
+    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("已完成0");
+    expect(screen.getByText("2 秒")).toBeInTheDocument();
+    expect(screen.queryByText("2 秒（进行中）")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [false, 0],
+    [false, 2],
+    [true, 1],
+    [true, 0],
+  ] as const)("uses confirmed timing with complete=%s and active executions=%s", async (complete, activeExecutions) => {
+    const parsing: VideoParseTaskView = {
+      ...task("PARSING"),
+      processingDurationMs: 90_000,
+      detail: {
+        timing: { recorded: true, complete, activeExecutions, effectiveDurationMs: 1_500 },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [parsing], total: 1, hasMore: false, nextCursor: null,
+    })));
+    renderPage();
+
+    expect(await screen.findByText("1.5 秒")).toBeInTheDocument();
+    expect(screen.queryByText(/1 分 30 秒/)).not.toBeInTheDocument();
+    expect(screen.getByText("有效解析时长").parentElement).toHaveAttribute("title", "仅统计实际解析时间，排队和停机不计入");
+  });
+
+  it.each([false, true])("does not present historical zero timing as recorded when timing metadata exists=%s", async (hasTiming) => {
+    const failed: VideoParseTaskView = {
+      ...task("PARSING_FAILED"),
+      processingDurationMs: 0,
+      processingTimingComplete: true,
+      detail: hasTiming ? {
+        timing: { recorded: false, complete: false, activeExecutions: 0, effectiveDurationMs: null },
+      } : {},
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [failed], total: 1, hasMore: false, nextCursor: null,
+    })));
+    renderPage();
+
+    expect(await screen.findByText("未记录")).toBeInTheDocument();
+    expect(screen.queryByText("0 毫秒")).not.toBeInTheDocument();
+  });
+
+  it("shows an unrecorded pending task as not started", async () => {
+    const pending: VideoParseTaskView = {
+      ...task("PENDING"),
+      detail: {
+        timing: { recorded: false, complete: false, activeExecutions: 0, effectiveDurationMs: null },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      items: [pending], total: 1, hasMore: false, nextCursor: null,
+    })));
+    renderPage();
+
+    expect(await screen.findByText("未开始")).toBeInTheDocument();
   });
 });
 
 describe("V2 task actions", () => {
-  it("labels an unaccepted pending task as an in-place V2 takeover", async () => {
+  it("offers starting an unaccepted pending task without exposing takeover internals", async () => {
     const pending = {
       ...task("PENDING", "takeover"),
       canReparse: true,
@@ -161,11 +307,12 @@ describe("V2 task actions", () => {
     const user = userEvent.setup();
 
     await user.click(await screen.findByRole("button", {
-      name: `开始 V2 解析 ${pending.originalFilename}`,
+      name: `开始解析 ${pending.originalFilename}`,
     }));
-    expect(screen.getByText(/沿用当前任务身份/)).toBeInTheDocument();
+    expect(screen.getByText("开始解析这一集？")).toBeInTheDocument();
+    expect(screen.getByText("将开始解析这集视频，新的模型调用会计入用量。")).toBeInTheDocument();
     expect(screen.getByRole("button", {
-      name: `确认开始 V2 解析 ${pending.originalFilename}`,
+      name: `确认开始解析 ${pending.originalFilename}`,
     })).toBeEnabled();
   });
 
@@ -292,13 +439,14 @@ describe("V2 task actions", () => {
       name: `重试解析 ${failed.originalFilename}`,
     })).not.toBeInTheDocument());
     expect(screen.getByText(failed.originalFilename!)).toBeInTheDocument();
-    expect(screen.getByText("3 / 4")).toBeInTheDocument();
     expect(uploadActions.syncRequeuedParse).toHaveBeenCalledWith(
       expect.objectContaining({
         videoParseTaskId: failed.videoParseTaskId,
         uploadSessionId: failed.uploadSessionId,
         originalFilename: failed.originalFilename,
         status: "PENDING",
+        attemptCount: 3,
+        maxAttempts: 4,
       }),
     );
   });
@@ -354,7 +502,7 @@ describe("V2 task actions", () => {
     await user.click(await screen.findByRole("button", {
       name: `整集重新解析 ${completed.originalFilename}`,
     }));
-    expect(screen.getByText(/建立新的 V2 任务身份/)).toBeInTheDocument();
+    expect(screen.getByText("将从视频开头重新解析，新的模型调用会计入用量。")).toBeInTheDocument();
     await user.click(screen.getByRole("button", {
       name: `确认整集重新解析 ${completed.originalFilename}`,
     }));

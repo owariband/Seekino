@@ -1,23 +1,70 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Clapperboard, Play } from "lucide-react";
-import { useState } from "react";
+import { ChevronLeft, ChevronRight, Clapperboard, Play } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
-import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
+import { getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
+import type { SeriesSummary } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
 import { episodeLabel, formatTimecode } from "../../shared/format";
-import { readVideoProgress, readWatchHistory } from "./playbackProgress";
+import { readWatchHistory } from "./playbackProgress";
+import { PlaybackFrame } from "./PlaybackFrame";
 import styles from "./watch.module.css";
+
+function SeriesArtwork({ series }: { series: SeriesSummary }) {
+  const containerRef = useRef<HTMLSpanElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (!containerRef.current) return;
+    if (typeof IntersectionObserver === "undefined") { setVisible(true); return; }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting) { setVisible(true); observer.disconnect(); }
+    }, { rootMargin: "160px" });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+  const detail = useQuery({
+    queryKey: ["series-detail", series.seriesId], queryFn: () => getSeries(series.seriesId),
+    enabled: visible && !series.cover, retry: shouldRetryApiRequest,
+  });
+  const playable = [...(detail.data?.videos ?? [])].filter((video) => video.playbackStatus === "READY" && video.playbackUrl)
+    .sort((a, b) => a.episodeOrder - b.episodeOrder || a.uploadSequence - b.uploadSequence);
+  const video = playable[0];
+  return <span className={styles.seriesCover} ref={containerRef}>
+    <span className={styles.coverFallback} aria-hidden="true"><Clapperboard size={30} strokeWidth={1} /><b>{series.name}</b></span>
+    {video && !series.cover ? <PlaybackFrame className={styles.seriesFrame}
+      src={mediaUrl(video.playbackUrl)} positionSeconds={video.durationSeconds * 0.1}
+      poster={mediaUrl(video.thumbnail?.url ?? null)} />
+      : series.cover ? <img key={series.cover.url} src={mediaUrl(series.cover.url) ?? undefined} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
+  </span>;
+}
 
 export function WatchHomePage() {
   const { series, isLoading, error } = useWorkspace();
-  const { identity, activeTenantId, canUpload } = useAuth();
-  const [requestedSeriesId, setRequestedSeriesId] = useState<string | null>(null);
+  const { activeSource, canUpload } = useAuth();
+  const shelfRef = useRef<HTMLDivElement>(null);
+  const [shelfEdges, setShelfEdges] = useState({ previous: false, next: false });
+  useEffect(() => {
+    const shelf = shelfRef.current;
+    if (!shelf) return;
+    const updateEdges = () => setShelfEdges({
+      previous: shelf.scrollLeft > 1,
+      next: shelf.scrollLeft + shelf.clientWidth < shelf.scrollWidth - 1,
+    });
+    updateEdges();
+    shelf.addEventListener("scroll", updateEdges, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateEdges);
+    observer?.observe(shelf);
+    return () => { shelf.removeEventListener("scroll", updateEdges); observer?.disconnect(); };
+  }, [series.length]);
+  const scrollShelf = (direction: number) => {
+    const shelf = shelfRef.current;
+    shelf?.scrollBy({ left: direction * shelf.clientWidth * 0.85, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+  };
   const history = readWatchHistory();
   const recent = history.find((item) => series.some((entry) => entry.seriesId === item.seriesId));
-  const activeSeriesId = requestedSeriesId && series.some((item) => item.seriesId === requestedSeriesId)
-    ? requestedSeriesId : recent?.seriesId ?? series[0]?.seriesId ?? null;
+  const activeSeriesId = recent?.seriesId ?? series[0]?.seriesId ?? null;
   const selectedSeries = series.find((item) => item.seriesId === activeSeriesId);
   const detailQuery = useQuery({
     queryKey: ["series-detail", activeSeriesId],
@@ -30,30 +77,49 @@ export function WatchHomePage() {
   );
   const firstPlayable = episodes.find((item) => item.playbackStatus === "READY" && item.playbackUrl);
   const recentSeries = recent ? series.find((item) => item.seriesId === recent.seriesId) : null;
-  const recentVideo = recent?.seriesId === activeSeriesId
-    ? episodes.find((item) => item.videoId === recent.videoId) : null;
+  const recentDetail = useQuery({
+    queryKey: ["series-detail", recent?.seriesId], queryFn: () => getSeries(recent!.seriesId),
+    enabled: Boolean(recent), retry: shouldRetryApiRequest,
+  });
+  const recentVideo = recentDetail.data?.videos.find((item) => item.videoId === recent?.videoId && item.playbackStatus === "READY" && item.playbackUrl);
+  const heroSeries = recentVideo ? recentSeries : selectedSeries;
+  const heroVideo = recentVideo ?? firstPlayable;
+  const heroPosition = recentVideo && recent ? recent.positionSeconds : Math.min(30_000, (heroVideo?.durationSeconds ?? 0) * 0.1);
 
   return (
-    <main className={`page ${styles.home}`}>
-      <header className={styles.homeHeader}>
-        <span>ANI VAG / WATCH</span>
-        <h1>视频观看</h1>
-        <p>选择一部视频，从上次离开的地方继续。</p>
-      </header>
+    <main className={`page ${styles.home}`} aria-label="视频观看">
+      <h1 className="sr-only">视频观看</h1>
 
-      {recent && recentSeries ? (
-        <Link className={styles.continueCard} to={`/watch/${encodeURIComponent(recent.seriesId)}/${encodeURIComponent(recent.videoId)}`}>
-          <span className={styles.continueIcon}><Play size={19} fill="currentColor" aria-hidden="true" /></span>
-          <span><small>继续观看</small><strong>{recentSeries.name}{recentVideo ? ` · ${episodeLabel(recentVideo.episodeOrder)}` : ""}</strong><em>上次看到 {formatTimecode(recent.positionSeconds)}</em></span>
-          <ChevronRight size={20} aria-hidden="true" />
-        </Link>
+      {heroSeries ? (
+        <section className={styles.hero} aria-label="继续观看推荐">
+          <PlaybackFrame className={styles.heroFrame} eager src={mediaUrl(heroVideo?.playbackUrl ?? null)} positionSeconds={heroPosition}
+            poster={mediaUrl(heroVideo?.thumbnail?.url ?? heroSeries.cover?.url ?? null)} />
+          <div className={styles.heroContent}>
+            <span className={styles.heroKicker}>{recentVideo ? "继续上次的故事" : "从这里开始"}</span>
+            <h2>{heroSeries.name}</h2>
+            <div className={styles.heroMeta}>
+              {heroVideo ? <span>{episodeLabel(heroVideo.episodeOrder)}</span> : null}
+              <span>{heroSeries.videoCount} 集</span>
+              {recentVideo && recent ? <span>上次看到 {formatTimecode(recent.positionSeconds)}</span> : null}
+            </div>
+            <p>{heroSeries.description || (recentVideo ? "故事还在继续，回到上次停下的那一刻。" : "选一集开始观看，也可以一起寻找故事里的名场面。")}</p>
+            <div className={styles.heroActions}>
+              {heroVideo ? <Link className={styles.heroPlay} to={`/watch/${encodeURIComponent(heroVideo.seriesId)}/${encodeURIComponent(heroVideo.videoId)}`}><Play size={20} fill="currentColor" aria-hidden="true" />{recentVideo ? "继续观看" : "播放本集"}</Link> : null}
+              <Link className={styles.heroBrowse} to={`/series/${encodeURIComponent(heroSeries.seriesId)}`}>查看系列<ChevronRight size={16} aria-hidden="true" /></Link>
+            </div>
+            {recentVideo && recent && heroVideo && heroVideo.durationSeconds > 0 ? <div className={styles.heroProgress}>
+              <progress aria-label="上次观看进度" max={heroVideo.durationSeconds} value={Math.min(recent.positionSeconds, heroVideo.durationSeconds)} />
+              <span>{formatTimecode(recent.positionSeconds)} / {formatTimecode(heroVideo.durationSeconds)}</span>
+            </div> : null}
+          </div>
+        </section>
       ) : null}
 
       {error ? <p className={styles.homeError} role="alert">读取视频系列失败：{error.message}</p> : null}
       {isLoading ? <p className={styles.homeEmpty} role="status">正在读取视频系列…</p> : null}
       {!isLoading && !error && series.length === 0 ? (
         <div className={styles.homeEmpty}>
-          {identity.mode === "cloud" && activeTenantId === identity.publicTenantId ? "公开课程暂未上线。" : "资料库里还没有视频。"}
+          {activeSource.kind === "public" ? "公开资料里还没有视频。" : "资料库里还没有视频。"}
           {canUpload ? <Link to="/library">前往资料库上传视频</Link> : null}
         </div>
       ) : null}
@@ -61,43 +127,23 @@ export function WatchHomePage() {
       {series.length > 0 ? (
         <div className={styles.homeGrid}>
           <section className={styles.seriesShelf} aria-label="选择视频系列">
-            <h2>视频系列 <small>{series.length}</small></h2>
-            <div className={styles.seriesCards}>
+            <div className={styles.shelfHeading}>
+              <h2>视频系列 <small>{series.length} 部作品</small></h2>
+              <div className={styles.shelfControls}>
+                <button type="button" aria-label="上一组系列" aria-controls="watch-series-shelf" disabled={!shelfEdges.previous} onClick={() => scrollShelf(-1)}><ChevronLeft size={18} aria-hidden="true" /></button>
+                <button type="button" aria-label="下一组系列" aria-controls="watch-series-shelf" disabled={!shelfEdges.next} onClick={() => scrollShelf(1)}><ChevronRight size={18} aria-hidden="true" /></button>
+              </div>
+            </div>
+            <div id="watch-series-shelf" className={styles.seriesCards} ref={shelfRef}>
               {series.map((item) => (
-                <button key={item.seriesId} type="button" className={item.seriesId === activeSeriesId ? styles.seriesCardActive : styles.seriesCard} onClick={() => setRequestedSeriesId(item.seriesId)} aria-pressed={item.seriesId === activeSeriesId}>
-                  <span className={styles.seriesCover}>
-                    {item.cover ? <img src={mediaUrl(item.cover.url) ?? undefined} alt="" /> : <Clapperboard size={22} strokeWidth={1.4} aria-hidden="true" />}
-                  </span>
-                  <span><strong>{item.name}</strong><small>{item.videoCount} 集</small></span>
-                </button>
+                <Link key={item.seriesId} className={styles.seriesCard} style={{ textDecoration: "none" }} to={`/series/${encodeURIComponent(item.seriesId)}`}>
+                  <SeriesArtwork series={item} />
+                  <span><strong>{item.name}</strong><small>{item.videoCount} 集 · 查看系列</small></span>
+                </Link>
               ))}
             </div>
           </section>
 
-          <section className={styles.homeEpisodes} aria-label="系列选集">
-            <div className={styles.homeEpisodesHeader}>
-              <div><small>正在浏览</small><h2>{selectedSeries?.name ?? "视频系列"}</h2><p>{selectedSeries?.description || "选择一集开始观看。"}</p></div>
-              {firstPlayable && activeSeriesId ? <Link className="button-primary" to={`/watch/${encodeURIComponent(activeSeriesId)}/${encodeURIComponent(firstPlayable.videoId)}`}><Play size={15} fill="currentColor" aria-hidden="true" />开始观看</Link> : null}
-            </div>
-            {detailQuery.isPending ? <p className={styles.homeEmpty} role="status">正在读取选集…</p> : null}
-            {detailQuery.isError ? <p className={styles.homeError} role="alert">读取选集失败：{errorMessage(detailQuery.error)}</p> : null}
-            {detailQuery.isSuccess && episodes.length === 0 ? <p className={styles.homeEmpty}>这个系列还没有视频。</p> : null}
-            <ol className={styles.homeEpisodeList}>
-              {episodes.map((episode) => {
-                const progress = readVideoProgress(episode.videoId);
-                return (
-                  <li key={episode.videoId}>
-                    <Link className={styles.homeEpisode} to={`/watch/${encodeURIComponent(episode.seriesId)}/${encodeURIComponent(episode.videoId)}`}>
-                      <span className={styles.homeEpisodeNumber}>{episodeLabel(episode.episodeOrder)}</span>
-                      <span className={styles.homeEpisodeTitle}><strong>{episode.originalFilename}</strong><small>{formatTimecode(episode.durationSeconds)}{progress && progress.positionSeconds > 0 ? ` · 已看至 ${formatTimecode(progress.positionSeconds)}` : ""}</small></span>
-                      <span className={styles.homeEpisodeAction}>{episode.playbackStatus === "READY" ? "观看" : "查看状态"}<ChevronRight size={16} aria-hidden="true" /></span>
-                      {progress && episode.durationSeconds > 0 ? <span className={styles.homeEpisodeProgress} style={{ width: `${Math.min(100, progress.positionSeconds / episode.durationSeconds * 100)}%` }} /> : null}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ol>
-          </section>
         </div>
       ) : null}
     </main>

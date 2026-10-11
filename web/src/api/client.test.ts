@@ -4,7 +4,10 @@ import {
   agentMessagesEventsUrl,
   ApiClientError,
   completeUpload,
+  clearDataSource,
+  configureAccountIdentity,
   configureApiIdentity,
+  configureDataSource,
   createGuestIdentity,
   createSeries,
   createUploadSession,
@@ -29,6 +32,8 @@ import {
   listVideoParseTasks,
   listSeries,
   logoutIdentity,
+  mediaUrl,
+  PRIMARY_CONNECTION,
   listAgentConversations,
   listAgentMessages,
   reparseUpload,
@@ -45,9 +50,10 @@ import {
   updateAgentGlobalSettings,
   updateVideoEpisode,
   uploadSeriesImage,
+  uploadSegment,
   verifyEmailCode,
 } from "./client";
-import type { AuthIdentity } from "./contracts";
+import type { ApiConnection, AuthIdentity, DataSource, UploadSessionView } from "./contracts";
 
 const localIdentity: AuthIdentity = {
   userId: "local", email: null, isGuest: false, tenantId: "local-default", publicTenantId: "local-default",
@@ -56,6 +62,7 @@ const localIdentity: AuthIdentity = {
 afterEach(() => {
   configureApiIdentity(localIdentity, "local-default");
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("cloud request identity", () => {
@@ -102,9 +109,195 @@ describe("cloud request identity", () => {
     release(new Response(JSON.stringify({ seriesId: "private-result" })));
     await rejected;
     expect(videoContentUrl("video-id")).toBe("/api/videos/content?videoId=video-id&tenantId=personal-id");
-    expect(identityStorageKey("anivag-agent-conversation")).toBe("anivag-agent-conversation:member-id:personal-id");
+    expect(identityStorageKey("anivag-agent-conversation")).toBe(`anivag-agent-conversation:${encodeURIComponent(PRIMARY_CONNECTION.id)}:member-id:personal-id`);
     configureApiIdentity(member, "public-courses");
-    expect(identityStorageKey("anivag-agent-conversation")).toBe("anivag-agent-conversation:member-id:public-courses");
+    expect(identityStorageKey("anivag-agent-conversation")).toBe(`anivag-agent-conversation:${encodeURIComponent(PRIMARY_CONNECTION.id)}:member-id:public-courses`);
+  });
+});
+
+describe("independent account and data connections", () => {
+  const remote: ApiConnection = { id: "remote:https://cloud.example", baseUrl: "/remote" };
+  const guest: AuthIdentity = {
+    ...localIdentity, mode: "cloud", userId: "guest-id", isGuest: true, tenantId: null,
+    publicTenantId: "public-courses", csrfToken: "guest-csrf",
+    permissions: { canUpload: false, canManage: false, canConfigure: false },
+  };
+  const member: AuthIdentity = {
+    ...guest, userId: "member-id", email: "learner@example.com", isGuest: false,
+    tenantId: "personal-id", csrfToken: "member-csrf",
+  };
+  const source = (connection = remote, identity = member): DataSource => ({
+    key: `${connection.id}:${identity.userId}:personal-id`, kind: "personal",
+    connection, tenantId: "personal-id", identity,
+  });
+
+  it("keeps local requests and SSE alive while a remote account logs in or out", async () => {
+    configureApiIdentity(localIdentity, "local-default");
+    const close = vi.fn();
+    vi.stubGlobal("EventSource", vi.fn(function () { return { addEventListener: vi.fn(), close }; }));
+    let release!: (response: Response) => void;
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) =>
+      String(input).includes("/series/get")
+        ? new Promise<Response>((resolve) => { release = resolve; })
+        : Promise.resolve(new Response(JSON.stringify(guest))));
+    vi.stubGlobal("fetch", fetchMock);
+    subscribeAgentMessages("local-conversation", vi.fn());
+    const pending = getSeries("local-series");
+    const signal = fetchMock.mock.calls[0]![1]!.signal!;
+    configureAccountIdentity(remote, guest);
+    await sendEmailCode("learner@example.com", remote);
+    configureAccountIdentity(remote, member);
+    await logoutIdentity(remote);
+    configureAccountIdentity(remote, null);
+    expect(signal.aborted).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.slice(1).map(([url]) => String(url))).toEqual([
+      "/remote/api/auth/email/send", "/remote/api/auth/logout",
+    ]);
+    expect(new Headers(fetchMock.mock.calls[1]![1]?.headers).get("X-CSRF-Token")).toBe("guest-csrf");
+    expect(new Headers(fetchMock.mock.calls[2]![1]?.headers).get("X-CSRF-Token")).toBe("member-csrf");
+    release(new Response(JSON.stringify({ seriesId: "local-series" })));
+    await expect(pending).resolves.toEqual({ seriesId: "local-series" });
+    await createSeries({ tenantId: "local-default", name: "Local" });
+    expect(new Headers(fetchMock.mock.calls[3]![1]?.headers).has("X-CSRF-Token")).toBe(false);
+    expect(identityStorageKey("selection", "legacy-selection")).toBe("legacy-selection");
+  });
+
+  it("isolates equal user and tenant IDs on different servers and rejects late local results", async () => {
+    configureApiIdentity(localIdentity, "local-default");
+    let release!: (response: Response) => void;
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Promise<Response>((resolve) => { release = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = getSeries("local-series");
+    const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    configureAccountIdentity(remote, member);
+    configureDataSource(source());
+    release(new Response(JSON.stringify({ seriesId: "stale-local-series" })));
+    await rejected;
+    expect(imageContentUrl("image/id")).toBe("/remote/api/media/images/content?tenantId=personal-id&imageId=image%2Fid");
+    expect(videoContentUrl("video/id")).toBe("/remote/api/videos/content?videoId=video%2Fid&tenantId=personal-id");
+    expect(jobEventsUrl("job/id")).toBe("/remote/api/jobs/events?jobId=job%2Fid&tenantId=personal-id");
+    expect(mediaUrl("/api/videos/content?videoId=video-id")).toBe("/remote/api/videos/content?videoId=video-id");
+    expect(mediaUrl("https://cdn.example/video?signature=abc")).toBe("https://cdn.example/video?signature=abc");
+    const firstKey = identityStorageKey("selection");
+    configureDataSource(source({ id: "remote:https://another.example", baseUrl: "/another" }));
+    expect(identityStorageKey("selection")).not.toBe(firstKey);
+  });
+
+  it("leaves remote auth available after the data source is revoked", async () => {
+    configureDataSource(source());
+    clearDataSource();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(guest)));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getSeries("revoked-series")).rejects.toMatchObject({ name: "AbortError" });
+    await expect(getAuthIdentity(undefined, remote)).resolves.toEqual(guest);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]![0])).toBe("/remote/api/auth/me");
+  });
+
+  it("keeps caller cancellation and credential refresh tied to the business scope", async () => {
+    configureDataSource(source());
+    let release!: (response: Response) => void;
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>((resolve) => { release = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    const caller = new AbortController();
+    const pending = getUploadSession("upload/id", caller.signal);
+    const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    caller.abort();
+    expect(fetchMock.mock.calls[0]![1]?.signal?.aborted).toBe(true);
+    release(new Response("{}"));
+    await rejected;
+
+    const close = vi.fn();
+    vi.stubGlobal("EventSource", vi.fn(function () { return { addEventListener: vi.fn(), close }; }));
+    subscribeAgentMessages("conversation/id", vi.fn());
+    const stale = getSeries("series-id");
+    const staleRejected = expect(stale).rejects.toMatchObject({ name: "AbortError" });
+    configureDataSource(source(remote, { ...member, csrfToken: "rotated-csrf" }));
+    expect(close).toHaveBeenCalledOnce();
+    release(new Response("{}"));
+    await staleRejected;
+  });
+
+  it.each(["canUpload", "canManage", "canConfigure"] as const)("cancels old requests and SSE when %s is withdrawn without changing credentials", async (permission) => {
+    const granted = { ...member, permissions: { canUpload: true, canManage: true, canConfigure: true } };
+    configureDataSource(source(remote, granted));
+    const close = vi.fn();
+    vi.stubGlobal("EventSource", vi.fn(function () { return { addEventListener: vi.fn(), close }; }));
+    subscribeAgentMessages("conversation/id", vi.fn());
+    let release!: (payload: unknown) => void;
+    const readPayload = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({ ok: false, status: 403, json: readPayload } as unknown as Response));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = getSeries("series-id");
+    const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(readPayload).toHaveBeenCalledOnce());
+    configureDataSource(source(remote, { ...granted, permissions: { ...granted.permissions, [permission]: false } }));
+    expect(fetchMock.mock.calls[0]![1]?.signal?.aborted).toBe(true);
+    expect(close).toHaveBeenCalledOnce();
+    release({ message: "late old scope error" });
+    await rejected;
+  });
+
+  it("identifies the connection behind a business authentication failure", async () => {
+    configureDataSource(source());
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 401 })));
+    const required = vi.fn();
+    window.addEventListener("anivag-auth-required", required);
+    try {
+      await expect(getSeries("series-id")).rejects.toMatchObject({ status: 401 });
+      expect(required).toHaveBeenCalledWith(expect.objectContaining({ detail: { connectionId: remote.id } }));
+    } finally {
+      window.removeEventListener("anivag-auth-required", required);
+    }
+  });
+
+  it("routes segmented uploads and answer streams with the selected source's credentials", async () => {
+    configureAccountIdentity(remote, member);
+    configureDataSource(source());
+    const open = vi.fn();
+    const headers = vi.fn();
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array([1, 2]).buffer) } });
+    vi.stubGlobal("XMLHttpRequest", class {
+      upload = { onprogress: null };
+      status = 200;
+      withCredentials = false;
+      onload: (() => void) | null = null;
+      open = open;
+      setRequestHeader = headers;
+      send() { this.onload?.(); }
+      abort() {}
+    });
+    const body = { size: 4, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer };
+    const file = { size: 4, slice: () => body } as unknown as File;
+    const session = { uploadSessionId: "upload/id", preferredSegmentSizeBytes: 4 } as UploadSessionView;
+    await expect(uploadSegment({ file, session, segmentNumber: 0, signal: new AbortController().signal, onProgress: vi.fn() })).resolves.toBe(4);
+    expect(open).toHaveBeenCalledWith("PUT", "/remote/api/uploads/segments/upload?uploadSessionId=upload%2Fid&segmentNumber=0&tenantId=personal-id");
+    expect(headers).toHaveBeenCalledWith("X-CSRF-Token", "member-csrf");
+    expect(headers).toHaveBeenCalledWith("Content-Range", "bytes 0-3/4");
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(new ReadableStream({ start(controller) { controller.close(); } }), { headers: { "Content-Type": "text/event-stream" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await streamAgentMessage("conversation/id", "query", "key", vi.fn(), new AbortController().signal);
+    expect(String(fetchMock.mock.calls[0]![0])).toBe("/remote/api/agent/messages/send?conversationId=conversation%2Fid");
+    expect(new Headers(fetchMock.mock.calls[0]![1]?.headers).get("X-CSRF-Token")).toBe("member-csrf");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body)).tenantId).toBe("personal-id");
+  });
+
+  it("matches only the configured upstream API origin when rewriting proxied media", async () => {
+    vi.stubEnv("VITE_REMOTE_API_BASE_URL", "/remote");
+    vi.stubEnv("VITE_REMOTE_API_ORIGIN", "https://cloud.example");
+    vi.resetModules();
+    const client = await import("./client");
+    expect(client.REMOTE_CONNECTION).toEqual({ id: "remote:https://cloud.example", baseUrl: "/remote" });
+    client.configureDataSource(source(client.REMOTE_CONNECTION!));
+    expect(client.mediaUrl("https://cloud.example/api/videos/content?videoId=1")).toBe("/remote/api/videos/content?videoId=1");
+    expect(client.mediaUrl("https://cloud.example/files/video.mp4?signature=1")).toBe("https://cloud.example/files/video.mp4?signature=1");
+    expect(client.mediaUrl("https://cdn.example/api/video?signature=1")).toBe("https://cdn.example/api/video?signature=1");
+    expect(client.mediaUrl("//cloud.example/api/video")).toBeNull();
+    expect(client.mediaUrl("http://")).toBeNull();
+    client.clearDataSource();
+    vi.resetModules();
   });
 });
 
@@ -143,7 +336,7 @@ describe("Series background routes", () => {
     expect(init?.method).toBe("POST");
     expect(new Headers(init?.headers).get("Content-Type")).toBe("image/png");
     expect(init?.body).toBe(file);
-    expect(init?.signal).toBe(signal);
+    expect(init?.signal?.aborted).toBe(false);
     expect(imageContentUrl("image/id", "workspace/id")).toBe("/api/media/images/content?tenantId=workspace%2Fid&imageId=image%2Fid");
   });
 
@@ -182,7 +375,7 @@ describe("local Token usage overview route", () => {
     const signal = new AbortController().signal;
     const usage = await getUsageOverview({ fromStartTime: 1, toStartTime: 2, seriesId: "series/id", runId: "run/id" }, signal);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/usage/overview?tenantId=local-default&fromStartTime=1&toStartTime=2&seriesId=series%2Fid&runId=run%2Fid");
-    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(signal);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
     expect(usage.source).toBe("local");
     expect(usage.totals.knownTokens).toBe(42);
     expect(usage.totals.totalTokens).toBeNull();
@@ -403,6 +596,19 @@ describe("POST answer stream", () => {
     controller.abort();
     await rejected;
     expect(cancel).toHaveBeenCalledOnce();
+    expect(body.locked).toBe(false);
+  });
+
+  it("stops buffered answer events immediately when the first event changes data source", async () => {
+    const body = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(encoder.encode(frame("first") + frame("stale")));
+      controller.close();
+    } });
+    vi.stubGlobal("fetch", vi.fn(async () => response(body)));
+    const received = vi.fn(() => configureApiIdentity(localIdentity, "another-tenant"));
+    await expect(streamAgentMessage("conversation/id", "query", "key", received, new AbortController().signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(received).toHaveBeenCalledOnce();
+    expect(received).toHaveBeenCalledWith(expect.objectContaining({ delta: "first" }));
     expect(body.locked).toBe(false);
   });
 

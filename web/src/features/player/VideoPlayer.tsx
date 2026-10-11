@@ -4,7 +4,7 @@ import { forwardRef, type KeyboardEvent, useEffect, useImperativeHandle, useRef,
 import { errorMessage, mediaUrl } from "../../api/client";
 import type { VideoSummary } from "../../api/contracts";
 import { episodeLabel, formatTimecode } from "../../shared/format";
-import { readVideoProgress, saveVideoProgress } from "./playbackProgress";
+import { playbackProgressStorageKey, readVideoProgress, saveVideoProgress } from "./playbackProgress";
 import styles from "./watch.module.css";
 
 interface VideoPlayerProps {
@@ -36,6 +36,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const progressReadyRef = useRef(false);
   const lastWriteAtRef = useRef(0);
   const initializedKeyRef = useRef<string | null>(null);
+  const [progressStorageKey] = useState(playbackProgressStorageKey);
   const [currentSeconds, setCurrentSeconds] = useState(0);
   const [durationSeconds, setDurationSeconds] = useState(video.durationSeconds);
   const [mediaReady, setMediaReady] = useState(false);
@@ -63,15 +64,15 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     setPlayError(null);
     return () => {
       if (progressReadyRef.current) {
-        saveVideoProgress({ seriesId: video.seriesId, videoId: video.videoId, positionSeconds: positionRef.current, durationSeconds: durationRef.current });
+        saveVideoProgress({ seriesId: video.seriesId, videoId: video.videoId, positionSeconds: positionRef.current, durationSeconds: durationRef.current }, progressStorageKey);
       }
     };
-  }, [video.seriesId, video.videoId, mediaKey, video.durationSeconds]);
+  }, [video.seriesId, video.videoId, mediaKey, video.durationSeconds, progressStorageKey]);
 
   useEffect(() => {
     const flush = () => {
       if (progressReadyRef.current) {
-        saveVideoProgress({ seriesId: video.seriesId, videoId: video.videoId, positionSeconds: positionRef.current, durationSeconds: durationRef.current });
+        saveVideoProgress({ seriesId: video.seriesId, videoId: video.videoId, positionSeconds: positionRef.current, durationSeconds: durationRef.current }, progressStorageKey);
       }
     };
     const flushWhenHidden = () => { if (document.visibilityState === "hidden") flush(); };
@@ -81,11 +82,11 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", flushWhenHidden);
     };
-  }, [video.seriesId, video.videoId]);
+  }, [video.seriesId, video.videoId, progressStorageKey]);
 
   const persist = () => {
     if (!progressReadyRef.current) return;
-    saveVideoProgress({ seriesId: video.seriesId, videoId: video.videoId, positionSeconds: positionRef.current, durationSeconds: durationRef.current });
+    saveVideoProgress({ seriesId: video.seriesId, videoId: video.videoId, positionSeconds: positionRef.current, durationSeconds: durationRef.current }, progressStorageKey);
     lastWriteAtRef.current = Date.now();
   };
 
@@ -135,7 +136,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     const knownDuration = Number.isFinite(media.duration) && media.duration > 0 ? Math.round(media.duration * 1000) : video.durationSeconds;
     durationRef.current = knownDuration;
     setDurationSeconds(knownDuration);
-    const saved = readVideoProgress(video.videoId);
+    const saved = readVideoProgress(video.videoId, progressStorageKey);
     const resume = saved?.seriesId === video.seriesId ? saved.positionSeconds : 0;
     const nearEnd = knownDuration > 0 && resume >= knownDuration - Math.min(15_000, knownDuration * 0.05);
     const requested = atSeconds !== undefined && Number.isSafeInteger(atSeconds) && atSeconds >= 0 ? atSeconds : nearEnd ? 0 : resume;

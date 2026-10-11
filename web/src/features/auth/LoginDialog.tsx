@@ -6,7 +6,7 @@ import { useAuth } from "./AuthProvider";
 import styles from "./auth.module.css";
 
 export function LoginDialog() {
-  const { loginOpen, closeLogin, sendCode, verifyCode } = useAuth();
+  const { loginOpen, closeLogin, sendCode, verifyCode, accountIdentity } = useAuth();
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [sentEmail, setSentEmail] = useState<string | null>(null);
@@ -19,7 +19,14 @@ export function LoginDialog() {
   const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000));
 
   useEffect(() => {
+    ++requestVersion.current;
+    setBusy(false);
+    setCode(""); setSentEmail(null); setError(null);
+  }, [accountIdentity?.userId]);
+
+  useEffect(() => {
     if (!loginOpen) return;
+    setNow(Date.now());
     const previous = document.activeElement as HTMLElement | null;
     panelRef.current?.querySelector<HTMLInputElement>("input")?.focus();
     const keyboard = (event: KeyboardEvent) => {
@@ -86,7 +93,7 @@ export function LoginDialog() {
   return <div className={styles.backdrop} onClick={(event) => { if (event.target === event.currentTarget) closeLogin(); }}>
     <div ref={panelRef} className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="login-heading">
       <header>
-        <div><h2 id="login-heading">邮箱登录</h2><p>登录后可上传视频，并保留自己的资料和对话。</p></div>
+        <div><h2 id="login-heading">邮箱登录</h2><p>登录后可访问你的远端资料。本机资料仍保留在本机。</p></div>
         <button className={styles.close} type="button" onClick={closeLogin} aria-label="关闭登录"><X size={18} /></button>
       </header>
       <form onSubmit={(event) => void verify(event)}>
@@ -103,7 +110,7 @@ export function LoginDialog() {
         <button className="button-primary" type="submit" disabled={busy || sentEmail !== email.trim().toLowerCase() || code.length !== 6}>
           {busy ? "处理中…" : "登录"}
         </button>
-        <button className={styles.guestLink} type="button" onClick={closeLogin}>继续体验公开课程</button>
+        <button className={styles.guestLink} type="button" onClick={closeLogin}>继续使用</button>
       </form>
     </div>
   </div>;

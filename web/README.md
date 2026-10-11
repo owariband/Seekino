@@ -68,11 +68,35 @@ npm run dev
 
 ```bash
 VITE_API_BASE_URL=http://127.0.0.1:9621
-VITE_WORKSPACE_ID=local-default
+VITE_TENANT_ID=local-default
 ```
 
-`VITE_API_BASE_URL` 留空时使用同源地址；`VITE_WORKSPACE_ID` 未设置时遵循服务端默认值
+`VITE_API_BASE_URL` 留空时使用同源地址；`VITE_TENANT_ID` 未设置时遵循服务端默认值
 `local-default`。连接失败不会生成本地替代数据。
+
+本机资料不要求账号登录。若要在 localhost 登录远端账号、浏览远端公开或个人资料，
+在 `web/.env.local` 增加固定的远端服务地址，然后重启 Vite：
+
+```bash
+ANIVAG_REMOTE_API_URL=https://your-anivag-server.example
+ANIVAG_REMOTE_COOKIE_NAME=anivag_auth
+```
+
+`ANIVAG_REMOTE_COOKIE_NAME` 必须与远端的 `ANIVAG_AUTH_COOKIE_NAME` 一致，默认均为
+`anivag_auth`。未配置地址时只使用当前服务。环境变量优先于 `.env` 文件；远端目标必须
+为 HTTPS origin，不带路径或凭据，独立的本机测试服务可以使用 loopback HTTP 地址。
+
+开发代理自动提供 `/remote/api` 和 `/remote/healthz`，同时注入
+`VITE_REMOTE_API_BASE_URL=/remote` 和远端 origin。它检查浏览器请求来源，再向固定服务
+转发，隔离本机与不同远端的会话 Cookie，并透传 CSRF、分片上传、视频 Range 和 SSE。
+远端会话保留 HttpOnly、SameSite，路径限定为 `/remote`；HTTP loopback 开发入口去掉
+Secure 属性，上游 HTTPS 校验保持开启。登录、退出和远端失联均不改变本机资料归属。
+切换资料来源不会上传本机资料；本次没有实现资料同步。
+
+这个代理仅供 Vite 开发联调。生产构建不会把 `ANIVAG_REMOTE_API_URL` 自动转换为
+`/remote`；生产环境应单独部署同源代理，并配置 `VITE_REMOTE_API_BASE_URL`。若服务
+返回同上游的绝对 `/api` 媒体地址，配置 `VITE_REMOTE_API_ORIGIN` 可将它映射到该代理。
+实际验证码登录还需要远端身份服务、Redis 和 SMTP 正常运行。
 
 验证：
 

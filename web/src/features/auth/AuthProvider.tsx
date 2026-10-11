@@ -1,21 +1,29 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, type PropsWithChildren, useCallback, useContext, useEffect, useRef, useState } from "react";
 
-import { ApiClientError, configureApiIdentity, createGuestIdentity, errorMessage, getAuthIdentity, logoutIdentity, sendEmailCode, verifyEmailCode, TENANT_ID } from "../../api/client";
-import type { AuthIdentity } from "../../api/contracts";
+import { ApiClientError, clearDataSource, configureAccountIdentity, configureDataSource, createGuestIdentity, errorMessage, getAuthIdentity, logoutIdentity, PRIMARY_CONNECTION, REMOTE_CONNECTION, sendEmailCode, verifyEmailCode, TENANT_ID } from "../../api/client";
+import type { ApiConnection, AuthIdentity, DataSource } from "../../api/contracts";
 import { LoginDialog } from "./LoginDialog";
 import styles from "./auth.module.css";
 
 interface AuthContextValue {
   identity: AuthIdentity;
   activeTenantId: string;
+  activeSource: DataSource;
+  sources: DataSource[];
   scopeKey: string;
+  accountIdentity: AuthIdentity | null;
+  accountConnection: ApiConnection | null;
+  accountStatus: "unconfigured" | "checking" | "connected" | "unavailable";
+  accountError: string | null;
+  retryAccount: () => void;
   canUpload: boolean;
   canManage: boolean;
   canConfigure: boolean;
   loginOpen: boolean;
   openLogin: () => void;
   closeLogin: () => void;
+  selectSource: (key: string) => void;
   selectTenant: (tenantId: string) => void;
   sendCode: (email: string) => Promise<number>;
   verifyCode: (email: string, code: string) => Promise<void>;
@@ -27,116 +35,239 @@ const localIdentity: AuthIdentity = {
   publicTenantId: TENANT_ID, mode: "local", csrfToken: "",
   permissions: { canUpload: true, canManage: true, canConfigure: true },
 };
-const unavailable = async () => { throw new Error("登录服务尚未初始化"); };
+const defaultSource: DataSource = {
+  key: `${PRIMARY_CONNECTION.id}:local`, kind: "local", connection: PRIMARY_CONNECTION,
+  tenantId: TENANT_ID, identity: localIdentity,
+};
+const unavailable = async () => { throw new Error("账号服务尚未连接"); };
 const AuthContext = createContext<AuthContextValue>({
-  identity: localIdentity, activeTenantId: TENANT_ID, scopeKey: "local",
+  identity: localIdentity, activeTenantId: TENANT_ID, activeSource: defaultSource, sources: [defaultSource], scopeKey: "local",
+  accountIdentity: null, accountConnection: null, accountStatus: "unconfigured", accountError: null,
   canUpload: true, canManage: true, canConfigure: true, loginOpen: false,
-  openLogin: () => undefined, closeLogin: () => undefined, selectTenant: () => undefined,
+  retryAccount: () => undefined, openLogin: () => undefined, closeLogin: () => undefined,
+  selectSource: () => undefined, selectTenant: () => undefined,
   sendCode: unavailable, verifyCode: unavailable, logout: unavailable,
 });
 
-export function AuthProvider({ children }: PropsWithChildren) {
+function accountSources(connection: ApiConnection, identity: AuthIdentity): DataSource[] {
+  if (identity.mode !== "cloud") throw new Error("该账号服务不支持远端登录");
+  if (!identity.publicTenantId || (!identity.isGuest && !identity.tenantId)) {
+    throw new Error("当前身份缺少可访问的资料来源");
+  }
+  const sources: DataSource[] = [{ key: `${connection.id}:public`, kind: "public", connection, tenantId: identity.publicTenantId, identity }];
+  if (!identity.isGuest && identity.tenantId && identity.tenantId !== identity.publicTenantId) {
+    sources.push({ key: `${connection.id}:personal`, kind: "personal", connection, tenantId: identity.tenantId, identity });
+  }
+  return sources;
+}
+
+async function readIdentity(connection: ApiConnection, signal?: AbortSignal): Promise<AuthIdentity> {
+  try { return await getAuthIdentity(signal, connection); }
+  catch (failure) {
+    if (!(failure instanceof ApiClientError) || failure.status !== 401) throw failure;
+    signal?.throwIfAborted();
+    return createGuestIdentity(signal, connection);
+  }
+}
+
+export function AuthProvider({ children, remoteConnection = REMOTE_CONNECTION }: PropsWithChildren<{ remoteConnection?: ApiConnection | null }>) {
   const queryClient = useQueryClient();
-  const [identity, setIdentity] = useState<AuthIdentity | null>(null);
-  const [activeTenantId, setActiveTenantId] = useState<string | null>(null);
+  const [primaryIdentity, setPrimaryIdentity] = useState<AuthIdentity | null>(null);
+  const primary = useRef<AuthIdentity | null>(null);
+  const [activeSource, setActiveSource] = useState<DataSource | null>(null);
+  const current = useRef<DataSource | null>(null);
+  const [accountIdentity, setAccountIdentity] = useState<AuthIdentity | null>(null);
+  const [accountConnection, setAccountConnection] = useState<ApiConnection | null>(remoteConnection);
+  const account = useRef<{ connection: ApiConnection | null; identity: AuthIdentity | null }>({ connection: remoteConnection, identity: null });
+  const [accountStatus, setAccountStatus] = useState<AuthContextValue["accountStatus"]>(remoteConnection ? "checking" : "unconfigured");
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [primaryError, setPrimaryError] = useState<string | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  const current = useRef<{ identity: AuthIdentity; tenantId: string } | null>(null);
-  const refreshVersion = useRef(0);
+  const accountVersion = useRef(0);
+  const accountMutation = useRef(false);
   const refreshing = useRef<{ version: number; signal?: AbortSignal } | null>(null);
-  const openLogin = useCallback(() => setLoginOpen(true), []);
+  const primaryVersion = useRef(0);
   const closeLogin = useCallback(() => setLoginOpen(false), []);
 
-  const applyIdentity = useCallback((next: AuthIdentity, tenantId?: string) => {
+  const applySource = useCallback((next: DataSource | null) => {
     const previous = current.current;
-    const ownTenant = next.isGuest ? next.publicTenantId : next.tenantId;
-    if (!ownTenant) throw new Error("当前身份缺少可访问的资料来源");
-    const selected = tenantId ?? (previous?.identity.userId === next.userId ? previous.tenantId : ownTenant);
-    const allowed = selected === next.publicTenantId || (!next.isGuest && selected === next.tenantId);
-    const nextTenant = allowed && selected ? selected : ownTenant;
-    const changed = !previous || previous.identity.userId !== next.userId
-      || previous.identity.csrfToken !== next.csrfToken || previous.tenantId !== nextTenant;
+    const changed = previous?.key !== next?.key || previous?.tenantId !== next?.tenantId
+      || previous?.identity.userId !== next?.identity.userId || previous?.identity.csrfToken !== next?.identity.csrfToken
+      || previous?.identity.permissions.canUpload !== next?.identity.permissions.canUpload
+      || previous?.identity.permissions.canManage !== next?.identity.permissions.canManage
+      || previous?.identity.permissions.canConfigure !== next?.identity.permissions.canConfigure;
     if (changed) {
-      configureApiIdentity(next, nextTenant);
+      if (next) configureDataSource(next); else clearDataSource();
       void queryClient.cancelQueries();
       queryClient.clear();
       setRevision((value) => value + 1);
-    }
-    current.current = { identity: next, tenantId: nextTenant };
-    setActiveTenantId(nextTenant);
-    setIdentity(next);
-    setError(null);
+    } else if (next) configureDataSource(next);
+    current.current = next;
+    setActiveSource(next);
   }, [queryClient]);
 
-  const refresh = useCallback(async (signal?: AbortSignal) => {
-    if (refreshing.current && !refreshing.current.signal?.aborted) return;
-    const version = ++refreshVersion.current;
+  const applyAccount = useCallback((connection: ApiConnection, next: AuthIdentity | null) => {
+    const available = next ? accountSources(connection, next) : [];
+    if (account.current.connection?.id !== connection.id) ++accountVersion.current;
+    configureAccountIdentity(connection, next);
+    account.current = { connection, identity: next };
+    setAccountConnection(connection);
+    setAccountIdentity(next);
+    if (current.current?.kind === "local") return;
+    const selected = available.find((source) => source.key === current.current?.key)
+      ?? (!current.current ? available.find((source) => source.kind === "personal") : undefined)
+      ?? available[0];
+    if (selected) applySource(selected);
+    else if (primary.current?.mode === "local" && primary.current.tenantId) {
+      applySource({ key: `${PRIMARY_CONNECTION.id}:local`, kind: "local", connection: PRIMARY_CONNECTION, tenantId: primary.current.tenantId, identity: primary.current });
+    } else applySource(null);
+  }, [applySource]);
+
+  const refreshAccount = useCallback(async (signal?: AbortSignal) => {
+    const connection = account.current.connection;
+    if (!connection || accountMutation.current
+      || (refreshing.current?.version === accountVersion.current && !refreshing.current.signal?.aborted)) return;
+    const version = ++accountVersion.current;
     refreshing.current = { version, signal };
+    setAccountStatus("checking");
+    let expired = false;
     try {
       let next: AuthIdentity;
-      try { next = await getAuthIdentity(signal); }
+      try { next = await getAuthIdentity(signal, connection); }
       catch (failure) {
         if (!(failure instanceof ApiClientError) || failure.status !== 401) throw failure;
-        next = await createGuestIdentity(signal);
+        if (signal?.aborted || version !== accountVersion.current || accountMutation.current) return;
+        expired = true;
+        next = await createGuestIdentity(signal, connection);
       }
-      if (signal?.aborted || version !== refreshVersion.current) return;
-      applyIdentity(next);
+      if (signal?.aborted || version !== accountVersion.current) return;
+      applyAccount(connection, next);
+      setAccountStatus("connected");
+      setAccountError(null);
     } catch (failure) {
-      if (!signal?.aborted && version === refreshVersion.current) setError(errorMessage(failure));
+      if (!signal?.aborted && version === accountVersion.current) {
+        if (expired) applyAccount(connection, null);
+        setAccountStatus("unavailable");
+        setAccountError(errorMessage(failure));
+      }
     } finally {
       if (refreshing.current?.version === version) refreshing.current = null;
     }
-  }, [applyIdentity]);
+  }, [applyAccount]);
+
+  const connectPrimary = useCallback(async (signal?: AbortSignal) => {
+    const version = ++primaryVersion.current;
+    try {
+      const next = await readIdentity(PRIMARY_CONNECTION, signal);
+      if (signal?.aborted || version !== primaryVersion.current) return;
+      if (next.mode === "local") {
+        if (!next.tenantId) throw new Error("本机服务缺少资料空间");
+        primary.current = next;
+        setPrimaryIdentity(next);
+        if (!current.current || current.current.kind === "local") {
+          applySource({ key: `${PRIMARY_CONNECTION.id}:local`, kind: "local", connection: PRIMARY_CONNECTION, tenantId: next.tenantId, identity: next });
+        }
+        if (account.current.connection) void refreshAccount(signal);
+      } else {
+        applyAccount(PRIMARY_CONNECTION, next);
+        primary.current = next;
+        setPrimaryIdentity(next);
+        setAccountStatus("connected");
+        setAccountError(null);
+      }
+      setPrimaryError(null);
+    } catch (failure) {
+      if (!signal?.aborted && version === primaryVersion.current) {
+        setPrimaryError(errorMessage(failure));
+        if (account.current.connection) void refreshAccount(signal);
+      }
+    }
+  }, [applySource, applyAccount, refreshAccount]);
 
   useEffect(() => {
     const controller = new AbortController();
-    void refresh(controller.signal);
-    const onFocus = () => { void refresh(controller.signal); };
+    void connectPrimary(controller.signal);
+    const onFocus = () => {
+      if (!primary.current) void connectPrimary(controller.signal);
+      else void refreshAccount(controller.signal);
+    };
+    const onAuthRequired = (event: Event) => {
+      const connectionId = (event as CustomEvent<{ connectionId: string }>).detail?.connectionId;
+      if (!connectionId || connectionId === account.current.connection?.id) void refreshAccount(controller.signal);
+    };
     window.addEventListener("focus", onFocus);
-    window.addEventListener("anivag-auth-required", onFocus);
+    window.addEventListener("anivag-auth-required", onAuthRequired);
     return () => {
       controller.abort();
+      ++primaryVersion.current;
+      ++accountVersion.current;
       window.removeEventListener("focus", onFocus);
-      window.removeEventListener("anivag-auth-required", onFocus);
+      window.removeEventListener("anivag-auth-required", onAuthRequired);
     };
-  }, [refresh]);
+  }, [connectPrimary, refreshAccount]);
 
-  if (!identity || !activeTenantId) {
+  if (!activeSource) {
+    const error = primaryError ?? accountError;
     return <div className={styles.loading} role={error ? "alert" : "status"}>
-      <p>{error ? `暂时无法连接登录服务：${error}` : "正在连接服务…"}</p>
-      {error ? <button className="button-primary" type="button" onClick={() => void refresh()}>重试连接</button> : null}
+      <p>{error ? `暂时无法连接资料服务：${error}` : "正在连接服务…"}</p>
+      {error ? <button className="button-primary" type="button" onClick={() => void connectPrimary()}>重试连接</button> : null}
     </div>;
   }
 
-  const writable = identity.mode === "local" || (!identity.isGuest && activeTenantId === identity.tenantId);
+  const sources: DataSource[] = [];
+  if (primaryIdentity?.mode === "local" && primaryIdentity.tenantId) {
+    sources.push({ key: `${PRIMARY_CONNECTION.id}:local`, kind: "local", connection: PRIMARY_CONNECTION, tenantId: primaryIdentity.tenantId, identity: primaryIdentity });
+  }
+  if (accountIdentity && accountConnection) sources.push(...accountSources(accountConnection, accountIdentity));
+  const identity = activeSource.identity;
+  const writable = activeSource.kind !== "public";
   const value: AuthContextValue = {
-    identity, activeTenantId,
-    scopeKey: `${identity.userId}:${activeTenantId}:${revision}`,
+    identity, activeTenantId: activeSource.tenantId, activeSource, sources,
+    scopeKey: `${activeSource.key}:${identity.userId}:${activeSource.tenantId}:${revision}`,
+    accountIdentity, accountConnection, accountStatus, accountError,
+    retryAccount: () => { void refreshAccount(); },
     canUpload: writable && identity.permissions.canUpload,
     canManage: writable && identity.permissions.canManage,
     canConfigure: identity.permissions.canConfigure,
-    loginOpen, openLogin, closeLogin,
-    selectTenant: (tenantId) => applyIdentity(identity, tenantId),
-    sendCode: async (email) => (await sendEmailCode(email)).retryAfterSeconds,
+    loginOpen, openLogin: () => { if (account.current.identity && !accountMutation.current) setLoginOpen(true); }, closeLogin,
+    selectSource: (key) => { const next = sources.find((source) => source.key === key); if (next) applySource(next); },
+    selectTenant: (tenantId) => { const next = sources.find((source) => source.connection.id === activeSource.connection.id && source.tenantId === tenantId); if (next) applySource(next); },
+    sendCode: async (email) => {
+      if (!account.current.connection || !account.current.identity) return unavailable();
+      return (await sendEmailCode(email, account.current.connection)).retryAfterSeconds;
+    },
     verifyCode: async (email, code) => {
-      const next = await verifyEmailCode(email, code);
-      ++refreshVersion.current;
-      applyIdentity(next);
-      setLoginOpen(false);
+      const connection = account.current.connection;
+      if (!connection) return unavailable();
+      if (accountMutation.current) throw new Error("账号操作正在进行，请稍后重试");
+      const version = ++accountVersion.current;
+      accountMutation.current = true;
+      setAccountStatus(account.current.identity ? "connected" : "unavailable");
+      try {
+        const next = await verifyEmailCode(email, code, connection);
+        if (version !== accountVersion.current) return;
+        applyAccount(connection, next);
+        setAccountStatus("connected"); setAccountError(null); setLoginOpen(false);
+      } finally { accountMutation.current = false; }
     },
     logout: async () => {
-      const next = await logoutIdentity();
-      ++refreshVersion.current;
-      applyIdentity(next);
-      setLoginOpen(false);
+      const connection = account.current.connection;
+      if (!connection) return unavailable();
+      if (accountMutation.current) throw new Error("账号操作正在进行，请稍后重试");
+      const version = ++accountVersion.current;
+      accountMutation.current = true;
+      setAccountStatus(account.current.identity ? "connected" : "unavailable");
+      try {
+        const next = await logoutIdentity(connection);
+        if (version !== accountVersion.current) return;
+        applyAccount(connection, next);
+        setAccountStatus("connected"); setAccountError(null); setLoginOpen(false);
+      } finally { accountMutation.current = false; }
     },
   };
 
-  return <AuthContext.Provider value={value}>
-    {children}
-    <LoginDialog />
-  </AuthContext.Provider>;
+  return <AuthContext.Provider value={value}>{children}<LoginDialog /></AuthContext.Provider>;
 }
 
 export function useAuth(): AuthContextValue {

@@ -2,7 +2,7 @@
   display: flex;
   width: 100%;
   max-width: 1840px;
-  height: 100dvh;
+  height: calc(100dvh - var(--app-header-height, 76px));
   min-height: 0;
   flex-direction: column;
   padding-bottom: 26px;
@@ -535,11 +535,11 @@
 
 @media (max-width: 1100px) {
   .withEvidence { grid-template-columns: minmax(0, 1fr); }
-  .evidenceColumn { position: fixed; z-index: 35; top: 76px; right: 20px; bottom: 28px; width: min(440px, calc(100vw - 40px)); box-shadow: var(--shadow); }
+  .evidenceColumn { position: fixed; z-index: 35; top: calc(var(--app-header-height, 76px) + 12px); right: 20px; bottom: 28px; width: min(440px, calc(100vw - 40px)); box-shadow: var(--shadow); }
 }
 
 @media (max-width: 760px) {
-  .page { height: calc(100dvh - 64px); padding: 20px 18px 90px; }
+  .page { height: calc(100dvh - var(--app-header-height, 76px)); padding: 20px 18px 24px; }
   .pageHeader { min-height: 30px; align-items: flex-start; margin-bottom: 12px; }
   .chatHeading { display: grid; gap: 2px; }
   .chatHeading > span { max-width: 42vw; }
@@ -547,7 +547,7 @@
   .conversationPicker > summary span, .newConversation span { display: none; }
   .conversationPicker > summary, .newConversation { width: 44px; min-height: 44px; justify-content: center; padding: 0; }
   .conversationPicker > summary svg:last-child { display: none; }
-  .conversationMenu { position: fixed; top: 138px; right: 12px; bottom: 12px; left: 12px; width: auto; max-height: none; }
+  .conversationMenu { position: fixed; top: calc(var(--app-header-height, 76px) + 12px); right: 12px; bottom: 12px; left: 12px; width: auto; max-height: none; }
   .conversationMenuClose, .deleteConversation { width: 44px; height: 44px; }
   .conversationList > li { grid-template-columns: minmax(0, 1fr) 44px; }
   .deleteConfirmation button { min-height: 44px; padding-inline: 13px; }
@@ -565,10 +565,10 @@
   .composerToolbar { align-items: flex-start; }
   .composerControls { gap: 4px; }
   .scopePicker summary { min-height: 40px; }
-  .answerSettings { position: fixed; right: 12px; bottom: 94px; left: 12px; width: auto; max-width: none; }
+  .answerSettings { position: fixed; right: 12px; bottom: 24px; left: 12px; width: auto; max-width: none; }
   .keyboardHint { display: none; }
   .candidateList { grid-template-columns: minmax(0, 1fr); }
-  .evidenceColumn { top: 76px; right: 12px; bottom: 94px; left: 12px; width: auto; }
+  .evidenceColumn { top: calc(var(--app-header-height, 76px) + 12px); right: 12px; bottom: 24px; left: 12px; width: auto; }
   .playerHeading { padding: 16px 18px; }
   .clipControls { grid-template-columns: 44px minmax(0, 1fr); padding-inline: 10px; }
   .clipTime { grid-column: 2; margin-top: -14px; text-align: left; }

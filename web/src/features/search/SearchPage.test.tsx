@@ -175,12 +175,12 @@ describe("Search assistant presentation", () => {
     const user = userEvent.setup();
 
     expect(screen.getByRole("heading", { name: "当前对话", level: 2 })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "anivag 助手" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Seekino 助手" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("打开对话记录")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
     expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent(series.name);
-    expect(screen.getByRole("textbox", { name: "向 anivag 助手提问" }).closest(".page")).toBeNull();
-    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "这段发生了什么？");
+    expect(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }).closest(".page")).toBeNull();
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "这段发生了什么？");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(mocks.send).toHaveBeenCalledWith("这段发生了什么？", [series.seriesId], null, {});
 
@@ -213,14 +213,14 @@ describe("Search assistant presentation", () => {
         captureExtraContext={captureExtraContext}
       />,
     );
-    const textbox = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
+    const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
 
     chatRef.current?.focusComposer();
     expect(textbox).toHaveFocus();
     expect(captureExtraContext).not.toHaveBeenCalled();
 
     const user = userEvent.setup();
-    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "这里继续讲了什么？", { skipClick: true });
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "这里继续讲了什么？", { skipClick: true });
     currentContext = extraContext;
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
@@ -246,7 +246,7 @@ describe("Search assistant presentation", () => {
       initialSeriesId: series.seriesId,
       captureExtraContext,
     });
-    const textbox = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
+    const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
     textbox.focus();
     const user = userEvent.setup();
     await user.type(textbox, "开头讲了什么？", { skipClick: true });
@@ -268,7 +268,7 @@ describe("Search assistant presentation", () => {
       captureExtraContext,
     });
     const user = userEvent.setup();
-    const textbox = screen.getByRole("textbox", { name: "向 anivag 助手提问" });
+    const textbox = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
     textbox.focus();
     await user.type(textbox, "这里讲了什么？", { skipClick: true });
     await user.click(screen.getByRole("button", { name: "发送问题" }));
@@ -287,7 +287,7 @@ describe("Search assistant presentation", () => {
 
     expect(screen.getByText(/当前系列暂不可检索/)).toHaveTextContent("全部可检索系列");
     expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("全部视频系列");
-    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "你好");
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
     expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {});
   });
@@ -299,11 +299,11 @@ describe("Search assistant presentation", () => {
     }, []);
     const user = userEvent.setup();
 
-    expect(screen.getByRole("heading", { name: "anivag 助手", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Seekino 助手", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "公开资料" })).toHaveAttribute("href", "https://example.com/source");
     expect(screen.queryByText(/可用视频范围/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("回答过程")).toBeInTheDocument();
-    await user.type(screen.getByRole("textbox", { name: "向 anivag 助手提问" }), "你好");
+    await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
     expect(mocks.send).toHaveBeenCalledWith("你好", [], null, {});

@@ -1,340 +1,142 @@
 .shell {
-  min-height: 100vh;
+  --app-header-height: 76px;
+  min-height: 100dvh;
 }
 
-.sidebarToggle {
-  position: fixed;
-  z-index: 25;
-  top: 28px;
-  left: calc(var(--sidebar-width) - 50px);
+.topbar {
+  position: sticky;
+  z-index: 60;
+  top: 0;
   display: grid;
-  width: 30px;
-  height: 32px;
-  place-items: center;
-  color: var(--ink-faint);
-  border-radius: 8px;
-  cursor: pointer;
-  background: transparent;
-}
-
-.sidebarToggle:hover {
-  color: var(--ink);
-  background: var(--surface-muted);
-}
-
-.sidebarCollapsed .sidebarToggle {
-  top: 27px;
-  left: clamp(22px, 2.5vw, 40px);
-  border: 1px solid var(--line);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  height: var(--app-header-height);
+  align-items: center;
+  gap: clamp(20px, 2.5vw, 48px);
+  padding: 0 clamp(20px, 2.4vw, 46px);
+  border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
 
-.sidebarCollapsed .content {
-  margin-left: 0;
-}
-
-.sidebarCollapsed .content :global(.page) > header {
-  padding-left: 44px;
-}
-
-.sidebar {
-  position: fixed;
-  z-index: 20;
-  inset: 0 auto 0 0;
-  display: flex;
-  width: var(--sidebar-width);
-  flex-direction: column;
-  padding: 28px 20px 20px;
-  border-right: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  backdrop-filter: blur(20px);
-}
-
-.sidebar[hidden] {
-  display: none;
-}
-
-.brand,
-.mobileBrand {
-  display: flex;
+.brand {
+  display: inline-flex;
   align-items: center;
-  gap: 11px;
-  color: var(--ink);
+  gap: 10px;
+  color: var(--teal-deep);
   text-decoration: none;
 }
+.brand img { width: 36px; height: 36px; border-radius: 8px; }
+.brand strong { font: 750 1.55rem/1 var(--sans); letter-spacing: -.045em; }
 
-.brand img,
-.mobileBrand img {
-  width: 33px;
-  height: 33px;
-}
-
-.brand strong {
-  font: 500 1.15rem/1.1 var(--display);
-  letter-spacing: .01em;
-}
-
-.navigation {
-  display: grid;
-  gap: 5px;
-  margin-top: 36px;
-}
-
-.account {
-  display: grid;
-  gap: 11px;
-  margin-top: 24px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface-raised);
-}
-.account > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.account > div > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-soft); font-size: .7rem; }
-.account button { flex: 0 0 auto; color: var(--teal-deep); background: transparent; cursor: pointer; font-size: .7rem; }
-.account label { display: grid; gap: 6px; color: var(--ink-faint); font-size: .66rem; }
-.account select { width: 100%; padding: 8px; font-size: .72rem; }
-.account p { margin: 0; color: var(--red); font-size: .7rem; }
-.mobileAccount { display: none; }
-
+.navigation { display: flex; height: 100%; min-width: 0; align-items: stretch; gap: clamp(4px, .7vw, 16px); }
 .navItem {
   position: relative;
-  display: flex;
-  min-height: 46px;
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 13px;
-  padding: 8px 12px;
-  color: var(--ink-faint);
-  border-radius: 10px;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  color: var(--ink-soft);
+  border-bottom: 3px solid transparent;
+  font-size: .85rem;
   text-decoration: none;
+  white-space: nowrap;
   transition: color 160ms ease, background 160ms ease;
 }
+.navItem svg { display: none; }
+.navItem:hover { color: var(--ink); background: var(--surface-muted); }
+.navActive { color: var(--teal-deep); border-bottom-color: var(--teal); background: var(--teal-wash); }
 
-.navItem::before {
-  content: "";
-  position: absolute;
-  top: 17px;
-  bottom: 17px;
-  left: -20px;
-  width: 2px;
-  background: transparent;
-}
-
-.navItem span {
-  color: inherit;
-  font-size: .79rem;
-}
-
-.navItem:hover,
-.navActive {
-  color: var(--teal-deep);
-  background: var(--teal-wash);
-}
-
-.navActive::before {
-  background: var(--teal);
-}
-
-.uploadDock {
-  display: grid;
-  gap: 14px;
-  width: 100%;
-  margin-top: auto;
-  padding: 15px;
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 15px;
-  cursor: pointer;
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-small);
-  text-align: left;
-}
-
-.uploadDockHeading,
-.uploadDockFooter {
-  display: flex;
+.headerActions { display: flex; align-items: center; gap: 10px; }
+.iconButton, .uploadButton, .accountTrigger {
+  display: inline-flex;
+  min-width: 42px;
+  height: 44px;
   align-items: center;
-  justify-content: space-between;
-}
-
-.uploadDockHeading > span {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--teal-deep);
-  font-size: .69rem;
-}
-
-.uploadDockHeading b {
-  color: var(--teal-deep);
-  font: 600 .66rem/1 var(--mono);
-}
-
-.uploadDock > p {
-  margin: 1px 0;
-  color: var(--ink-faint);
-  font-size: .66rem;
-}
-
-.microTasks {
-  display: grid;
+  justify-content: center;
   gap: 8px;
-}
-
-.microTasks > div {
-  display: grid;
-  grid-template-columns: 34px 1fr 27px;
-  gap: 7px;
-  align-items: center;
-  color: var(--ink-faint);
-  font: 500 .55rem/1 var(--mono);
-}
-
-.microTasks i {
-  position: relative;
-  height: 2px;
-  overflow: hidden;
-  background: var(--line);
-}
-
-.microTasks em {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: var(--teal);
-}
-
-.uploadDockFooter {
-  padding-top: 10px;
-  color: var(--ink-faint);
-  border-top: 1px solid var(--line);
-  font-size: .61rem;
-}
-
-.sidebarFooter {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 18px;
-  padding: 11px 4px 0;
-  border-top: 1px solid var(--line);
-}
-
-.runtime {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink-faint);
-  font-size: .62rem;
-}
-
-.runtime i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.runtimelive {
-  color: var(--teal-deep);
-}
-
-.runtimeoffline {
-  color: var(--red);
-}
-
-.sidebarFooter button {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
+  padding: 0 10px;
   color: var(--ink-soft);
-  border: 1px solid var(--line);
-  border-radius: 50%;
+  border-radius: 6px;
+  background: transparent;
+  text-decoration: none;
   cursor: pointer;
+}
+.iconButton:hover, .uploadButton:hover, .accountTrigger:hover, .accountTrigger[aria-expanded="true"] { color: var(--teal-deep); background: var(--teal-wash); }
+.uploadButton { position: relative; overflow: hidden; font-size: .75rem; }
+.uploadButton i { position: absolute; bottom: 0; left: 0; height: 2px; background: var(--teal); }
+.accountMenu { position: relative; }
+.accountTrigger { gap: 7px; padding: 0 0 0 7px; }
+.accountTrigger[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.avatar { display: grid; width: 38px; height: 38px; place-items: center; color: var(--teal-deep); border: 1px solid var(--line-strong); border-radius: 50%; background: var(--teal-wash); font: 650 1rem/1 var(--sans); }
+
+.account {
+  position: absolute;
+  top: calc(100% + 17px);
+  right: 0;
+  display: grid;
+  gap: 18px;
+  width: min(300px, calc(100vw - 32px));
+  max-height: calc(100dvh - var(--app-header-height) - 24px);
+  overflow-y: auto;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: var(--surface-raised);
+  box-shadow: var(--shadow);
+}
+.account header { display: grid; gap: 6px; }
+.account header strong { color: var(--ink); font-size: .88rem; overflow-wrap: anywhere; }
+.account header span, .accountAction > span { color: var(--ink-soft); font-size: .72rem; }
+.accountAction button { min-height: 36px; padding: 0 15px; color: var(--teal-deep); border: 1px solid var(--line-strong); border-radius: 5px; background: var(--teal-wash); cursor: pointer; font-size: .78rem; }
+.accountAction button:disabled { opacity: .5; cursor: wait; }
+.account label { display: grid; gap: 8px; color: var(--ink-soft); font-size: .72rem; }
+.account select { min-height: 42px; width: 100%; padding: 8px 10px; font-size: .78rem; }
+.account p { margin: 0; color: var(--red); font-size: .72rem; }
+.sourceLabel { display: flex; justify-content: space-between; gap: 16px; color: var(--ink-soft); font-size: .72rem; }
+.sourceLabel strong { color: var(--ink); font-weight: 500; }
+.runtime { display: flex; align-items: center; gap: 8px; padding-top: 14px; color: var(--ink-soft); border-top: 1px solid var(--line); font-size: .68rem; }
+.runtime i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.runtimelive { color: var(--teal-deep); }
+.runtimeoffline { color: var(--red); }
+.content { min-height: calc(100dvh - var(--app-header-height)); min-width: 0; }
+
+@media (max-width: 1200px) and (min-width: 1101px) {
+  .topbar { gap: 20px; padding-inline: 24px; }
+  .navItem { padding-inline: 8px; font-size: .79rem; }
+  .headerActions { gap: 4px; }
+  .uploadButton > span { display: none; }
 }
 
-.content {
-  min-height: 100vh;
-  margin-left: var(--sidebar-width);
+@media (max-width: 1100px) {
+  .shell { --app-header-height: 112px; }
+  .topbar { grid-template-columns: 1fr auto; grid-template-rows: 64px 48px; column-gap: 16px; row-gap: 0; padding: 0 24px; }
+  .navigation { grid-column: 1 / -1; grid-row: 2; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin-inline: -24px; padding-inline: 24px; border-top: 1px solid var(--line); }
+  .navigation::-webkit-scrollbar { display: none; }
+  .navItem { gap: 6px; padding-inline: 15px; font-size: .78rem; }
+  .navItem svg { display: block; }
+  .headerActions { grid-column: 2; grid-row: 1; }
+  .account { top: calc(100% + 11px); }
 }
 
-.mobileHeader,
-.mobileNav {
-  display: none;
+@media (max-width: 580px) {
+  .topbar { column-gap: 8px; padding-inline: 16px; }
+  .brand { gap: 7px; }
+  .brand img { width: 30px; height: 30px; }
+  .brand strong { font-size: 1.25rem; }
+  .headerActions { gap: 1px; }
+  .iconButton, .uploadButton { min-width: 36px; width: 36px; padding-inline: 7px; }
+  .uploadButton > span { display: none; }
+  .avatar { width: 34px; height: 34px; }
+  .accountTrigger { min-width: 44px; padding-left: 4px; }
+  .accountTrigger > svg { display: none; }
+  .navigation { margin-inline: -16px; padding-inline: 16px; }
+  .navItem { padding-inline: 12px; }
+  .account { right: 0; }
 }
 
-@media (max-width: 760px) {
-  .mobileAccount { display: grid; grid-template-columns: 1fr 1fr; align-items: center; margin: 12px 18px; }
-  .mobileAccount label { grid-template-columns: auto 1fr; align-items: center; }
-  .sidebarToggle {
-    display: none;
-  }
-  .sidebarCollapsed .content :global(.page) > header {
-    padding-left: 0;
-  }
-  .sidebar {
-    display: none;
-  }
-  .content {
-    margin-left: 0;
-    padding-top: 64px;
-  }
-  .mobileHeader {
-    position: fixed;
-    z-index: 30;
-    inset: 0 0 auto;
-    display: flex;
-    height: 64px;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 18px;
-    border-bottom: 1px solid var(--line);
-    background: color-mix(in srgb, var(--surface) 91%, transparent);
-    backdrop-filter: blur(16px);
-  }
-  .mobileBrand img { width: 28px; height: 28px; }
-  .mobileBrand strong { font: 500 1rem/1 var(--display); }
-  .mobileHeader > div { display: flex; gap: 7px; }
-  .mobileHeader button {
-    display: flex;
-    min-width: 36px;
-    height: 36px;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    color: var(--ink-soft);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    background: var(--surface-raised);
-    font-size: .67rem;
-  }
-  .mobileNav {
-    position: fixed;
-    z-index: 30;
-    inset: auto 10px 10px;
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
-    padding: 7px;
-    border: 1px solid var(--line);
-    border-radius: 18px;
-    background: color-mix(in srgb, var(--surface-raised) 91%, transparent);
-    box-shadow: var(--shadow);
-    backdrop-filter: blur(18px);
-  }
-  .mobileNav a {
-    display: grid;
-    gap: 3px;
-    justify-items: center;
-    padding: 7px 3px;
-    color: var(--ink-faint);
-    border-radius: 11px;
-    font-size: .58rem;
-    text-decoration: none;
-  }
-  .mobileNav .mobileActive {
-    color: var(--teal-deep);
-    background: var(--teal-wash);
-  }
+@media (max-width: 360px) {
+  .iconButton, .uploadButton { min-width: 32px; width: 32px; padding-inline: 5px; }
+  .accountTrigger { min-width: 36px; width: 36px; padding-left: 2px; }
+  .avatar { width: 32px; height: 32px; }
 }

@@ -9,7 +9,9 @@ import type {
   AgentMessageSendView,
   AgentMessageView,
   ApiErrorPayload,
+  ApiConnection,
   AuthIdentity,
+  DataSource,
   EvidenceReference,
   ImageAsset,
   Page,
@@ -35,13 +37,48 @@ import type {
 export let TENANT_ID =
   import.meta.env.VITE_TENANT_ID?.trim() || "local-default";
 let TENANT_QUERY = encodeURIComponent(TENANT_ID);
-let apiIdentity: AuthIdentity | null = null;
-let scopeController: AbortController | null = null;
+let activeDataSource: DataSource | null = null;
+let scopeController = new AbortController();
+const accountIdentities = new Map<string, AuthIdentity | null>();
 const eventSources = new Set<EventSource>();
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(
   /\/$/,
   "",
 );
+export const PRIMARY_CONNECTION: ApiConnection = {
+  id: `primary:${API_BASE_URL || "same-origin"}`,
+  baseUrl: API_BASE_URL,
+};
+const remoteBaseUrl = import.meta.env.VITE_REMOTE_API_BASE_URL?.trim().replace(/\/$/, "");
+export const REMOTE_CONNECTION: ApiConnection | null = remoteBaseUrl ? {
+  id: `remote:${import.meta.env.VITE_REMOTE_API_ORIGIN || remoteBaseUrl}`,
+  baseUrl: remoteBaseUrl,
+} : null;
+
+interface RequestContext {
+  connection: ApiConnection;
+  identity: AuthIdentity | null;
+  scopeSignal?: AbortSignal;
+}
+
+function businessContext(): RequestContext {
+  const connection = activeDataSource?.connection ?? PRIMARY_CONNECTION;
+  return {
+    connection,
+    identity: activeDataSource?.identity ?? null,
+    scopeSignal: scopeController.signal,
+  };
+}
+
+function accountContext(connection: ApiConnection): RequestContext {
+  return { connection, identity: accountIdentities.get(connection.id) ?? null };
+}
+
+function authRequired(connection: ApiConnection): void {
+  window.dispatchEvent(new CustomEvent("anivag-auth-required", {
+    detail: { connectionId: connection.id },
+  }));
+}
 
 export class ApiClientError extends Error {
   readonly status: number;
@@ -65,8 +102,8 @@ export function shouldRetryApiRequest(
   return failureCount < 1;
 }
 
-function apiUrl(path: string): string {
-  return `${API_BASE_URL}${path}`;
+function apiUrl(path: string, connection = activeDataSource?.connection ?? PRIMARY_CONNECTION): string {
+  return `${connection.baseUrl}${path}`;
 }
 
 async function readError(response: Response): Promise<ApiErrorPayload | null> {
@@ -80,14 +117,16 @@ async function readError(response: Response): Promise<ApiErrorPayload | null> {
 async function requestJson<T>(
   path: string,
   init?: RequestInit,
+  context = businessContext(),
 ): Promise<T> {
-  const signal = scopedSignal(init?.signal);
+  const signal = scopedSignal(init?.signal, context.scopeSignal);
+  signal?.throwIfAborted();
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
-  if (apiIdentity?.csrfToken && !["GET", "HEAD"].includes(init?.method ?? "GET")) {
-    headers.set("X-CSRF-Token", apiIdentity.csrfToken);
+  if (context.identity?.csrfToken && !["GET", "HEAD"].includes(init?.method ?? "GET")) {
+    headers.set("X-CSRF-Token", context.identity.csrfToken);
   }
-  const response = await fetch(apiUrl(path), {
+  const response = await fetch(apiUrl(path, context.connection), {
     ...init,
     credentials: "include",
     headers,
@@ -95,67 +134,105 @@ async function requestJson<T>(
   });
   signal?.throwIfAborted();
   if (!response.ok) {
-    if (response.status === 401 && !path.startsWith("/api/auth/")) window.dispatchEvent(new Event("anivag-auth-required"));
-    throw new ApiClientError(response.status, await readError(response));
+    if (response.status === 401 && !path.startsWith("/api/auth/")) authRequired(context.connection);
+    const payload = await readError(response);
+    signal?.throwIfAborted();
+    throw new ApiClientError(response.status, payload);
   }
   const payload = (await response.json()) as T;
   signal?.throwIfAborted();
   return payload;
 }
 
-function scopedSignal(signal?: AbortSignal | null): AbortSignal | undefined {
-  if (!scopeController) return signal ?? undefined;
-  return signal ? AbortSignal.any([scopeController.signal, signal]) : scopeController.signal;
+function scopedSignal(signal?: AbortSignal | null, scopeSignal?: AbortSignal): AbortSignal | undefined {
+  if (!scopeSignal) return signal ?? undefined;
+  return signal ? AbortSignal.any([scopeSignal, signal]) : scopeSignal;
+}
+
+export function configureAccountIdentity(connection: ApiConnection, identity: AuthIdentity | null): void {
+  accountIdentities.set(connection.id, identity);
+}
+
+export function clearDataSource(): void {
+  scopeController.abort();
+  eventSources.forEach((stream) => stream.close());
+  eventSources.clear();
+  activeDataSource = null;
+}
+
+export function configureDataSource(source: DataSource): void {
+  const previous = activeDataSource;
+  if (!previous || previous.key !== source.key || previous.connection.id !== source.connection.id
+    || previous.connection.baseUrl !== source.connection.baseUrl || previous.tenantId !== source.tenantId
+    || previous.identity.userId !== source.identity.userId || previous.identity.csrfToken !== source.identity.csrfToken
+    || previous.identity.permissions.canUpload !== source.identity.permissions.canUpload
+    || previous.identity.permissions.canManage !== source.identity.permissions.canManage
+    || previous.identity.permissions.canConfigure !== source.identity.permissions.canConfigure) {
+    scopeController.abort();
+    eventSources.forEach((stream) => stream.close());
+    eventSources.clear();
+    scopeController = new AbortController();
+  }
+  activeDataSource = source;
+  TENANT_ID = source.tenantId;
+  TENANT_QUERY = encodeURIComponent(source.tenantId);
 }
 
 export function configureApiIdentity(identity: AuthIdentity, tenantId: string): void {
-  scopeController?.abort();
-  eventSources.forEach((source) => source.close());
-  eventSources.clear();
-  apiIdentity = identity;
-  TENANT_ID = tenantId;
-  TENANT_QUERY = encodeURIComponent(tenantId);
-  scopeController = identity.mode === "cloud" ? new AbortController() : null;
+  configureAccountIdentity(PRIMARY_CONNECTION, identity);
+  configureDataSource({
+    key: `${PRIMARY_CONNECTION.id}:${identity.userId}:${tenantId}`,
+    kind: identity.mode === "local" ? "local" : tenantId === identity.publicTenantId ? "public" : "personal",
+    connection: PRIMARY_CONNECTION,
+    tenantId,
+    identity,
+  });
 }
 
 export function identityStorageKey(prefix: string, localKey = `${prefix}:${TENANT_ID}`): string {
-  return apiIdentity?.mode === "cloud" ? `${prefix}:${apiIdentity.userId}:${TENANT_ID}` : localKey;
+  return activeDataSource && activeDataSource.kind !== "local"
+    ? `${prefix}:${encodeURIComponent(activeDataSource.connection.id)}:${activeDataSource.identity.userId}:${TENANT_ID}`
+    : localKey;
 }
 
-export function getAuthIdentity(signal?: AbortSignal): Promise<AuthIdentity> {
-  return requestJson("/api/auth/me", { signal });
+export function getAuthIdentity(signal?: AbortSignal, connection = REMOTE_CONNECTION ?? PRIMARY_CONNECTION): Promise<AuthIdentity> {
+  return requestJson("/api/auth/me", { signal }, accountContext(connection));
 }
 
-export function createGuestIdentity(signal?: AbortSignal): Promise<AuthIdentity> {
-  return requestJson("/api/auth/guest", { method: "POST", signal });
+export function createGuestIdentity(signal?: AbortSignal, connection = REMOTE_CONNECTION ?? PRIMARY_CONNECTION): Promise<AuthIdentity> {
+  return requestJson("/api/auth/guest", { method: "POST", signal }, accountContext(connection));
 }
 
-export function sendEmailCode(email: string): Promise<{ retryAfterSeconds: number }> {
+export function sendEmailCode(email: string, connection = REMOTE_CONNECTION ?? PRIMARY_CONNECTION): Promise<{ retryAfterSeconds: number }> {
   return requestJson("/api/auth/email/send", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }),
-  });
+  }, accountContext(connection));
 }
 
-export function verifyEmailCode(email: string, code: string): Promise<AuthIdentity> {
+export function verifyEmailCode(email: string, code: string, connection = REMOTE_CONNECTION ?? PRIMARY_CONNECTION): Promise<AuthIdentity> {
   return requestJson("/api/auth/email/verify", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, code }),
-  });
+  }, accountContext(connection));
 }
 
-export function logoutIdentity(): Promise<AuthIdentity> {
-  return requestJson("/api/auth/logout", { method: "POST" });
+export function logoutIdentity(connection = REMOTE_CONNECTION ?? PRIMARY_CONNECTION): Promise<AuthIdentity> {
+  return requestJson("/api/auth/logout", { method: "POST" }, accountContext(connection));
 }
 
 export async function checkHealth(): Promise<boolean> {
-  const signal = scopedSignal();
-  const response = await fetch(apiUrl("/healthz"), {
+  const context = businessContext();
+  const signal = context.scopeSignal;
+  signal?.throwIfAborted();
+  const response = await fetch(apiUrl("/healthz", context.connection), {
     credentials: "include",
     headers: { Accept: "application/json" },
     signal,
   });
   signal?.throwIfAborted();
   if (!response.ok) {
-    throw new ApiClientError(response.status, await readError(response));
+    const payload = await readError(response);
+    signal?.throwIfAborted();
+    throw new ApiClientError(response.status, payload);
   }
   const payload = (await response.json()) as { status?: string };
   signal?.throwIfAborted();
@@ -446,7 +523,18 @@ export function getVideoChunk(videoChunkId: string, tenantId = TENANT_ID): Promi
 
 export function mediaUrl(url: string | null): string | null {
   if (!url) return null;
-  if (/^https?:\/\//i.test(url)) return url;
+  if (/^https?:\/\//i.test(url)) {
+    const connection = activeDataSource?.connection ?? PRIMARY_CONNECTION;
+    const upstream = connection.id === REMOTE_CONNECTION?.id ? import.meta.env.VITE_REMOTE_API_ORIGIN : undefined;
+    if (upstream) {
+      let parsed: URL;
+      try { parsed = new URL(url); } catch { return null; }
+      if (parsed.origin === upstream && parsed.pathname.startsWith("/api/")) {
+        return apiUrl(`${parsed.pathname}${parsed.search}${parsed.hash}`, connection);
+      }
+    }
+    return url;
+  }
   return url.startsWith("/") && !url.startsWith("//") ? apiUrl(url) : null;
 }
 
@@ -458,7 +546,9 @@ export function subscribeAgentMessages(
   conversationId: string,
   onSnapshot: (snapshot: AgentMessageEventView) => void,
 ): () => void {
-  const signal = scopedSignal();
+  const context = businessContext();
+  const signal = context.scopeSignal;
+  signal?.throwIfAborted();
   const source = new EventSource(agentMessagesEventsUrl(conversationId), { withCredentials: true });
   eventSources.add(source);
   source.addEventListener("messages", (event) => {
@@ -469,7 +559,7 @@ export function subscribeAgentMessages(
     if (snapshot?.conversationId === conversationId && Array.isArray(snapshot.messages)) onSnapshot(snapshot);
   });
   source.addEventListener("error", () => {
-    if (!signal?.aborted) window.dispatchEvent(new Event("anivag-auth-required"));
+    if (!signal?.aborted) authRequired(context.connection);
   });
   return () => { eventSources.delete(source); source.close(); };
 }
@@ -508,12 +598,14 @@ export async function streamAgentMessage(
   options: AgentMessageRunOptions = {},
   extraContext: Record<string, unknown> | null = null,
 ): Promise<void> {
-  signal = scopedSignal(signal)!;
-  const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`), {
+  const context = businessContext();
+  signal = scopedSignal(signal, context.scopeSignal)!;
+  signal.throwIfAborted();
+  const response = await fetch(apiUrl(`/api/agent/messages/send?conversationId=${encodeURIComponent(conversationId)}`, context.connection), {
     method: "POST",
     credentials: "include",
     headers: { Accept: "text/event-stream", "Content-Type": "application/json", "Idempotency-Key": idempotencyKey,
-      ...(apiIdentity?.csrfToken ? { "X-CSRF-Token": apiIdentity.csrfToken } : {}),
+      ...(context.identity?.csrfToken ? { "X-CSRF-Token": context.identity.csrfToken } : {}),
     },
     body: JSON.stringify({
       tenantId: TENANT_ID,
@@ -527,8 +619,10 @@ export async function streamAgentMessage(
   });
   signal.throwIfAborted();
   if (!response.ok) {
-    if (response.status === 401) window.dispatchEvent(new Event("anivag-auth-required"));
-    throw new ApiClientError(response.status, await readError(response));
+    if (response.status === 401) authRequired(context.connection);
+    const payload = await readError(response);
+    signal.throwIfAborted();
+    throw new ApiClientError(response.status, payload);
   }
   if (!response.body || !response.headers.get("Content-Type")?.includes("text/event-stream")) {
     await response.body?.cancel().catch(() => undefined);
@@ -555,6 +649,7 @@ async function consumeEventStream(
   let data: string[] = [];
   let ended = false;
   const dispatch = () => {
+    signal.throwIfAborted();
     if (data.length) onEvent(type, data.join("\n"));
     type = "message";
     data = [];
@@ -635,7 +730,9 @@ export async function uploadSegment({
   signal,
   onProgress,
 }: UploadSegmentOptions): Promise<number> {
-  signal = scopedSignal(signal)!;
+  const context = businessContext();
+  const tenantQuery = TENANT_QUERY;
+  signal = scopedSignal(signal, context.scopeSignal)!;
   if (signal.aborted) {
     throw new DOMException("Upload paused", "AbortError");
   }
@@ -661,20 +758,25 @@ export async function uploadSegment({
       apiUrl(
         "/api/uploads/segments/upload" +
           `?uploadSessionId=${encodeURIComponent(session.uploadSessionId)}` +
-          `&segmentNumber=${segmentNumber}&tenantId=${TENANT_QUERY}`,
+          `&segmentNumber=${segmentNumber}&tenantId=${tenantQuery}`,
+        context.connection,
       ),
     );
     xhr.withCredentials = true;
-    if (apiIdentity?.csrfToken) xhr.setRequestHeader("X-CSRF-Token", apiIdentity.csrfToken);
+    if (context.identity?.csrfToken) xhr.setRequestHeader("X-CSRF-Token", context.identity.csrfToken);
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.setRequestHeader(
       "Content-Range",
       `bytes ${start}-${endExclusive - 1}/${file.size}`,
     );
     xhr.setRequestHeader("X-Content-SHA256", checksum);
-    xhr.upload.onprogress = (event) => onProgress(event.loaded);
+    xhr.upload.onprogress = (event) => { if (!signal.aborted) onProgress(event.loaded); };
     xhr.onload = () => {
       signal.removeEventListener("abort", abort);
+      if (signal.aborted) {
+        reject(new DOMException("Upload paused", "AbortError"));
+        return;
+      }
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress(body.size);
         resolve(body.size);
@@ -686,11 +788,12 @@ export async function uploadSegment({
       } catch {
         payload = null;
       }
+      if (xhr.status === 401) authRequired(context.connection);
       reject(new ApiClientError(xhr.status, payload));
     };
     xhr.onerror = () => {
       signal.removeEventListener("abort", abort);
-      reject(new Error("分片上传网络连接中断"));
+      reject(signal.aborted ? new DOMException("Upload paused", "AbortError") : new Error("分片上传网络连接中断"));
     };
     xhr.onabort = () => {
       signal.removeEventListener("abort", abort);

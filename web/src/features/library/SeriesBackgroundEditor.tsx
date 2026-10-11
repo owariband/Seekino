@@ -8,7 +8,7 @@ import type { ImageAsset, SeriesBackground, SeriesUpdateRequest, SeriesView } fr
 import { useWorkspace } from "../../app/workspace";
 import styles from "./library.module.css";
 
-function readBackground(data: SeriesView["importantExtraData"]): SeriesBackground {
+export function readBackground(data: SeriesView["importantExtraData"]): SeriesBackground {
   if (!data) return { format: "markdown", content: "" };
   if (Object.keys(data).every((key) => key === "format" || key === "content") && typeof data.content === "string" && (data.format === undefined || data.format === "markdown" || data.format === "json")) {
     return { format: data.format === "json" ? "json" : "markdown", content: data.content };
@@ -20,14 +20,15 @@ function readBackground(data: SeriesView["importantExtraData"]): SeriesBackgroun
   return { format: "json", content: JSON.stringify(data, null, 2) };
 }
 
-export function SeriesBackgroundEditor({ series }: { series: SeriesView }) {
+export function SeriesBackgroundEditor({ series, readOnly = false }: { series: SeriesView; readOnly?: boolean }) {
   const { mode, updateSeries } = useWorkspace();
   const current = {
     ...readBackground(series.importantExtraData),
     description: series.description ?? "",
     transcriptLanguageHint: series.transcriptLanguageHint ?? "",
   };
-  const [editing, setEditing] = useState(false);
+  const [editRequested, setEditing] = useState(false);
+  const editing = !readOnly && editRequested;
   const [draft, setDraft] = useState(current);
   const [baseline, setBaseline] = useState(current);
   const [saving, setSaving] = useState(false);
@@ -161,11 +162,11 @@ export function SeriesBackgroundEditor({ series }: { series: SeriesView }) {
   };
 
   return (
-    <section className={styles.background} aria-label="系列背景资料">
-      <div className={styles.backgroundHeading}>
+    <section className={readOnly ? styles.backgroundReadOnly : styles.background} aria-label="系列背景资料">
+      {!readOnly ? <div className={styles.backgroundHeading}>
         <h2>背景资料</h2>
         {!editing ? <button className="button-quiet" type="button" onClick={startEditing} disabled={mode !== "live"}><Pencil size={14} />编辑背景</button> : null}
-      </div>
+      </div> : null}
       {editing ? (
         <form className={styles.backgroundForm} onSubmit={save} onKeyDown={(event) => {
           if (event.key === "Escape" && !saving) { event.preventDefault(); cancel(); }
@@ -200,8 +201,8 @@ export function SeriesBackgroundEditor({ series }: { series: SeriesView }) {
         </form>
       ) : (
         <>
-          {series.description ? <p className={styles.seriesDescription}>{series.description}</p> : null}
-          <p className={styles.backgroundHint}>ASR 原文语言：{series.transcriptLanguageHint ?? "未设置"}</p>
+          {!readOnly && series.description ? <p className={styles.seriesDescription}>{series.description}</p> : null}
+          {!readOnly ? <p className={styles.backgroundHint}>ASR 原文语言：{series.transcriptLanguageHint ?? "未设置"}</p> : null}
           {document.format === "markdown" && document.content ? (
             <div className={styles.backgroundMarkdown}>
               <Markdown

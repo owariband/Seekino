@@ -7,7 +7,6 @@ import {
   Clock3,
   RefreshCw,
   RotateCcw,
-  Rows3,
   Trash2,
   UploadCloud,
 } from "lucide-react";
@@ -58,10 +57,6 @@ const activeStatuses = new Set<VideoParseTaskStatus>([
   "PARSING",
   "INDEXING",
 ]);
-const failedStatuses = new Set<VideoParseTaskStatus>([
-  "PARSING_FAILED",
-  "INDEXING_FAILED",
-]);
 
 function formatProcessingDuration(durationMs: number): string {
   if (durationMs < 1_000) return `${durationMs} 毫秒`;
@@ -73,18 +68,16 @@ function formatProcessingDuration(durationMs: number): string {
 }
 
 function processingDurationText(task: VideoParseTaskView): string {
+  const timing = task.detail.timing;
+  if (timing) {
+    if (!timing.recorded || timing.effectiveDurationMs === null) {
+      return task.status === "PENDING" ? "未开始" : "未记录";
+    }
+    return formatProcessingDuration(timing.effectiveDurationMs);
+  }
   if (task.attemptCount === 0) return "未开始";
-  if (activeStatuses.has(task.status)) {
-    return task.processingDurationMs > 0
-      ? `${formatProcessingDuration(task.processingDurationMs)}（进行中）`
-      : "当前阶段处理中";
-  }
-  if (task.processingTimingComplete) {
-    return formatProcessingDuration(task.processingDurationMs);
-  }
-  return task.processingDurationMs > 0
-    ? `至少 ${formatProcessingDuration(task.processingDurationMs)}（不完整）`
-    : "尚未完整记录";
+  if (task.processingDurationMs === 0) return "未记录";
+  return formatProcessingDuration(task.processingDurationMs);
 }
 
 function mergeTaskProjection(
@@ -255,7 +248,7 @@ export function TasksPage() {
     } catch (error) {
       setActionErrors((current) => ({
         ...current,
-        [task.videoParseTaskId]: `${task.status === "PENDING" ? "开始 V2 解析" : "整集重新解析"}失败：${errorMessage(error)}`,
+        [task.videoParseTaskId]: `${task.status === "PENDING" ? "开始解析" : "整集重新解析"}失败：${errorMessage(error)}`,
       }));
     } finally {
       setReparsingUploadSessionIds((current) => {
@@ -272,7 +265,6 @@ export function TasksPage() {
     : tasks.filter((task) => task.status === filter);
   const runningCount = tasks.filter((task) => activeStatuses.has(task.status)).length;
   const completedCount = tasks.filter((task) => task.status === "COMPLETE").length;
-  const chunkCount = tasks.reduce((sum, task) => sum + task.chunkCount, 0);
   const latestVersionByVideo = new Map<string, number>();
   for (const task of tasks) {
     latestVersionByVideo.set(
@@ -297,7 +289,6 @@ export function TasksPage() {
 
       <section className={styles.metrics} aria-label="任务概况">
         <article><Activity size={17} /><div><span>进行中</span><strong>{runningCount}</strong></div></article>
-        <article><Rows3 size={17} /><div><span>固定切片</span><strong>{chunkCount}</strong></div></article>
         <article><CheckCircle2 size={17} /><div><span>已完成</span><strong>{completedCount}</strong></div></article>
       </section>
 
@@ -316,19 +307,24 @@ export function TasksPage() {
             <button type="button" key={value} aria-pressed={filter === value} className={filter === value ? styles.filterActive : undefined} onClick={() => setFilter(value)}>{label}</button>
           ))}
         </div>
-        <span>每 5 秒自动同步 · 手动刷新可立即校准</span>
       </div>
 
       <section className={styles.jobList} aria-live="polite">
         {tasksQuery.isPending ? (
-          <div className={styles.loadState}><RefreshCw className={styles.spinning} size={22} /><p>正在从 API 读取解析任务…</p></div>
+          <div className={styles.loadState}><RefreshCw className={styles.spinning} size={22} /><p>正在读取解析任务…</p></div>
         ) : null}
         {tasksQuery.error instanceof Error ? (
-          <div className={styles.loadState} data-error="true"><CircleAlert size={22} /><h2>任务接口暂时不可用</h2><p>{tasksQuery.error.message}</p></div>
+          <div className={styles.loadState} data-error="true"><CircleAlert size={22} /><h2>暂时无法读取任务</h2><p>{tasksQuery.error.message}</p></div>
         ) : null}
         {visibleTasks.map((task) => {
           const currentStageIndex = PIPELINE_STAGE_INDEX[task.status];
-          const pipelineProgress = (currentStageIndex / (PIPELINE.length - 1)) * 100;
+          const progress = task.detail.progress;
+          const pipelineProgress = progress
+            ? progress.percent ?? 0
+            : (currentStageIndex / (PIPELINE.length - 1)) * 100;
+          const progressText = progress
+            ? progress.percent === null ? "准备中" : `${Number(progress.percent.toFixed(1))}%`
+            : task.status === "COMPLETE" ? "100%" : task.status === "PENDING" ? "0%" : "—";
           const stageTitle = activeStatuses.has(task.status)
             ? `正在${PIPELINE[currentStageIndex]}`
             : statusText[task.status];
@@ -345,16 +341,16 @@ export function TasksPage() {
               <header className={styles.jobHeader}>
                 <div className={styles.episodeSeal}>{episodeLabel(episodeOrder)}</div>
                 <div className={styles.jobName}>
-                  <span className="eyebrow">{task.seriesName || "视频解析 V2"}</span>
+                  <span className="eyebrow">{task.seriesName || "视频解析"}</span>
                   <h2>{stageTitle}</h2>
                 </div>
                 <div className={styles.jobActions}>
                   <div className={styles.jobStatus} data-status={task.status}>
                     <i />{statusText[task.status]}
                   </div>
-                  <div className={styles.jobPercent}>
-                    <small>任务进度</small>
-                    <strong>{task.status === "COMPLETE" ? "100%" : task.status === "PENDING" ? "0%" : "—"}</strong>
+                  <div className={styles.jobPercent} aria-label="解析进度">
+                    <small>解析进度</small>
+                    <strong>{progressText}</strong>
                   </div>
                 </div>
               </header>
@@ -370,7 +366,7 @@ export function TasksPage() {
                         disabled={deleting || retrying || reparsing}
                         onClick={() => void retryParse(task)}
                         aria-label={`重试解析 ${filename}`}
-                        title="沿用同一 V2 task identity 重试"
+                        title="重试当前解析任务"
                       >
                         <RotateCcw size={14} />{retrying ? "正在重试…" : "重试解析"}
                       </button>
@@ -384,10 +380,10 @@ export function TasksPage() {
                           setConfirmingDeleteTaskId(null);
                           setConfirmingReparseTaskId(task.videoParseTaskId);
                         }}
-                        aria-label={`${pendingTakeover ? "开始 V2 解析" : "整集重新解析"} ${filename}`}
-                        title={pendingTakeover ? "接管历史占位任务并沿用当前 V2 任务身份" : "创建新的 V2 task identity，从视频开头重新解析"}
+                        aria-label={`${pendingTakeover ? "开始解析" : "整集重新解析"} ${filename}`}
+                        title={pendingTakeover ? "开始解析这一集" : "从视频开头重新解析"}
                       >
-                        <RefreshCw size={14} />{reparsing ? (pendingTakeover ? "正在接管…" : "正在重新解析…") : (pendingTakeover ? "开始 V2 解析" : "整集重新解析")}
+                        <RefreshCw size={14} />{reparsing ? (pendingTakeover ? "正在开始解析…" : "正在重新解析…") : (pendingTakeover ? "开始解析" : "整集重新解析")}
                       </button>
                     ) : null}
                     <button
@@ -399,7 +395,7 @@ export function TasksPage() {
                         setConfirmingDeleteTaskId(task.videoParseTaskId);
                       }}
                       aria-label={`删除任务 ${filename}`}
-                      title={task.canDelete ? "删除本次上传及其解析产物" : "任务仍有执行租约，等待释放后再删除"}
+                      title={task.canDelete ? "删除本次上传及其解析产物" : "任务正在执行，请稍后再删除"}
                     >
                       <Trash2 size={14} />{deleting ? "正在删除…" : "删除任务"}
                     </button>
@@ -410,8 +406,8 @@ export function TasksPage() {
               {confirmingReparseTaskId === task.videoParseTaskId ? (
                 <div className={styles.reparseConfirmation} role="alert">
                   <div>
-                    <strong>{pendingTakeover ? "开始这一集的 V2 解析？" : "从头重新解析这一整集？"}</strong>
-                    <p>{pendingTakeover ? "系统会接管历史占位任务并沿用当前任务身份；新的模型调用会计入用量。" : "系统会建立新的 V2 任务身份并从视频开头运行；新的模型调用会计入用量。"}</p>
+                    <strong>{pendingTakeover ? "开始解析这一集？" : "从头重新解析这一整集？"}</strong>
+                    <p>{pendingTakeover ? "将开始解析这集视频，新的模型调用会计入用量。" : "将从视频开头重新解析，新的模型调用会计入用量。"}</p>
                   </div>
                   <div className={styles.confirmActions}>
                     <button className="button-quiet" type="button" onClick={() => setConfirmingReparseTaskId(null)}>取消</button>
@@ -420,7 +416,7 @@ export function TasksPage() {
                       type="button"
                       disabled={!task.canReparse || deleting || retrying || reparsing}
                       onClick={() => void reparse(task)}
-                      aria-label={`${pendingTakeover ? "确认开始 V2 解析" : "确认整集重新解析"} ${filename}`}
+                      aria-label={`${pendingTakeover ? "确认开始解析" : "确认整集重新解析"} ${filename}`}
                     >
                       <RefreshCw size={14} />{pendingTakeover ? "确认开始解析" : "确认从头解析"}
                     </button>
@@ -451,34 +447,33 @@ export function TasksPage() {
 
               {actionErrors[task.videoParseTaskId] ? <p className={styles.actionError} role="alert">{actionErrors[task.videoParseTaskId]}</p> : null}
 
-              <div className={styles.pipeline}>
-                <div className={styles.pipelineLine}><span style={{ width: `${pipelineProgress}%` }} /></div>
-                {PIPELINE.map((stage, index) => (
-                  <div
-                    key={stage}
-                    className={clsx(styles.pipelineStage, index < currentStageIndex && styles.stageDone, index === currentStageIndex && styles.stageCurrent)}
-                  >
-                    <i /><span>{stage}</span>
-                  </div>
-                ))}
-              </div>
+              <div className={styles.jobProgress}>
+                <div className={styles.pipeline}>
+                  <div className={styles.pipelineLine}><span style={{ width: `${pipelineProgress}%` }} /></div>
+                  {PIPELINE.map((stage, index) => (
+                    <div
+                      key={stage}
+                      className={clsx(styles.pipelineStage, index < currentStageIndex && styles.stageDone, index === currentStageIndex && styles.stageCurrent)}
+                    >
+                      <i /><span>{stage}</span>
+                    </div>
+                  ))}
+                </div>
 
-              <div className={styles.progressFacts} aria-label="解析任务进度">
-                <span>固定切片 <strong>{task.chunkCount} 段</strong></span>
-                <span>任务身份 <strong>v{task.version}</strong></span>
-                <span>租约版本 <strong>{task.leaseVersion}</strong></span>
+                <div className={styles.progressFacts} aria-label="解析任务进度">
+                  <span>固定切片 <strong>{task.chunkCount} 段</strong></span>
+                  {progress ? <>
+                    <span>理解 <strong>{progress.completedChunks} / {progress.totalChunks}</strong></span>
+                    <span>Refine <strong>{progress.completedRefines} / {progress.totalRefines}</strong></span>
+                    <span>完成单元 <strong>{progress.completedUnits} / {progress.totalUnits}</strong></span>
+                  </> : null}
+                </div>
               </div>
 
               <div className={styles.jobDetail}>
-                <div className={styles.checkpoints}>
-                  <div className={styles.detailTitle}><span>V2 任务状态</span><small>以服务端持久状态为准</small></div>
-                  <div className={styles.checkpointGrid}><span>{statusText[task.status]} · {task.chunkCount} 个固定切片</span></div>
-                </div>
                 <dl>
-                  <div><dt>文件</dt><dd>{filename}</dd></div>
-                  <div><dt>尝试次数</dt><dd>{task.attemptCount} / {task.maxAttempts}</dd></div>
-                  <div><dt>{task.status === "COMPLETE" || failedStatuses.has(task.status) ? "解析耗时" : "累计解析耗时"}</dt><dd>{processingDurationText(task)}</dd></div>
-                  <div><dt>流水线</dt><dd>{task.pipelineVersion}</dd></div>
+                  <div><dt>文件</dt><dd title={filename}>{filename}</dd></div>
+                  <div title="仅统计实际解析时间，排队和停机不计入"><dt>有效解析时长</dt><dd>{processingDurationText(task)}</dd></div>
                   <div><dt>更新于</dt><dd>{new Date(task.updateTime).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</dd></div>
                 </dl>
               </div>
@@ -486,12 +481,12 @@ export function TasksPage() {
               {task.lastError ? (
                 <div className={styles.jobError}><CircleAlert size={15} /><div><strong>最近一次错误</strong><p>{task.lastError.message}</p></div></div>
               ) : null}
-              {task.status === "PENDING" ? <p className={styles.retryNote}><Clock3 size={13} />服务端会按任务调度时间执行，前端不会重复创建任务。</p> : null}
+              {task.status === "PENDING" ? <p className={styles.retryNote}><Clock3 size={13} />等待开始解析。</p> : null}
             </article>
           );
         })}
         {tasksQuery.isSuccess && visibleTasks.length === 0 ? (
-          <div className={styles.empty}><Activity size={25} strokeWidth={1.4} /><h2>这里暂时很安静</h2><p>上传完成并创建 V2 解析任务后，持久状态会出现在这里。</p></div>
+          <div className={styles.empty}><Activity size={25} strokeWidth={1.4} /><h2>这里暂时很安静</h2><p>上传视频后，可以在这里查看解析进度。</p></div>
         ) : null}
       </section>
     </main>

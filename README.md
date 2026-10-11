@@ -1,6 +1,6 @@
-# anivag
+# Seekino
 
-anivag 是面向事件级视频检索、观看问答与时间证据定位的多模态视频理解产品。动画名场面是首个应用场景：导入若干集视频后，可以用自然语言查找动作、人物关系或情绪变化，也可以在观看时询问当前画面和刚才的对白，再跳回原片核对。
+Seekino（原 AniVAG）是面向事件级视频检索、观看问答与时间证据定位的多模态视频理解产品。动画名场面是首个应用场景：导入若干集视频后，可以用自然语言查找动作、人物关系或情绪变化，也可以在观看时询问当前画面和刚才的对白，再跳回原片核对。
 
 媒体、业务事实和索引保存在自己的运行环境，模型来源由自己的配置管理。使用远程模型时，相应音视频、帧或文本会发送到配置的供应商。
 
@@ -130,7 +130,7 @@ Vite 代理读取同一环境中的 `ANIVAG_HTTP_HOST` / `ANIVAG_HTTP_PORT`。�
 ./start.sh stop
 ```
 
-**当前启动器仍用旧 `workspaceId` 参数检查资料库，会在 API 就绪后退出，见 [CHK-022](docs/dev/check_log.md)。修复前使用上面的手动启动步骤。** `stop` 只停止启动器管理的进程，不会停止手动启动的 API/Web 或 Compose 数据库。
+启动器按当前 `tenantId` 契约检查 API 资料库及 Web 代理，使用 `ANIVAG_LOCAL_TENANT_ID` 配置的本地 Tenant。启动前需准备可达的 Elasticsearch；脚本会校验集群与索引，不启动 ES。`stop` 只停止启动器管理的进程，不会停止手动启动的 API/Web 或 Compose 数据库。
 
 启动器自建数据与日志在 `outputs/local-services/`；媒体默认在 `outputs/server/artifacts/`，可通过 `ANIVAG_ARTIFACT_ROOT` 修改。已有 MySQL/ES 会按配置复用，旧 Schema 不自动 ALTER。Docker 和端口配置详情见 [开发部署说明](deploy/README.md)。
 

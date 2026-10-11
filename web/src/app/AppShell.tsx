@@ -3,19 +3,17 @@ import {
   Activity,
   ArrowUpFromLine,
   ChartNoAxesCombined,
+  ChevronDown,
   LibraryBig,
   Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PlaySquare,
   Search,
   Settings,
   Sun,
+  UserRound,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { NavLink, Outlet } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router";
 
-import { taskProgress } from "../features/uploads/upload-types";
 import { useUploads } from "../features/uploads/UploadProvider";
 import { useAuth } from "../features/auth/AuthProvider";
 import { errorMessage } from "../api/client";
@@ -24,7 +22,6 @@ import { useWorkspace } from "./workspace";
 import styles from "./app-shell.module.css";
 
 const navigation = [
-  { to: "/watch", label: "视频观看", icon: PlaySquare },
   { to: "/search", label: "名场面检索", icon: Search },
   { to: "/library", label: "资料库", icon: LibraryBig },
   { to: "/tasks", label: "解析任务", icon: Activity },
@@ -32,143 +29,103 @@ const navigation = [
   { to: "/settings", label: "设置", icon: Settings },
 ];
 
-function AccountControls({ mobile = false }: { mobile?: boolean }) {
-  const { identity, activeTenantId, selectTenant, openLogin, logout } = useAuth();
+function AccountControls({ onLogin }: { onLogin: () => void }) {
+  const { accountIdentity, accountStatus, accountError, retryAccount, sources, activeSource, selectSource, logout } = useAuth();
+  const { mode } = useWorkspace();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (identity.mode === "local") return null;
-  return <section className={clsx(styles.account, mobile && styles.mobileAccount)} aria-label="当前账号">
-    <div><span title={identity.email ?? undefined}>{identity.isGuest ? "游客体验" : identity.email}</span>
-      {identity.isGuest ? <button type="button" onClick={openLogin}>邮箱登录</button>
+  const signedIn = accountIdentity && !accountIdentity.isGuest;
+  return <section id="anivag-account-panel" className={styles.account} aria-label="当前账号">
+    <header><strong>{signedIn ? accountIdentity.email || "已登录" : "未登录"}</strong><span>账号与资料来源</span></header>
+    <div className={styles.accountAction}>
+      {accountStatus === "unconfigured" ? <span title="连接账号服务后，可登录并访问远端资料">未连接账号服务</span>
+        : accountStatus === "checking" ? <span>连接中…</span>
+        : accountStatus === "unavailable" ? <button type="button" title={accountError ?? undefined} onClick={retryAccount}>重新连接</button>
+        : !signedIn ? <button type="button" onClick={onLogin}>登录</button>
         : <button type="button" disabled={busy} onClick={async () => {
           setBusy(true); setError(null);
           try { await logout(); } catch (failure) { setError(errorMessage(failure)); }
           finally { setBusy(false); }
         }}>{busy ? "退出中…" : "退出"}</button>}
     </div>
-    <label><span>资料来源</span><select className="field" aria-label={mobile ? "移动端选择资料来源" : "选择资料来源"}
-      value={activeTenantId} onChange={(event) => selectTenant(event.target.value)}>
-      <option value={identity.publicTenantId}>公开课程</option>
-      {!identity.isGuest && identity.tenantId && identity.tenantId !== identity.publicTenantId ? <option value={identity.tenantId}>我的资料库</option> : null}
-    </select></label>
+    {sources.length > 1 ? <label><span>资料来源</span><select className="field" aria-label="选择资料来源"
+      value={activeSource.key} onChange={(event) => selectSource(event.target.value)}>
+      {sources.map((source) => <option key={source.key} value={source.key}>{source.kind === "local" ? "本机资料" : source.kind === "public" ? "公开资料" : "我的资料"}</option>)}
+    </select></label> : <div className={styles.sourceLabel}><span>当前资料</span><strong>{activeSource.kind === "local" ? "本机资料" : activeSource.kind === "public" ? "公开资料" : "我的资料"}</strong></div>}
     {error ? <p role="alert">{error}</p> : null}
+    <div className={clsx(styles.runtime, styles[`runtime${mode}`])}><i aria-hidden="true" /><span>{mode === "live" ? "资料已连接" : mode === "offline" ? "资料连接不可用" : "检查资料连接"}</span></div>
   </section>;
 }
 
 export function AppShell() {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("anivag-sidebar-collapsed") === "true");
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+  const avatarRef = useRef<HTMLButtonElement>(null);
+  const location = useLocation();
   const { theme, toggleTheme } = useTheme();
-  const { mode } = useWorkspace();
-  const { visibleTasks, activeCount, overallProgress, openDialog } = useUploads();
-  const { identity, canUpload, canManage, canConfigure, openLogin, selectTenant } = useAuth();
+  const { activeCount, overallProgress, openDialog } = useUploads();
+  const { accountIdentity, canUpload, canManage, canConfigure, openLogin, sources, selectSource } = useAuth();
+  const signedIn = accountIdentity && !accountIdentity.isGuest;
   const visibleNavigation = navigation.filter(({ to }) => {
     if (to === "/settings") return canConfigure;
     if (["/library", "/tasks", "/usage"].includes(to)) return canManage;
     return true;
   });
-  const uploadAction = canUpload ? openDialog : identity.isGuest ? openLogin : () => {
-    if (identity.tenantId) selectTenant(identity.tenantId);
+  const uploadAction = canUpload ? openDialog : !signedIn ? openLogin : () => {
+    const personalSource = sources.find((source) => source.kind === "personal");
+    if (personalSource) selectSource(personalSource.key);
   };
-  const previewTasks = visibleTasks
-    .filter((task) => !["completed", "cancelled"].includes(task.status))
-    .slice(0, 3);
 
+  useEffect(() => { setAccountOpen(false); }, [location.key]);
   useEffect(() => {
-    window.localStorage.setItem("anivag-sidebar-collapsed", String(sidebarCollapsed));
-  }, [sidebarCollapsed]);
+    if (!accountOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!accountRef.current?.contains(event.target as Node)) setAccountOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setAccountOpen(false); avatarRef.current?.focus(); }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeOnEscape); };
+  }, [accountOpen]);
 
   return (
-    <div className={clsx(styles.shell, sidebarCollapsed && styles.sidebarCollapsed)}>
-      <button
-        className={styles.sidebarToggle}
-        type="button"
-        onClick={() => setSidebarCollapsed((current) => !current)}
-        aria-label={sidebarCollapsed ? "展开导航" : "收起导航"}
-        title={sidebarCollapsed ? "展开导航" : "收起导航"}
-        aria-expanded={!sidebarCollapsed}
-        aria-controls="anivag-sidebar"
-      >
-        {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-      </button>
-      <aside id="anivag-sidebar" className={styles.sidebar} hidden={sidebarCollapsed}>
-        <NavLink className={styles.brand} to="/watch" aria-label="anivag 首页">
-          <img src="/anivag-mark.svg" alt="" />
-          <strong>anivag</strong>
+    <div className={styles.shell}>
+      <header className={styles.topbar} aria-label="全站导航">
+        <NavLink className={styles.brand} to="/watch" aria-label="Seekino 首页">
+          <img src="/seekino-logo.png" alt="" /><strong>seekino</strong>
         </NavLink>
-
-        <AccountControls />
-
         <nav className={styles.navigation} aria-label="主导航">
           {visibleNavigation.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) => clsx(styles.navItem, isActive && styles.navActive)}
-            >
-              <Icon size={17} strokeWidth={1.8} />
-              <span>{label}</span>
+            <NavLink key={to} to={to} className={({ isActive }) => clsx(styles.navItem, isActive && styles.navActive)}>
+              <Icon size={16} strokeWidth={1.8} aria-hidden="true" /><span>{label}</span>
             </NavLink>
           ))}
         </nav>
-
-        {canUpload ? <button className={styles.uploadDock} type="button" onClick={openDialog}>
-          <div className={styles.uploadDockHeading}>
-            <span><ArrowUpFromLine size={15} /> 并行传输</span>
-            <b>{overallProgress}%</b>
-          </div>
-          {previewTasks.length > 0 ? (
-            <div className={styles.microTasks}>
-              {previewTasks.map((task) => (
-                <div key={task.taskId}>
-                  <span>EP {String(task.episodeOrder).padStart(2, "0")}</span>
-                  <i><em style={{ width: `${taskProgress(task)}%` }} /></i>
-                  <small>{taskProgress(task)}%</small>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p>可同时放入 3 个视频</p>
-          )}
-          <div className={styles.uploadDockFooter}>
-            <span>{activeCount > 0 ? `${activeCount} 项进行中` : "打开上传案台"}</span>
-            <ArrowUpFromLine size={13} />
-          </div>
-        </button> : <button className={styles.uploadDock} type="button" onClick={uploadAction}>
-          <div className={styles.uploadDockHeading}><span><ArrowUpFromLine size={15} />
-            {identity.isGuest ? "登录后上传视频" : "进入我的资料库"}</span></div>
-          <p>{identity.isGuest ? "公开课程可直接观看和检索" : "公开课程为只读资料"}</p>
-        </button>}
-
-        <footer className={styles.sidebarFooter}>
-          <div className={clsx(styles.runtime, styles[`runtime${mode}`])}>
-            <i />
-            <span>{mode === "live" ? "API 已连接" : mode === "offline" ? "API 不可用" : "检查服务"}</span>
-          </div>
-          <button type="button" onClick={toggleTheme} aria-label={theme === "light" ? "切换至黑夜模式" : "切换至白天模式"}>
-            {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+        <div className={styles.headerActions}>
+          <span id="watch-header-actions" style={{ display: "contents" }} />
+          <NavLink className={styles.iconButton} to="/search" aria-label="搜索名场面" title="搜索名场面"><Search size={21} strokeWidth={1.7} aria-hidden="true" /></NavLink>
+          <button className={styles.uploadButton} type="button" onClick={uploadAction}
+            aria-label={canUpload ? `并行传输 · ${activeCount > 0 ? `${activeCount} 项进行中，${overallProgress}%` : "打开上传案台"}` : !signedIn ? "登录后上传远端视频" : "进入我的资料"}
+            title={canUpload ? "上传视频与管理并行传输" : !signedIn ? "登录后上传远端视频" : "进入我的资料"}>
+            <ArrowUpFromLine size={19} strokeWidth={1.7} aria-hidden="true" /><span>{canUpload ? activeCount > 0 ? `${overallProgress}%` : "上传" : !signedIn ? "上传" : "我的资料"}</span>
+            {canUpload && activeCount > 0 ? <i style={{ width: `${overallProgress}%` }} aria-hidden="true" /> : null}
           </button>
-        </footer>
-      </aside>
-
-      <div className={styles.content}>
-        <header className={styles.mobileHeader}>
-          <NavLink className={styles.mobileBrand} to="/watch"><img src="/anivag-mark.svg" alt="" /><strong>anivag</strong></NavLink>
-          <div>
-            <button type="button" onClick={uploadAction} aria-label={canUpload ? "打开上传面板" : identity.isGuest ? "登录后上传" : "进入个人资料库"}><ArrowUpFromLine size={17} /><span>{canUpload ? activeCount || "上传" : identity.isGuest ? "登录" : "个人资料"}</span></button>
-            <button type="button" onClick={toggleTheme} aria-label="切换明暗主题">{theme === "light" ? <Moon size={17} /> : <Sun size={17} />}</button>
+          <button className={styles.iconButton} type="button" onClick={toggleTheme} aria-label={theme === "light" ? "切换至黑夜模式" : "切换至白天模式"} title={theme === "light" ? "切换至黑夜模式" : "切换至白天模式"}>
+            {theme === "light" ? <Moon size={20} strokeWidth={1.7} aria-hidden="true" /> : <Sun size={20} strokeWidth={1.7} aria-hidden="true" />}
+          </button>
+          <div className={styles.accountMenu} ref={accountRef} onBlur={(event) => {
+            if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setAccountOpen(false);
+          }}>
+            <button className={styles.accountTrigger} type="button" ref={avatarRef} onClick={() => setAccountOpen((open) => !open)} aria-label="打开账号菜单" aria-expanded={accountOpen} aria-controls="anivag-account-panel" title={signedIn ? accountIdentity.email || "我的账号" : "登录与账号"}>
+              <span className={styles.avatar}>{signedIn && accountIdentity.email ? accountIdentity.email.slice(0, 1).toUpperCase() : <UserRound size={21} strokeWidth={1.6} aria-hidden="true" />}</span><ChevronDown size={13} aria-hidden="true" />
+            </button>
+            {accountOpen ? <AccountControls onLogin={() => { avatarRef.current?.focus(); setAccountOpen(false); openLogin(); }} /> : null}
           </div>
-        </header>
-        <AccountControls mobile />
-        <Outlet />
-      </div>
-
-      <nav className={styles.mobileNav} aria-label="移动端主导航">
-        {visibleNavigation.map(({ to, label, icon: Icon }) => (
-          <NavLink key={to} to={to} className={({ isActive }) => isActive ? styles.mobileActive : undefined}>
-            <Icon size={18} /><span>{label}</span>
-          </NavLink>
-        ))}
-      </nav>
+        </div>
+      </header>
+      <div className={styles.content}><Outlet /></div>
     </div>
   );
 }

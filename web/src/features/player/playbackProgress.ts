@@ -78,9 +78,12 @@ function migrateLegacyHistory(): WatchProgress[] {
   return migrated;
 }
 
-export function readWatchHistory(): WatchProgress[] {
+export function playbackProgressStorageKey(): string {
+  return identityStorageKey(STORAGE_KEY, STORAGE_KEY);
+}
+
+export function readWatchHistory(storageKey = playbackProgressStorageKey()): WatchProgress[] {
   try {
-    const storageKey = identityStorageKey(STORAGE_KEY, STORAGE_KEY);
     const encoded = localStorage.getItem(storageKey);
     if (encoded === null) return storageKey === STORAGE_KEY ? migrateLegacyHistory() : [];
     const stored: unknown = JSON.parse(encoded);
@@ -91,17 +94,17 @@ export function readWatchHistory(): WatchProgress[] {
   }
 }
 
-export function readVideoProgress(videoId: string): WatchProgress | null {
-  return readWatchHistory().find((item) => item.videoId === videoId) ?? null;
+export function readVideoProgress(videoId: string, storageKey = playbackProgressStorageKey()): WatchProgress | null {
+  return readWatchHistory(storageKey).find((item) => item.videoId === videoId) ?? null;
 }
 
-export function saveVideoProgress(progress: Omit<WatchProgress, "updatedAt">): void {
+export function saveVideoProgress(progress: Omit<WatchProgress, "updatedAt">, storageKey = playbackProgressStorageKey()): void {
   const updated = { ...progress, updatedAt: Date.now() };
   if (!isWatchProgress(updated)) return;
   updated.positionSeconds = Math.min(updated.positionSeconds, updated.durationSeconds);
   try {
-    const history = readWatchHistory().filter((item) => item.videoId !== updated.videoId);
-    localStorage.setItem(identityStorageKey(STORAGE_KEY, STORAGE_KEY), JSON.stringify([updated, ...history].slice(0, MAX_HISTORY)));
+    const history = readWatchHistory(storageKey).filter((item) => item.videoId !== updated.videoId);
+    localStorage.setItem(storageKey, JSON.stringify([updated, ...history].slice(0, MAX_HISTORY)));
   } catch {
     // Browsers can disable or fill local storage; playback remains usable.
   }
