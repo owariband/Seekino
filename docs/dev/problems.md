@@ -1,6 +1,6 @@
 # 项目问题清单
 
-更新日期：2026-10-09。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。本次仅补充 B07 的 ParseV2 真实性能与失败恢复问题；其余条目保留原有历史状态，未作为当前工作区的全量复核。
+更新日期：2026-10-11。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。本次补充 B07 的 Codex 原生 Refine 超时诊断；其余条目保留各自日期下的历史状态，未作为当前工作区的全量复核。
 
 ## frontend
 
@@ -241,6 +241,64 @@ return completed
 ### B07：视频解析成本高昂且耗时超过片长数倍
 
 优先级：高。类型：解析性能、单位经济性与失败止损问题。状态：已由本地开发库和运行日志实测确认，待优化。
+
+#### 2026-10-11：Refine 单项读取反复等待原生 PostToolUse，耗尽整次执行预算
+
+优先级：高。状态：已定位一个超时样本的主要等待环节，待修复；托管 hook 内部为何耗时数秒仍未确认。以下为当日已采集的运行证据，不表示当前任务实时状态，也不替代后面的历史模型与 Pipeline 结论。
+
+##### 现象与实际执行路径
+
+- Parse Task：`d470e300-9813-4c19-a62e-f52503e2e1ae`；Video：`e709a2d8-aabb-509e-b323-e7f9aa7018b2`。本轮实际使用 `codex_local / gpt-6-astra`、`reasoning_effort=low`；Refine 跟随 Understanding 模型绑定。
+- Gateway 对 native adapter 直接执行 `CodexAgentModel.generate()`，走 Codex 原生 app-server agent；Server 传入 `tool_harness="deepagents"` 不代表本轮经过 DeepAgents 图或其 hook。
+- 当前 `request_timeout_seconds=600` 作为整个 native invocation 的 deadline，覆盖会话启动、模型生成、工具调用、工具后的 hook 等待和结果返回。到期由 AniVAG 终止 session，并报 `Codex Agent execution deadline expired`；不是一次供应商 HTTP 请求必然等待了十分钟。
+- 已观测到的主要模式是逐项读取之间的同步等待：AniVAG 已将成功工具回执交给 Codex，调用工具的 Agent 脚本仍要等 PostToolUse 完成，才能拿到结果并继续下一次读取。
+
+```text
+Agent 脚本请求 get_context_canvas(item 1)
+    → AniVAG 执行读取，将成功结果交给 Codex
+    → Codex await PostToolUse hook
+    → hook 完成后，结果才交回调用脚本
+    → 脚本请求 item 2，重复上述过程
+    → 整次 invocation 达到 600 秒 deadline，尚未形成持久提交
+```
+
+##### 完整超时样本与耗时口径
+
+样本为 Refine `[19,22)`、`lease_version=2`，invocation `37723952-ebd2-4143-af64-db313743b4f7`。时间为 `2026-10-11 +0800`；原始采集于 `16:48:33` 核实覆盖整次 invocation，native 日志后续滚动不能视作仍可完整重放。
+
+| 指标 | 已采集结果 |
+| --- | --- |
+| invocation 起止与耗时 | `16:10:06.460–16:20:06.436`，`599.976 s`，最终超时 |
+| 成功事件读取 | 127 次：64 次 overview、63 次 content；涉及 64 个唯一事件，最后一个只读到 overview |
+| 相同路径重复读取 | 0；该样本不是反复读取同一对象的模式 |
+| 已闭合 hook | 126 段，时间并集 `481.954 s`，占整次 invocation 的约 `80.3%` |
+| event 回执中段 | 首末成功回执跨度 `483.459 s`；其中闭合 hook 并集 `481.954 s`，其余合计 `1.505 s`，尚未细分读取、传输与推进 |
+| 写入与提交冲突 | 采集范围内未观察到写入或 snapshot-conflict；该次超时发生在持久提交前 |
+
+`481.954 s` 是 hook/started → hook/completed 生命周期区间的并集，不是 Canvas 执行时间、handler CPU 时间或已证实的网络等待。另有末尾未闭合 hook，未计入该值；整次执行其余约 118 秒尚未完整分解，不能直接标为模型推理时间。读取属于业务核验，不能把整次 600 秒都命名为“无效时长”。
+
+##### 源码与本机配置确认的机制
+
+1. **工具回执与脚本取得结果之间存在同步 hook。** 已安装 SDK 与 bundled CLI 为 `0.156.1`；对应官方 `rust-v0.156.1` 源码中，registry 先 await 业务工具，再 await PostToolUse，最后才返回结果。code-mode 内部工具调用也经过这条路径。PostToolUse 可以追加反馈或阻止原始结果继续到达脚本，因此同步方式会等待其决定；不是工具一返回就立即恢复脚本。
+2. **这类动态工具默认串行，范围是同一个执行 runtime。** DynamicToolHandler 没有覆盖 `supports_parallel_tool_calls`，默认值为 false；同一个 code-mode turn worker 的 nested calls 共享 ToolCallRuntime，其写锁覆盖工具 dispatch 和后面的 PostToolUse 等待。不是按工具名称分别建锁，也不是四个独立 Refine process 共用全局锁。仅把单项调用改为 `Promise.all` 不会减少 hook 次数，在该版本的同一 worker 中仍受串行门禁约束。
+3. **当前存在匹配全部工具的同步托管命令。** 本机 `/etc/codex/requirements.toml` 启用 hooks，PostToolUse 的 matcher 为 `.*`，命令为 CorpLink Resources 下的 `corplink-bridge`，timeout 为 5 秒，未设置 async，按同步方式执行。Codex 的命令 runner 启动外部进程、传入事件 JSON，并等待输出与进程结束；5 秒是命令执行超时配置，不是固定 sleep，也不是整个 Refine 的预算。采集中的通用 hook 事件缺少逐条 handler 关联，不能声称 126 段已逐一证明均属于这个命令。
+4. **读取契约放大调用次数，写入已有批次能力。** `get_context_canvas` 已支持目录 list/分页，但单次正文读取只接受一个 reference；工具说明引导先 overview，再读取具体 section。样本中 64 个事件由此产生 127 次成功读取。`write_context_canvas` 的 timeline 写入已经支持 `operations[]`，不能记录为读写都只能逐项，也不需要据此重写整个 Canvas。
+
+##### 尚未确认的原因与独立问题
+
+- CorpLink 安装资源只有编译后的 `corplink-bridge`，没有可读 handler 实现。当前只能把等待定位到 Codex 的同步 hook 生命周期；其内部是否等待 IPC、其他系统服务、网络、队列或进程启动／退出，均未证实，不能凭名称断言是在做内容审核或模型调用。
+- 没有证据证明该样本是“大量结果已经计算完，再堵在一个全局返回队列”。观测到的是前一次读取完成后等待 hook，再继续下一项；源码另确认同一 runtime 中非并行动态工具的执行门禁。
+- 其他窗口已独立证实存在共享成员被相邻 Refine 修改、提交版本／fingerprint 冲突，然后在同一 lease 内重新核验的重复工作。该机制继续成立，但不能解释本样本在提交前耗尽预算；同样不能把这里的 `80.3%` 外推到全部 Refine 超时或整集墙钟时间。
+- invocation 超时后临时 Canvas 未持久提交，既有队列重领时重新创建 Canvas 和原生 thread，无法直接续接此前读取进度。提交冲突后重新 invocation 也会重新获得单次 deadline，因此一个 Refine lease 可以超过十分钟。SDK completed 不等于成果已持久提交。
+
+##### 待处理方向与验收
+
+- 优先在现有读取契约上支持多个 references 或按 member 的有界正文批量读取；已知 section 时可直接读取正文，保留 issued references、revision、输出大小预算与分页，减少实际工具调用和 hook 触发次数。不能用无界全量输出代替分页，也不能把 `Promise.all` 当作同等修复。
+- 补齐 task／interval／lease／invocation／tool call 与 hook handler 的关联、起止、回执、错误及超时状态、Canvas revision 和最后有效动作；区分业务读取、hook 生命周期与 handler 内部阶段，不记录模型私有推理、credentials 或媒体 base64。托管 handler 内部延迟需要其处理方的执行证据。
+- 调度层另行评估领取 Refine 时避开正在执行的共享成员窗口，保留不重叠并行和提交快照校验；不能删除版本校验掩盖冲突，也不强制无需修改的 Refine 制造更新。
+- 先以 fake provider + 真实 Canvas／queue／repository 离线验证批读结果和边界、调用次数下降、无修改正常完成、已提交成果不重复执行，以及不重叠窗口并行。批读后的真实耗时与质量尚未验证，不承诺仅修这一处就能整集完成；总 deadline、自动重试及 fallback 调整需独立评估。
+
+依据：[诊断 HTML 与样本明细](../../outputs/reports/refine-timeout-20261011.html)、本机 `outputs/local-services/api.log`、原采集的 `/Users/bytedance/.codex/logs_2.sqlite` 中 `codex_app_server::outgoing_message` 记录，以及 ModelUsage／execution_timing 快照；[Canvas 读取工具](../../agent/utils/context_canvas_tools.py)、[timeline 批次写入](../../agent/video_parse_v2/timelineEvent_canvas.py)、[Codex adapter](../../gateway/codex/agent.py)、[Refine agent](../../agent/video_parse_v2/refine/agent.py)、[领取逻辑](../../server/mq/video_parse_queue.py)、[提交校验](../../server/repository/video_parse.py)。原生机制以对应 release 的官方源码为依据：[registry 的 tool → PostToolUse → 返回](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/core/src/tools/registry.rs#L624)、[dynamic handler](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/core/src/tools/handlers/dynamic.rs#L82)、[默认并行设置](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/tools/src/tool_executor.rs#L112)、[执行锁范围](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/core/src/tools/parallel.rs#L181)、[code-mode 共享 runtime](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/core/src/tools/code_mode/delegate.rs#L432)、[命令 hook runner](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/hooks/src/engine/command_runner.rs#L193)与 [OpenAI 官方 Hooks 文档](https://learn.chatgpt.com/docs/hooks)。
 
 #### 2026-10-09：ParseV2 的 90 秒视频耗时 37 分钟
 
@@ -542,3 +600,121 @@ Chat Agent 已经维护一份结构化 Workspace／Canvas，并通过 Tool 逐�
 - Raw Evidence 始终可追溯且不可被覆盖；Canonical 数据的来源、版本和最终持久化时机明确。
 - Chat 与 Parse 至少各有一个真实流程使用同一套 Canvas/Patch 核心，且没有复制两份路径校验、revision 或 diff 实现。
 - Parse 失败重试能够从最后一个已提交的完整 Chunk Snapshot 恢复，不依赖进程内共享可变对象。
+
+## Chat 联调问题（2026-10-11）
+
+以下为本次新增记录；前面的条目保留各自日期下的历史状态，本轮未做全量复核。时间均为 `+0800`。
+
+### C08：业务图继承 Supervisor checkpoint，导致视频工具执行前失败
+
+优先级：高。状态：最小代码修复与离线回归通过，API 已加载修复，真实当前视频 Chat API 调用链已完成；片段证据仍不完整，见 C10。
+
+#### 现象与根因
+
+- 原故障时间：`2026-10-11 00:31:22`；Conversation 为 `e9e55375-55f4-48b8-8dd6-2566e2472ce3`，Assistant Message 为 `a7ff9c39-f93e-483f-8465-16a3d57842e6`。`understand_current_video` 执行 `7 ms` 后发生 TypeError，整轮 `996 ms`，最终包装为 `AgentModelInvocationError / AGENT_MODEL_ERROR`。API 与 Web 健康检查成功无法证明这条视频调用链成功。
+- 当前 Supervisor 调用 `create_deep_agent()`，由 Deep Agents SDK 自动生成模型／工具循环的 graph；`supervisor.py` 没有另建 Supervisor `StateGraph`。两个专业业务 runtime 各自保留固定业务图，并通过普通工具调用；没有向 `create_deep_agent()` 注册业务 `subagents=`。
+- 外层 Supervisor 使用 `InMemorySaver`。内部业务图原来使用默认 `builder.compile()`，会沿工具调用的运行上下文继承外层 checkpointer。单独运行这些业务图时没有父 saver，因此原有普通 runtime 测试没有暴露此问题。
+- 实时理解把 `RealtimeRequest` 放入 graph 状态，其中的 `check_control` 是关联本次取消／超时控制的函数，不能被当前 msgpack 序列化器保存。视频检索状态中的 `VideoSearchContextCanvas` 同样无法直接序列化。`InMemorySaver` 仍需序列化状态，并非直接保留任意 Python 对象引用。
+- 使用真实 Supervisor、真实 Deep Agents 与真实业务 runtime，只替换外部模型、host 和检索，分别复现 `TypeError: Type is not msgpack serializable: RealtimeRequest` 与 `TypeError: Type is not msgpack serializable: VideoSearchContextCanvas`。实时理解复现时 `prepare_context_calls=0`、`model_calls=1`，故障发生在业务上下文准备之前。
+
+checkpoint 本身可用于业务图，但状态必须可序列化；需要恢复执行时，还要明确运行时依赖如何重建。当前两个 runtime 按单次工具任务设计，未实现从 LangGraph checkpoint 恢复这些临时对象的能力。关闭 checkpoint 保存不影响执行中的状态传递、Canvas 处理、取消／超时检查，也不关闭底层 Chunk 结果的业务持久化。未来如需中断续跑，应单独设计可保存状态与恢复语义，而非直接继承外层 saver。
+
+#### 当前安装版本的配套错误
+
+核对安装版本：`deepagents 0.7.23`、`langgraph 1.2.11`、`langgraph-checkpoint 4.2.0`、`langchain 1.4.4`。
+
+仅将两个业务图改为 `compile(checkpointer=False)` 仍不足：外层 `durability="sync"` 会独立传播到没有 saver 的业务图。当前 LangGraph 仍等待未创建的 `_put_checkpoint_fut`，实时理解和视频检索分别复现 `AsyncPregelLoop`／`SyncPregelLoop` 缺少该属性的 AttributeError。这是当前安装版本在无 checkpointer 嵌套调用中的同步等待边界问题。
+
+#### 已实施的最小修复
+
+| 文件 | 调整 | 作用 |
+| --- | --- | --- |
+| [实时理解 runtime](../../agent/chat/realtime_understanding/runtime.py) | `builder.compile(checkpointer=False)` | 本次请求与回调不进入 Supervisor checkpoint |
+| [视频检索 runtime](../../agent/chat/video_search/runtime.py) | `builder.compile(checkpointer=False)` | 本次 Canvas 与控制对象不进入 Supervisor checkpoint |
+| [Deep Agents 适配器](../../gateway/agent_model/deepagents.py) | 外层 `graph.invoke(..., durability="async")` | 保留外层 saver，避免向无 saver 业务图传播同步 checkpoint 等待 |
+| [Supervisor 测试](../../tests/agent/chat/test_supervisor.py) | 新增两个参数化测试，共 4 个用例 | 验证真实嵌套调用、会话确认与错误清理 |
+
+保留视频检索的 Query → 检索 → Evaluator → Chat，以及实时理解的准备上下文 → 并行片段证据／画面观察 → 汇总。没有新增转发 LLM、迁移到 `CompiledSubAgent`、使用 LangGraph 私有配置键或升级依赖；DTO、VO、API、数据库 Schema、前端字段及 `gateway/bridge` 均未修改。
+
+#### 离线回归
+
+新增用例修复前得到 `2 failed`，分别复现两种 msgpack 错误；仅关闭两个业务图 checkpoint 后，再次得到 `2 failed`，分别复现上述同步等待错误；完整修复后相关回归合计 **256 passed**，均在 `-W error` 下执行：
+
+```bash
+.venv/bin/python -W error -m pytest -q \
+  tests/agent/chat/test_realtime_understanding.py \
+  tests/agent/chat/test_runtime.py \
+  tests/agent/chat/test_tools.py \
+  tests/gateway/test_deepagents.py \
+  tests/gateway/test_agent_factory.py
+# 219 passed
+
+.venv/bin/python -W error -m pytest \
+  tests/agent/chat/test_supervisor.py -q --tb=short
+# 37 passed
+```
+
+新增 4 个用例使用真实 `SupervisorRuntime → DeepAgentsSupervisorModel → 业务 runtime`，只 fake 外部模型、检索和 host。覆盖实时 host 的 prepare／chunk／visual／compose、视频检索批准答案及证据、外层 checkpoint 存在、`confirm_turn` 保存最终答案、第二轮保留第一轮确认后的回答、pending 清空，以及取消／host 原始错误传播与失败状态清理。连续两轮的会话保留结论来自离线回归，本次真实模型只验证一轮。
+
+#### 服务加载与真实模型验收
+
+- 获得单独授权后，仅重启 API，PID 从 `42228` 变为 `80107`；`13:33:24` 完成启动，parse consumer 为 `running`，Web PID `41425` 保持运行。
+- 获得指定视频数据与模型目的地授权后，使用真实 HTTP Chat API 创建回归会话，询问 mygo 视频 `90.123 s` 附近正在发生什么。冻结播放字段 `positionSeconds=90123` 沿用既有合同，其实际单位为毫秒。
+- 回归 Conversation：`59bff08f-76a2-4244-b448-aef6a42ae91c`；Assistant Message：`5485fc08-1dfe-4085-857b-d33dfe1bce4c`；Tenant：`local-default`。
+- `13:39:02` 工具启动，`13:39:21` 工具成功返回，`duration_ms=19467`；`13:39:35` Supervisor 与整轮执行完成，`duration_ms=40733`，回答为 `451` 字符。消息 API 确认为 `COMPLETED`、`lastError=null`，本轮未见 msgpack、`_put_checkpoint_fut` 或轮次确认错误／警告。
+- 模型用量记录确认火山方舟 `doubao-seed-2-1-pro-260628` 的 `RealtimeVisualObservation` 和 `RealtimeContextSummary` 各调用一次；外层使用当前 DeepSeek／Ark 配置。上述实际业务调用与终态共同作为验收证据，不以 HTTP 200 代替链路成功。
+- 工具结果为 `partial=true`，含义见 C10；不能据此宣称完整片段解析已恢复。当前实时理解结果不单独写入 `searchResult`，故本轮 `searchResult=null`、`evidence_hits=0` 不等于工具失败。
+- 浏览器环境没有可用实例，本次未完成浏览器操作或 SSE 传输联调；真实视频检索完整链路也未在本轮验证。视频检索的嵌套调用、批准答案和证据由上述离线回归保护。
+
+依据：[deepagents.py](../../gateway/agent_model/deepagents.py)、[supervisor.py](../../agent/chat/supervisor.py)、[RealtimeRequest](../../agent/chat/realtime_understanding/state.py)、[test_supervisor.py](../../tests/agent/chat/test_supervisor.py)；本机 `outputs/local-services/api.log` 与 `outputs/server/logs/development/api.log` 及轮转文件中对应 Conversation／Message 的记录；`GET /api/agent/messages/get` 与 `GET /api/usage/overview?tenantId=local-default&runId=5485fc08-1dfe-4085-857b-d33dfe1bce4c` 的只读核验。
+
+### C09：真实 provider 的工具列表仍暴露默认 general-purpose task
+
+优先级：待确认。状态：已观察到，独立问题，本次未修复；不阻断 C08 的这次真实 Chat 执行。
+
+- 当前代码为 `anivag_supervisor` 注册禁用 general-purpose SubAgent 的 harness profile，wrapper 的 `model_name` 使用 `anivag_supervisor:<configured-model>`；真实适配器追踪仍报告实际 provider，例如 DeepSeek／Ark。profile 匹配路径是否符合预期仍待独立复核，不能直接把猜测写成根因。
+- 本次真实回归的模型 operation／工具列表包含 `read_file,task,search_web,search_video_graph,understand_current_video`，而已有 fake-model 测试预期不包含 `task`。这里的 `task` 是 SDK 默认 general-purpose 工具，不是已注册的视频业务 SubAgent；工具列表包含它不代表本轮实际调用了它。
+- 待办归属：`gateway/agent_model` 的 SDK harness 配置适配。先以真实 provider 适配器复核 profile 选择与最终绑定工具，再确定最小修复；保留当前两个业务工具和专业工作流，不借此迁移整个 SubAgent 架构。
+- 验收：真实 DeepSeek／Ark 适配器与 fake-model 都不再暴露被明确禁用的默认 `task`，普通视频工具调用、会话 checkpoint 和错误传播仍通过。
+
+依据：[deepagents.py](../../gateway/agent_model/deepagents.py) 的 harness profile 注册与模型包装、[test_deepagents.py](../../tests/gateway/test_deepagents.py) 的工具列表断言，以及 C08 真实 Message 的模型用量记录。
+
+### C10：实时理解已返回，但相邻 Chunk 证据仍缺失
+
+状态：已观察到，片段解析根因未独立定位，本次未修复。
+
+- 既有 mygo Video 为 `e709a2d8-aabb-509e-b323-e7f9aa7018b2`，全量 Parse Task 为 `d470e300-9813-4c19-a62e-f52503e2e1ae`；联调前任务 API 已返回 `PARSING_FAILED`。
+- C08 的实时工具成功返回 `partial=true`。回答明确说明 `0–60 s`、`60–120 s`、`120–180 s` 三个相邻片段解析失败，缺少完整前因与后续证据；本轮仍取得暂停画面观察并完成上下文汇总与最终回答。
+- 本轮没有独立逐 Chunk 查询或复现其解析错误，不能仅凭整轮 `COMPLETED` 认定三个片段成功，也不能把既有 Parse 失败归为 C08 已修复的 checkpoint 问题。
+- 待办归属：基础视频解析 runtime／Server 解析任务恢复链路。按上述 Parse Task 与目标 Chunk 核对现有失败记录及模型／媒体阶段，分别定位原因；后续验收应确认缺失片段恢复后的证据覆盖与来源。未调用全量解析重试／重置接口，未扩大本次代码修复范围。
+
+依据：联调前 `GET /api/jobs/video-parse/list` 的任务状态、C08 的工具日志及真实回答；[realtime_understanding.py](../../server/service/realtime_understanding.py) 的既有 Chunk 读取与部分证据返回语义。既有全量解析成本／恢复问题仍按 B07 的历史记录分别处理，不套用其旧根因作为本轮结论。
+
+### C11：API 仍加载旧 Gateway 校验器，读取新视觉配置时拒绝 Chat 请求
+
+优先级：高。状态：重新加载 API 后已消除该配置错误，真实单轮 Chat API 复测完成；截图的具体播放位置与浏览器操作未验证。
+
+#### 现象与根因
+
+- 用户截图显示 `GatewayConfig: vision does not support adapter 'openai'`，请求编号为 `7509f2c9-cb20-45a6-b289-6ebc22f8215a`。对应日志为 `2026-10-11 14:13:38`，`POST /api/agent/messages/send` 返回 HTTP 400，耗时 `12.6 ms`，尚未进入 Supervisor 或视频工具。这与 C08 的工具状态序列化错误不同，不能把 C08 的成功验收概括成所有 Chat 请求均已恢复。
+- API PID `80107` 于 `13:33:24` 完成启动；磁盘 `gateway/multimodal.py` 修改时间为 `13:56:01`，`gateway/config.py` 为 `13:57:26`，`config.yaml` 为 `14:05:27`。当前配置的 `models.vision` 已从 Ark 改为 `deepseek_api / deepseek-flash`，但运行中的 API 仍加载修改前的 Python 校验器。
+- 旧校验规则只允许 vision 使用 `ArkModelSourceConfig` 或 `OpenAIVisionSourceConfig`，因此拒绝 DeepSeek 对应的 `OpenAIModelSourceConfig(adapter="openai")`，精确产生截图报错。当前工作区代码已经根据适配器能力校验，并支持 OpenAI／DeepSeek 的有序图片输入；使用当前源码执行 `load_config()` 和 `read_global_agent_settings()` 均通过。
+- Chat 的 `AgentChatService._current_config()` 每次发送前调用配置 loader，沿 `read_global_agent_settings() → _read_document() → GatewayConfig.model_validate()` 校验整份 YAML。因此进程内旧代码可以读到磁盘新配置，使全局 vision 配置变化阻断 Chat；`/api/agent/messages/options` 和 `/api/agent/global-settings` 也会受影响。重启前只读请求全局设置接口再次复现同样的 HTTP 400。
+
+#### 本次处理与服务加载
+
+- 沿用已授权的 API 重启范围，只重新加载 AniVAG API；没有追加生产代码修改，也没有把视觉配置改回 Ark。C08 的两个 `compile(checkpointer=False)` 和外层 `durability="async"` 保留。
+- 旧 API 收到 SIGTERM 后停止监听，但仍等待一个现有 HTTP 长连接关闭；SIGINT 后也未退出。核对 PID 与原启动签名后，仅对旧 API `80107` 使用 SIGKILL 完成退出，再启动 API；Web、MySQL 和其他进程未停止。
+- 新 API PID 为 `11135`，`14:20:00` 完成启动；parse consumer 为 `running`，Web PID 仍为 `41425`。重启后 `/api/agent/global-settings` 与 `/api/agent/messages/options` 均返回 HTTP 200，全局配置 revision 与当前磁盘一致。接口恢复仅证明配置阻断解除，完整业务证据见下述复测。
+
+#### 回归与实际验收范围
+
+- 当前配置与适配器离线回归：`.venv/bin/python -W error -m pytest -q tests/gateway/test_config.py tests/gateway/test_model_config_v2.py tests/gateway/test_multimodal_agent.py tests/gateway/test_deepagents_multimodal.py`，**145 passed**。
+- 扩展回归：`.venv/bin/python -W error -m pytest -q tests/server/test_bootstrap.py tests/server/test_config.py tests/agent/chat/test_supervisor.py --tb=short`，**303 passed / 2 failed**。两项失败均发生在导入 Starlette TestClient 时，原因是已安装 AnyIO 的 `anyio.abc.BlockingPortal` 弃用警告被 `-W error` 提升为异常；它们属于扩展 Server 测试的依赖兼容问题，本次未升级依赖或修改测试来隐藏警告。
+- 上述两项使用 `.venv/bin/python -m pytest -q tests/server/test_bootstrap.py -k test_app_lifespan_closes_only_services_it_owns --tb=short` 单独复跑，**2 passed / 1 warning**。不能据此声称扩展回归在 `-W error` 下全部通过。
+- 真实模型复测沿用此前已授权的同一 mygo 视频与 `90.123 s` 位置。Conversation：`d717e944-8c34-4d8e-af5b-9ef7cb9f1325`；Assistant Message：`18eb1c89-b56e-4750-b0db-cf7f01ca8408`；Tenant：`local-default`。
+- `14:20:45` 启动 `understand_current_video`，`14:21:10` 成功返回，`duration_ms=24559`；`14:21:24` 整轮完成，`duration_ms=45035`，回答 `593` 字符。消息只读 API 再次确认 `COMPLETED`、`lastError=null`。本轮未出现截图的 GatewayConfig 错误或 C08 的 checkpoint 错误。
+- 用量记录确认 Ark `doubao-seed-2-1-pro-260628` 的 `RealtimeVisualObservation` 与 `RealtimeContextSummary` 各调用一次，外层使用 DeepSeek／Ark 配置内备用模型。既有 mygo 的实时 host 从 Parse Task 读取冻结的 `ParseConfig`，所以全局 vision 改为 DeepSeek 不代表已有任务的实时观察模型自动切换；本次没有验证新建 Parse Task 的 DeepSeek 视觉模型真实调用。
+- 实时结果仍为 `partial=true`，不表示 C10 的基础片段失败已修复；模型工具列表仍含默认 `task`，C09 继续独立待处理。浏览器自动化没有可用实例，未验证浏览器／SSE，也没有对截图的 `10:27.52` 位置发起新的真实模型测试。
+
+依据：[GatewayConfig](../../gateway/config.py)、[适配器能力](../../gateway/multimodal.py)、[全局设置读取](../../server/config/global_agent_settings.py)、[Chat 配置读取](../../server/service/agent_chat.py)、[实时 host](../../server/service/realtime_understanding.py)；本机 `outputs/local-services/api.log` 与 `outputs/server/logs/development/api.log` 中上述请求编号、Conversation／Message 与进程启动记录；消息与模型用量只读 API。

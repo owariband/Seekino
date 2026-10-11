@@ -2,15 +2,26 @@
 
 检查日期：2026-10-10。检查对象为当前工作区，包含检查开始前已有的未提交修改。
 
-本文件用于逐项 Review。用户授权范围为运行检查、代码审查和维护本记录；问题记录的“建议”尚未实施。每条问题保留稳定编号、影响、触发条件、证据及验收建议，避免把测试环境限制误记为代码 bug。
+本文件用于逐项 Review。问题保留稳定编号、影响、触发条件、证据及验收建议，避免把测试环境限制误记为代码 bug。首次审查建议未实施；后续用户授权启动前端联调，CHK-022 已按下述记录修复，其余建议仍待 Review。
+
+## 2026-10-10 本机前端联调启动复核
+
+- 一键启动资料库探针已使用当前 `tenantId` 合同，复用 `AuthConfig.local_tenant_id` 并编码查询参数。真实路由回归覆盖默认及自定义 Tenant；`tests/server/test_local_services.py` 为 **32 passed**。
+- 现有 Python 环境与锁文件一致，无需同步依赖；前端构建通过，19 个文件、**229 项单测通过**。
+- 旧开发库因 `workspace_id` 与旧字段合同被当前 Schema 校验拒绝。按用户选择，新建 `anivag_local_20261010_development`、`anivag_video_chunks_local_20261010_development`，媒体目录为 `outputs/server/local-20261010/artifacts`；旧库、旧索引与媒体均保留，未执行历史数据迁移。
+- `.env.local` 已切换到新联调资源，原配置保存在忽略目录 `outputs/local-services/config-backups/20261010-150638-before-frontend-dev.env`，不进入 Git。
+- 原生 ES 8.19.22 与 MySQL 8.4 已运行；`./start.sh` 首次启动及再次复用均成功，`./start.sh status` 四项全部运行。API 为 `127.0.0.1:9621`，Web 为 `127.0.0.1:5173`；启动器仍要求提前准备 ES。
+- API 直连与 Vite 代理共 **11 个 GET 全部 200**，包括身份、Consumer 健康、Series、V2 任务、Job 列表以及 OpenAPI。报告：`outputs/local-services/frontend-startup-smoke.json`。
+- 真实 Chromium 验证 `/watch`、`/library`、`/tasks` 三页，身份与列表正常，Consumer running，页面显示真实空库及 API 已连接；页面 JS 错误、console error 与 alert 均为 0。报告与截图：`outputs/local-services/frontend-ui-smoke/`。
+- 本轮验证到本机启动、身份恢复、列表与页面联调，未上传视频或调用真实模型，不能视为当前完整解析→检索→问答的验收。
 
 ## 检查结论与验证范围
 
-本次当前工作区审查已完成，覆盖启动入口、依赖与测试、上传与续传、V2 解析、检索问答、播放器、身份与权限、任务恢复及 Engine/Agent/Gateway/Server 分层。共记录 22 条待 Review 问题：P1 2 条、P2 16 条、P3 4 条；建议均未实施。
+首次当前工作区审查已完成，覆盖启动入口、依赖与测试、上传与续传、V2 解析、检索问答、播放器、身份与权限、任务恢复及 Engine/Agent/Gateway/Server 分层。共记录 22 条问题；CHK-022 已修复，剩余 21 条待 Review：P1 1 条、P2 16 条、P3 4 条。
 
-结论：直接启动正式 API 的隔离工程检查可以通过，但当前一键启动入口被 CHK-022 阻断；Consumer 还有 CHK-005 的恢复问题。前端构建和既有单测通过，实际观看、重试、续传、移动操作及键盘访问仍有明确缺陷，不能认定当前完整流程已跑通且好用。真实外部服务和模型质量的验收边界单独列在文末，不把模拟结果或历史版本实测作为当前全链路通过。
+结论：当前一键启动及真实前端页面联调已通过，旧库未迁移，本机使用新的独立空库；Consumer 仍有 CHK-005 的恢复问题。实际观看、重试、续传、移动操作及键盘访问仍有明确缺陷，不能认定当前完整流程已跑通且好用。真实外部服务和模型质量的验收边界单独列在文末，不把模拟结果或历史版本实测作为当前全链路通过。下表保留首次审查结果，当前启动状态以上方复核为准。
 
-建议先 Review CHK-022（启动）与 CHK-005（Worker 恢复），然后检查 CHK-010（续传来源）、CHK-012（额度幂等）、CHK-013（删除后上下文）、CHK-014（无音轨解析），以及 CHK-008/009/017/019/020 的日常操作体验；CHK-001..004 为过时测试合同，需要恢复有效回归保障。
+建议先 Review CHK-005（Worker 恢复），然后检查 CHK-010（续传来源）、CHK-012（额度幂等）、CHK-013（删除后上下文）、CHK-014（无音轨解析），以及 CHK-008/009/017/019/020 的日常操作体验；CHK-001..004 为过时测试合同，需要恢复有效回归保障。
 
 | 检查项 | 状态 | 证据与限制 |
 | --- | --- | --- |
@@ -242,9 +253,9 @@
 - 建议：同步 Gateway 文档，明确正式 Server 当前不消费 tracing 配置，独立模块使用说明与 SQL 用量合同各自准确。
 - 验收：各入口文档与当前 bootstrap 一致；读者能够区分 SQL 模型用量和独立 Langfuse 模块，避免把配置 true 误认为正式服务已经启用。
 
-### CHK-022 · P1 · 一键启动仍用 workspaceId 检查资料库，被当前 API 的 tenantId 校验阻断
+### CHK-022 · P1 · 已修复：一键启动资料库探针的 Tenant 合同
 
-- 状态：当前真实 FastAPI 路由与 production 启动 helper 已联合复现；属于用户入口的启动合同失配。
+- 状态：已修复并完成真实路由回归、本机首次启动、已有 API/Web 复用与 Vite 代理验证，详见顶部启动复核。以下保留原始问题证据。
 - 触发条件：运行 `./start.sh start`，MySQL/ES 与 API 达到就绪，启动器准备检查资料库并启动 Web。
 - 现象与影响：API 本身可健康运行，但启动器发出的资料库请求返回 422，抛“API 已监听但资料库查询失败，请查看 api.log。”，未进入 Web 启动；一键启动不能完成。直接正式 server.main 的隔离启动通过不能覆盖此入口。
 - 代码证据：[`scripts/local_services.py:318`](../../scripts/local_services.py#L318) 请求 `/api/series/list?workspaceId=local-default`；当前 [`server/api/library.py:113`](../../server/api/library.py#L113) 必须接收 tenantId。启动器在 [`349`](../../scripts/local_services.py#L349) 及 Web 代理检查的 [`370`](../../scripts/local_services.py#L370) 都使用这个 helper，入口 [`452`](../../scripts/local_services.py#L452) 调用 start_applications。
@@ -282,3 +293,13 @@
 - 本轮新增/维护的仓库文件只有 `docs/dev/check_log.md`；原有 tracked 文件修改保留。两次隔离运行的 MySQL/ES 及正式 HTTP 临时进程已停止，经沙箱外探测确认端口关闭（首次 51757/51758，合同复核 55296/55297/55419）；未对原有数据执行迁移或重启，未 commit/push。
 - 真实模型、SMTP 发信、数据库迁移以及现有用户数据的变更需要有对应验证证据；没有执行的部分保留“未验证”，不声明跑通。
 - 记录中的严重度：P1 为主要流程阻断、数据/权限正确性问题；P2 为明确功能或体验问题；P3 为维护性与覆盖缺口建议。严重度结合触发条件判断。
+
+
+## 2026-10-10 22:05 Parse 模型诊断补齐
+
+- 已核实运行装配 `server/bootstrap.py` 为 `tracing=None`，本地现有模型用量记录不包含完整请求、回执或工具执行树。过去摘要日志定位的是 Ark completed 空输出，尚未查实供应方内部原因。
+- 本轮新增 `gateway/model_diagnostics.py`，接入 `gateway/agent_model/multimodal.py` 与 `gateway/ark/sse.py`：本机开关启用且具有 Parse 任务身份时，按实际 call_id 保存请求正文、工具 schema/历史反馈、SDK 解析事件、回执和异常链；媒体内容寻址复用并校验恢复，凭据脱敏，写入失败保留原执行结果。
+- 多轮工具模型请求增加 agent_run_id/agent_round；外层异常携带 provider request_id，使现有 consumer 重试日志能够关联上游请求。保持 Chat/Canvas 的工具语义、数据库合同和任务执行限制。
+- 验证：模型诊断、工具请求、SSE 和 Parse Canvas 四文件合计 104 passed；公共模型用量测试 49 passed，合计 153 passed，均为离线测试。生产新增模块及全部 tracked diff 的空白检查通过。
+- 已在 ignored `.env.local` 启用 `ANIVAG_MODEL_TRACE_DIR=outputs/model-traces`。确认没有活动解析租约后，仅重启自管 API/Web，保留数据库与 ES；API、Web 代理资料库查询正常。模型用量记录重启前后均 89 条，未自动解析或发出推理请求。
+- 限制：诊断从后续请求生效，不能恢复历史未保存的输入；记录 SDK 解析事件，非原始 wire。已反馈给模型的工具历史可恢复，工具在下一轮形成前直接崩溃的独立轨迹未新增；供应方未返回的内部错误原因仍需凭请求 ID 排查。格式与本地读取说明见 `outputs/model-traces/README.md`。

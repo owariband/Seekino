@@ -52,6 +52,11 @@ Objectives and Key Results
 
 P1 的实现先沿用现有解析、embedding 和召回主线，主要补齐 Server 身份与范围控制、数据归属、公开入口和前端状态。个人 Workspace 阶段不引入成员表、邀请、团队角色或团队管理页面。
 
+
+### https://learn.chatgpt.com/docs/app-server，supervisor变成完备的agent harness runtime，subagent作为可选必备tool
+我想要用户在anivag能够用它自己的codex,然后还能像用codex那样允许codex操作本机文件呢?如果是这样我们应该怎么处理?
+云端就先不管吧,就假设localhost的场景
+
 ## P2
 
 ### O3. 提供完整团队与租户协作能力
