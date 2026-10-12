@@ -468,6 +468,7 @@ export function TasksPage() {
                   {progress ? <>
                     <span>理解 <strong>{progress.completedChunks} / {progress.totalChunks}</strong></span>
                     <span>Refine <strong>{progress.completedRefines} / {progress.totalRefines}</strong></span>
+                    <span>索引 <strong>{progress.indexedIntervals} / {progress.totalRefines}</strong></span>
                     <span>完成单元 <strong>{progress.completedUnits} / {progress.totalUnits}</strong></span>
                   </> : null}
                 </div> : null}

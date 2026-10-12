@@ -34,6 +34,19 @@ _CHECKPOINT_STAGE_RANK = {
 }
 
 
+def calculate_video_parse_progress(
+    *, completed_parse_units: int, total_parse_units: int,
+    indexed_intervals: int, total_intervals: int,
+) -> float | None:
+    if total_parse_units <= 0:
+        return None
+    if total_intervals == 0:
+        return completed_parse_units * 100 / total_parse_units
+    # Understanding and Refine retain equal unit weights within the first 95%.
+    return (completed_parse_units * 95 / total_parse_units
+            + indexed_intervals * 5 / total_intervals)
+
+
 def calculate_checkpoint_progress(
     checkpoints: Iterable[CheckpointProgressSource],
     total_duration_seconds: int,

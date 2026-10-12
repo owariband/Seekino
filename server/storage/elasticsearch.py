@@ -358,7 +358,7 @@ class ElasticsearchVideoChunkStore:
     def inspect_exact(
         self, documents: Sequence[VideoChunkIndexDocument],
     ) -> dict[str, bool]:
-        """Real-time read whether each stored source exactly matches its document."""
+        """Real-time read whether each stored document has the expected complete version."""
 
         expected: dict[str, dict[str, Any]] = {}
         for document in documents:
@@ -384,49 +384,52 @@ class ElasticsearchVideoChunkStore:
             if not isinstance(source, Mapping):
                 raise ElasticsearchDocumentConsistencyError("mget document has no source")
             self._validate_identity(expected_id, source)
-            matches[expected_id] = dict(source) == expected[expected_id]
+            matches[expected_id] = self._matches_source(source, expected[expected_id])
         return matches
 
-    def is_ready(self, documents: Sequence[VideoChunkIndexDocument]) -> bool:
-        """Return whether the exact documents are visible before an upsert.
+    def is_current(
+        self, expected: Mapping[str, Any], *, semantic_required: bool,
+        sparse_required: bool = False,
+    ) -> bool:
+        """Check a complete query-visible version without constructing embedding vectors."""
+        self._validate_identity(document_id(expected["parse_task_id"], expected["video_chunk_id"]), expected)
+        return self._query_ready(
+            [expected], mismatch_is_error=False,
+            semantic_required=semantic_required, sparse_required=sparse_required,
+        )
 
-        A visible document with the same stable ID but a different source needs
-        an idempotent overwrite.  That is a normal preflight miss, whereas the
-        same mismatch after ``refresh=wait_for`` is a consistency failure.
-        """
+    def is_ready(self, documents: Sequence[VideoChunkIndexDocument]) -> bool:
+        """Return whether complete documents at the expected versions are query-visible."""
 
         return self._query_ready(documents, mismatch_is_error=False)
 
     def verify_ready(self, documents: Sequence[VideoChunkIndexDocument]) -> bool:
-        """Strictly verify exact query-visible sources after an upsert."""
+        """Verify complete query-visible documents at the expected versions after an upsert."""
 
         return self._query_ready(documents, mismatch_is_error=True)
 
     def _query_ready(
         self,
-        documents: Sequence[VideoChunkIndexDocument],
+        documents: Sequence[VideoChunkIndexDocument | Mapping[str, Any]],
         *,
         mismatch_is_error: bool,
+        semantic_required: bool | None = None,
+        sparse_required: bool | None = None,
     ) -> bool:
 
         if not documents:
             raise ValueError("verify_ready requires the complete expected Chunk set")
         for document in documents:
-            expected = self._document_source(document)
+            expected = self._document_source(document) if isinstance(document, VideoChunkIndexDocument) else document
             physical_id = document_id(
-                document.parse_task_id,
-                document.video_chunk_id,
+                expected["parse_task_id"], expected["video_chunk_id"],
             )
             try:
                 response = self._client.search(
                     index=self.index_name,
                     query={"bool": {"filter": [
                         {"ids": {"values": [physical_id]}},
-                        {"term": {"tenant_id": document.tenant_id}},
-                        {"term": {"video_id": document.video_id}},
-                        {"term": {"parse_task_id": document.parse_task_id}},
-                        {"term": {"content_version": document.content_version}},
-                        {"term": {"index_generation": document.index_generation}},
+                        *({"term": {name: expected[name]}} for name in _SOURCE_FIELDS),
                     ]}},
                     size=1,
                     source=True,
@@ -437,13 +440,36 @@ class ElasticsearchVideoChunkStore:
             if not hits:
                 return False
             hit = hits[0]
-            if hit.get("_id") != physical_id or hit.get("_source") != expected:
+            if hit.get("_id") != physical_id or not self._matches_source(
+                hit.get("_source"), expected,
+                semantic_required=semantic_required, sparse_required=sparse_required,
+            ):
                 if not mismatch_is_error:
                     return False
                 raise ElasticsearchDocumentConsistencyError(
                     f"search-visible document differs: {physical_id}"
                 )
         return True
+
+    def _matches_source(
+        self, source: object, expected: Mapping[str, Any], *,
+        semantic_required: bool | None = None, sparse_required: bool | None = None,
+    ) -> bool:
+        if not isinstance(source, Mapping):
+            return False
+        if semantic_required is None:
+            semantic_required = expected.get("semantic_vector") is not None
+        if sparse_required is None:
+            sparse_required = "sparse_vector" in expected
+        return (
+            all(type(source.get(name)) is type(expected[name]) and source.get(name) == expected[name]
+                for name in _SOURCE_FIELDS)
+            and isinstance(source.get("lexical_fields"), list)
+            and isinstance(source.get("semantic_text"), str)
+            and _valid_stored_vector(source.get("vision_vector"), self.vision_dimensions)
+            and (not semantic_required or _valid_stored_vector(source.get("semantic_vector"), self.semantic_dimensions))
+            and (not sparse_required or _stored_sparse_weights(source.get("sparse_vector")) is not None)
+        )
 
     def delete(
         self, *, parse_task_id: str, video_chunk_id: str,

@@ -198,7 +198,9 @@ def _build_application_services(
         retrieval_config=settings.retrieval,
         index_generation=settings.elasticsearch.index_generation,
         request_timeout_seconds=min(
-            settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
+            timeout for timeout in (
+                settings.agent_request_timeout_seconds, settings.agent.execution_timeout_seconds,
+            ) if timeout is not None
         ),
         max_output_tokens=settings.agent.max_output_tokens, tracing=tracing,
         gateway_client=gateway_client,
@@ -252,9 +254,11 @@ def _build_application_services(
                 raise ValueError("cloud Agent execution timeout must be shorter than the query lease")
             agent_config = replace(agent_config, limits_enabled=True)
         request_timeout = min(
-            settings.agent_request_timeout_seconds,
-            agent_config.execution_timeout_seconds,
-            agent_model_config.request_timeout_seconds,
+            timeout for timeout in (
+                settings.agent_request_timeout_seconds,
+                agent_config.execution_timeout_seconds,
+                agent_model_config.request_timeout_seconds,
+            ) if timeout is not None
         )
         max_output_tokens = min(
             agent_config.max_output_tokens,
@@ -314,9 +318,11 @@ def _build_application_services(
         if settings.auth.mode == "cloud":
             agent_config = replace(agent_config, limits_enabled=True)
         request_timeout = min(
-            settings.agent_request_timeout_seconds,
-            agent_config.execution_timeout_seconds,
-            supervisor_binding.request_timeout_seconds,
+            timeout for timeout in (
+                settings.agent_request_timeout_seconds,
+                agent_config.execution_timeout_seconds,
+                supervisor_binding.request_timeout_seconds,
+            ) if timeout is not None
         )
         max_output_tokens = min(
             agent_config.max_output_tokens,

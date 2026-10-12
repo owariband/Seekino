@@ -182,7 +182,7 @@ def _indexing_case(tmp_path, store):
                 id=video_id, series_id=series_id, episode_order=1,
                 upload_sequence=1, filename="episode.mp4",
                 source_uri=str(source), hash="a" * 64,
-                size_bytes=source.stat().st_size, duration_ms=20,
+                size_bytes=source.stat().st_size, duration_ms=20_000,
                 upload_status="COMPLETED", parse_status="QUEUED",
                 upload_progress=100, parse_progress=0,
             ))
@@ -210,7 +210,7 @@ def _indexing_case(tmp_path, store):
             ))
         video_lease = queue.claim_video("prepare", lease_duration=timedelta(minutes=10))
         assert video_lease is not None
-        chunks = repository.ensure_video_chunks(video_lease, [(0, 0, 10), (1, 10, 20)])
+        chunks = repository.ensure_video_chunks(video_lease, [(0, 0, 10_000), (1, 10_000, 20_000)])
         prepared = repository.ensure_parse_tasks(
             video_lease, [chunk.video_chunk_id for chunk in chunks], [(0, 2)],
         )
@@ -222,8 +222,8 @@ def _indexing_case(tmp_path, store):
             repository.commit_chunk_result(lease, content={
                 "persons": [],
                 "timeline": [{
-                    "event_type": "ACTION", "start_seconds": sequence * 10 + 1,
-                    "end_seconds": sequence * 10 + 4,
+                    "event_type": "ACTION", "start_seconds": sequence * 10_000 + 1_000,
+                    "end_seconds": sequence * 10_000 + 4_000,
                     "description": f"恢复测试松饼行动，片段{sequence}",
                     "participants": [], "visible_persons": [],
                 }],
@@ -447,6 +447,7 @@ def test_real_es_strict_generation_and_exact_replay(isolated_store):
             question="generation two",
         ),
         index_generation=2,
+        content_version=2,
     )
     store.bulk_upsert([document], refresh="wait_for")
 
@@ -465,7 +466,51 @@ def test_real_es_strict_generation_and_exact_replay(isolated_store):
     assert stale_error.value.status_codes == {_id(document): 409}
 
     conflicting = replace(document, semantic_vector=[0.5, 0.5])
-    assert store.inspect_exact([conflicting]) == {_id(document): False}
+    assert store.inspect_exact([conflicting]) == {_id(document): True}
+    assert store.verify_ready([conflicting])
+
+    for mismatched in (
+        lower_generation,
+        replace(document, index_generation=3),
+        replace(document, content_version=1),
+        replace(document, content_version=3),
+        replace(document, tenant_id="another-workspace"),
+        replace(document, series_id=str(uuid4())),
+        replace(document, video_id=str(uuid4())),
+        replace(document, parse_task_id=str(uuid4())),
+        replace(document, video_chunk_id=str(uuid4())),
+        replace(document, chunk_start_seconds=11),
+        replace(document, chunk_end_seconds=21),
+    ):
+        assert store.inspect_exact([mismatched]) == {_id(mismatched): False}
+        assert not store.is_ready([mismatched])
+
+
+def test_real_es_readiness_accepts_same_version_after_numeric_tail_change(isolated_store, monkeypatch):
+    store = isolated_store
+    original_value = -0.00010395050048828125
+    stored_value = -0.00010395050048828124
+    document = replace(_document(
+        series_id=str(uuid4()), video_id=str(uuid4()), chunk_id=str(uuid4()),
+        parse_task_id=str(uuid4()), question="数值尾差版本确认",
+    ), semantic_vector=[1.0, original_value])
+    original_source = store._document_source
+
+    def with_numeric_tail(item):
+        source = original_source(item)
+        source["semantic_vector"] = [1.0, stored_value]
+        return source
+
+    assert not store.is_ready([document])
+    monkeypatch.setattr(store, "_document_source", with_numeric_tail)
+    store.bulk_upsert([document], refresh="wait_for")
+    monkeypatch.setattr(store, "_document_source", original_source)
+    source = store._client.get(index=store.index_name, id=_id(document))["_source"]
+    assert source["semantic_vector"] == [1.0, stored_value]
+    assert source["semantic_vector"] != document.semantic_vector
+    assert store.inspect_exact([document]) == {_id(document): True}
+    assert store.is_ready([document])
+    assert store.verify_ready([document])
 
 
 def test_real_es_rejects_late_content_in_the_same_generation(isolated_store):

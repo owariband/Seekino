@@ -23,6 +23,7 @@ from sqlalchemy.types import TypeDecorator
 
 from ..constants.database import ID_LENGTH, MYSQL_TABLE_OPTIONS
 from .base import BaseModel
+from .types import StringEncodedJSON
 from ..utils.time import (
     normalize_database_utc_datetime,
     require_utc_datetime,
@@ -268,7 +269,7 @@ class VideoChunkEmbedding(BaseModel):
         primary_key=True,
     )
     text_input: Mapped[str] = mapped_column(LONG_TEXT, nullable=False)
-    text_vector: Mapped[list[float] | None] = mapped_column(JSON)
-    vision_vector: Mapped[list[float] | None] = mapped_column(JSON)
+    text_vector: Mapped[list[float] | None] = mapped_column(StringEncodedJSON())
+    vision_vector: Mapped[list[float] | None] = mapped_column(StringEncodedJSON())
     text_embedding_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     vision_embedding_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)

@@ -11,7 +11,7 @@ import {
   Sun,
   UserRound,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router";
 
 import { useUploads } from "../features/uploads/UploadProvider";
@@ -22,15 +22,15 @@ import { useWorkspace } from "./workspace";
 import styles from "./app-shell.module.css";
 
 const navigation = [
-  { to: "/search", label: "名场面检索", icon: Search },
   { to: "/library", label: "资料库", icon: LibraryBig },
   { to: "/tasks", label: "解析任务", icon: Activity },
   { to: "/usage", label: "模型消耗", icon: ChartNoAxesCombined },
-  { to: "/settings", label: "设置", icon: Settings },
 ];
 
+export type WatchPanelLayout = { open: boolean; width: number; resizing: boolean };
+
 function AccountControls({ onLogin }: { onLogin: () => void }) {
-  const { accountIdentity, accountStatus, accountError, retryAccount, sources, activeSource, selectSource, logout } = useAuth();
+  const { accountIdentity, accountStatus, accountError, retryAccount, sources, activeSource, selectSource, logout, canConfigure } = useAuth();
   const { mode } = useWorkspace();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,24 +53,22 @@ function AccountControls({ onLogin }: { onLogin: () => void }) {
       {sources.map((source) => <option key={source.key} value={source.key}>{source.kind === "local" ? "本机资料" : source.kind === "public" ? "公开资料" : "我的资料"}</option>)}
     </select></label> : <div className={styles.sourceLabel}><span>当前资料</span><strong>{activeSource.kind === "local" ? "本机资料" : activeSource.kind === "public" ? "公开资料" : "我的资料"}</strong></div>}
     {error ? <p role="alert">{error}</p> : null}
+    {canConfigure ? <NavLink className={styles.accountLink} to="/settings"><Settings size={17} aria-hidden="true" />设置</NavLink> : null}
     <div className={clsx(styles.runtime, styles[`runtime${mode}`])}><i aria-hidden="true" /><span>{mode === "live" ? "资料已连接" : mode === "offline" ? "资料连接不可用" : "检查资料连接"}</span></div>
   </section>;
 }
 
 export function AppShell() {
   const [accountOpen, setAccountOpen] = useState(false);
+  const [watchPanelLayout, setWatchPanelLayout] = useState<WatchPanelLayout>({ open: false, width: 440, resizing: false });
   const accountRef = useRef<HTMLDivElement>(null);
   const avatarRef = useRef<HTMLButtonElement>(null);
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
   const { activeCount, overallProgress, openDialog } = useUploads();
-  const { accountIdentity, canUpload, canManage, canConfigure, openLogin, sources, selectSource } = useAuth();
+  const { accountIdentity, canUpload, canManage, openLogin, sources, selectSource } = useAuth();
   const signedIn = accountIdentity && !accountIdentity.isGuest;
-  const visibleNavigation = navigation.filter(({ to }) => {
-    if (to === "/settings") return canConfigure;
-    if (["/library", "/tasks", "/usage"].includes(to)) return canManage;
-    return true;
-  });
+  const visibleNavigation = canManage ? navigation : [];
   const uploadAction = canUpload ? openDialog : !signedIn ? openLogin : () => {
     const personalSource = sources.find((source) => source.kind === "personal");
     if (personalSource) selectSource(personalSource.key);
@@ -91,7 +89,9 @@ export function AppShell() {
   }, [accountOpen]);
 
   return (
-    <div className={styles.shell}>
+    <div className={styles.shell} data-app-shell data-watch-panel-open={watchPanelLayout.open}
+      data-watch-panel-resizing={watchPanelLayout.resizing} style={{ "--watch-panel-width": `${watchPanelLayout.width}px` } as CSSProperties}>
+      <div className={styles.primary}>
       <header className={styles.topbar} aria-label="全站导航">
         <NavLink className={styles.brand} to="/watch" aria-label="Seekino 首页">
           <img src="/assets/seekino-logo.png" alt="" /><strong>seekino</strong>
@@ -125,7 +125,9 @@ export function AppShell() {
           </div>
         </div>
       </header>
-      <div className={styles.content}><Outlet /></div>
+      <div className={styles.content}><Outlet context={setWatchPanelLayout} /></div>
+      </div>
+      <div id="watch-side-panel-host" className={styles.panelHost} />
     </div>
   );
 }

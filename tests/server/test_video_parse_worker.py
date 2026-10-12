@@ -144,10 +144,28 @@ class _ElasticsearchBoundary:
 
     def is_ready(self, documents) -> bool:
         return all(
-            self.documents.get(
-                document_id(document.parse_task_id, document.video_chunk_id)
-            ) == document
+            self.is_current(
+                {name: getattr(document, name) for name in (
+                    "tenant_id", "series_id", "video_id", "parse_task_id",
+                    "video_chunk_id", "content_version", "index_generation",
+                    "chunk_start_seconds", "chunk_end_seconds",
+                )},
+                semantic_required=document.semantic_vector is not None,
+                sparse_required=document.sparse_token_weights is not None,
+            )
             for document in documents
+        )
+
+    def is_current(self, expected, *, semantic_required, sparse_required=False) -> bool:
+        document = self.documents.get(document_id(
+            expected["parse_task_id"], expected["video_chunk_id"],
+        ))
+        return (
+            document is not None
+            and all(getattr(document, name) == value for name, value in expected.items())
+            and len(document.vision_vector) == self.vision_dimensions
+            and (not semantic_required or len(document.semantic_vector or ()) == self.semantic_dimensions)
+            and (not sparse_required or document.sparse_token_weights is not None)
         )
 
     def inspect(self, keys):
@@ -1819,7 +1837,7 @@ def test_execution_timing_records_short_runs_without_changing_results(monkeypatc
             asyncio.run(execute())
         assert caught.value is error
     assert runtime._model_manager.get() is None
-    if kind in {"index", "video"}:
+    if kind == "video":
         assert samples == []
     else:
         assert len(samples) == 2

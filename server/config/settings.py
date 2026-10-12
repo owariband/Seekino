@@ -35,7 +35,7 @@ class ServerSettings:
     agent_chat_model: str | None
     agent_fallback_model: str | None
     agent_evaluator_model: str | None
-    agent_request_timeout_seconds: float
+    agent_request_timeout_seconds: float | None
     mq: MQConsumerConfig
     allowed_origins: tuple[str, ...]
     model_config_path: Path | None
@@ -270,8 +270,15 @@ def resolve_execution_mode(value: str | None = None) -> Literal["v2"]:
     return "v2"
 
 
-def resolve_agent_request_timeout_seconds(value: float | str | None = None) -> float:
-    return _environment_float("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", 180, value=value)
+def resolve_agent_request_timeout_seconds(value: float | str | None = None) -> float | None:
+    name = "ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS"
+    raw = value if value is not None else _optional_environment(name)
+    if raw is None:
+        return None
+    timeout = float(raw)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"{name} must be finite and greater than zero")
+    return timeout
 
 
 def _required_environment(name: str, *, value: str | None = None) -> str:

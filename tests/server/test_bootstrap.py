@@ -231,6 +231,15 @@ def test_parse_defaults_accept_existing_runtime_values_beyond_ui_recommendations
 
 @pytest.mark.parametrize("supervisor_backend", ["legacy", "deepagents", "codex"])
 @pytest.mark.parametrize(
+    ("global_timeout", "supervisor_timeout", "execution_timeout", "expected_agent_timeout", "expected_independent_timeout", "expected_retrieval_timeout"),
+    [
+        pytest.param(120, 75, 90, 90, 75, 90, id="existing-runtime-controls"),
+        pytest.param(None, 600, 480, 180, 480, 480, id="config-budget-without-global-override"),
+        pytest.param(None, 75, 480, 180, 75, 480, id="smaller-config-model-budget"),
+        pytest.param(60, 600, 480, 60, 60, 60, id="explicit-smaller-global-override"),
+    ],
+)
+@pytest.mark.parametrize(
     ("configured_models", "expected_models"),
     [
         (
@@ -253,10 +262,18 @@ def test_process_assembly_receives_runtime_configuration(
     configured_models,
     expected_models,
     supervisor_backend,
+    global_timeout,
+    supervisor_timeout,
+    execution_timeout,
+    expected_agent_timeout,
+    expected_independent_timeout,
+    expected_retrieval_timeout,
 ):
     for name in tuple(os.environ):
         if name.startswith("ANIVAG_"):
             monkeypatch.delenv(name, raising=False)
+    if global_timeout is not None:
+        monkeypatch.setenv("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", str(global_timeout))
     monkeypatch.setenv("ANIVAG_ENVIRONMENT", "test")
     monkeypatch.setenv("ANIVAG_PARSE_EXECUTION_MODE", "v2")
     monkeypatch.setenv(
@@ -269,6 +286,7 @@ def test_process_assembly_receives_runtime_configuration(
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
     configuration = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
+    configuration["models"]["agent"]["request_timeout_seconds"] = 180
     if supervisor_backend == "legacy":
         configuration.pop("supervisor_harness", None)
         configuration["models"].pop("supervisor", None)
@@ -279,7 +297,7 @@ def test_process_assembly_receives_runtime_configuration(
             "model": "independent-supervisor-model",
             "supports_vision_input": supervisor_backend == "codex",
             "reasoning_effort": "low",
-            "request_timeout_seconds": 75,
+            "request_timeout_seconds": supervisor_timeout,
             "max_output_tokens": 1024,
             "max_input_chars": 80_000,
             "context_window_tokens": 32_000,
@@ -303,7 +321,6 @@ def test_process_assembly_receives_runtime_configuration(
         agent_evaluator_model=configured_models[1],
         agent_chat_model=configured_models[2],
         agent_fallback_model="configured-fallback-model",
-        agent_request_timeout_seconds=120,
         images=ImageUploadConfig(maximum_upload_size_bytes=2048, maximum_pixels=1_000_000, model_max_edge=512),
         agent=AgentServiceConfig(
             max_loop_turns=2, max_model_calls_per_turn=4,
@@ -316,9 +333,10 @@ def test_process_assembly_receives_runtime_configuration(
             max_prompt_chars=120_000,
             stage_timeout_seconds=45,
             evaluator_stage_timeout_seconds=210,
-            execution_timeout_seconds=90, maximum_concurrent_kicks=2,
+            execution_timeout_seconds=execution_timeout, maximum_concurrent_kicks=2,
         ),
     )
+    assert settings.agent_request_timeout_seconds == global_timeout
     # Change the environment after loading Settings to prove assembly uses it.
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_MODEL", "unexpected-env-model")
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "0.5")
@@ -367,7 +385,7 @@ def test_process_assembly_receives_runtime_configuration(
         embedder = received["query_embedder"]
         assert embedder._binding.model == settings.video_embedding_model
         assert embedder._binding.video_fps == settings.video_embedding_fps
-        assert embedder._binding.request_timeout_seconds == 90
+        assert embedder._binding.request_timeout_seconds == expected_retrieval_timeout
         defaults = services.uploads.parse_defaults
         assert defaults is not None
         assert defaults.embedding.model == settings.video_embedding_model
@@ -382,9 +400,9 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._query_model.model_name == expected_models[0]
         assert runtime._evaluator_model.model_name == expected_models[1]
         assert runtime._chat_model.model_name == expected_models[2]
-        assert runtime._query_model.request_timeout_seconds == 90
-        assert runtime._evaluator_model.request_timeout_seconds == 90
-        assert runtime._chat_model._request_timeout_seconds == 90
+        assert runtime._query_model.request_timeout_seconds == expected_agent_timeout
+        assert runtime._evaluator_model.request_timeout_seconds == expected_agent_timeout
+        assert runtime._chat_model._request_timeout_seconds == expected_agent_timeout
         assert callable(runtime._evaluator_model.run_structured)
         assert runtime._query_model.provider_name == "deepseek"
         assert runtime._evaluator_model.provider_name == "deepseek"
@@ -402,7 +420,13 @@ def test_process_assembly_receives_runtime_configuration(
         assert supervisor_model.provider_name == ("codex" if supervisor_backend == "codex" else "deepseek")
         assert supervisor_builds[0]["harness"] == ("deepagents" if supervisor_backend == "legacy" else supervisor_backend)
         assert supervisor_builds[0]["reasoning_effort"] == ("high" if supervisor_backend == "legacy" else "low")
-        assert supervisor_builds[0]["request_timeout_seconds"] == (90 if supervisor_backend == "legacy" else 75)
+        expected_supervisor_timeout = expected_agent_timeout if supervisor_backend == "legacy" else expected_independent_timeout
+        assert supervisor_builds[0]["request_timeout_seconds"] == expected_supervisor_timeout
+        actual_supervisor_timeout = (
+            supervisor_model._agent_model.request_timeout_seconds
+            if supervisor_backend == "codex" else supervisor_model._request_timeout_seconds
+        )
+        assert actual_supervisor_timeout == expected_supervisor_timeout
         assert supervisor_builds[0]["max_output_tokens"] == (2048 if supervisor_backend == "legacy" else 1024)
         assert supervisor_builds[0]["max_input_chars"] == 120_000
         if supervisor_backend != "legacy":
@@ -437,7 +461,7 @@ def test_process_assembly_receives_runtime_configuration(
         assert runtime._max_catalog_items == 20
         assert runtime._stage_timeout == 45
         assert runtime._evaluator_stage_timeout == 210
-        assert runtime._execution_timeout == 90
+        assert runtime._execution_timeout == execution_timeout
         assert services.agent._executor._max_workers == 2
         updated = replace(
             settings.agent, evaluator_stage_timeout_seconds=240,
@@ -461,6 +485,7 @@ def test_process_assembly_receives_runtime_configuration(
             if supervisor_backend != "codex":
                 assert replacement_supervisor._model.session_store is supervisor_model.session_store
             assert supervisor_builds[1]["reasoning_effort"] == ("none" if supervisor_backend == "legacy" else "low")
+            assert supervisor_builds[1]["request_timeout_seconds"] == expected_supervisor_timeout
             assert services.agent.active_maximum_concurrent_kicks == 2
         finally:
             if replacement_supervisor is not None:

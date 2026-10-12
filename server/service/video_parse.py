@@ -930,9 +930,12 @@ class VideoParseRuntimeService:
         manager_token = self._model_manager.set(manager)
         stopped = asyncio.Event()
         heartbeat_errors: list[BaseException] = []
-        track_execution = category == "parse" and (
-            isinstance(lease, ChunkParseLease)
-            or isinstance(lease, IntervalParseLease) and lease.phase == "REFINING"
+        track_execution = (
+            category == "parse" and isinstance(lease, ChunkParseLease)
+            or isinstance(lease, IntervalParseLease) and (
+                category == "parse" and lease.phase == "REFINING"
+                or category == "embedding" and lease.phase == "INDEXING"
+            )
         )
         timing_started_at = time.time_ns() // 1_000_000
         timing_started = time.monotonic()

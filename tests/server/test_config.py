@@ -94,6 +94,7 @@ def test_server_settings_load_upload_parse_agent_and_mq_defaults(monkeypatch) ->
     assert settings.agent_chat_model is None
     assert settings.agent_fallback_model is None
     assert settings.agent_evaluator_model is None
+    assert settings.agent_request_timeout_seconds is None
     assert settings.mq.heartbeat_interval < settings.mq.lease_duration
     assert settings.mq.poll_interval_seconds == 2.0
     assert settings.mq.retry_base == timedelta(seconds=30)
@@ -399,7 +400,7 @@ def test_scoped_database_settings_ignore_unrelated_invalid_configuration(monkeyp
     assert resolve_environment() is DatabaseEnvironment.DEVELOPMENT
     assert resolve_database_url() == os.environ["ANIVAG_DATABASE_URL"]
     assert resolve_database_pool_recycle_seconds() == 3600
-    assert resolve_agent_request_timeout_seconds() == 180
+    assert resolve_agent_request_timeout_seconds() is None
     assert resolve_artifact_root() == Path("outputs/server/artifacts")
     assert resolve_parse_max_height() == 720
 
@@ -422,6 +423,18 @@ def test_explicit_settings_inputs_override_invalid_environment(monkeypatch, tmp_
     assert resolve_parse_max_height(1080) == 1080
     assert resolve_execution_mode("v2") == "v2"
     assert resolve_artifact_root(tmp_path) == tmp_path
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    (None, None), ("", None), (" ", None), ("45.5", 45.5),
+])
+def test_agent_request_timeout_has_no_implicit_ceiling(monkeypatch, value, expected):
+    _clean_anivag_environment(monkeypatch)
+    if value is not None:
+        monkeypatch.setenv("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", value)
+
+    assert resolve_agent_request_timeout_seconds() == expected
+    assert ServerSettings.from_environment().agent_request_timeout_seconds == expected
 
 
 @pytest.mark.parametrize("resolver,value", [
@@ -643,6 +656,8 @@ def test_retrieval_model_limits_reuse_yaml_runtime_precedence(monkeypatch):
 
     assert resolve_retrieval_model_limits(config_path, request_timeout_seconds=120) == (45, 2048)
     assert resolve_retrieval_model_limits(config_path, request_timeout_seconds=15) == (15, 2048)
+    assert resolve_retrieval_model_limits(config_path, request_timeout_seconds=None) == (45, 2048)
+    assert resolve_retrieval_model_limits(config_path) == (45, 2048)
 
 
 @pytest.mark.parametrize("rerank_enabled", [0, 1, "true", None])

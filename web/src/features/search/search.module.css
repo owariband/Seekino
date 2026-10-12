@@ -576,15 +576,16 @@
   .evidenceContent { padding: 18px; }
 }
 
-.page.embeddedPage { width: 100%; max-width: none; height: 100%; min-height: 0; padding: 8px 14px 12px; }
-.embeddedPage .pageHeader { min-width: 0; min-height: 38px; gap: 8px; align-items: center; margin-bottom: 0; }
+.page.embeddedPage { container-type: size; width: 100%; max-width: none; height: 100%; min-height: 0; padding: 8px 14px 12px; }
+.embeddedPage .pageHeader { position: relative; min-width: 0; min-height: 38px; gap: 8px; align-items: center; margin-bottom: 0; }
 .embeddedPage .chatHeading { display: flex; min-width: 0; flex: 1; align-items: center; }
 .embeddedPage .chatTitle { overflow: hidden; font-size: .78rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .embeddedPage .conversationActions { gap: 5px; }
+.embeddedPage .conversationPicker, .embeddedPage .scopePicker { position: static; }
 .embeddedPage .conversationPicker > summary span, .embeddedPage .newConversation span { display: none; }
 .embeddedPage .conversationPicker > summary, .embeddedPage .newConversation { width: 30px; min-height: 30px; justify-content: center; padding: 0; border-color: transparent; background: transparent; }
 .embeddedPage .conversationPicker > summary svg:last-child { display: none; }
-.embeddedPage .conversationMenu { position: absolute; top: calc(100% + 9px); right: 0; bottom: auto; left: auto; width: min(360px, calc(100vw - 24px)); max-height: min(480px, 65dvh); }
+.embeddedPage .conversationMenu { position: absolute; top: calc(100% + 9px); right: 0; bottom: auto; left: auto; width: min(360px, 100cqw); max-height: min(480px, calc(100cqh - 47px)); }
 .embeddedPage .workspace { min-height: 0; gap: 0; }
 .embeddedPage .thread { gap: 18px; padding: 14px 0 16px; }
 .embeddedPage .userMessage > div { max-width: 88%; padding: 9px 11px; border-radius: 12px 12px 3px 12px; }
@@ -622,11 +623,11 @@
 .embeddedPage .composerArea { width: 100%; padding: 8px 0 0; border-top: 1px solid var(--line); }
 .embeddedPage .composer { gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; box-shadow: none; }
 .embeddedPage .composer textarea { min-height: 38px; max-height: 130px; font-size: .82rem; line-height: 1.5; }
-.embeddedPage .composerToolbar { min-height: 28px; gap: 6px; margin-top: 3px; }
+.embeddedPage .composerToolbar { position: relative; min-height: 28px; gap: 6px; margin-top: 3px; }
 .embeddedPage .composerControls { flex-wrap: nowrap; gap: 4px; }
 .embeddedPage .scopePicker summary { min-height: 28px; padding: 0 6px; background: transparent; font-size: .67rem; }
 .embeddedPage .answerSettingsPicker summary small { display: none; }
-.embeddedPage .scopeOptions { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; width: min(340px, calc(100vw - 24px)); max-width: none; }
+.embeddedPage .scopeOptions { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; width: min(340px, 100cqw); max-width: none; }
 .embeddedPage .answerSettings { right: 0; left: auto; }
 .embeddedPage .keyboardHint { display: none; }
 .scopeNotice { margin: 6px 2px 0; color: var(--ink-soft); font-size: .68rem; line-height: 1.5; }

@@ -89,9 +89,14 @@ class RetrievalConfig:
 
 
 def resolve_retrieval_model_limits(
-    config_path: str | Path | None = None, *, request_timeout_seconds: float,
+    config_path: str | Path | None = None, *, request_timeout_seconds: float | None = None,
 ) -> tuple[float, int]:
-    if not math.isfinite(request_timeout_seconds) or request_timeout_seconds <= 0:
+    if request_timeout_seconds is not None and (
+        not math.isfinite(request_timeout_seconds) or request_timeout_seconds <= 0
+    ):
         raise ValueError("request_timeout_seconds must be finite and greater than zero")
     agent, _ = read_global_agent_settings(config_path)
-    return min(request_timeout_seconds, agent.execution_timeout_seconds), agent.max_output_tokens
+    timeout = agent.execution_timeout_seconds
+    if request_timeout_seconds is not None:
+        timeout = min(timeout, request_timeout_seconds)
+    return timeout, agent.max_output_tokens

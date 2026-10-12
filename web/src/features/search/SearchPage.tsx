@@ -181,7 +181,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   const followThread = useRef(true);
 
   useImperativeHandle(ref, () => ({
-    focusComposer: () => composerRef.current?.focus(),
+    focusComposer: () => composerRef.current?.focus({ preventScroll: true }),
   }), []);
   const { conversationId, messages, progress, loading, searching, error, clear: clearConversation, send } = useAgentConversation(requestedConversationId);
   const isSearchable = (status: string) => status === "READY";

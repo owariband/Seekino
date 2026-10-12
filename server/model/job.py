@@ -19,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import BaseModel
+from .types import StringEncodedJSON
 from ..utils.time import now_unix_time_ms, now_utc
 from .video import (
     ID_LENGTH,
@@ -407,7 +408,9 @@ class ChunkParseContent(BaseModel):
     )
     content: Mapped[Any | None] = mapped_column(JSON)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(
+        StringEncodedJSON(string_path=("_index_embeddings_v2", "representations")),
+    )
 
 
 class IntervalParseTask(BaseModel):

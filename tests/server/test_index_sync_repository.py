@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, event, func, select, update
+from sqlalchemy import delete, event, func, select, text, update
 from sqlalchemy.dialects import mysql
 from sqlalchemy.schema import CreateTable
 
@@ -168,6 +169,80 @@ def test_same_desired_state_stays_synced_and_all_chunks_gate_ready(
     ]
     assert all(item.status is IndexSyncStatus.SYNCED for item in repeated)
     assert _series_status(engine, prepared_import.series_id) == "READY"
+
+
+def test_vectors_are_string_persisted_and_publish_without_precision_loss(
+    prepared_import,
+    repository,
+) -> None:
+    engine, video_repository = repository
+    expected_text = [-0.00010395050048828125, 1.9311904907226562e-05]
+    expected_vision = [0.3, 0.4]
+    prepared_with_vectors = _with_vectors(
+        prepared_import, first_text=expected_text,
+    )
+    video_repository.import_video_parse(prepared_with_vectors)
+    index_repository = IndexSyncRepository(create_session_factory(engine))
+    target_id = prepared_with_vectors.chunks[0].video_chunk_id
+
+    with engine.connect() as connection:
+        stored = connection.execute(
+            text(
+                "SELECT text_vector, vision_vector FROM video_chunk_embedding "
+                "WHERE chunk_id = :chunk_id"
+            ),
+            {"chunk_id": target_id},
+        ).one()
+    for raw_value, expected in zip(
+        stored, (expected_text, expected_vision), strict=True,
+    ):
+        encoded = json.loads(raw_value)
+        assert isinstance(encoded, str)
+        assert [value.hex() for value in json.loads(encoded)] == [
+            value.hex() for value in expected
+        ]
+
+    def assert_publish_vectors(item) -> None:
+        assert item.operation is IndexSyncOperation.UPSERT
+        for actual, expected in (
+            (item.text_vector, expected_text),
+            (item.vision_vector, expected_vision),
+        ):
+            assert isinstance(actual, list)
+            assert all(type(value) is float for value in actual)
+            assert [value.hex() for value in actual] == [
+                value.hex() for value in expected
+            ]
+
+    original = {item.video_chunk_id: item for item in index_repository.list_all()}
+    assert_publish_vectors(original[target_id])
+    video_repository.import_video_parse(prepared_with_vectors)
+    repeated = {item.video_chunk_id: item for item in index_repository.list_all()}
+    assert_publish_vectors(repeated[target_id])
+    assert {
+        chunk_id: (item.source_revision, item.generation)
+        for chunk_id, item in repeated.items()
+    } == {
+        chunk_id: (item.source_revision, item.generation)
+        for chunk_id, item in original.items()
+    }
+
+    # Historical rows stored JSON arrays; fresh repository reads still publish numbers.
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE video_chunk_embedding SET text_vector = :text_vector, "
+                "vision_vector = :vision_vector WHERE chunk_id = :chunk_id"
+            ),
+            {
+                "chunk_id": target_id,
+                "text_vector": json.dumps(expected_text, allow_nan=False),
+                "vision_vector": json.dumps(expected_vision, allow_nan=False),
+            },
+        )
+    legacy = {item.video_chunk_id: item for item in index_repository.list_all()}
+    assert_publish_vectors(legacy[target_id])
+    assert index_repository.materialize_all() == 0
 
 
 def test_unparsed_sibling_does_not_hide_ready_video(

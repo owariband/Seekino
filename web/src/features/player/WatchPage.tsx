@@ -1,10 +1,11 @@
 import { ChevronLeft, ChevronRight, Clapperboard, ListVideo, MessageCircle, PanelRightClose, Play, X } from "lucide-react";
-import { type CSSProperties, type KeyboardEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type Dispatch, type KeyboardEvent, type PointerEvent, type ReactNode, type SetStateAction, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useLocation, useNavigate, useParams } from "react-router";
+import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router";
 
 import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
+import type { WatchPanelLayout } from "../../app/AppShell";
 import { episodeLabel, formatTimecode } from "../../shared/format";
 import { SearchPage, type SearchPageHandle } from "../search/SearchPage";
 import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
@@ -37,10 +38,16 @@ function savedPanelWidth(): number {
   }
 }
 
+function WatchPanelPortal({ children }: { children: ReactNode }) {
+  const host = document.getElementById("watch-side-panel-host");
+  return host ? createPortal(children, host) : children;
+}
+
 export function WatchPage() {
   const { seriesId, videoId } = useParams();
   const { search } = useLocation();
   const navigate = useNavigate();
+  const setWatchPanelLayout = useOutletContext<Dispatch<SetStateAction<WatchPanelLayout>> | undefined>();
   const pageRef = useRef<HTMLElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<VideoPlayerHandle>(null);
@@ -54,6 +61,10 @@ export function WatchPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<"chat" | "episodes">("chat");
   const [panelWidth, setPanelWidth] = useState(savedPanelWidth);
+  const [resizing, setResizing] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  const maxPanelWidth = Math.min(850, Math.max(MIN_PANEL_WIDTH, viewportWidth - 420));
+  const visiblePanelWidth = Math.min(panelWidth, maxPanelWidth);
   const [pageFullscreen, setPageFullscreen] = useState(false);
   const seriesQuery = useQuery({
     queryKey: ["series-detail", seriesId],
@@ -126,6 +137,8 @@ export function WatchPage() {
 
   const closePanel = () => {
     pendingChatFocusRef.current = false;
+    draggingRef.current = false;
+    setResizing(false);
     setPanelOpen(false);
     panelToggleRef.current?.focus();
   };
@@ -172,30 +185,45 @@ export function WatchPage() {
   }, [panelWidth]);
 
   useEffect(() => {
-    const sync = () => setPageFullscreen(document.fullscreenElement === pageRef.current);
+    const sync = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+
+  useLayoutEffect(() => {
+    setWatchPanelLayout?.({ open: panelOpen, width: visiblePanelWidth, resizing });
+  }, [panelOpen, visiblePanelWidth, resizing, setWatchPanelLayout]);
+
+  useLayoutEffect(() => () => {
+    setWatchPanelLayout?.((layout) => ({ ...layout, open: false, resizing: false }));
+  }, [setWatchPanelLayout]);
+
+  useEffect(() => {
+    const sync = () => setPageFullscreen(Boolean(pageRef.current && document.fullscreenElement?.contains(pageRef.current)));
     document.addEventListener("fullscreenchange", sync);
     return () => document.removeEventListener("fullscreenchange", sync);
   }, []);
 
   const togglePageFullscreen = async () => {
-    if (document.fullscreenElement === pageRef.current) {
+    const target = pageRef.current?.closest<HTMLElement>("[data-app-shell]") ?? pageRef.current;
+    if (document.fullscreenElement === target) {
       await document.exitFullscreen();
-    } else if (pageRef.current?.requestFullscreen) {
-      await pageRef.current.requestFullscreen();
+    } else if (target?.requestFullscreen) {
+      await target.requestFullscreen();
     } else {
       throw new Error("当前浏览器不支持网页全屏");
     }
   };
 
   const resizePanel = (clientX: number) => {
-    const bounds = layoutRef.current?.getBoundingClientRect();
+    const bounds = (pageRef.current?.closest("[data-app-shell]") ?? pageRef.current)?.getBoundingClientRect();
     if (!bounds) return;
-    const maxWidth = Math.min(850, Math.max(MIN_PANEL_WIDTH, bounds.width - 420));
-    setPanelWidth(Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, bounds.right - clientX)));
+    setPanelWidth(Math.max(MIN_PANEL_WIDTH, Math.min(maxPanelWidth, bounds.right - clientX)));
   };
 
   const endResize = (event: PointerEvent<HTMLDivElement>) => {
     draggingRef.current = false;
+    setResizing(false);
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
@@ -210,15 +238,18 @@ export function WatchPage() {
   </button>;
 
   return (
-    <main ref={pageRef} className={`page ${styles.page}`}>
-      <div ref={layoutRef} className={styles.layout} data-panel-open={panelOpen} style={{ "--watch-panel-width": `${panelWidth}px` } as CSSProperties}>
+    <main ref={pageRef} className={`page ${styles.page}`} data-panel-open={panelOpen} data-fullscreen={pageFullscreen} style={{ "--watch-panel-width": `${visiblePanelWidth}px` } as CSSProperties}>
+      <div ref={layoutRef} className={styles.layout}>
         {headerActions ? createPortal(panelToggle, headerActions) : <div className={styles.floatingTools}>{panelToggle}</div>}
         <section className={styles.viewer} aria-label="视频播放器" onKeyDownCapture={(event) => switchPaneOnTab(event, "chat")}>
           {episodes.length === 0 ? <p className={styles.unavailable} role="status">这个系列还没有视频。</p> : !selected ? (
             <p className={styles.unavailable} role="alert">找不到这集视频，请在下方选集重新选择。</p>
           ) : <VideoPlayer ref={playerRef} key={`${selected.videoId}:${atSeconds ?? "resume"}`} video={selected} atSeconds={atSeconds} fullscreen={pageFullscreen} onToggleFullscreen={togglePageFullscreen} onPlaybackPositionChange={updatePlaybackContext} />}
         </section>
+      </div>
 
+      <WatchPanelPortal>
+      <aside id="watch-side-panel" className={styles.sidePanel} aria-label="观看侧栏" data-open={panelOpen} aria-hidden={!panelOpen} inert={!panelOpen} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.stopPropagation(); closePanel(); } }}>
         {panelOpen ? <div
           className={styles.resizeHandle}
           role="separator"
@@ -226,11 +257,12 @@ export function WatchPage() {
           aria-label="调整右侧栏宽度"
           aria-orientation="vertical"
           aria-valuemin={MIN_PANEL_WIDTH}
-          aria-valuemax={850}
-          aria-valuenow={panelWidth}
+          aria-valuemax={maxPanelWidth}
+          aria-valuenow={visiblePanelWidth}
           onPointerDown={(event) => {
             event.preventDefault();
             draggingRef.current = true;
+            setResizing(true);
             event.currentTarget.setPointerCapture?.(event.pointerId);
             resizePanel(event.clientX);
           }}
@@ -240,46 +272,44 @@ export function WatchPage() {
           onKeyDown={(event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
             event.preventDefault();
-            const maxWidth = Math.min(850, Math.max(MIN_PANEL_WIDTH, (layoutRef.current?.clientWidth ?? window.innerWidth) - 420));
-            setPanelWidth((width) => Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, width + (event.key === "ArrowLeft" ? 24 : -24))));
+            setPanelWidth(Math.max(MIN_PANEL_WIDTH, Math.min(maxPanelWidth, visiblePanelWidth + (event.key === "ArrowLeft" ? 24 : -24))));
           }}
         /> : null}
 
-        <aside id="watch-side-panel" className={styles.sidePanel} aria-label="观看侧栏" hidden={!panelOpen} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.stopPropagation(); closePanel(); } }}>
-          <div className={styles.panelHeader}><strong>边看边聊</strong><button type="button" onClick={closePanel} aria-label="关闭对话面板"><X size={20} aria-hidden="true" /></button></div>
-          <div className={styles.sideTabs} role="tablist" aria-label="观看侧栏内容">
-            <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={focusChat}><MessageCircle size={15} aria-hidden="true" />Chat</button>
-            <button type="button" role="tab" id="watch-episodes-tab" aria-controls="watch-episodes-panel" aria-selected={panelTab === "episodes"} onClick={() => setPanelTab("episodes")}><ListVideo size={15} aria-hidden="true" />选集</button>
-          </div>
-          <div
-            id="watch-chat-panel"
-            className={styles.chatPanel}
-            role="tabpanel"
-            aria-labelledby="watch-chat-tab"
-            hidden={panelTab !== "chat"}
-            onPointerDownCapture={(event) => { if (event.button === 0) captureExtraContext(); }}
-            onKeyDownCapture={(event) => switchPaneOnTab(event, "player")}
-          >
-            <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} captureExtraContext={captureExtraContext} onOpenVideo={({ seriesId: targetSeriesId, videoId: targetVideoId, startSeconds }) => {
-              navigate(`${watchPath(targetSeriesId, targetVideoId)}?atSeconds=${startSeconds}`);
-            }} />
-          </div>
-          <div id="watch-episodes-panel" className={styles.episodePanel} role="tabpanel" aria-labelledby="watch-episodes-tab" hidden={panelTab !== "episodes"}>
-            <h2>选集 <span><small>{episodes.length} 集</small><Link to="/library">调整集数</Link></span></h2>
-            <ol className={styles.episodeList}>
-              {episodes.map((episode) => (
-                <li key={episode.videoId}>
-                  <Link to={watchPath(seriesId, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
-                    <span>{episodeLabel(episode.episodeOrder)}</span>
-                    <strong>{episode.originalFilename}</strong>
-                    <small>{formatTimecode(episode.durationSeconds)} · {episode.playbackStatus === "READY" ? "可播放" : "播放未就绪"}</small>
-                  </Link>
-                </li>
-              ))}
-            </ol>
-          </div>
-        </aside>
-      </div>
+        <div className={styles.panelHeader}><strong>边看边聊</strong><button type="button" onClick={closePanel} aria-label="关闭对话面板"><X size={20} aria-hidden="true" /></button></div>
+        <div className={styles.sideTabs} role="tablist" aria-label="观看侧栏内容">
+          <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={focusChat}><MessageCircle size={15} aria-hidden="true" />Chat</button>
+          <button type="button" role="tab" id="watch-episodes-tab" aria-controls="watch-episodes-panel" aria-selected={panelTab === "episodes"} onClick={() => setPanelTab("episodes")}><ListVideo size={15} aria-hidden="true" />选集</button>
+        </div>
+        <div
+          id="watch-chat-panel"
+          className={styles.chatPanel}
+          role="tabpanel"
+          aria-labelledby="watch-chat-tab"
+          hidden={panelTab !== "chat"}
+          onPointerDownCapture={(event) => { if (event.button === 0) captureExtraContext(); }}
+          onKeyDownCapture={(event) => switchPaneOnTab(event, "player")}
+        >
+          <SearchPage ref={chatRef} embedded initialSeriesId={seriesId} captureExtraContext={captureExtraContext} onOpenVideo={({ seriesId: targetSeriesId, videoId: targetVideoId, startSeconds }) => {
+            navigate(`${watchPath(targetSeriesId, targetVideoId)}?atSeconds=${startSeconds}`);
+          }} />
+        </div>
+        <div id="watch-episodes-panel" className={styles.episodePanel} role="tabpanel" aria-labelledby="watch-episodes-tab" hidden={panelTab !== "episodes"}>
+          <h2>选集 <span><small>{episodes.length} 集</small><Link to="/library">调整集数</Link></span></h2>
+          <ol className={styles.episodeList}>
+            {episodes.map((episode) => (
+              <li key={episode.videoId}>
+                <Link to={watchPath(seriesId, episode.videoId)} aria-current={episode.videoId === selected?.videoId ? "page" : undefined}>
+                  <span>{episodeLabel(episode.episodeOrder)}</span>
+                  <strong>{episode.originalFilename}</strong>
+                  <small>{formatTimecode(episode.durationSeconds)} · {episode.playbackStatus === "READY" ? "可播放" : "播放未就绪"}</small>
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </aside>
+      </WatchPanelPortal>
       <div className={styles.watchDetails}>
         <section className={styles.watchSynopsis} aria-label="视频简介">
           <Link className={styles.seriesName} to={`/series/${encodeURIComponent(seriesId)}`}>{series.name}<ChevronRight size={18} aria-hidden="true" /></Link>

@@ -1526,6 +1526,14 @@ class VideoParseRepository:
                 **deepcopy(dict(result.detail or {})),
                 "indexed_versions": recorded,
             }
+            # Partial publication also finishes this execution. Preserve its
+            # receipt so an observed timing sample can close after a later lease.
+            finished_leases = result_detail.get("indexing_finished_lease_versions", [])
+            if not isinstance(finished_leases, list):
+                finished_leases = []
+            if lease.lease_version not in finished_leases:
+                finished_leases.append(lease.lease_version)
+            result_detail["indexing_finished_lease_versions"] = finished_leases
             if all_current:
                 result_detail["indexing_committed_lease_version"] = (
                     lease.lease_version
@@ -1744,7 +1752,7 @@ class VideoParseRepository:
         outcome: str = "running",
         now: datetime | None = None,
     ) -> bool:
-        """Sample one fenced parsing execution without changing its task state."""
+        """Sample one fenced parsing/indexing execution without changing its task state."""
 
         for name, value in (("started_at_ms", started_at_ms), ("elapsed_ms", elapsed_ms)):
             if type(value) is not int or value < 0:
@@ -1756,11 +1764,12 @@ class VideoParseRepository:
         if isinstance(lease, ChunkParseLease):
             phase, kind, task_id = "understand", "chunk", lease.chunk_parse_task_id
             model = ChunkParseTask
-        elif isinstance(lease, IntervalParseLease) and lease.phase == "REFINING":
-            phase, kind, task_id = "refine", "interval", lease.interval_parse_task_id
+        elif isinstance(lease, IntervalParseLease) and lease.phase in {"REFINING", "INDEXING"}:
+            phase = "refine" if lease.phase == "REFINING" else "index"
+            kind, task_id = "interval", lease.interval_parse_task_id
             model = IntervalParseTask
         else:
-            raise ValueError("timing supports only Chunk Understanding and Interval Refine")
+            raise ValueError("timing supports only Chunk Understanding and Interval Refine/Index")
 
         sampled_at = now if now is not None else now_utc()
         identity = {
@@ -1786,11 +1795,17 @@ class VideoParseRepository:
             else:
                 active = _matching_interval_lease(child, lease, sampled_at)
                 content = session.get(IntervalParseContent, task_id) if finished else None
+                receipt = content.detail if content is not None and isinstance(content.detail, dict) else {}
+                finished_leases = receipt.get("indexing_finished_lease_versions", [])
+                committed_version = (
+                    receipt.get("refinement_committed_lease_version") == lease.lease_version
+                    if phase == "refine" else (
+                        receipt.get("indexing_committed_lease_version") == lease.lease_version
+                        or isinstance(finished_leases, list) and lease.lease_version in finished_leases
+                    )
+                )
                 committed = bool(
-                    content is not None
-                    and isinstance(content.detail, dict)
-                    and content.detail.get("refinement_committed_lease_version")
-                    == lease.lease_version
+                    committed_version
                     and tuple(child.chunk_task_ids) == lease.chunk_parse_task_ids
                     and child.start_sequence_no == lease.start_sequence_no
                     and child.chunk_count == lease.chunk_count

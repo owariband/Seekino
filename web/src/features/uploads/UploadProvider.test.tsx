@@ -13,6 +13,7 @@ import { UploadDialog } from "./UploadDialog";
 import { UploadProvider, useUploads } from "./UploadProvider";
 
 const mocks = vi.hoisted(() => ({
+  displayMode: "release" as "release" | "debug",
   selectedSeries: { seriesId: "series-a", name: "测试系列", videos: [], pendingUploads: [] as UploadSessionView[] },
   refreshSeries: vi.fn(),
   createUploadSession: vi.fn(),
@@ -127,6 +128,7 @@ function Controls() {
 
 beforeEach(() => {
   vi.unstubAllGlobals();
+  mocks.displayMode = "release";
   mocks.selectedSeries.pendingUploads = [];
   mocks.refreshSeries.mockReset().mockResolvedValue(undefined);
   mocks.createUploadSession.mockReset().mockResolvedValue(session);
@@ -142,7 +144,8 @@ beforeEach(() => {
   );
 });
 
-it("sends the selected frame rate and analysis height with an upload", async () => {
+it("sends the selected frame rate and analysis height with an upload in debug", async () => {
+  mocks.displayMode = "debug";
   const { container } = render(<UploadProvider><Controls /></UploadProvider>);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "上传面板" }));
@@ -163,6 +166,44 @@ it("sends the selected frame rate and analysis height with an upload", async () 
     window: { analysisMaxHeight: 480, canonicalMaxHeight: 720 },
     vision: { fps: 0.5 },
   });
+});
+
+it("uploads with server defaults in release without loading debug configuration", async () => {
+  const { container } = render(<UploadProvider><Controls /></UploadProvider>);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "上传面板" }));
+  expect(screen.queryByRole("region", { name: "解析配置" })).not.toBeInTheDocument();
+  expect(mocks.getParseConfig).not.toHaveBeenCalled();
+  await user.upload(container.querySelector<HTMLInputElement>('input[type="file"][multiple]')!, file);
+  await user.click(screen.getByRole("button", { name: "开始并行上传" }));
+  await waitFor(() => expect(mocks.createUploadSession).toHaveBeenCalledOnce());
+  expect(mocks.createUploadSession.mock.calls[0]?.[2]).toMatchObject({ originalFilename: file.name });
+  expect(mocks.createUploadSession.mock.calls[0]?.[2].parseConfig).toBeUndefined();
+});
+
+it.each([false, true])("uses server defaults after switching a custom upload to release (locked: %s)", async (locked) => {
+  mocks.displayMode = "debug";
+  const view = render(<UploadProvider><Controls /></UploadProvider>);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "上传面板" }));
+  await waitFor(() => expect(mocks.getParseConfig).toHaveBeenCalledOnce());
+  await user.upload(view.container.querySelector<HTMLInputElement>('input[type="file"][multiple]')!, file);
+  await user.click(screen.getByRole("radio", { name: "自定义" }));
+  const fps = screen.getByRole("spinbutton", { name: "取帧 FPS" });
+  await user.clear(fps);
+  await user.type(fps, "0.5");
+  if (locked) {
+    await user.click(screen.getByRole("button", { name: "锁定本集配置" }));
+    expect(screen.getByRole("button", { name: "已锁定本集配置" })).toBeInTheDocument();
+  }
+
+  mocks.displayMode = "release";
+  view.rerender(<UploadProvider><Controls /></UploadProvider>);
+  expect(screen.queryByRole("region", { name: "解析配置" })).not.toBeInTheDocument();
+  expect(screen.queryByText("已锁定本集配置")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "开始并行上传" }));
+  await waitFor(() => expect(mocks.createUploadSession).toHaveBeenCalledOnce());
+  expect(mocks.createUploadSession.mock.calls[0]?.[2].parseConfig).toBeUndefined();
 });
 
 describe("upload deletion", () => {
@@ -231,6 +272,7 @@ describe("upload deletion", () => {
   });
 
   it("reattaches a recovered in-memory task when its parse job is manually retried", async () => {
+    mocks.displayMode = "debug";
     mocks.selectedSeries.pendingUploads = [session];
     vi.stubGlobal("EventSource", class {
       onerror: (() => void) | null = null;
@@ -305,6 +347,7 @@ describe("upload deletion", () => {
   });
 
   it("observes a V2 task identity when completion has no legacy job", async () => {
+    mocks.displayMode = "debug";
     const completing = {
       ...session,
       status: "COMPLETING" as const,

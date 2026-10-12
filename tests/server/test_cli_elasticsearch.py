@@ -314,8 +314,8 @@ def test_search_v2_uses_only_elasticsearch_and_closes_client(
             calls["repository"] = "v2"
 
     class Embedder:
-        def __init__(self, *, model, dimensions, fps, **kwargs):
-            calls["embedder"] = (model, dimensions, fps)
+        def __init__(self, *, gateway_client, binding):
+            calls["embedder"] = (binding.model, binding.dimensions, binding.video_fps)
 
     class Result:
         def model_dump(self, *, mode, by_alias):
@@ -350,13 +350,17 @@ def test_search_v2_uses_only_elasticsearch_and_closes_client(
     monkeypatch.setattr(cli, "VideoParseRepository", Repository)
     monkeypatch.setattr(retrieval_bootstrap, "_LazyQueryEmbedder", Embedder)
     monkeypatch.setattr(retrieval_bootstrap, "VideoParseRetrievalService", Retrieval)
+    configured = load_config()
     monkeypatch.setattr(
         cli,
         "load_config",
-        lambda _path: load_config().model_copy(update={
-            "multimodal_embedding": load_config().multimodal_embedding.model_copy(
-                update={"model": "configured-model", "fps": 2.0},
-            ),
+        lambda _path: configured.model_copy(update={
+            "normalized_models": {
+                **configured.normalized_models,
+                "embedding": configured.resolve_embedding_binding(environ={}).model_copy(
+                    update={"model": "configured-model", "video_fps": 2.0},
+                ),
+            },
         }),
     )
     monkeypatch.setattr(sys, "argv", [
@@ -609,8 +613,13 @@ def test_cli_closes_resources_when_storage_construction_fails(monkeypatch, failu
 
 
 @pytest.mark.parametrize("failure", [None, "model", "sdk", "source"])
+@pytest.mark.parametrize(
+    "timeout_override,rerank_timeout,expected_timeout,expected_rerank_timeout",
+    [(None, 600, 480, 480), (45, 600, 45, 45), (None, 30, 480, 30)],
+)
 def test_cli_search_uses_real_endpoint_contract_selected_key_and_shared_policy(
     monkeypatch, tmp_path, capsys, failure,
+    timeout_override, rerank_timeout, expected_timeout, expected_rerank_timeout,
 ):
     actual_model = "doubao-embedding-vision-250615"
     series_id = "11111111-1111-4111-8111-111111111111"
@@ -619,10 +628,15 @@ def test_cli_search_uses_real_endpoint_contract_selected_key_and_shared_policy(
     config_path = tmp_path / "models.yaml"
     payload = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.yaml").read_text())
     payload["model_sources"]["ark_default"]["api_key_env"] = "CLI_EMBEDDING_KEY"
+    payload["agent_runtime"]["execution_timeout_seconds"] = 480
+    payload["models"]["rerank"]["request_timeout_seconds"] = rerank_timeout
     config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
     monkeypatch.setenv("CLI_EMBEDDING_KEY", "selected-key")
-    monkeypatch.setenv("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", "45")
+    if timeout_override is None:
+        monkeypatch.delenv("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("ANIVAG_AGENT_REQUEST_TIMEOUT_SECONDS", str(timeout_override))
     monkeypatch.setenv("ANIVAG_VIDEO_EMBEDDING_FPS", "2")
     monkeypatch.setenv("ANIVAG_RETRIEVAL_CHANNEL_TOP_K", "12")
     monkeypatch.setenv("ANIVAG_RETRIEVAL_RRF_K", "48")
@@ -643,7 +657,7 @@ def test_cli_search_uses_real_endpoint_contract_selected_key_and_shared_policy(
         parse_tasks_by_video_id={video_id: task_id}, series_by_video_id={video_id: series_id},
         parse_config=parsed, index_generation=1,
     )
-    events, requests, options, services = [], [], [], []
+    events, requests, options, services, timeouts = [], [], [], [], []
 
     class Repository:
         def __init__(self, _sessions):
@@ -687,10 +701,11 @@ def test_cli_search_uses_real_endpoint_contract_selected_key_and_shared_policy(
     ))
     monkeypatch.setattr(elasticsearch_caller, "ElasticsearchVideoChunkStore", Store)
     monkeypatch.setattr(cli, "VideoParseRepository", Repository)
-    monkeypatch.setattr(retrieval_bootstrap, "Ark", SimpleNamespace(volc=sdk_client))
+    monkeypatch.setattr("arkruntime.Ark.volc", sdk_client)
     build = cli.build_retrieval_service
 
     def build_and_record(*args, **kwargs):
+        timeouts.append(kwargs["request_timeout_seconds"])
         service, encoder = build(*args, **kwargs)
         services.append(service)
         return service, encoder
@@ -716,19 +731,21 @@ def test_cli_search_uses_real_endpoint_contract_selected_key_and_shared_policy(
         cli.main()
         assert json.loads(capsys.readouterr().out)["hits"] == []
     service = services[0]
+    assert timeouts == [expected_timeout]
     assert service._semantic_encoder.model == actual_model
     assert service._expected_embedding_source == "ark_default"
-    assert service._embedder._fps == 2
+    assert service._embedder._binding.video_fps == 2
     assert service._policy.channel_top_k == 8 and service._policy.rrf_k == 48
     assert service._policy.lexical_weight == 0.5
     assert service._policy.semantic_weight == 0.4 and service._policy.vision_weight == 0.6
     assert service._candidate_budget == 22 and service._reranker is not None
+    assert service._reranker._delegate._binding.request_timeout_seconds == expected_rerank_timeout
     if failure == "source":
         assert requests == [] and options == []
         assert events == ["elasticsearch", "database"]
     else:
         assert [request["model"] for request in requests] == ["ep-A"]
-        assert options == [{"timeout": 45.0, "max_retries": 0, "api_key": "selected-key"}]
+        assert options == [{"timeout": expected_timeout, "max_retries": 0, "api_key": "selected-key"}]
         assert events == ["sdk", "elasticsearch", "database"]
 
 

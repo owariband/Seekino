@@ -186,14 +186,127 @@ def test_execution_timing_refine_final_survives_the_next_index_lease(repository)
         replace(refine, lease_version=refine.lease_version + 20), started_at_ms=started,
         elapsed_ms=9900, finished=True, outcome="completed", now=at,
     )
-    with pytest.raises(ValueError, match="only Chunk Understanding"):
-        repo.record_execution_timing(index, started_at_ms=started, elapsed_ms=100, now=at)
+    assert repo.record_execution_timing(index, started_at_ms=started, elapsed_ms=100, now=at)
     with factory() as session:
         entries = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["execution_timing"]["entries"]
-        assert list(entries) == [f"refine:{refine.interval_parse_task_id}:{refine.lease_version}"]
-        assert next(iter(entries.values()))["elapsed_ms"] == 300
+        assert set(entries) == {
+            f"refine:{refine.interval_parse_task_id}:{refine.lease_version}",
+            f"index:{index.interval_parse_task_id}:{index.lease_version}",
+        }
+        assert entries[f"refine:{refine.interval_parse_task_id}:{refine.lease_version}"]["elapsed_ms"] == 300
         current = session.get(IntervalParseTask, index.interval_parse_task_id)
         assert current.lease_version == index.lease_version and current.lease_owner == "indexer"
+
+
+@pytest.mark.parametrize("chunk_count", [2, 4])
+@pytest.mark.parametrize("observed", [False, True])
+def test_index_timing_closes_only_observed_full_or_partial_publication(repository, chunk_count, observed):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=chunk_count)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=chunk_count)
+    at = NOW + timedelta(minutes=1)
+    refine = queue.claim_interval_refine("refiner", lease_duration=timedelta(minutes=5), now=at)
+    repo.commit_interval_refinement(
+        refine, **_refinement_inputs(repo, refine, now=at),
+        interval_content={"updates": []}, member_updates={}, now=at,
+    )
+    index = queue.claim_interval_index("indexer", lease_duration=timedelta(minutes=5), now=at)
+    started = datetime_to_unix_time_ms(at)
+    if observed:
+        assert repo.record_execution_timing(index, started_at_ms=started, elapsed_ms=100, now=at)
+    snapshot = repo.load_interval_indexing_snapshot(index, now=at)
+    assert len(snapshot.chunks) == (2 if chunk_count == 2 else 1)
+    repo.complete_interval_indexing(
+        index, {chunk.chunk_parse_task_id: chunk.content_version for chunk in snapshot.chunks}, now=at,
+    )
+    assert queue.is_execution_lease_committed(index) is (chunk_count == 2)
+    with factory() as session:
+        detail = session.get(IntervalParseContent, index.interval_parse_task_id).detail
+        assert detail["indexing_finished_lease_versions"] == [index.lease_version]
+        assert ("indexing_committed_lease_version" in detail) is (chunk_count == 2)
+
+    if chunk_count == 4:
+        later = at + timedelta(seconds=2)
+        refine_next = queue.claim_interval_refine("refiner-next", lease_duration=timedelta(minutes=5), now=later)
+        repo.commit_interval_refinement(
+            refine_next, **_refinement_inputs(repo, refine_next, now=later),
+            interval_content={"updates": []}, member_updates={}, now=later,
+        )
+        index_next = queue.claim_interval_index("indexer-next", lease_duration=timedelta(minutes=5), now=later)
+        assert index_next.interval_parse_task_id == index.interval_parse_task_id
+        snapshot_next = repo.load_interval_indexing_snapshot(index_next, now=later)
+        repo.complete_interval_indexing(
+            index_next, {chunk.chunk_parse_task_id: chunk.content_version for chunk in snapshot_next.chunks}, now=later,
+        )
+        with factory() as session:
+            detail = session.get(IntervalParseContent, index.interval_parse_task_id).detail
+            assert detail["indexing_finished_lease_versions"] == [index.lease_version, index_next.lease_version]
+            assert detail["indexing_committed_lease_version"] == index_next.lease_version
+
+    for stale in (
+        replace(index, worker_id="other-worker"),
+        replace(index, lease_version=index.lease_version + 50),
+        replace(index, chunk_parse_task_ids=(str(uuid4()),)),
+        replace(index, start_sequence_no=99),
+        replace(index, chunk_count=99),
+    ):
+        assert not repo.record_execution_timing(
+            stale, started_at_ms=started, elapsed_ms=9000,
+            finished=True, outcome="completed", now=at + timedelta(seconds=3),
+        )
+    assert repo.record_execution_timing(
+        index, started_at_ms=started, elapsed_ms=3000,
+        finished=True, outcome="completed", now=at + timedelta(seconds=3),
+    ) is observed
+    with factory() as session:
+        entries = session.get(VideoParseTask, task_id).detail.get("_worker_runtime_v2", {}).get("execution_timing", {}).get("entries", {})
+        key = f"index:{index.interval_parse_task_id}:{index.lease_version}"
+        if observed:
+            assert entries[key]["finished"] and entries[key]["elapsed_ms"] == 3000
+        else:
+            assert key not in entries
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_index_timing_preserves_failures_and_rejects_uncommitted_stale_leases(repository, expired):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=2)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=2)
+    at = NOW + timedelta(minutes=1)
+    refine = queue.claim_interval_refine("refiner", lease_duration=timedelta(minutes=5), now=at)
+    repo.commit_interval_refinement(
+        refine, **_refinement_inputs(repo, refine, now=at),
+        interval_content={"updates": []}, member_updates={}, now=at,
+    )
+    index = queue.claim_interval_index("indexer", lease_duration=timedelta(seconds=10), now=at)
+    started = datetime_to_unix_time_ms(at)
+    assert repo.record_execution_timing(index, started_at_ms=started, elapsed_ms=100, now=at)
+    failed_at = at + timedelta(seconds=12 if expired else 1)
+    if expired:
+        assert not repo.record_execution_timing(
+            index, started_at_ms=started, elapsed_ms=12000, finished=True, outcome="failed", now=failed_at,
+        )
+        assert queue.reap_expired_intervals(retry_delay=timedelta(0), now=failed_at) == 1
+    else:
+        assert repo.record_execution_timing(
+            index, started_at_ms=started, elapsed_ms=1000, finished=True, outcome="failed", now=failed_at,
+        )
+        assert queue.retry_interval(index, error="embedding failed", retry_at=failed_at, now=failed_at)
+    next_index = queue.claim_interval_index("next-indexer", lease_duration=timedelta(minutes=5), now=failed_at)
+    assert next_index.lease_version > index.lease_version
+    snapshot = repo.load_interval_indexing_snapshot(next_index, now=failed_at)
+    repo.complete_interval_indexing(
+        next_index, {chunk.chunk_parse_task_id: chunk.content_version for chunk in snapshot.chunks}, now=failed_at,
+    )
+    assert not repo.record_execution_timing(
+        index, started_at_ms=started, elapsed_ms=13000,
+        finished=True, outcome="completed", now=failed_at + timedelta(seconds=1),
+    )
+    with factory() as session:
+        entry = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["execution_timing"]["entries"][
+            f"index:{index.interval_parse_task_id}:{index.lease_version}"
+        ]
+        assert entry["elapsed_ms"] == (100 if expired else 1000)
+        assert entry["finished"] is (not expired)
+        assert entry["outcome"] == ("running" if expired else "failed")
 
 
 @pytest.mark.parametrize("values", [

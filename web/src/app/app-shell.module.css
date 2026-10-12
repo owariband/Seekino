@@ -1,7 +1,18 @@
 .shell {
   --app-header-height: 76px;
-  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 0px;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100dvh;
+  overflow: clip;
+  transition: grid-template-columns 400ms cubic-bezier(1, 0, .85, .2), grid-template-rows 400ms cubic-bezier(1, 0, .85, .2);
 }
+.shell[data-watch-panel-open="true"] { grid-template-columns: minmax(0, 1fr) var(--watch-panel-width, 440px); transition-timing-function: cubic-bezier(.3, .9, 0, 1); }
+.shell[data-watch-panel-resizing="true"] { transition: none; }
+.primary { container: app-primary / size; height: 100%; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+.panelHost { height: 100%; min-width: 0; min-height: 0; overflow: clip; }
+.shell:fullscreen .topbar { display: none; }
+.shell:fullscreen .content { --app-header-height: 0px; }
 
 .topbar {
   position: sticky;
@@ -93,23 +104,26 @@
 .account label { display: grid; gap: 8px; color: var(--ink-soft); font-size: .72rem; }
 .account select { min-height: 42px; width: 100%; padding: 8px 10px; font-size: .78rem; }
 .account p { margin: 0; color: var(--red); font-size: .72rem; }
+.accountLink { display: flex; min-height: 40px; align-items: center; gap: 9px; margin: 0 -8px; padding: 0 8px; color: var(--ink-soft); border-radius: 6px; font-size: .8rem; text-decoration: none; }
+.accountLink:hover, .accountLink[aria-current="page"] { color: var(--teal-deep); background: var(--teal-wash); }
+.accountLink:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 .sourceLabel { display: flex; justify-content: space-between; gap: 16px; color: var(--ink-soft); font-size: .72rem; }
 .sourceLabel strong { color: var(--ink); font-weight: 500; }
 .runtime { display: flex; align-items: center; gap: 8px; padding-top: 14px; color: var(--ink-soft); border-top: 1px solid var(--line); font-size: .68rem; }
 .runtime i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .runtimelive { color: var(--teal-deep); }
 .runtimeoffline { color: var(--red); }
-.content { min-height: calc(100dvh - var(--app-header-height)); min-width: 0; }
+.content { min-height: calc(100cqh - var(--app-header-height)); min-width: 0; }
 
-@media (max-width: 1200px) and (min-width: 1101px) {
+@container app-primary (max-width: 1200px) and (min-width: 1101px) {
   .topbar { gap: 20px; padding-inline: 24px; }
   .navItem { padding-inline: 8px; font-size: .79rem; }
   .headerActions { gap: 4px; }
   .uploadButton > span { display: none; }
 }
 
-@media (max-width: 1100px) {
-  .shell { --app-header-height: 112px; }
+@container app-primary (max-width: 1100px) {
+  .topbar, .content { --app-header-height: 112px; }
   .topbar { grid-template-columns: 1fr auto; grid-template-rows: 64px 48px; column-gap: 16px; row-gap: 0; padding: 0 24px; }
   .navigation { grid-column: 1 / -1; grid-row: 2; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin-inline: -24px; padding-inline: 24px; border-top: 1px solid var(--line); }
   .navigation::-webkit-scrollbar { display: none; }
@@ -119,7 +133,7 @@
   .account { top: calc(100% + 11px); }
 }
 
-@media (max-width: 580px) {
+@container app-primary (max-width: 580px) {
   .topbar { column-gap: 8px; padding-inline: 16px; }
   .brand { gap: 7px; }
   .brand img { width: 30px; height: 30px; }
@@ -135,8 +149,19 @@
   .account { right: 0; }
 }
 
-@media (max-width: 360px) {
+@container app-primary (max-width: 360px) {
   .iconButton, .uploadButton { min-width: 32px; width: 32px; padding-inline: 5px; }
   .accountTrigger { min-width: 36px; width: 36px; padding-left: 2px; }
   .avatar { width: 32px; height: 32px; }
+}
+
+@media (max-width: 800px) {
+  .shell, .shell[data-watch-panel-open="true"] { grid-template-columns: minmax(0, 1fr); }
+  .shell { grid-template-rows: minmax(0, 1fr) 0px; }
+  .shell[data-watch-panel-open="true"] { grid-template-rows: minmax(0, 1fr) min(55dvh, 480px); }
+  .panelHost { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell { transition: none; }
 }

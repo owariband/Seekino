@@ -1,6 +1,6 @@
 # 项目问题清单
 
-更新日期：2026-10-11。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。本次补充 B07 的 Codex 原生 Refine 超时诊断；其余条目保留各自日期下的历史状态，未作为当前工作区的全量复核。
+更新日期：2026-10-12。依据源码、运行日志和验证结果，区分已修复缺陷、功能缺失和待联调项。本文件同时记录问题根因、已实施方案与待处理方案，实际状态以每项标注为准，不扩展当前开发范围。此前补充 B07 的 Codex 原生 Refine 超时诊断及 B08 的数值编码改动；随后记录 B08 的索引版本策略、Embedding 独立存储要求与精度／差异来源的证据边界。本轮在 B07 最新日期条目记录 MYGO EP03 完整完成的耗时收敛里程碑，以及索引进度权重降至 5%。其余条目保留各自日期下的历史状态，未作为当前工作区的全量复核。
 
 ## frontend
 
@@ -240,7 +240,57 @@ return completed
 
 ### B07：视频解析成本高昂且耗时超过片长数倍
 
-优先级：高。类型：解析性能、单位经济性与失败止损问题。状态：已由本地开发库和运行日志实测确认，待优化。
+优先级：高。类型：解析性能、单位经济性与失败止损问题。状态：2026-10-12 已取得真实整集完成的耗时收敛里程碑；历史问题、已实施修复与仍待优化的边界按下列日期分别记录。
+
+#### 2026-10-12：整集解析耗时收敛里程碑，MYGO EP03 完整完成
+
+状态：有界正文批读与索引版本幂等策略已实施，真实整集的理解、Refine、索引发布均完成，当前长耗时主路径已显著改善。此处的“解决”对应本次任务正常完成及下列已实施行为，不表示所有并发重算、短错误或语义质量问题都已消失。
+
+##### 最终运行证据与时间口径
+
+- Parse Task：`20b05d4c-becf-4fce-b744-0d3ac8f2f8e1`，MYGO EP03；父任务 `attempt_count=1`，终态 `COMPLETE`。理解 **24/24**、Refine **22/22**、索引 **22/22**，完成单元 **68/68**。索引完成意味着当前成员版本已通过发布／查询可见性校验并持久提交，不只是 SDK 返回 completed。
+- 此前卡在索引的 EP01（`d470e300-9813-4c19-a62e-f52503e2e1ae`）与 EP02（`5584368a-3d77-4fad-b11b-3b8c3f9e249b`），当日 14:49 的已采集快照也确认均为 `COMPLETE`、索引 22/22。它们保留历史失败执行，时长完整性仍为 false，不能把旧累计值当作本次单轮完整基准。
+- 开始：`2026-10-12 14:45:27.792 +0800`；完成：`15:13:43.821 +0800`。墙钟 **28 分 16.029 秒**；全链有效执行区间并集 **28 分 13.979 秒**（`1693979ms`），账本 `complete=true`、所有执行已闭合，页面按整秒显示 **28 分 13 秒**。
+- 仅 Understanding 与 Refine 的执行区间并集为 **26 分 59.496 秒**。用户提到的“26 min”与这一口径对应；它不等于含 Index 的全链耗时。Index 在解析结束后增加的尾段为 **1 分 14.483 秒**。
+- 本轮冻结模型为 `gpt-6-astra`、`reasoning_effort=low`，原生 invocation deadline 仍为 600 秒；视觉输入为 `ordered_frames`，最多 32 帧、max_height=720。没有通过扩大 timeout、自动重试或 fallback 预算来解释这次收敛。
+- 用户回顾的整集体验为约 **90 分钟 → 异常样本约 110 分钟 → 优化后仍有错误的约 37 分钟 → 本轮解析主体约 26 分钟**。这些包含不同集数、执行轮次、错误重试及记录完整性；不能当成同片、同配置的严格 A/B 加速比。本轮完整有效时长以 **28 分 13.979 秒**为准，也不要与下面 2026-10-09 的“90 秒视频耗时 37 分钟”样本混用。
+
+| 本轮阶段 | 执行记录 | 阶段时间区间并集 | worker 累计工作时间 |
+| --- | --- | ---: | ---: |
+| 完整 chunk（含 ASR、理解及宿主执行） | 24，全部 completed | 16 分 27.492 秒 | 52 分 04.593 秒 |
+| Refine lease | 22，全部 completed | 19 分 22.296 秒 | 51 分 01.657 秒 |
+| Index（含 embedding、媒体准备与 ES 发布） | 24：22 completed、2 failed 后恢复 | 3 分 08.736 秒 | 8 分 14.165 秒 |
+
+阶段之间并行交错，**三个阶段并集不能直接相加**；worker 累计量也不是整集墙钟时间。
+
+本轮 ModelUsage 共 **169 条，全部 completed、0 failed**：
+
+| 调用 | 次数 | 单次平均 | 单次最长 |
+| --- | ---: | ---: | ---: |
+| ASR | 24 | 27.763 秒 | 43.439 秒 |
+| Codex Understanding invocation | 24 | 96.058 秒 | 117.180 秒 |
+| Codex Refine invocation | 42 | 72.849 秒 | 104.083 秒 |
+| 文本 embedding | 37 | 0.206 秒 | 0.534 秒 |
+| 视频 embedding | 42 | 7.400 秒 | 9.587 秒 |
+
+Codex invocation 包含整个 native agent 执行，不等于一次底层采样。Refine lease 平均为 139.166 秒、最长 370.275 秒，包含窗口内多次 invocation；不能与上表单 invocation 的平均值混用。Embedding 本身为亚秒／秒级，Index 总时长还包含非模型工作，不能把索引拖尾都归因于 embedding 模型慢。
+
+##### 已实施的解决方案
+
+1. **Canvas 支持有界批量读取正文。** `get_context_canvas` 接受 `references=[...]` 与明确 section，按零基 `start/end` 项范围读取（end 不包含），批读不使用 cursor；已知正文 section 可直接读取，省去每个事件先 overview 再 content 的双重调用。整个 JSON 回执限制为 **8,000 o200k_base tokens**，预算不足时裁剪后续项并返回明确 warning／truncated／complete_end，要求缩小读取范围；简略项不能当作已完整核验。写入继续复用既有原子批次，保留 revision、issued references 和提交快照校验。减少逐项调用也减少同步 PostToolUse 的触发次数；没有关闭或修复托管 hook 内部实现。
+2. **索引以身份、版本、完整性和可见性决定完成。** 对当前正确版本的 ES 文档直接验证、复用，跳过重复媒体构建与 embedding；缺失或较旧版本才发布，较新版本拒绝旧目标覆盖。修正了“同版本缓存数值差异 → 重写相同 external version → 失败重放”的决策路径，同时保留租约、SQL 当前版本和 ES 外部版本防护。精度保存与差异来源研究独立保留，不将新 JSON 编码、重新生成向量或推进 generation 作为所有任务恢复的前提。
+3. **总有效时长覆盖完整业务链。** 使用同一 execution_timing 账本记录 Understanding、Refine、Index 的实际执行区间，取并集；失败执行计入，排队、停机和等待重试排除。Index 全量完成或部分发布释放租约后，已观察到的计时样本仍可安全闭合；未观察到的历史执行不补造，记录不全时返回 `complete=false`。ModelUsage 保留单次模型调用起止，独立 EMBD 时长栏仍未在任务页展示。
+4. **索引阶段进度权重改为 5%。** 理解与 Refine 在其余 95% 内按完成单元分摊；当前固定拓扑的公式为 `95 × (completedChunks + completedRefines) / 46 + 5 × indexedIntervals / 22`。理解与 Refine 全提交为 95%，索引 1/22 为约 95.2%，全部提交为 100%。原始完成单元计数仍为 68/68，百分比不再等于完成单元数除以 68。5% 是固定展示权重，不是 ETA 或精确的模型耗时比例。
+
+##### 尚未解决的边界
+
+- **Refine 并发快照冲突仍存在。** 本轮记录 **20 次冲突，涉及 10 个窗口**；42 次 Refine invocation 对应 22 个完成窗口与 20 次冲突重算。当前领取逻辑尚未排除共享成员的有效 Refine lease，不能记录为已实现互斥调度或已消除重复核验。此次没有模型超时，不代表未来不会再次超过 600 秒。
+- **本轮并非零错误。** 两次 Index 执行分别在 96ms、47ms 后以 `VideoParseIndexCoordinationError` 失败，各恢复一次后完成；它们不是模型 timeout。最终 last_error 已清空，日志未保留具体错误消息，不能补写更细原因。
+- 同版本缓存并发、重复 embedding 与批读实际调用次数的进一步优化仍需各自证据；托管 hook 内部等待原因、旧 Pro 空输出问题未被本次成功解决。完整完成与可检索状态也不替代人物、对白、动作等语义质量的独立验收。
+
+本轮权重调整的离线验证：后端 Job Repository **32 passed**，TasksPage **18 passed**，覆盖 95% 解析／5% 索引、持久成果计数、未知拓扑及完成后 100%。没有新增真实模型调用、任务重试、服务重启、数据库迁移、commit 或 push；上述 EP03 运行证据来自本轮只读核验的既有任务。
+
+依据：该 Parse Task 的最终 API 快照、ModelUsage／execution_timing 一致快照，以及 `outputs/local-services/api.log` 中 `14:45:27–15:13:43 +0800` 的记录；[Canvas 批读工具](../../agent/utils/context_canvas_tools.py)、[Refine 读取指引](../../agent/video_parse_v2/prompts.py)、[索引版本策略](../../server/service/video_parse_index_coordinator.py)、[ES 就绪验证](../../server/storage/elasticsearch.py)、[执行计时](../../server/service/video_parse.py)、[计时持久化与快照提交](../../server/repository/video_parse.py)、[进度权重](../../server/model/job_progress.py)、[任务汇总](../../server/repository/job.py)。下方历史条目及 B08 中“尚未恢复”的描述保留其采集时点，真实恢复与新集完成的最新结果以上述日期条目为准。
 
 #### 2026-10-11：Refine 单项读取反复等待原生 PostToolUse，耗尽整次执行预算
 
@@ -473,6 +523,66 @@ EP01 的各 Attempt 跨越了隔夜和人工恢复间隔，所以 `completed_at 
 - 所有调用都有价格快照，或在 API／UI 中明确标记未知费用；失败 Job 达到预算后可解释地终止，不再让重试无限线性放大资源消耗。
 
 依据：[pipeline.py](../../engine/parsev1/pipeline.py)、[transcribe.py](../../engine/parsev1/transcribe.py)、[understand.py](../../engine/parsev1/understand.py) 与 [embed.py](../../engine/parsev1/embed.py) 的阶段顺序和并发边界；[video_chunk_parse.py](../../engine/parsev1/video_chunk_parse.py) 的主理解与 fallback；[analysis_windows.py](../../engine/parsev1/analysis_windows.py)、[video_processing.py](../../server/service/parsev1/video_processing.py) 与 [artifact.py](../../server/storage/artifact.py) 的媒体准备、Lease 目录和复制发布；[consumer.py](../../server/mq/consumer.py) 的 Job 消费；[parse_usage.py](../../server/service/parse_usage.py) 与 [parse-model-usage.md](../parse-model-usage.md) 的价格快照和费用口径；[config.yaml](../../config.yaml) 的当前模型与 fallback 配置；本地开发库和 `outputs/server/logs/development/api.log` 的 2026-09-20 至 2026-09-23 运行记录。
+
+### B08：索引版本策略、Embedding 存储边界与 JSON 数值精度
+
+优先级：高。类型：索引更新策略、向量持久化职责与精度研究。状态：2026-10-12 已实现按身份／版本确认索引完成；独立 embedding 字段尚未实施。用户根据精度影响研究选择本次不推进精度修复，仅调整索引策略；此前工作区的数值编码改动保留原状，不计入本次实现或部署结论。
+
+#### 2026-10-12 确认的三项问题
+
+1. **索引按身份与版本决定更新。** 可信身份为 tenant／series／video／parse task／chunk，版本为 content_version 与 index_generation。相同版本、文档完整且 query-visible 时直接确认完成，跳过重复构建和 embedding；版本较低或文档缺失才发布，较高版本阻止旧任务覆盖。同版本尚未可见时确认可见性，不以向量数值差异触发重写。原 `is_ready`、`verify_ready` 与异常读回的完整 source 相等判断违背此策略，数值尾差只是暴露问题的一个触发条件；维度及数值合法性校验和数据审计与更新决策分开。SQL receipt 的身份／版本仍需正确。
+2. **独立 `embedding JSON` 字段承接缓存。** 将 `detail._index_embeddings_v2` 的完整 envelope（content_version、receipt、representations）移至 `ChunkParseContent.embedding`；detail 保留 evidence、scope、compact。字段拆分解决职责和读写粒度，不能宣称仅新增原生 JSON 列就避免浮点往返误差。具体数值编码、历史数据兼容及迁移执行尚待落实，本次记录不授权迁移或重启。
+3. **研究精度机制、影响及差异来源。** 已确认本机 MySQL JSON 转换对部分数值产生一个 binary64 ULP 的往返差异；需要区分十进制解析、二进制存储及输出格式化，量化 cosine／排序的影响，并核对 ES 原始 `_source` 与内部向量表示。既有对比是 SQL 缓存读回值与 ES `_source`，没有原始模型响应、缓存及 ES 三端的同一次调用关联，不能表述为“模型内存原值被 ES 改坏”或“模型不稳定”。数百维差异的来源保持未定位，源码允许并发覆盖只是候选路径。
+
+当前判断修正：优先解决版本幂等语义。身份／版本／完整性／可见性正确的 ES 文档可直接认可，纠正旧缓存数值或推进 generation 不是所有任务恢复的前置条件。精度保存和来源追踪分别作为持久化与诊断问题研究。
+
+本次实现：ES 前置 readiness、写入后的验证和异常实时读回均以身份／版本及必需字段完整性判定，取消正文与向量逐值相等。Coordinator 在构建媒体／embedding 前确认已有版本；同版本可检索时跳过重建，必要时轻量补 receipt，并在完成前复核；同版本未可见时按现有规则重试，更高版本拒绝旧目标覆盖。外部版本防护和租约／SQL 当前内容版本校验保留，未迁移数据库、恢复真实任务或重启服务。
+
+本次验收：存储／Coordinator 单元回归 99 项通过；Worker 索引相关回归 7 项通过；真实 ES 8 项集成回归通过（含同版本尾差、迟到版本、部分发布恢复），测试仅使用随机隔离测试索引并清理，没有外部模型调用。真实 MYGO 任务尚未用新代码重跑，不能以测试通过宣称这两集已经恢复。
+
+#### 本轮研究结论与边界
+
+- **解析机制已用同版本源码实验隔离。** MySQL 8.4.11 官方 bundled RapidJSON 默认解析对故障小数产生一个 binary64 ULP 的差异，full-precision flag 对这些输入恢复参考值；binary JSON 仍以八字节 double 保存。输入解析即可解释尾差，不需要假设向量降成 float32 或读出时固定截断。当前 MySQL 离线，实验针对官方解析器，不冒充本轮服务器逐函数调试。
+- **本例数值影响很小，严格比较影响很大。** 已复现坐标的绝对差约 `1.36e-20`，相对差约 `1.30e-16`，转换到 float32 后位相同。五组现有 1024 维向量的有限扰动实验中，cosine 最大变化约 `1.11e-16`；没有据此担保全部检索或所有近乎同分排序不变。尾差会改变逐值相等／哈希结果，不能成为同版本发布的更新条件。
+- **当前 ES 原始 source 保存路径已只读核对。** ES 为 8.19.22，目标索引 `index.mode=standard`、`index.mapping.source.mode=STORED`，default／final pipeline 均为 `_none`，mapping 无 source 过滤，两路向量为 1024 维 hnsw。原始 `_source` 与内部 float32 向量索引是独立路径，不能拿内部表示推断原始 source 被改。当前配置快照不补齐历史调用来源，也不证明所有历史时刻配置相同。
+- **归因边界保持不变。** 当前已比较的是 SQL 缓存与 ES source；没有证明同一次模型响应的内存值被 ES 改成另一组值。客户端 dumps／loads 对四个故障数值保留原位模式；数百维大差仍需追踪原始响应、实际发布 payload 与读回结果的调用身份。
+
+完整机制、官方源码链接、独立解析复现和数值影响见 [MySQL JSON 向量精度研究（2026-10-12）](../research/2026-10-12-mysql-json-vector-precision.md)。该研究轮次仅记录与研究；随后版本策略已按用户指示实施，字段迁移及真实任务恢复仍未执行。
+
+#### 已采集现象与失败机制
+
+- 排查中的 MYGO EP01 Parse Task 为 `d470e300-9813-4c19-a62e-f52503e2e1ae`。理解 24/24、Refine 22/22 已完成，17:31:06 的索引日志记录 `ElasticsearchBulkWriteError`，17:31:23 主任务进入 INDEXING_FAILED。当时快照为 24 个 Chunk COMPLETE、22 个 Interval 中 4 COMPLETE／17 INDEXING／1 INDEXING_FAILED，ES 有 20/24 个文档。这些是已采集快照，不表示当前实时状态。
+- 对已存在 ES 文档的完整 source 比对，身份、内容版本、文本及其他字段一致；部分向量坐标有 binary64 末位差。例如缓存为 `-0.00010395050048828124`，ES 为 `-0.00010395050048828125`，绝对差 `1.3552527156068805e-20`，恰好 1 ULP。本机 MySQL 8.4.11 的只读 JSON 转换已复现数值变化，Python JSON 往返则保持原值。另有 4 个文档的向量数百维不同、最大差异约 `0.0068`；来源尚未关联到原始模型响应，不能据此归因于模型或并发。
+- 发布代码直接使用构建出的内存 artifact，后续重放优先读取 SQL 缓存。MySQL JSON 数值往返的已复现尾差可以解释部分缓存／ES 差异，但这条代码路径不证明历史 ES `_source` 改变了模型原始响应。此前把缓存对比结果表述为模型内存与 ES 的差异过于确定，应以上述三端关联证据边界为准。
+
+```text
+ES 已有 ID／版本 V、向量 A
+    → 同版本缓存恢复出 A′，哪怕只差 1 ULP
+    → is_ready 比较完整 source，返回 false
+    → 以 external 版本 V 重写已有文档
+    → 同版本写入冲突；inspect_exact 仍判定 false
+    → 原 bulk 异常重新抛出，缓存重放再次走同一路径
+```
+
+已用真实 coordinator／storage 逻辑与内存客户端构造复现：首轮发布成功，仅修改同 receipt／版本缓存中的一个坐标为相邻 binary64 值，随后连续三轮均为 `is_ready=false → bulk item 409 → inspect_exact=false → 原异常抛出`，没有重新编码。**构造客户端的 409 验证了确定性机制，不是历史 bulk item 错误的原始证据。** 原日志未保留 item status／error，历史 409 仍属根据代码与快照作出的推断。
+
+#### 已实施的精度修复与验收范围
+
+- 通用 JSON 编解码放在 [server/utils/json.py](../../server/utils/json.py)，[StringEncodedJSON](../../server/model/types.py) 只负责 SQLAlchemy 绑定与结果转换。物理列仍为 JSON；写入时将目标数值 payload 编码为 JSON 字符串，读取时由 Python 解码，避免数据库再次解析其中的浮点数字。业务内存、DTO、Engine 及 ES／Qdrant 请求继续使用数字数组／权重映射。
+- Parse V2 只编码 `ChunkParseContent.detail._index_embeddings_v2.representations`，覆盖 dense text／video 向量和 sparse weights；外层 content_version、receipt、index_generation 及其他 detail 字段保持原生结构。编码前复制数据，不修改仍要发布到 ES 的内存结果。
+- Legacy `VideoChunkEmbedding.text_vector`／`vision_vector` 同样使用字符串编码。ORM 与列查询读取时自动恢复数值，IndexSync 的发布快照和 source_revision 计算不需要业务层适配；旧数字数组／对象仍可读取，重新写入后使用新格式。
+- 本批 **310 项离线测试通过**，覆盖字符串物理存储、故障坐标 `float.hex()` 精确保留、V2 dense／sparse 恢复、旧格式兼容，以及 legacy 重复导入的 source_revision／generation 稳定。尚未进行实时 MySQL／ES 联调，没有重启服务、修改历史缓存或恢复该任务。已发生精度变化的旧数字不能通过再次字符串化还原为原始值。
+
+#### 独立待处理项与验收条件
+
+| 问题 | 已确认边界与影响 | 待处理与验收 |
+| --- | --- | --- |
+| 同版本缓存并发覆盖候选路径 | 相邻 Interval 可为共享 Chunk 编码；`save_index_embeddings()` 对相同 receipt／版本的 representations 使用 `update`，后保存结果可覆盖前结果，各自仍使用本地 artifact 发布。源码存在这条路径，但尚未证明它造成了历史数百维差异，也未证明模型同输入重复请求会产生不同结果。 | 关联 call_id／输入指纹／结果标识及缓存、发布记录，先确认真实来源；同版本发布按版本幂等策略处理，缓存生命周期问题独立核对。 |
+| Refine／Index 共用 retry_count | Interval 的 Refine 失败计数在成功转入 INDEXING 后保留。采集中的 Interval 16 已有两次 Refine 超时，随后第一次 Index 失败即达到 `3 > max_retry_count=2`，进入 INDEXING_FAILED。 | 明确重试额度是否按阶段分配，验证前阶段失败后仍具有约定的 Index 重试机会；不通过删除异常或放松 source 校验掩盖失败。 |
+| 原始 bulk item 错误日志缺失 | `ElasticsearchBulkWriteError` 保存 failures／status_codes，但消费者主要记录异常类型与摘要，无法从当次日志确认 item 是版本冲突还是其他 ES 错误。 | 记录 task／interval／lease、失败文档 ID、item status 与 ES error type／reason；故障注入能还原逐项原因，不输出向量正文或凭据。 |
+| 既存缓存与任务索引恢复 | 新编码不能恢复已经发生舍入的原始值；INDEXING_FAILED 状态和缺失文档不会因部署新代码自动恢复。旧逻辑下 `request_index_rebuild()` 仅重置状态和 retry_count，保留缓存，不能改变错误的 source 比较策略。 | 先实施按身份／版本／完整性／可见性判断的策略，再确认全部目标可检索、Interval 与 Task 正常完成；已有相同正确版本无需因缓存尾差强制重算或推进 generation。精度或来源修复只针对独立证实的数据问题，不作为全部任务恢复的前置条件。 |
+
+依据：[缓存保存与索引 receipt](../../server/repository/video_parse.py)、[索引协调与缓存恢复](../../server/service/video_parse_index_coordinator.py)、[ES external version 与完整 source 校验](../../server/storage/elasticsearch.py)、[Interval 重试计数](../../server/mq/video_parse_queue.py)、[消费者错误日志](../../server/mq/video_parse_consumer.py)、[模型 JSON 类型回归](../../tests/server/test_model_json.py)、[V2 Repository 回归](../../tests/server/test_video_parse_repository.py)、[Legacy IndexSync 回归](../../tests/server/test_index_sync_repository.py)，以及 `outputs/local-services/api.log` 中上述时间段记录和当日只读 MySQL／ES 比对结果。
 
 ## Chat 联调问题（2026-09-21）
 

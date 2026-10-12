@@ -417,7 +417,7 @@ def test_strict_external_version_rejects_a_lower_generation(store, client, IDs):
     assert caught.value.version_conflict_ids == {_id(older_generation)}
 
 
-def test_equal_external_version_conflict_supports_exact_reconciliation(store, client, IDs):
+def test_equal_external_version_conflict_supports_version_reconciliation(store, client, IDs):
     document = _document(IDs)
     client.bulk_response = {"errors": True, "items": [{"index": {
         "_id": _id(document),
@@ -431,6 +431,8 @@ def test_equal_external_version_conflict_supports_exact_reconciliation(store, cl
     assert client.last_bulk["operations"][0]["index"]["version_type"] == "external"
 
     stored_source = store._document_source(document)
+    stored_source["semantic_vector"] = [0.8, 0.2]
+    stored_source["vision_vector"] = [0.1, 0.9]
     client.mget_response = {"docs": [{
         "_id": _id(document), "found": True, "_source": stored_source,
     }]}
@@ -438,7 +440,30 @@ def test_equal_external_version_conflict_supports_exact_reconciliation(store, cl
 
     conflicting = _document(IDs, question="同版本的不同投影")
     assert _version(conflicting) == _version(document)
-    assert store.inspect_exact([conflicting]) == {_id(document): False}
+    assert store.inspect_exact([conflicting]) == {_id(document): True}
+
+
+def test_readiness_accepts_complete_same_version_without_comparing_body_or_vectors(store, client, IDs):
+    document = _document(IDs)
+    source = store._document_source(_document(IDs, question="同版本的另一段正文"))
+    source["semantic_vector"] = [0.8, 0.2]
+    source["vision_vector"] = [0.1, 0.9]
+    client.indices.mapping = store._mapping()
+    client.search_response = {"hits": {"hits": [{"_id": _id(document), "_source": source}]}}
+    client.mget_response = {"docs": [{"_id": _id(document), "found": True, "_source": source}]}
+    expected = {name: source[name] for name in (
+        "tenant_id", "series_id", "video_id", "video_chunk_id", "parse_task_id",
+        "content_version", "index_generation", "chunk_start_seconds", "chunk_end_seconds",
+    )}
+
+    assert store.is_ready([document]) is True
+    assert store.verify_ready([document]) is True
+    assert store.inspect_exact([document]) == {_id(document): True}
+    assert store.is_current(expected, semantic_required=True) is True
+    filters = client.last_search["query"]["bool"]["filter"]
+    assert {"term": {"series_id": IDs.series}} in filters
+    assert {"term": {"chunk_start_seconds": 10}} in filters
+    assert {"term": {"chunk_end_seconds": 20}} in filters
 
 
 def test_document_and_mapping_keep_only_outer_versions_and_real_search_content(store, IDs):
@@ -483,12 +508,25 @@ def test_content_updates_overwrite_the_same_task_chunk_document(store, client, I
 
 
 @pytest.mark.parametrize("field,value", [
+    ("tenant_id", "another-workspace"),
+    ("series_id", str(uuid4())),
+    ("video_id", str(uuid4())),
+    ("video_chunk_id", str(uuid4())),
     ("parse_task_id", "another-task"),
     ("content_version", 1),
+    ("content_version", 3),
     ("index_generation", 2),
+    ("chunk_start_seconds", 9),
+    ("chunk_end_seconds", 21),
+    ("lexical_fields", None),
+    ("semantic_text", None),
+    ("semantic_vector", None),
     ("vision_vector", None),
+    ("vision_vector", [0.0, 0.0]),
+    ("vision_vector", [1.0]),
+    ("vision_vector", [float("nan"), 1.0]),
 ])
-def test_verify_ready_checks_exact_task_version_generation_and_required_source(
+def test_verify_ready_checks_identity_version_bounds_and_required_source(
     store, client, IDs, field, value,
 ):
     document = _document(IDs)
@@ -502,6 +540,50 @@ def test_verify_ready_checks_exact_task_version_generation_and_required_source(
     assert {"term": {"parse_task_id": IDs.parse_task}} in filters
     assert {"term": {"content_version": 2}} in filters
     assert {"term": {"index_generation": 1}} in filters
+
+
+@pytest.mark.parametrize("field,value", [
+    ("tenant_id", "another-workspace"),
+    ("content_version", 1),
+    ("content_version", 3),
+    ("index_generation", 1),
+    ("index_generation", 3),
+    ("chunk_end_seconds", 21),
+])
+def test_current_and_readback_reject_other_identity_or_older_and_later_versions(store, client, IDs, field, value):
+    document = replace(_document(IDs), index_generation=2)
+    expected = {name: value for name, value in store._document_source(document).items() if name in (
+        "tenant_id", "series_id", "video_id", "video_chunk_id", "parse_task_id",
+        "content_version", "index_generation", "chunk_start_seconds", "chunk_end_seconds",
+    )}
+    source = store._document_source(document)
+    source[field] = value
+    client.indices.mapping = store._mapping()
+    client.search_response = {"hits": {"hits": [{"_id": _id(document), "_source": source}]}}
+    client.mget_response = {"docs": [{"_id": _id(document), "found": True, "_source": source}]}
+
+    assert store.is_current(expected, semantic_required=True) is False
+    assert store.inspect_exact([document]) == {_id(document): False}
+
+
+def test_metadata_readiness_checks_required_dense_and_sparse_representations(store, client, IDs):
+    document = _document(IDs)
+    source = store._document_source(document)
+    expected = {name: value for name, value in source.items() if name in (
+        "tenant_id", "series_id", "video_id", "video_chunk_id", "parse_task_id",
+        "content_version", "index_generation", "chunk_start_seconds", "chunk_end_seconds",
+    )}
+    source["semantic_text"] = ""
+    source["semantic_vector"] = None
+    client.search_response = {"hits": {"hits": [{"_id": _id(document), "_source": source}]}}
+
+    assert store.is_current(expected, semantic_required=False) is True
+    assert store.is_current(expected, semantic_required=True) is False
+    assert store.is_current(expected, semantic_required=False, sparse_required=True) is False
+    source["sparse_vector"] = {"utterance": 0.5}
+    assert store.is_current(expected, semantic_required=False, sparse_required=True) is True
+    source["sparse_vector"] = {"utterance": -0.5}
+    assert store.is_current(expected, semantic_required=False, sparse_required=True) is False
 
 
 def test_lexical_query_preserves_nested_source_and_authorized_task_pair(store, client, IDs):
@@ -582,6 +664,13 @@ def test_inspect_is_separate_from_query_readiness_and_delete_is_task_scoped(stor
     assert state.content_version == document.content_version
     assert state.semantic_vector == (1.0, 0.0)
     assert state.vision_vector == (0.0, 1.0)
+    assert store.inspect_exact([document]) == {_id(document): True}
+    expected = {name: value for name, value in source.items() if name in (
+        "tenant_id", "series_id", "video_id", "video_chunk_id", "parse_task_id",
+        "content_version", "index_generation", "chunk_start_seconds", "chunk_end_seconds",
+    )}
+    assert store.is_current(expected, semantic_required=True) is False
+    assert store.is_ready([document]) is False
     assert store.verify_ready([document]) is False
     store.delete(parse_task_id=IDs.parse_task, video_chunk_id=IDs.chunk)
     assert client.deleted[0]["id"] == _id(document)

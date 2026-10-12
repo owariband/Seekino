@@ -992,13 +992,48 @@ def test_v2_progress_counts_submissions_and_batches_list_reads(repository):
     assert detail.task.detail == listed[task_id].task.detail
     assert detail.task.detail["progress"] == {
         "completedChunks": 24, "totalChunks": 24, "completedRefines": 8, "totalRefines": 22,
-        "completedUnits": 32, "totalUnits": 46, "percent": pytest.approx(32 * 100 / 46),
+        "completedUnits": 32, "totalUnits": 68, "percent": pytest.approx(32 * 95 / 46),
         "topologyReady": True, "indexedIntervals": 0,
     }
     assert listed[other_id].task.detail["progress"]["completedChunks"] == 1
     assert detail.task.detail["source"] == "upload"
     with factory() as session:
         assert session.get(VideoParseTask, task_id).detail == {"source": "upload"}
+
+
+def test_v2_progress_includes_persisted_index_publication(repository):
+    jobs, factory, task_id, _, intervals, _ = _seed_v2_tracking(
+        repository, chunk_count=24, completed_chunks=24, submitted_refines=22,
+    )
+    progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
+    assert progress["completedUnits"] == 46
+    assert progress["totalUnits"] == 68
+    assert progress["indexedIntervals"] == 0
+    assert progress["percent"] == 95
+
+    with factory.begin() as session:
+        session.get(IntervalParseTask, intervals[0]).status = "COMPLETE"
+    progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
+    assert progress["indexedIntervals"] == 1
+    assert progress["completedUnits"] == 47
+    assert progress["percent"] == pytest.approx(95 + 5 / 22)
+
+    with factory.begin() as session:
+        for interval_id in intervals:
+            session.get(IntervalParseTask, interval_id).status = "COMPLETE"
+        session.get(VideoParseTask, task_id).status = "COMPLETE"
+    progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
+    assert progress["indexedIntervals"] == 22
+    assert progress["completedUnits"] == progress["totalUnits"] == 68
+    assert progress["percent"] == 100
+
+    with factory.begin() as session:
+        session.delete(session.get(IntervalParseContent, intervals[0]))
+    progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
+    assert progress["indexedIntervals"] == 21
+    assert progress["completedRefines"] == 21
+    assert progress["completedUnits"] == 66
+    assert progress["percent"] == pytest.approx(45 * 95 / 46 + 21 * 5 / 22)
 
 
 @pytest.mark.parametrize("elapsed,expected", [(1000, 1500), (0, 0)])
@@ -1059,13 +1094,18 @@ def test_v2_progress_requires_chunk_content_and_the_frozen_sequence_topology(rep
     assert progress["topologyReady"] is False and progress["percent"] is None
 
 
-def test_v2_timing_requires_retry_coverage_and_ignores_index_leases(repository):
+def test_v2_timing_requires_retry_coverage_for_refine_and_index(repository):
     jobs, factory, task_id, chunks, intervals, _ = _seed_v2_tracking(repository, submitted_refines=1)
     entries = {f"understand:{child}:1": _timing_entry("understand", child) for child in chunks}
     entries[f"refine:{intervals[0]}:1"] = _timing_entry("refine", intervals[0], started=3000)
     _store_timing(factory, task_id, entries)
     detail = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default")
-    assert detail.task.detail["timing"]["complete"] is True  # Index lease 2 needs no Refine span.
+    assert detail.task.detail["timing"]["complete"] is False  # Historical index lease 2 was not recorded.
+    entries[f"index:{intervals[0]}:2"] = _timing_entry("index", intervals[0], version=2, started=7000)
+    _store_timing(factory, task_id, entries)
+    timing = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]
+    assert timing["complete"] is True
+    assert timing["effectiveDurationMs"] == 3000  # Gaps between executions are excluded.
     assert detail.task.detail["progress"]["completedRefines"] == 1  # The submitted updates list is empty.
     with factory.begin() as session:
         session.get(ChunkParseTask, chunks[0]).lease_version = 2
@@ -1078,6 +1118,65 @@ def test_v2_timing_requires_retry_coverage_and_ignores_index_leases(repository):
     legacy = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail
     assert legacy["progress"]["completedRefines"] == 1
     assert legacy["timing"]["complete"] is False
+
+
+@pytest.mark.parametrize("refine_started,refine_elapsed,index_started,index_elapsed,expected", [
+    (1600, 500, 2000, 1500, 2500), (3000, 1000, 7000, 3000, 5000),
+])
+def test_v2_timing_unions_index_with_parse_and_refine(
+    repository, refine_started, refine_elapsed, index_started, index_elapsed, expected,
+):
+    jobs, factory, task_id, chunks, intervals, _ = _seed_v2_tracking(repository, submitted_refines=1)
+    entries = {f"understand:{child}:1": _timing_entry("understand", child) for child in chunks}
+    entries[f"refine:{intervals[0]}:1"] = _timing_entry("refine", intervals[0],
+                                                     started=refine_started, elapsed=refine_elapsed)
+    entries[f"index:{intervals[0]}:2"] = _timing_entry("index", intervals[0], version=2,
+                                                               started=index_started, elapsed=index_elapsed)
+    _store_timing(factory, task_id, entries)
+    detail = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default")
+    assert detail.task.detail["timing"] == {
+        "recorded": True, "complete": True, "activeExecutions": 0, "effectiveDurationMs": expected,
+    }
+    assert detail.task.processing_duration_ms == expected
+
+
+def test_v2_index_timing_requires_every_index_retry_and_preserves_failed_execution(repository):
+    jobs, factory, task_id, chunks, intervals, _ = _seed_v2_tracking(repository, submitted_refines=1)
+    with factory.begin() as session:
+        session.get(IntervalParseTask, intervals[0]).lease_version = 3
+    entries = {f"understand:{child}:1": _timing_entry("understand", child) for child in chunks}
+    entries[f"refine:{intervals[0]}:1"] = _timing_entry("refine", intervals[0], started=3000)
+    entries[f"index:{intervals[0]}:3"] = _timing_entry("index", intervals[0], version=3, started=9000)
+    _store_timing(factory, task_id, entries)
+    assert jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]["complete"] is False
+    failed = _timing_entry("index", intervals[0], version=2, started=5000, elapsed=2000)
+    failed["outcome"] = "failed"
+    entries[f"index:{intervals[0]}:2"] = failed
+    _store_timing(factory, task_id, entries)
+    timing = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]
+    assert timing["complete"] is True
+    assert timing["effectiveDurationMs"] == 5000
+
+
+def test_v2_active_index_timing_is_confirmed_prefix_and_expires(repository, monkeypatch):
+    jobs, factory, task_id, chunks, intervals, now_ms = _seed_v2_tracking(repository, submitted_refines=1)
+    monkeypatch.setattr("server.repository.job.now_unix_time_ms", lambda: now_ms)
+    with factory.begin() as session:
+        child = session.get(IntervalParseTask, intervals[0])
+        child.status, child.lease_owner = "INDEXING", "worker"
+        child.lease_expire_time = datetime.fromtimestamp(now_ms / 1000, tz=UTC) + timedelta(minutes=1)
+    entries = {f"understand:{child}:1": _timing_entry("understand", child, started=now_ms - 5000) for child in chunks}
+    entries[f"refine:{intervals[0]}:1"] = _timing_entry("refine", intervals[0], started=now_ms - 3000)
+    entries[f"index:{intervals[0]}:2"] = _timing_entry("index", intervals[0], version=2,
+                                                     started=now_ms - 500, elapsed=100, finished=False)
+    _store_timing(factory, task_id, entries)
+    timing = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]
+    assert timing == {"recorded": True, "complete": True, "activeExecutions": 1, "effectiveDurationMs": 2100}
+    monkeypatch.setattr("server.repository.job.now_unix_time_ms", lambda: now_ms + 10_000)
+    assert jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"] == timing
+    monkeypatch.setattr("server.repository.job.now_unix_time_ms", lambda: now_ms + 60_000)
+    expired = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]
+    assert expired == {**timing, "complete": False, "activeExecutions": 0}
 
 
 def test_v2_active_timing_is_recorded_prefix_without_clock_extrapolation(repository, monkeypatch):

@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router";
 
 import type { SeriesView, VideoSummary } from "../../api/contracts";
+import type { WatchPanelLayout } from "../../app/AppShell";
 import { WatchPage } from "./WatchPage";
 
 const mocks = vi.hoisted(() => ({
@@ -121,14 +123,25 @@ function CurrentLocation() {
   return <output data-testid="location">{location.pathname + location.search}</output>;
 }
 
-function renderPage(path = "/watch/series-1/video-2") {
+function WatchShell() {
+  const [layout, setLayout] = useState<WatchPanelLayout>({ open: false, width: 440, resizing: false });
+  return <div data-app-shell data-testid="watch-shell" data-watch-panel-open={layout.open}
+    data-watch-panel-resizing={layout.resizing} data-watch-panel-width={layout.width}>
+    <Outlet context={setLayout} />
+    <div id="watch-side-panel-host" />
+  </div>;
+}
+
+function renderPage(path = "/watch/series-1/video-2", withShell = false) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/watch/:seriesId/:videoId" element={<><WatchPage /><CurrentLocation /></>} />
-          <Route path="/library" element={<p>资料库页面</p>} />
+          <Route element={withShell ? <WatchShell /> : <Outlet />}>
+            <Route path="/watch/:seriesId/:videoId" element={<><WatchPage /><CurrentLocation /></>} />
+            <Route path="/library" element={<p>资料库页面</p>} />
+          </Route>
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -147,17 +160,19 @@ describe("WatchPage", () => {
     const widthMock = vi.spyOn(window, "innerWidth", "get").mockReturnValue(width);
     renderPage();
     await screen.findByTestId("video-player");
-    expect(document.getElementById("watch-side-panel")).toHaveAttribute("hidden");
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "true");
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("inert");
     const toggle = screen.getByRole("button", { name: "打开观看侧栏" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(mocks.pauseAndGetSnapshot).not.toHaveBeenCalled();
     fireEvent.click(toggle);
-    expect(document.getElementById("watch-side-panel")).not.toHaveAttribute("hidden");
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "false");
+    expect(document.getElementById("watch-side-panel")).not.toHaveAttribute("inert");
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     widthMock.mockRestore();
   });
 
-  it("keeps both the current episode and series Chat mounted while opening and closing the overlay", async () => {
+  it("keeps both the current episode and series Chat mounted while opening and closing the sidebar", async () => {
     renderPage();
     const player = await screen.findByTestId("video-player");
     const chat = screen.getByTestId("supervisor-chat");
@@ -166,7 +181,7 @@ describe("WatchPage", () => {
     expect(chat).toHaveAttribute("data-series-id", "series-1");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
     fireEvent.click(screen.getByRole("button", { name: "收起观看侧栏" }));
-    expect(document.getElementById("watch-side-panel")).toHaveAttribute("hidden");
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByTestId("supervisor-chat")).toBe(chat);
     expect(screen.getByTestId("video-player")).toBe(player);
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
@@ -210,7 +225,7 @@ describe("WatchPage", () => {
     expect(links.map((item) => item.getAttribute("href"))).toEqual([
       "/watch/series-1/video-2", "/watch/series-1/video-3",
     ]);
-    expect(document.getElementById("watch-side-panel")).toHaveAttribute("hidden");
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "true");
     fireEvent.click(links[0]!);
     await waitFor(() => expect(screen.getByTestId("video-player")).toHaveTextContent("video-2 @ history"));
     expect(screen.getByTestId("location")).not.toHaveTextContent("atSeconds");
@@ -261,7 +276,8 @@ describe("WatchPage", () => {
     const composer = screen.getByRole("textbox", { name: "向 Seekino 助手提问" });
     expect(composer).toHaveFocus();
     fireEvent.keyDown(composer, { key: "Escape" });
-    expect(document.getElementById("watch-side-panel")).toHaveAttribute("hidden");
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("aria-hidden", "true");
+    expect(document.getElementById("watch-side-panel")).toHaveAttribute("inert");
     expect(screen.getByRole("button", { name: "打开观看侧栏" })).toHaveFocus();
   });
 
@@ -402,7 +418,7 @@ describe("WatchPage", () => {
     fireEvent.keyDown(player, { key: "Tab" });
 
     expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
-    expect(screen.getByRole("complementary", { name: "观看侧栏" })).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("complementary", { name: "观看侧栏" })).toHaveAttribute("aria-hidden", "false");
     expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
     expect(composer).toHaveFocus();
     expect(mocks.focusComposer).toHaveBeenCalledOnce();
@@ -420,17 +436,62 @@ describe("WatchPage", () => {
     expect(mocks.resumePlayer).toHaveBeenCalledOnce();
   });
 
-  it("makes the whole watch page fullscreen so Chat stays beside the video", async () => {
-    renderPage();
+  it("syncs the shell layout and keeps the portaled Chat mounted until leaving the watch route", async () => {
+    renderPage("/watch/series-1/video-2", true);
     await screen.findByTestId("video-player");
+    const shell = screen.getByTestId("watch-shell");
+    const host = document.getElementById("watch-side-panel-host")!;
+    const panel = document.getElementById("watch-side-panel")!;
+    expect(host).toContainElement(panel);
+    expect(screen.getByRole("main")).not.toContainElement(panel);
+    expect(shell).toHaveAttribute("data-watch-panel-open", "false");
+
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    const page = screen.getByRole("main");
-    const requestFullscreen = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(page, "requestFullscreen", { value: requestFullscreen });
-    fireEvent.click(screen.getByRole("button", { name: "网页全屏" }));
-    expect(requestFullscreen).toHaveBeenCalledOnce();
-    expect(page).toContainElement(screen.getByTestId("supervisor-chat"));
-    expect(page).toContainElement(screen.getByRole("complementary", { name: "观看侧栏" }));
+    expect(shell).toHaveAttribute("data-watch-panel-open", "true");
+    Object.defineProperty(shell, "getBoundingClientRect", { value: () => ({ left: 0, right: 1200, width: 1200 }) });
+    const divider = screen.getByRole("separator", { name: "调整右侧栏宽度" });
+    fireEvent.pointerDown(divider, { pointerId: 1, clientX: 700 });
+    expect(shell).toHaveAttribute("data-watch-panel-resizing", "true");
+    expect(shell).toHaveAttribute("data-watch-panel-width", "500");
+    fireEvent.pointerUp(divider, { pointerId: 1 });
+    expect(shell).toHaveAttribute("data-watch-panel-resizing", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话面板" }));
+    expect(shell).toHaveAttribute("data-watch-panel-open", "false");
+    expect(host).toContainElement(panel);
+    expect(panel).toHaveAttribute("inert");
+    fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+    fireEvent.click(screen.getByRole("tab", { name: "选集" }));
+    fireEvent.pointerDown(screen.getByRole("separator", { name: "调整右侧栏宽度" }), { pointerId: 2, clientX: 700 });
+    fireEvent.click(screen.getByRole("link", { name: "调整集数" }));
+    await screen.findByText("资料库页面");
+    expect(shell).toHaveAttribute("data-watch-panel-open", "false");
+    expect(shell).toHaveAttribute("data-watch-panel-resizing", "false");
+    expect(host).toBeEmptyDOMElement();
+  });
+
+  it.each([false, true])("includes Chat in the fullscreen target with an app shell: %s", async (withShell) => {
+    const originalFullscreen = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
+    try {
+      renderPage("/watch/series-1/video-2", withShell);
+      await screen.findByTestId("video-player");
+      fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+      const page = screen.getByRole("main");
+      const target = withShell ? screen.getByTestId("watch-shell") : page;
+      const requestFullscreen = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(target, "requestFullscreen", { value: requestFullscreen });
+      fireEvent.click(screen.getByRole("button", { name: "网页全屏" }));
+      expect(requestFullscreen).toHaveBeenCalledOnce();
+      expect(target).toContainElement(screen.getByTestId("supervisor-chat"));
+      expect(target).toContainElement(screen.getByRole("complementary", { name: "观看侧栏" }));
+      Object.defineProperty(document, "fullscreenElement", { configurable: true, value: target });
+      fireEvent(document, new Event("fullscreenchange"));
+      expect(page).toHaveAttribute("data-fullscreen", "true");
+      expect(screen.getByRole("button", { name: "退出网页全屏" })).toBeInTheDocument();
+    } finally {
+      if (originalFullscreen) Object.defineProperty(document, "fullscreenElement", originalFullscreen);
+      else Reflect.deleteProperty(document, "fullscreenElement");
+    }
   });
 
   it("places the Chat toggle in the top bar and brings it into the fullscreen viewer", async () => {
@@ -461,16 +522,53 @@ describe("WatchPage", () => {
     await screen.findByTestId("video-player");
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
     const divider = await screen.findByRole("separator", { name: "调整右侧栏宽度" });
-    const layout = divider.parentElement!;
-    Object.defineProperty(layout, "clientWidth", { value: 1200 });
-    Object.defineProperty(layout, "getBoundingClientRect", { value: () => ({ left: 0, right: 1200, width: 1200 }) });
+    const page = screen.getByRole("main");
+    Object.defineProperty(page, "getBoundingClientRect", { value: () => ({ left: 0, right: 1200, width: 1200 }) });
     fireEvent.keyDown(divider, { key: "ArrowLeft" });
     expect(divider).toHaveAttribute("aria-valuenow", "464");
     fireEvent.pointerDown(divider, { pointerId: 1, clientX: 740 });
     fireEvent.pointerMove(divider, { pointerId: 1, clientX: 600 });
     fireEvent.pointerUp(divider, { pointerId: 1 });
     expect(divider).toHaveAttribute("aria-valuenow", "600");
-    expect(layout.style.getPropertyValue("--watch-panel-width")).toBe("600px");
+    expect(page.style.getPropertyValue("--watch-panel-width")).toBe("600px");
     expect(localStorage.getItem("anivag-watch-panel-width")).toBe("600");
+  });
+
+  it("clamps a saved wide sidebar to the viewport without losing the preference, and resizes from its visible width", async () => {
+    const widthMock = vi.spyOn(window, "innerWidth", "get").mockReturnValue(1440);
+    localStorage.setItem("anivag-watch-panel-width", "850");
+    try {
+      renderPage();
+      await screen.findByTestId("video-player");
+      fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
+      const divider = screen.getByRole("separator", { name: "调整右侧栏宽度" });
+      const page = screen.getByRole("main");
+      expect(divider).toHaveAttribute("aria-valuenow", "850");
+
+      widthMock.mockReturnValue(1000);
+      fireEvent(window, new Event("resize"));
+      expect(divider).toHaveAttribute("aria-valuenow", "580");
+      expect(divider).toHaveAttribute("aria-valuemax", "580");
+      expect(page.style.getPropertyValue("--watch-panel-width")).toBe("580px");
+      expect(localStorage.getItem("anivag-watch-panel-width")).toBe("850");
+
+      widthMock.mockReturnValue(1440);
+      fireEvent(window, new Event("resize"));
+      expect(divider).toHaveAttribute("aria-valuenow", "850");
+      expect(page.style.getPropertyValue("--watch-panel-width")).toBe("850px");
+
+      widthMock.mockReturnValue(1000);
+      fireEvent(window, new Event("resize"));
+      fireEvent.keyDown(divider, { key: "ArrowRight" });
+      expect(divider).toHaveAttribute("aria-valuenow", "556");
+      expect(localStorage.getItem("anivag-watch-panel-width")).toBe("556");
+
+      widthMock.mockReturnValue(1440);
+      fireEvent(window, new Event("resize"));
+      expect(divider).toHaveAttribute("aria-valuenow", "556");
+      expect(page.style.getPropertyValue("--watch-panel-width")).toBe("556px");
+    } finally {
+      widthMock.mockRestore();
+    }
   });
 });

@@ -138,15 +138,61 @@ class VideoParseIndexCoordinator:
                 "Elasticsearch inspection omitted an expected Chunk"
             )
         self._check_active()
-        documents = [
-            self._build_document(
-                lease,
-                snapshot,
-                chunk,
-                stored[(snapshot.video_parse_task_id, chunk.video_chunk_id)],
-            )
-            for chunk in snapshot.chunks
-        ]
+        documents = []
+        current_versions = []
+        for chunk in snapshot.chunks:
+            state = stored[(snapshot.video_parse_task_id, chunk.video_chunk_id)]
+            current = self._same_stored_version(state, snapshot, chunk)
+            if state.present and (
+                state.index_generation or 0, state.content_version or 0
+            ) > (self.contract.index_generation, chunk.content_version):
+                raise VideoParseIndexCoordinationError(
+                    "Elasticsearch already contains a newer index version"
+                )
+            if current:
+                expected = {
+                    "tenant_id": chunk.tenant_id,
+                    "series_id": chunk.series_id,
+                    "video_id": chunk.video_id,
+                    "parse_task_id": snapshot.video_parse_task_id,
+                    "video_chunk_id": chunk.video_chunk_id,
+                    "content_version": chunk.content_version,
+                    "index_generation": self.contract.index_generation,
+                    "chunk_start_seconds": chunk.start_seconds,
+                    "chunk_end_seconds": chunk.end_seconds,
+                }
+                semantic_required = any(
+                    event["start_seconds"] < chunk.end_seconds
+                    and event["end_seconds"] > chunk.start_seconds
+                    for event in chunk.content["timeline"]
+                )
+                if not self._store.is_current(
+                    expected, semantic_required=semantic_required,
+                    sparse_required=self.contract.sparse_encoder is not None,
+                ):
+                    raise VideoParseIndexCoordinationError(
+                        "current Elasticsearch version is not query-visible or complete"
+                    )
+                current_versions.append((expected, semantic_required))
+                receipt = ChunkIndexReceipt(
+                    parse_task_id=snapshot.video_parse_task_id,
+                    video_chunk_id=chunk.video_chunk_id,
+                    content_version=chunk.content_version,
+                    index_generation=self.contract.index_generation,
+                ).as_dict()
+                if (not _cached_representations(chunk.content_detail, receipt=receipt)
+                        or self.contract.sparse_encoder is not None):
+                    representations = {}
+                    if self.contract.sparse_encoder is not None:
+                        representations["sparse"] = {
+                            "channel": "sparse",
+                            "weights": dict(state.sparse_token_weights or ()),
+                        }
+                    self._save_representations(
+                        lease, chunk, representations, receipt=receipt,
+                    )
+                continue
+            documents.append(self._build_document(lease, snapshot, chunk, state))
         pending = [
             document
             for document in documents
@@ -159,8 +205,7 @@ class VideoParseIndexCoordinator:
             except (ValueError, ElasticsearchIndexSchemaError):
                 raise
             except Exception:
-                # A lost bulk response is ambiguous. Exact real-time readback
-                # distinguishes a completed replay from a conflicting source.
+                # A lost bulk response is reconciled by stored identity/version.
                 self._check_active()
                 exact = self._store.inspect_exact(pending)
                 expected_ids = {
@@ -179,6 +224,13 @@ class VideoParseIndexCoordinator:
                 "Elasticsearch documents changed after the readiness inspection"
             )
 
+        if any(not self._store.is_current(
+            expected, semantic_required=semantic_required,
+            sparse_required=self.contract.sparse_encoder is not None,
+        ) for expected, semantic_required in current_versions):
+            raise VideoParseIndexCoordinationError(
+                "Elasticsearch current version changed before completion"
+            )
         indexed_versions = {
             chunk.chunk_parse_task_id: chunk.content_version
             for chunk in snapshot.chunks

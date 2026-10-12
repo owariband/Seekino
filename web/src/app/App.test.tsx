@@ -382,7 +382,8 @@ describe("application shell", () => {
     await user.click(screen.getAllByRole("link", { name: "模型消耗" })[0]!);
     expect(await screen.findByRole("heading", { name: "模型消耗", level: 1 })).toBeInTheDocument();
 
-    await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
+    await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
+    await user.click(screen.getByRole("link", { name: "设置" }));
     expect(await screen.findByRole("heading", { name: "设置", level: 1 })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "切换至黑夜模式" }));
@@ -479,13 +480,14 @@ describe("application shell", () => {
     const navigation = screen.getByRole("navigation", { name: "主导航" });
     expect(navigation.querySelector("[aria-current]")).toBeNull();
     expect(within(navigation).queryByRole("link", { name: "视频观看" })).not.toBeInTheDocument();
+    expect(within(navigation).getAllByRole("link").map((link) => link.textContent)).toEqual(["资料库", "解析任务", "模型消耗"]);
 
     await user.click(screen.getByRole("link", { name: "Seekino 首页" }));
     expect(await screen.findByRole("heading", { name: "视频观看", level: 1 })).toBeInTheDocument();
     expect(navigation.querySelector("[aria-current]")).toBeNull();
     expect(within(navigation).queryByRole("link", { name: "视频观看" })).not.toBeInTheDocument();
 
-    const searchLink = within(navigation).getByRole("link", { name: "名场面检索" });
+    const searchLink = within(screen.getByRole("banner", { name: "全站导航" })).getByRole("link", { name: "搜索名场面" });
     await user.click(searchLink);
     expect(await screen.findByRole("heading", { name: "Seekino 助手", level: 1 })).toBeInTheDocument();
     expect(searchLink).toHaveAttribute("aria-current", "page");
@@ -565,7 +567,8 @@ describe("application shell", () => {
   it("saves global Agent settings and shows saved versus active restart values", async () => {
     const { fetchMock } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
-    await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
+    await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
+    await user.click(screen.getByRole("link", { name: "设置" }));
     const concurrency = await screen.findByRole("spinbutton", { name: /并行任务上限/ });
     await waitFor(() => expect(concurrency).toBeEnabled());
     expect(concurrency).toHaveValue(4);
@@ -590,7 +593,8 @@ describe("application shell", () => {
   it("saves the read tool character limit from global settings", async () => {
     const { fetchMock } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
-    await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
+    await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
+    await user.click(screen.getByRole("link", { name: "设置" }));
     await user.click(screen.getByText("工具输出"));
     expect(screen.getByText(/read 工具按片段内容的字符范围读取，不按行读取/)).toBeInTheDocument();
     const readLimit = await screen.findByRole("spinbutton", { name: /read 单次最多读取字符数/ });
@@ -614,7 +618,8 @@ describe("application shell", () => {
   it("saves independent thinking modes for Query, Evaluator, and Chat", async () => {
     const { fetchMock } = renderApp([apiSeries], { runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
-    await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
+    await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
+    await user.click(screen.getByRole("link", { name: "设置" }));
     await screen.findByRole("spinbutton", { name: /并行任务上限/ });
     await user.click(screen.getByText("模型思考"));
     const query = screen.getByRole("combobox", { name: /Query 检索/ });
@@ -648,7 +653,8 @@ describe("application shell", () => {
   it("preserves form edits and asks for a reload after a YAML revision conflict", async () => {
     renderApp([apiSeries], { failGlobalSettingsSave: true, runtimeConfig: { displayMode: "debug" } });
     const user = userEvent.setup();
-    await user.click(screen.getAllByRole("link", { name: /设置/ })[0]!);
+    await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
+    await user.click(screen.getByRole("link", { name: "设置" }));
     const timeout = await screen.findByRole("spinbutton", { name: /审核阶段超时/ });
     await waitFor(() => expect(timeout).toBeEnabled());
     fireEvent.input(timeout, { target: { value: "240" } });
@@ -675,6 +681,7 @@ describe("application shell", () => {
     expect(accountTrigger).toHaveAttribute("aria-expanded", "true");
     expect(accountTrigger).toHaveAttribute("aria-controls", accountPanel.id);
     expect(within(accountPanel).getByText("未连接账号服务")).toBeInTheDocument();
+    expect(within(accountPanel).getByRole("link", { name: "设置" })).toHaveAttribute("href", "/settings");
     await user.click(accountTrigger);
     expect(screen.queryByRole("region", { name: "当前账号" })).not.toBeInTheDocument();
     expect(accountTrigger).toHaveAttribute("aria-expanded", "false");
@@ -682,7 +689,9 @@ describe("application shell", () => {
 
     await user.click(accountTrigger);
     await user.tab();
-    expect(accountTrigger).not.toHaveFocus();
+    expect(screen.getByRole("link", { name: "设置" })).toHaveFocus();
+    expect(screen.getByRole("region", { name: "当前账号" })).toBeInTheDocument();
+    await user.tab();
     expect(screen.queryByRole("region", { name: "当前账号" })).not.toBeInTheDocument();
 
     await user.click(accountTrigger);
@@ -709,6 +718,12 @@ describe("application shell", () => {
     expect(screen.getByRole("region", { name: "当前账号" })).toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: "资料库" }));
     expect(await screen.findByRole("heading", { name: "资料库", level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "当前账号" })).not.toBeInTheDocument();
+    expect(accountTrigger).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(accountTrigger);
+    await user.click(within(screen.getByRole("region", { name: "当前账号" })).getByRole("link", { name: "设置" }));
+    expect(await screen.findByRole("heading", { name: "设置", level: 1 })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "当前账号" })).not.toBeInTheDocument();
     expect(accountTrigger).toHaveAttribute("aria-expanded", "false");
   });

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/seekino-logo.png" width="144" alt="Seekino 绿色鲨鱼 logo" />
+  <img src="assets/seekino-logo.png" width="144" alt="Seekino 青绿色鲨鱼 logo" />
 </p>
 
 <h1 align="center">Seekino</h1>

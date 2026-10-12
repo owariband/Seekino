@@ -336,17 +336,21 @@ export interface VideoParseTaskView {
       totalChunks: number;
       completedRefines: number;
       totalRefines: number;
+      /** Persisted Understanding, Refine, and index publication completions. */
       completedUnits: number;
+      /** One unit per chunk plus Refine and index units per interval. */
       totalUnits: number;
+      /** Understanding and Refine share 95%; index publication (including embedding) contributes 5%. */
       percent: number | null;
       topologyReady: boolean;
+      /** Intervals whose current member versions are published and query-visible. */
       indexedIntervals: number;
     };
     timing?: {
       recorded: boolean;
       complete: boolean;
       activeExecutions: number;
-      /** Union of confirmed understanding and Refine execution spans. */
+      /** Union of confirmed Understanding, Refine, and index execution spans (including embedding). */
       effectiveDurationMs: number | null;
     };
   };

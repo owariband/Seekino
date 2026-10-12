@@ -101,7 +101,7 @@ describe("V2 task observation", () => {
       detail: {
         progress: {
           completedChunks: 24, totalChunks: 24, completedRefines: 8, totalRefines: 22,
-          completedUnits: 32, totalUnits: 46, percent: 32 / 46 * 100,
+          completedUnits: 32, totalUnits: 68, percent: 95 * 32 / 46,
           topologyReady: true, indexedIntervals: 0,
         },
       },
@@ -112,9 +112,9 @@ describe("V2 task observation", () => {
     const { container } = renderPage();
 
     expect(await screen.findByRole("heading", { name: "解析异常" })).toBeInTheDocument();
-    expect(screen.getByLabelText("解析进度")).toHaveTextContent("69.6%");
+    expect(screen.getByLabelText("解析进度")).toHaveTextContent("66.1%");
     expect(screen.queryByLabelText("解析任务进度")).not.toBeInTheDocument();
-    expect(container).not.toHaveTextContent(/固定切片|理解|Refine|完成单元|有效解析时长/);
+    expect(container).not.toHaveTextContent(/固定切片|理解|Refine|索引\s*0\s*\/\s*22|完成单元|有效解析时长/);
     expect(screen.getByText("解析失败")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: `重试解析 ${failed.originalFilename}` })).toBeEnabled();
     expect(screen.getByRole("button", { name: `整集重新解析 ${failed.originalFilename}` })).toBeEnabled();
@@ -181,7 +181,7 @@ describe("V2 task observation", () => {
     expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: "0%" });
   });
 
-  it("shows combined persisted progress and gains one unit on the next snapshot", async () => {
+  it("shows weighted persisted progress and gains one parsing unit on the next snapshot", async () => {
     let serverTask: VideoParseTaskView = {
       ...task("PARSING_FAILED"),
       chunkCount: 24,
@@ -189,8 +189,8 @@ describe("V2 task observation", () => {
         progress: {
           completedChunks: 24, totalChunks: 24,
           completedRefines: 8, totalRefines: 22,
-          completedUnits: 32, totalUnits: 46,
-          percent: 32 / 46 * 100, topologyReady: true, indexedIntervals: 0,
+          completedUnits: 32, totalUnits: 68,
+          percent: 95 * 32 / 46, topologyReady: true, indexedIntervals: 0,
         },
       },
     };
@@ -201,23 +201,24 @@ describe("V2 task observation", () => {
     const user = userEvent.setup();
 
     await screen.findByRole("heading", { name: "解析异常" });
-    expect(screen.getByLabelText("解析进度")).toHaveTextContent("69.6%");
+    expect(screen.getByLabelText("解析进度")).toHaveTextContent("66.1%");
     expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("理解 24 / 24");
     expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("Refine 8 / 22");
-    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("完成单元 32 / 46");
-    expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: `${32 / 46 * 100}%` });
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("索引 0 / 22");
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("完成单元 32 / 68");
+    expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: `${95 * 32 / 46}%` });
 
     serverTask = {
       ...serverTask,
       detail: {
         progress: {
           ...serverTask.detail.progress!,
-          completedRefines: 9, completedUnits: 33, percent: 33 / 46 * 100,
+          completedRefines: 9, completedUnits: 33, percent: 95 * 33 / 46,
         },
       },
     };
     await user.click(screen.getByRole("button", { name: "同步状态" }));
-    await waitFor(() => expect(screen.getByLabelText("解析进度")).toHaveTextContent("71.7%"));
+    await waitFor(() => expect(screen.getByLabelText("解析进度")).toHaveTextContent("68.2%"));
     expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("Refine 9 / 22");
   });
 
@@ -243,15 +244,16 @@ describe("V2 task observation", () => {
     expect(screen.getByLabelText("解析进度")).not.toHaveTextContent("%");
   });
 
-  it("keeps indexing in progress when all parsing units are complete", async () => {
-    const indexing: VideoParseTaskView = {
+  it("advances persisted indexing progress and reaches 100% only after publishing all intervals", async () => {
+    let indexing: VideoParseTaskView = {
       ...task("INDEXING"),
+      chunkCount: 24,
       detail: {
         progress: {
-          completedChunks: 5, totalChunks: 5,
-          completedRefines: 3, totalRefines: 3,
-          completedUnits: 8, totalUnits: 8,
-          percent: 100, topologyReady: true, indexedIntervals: 1,
+          completedChunks: 24, totalChunks: 24,
+          completedRefines: 22, totalRefines: 22,
+          completedUnits: 46, totalUnits: 68,
+          percent: 95, topologyReady: true, indexedIntervals: 0,
         },
         timing: { recorded: true, complete: true, activeExecutions: 0, effectiveDurationMs: 2_000 },
       },
@@ -259,14 +261,44 @@ describe("V2 task observation", () => {
     vi.stubGlobal("fetch", vi.fn(async () => response({
       items: [indexing], total: 1, hasMore: false, nextCursor: null,
     })));
-    renderPage();
+    const { container } = renderPage();
+    const user = userEvent.setup();
 
     expect(await screen.findByRole("heading", { name: "正在发布检索结果" })).toBeInTheDocument();
-    expect(screen.getByLabelText("解析进度")).toHaveTextContent("100%");
+    expect(screen.getByLabelText("解析进度")).toHaveTextContent("95%");
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("索引 0 / 22");
+    expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: "95%" });
     expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中1");
     expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("已完成0");
     expect(screen.getByText("2 秒")).toBeInTheDocument();
     expect(screen.queryByText("2 秒（进行中）")).not.toBeInTheDocument();
+
+    indexing = {
+      ...indexing,
+      detail: {
+        ...indexing.detail,
+        progress: { ...indexing.detail.progress!, indexedIntervals: 1, completedUnits: 47, percent: 95 + 5 / 22 },
+      },
+    };
+    await user.click(screen.getByRole("button", { name: "同步状态" }));
+    await waitFor(() => expect(screen.getByLabelText("解析进度")).toHaveTextContent("95.2%"));
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("索引 1 / 22");
+    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("进行中1");
+
+    indexing = {
+      ...indexing,
+      status: "COMPLETE",
+      detail: {
+        ...indexing.detail,
+        progress: { ...indexing.detail.progress!, indexedIntervals: 22, completedUnits: 68, percent: 100 },
+      },
+    };
+    await user.click(screen.getByRole("button", { name: "同步状态" }));
+    await waitFor(() => expect(screen.getByLabelText("解析进度")).toHaveTextContent("100%"));
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("索引 22 / 22");
+    expect(screen.getByLabelText("解析任务进度")).toHaveTextContent("完成单元 68 / 68");
+    expect(container.querySelector('[class*="pipelineLine"] > span')).toHaveStyle({ width: "100%" });
+    expect(screen.getByRole("region", { name: "任务概况" })).toHaveTextContent("已完成1");
   });
 
   it.each([

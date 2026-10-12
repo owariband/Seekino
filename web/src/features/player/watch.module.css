@@ -1,22 +1,21 @@
-.page { --watch-gutter: clamp(16px, 3vw, 64px); width: 100%; max-width: none; min-height: calc(100dvh - var(--app-header-height, 76px)); padding: 0 0 64px; }
-.page:fullscreen { width: 100vw; height: 100dvh; overflow: hidden; padding: 0; background: #090c0b; }
-.page:fullscreen .layout { padding: 0; }
-.page:fullscreen .viewer { height: 100dvh; }
-.page:fullscreen .watchDetails { display: none; }
-.page:fullscreen .sidePanel, .page:fullscreen .resizeHandle { top: 0; }
+.page { --watch-gutter: clamp(16px, 3cqw, 64px); width: 100%; max-width: none; min-height: calc(100cqh - var(--app-header-height, 76px)); padding: 0 0 64px; }
+.page[data-fullscreen="true"] { height: 100cqh; overflow: hidden; padding: 0; background: #090c0b; }
+.page[data-fullscreen="true"] .layout { padding: 0; }
+.page[data-fullscreen="true"] .viewer { height: 100cqh; min-height: 0; }
+.page[data-fullscreen="true"] .watchDetails { display: none; }
 .panelToggle { display: inline-flex; width: 42px; height: 42px; align-items: center; justify-content: center; color: var(--ink-soft); border-radius: 6px; background: transparent; cursor: pointer; }
 .panelToggle:hover, .panelToggle[aria-expanded="true"] { color: var(--teal-deep); background: var(--teal-wash); }
 .floatingTools { position: absolute; z-index: 10; top: 12px; left: 16px; }
 .floatingTools .panelToggle { color: #f7f8f7; background: rgb(9 12 11 / 75%); }
-.layout { position: relative; min-width: 0; scroll-margin-top: var(--app-header-height, 76px); padding: 20px var(--watch-gutter); background: #090c0b; }
-.viewer { width: 100%; min-width: 0; height: min(calc((100vw - 2 * var(--watch-gutter)) * .5625 + 70px), calc(100dvh - var(--app-header-height, 76px) - 40px)); min-height: 180px; }
-.resizeHandle { position: fixed; z-index: 46; top: var(--app-header-height, 76px); right: calc(min(var(--watch-panel-width, 440px), 100vw) - 10px); bottom: 0; width: 10px; cursor: col-resize; touch-action: none; user-select: none; }
+.layout { position: relative; container: watch-player / inline-size; min-width: 0; scroll-margin-top: var(--app-header-height, 76px); padding: 20px var(--watch-gutter); background: #090c0b; }
+.viewer { width: 100%; min-width: 0; height: min(calc(100cqw * .5625 + 70px), calc(100cqh - var(--app-header-height, 76px) - 40px)); min-height: 180px; }
+.resizeHandle { position: absolute; z-index: 46; top: 0; left: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
 .resizeHandle::before { position: absolute; top: 35%; bottom: 35%; left: 4px; width: 2px; border-radius: 2px; background: var(--line-strong); content: ""; }
 .resizeHandle:hover::before, .resizeHandle:focus-visible::before { top: 25%; bottom: 25%; background: var(--teal); }
 .videoPlayer { position: relative; display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; color: #f7f8f7; border-radius: 4px; background: #101514; outline: none; }
 .videoPlayer:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
 .videoPlayerStage { position: relative; display: grid; width: 100%; min-height: 0; flex: 1; place-items: center; background: #090c0b; }
-.videoPlayerStage video { display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
+.videoPlayerStage video { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
 .videoPlayerCenterPlay { position: absolute; display: grid; width: 64px; height: 64px; place-items: center; padding-left: 5px; color: white; border: 1px solid rgb(255 255 255 / 44%); border-radius: 50%; background: rgb(11 20 19 / 70%); backdrop-filter: blur(8px); cursor: pointer; transition: transform 160ms ease, background 160ms ease; }
 .videoPlayerCenterPlay:hover { transform: scale(1.07); background: rgb(20 94 84 / 90%); }
 .videoPlayerControls { display: grid; gap: 4px; padding: 0 12px 6px; background: #101514; }
@@ -35,7 +34,7 @@
 .videoPlayerError { margin: 0; padding: 8px 16px 12px; color: #ffc5c5; background: #101514; font-size: .72rem; }
 .videoPlayerUnavailable { display: grid; width: 100%; aspect-ratio: 16 / 9; place-items: center; padding: 24px; color: #dce3e1; border-radius: 14px; background: #101514; font-size: .82rem; text-align: center; }
 .unavailable { display: grid; width: 100%; aspect-ratio: 16 / 9; place-items: center; margin: 0; padding: 24px; color: #eee; border-radius: 12px; background: #111; font-size: .85rem; text-align: center; }
-.watchDetails { display: grid; max-width: 1720px; grid-template-columns: minmax(0, 1fr) minmax(300px, 34%); gap: clamp(32px, 6vw, 100px); margin: 0 auto; padding: 36px var(--watch-gutter) 0; }
+.watchDetails { display: grid; width: 100%; max-width: 1720px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: clamp(32px, 4cqw, 64px); margin: 0 auto; padding: 36px var(--watch-gutter) 0; }
 .watchSynopsis, .upNext { min-width: 0; }
 .seriesName { display: inline-flex; align-items: center; gap: 8px; color: var(--teal-deep); font-size: 1.15rem; font-weight: 600; text-decoration: none; }
 .seriesName:hover { text-decoration: underline; }
@@ -57,18 +56,19 @@
 .nextTitle strong { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; font-size: .8rem; font-weight: 550; line-height: 1.5; }
 .nextEpisodes a:hover strong { color: var(--teal-deep); }
 .nextTitle > span { color: var(--ink-faint); font-size: .68rem; }
-.sidePanel { position: fixed; z-index: 45; top: var(--app-header-height, 76px); right: 0; bottom: 0; display: flex; width: min(var(--watch-panel-width, 440px), 100vw); min-width: 0; min-height: 0; flex-direction: column; border-left: 1px solid var(--line); background: var(--surface); box-shadow: -16px 0 48px rgb(0 0 0 / 24%); }
-.panelHeader { display: flex; flex: 0 0 auto; min-height: 52px; align-items: center; justify-content: space-between; padding: 0 14px 0 20px; border-bottom: 1px solid var(--line); }
+.sidePanel { position: relative; display: flex; width: var(--watch-panel-width, 440px); height: 100%; min-height: 0; flex-direction: column; padding: 0 10px 10px; border-left: 1px solid var(--line); background: var(--surface); }
+.sidePanel[data-open="false"] { visibility: hidden; pointer-events: none; transition: visibility 0s 400ms; }
+.panelHeader { display: flex; flex: 0 0 auto; min-height: 48px; align-items: center; justify-content: space-between; padding: 0 4px 0 10px; }
 .panelHeader strong { color: var(--ink); font-size: .85rem; font-weight: 600; }
 .panelHeader button { display: grid; width: 34px; height: 34px; place-items: center; color: var(--ink-soft); border-radius: 4px; background: transparent; cursor: pointer; }
 .panelHeader button:hover { color: var(--teal-deep); background: var(--teal-wash); }
-.sidePanel[hidden], .chatPanel[hidden], .episodePanel[hidden] { display: none; }
-.sideTabs { display: flex; flex: 0 0 auto; gap: 24px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.chatPanel[hidden], .episodePanel[hidden] { display: none; }
+.sideTabs { display: flex; flex: 0 0 auto; gap: 24px; padding: 0 16px; border-bottom: 1px solid var(--line); border-radius: 16px 16px 0 0; background: var(--canvas); }
 .sideTabs button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 0 3px; color: var(--ink-faint); border-bottom: 2px solid transparent; background: transparent; cursor: pointer; font-size: .76rem; }
 .sideTabs button:hover, .sideTabs button[aria-selected="true"] { color: var(--teal-deep); }
 .sideTabs button[aria-selected="true"] { border-bottom-color: var(--teal); }
-.chatPanel { display: flex; min-width: 0; min-height: 0; flex: 1; }
-.episodePanel { min-width: 0; min-height: 0; flex: 1; overflow-y: auto; }
+.chatPanel { display: flex; min-width: 0; min-height: 0; flex: 1; border-radius: 0 0 16px 16px; background: var(--canvas); }
+.episodePanel { min-width: 0; min-height: 0; flex: 1; overflow-y: auto; border-radius: 0 0 16px 16px; background: var(--canvas); }
 .episodePanel h2 { display: flex; justify-content: space-between; margin: 0; padding: 16px; color: var(--ink); border-bottom: 1px solid var(--line); font-size: .9rem; font-weight: 550; }
 .episodePanel h2 span { display: inline-flex; align-items: center; gap: 10px; }
 .episodePanel h2 a { color: var(--teal-deep); font-size: .68rem; font-weight: 400; text-decoration: none; }
@@ -80,11 +80,19 @@
 .episodeList a[aria-current="page"] { background: var(--teal-wash); }
 .episodeList a > span { color: var(--teal-deep); font: 600 .65rem/1.4 var(--mono); }
 .episodeList strong { overflow: hidden; color: var(--ink); font-size: .72rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 800px) { .watchDetails { grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 26px; } .resizeHandle { display: none; } .nextEpisodes a { grid-template-columns: minmax(120px, 32%) minmax(0, 1fr); } .episodeList a { grid-template-columns: 46px minmax(0, 1fr); } .episodeList small { grid-column: 2; } }
-@media (max-width: 580px) { .layout { padding: 12px 0; } .viewer { height: calc(100vw * .5625 + 70px); } .watchSynopsis h1 { font-size: 1.15rem; } .panelToggle { width: 36px; flex-shrink: 0; } }
-@media (max-width: 580px) { .videoPlayerControls { padding: 0 8px 4px; } .videoPlayerControlRow { gap: 1px; } .videoPlayerControlRow .videoPlayerSkip { width: 34px; padding: 0; } .videoPlayerSkip small { display: none; } .videoPlayerControlRow time { margin-left: 2px; font-size: .58rem; } .videoPlayerVolume { display: none; } }
+@media (max-width: 800px) {
+  .sidePanel { width: 100vw; border-left: 0; border-top: 1px solid var(--line); }
+  .watchDetails { grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 26px; }
+  .resizeHandle { display: none; }
+  .nextEpisodes a { grid-template-columns: minmax(120px, 32%) minmax(0, 1fr); }
+  .episodeList a { grid-template-columns: 46px minmax(0, 1fr); }
+  .episodeList small { grid-column: 2; }
+}
+@media (max-width: 580px) { .layout { padding: 12px 0; } .watchSynopsis h1 { font-size: 1.15rem; } .panelToggle { width: 36px; flex-shrink: 0; } }
+@container watch-player (max-width: 580px) { .videoPlayerControls { padding: 0 8px 4px; } .videoPlayerControlRow { gap: 1px; } .videoPlayerControlRow .videoPlayerSkip { width: 34px; padding: 0; } .videoPlayerSkip small { display: none; } .videoPlayerControlRow time { margin-left: 2px; font-size: .58rem; } .videoPlayerVolume { display: none; } }
 
-@media (max-width: 360px) { .panelToggle { width: 32px; } .videoPlayerControlRow button, .videoPlayerControlRow .videoPlayerSkip { width: 30px; } .videoPlayerControlRow select { width: 48px; } }
+@media (max-width: 360px) { .panelToggle { width: 32px; } }
+@container watch-player (max-width: 360px) { .videoPlayerControls { padding-inline: 6px; } .videoPlayerControlRow button, .videoPlayerControlRow .videoPlayerSkip { width: 30px; } .videoPlayerControlRow select { width: 48px; } .videoPlayerControlRow time { margin-left: 0; font-size: .55rem; } }
 
 .home { --home-gutter: clamp(20px, 5vw, 96px); width: 100%; max-width: none; padding: 0 0 64px; }
 .hero { position: relative; isolation: isolate; display: flex; min-height: 520px; height: min(54vw, 720px); align-items: center; overflow: hidden; padding: 64px var(--home-gutter) 100px; color: #f3f8f5; background: #10251f; }
@@ -156,4 +164,4 @@
 .homeError { margin: 0; padding: 20px; color: var(--red); font-size: .8rem; }
 @media (max-width: 760px) { .hero { min-height: 590px; height: auto; align-items: end; padding: 230px var(--home-gutter) 70px; } .heroFrame { bottom: 130px; } .hero::before { background: linear-gradient(0deg, #10251f 12%, rgb(5 16 13 / 88%) 40%, rgb(5 16 13 / 4%) 85%); } .hero::after { height: 80px; } .heroContent { width: 100%; } .heroContent h2 { margin: 14px 0; font-size: clamp(2rem, 8vw, 3.5rem); } .heroContent > p { margin: 16px 0 22px; font-size: .85rem; -webkit-line-clamp: 2; } .heroMeta { font-size: .72rem; } .heroPlay, .heroBrowse { padding-inline: 18px; font-size: .8rem; } .heroProgress { margin-top: 22px; } }
 @media (max-width: 580px) { .homeGrid { gap: 24px; } .seriesCards { grid-auto-columns: 76%; gap: 16px; } .seriesCards strong { font-size: .9rem; } .seriesCards small { font-size: .7rem; } .homeEpisode { grid-template-columns: 46px minmax(0, 1fr) auto; gap: 10px; padding-inline: 8px; } .homeEpisodeNumber { font-size: .68rem; } .coverFallback { padding: 15px; gap: 12px; } }
-@media (prefers-reduced-motion: reduce) { .seriesCover { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .seriesCover, .sidePanel[data-open="false"] { transition: none; } }
