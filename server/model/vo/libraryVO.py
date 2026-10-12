@@ -45,6 +45,7 @@ class SeriesSummary(ContractModel):
     series_id: str
     tenant_id: str
     name: str
+    display_name: str | None = None
     description: str | None
     status: Literal["EMPTY", "INDEXING", "PARTIAL", "READY", "FAILED"]
     video_count: int = Field(ge=0)

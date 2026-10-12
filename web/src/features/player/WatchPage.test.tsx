@@ -216,8 +216,8 @@ describe("WatchPage", () => {
     renderPage("/watch/series-1/video-1?atSeconds=12000");
     const description = await screen.findByRole("region", { name: "视频简介" });
     expect(within(description).getByRole("link", { name: "测试课程" })).toHaveAttribute("href", "/series/series-1");
-    expect(within(description).getByRole("heading", { level: 1 })).toHaveTextContent("EP 01");
-    expect(within(description).getByRole("heading", { level: 1 })).toHaveTextContent("video-1.mp4");
+    expect(within(description).getByRole("heading", { level: 1 })).toHaveTextContent("第 1 集");
+    expect(within(description).getByRole("heading", { level: 1 })).toHaveAttribute("title", "video-1.mp4");
     expect(within(description).getByText("一起寻找故事里的名场面。")).toBeVisible();
     const upcoming = screen.getByRole("region", { name: "后续集数" });
     expect(within(upcoming).getByRole("heading", { name: "接下来" })).toBeVisible();

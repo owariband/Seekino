@@ -32,6 +32,7 @@ class SeriesBackground(ContractModel):
 class SeriesUpdateRequest(ContractModel):
     tenant_id: str = Field(min_length=1, max_length=64)
     series_id: str = Field(min_length=1)
+    display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     transcript_language_hint: str | None = Field(default=None, max_length=64)
     important_extra_data: SeriesBackground | None = None
@@ -88,6 +89,7 @@ class SeriesState:
     created_at: int
     updated_at: int
     is_published: bool = False
+    display_name: str | None = None
     ready_video_count: int = 0
     failed_video_count: int = 0
     pending_upload_count: int = 0

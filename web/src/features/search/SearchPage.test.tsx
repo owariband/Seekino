@@ -140,6 +140,7 @@ function renderPage(
     initialSeriesId?: string;
     captureExtraContext?: () => Record<string, unknown> | null;
     onOpenVideo?: (target: { seriesId: string; videoId: string; startSeconds: number }) => void;
+    onSeekCurrent?: (positionMs: number) => void;
   } = {},
   displayMode: "release" | "debug" = "release",
 ) {
@@ -311,13 +312,33 @@ describe("Search assistant presentation", () => {
     expect(screen.getByText("当前播放位置尚未就绪，请稍后重试")).toHaveAttribute("role", "alert");
   });
 
+  it("turns answer timestamps into seek buttons for the episode being watched", async () => {
+    const onSeekCurrent = vi.fn();
+    renderPage(assistantMessage("当前停在 **10分38秒** 左右，片尾在 01:02:03；画面比例 16:9。"), [series], {
+      embedded: true, initialSeriesId: series.seriesId, onSeekCurrent,
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "10分38秒" }));
+    expect(onSeekCurrent).toHaveBeenLastCalledWith(638_000);
+    await user.click(screen.getByRole("button", { name: "01:02:03" }));
+    expect(onSeekCurrent).toHaveBeenLastCalledWith(3_723_000);
+    expect(screen.queryByRole("button", { name: "16:9" })).not.toBeInTheDocument();
+  });
+
+  it("keeps answer timestamps as plain text outside the watch page", () => {
+    renderPage(assistantMessage("大约在 10:38 出现。"));
+    expect(screen.queryByRole("button", { name: "10:38" })).not.toBeInTheDocument();
+    expect(screen.getByText("大约在 10:38 出现。")).toBeInTheDocument();
+  });
+
   it("states when the watched series is not searchable instead of presenting a global scope as current", async () => {
     renderPage(assistantMessage("可以继续聊天"), [{ ...series, status: "PARTIAL" }], {
       embedded: true, initialSeriesId: series.seriesId,
     });
     const user = userEvent.setup();
 
-    expect(screen.getByText(/当前系列暂不可检索/)).toHaveTextContent("全部可检索系列");
+    expect(screen.getByText("检索范围：全部系列")).toBeVisible();
+    expect(screen.getByText("本系列未完成解析")).toBeVisible();
     expect(screen.getByLabelText("选择检索视频系列")).toHaveTextContent("全部视频系列");
     await user.type(screen.getByRole("textbox", { name: "向 Seekino 助手提问" }), "你好");
     await user.click(screen.getByRole("button", { name: "发送问题" }));

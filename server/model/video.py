@@ -88,6 +88,8 @@ class Series(BaseModel):
     id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Viewer-facing title; ``name`` stays the stable import key the id derives from.
+    display_name: Mapped[str | None] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(LONG_TEXT)
     transcript_language_hint: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), nullable=False)

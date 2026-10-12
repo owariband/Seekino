@@ -61,14 +61,19 @@ class LibraryService:
     ) -> SeriesState:
         series = self.get_series(series_id, tenant_id=tenant_id, owner_user_id=owner_user_id)
         if changes.keys() - {
-            "description", "transcript_language_hint", "important_extra_data",
+            "display_name", "description", "transcript_language_hint", "important_extra_data",
             "is_published",
         }:
             raise ValueError(
-                "only description, transcript_language_hint and "
+                "only display_name, description, transcript_language_hint, "
                 "important_extra_data and is_published can be updated"
             )
         normalized = dict(changes)
+        if "display_name" in normalized and normalized["display_name"] is not None:
+            display_name = normalized["display_name"]
+            if not isinstance(display_name, str) or len(display_name.strip()) > 255:
+                raise ValueError("display_name must be text up to 255 characters or null")
+            normalized["display_name"] = display_name.strip() or None
         if "is_published" in normalized:
             if not isinstance(normalized["is_published"], bool):
                 raise ValueError("is_published must be a boolean")

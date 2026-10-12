@@ -71,28 +71,36 @@
     --radius-large: 24px;
     --radius-medium: 16px;
     --radius-small: 10px;
+    /* Brand colors come from the mascot (assets/mascot/seekino-logo.svg). */
+    --brand: #74c5ba;
+    --brand-shade: #349489;
+    --brand-ink: #0b3b33;
+    --brand-wordmark: var(--brand-ink);
+    --stage: #0c1412;
   }
 
   :root[data-theme="dark"] {
-    color: #f0f0ee;
-    background: #262626;
-    --canvas: #262626;
-    --surface: #303030;
-    --surface-raised: #3f3f3f;
-    --surface-muted: #454545;
-    --ink: #f0f0ee;
-    --ink-soft: #d0d0cc;
-    --ink-faint: #ababaa;
-    --line: #4b4b4b;
-    --line-strong: #676767;
-    --teal: #6bbbad;
-    --teal-deep: #7ac9b8;
-    --teal-soft: #3f3f3f;
-    --teal-wash: #3a3a3a;
+    color: #e7efec;
+    background: #121816;
+    --canvas: #121816;
+    --surface: #1a2220;
+    --surface-raised: #222c29;
+    --surface-muted: #28332f;
+    --ink: #e7efec;
+    --ink-soft: #b7c6c1;
+    --ink-faint: #8a9b96;
+    --line: rgba(160, 205, 192, 0.14);
+    --line-strong: rgba(116, 197, 186, 0.42);
+    --teal: #74c5ba;
+    --teal-deep: #8dd3c8;
+    --teal-soft: #213330;
+    --teal-wash: #1f2e2a;
     --amber: #d9b26f;
     --red: #f28b82;
-    --shadow: 0 18px 50px rgba(0, 0, 0, 0.12);
-    --shadow-small: 0 8px 24px rgba(0, 0, 0, 0.1);
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
+    --shadow-small: 0 8px 24px rgba(0, 0, 0, 0.26);
+    --brand-wordmark: var(--brand);
+    --stage: #080d0c;
   }
 }
 
@@ -173,7 +181,7 @@
     justify-content: center;
     gap: 8px;
     padding: 0 17px;
-    border-radius: 999px;
+    border-radius: var(--radius-small);
     cursor: pointer;
     transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, color 160ms ease;
   }

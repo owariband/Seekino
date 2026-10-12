@@ -138,7 +138,7 @@ class LibraryRepository:
             if record is None:
                 raise SeriesNotFoundError("Series does not exist in this workspace")
             for field in (
-                "description", "transcript_language_hint", "important_extra_data", "is_published",
+                "display_name", "description", "transcript_language_hint", "important_extra_data", "is_published",
             ):
                 if field in changes:
                     setattr(record, field, changes[field])
@@ -666,6 +666,7 @@ class LibraryRepository:
             series_id=record.id,
             tenant_id=record.tenant_id,
             name=record.name,
+            display_name=record.display_name,
             description=record.description,
             transcript_language_hint=record.transcript_language_hint,
             status=record.status if status is None else status,

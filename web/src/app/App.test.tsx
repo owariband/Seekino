@@ -373,13 +373,15 @@ describe("application shell", () => {
     await user.click(screen.getAllByRole("link", { name: /资料库/ })[0]!);
     expect(await screen.findByRole("heading", { name: "资料库", level: 1 })).toBeInTheDocument();
 
-    await user.click(screen.getAllByRole("link", { name: /解析任务/ })[0]!);
+    await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
+    await user.click(screen.getByRole("link", { name: "解析任务" }));
     expect(await screen.findByRole("heading", { name: "解析任务", level: 1 })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "管理上传" }));
     expect(screen.getByRole("dialog", { name: /把每一集/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "关闭上传面板" }));
 
-    await user.click(screen.getAllByRole("link", { name: "模型消耗" })[0]!);
+    await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
+    await user.click(screen.getByRole("link", { name: "模型消耗" }));
     expect(await screen.findByRole("heading", { name: "模型消耗", level: 1 })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "打开账号菜单" }));
@@ -480,7 +482,7 @@ describe("application shell", () => {
     const navigation = screen.getByRole("navigation", { name: "主导航" });
     expect(navigation.querySelector("[aria-current]")).toBeNull();
     expect(within(navigation).queryByRole("link", { name: "视频观看" })).not.toBeInTheDocument();
-    expect(within(navigation).getAllByRole("link").map((link) => link.textContent)).toEqual(["资料库", "解析任务", "模型消耗"]);
+    expect(within(navigation).getAllByRole("link").map((link) => link.textContent)).toEqual(["资料库"]);
 
     await user.click(screen.getByRole("link", { name: "Seekino 首页" }));
     expect(await screen.findByRole("heading", { name: "视频观看", level: 1 })).toBeInTheDocument();
@@ -688,6 +690,9 @@ describe("application shell", () => {
     expect(composer).toHaveValue("还未发送的问题");
 
     await user.click(accountTrigger);
+    await user.tab();
+    expect(screen.getByRole("link", { name: "解析任务" })).toHaveFocus();
+    await user.tab();
     await user.tab();
     expect(screen.getByRole("link", { name: "设置" })).toHaveFocus();
     expect(screen.getByRole("region", { name: "当前账号" })).toBeInTheDocument();
@@ -1082,7 +1087,7 @@ describe("application shell", () => {
     await user.type(await screen.findByRole("textbox", { name: "向 Seekino 助手提问" }), "雨天门口");
     await user.click(screen.getByRole("button", { name: "发送问题" }));
 
-    expect(await screen.findByText("模型暂时不可用")).toHaveAttribute("role", "alert");
+    expect((await screen.findByText("模型暂时不可用")).closest("p")).toHaveAttribute("role", "alert");
     expect(await screen.findByText("回答未完成")).toHaveAttribute("role", "status");
     expect(screen.queryByText("回答已完成")).not.toBeInTheDocument();
   });
@@ -1104,7 +1109,7 @@ describe("application shell", () => {
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/agent/conversations/create"))).toHaveLength(2));
     await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
-    expect(await screen.findByText("可以聊天，也可以询问视频内容或查找资料。")).toBeInTheDocument();
+    expect(await screen.findByText("描述记得的画面、台词或人物关系，一起把那一刻找回来。")).toBeInTheDocument();
 
     await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 雨天门口，/ }));
@@ -1150,7 +1155,7 @@ describe("application shell", () => {
 
     await user.click(screen.getByLabelText("打开对话记录"));
     await user.click(await screen.findByRole("button", { name: /^打开对话 Test，/ }));
-    const failure = await screen.findByText("无法打开选中的对话");
+    const failure = (await screen.findByText("无法打开选中的对话")).closest("p")!;
     await waitFor(() => expect(failure).toHaveFocus());
     expect(screen.getByRole("status")).toHaveTextContent("打开对话失败：无法打开选中的对话");
   });
@@ -1388,7 +1393,7 @@ describe("application shell", () => {
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem("anivag-agent-conversation:local-default")!).id).toBe("conversation-2"));
-    expect(await screen.findByText("可以聊天，也可以询问视频内容或查找资料。")).toBeInTheDocument();
+    expect(await screen.findByText("描述记得的画面、台词或人物关系，一起把那一刻找回来。")).toBeInTheDocument();
   });
 
   it("allows multi-selection and keeps a running answer and its scope when the next selection changes", async () => {

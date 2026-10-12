@@ -12,8 +12,9 @@ import {
   UserRound,
 } from "lucide-react";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 
+import { FOCUS_SEARCH_EVENT } from "../features/search/SearchPage";
 import { useUploads } from "../features/uploads/UploadProvider";
 import { useAuth } from "../features/auth/AuthProvider";
 import { errorMessage } from "../api/client";
@@ -23,14 +24,20 @@ import styles from "./app-shell.module.css";
 
 const navigation = [
   { to: "/library", label: "资料库", icon: LibraryBig },
+];
+
+// Operator pages live in the account menu so viewers see a quiet header.
+const managementLinks = [
   { to: "/tasks", label: "解析任务", icon: Activity },
   { to: "/usage", label: "模型消耗", icon: ChartNoAxesCombined },
 ];
 
+const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+
 export type WatchPanelLayout = { open: boolean; width: number; resizing: boolean };
 
 function AccountControls({ onLogin }: { onLogin: () => void }) {
-  const { accountIdentity, accountStatus, accountError, retryAccount, sources, activeSource, selectSource, logout, canConfigure } = useAuth();
+  const { accountIdentity, accountStatus, accountError, retryAccount, sources, activeSource, selectSource, logout, canConfigure, canManage } = useAuth();
   const { mode } = useWorkspace();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +60,10 @@ function AccountControls({ onLogin }: { onLogin: () => void }) {
       {sources.map((source) => <option key={source.key} value={source.key}>{source.kind === "local" ? "本机资料" : source.kind === "public" ? "公开资料" : "我的资料"}</option>)}
     </select></label> : <div className={styles.sourceLabel}><span>当前资料</span><strong>{activeSource.kind === "local" ? "本机资料" : activeSource.kind === "public" ? "公开资料" : "我的资料"}</strong></div>}
     {error ? <p role="alert">{error}</p> : null}
-    {canConfigure ? <NavLink className={styles.accountLink} to="/settings"><Settings size={17} aria-hidden="true" />设置</NavLink> : null}
+    {canManage || canConfigure ? <nav className={styles.accountLinks} aria-label="管理">
+      {canManage ? managementLinks.map(({ to, label, icon: Icon }) => <NavLink key={to} className={styles.accountLink} to={to}><Icon size={17} aria-hidden="true" />{label}</NavLink>) : null}
+      {canConfigure ? <NavLink className={styles.accountLink} to="/settings"><Settings size={17} aria-hidden="true" />设置</NavLink> : null}
+    </nav> : null}
     <div className={clsx(styles.runtime, styles[`runtime${mode}`])}><i aria-hidden="true" /><span>{mode === "live" ? "资料已连接" : mode === "offline" ? "资料连接不可用" : "检查资料连接"}</span></div>
   </section>;
 }
@@ -64,6 +74,7 @@ export function AppShell() {
   const accountRef = useRef<HTMLDivElement>(null);
   const avatarRef = useRef<HTMLButtonElement>(null);
   const location = useLocation();
+  const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const { activeCount, overallProgress, openDialog } = useUploads();
   const { accountIdentity, canUpload, canManage, openLogin, sources, selectSource } = useAuth();
@@ -75,6 +86,16 @@ export function AppShell() {
   };
 
   useEffect(() => { setAccountOpen(false); }, [location.key]);
+  useEffect(() => {
+    const openSearch = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      if (location.pathname === "/search") window.dispatchEvent(new Event(FOCUS_SEARCH_EVENT));
+      else navigate("/search", { state: { focusComposer: true } });
+    };
+    document.addEventListener("keydown", openSearch);
+    return () => document.removeEventListener("keydown", openSearch);
+  }, [location.pathname, navigate]);
   useEffect(() => {
     if (!accountOpen) return;
     const closeOutside = (event: PointerEvent) => {
@@ -94,18 +115,20 @@ export function AppShell() {
       <div className={styles.primary}>
       <header className={styles.topbar} aria-label="全站导航">
         <NavLink className={styles.brand} to="/watch" aria-label="Seekino 首页">
-          <img src="/assets/seekino-logo.png" alt="" /><strong>seekino</strong>
+          <img src="/assets/seekino-logo.svg" alt="" /><strong>Seekino</strong>
         </NavLink>
         <nav className={styles.navigation} aria-label="主导航">
           {visibleNavigation.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} className={({ isActive }) => clsx(styles.navItem, isActive && styles.navActive)}>
+            <NavLink key={to} to={to} title={label} className={({ isActive }) => clsx(styles.navItem, isActive && styles.navActive)}>
               <Icon size={16} strokeWidth={1.8} aria-hidden="true" /><span>{label}</span>
             </NavLink>
           ))}
         </nav>
+        <NavLink className={styles.searchTrigger} to="/search" state={{ focusComposer: true }} aria-label="搜索名场面" title={`搜索名场面（${isMac ? "⌘" : "Ctrl"} K）`}>
+          <Search size={18} strokeWidth={1.8} aria-hidden="true" /><span>描述一个画面，找回那一刻…</span><kbd aria-hidden="true">{isMac ? "⌘" : "Ctrl"} K</kbd>
+        </NavLink>
         <div className={styles.headerActions}>
           <span id="watch-header-actions" style={{ display: "contents" }} />
-          <NavLink className={styles.iconButton} to="/search" aria-label="搜索名场面" title="搜索名场面"><Search size={21} strokeWidth={1.7} aria-hidden="true" /></NavLink>
           <button className={styles.uploadButton} type="button" onClick={uploadAction}
             aria-label={canUpload ? `并行传输 · ${activeCount > 0 ? `${activeCount} 项进行中，${overallProgress}%` : "打开上传案台"}` : !signedIn ? "登录后上传远端视频" : "进入我的资料"}
             title={canUpload ? "上传视频与管理并行传输" : !signedIn ? "登录后上传远端视频" : "进入我的资料"}>

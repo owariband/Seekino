@@ -100,7 +100,10 @@ export interface SeriesSummary {
   isPublished?: boolean;
   seriesId: string;
   tenantId: string;
+  /** Stable import key; the series id derives from it. */
   name: string;
+  /** Viewer-facing title; use seriesTitle() to fall back to name. */
+  displayName?: string | null;
   description: string | null;
   status: SeriesStatus;
   videoCount: number;
@@ -139,6 +142,7 @@ export interface SeriesUpdateRequest {
   isPublished?: boolean;
   tenantId: string;
   seriesId: string;
+  displayName?: string | null;
   description?: string | null;
   transcriptLanguageHint?: string | null;
   importantExtraData?: SeriesBackground | null;

@@ -198,7 +198,7 @@ def project_series_summary(state: SeriesState, media: MediaService) -> SeriesSum
     return SeriesSummary(
         series_id=state.series_id, tenant_id=state.tenant_id,
         is_published=state.is_published,
-        name=state.name, description=state.description, status=state.status,
+        name=state.name, display_name=state.display_name, description=state.description, status=state.status,
         video_count=state.video_count, ready_video_count=state.ready_video_count,
         failed_video_count=state.failed_video_count, pending_upload_count=state.pending_upload_count,
         cover=ImageAsset.model_validate(asdict(cover)) if cover else None,

@@ -1,0 +1,62 @@
+.mascot {
+  --mascot-body: var(--brand, #74c5ba);
+  --mascot-shade: var(--brand-shade, #349489);
+  --mascot-belly: #fcfaf1;
+  --mascot-ink: var(--brand-ink, #0b3b33);
+  --mascot-drop: #bfe6ee;
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.mascot g, .mascot path, .mascot circle { transform-box: fill-box; }
+.float { transform-origin: 50% 100%; }
+.tilt { transform-origin: 50% 100%; }
+.tail { transform-origin: 10% 95%; }
+.finLeft { transform-origin: 100% 50%; }
+.finRight { transform-origin: 0% 50%; }
+/* Each eye blinks around its own center; the face is tilted, so a shared origin would slide them together. */
+.eyes circle { transform-origin: 50% 50%; }
+.question { transform-origin: 50% 100%; }
+
+.mascot[data-mood="idle"] .float { animation: mascot-bob 2.6s ease-in-out infinite; }
+.mascot[data-mood="idle"] .tail { animation: mascot-wag 1.3s ease-in-out infinite; }
+.mascot[data-mood="idle"] .finLeft { animation: mascot-flap-left 1.3s ease-in-out infinite; }
+.mascot[data-mood="idle"] .finRight { animation: mascot-flap-right 1.3s ease-in-out infinite; }
+.mascot[data-mood="idle"] .eyes circle { animation: mascot-blink 4.2s ease-in-out infinite; }
+
+.mascot[data-mood="seek"] .float { animation: mascot-bob 1.6s ease-in-out infinite; }
+.mascot[data-mood="seek"] .tilt { animation: mascot-sway 2.4s ease-in-out infinite; }
+.mascot[data-mood="seek"] .face { animation: mascot-look 2.4s ease-in-out infinite; }
+.mascot[data-mood="seek"] .tail { animation: mascot-wag .8s ease-in-out infinite; }
+.mascot[data-mood="seek"] .finLeft { animation: mascot-flap-left .8s ease-in-out infinite; }
+.mascot[data-mood="seek"] .finRight { animation: mascot-flap-right .8s ease-in-out infinite; }
+
+.mascot[data-mood="puzzled"] .tilt { animation: mascot-puzzle 3.2s ease-in-out infinite; }
+.mascot[data-mood="puzzled"] .question { animation: mascot-question 3.2s ease-in-out infinite; }
+.mascot[data-mood="puzzled"] .eyes circle { animation: mascot-blink 3.2s ease-in-out infinite; }
+
+.mascot[data-mood="oops"] .eyes circle { animation: mascot-double-blink 2.8s ease-in-out infinite; }
+.mascot[data-mood="oops"] .drop { animation: mascot-drop 2.8s ease-in infinite; }
+.mascot[data-mood="oops"] .tilt { transform: rotate(-3deg); }
+
+@keyframes mascot-bob { 50% { transform: translateY(-5px); } }
+@keyframes mascot-wag { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(7deg); } }
+@keyframes mascot-flap-left { 0%, 100% { transform: rotate(8deg); } 50% { transform: rotate(-10deg); } }
+@keyframes mascot-flap-right { 0%, 100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }
+@keyframes mascot-blink { 0%, 44%, 52%, 100% { transform: scaleY(1); } 48% { transform: scaleY(.1); } }
+@keyframes mascot-double-blink { 0%, 30%, 38%, 46%, 54%, 100% { transform: scaleY(1); } 34%, 50% { transform: scaleY(.1); } }
+@keyframes mascot-sway { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+@keyframes mascot-look { 0%, 12%, 100% { transform: translateX(-9px); } 38%, 62% { transform: translateX(9px); } 88% { transform: translateX(-9px); } }
+@keyframes mascot-puzzle { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(-4deg); } }
+@keyframes mascot-question { 0%, 100% { transform: translateY(0) rotate(-8deg); opacity: 1; } 50% { transform: translateY(-6px) rotate(6deg); opacity: .85; } }
+@keyframes mascot-drop {
+  0%, 20% { transform: translateY(-6px); opacity: 0; }
+  35% { transform: translateY(0); opacity: 1; }
+  80% { transform: translateY(18px); opacity: 1; }
+  100% { transform: translateY(26px); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot *, .mascot { animation: none !important; }
+}

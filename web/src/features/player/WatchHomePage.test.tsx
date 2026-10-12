@@ -102,7 +102,7 @@ describe("WatchHomePage", () => {
     const continueLink = await within(hero).findByRole("link", { name: "继续观看" });
     expect(continueLink).toHaveAttribute("href", "/watch/series-b/b-2");
     expect(within(hero).getByRole("heading", { name: "乙系列", level: 2 })).toBeInTheDocument();
-    expect(within(hero).getByText("EP 02")).toBeInTheDocument();
+    expect(within(hero).getByText("第 2 集")).toBeInTheDocument();
     expect(within(hero).getByText("上次看到 00:45")).toBeInTheDocument();
     const frame = within(hero).getByTestId("playback-frame");
     expect(frame.getAttribute("data-src")).toContain("videoId=b-2");
@@ -136,7 +136,7 @@ describe("WatchHomePage", () => {
     const hero = await screen.findByRole("region", { name: "继续观看推荐" });
     expect(await within(hero).findByRole("link", { name: "播放本集" })).toHaveAttribute("href", "/watch/series-a/a-2");
     expect(within(hero).getByRole("heading", { name: "甲系列", level: 2 })).toBeInTheDocument();
-    expect(within(hero).getByText("EP 02")).toBeInTheDocument();
+    expect(within(hero).getByText("第 2 集")).toBeInTheDocument();
     expect(within(hero).queryByRole("link", { name: "继续观看" })).not.toBeInTheDocument();
     expect(within(hero).queryByText(/上次看到/)).not.toBeInTheDocument();
     expect(within(hero).getByTestId("playback-frame").getAttribute("data-src")).toContain("videoId=a-2");

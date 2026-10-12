@@ -38,6 +38,8 @@ interface ApiError extends Failure {
 
 Series list 返回轻量 `SeriesSummary`，get / create 返回 `SeriesDetail`；列表不会假装包含完整剧集信息。Job list 的 total 与 jobs/summary 均从完整 SQL 范围统计，不用首屏数量冒充全局统计。索引状态由 Chunk / Embedding / Sync Intent 事实推导，不将解析完成视为索引 READY。
 
+`SeriesSummary.displayName` 是面向观众的作品标题，可为空，界面为空时回退到 `name`；`name` 仍是导入时的稳定键（Series id 由它派生），不可改名。
+
 `SeriesDetail.transcriptLanguageHint` 是用户配置的 ASR 原文语言提示，例如日语 `ja`。它进入 Query Agent 的 `series_context`，用于判断 Transcript-heavy Query 应采用哪种语言和脚本；它不是界面 locale，不证明具体台词存在，更新后也不会重新解析视频。
 
 ParseJob 的 overallProgress 以语义解析为主：canonical VideoChunk 全部完成媒体准备后到 1%，随后按已 PARSED 的真实视频时长从 1% 推进到 99%；文本/视觉向量化、持久化和索引同步不再额外瓜分权重，所有片段完成语义解析后保持 99%，只有任务成功并可检索时才到 100%。completedDurationSeconds、completedThroughSeconds、completedChunkCount 和 currentChunk 始终描述 PARSED 覆盖：前者是全部已解析片段的时长和，连续水位只统计从零开始无缺口的已解析范围，两者不能混用。stageProgress 仅保留为内部阶段诊断字段，任务页不再展示第二个百分比。范围缺失或不连续的历史任务返回 null，不回退到旧的估算百分比。
@@ -162,3 +164,5 @@ request_fingerprint 只保存原始规范化创建请求的摘要，不包含服
 video_chunk_checkpoint 的 chunk_start_seconds / chunk_end_seconds 保存 canonical VideoChunk 相对于原视频起点的整数毫秒范围，用于按真实视频时长计算解析进度。AnalysisWindow 允许重叠，不能用于累计完成时长。两列必须同时为空或同时有值；已有值不可改写。字段名保留。MySQL 使用 `video.duration_seconds` 的 `media_time_milliseconds` 列注释识别整个媒体时间合同，ES 使用现有 mapping `_meta.media_time_unit=milliseconds`；无标记的旧秒制数据不能直接加载。受控迁移见 `docs/migrations/20261008_video_timeline_milliseconds.sql`，其中整秒记录乘 1000 只转换单位，不能恢复此前已丢失的小数精度。旧产物与正式内容必须按其合同转换或重新解析后再恢复。
 
 Series 的 `transcript_language_hint` 由用户确认并用于 Query Agent 的 Transcript 检索改写；已有行保持 null，不从作品名或文件名猜测。对应受控 SQL 见 `docs/migrations/20260917_series_transcript_language_hint.sql`。
+
+Series 的 `display_name` 是可选的观众可见标题，与 `name`（导入键）分开；对应受控 SQL 见 `docs/migrations/20261012_series_display_name.sql`。

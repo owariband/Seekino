@@ -7,7 +7,8 @@ import { getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
 import type { SeriesSummary } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
-import { episodeLabel, formatTimecode } from "../../shared/format";
+import { episodeTitle, formatTimecode, seriesTitle } from "../../shared/format";
+import { Mascot } from "../../shared/Mascot";
 import { readWatchHistory } from "./playbackProgress";
 import { PlaybackFrame } from "./PlaybackFrame";
 import styles from "./watch.module.css";
@@ -32,7 +33,7 @@ function SeriesArtwork({ series }: { series: SeriesSummary }) {
     .sort((a, b) => a.episodeOrder - b.episodeOrder || a.uploadSequence - b.uploadSequence);
   const video = playable[0];
   return <span className={styles.seriesCover} ref={containerRef}>
-    <span className={styles.coverFallback} aria-hidden="true"><Clapperboard size={30} strokeWidth={1} /><b>{series.name}</b></span>
+    <span className={styles.coverFallback} aria-hidden="true"><Clapperboard size={30} strokeWidth={1} /><b>{seriesTitle(series)}</b></span>
     {video && !series.cover ? <PlaybackFrame className={styles.seriesFrame}
       src={mediaUrl(video.playbackUrl)} positionSeconds={video.durationSeconds * 0.1}
       poster={mediaUrl(video.thumbnail?.url ?? null)} />
@@ -96,9 +97,9 @@ export function WatchHomePage() {
             poster={mediaUrl(heroVideo?.thumbnail?.url ?? heroSeries.cover?.url ?? null)} />
           <div className={styles.heroContent}>
             <span className={styles.heroKicker}>{recentVideo ? "继续上次的故事" : "从这里开始"}</span>
-            <h2>{heroSeries.name}</h2>
+            <h2>{seriesTitle(heroSeries)}</h2>
             <div className={styles.heroMeta}>
-              {heroVideo ? <span>{episodeLabel(heroVideo.episodeOrder)}</span> : null}
+              {heroVideo ? <span>{episodeTitle(heroVideo.episodeOrder)}</span> : null}
               <span>{heroSeries.videoCount} 集</span>
               {recentVideo && recent ? <span>上次看到 {formatTimecode(recent.positionSeconds)}</span> : null}
             </div>
@@ -115,11 +116,12 @@ export function WatchHomePage() {
         </section>
       ) : null}
 
-      {error ? <p className={styles.homeError} role="alert">读取视频系列失败：{error.message}</p> : null}
-      {isLoading ? <p className={styles.homeEmpty} role="status">正在读取视频系列…</p> : null}
+      {error ? <p className={styles.homeError} role="alert"><Mascot mood="oops" size={56} /><span>读取视频系列失败：{error.message}</span></p> : null}
+      {isLoading ? <p className={styles.homeEmpty} role="status"><Mascot mood="seek" size={56} /><span>正在读取视频系列…</span></p> : null}
       {!isLoading && !error && series.length === 0 ? (
         <div className={styles.homeEmpty}>
-          {activeSource.kind === "public" ? "公开资料里还没有视频。" : "资料库里还没有视频。"}
+          <Mascot mood="puzzled" size={72} />
+          <span>{activeSource.kind === "public" ? "公开资料里还没有视频。" : "资料库里还没有视频。"}</span>
           {canUpload ? <Link to="/library">前往资料库上传视频</Link> : null}
         </div>
       ) : null}
@@ -129,16 +131,16 @@ export function WatchHomePage() {
           <section className={styles.seriesShelf} aria-label="选择视频系列">
             <div className={styles.shelfHeading}>
               <h2>视频系列 <small>{series.length} 部作品</small></h2>
-              <div className={styles.shelfControls}>
+              {shelfEdges.previous || shelfEdges.next ? <div className={styles.shelfControls}>
                 <button type="button" aria-label="上一组系列" aria-controls="watch-series-shelf" disabled={!shelfEdges.previous} onClick={() => scrollShelf(-1)}><ChevronLeft size={18} aria-hidden="true" /></button>
                 <button type="button" aria-label="下一组系列" aria-controls="watch-series-shelf" disabled={!shelfEdges.next} onClick={() => scrollShelf(1)}><ChevronRight size={18} aria-hidden="true" /></button>
-              </div>
+              </div> : null}
             </div>
             <div id="watch-series-shelf" className={styles.seriesCards} ref={shelfRef}>
               {series.map((item) => (
                 <Link key={item.seriesId} className={styles.seriesCard} style={{ textDecoration: "none" }} to={`/series/${encodeURIComponent(item.seriesId)}`}>
                   <SeriesArtwork series={item} />
-                  <span><strong>{item.name}</strong><small>{item.videoCount} 集 · 查看系列</small></span>
+                  <span><strong>{seriesTitle(item)}</strong><small>{item.videoCount} 集 · 查看系列</small></span>
                 </Link>
               ))}
             </div>

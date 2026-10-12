@@ -122,8 +122,8 @@ describe("SeriesPage", () => {
     expect(within(episodes).getAllByRole("listitem")).toHaveLength(3);
     expect(within(episodes).getAllByRole("link")).toHaveLength(1);
     expect(within(episodes).getByRole("link")).toHaveAttribute("href", "/watch/series-a/a-3");
-    expect(within(episodes).getByText("a-1.mp4")).toBeVisible();
-    expect(within(episodes).getByText("a-2.mp4")).toBeVisible();
+    expect(within(episodes).getByTitle("a-1.mp4")).toHaveTextContent("第 1 集");
+    expect(within(episodes).getByTitle("a-2.mp4")).toHaveTextContent("第 2 集");
     expect(screen.queryByRole("link", { name: "继续观看" })).not.toBeInTheDocument();
   });
 
@@ -154,47 +154,32 @@ describe("SeriesPage", () => {
     expect(screen.getByRole("region", { name: "系列选集" })).toBeVisible();
   });
 
-  it("expands supplied Markdown and asset images without claiming the series has no introduction", async () => {
+  it("keeps the model-facing background behind a collapsed manager section", async () => {
     mocks.getSeries.mockResolvedValue({ ...series, description: null, transcriptLanguageHint: "ja",
       importantExtraData: { format: "markdown", content: "## 高松灯\n\n![灯的立绘](asset://simg_tomori)\n\n乐队的**主唱**。" },
     });
     const user = userEvent.setup();
-    const originalBounds = HTMLElement.prototype.getBoundingClientRect;
-    const boundsMock = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      const bounds = originalBounds.call(this);
-      return this.getAttribute("aria-label") === "系列背景资料" ? { ...bounds, height: 500, bottom: bounds.top + 500 } : bounds;
-    });
-    try {
-      renderPage();
-      const expand = await screen.findByRole("button", { name: "展开背景介绍" });
-      expect(expand).toHaveAttribute("aria-expanded", "false");
-      expect(expand).toHaveAttribute("aria-controls", "series-background-content");
-      expect(screen.queryByText("还没有填写系列简介。")).not.toBeInTheDocument();
-      await user.click(expand);
-      expect(screen.getByRole("heading", { name: "高松灯", level: 2 })).toBeVisible();
-      expect(screen.getByText("主唱").tagName).toBe("STRONG");
-      expect(screen.getByRole("img", { name: "灯的立绘" })).toHaveAttribute("src", "/api/media/images/content?tenantId=local-default&imageId=simg_tomori");
-      expect(document.getElementById("series-background-content")).toContainElement(screen.getByRole("heading", { name: "高松灯" }));
-      expect(screen.queryByRole("button", { name: "编辑背景" })).not.toBeInTheDocument();
-      expect(screen.queryByText(/ASR 原文语言/)).not.toBeInTheDocument();
-      const collapse = screen.getByRole("button", { name: "收起背景介绍" });
-      expect(collapse).toHaveAttribute("aria-expanded", "true");
-      await user.click(collapse);
-      expect(screen.getByRole("button", { name: "展开背景介绍" })).toHaveAttribute("aria-expanded", "false");
-      expect(mocks.updateSeries).not.toHaveBeenCalled();
-    } finally {
-      boundsMock.mockRestore();
-    }
+    renderPage();
+    const toggle = await screen.findByText("解析用人物与背景资料");
+    expect(screen.getByText("还没有填写系列简介。")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "高松灯", level: 2, hidden: true })).not.toBeVisible();
+    await user.click(toggle);
+    expect(screen.getByRole("heading", { name: "高松灯", level: 2 })).toBeVisible();
+    expect(screen.getByText("主唱").tagName).toBe("STRONG");
+    expect(screen.getByRole("img", { name: "灯的立绘" })).toHaveAttribute("src", "/api/media/images/content?tenantId=local-default&imageId=simg_tomori");
+    expect(screen.queryByRole("button", { name: "编辑背景" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/ASR 原文语言/)).not.toBeInTheDocument();
+    expect(mocks.updateSeries).not.toHaveBeenCalled();
   });
 
-  it("shows both the existing description and background without duplicating the description", async () => {
+  it("shows the viewer description once and the background only after expanding", async () => {
     mocks.getSeries.mockResolvedValue({ ...series, importantExtraData: { format: "markdown", content: "## 故事背景\n\n猫曾经住在河岸边。" } });
+    const user = userEvent.setup();
     renderPage();
-    await screen.findByRole("heading", { name: "故事背景" });
+    await user.click(await screen.findByText("解析用人物与背景资料"));
     expect(screen.getAllByText(series.description!)).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "故事背景" })).toBeVisible();
     expect(screen.getByText("猫曾经住在河岸边。")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "展开背景介绍" })).not.toBeInTheDocument();
     expect(screen.queryByText("还没有填写系列简介。")).not.toBeInTheDocument();
     expect(mocks.updateSeries).not.toHaveBeenCalled();
   });
@@ -206,7 +191,7 @@ describe("SeriesPage", () => {
     const original = JSON.stringify(data);
     mocks.getSeries.mockResolvedValue({ ...series, description: null, importantExtraData: data });
     renderPage();
-    await screen.findByRole("region", { name: "系列背景资料" });
+    await userEvent.setup().click(await screen.findByText("解析用人物与背景资料"));
     if (format === "JSON") {
       expect(screen.getByRole("region", { name: "系列背景资料" }).querySelector("pre")?.textContent).toBe(text);
       expect(screen.queryByRole("heading", { name: "原始人物背景" })).not.toBeInTheDocument();
@@ -215,8 +200,7 @@ describe("SeriesPage", () => {
       expect(screen.getByText(text)).toBeVisible();
     }
     expect(JSON.stringify(data)).toBe(original);
-    expect(screen.queryByRole("button", { name: "展开背景介绍" })).not.toBeInTheDocument();
-    expect(screen.queryByText("还没有填写系列简介。")).not.toBeInTheDocument();
+    expect(screen.getByText("还没有填写系列简介。")).toBeVisible();
     expect(mocks.updateSeries).not.toHaveBeenCalled();
   });
 
@@ -224,7 +208,7 @@ describe("SeriesPage", () => {
     mocks.getSeries.mockResolvedValue({ ...series, description: " \n", importantExtraData: { format: "markdown", content: " \n\t" } });
     renderPage();
     expect(await screen.findByText("还没有填写系列简介。")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "展开背景介绍" })).not.toBeInTheDocument();
+    expect(screen.queryByText("解析用人物与背景资料")).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "系列背景资料" })).not.toBeInTheDocument();
     expect(mocks.updateSeries).not.toHaveBeenCalled();
   });

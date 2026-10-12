@@ -24,6 +24,7 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
   const { mode, updateSeries } = useWorkspace();
   const current = {
     ...readBackground(series.importantExtraData),
+    displayName: series.displayName ?? "",
     description: series.description ?? "",
     transcriptLanguageHint: series.transcriptLanguageHint ?? "",
   };
@@ -49,7 +50,8 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
     ...Array.from(document.content.matchAll(/asset:\/\/([A-Za-z0-9_-]+)/g), (match) => match[1]!),
     ...(editing ? Object.keys(assets) : []),
   ])];
-  const changed = draft.description.trim() !== baseline.description.trim()
+  const changed = draft.displayName.trim() !== baseline.displayName.trim()
+    || draft.description.trim() !== baseline.description.trim()
     || draft.transcriptLanguageHint.trim() !== baseline.transcriptLanguageHint.trim()
     || draft.format !== baseline.format
     || draft.content !== baseline.content;
@@ -138,6 +140,7 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
     if (busy || !changed || mode !== "live") return;
     setError(null);
     const changes: Omit<SeriesUpdateRequest, "tenantId"> = { seriesId: series.seriesId };
+    if (draft.displayName.trim() !== baseline.displayName.trim()) changes.displayName = draft.displayName.trim() || null;
     if (draft.description.trim() !== baseline.description.trim()) changes.description = draft.description.trim() || null;
     if (draft.transcriptLanguageHint.trim() !== baseline.transcriptLanguageHint.trim()) {
       changes.transcriptLanguageHint = draft.transcriptLanguageHint.trim() || null;
@@ -171,6 +174,7 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
         <form className={styles.backgroundForm} onSubmit={save} onKeyDown={(event) => {
           if (event.key === "Escape" && !saving) { event.preventDefault(); cancel(); }
         }}>
+          <label><span>显示名称</span><input className="field" value={draft.displayName} maxLength={255} disabled={busy} onChange={(event) => setDraft((value) => ({ ...value, displayName: event.target.value }))} placeholder={`留空则显示「${series.name}」`} /></label>
           <label><span>简介</span><input className="field" value={draft.description} disabled={busy} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} placeholder="简单介绍这个视频系列" /></label>
           <label><span>ASR 原文语言</span><input className="field" value={draft.transcriptLanguageHint} list={languageOptionsId} maxLength={64} disabled={busy} onChange={(event) => setDraft((value) => ({ ...value, transcriptLanguageHint: event.target.value }))} placeholder="例如：ja（日语）" /></label>
           <datalist id={languageOptionsId}><option value="ja">日语</option><option value="zh-Hans">简体中文</option><option value="en">英语</option><option value="ko">韩语</option></datalist>
@@ -201,6 +205,7 @@ export function SeriesBackgroundEditor({ series, readOnly = false }: { series: S
         </form>
       ) : (
         <>
+          {!readOnly && series.displayName ? <p className={styles.backgroundHint}>显示名称：{series.displayName}</p> : null}
           {!readOnly && series.description ? <p className={styles.seriesDescription}>{series.description}</p> : null}
           {!readOnly ? <p className={styles.backgroundHint}>ASR 原文语言：{series.transcriptLanguageHint ?? "未设置"}</p> : null}
           {document.format === "markdown" && document.content ? (

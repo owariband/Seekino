@@ -1,12 +1,15 @@
-import { ArrowUp, ChevronDown, History, LoaderCircle, MessageCircleMore, Play, Plus, ScanSearch, SlidersHorizontal, Trash2, X } from "lucide-react";
-import { forwardRef, type FormEvent, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
-import Markdown, { defaultUrlTransform } from "react-markdown";
+import { ArrowUp, ChevronDown, History, LoaderCircle, MessageCircleMore, Play, Plus, SlidersHorizontal, Trash2, TriangleAlert, X } from "lucide-react";
+import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
+import { Link, useInRouterContext } from "react-router";
 import remarkGfm from "remark-gfm";
 
 import { useWorkspace } from "../../app/workspace";
 import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, listAgentConversations, mediaUrl } from "../../api/client";
 import type { AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, EvidenceReference } from "../../api/contracts";
-import { clipText, episodeLabel, formatTimeRange } from "../../shared/format";
+import { clipText, episodeLabel, formatTimecode, formatTimeRange } from "../../shared/format";
+import { Mascot } from "../../shared/Mascot";
+import { useAuth } from "../auth/AuthProvider";
 import { AgentProgress } from "./AgentProgress";
 import { EvidencePlayer } from "./EvidencePlayer";
 import { explainHit, readableTranscript } from "./explain";
@@ -15,11 +18,16 @@ import styles from "./search.module.css";
 
 type SelectedMessageOptions = Required<AgentMessageRunOptions>;
 type MessageOptionOverrides = AgentMessageRunOptions;
+/** Dispatched on window to focus the standalone search composer (⌘K / Ctrl K). */
+export const FOCUS_SEARCH_EVENT = "seekino:focus-search";
+
 type SearchPageProps = {
   embedded?: boolean;
   initialSeriesId?: string;
   captureExtraContext?: () => Record<string, unknown> | null;
   onOpenVideo?: (target: { seriesId: string; videoId: string; startSeconds: number }) => void;
+  /** Seeks the episode being watched; enables clickable timestamps in answers. Milliseconds. */
+  onSeekCurrent?: (positionMs: number) => void;
 };
 
 export interface SearchPageHandle {
@@ -115,28 +123,70 @@ function conversationAccessibleName(conversation: AgentConversationView): string
   return `${conversation.title}，${conversationTime(conversation)}，编号 ${conversation.conversationId}`;
 }
 
+// "10分38秒" / "1小时2分3秒" / "10:38" / "01:02:03"; ratios like 16:9 do not match.
+const TIMESTAMP_PATTERN = /(?:(\d{1,2})\s*小时\s*)?(\d{1,3})\s*分(?:钟)?\s*(\d{1,2})\s*秒|(?<![\d:])(?:(\d{1,2}):)?(\d{1,3}):(\d{2})(?![\d:])/g;
+
+function timestampMs(match: RegExpMatchArray): number | null {
+  const [, hours, minutes, seconds, clockHours, clockMinutes, clockSeconds] = match;
+  const h = Number(hours ?? clockHours ?? 0);
+  const m = Number(minutes ?? clockMinutes);
+  const sec = Number(seconds ?? clockSeconds);
+  if (sec >= 60 || ((hours ?? clockHours) !== undefined && m >= 60)) return null;
+  return ((h * 60 + m) * 60 + sec) * 1000;
+}
+
+function linkTimestamps(children: ReactNode, onSeek: (positionMs: number) => void): ReactNode {
+  return Children.map(children, (child) => {
+    if (typeof child !== "string") return child;
+    const parts: ReactNode[] = [];
+    let cursor = 0;
+    for (const match of child.matchAll(TIMESTAMP_PATTERN)) {
+      const positionMs = timestampMs(match);
+      if (positionMs === null) continue;
+      parts.push(child.slice(cursor, match.index));
+      parts.push(<button key={match.index} type="button" className={styles.timeLink} onClick={() => onSeek(positionMs)} title={`跳转到 ${formatTimecode(positionMs)}`}>{match[0]}</button>);
+      cursor = match.index! + match[0].length;
+    }
+    if (!parts.length) return child;
+    parts.push(child.slice(cursor));
+    return parts;
+  });
+}
+
+const SeekContext = createContext<((positionMs: number) => void) | undefined>(undefined);
+
+function WithTimes({ children }: { children: ReactNode }) {
+  const onSeek = useContext(SeekContext);
+  return onSeek ? linkTimestamps(children, onSeek) : children;
+}
+
+// Stable component identities: inline overrides would remount the answer on every render.
+const answerComponents: Components = {
+  p: ({ children }) => <p><WithTimes>{children}</WithTimes></p>,
+  li: ({ children }) => <li><WithTimes>{children}</WithTimes></li>,
+  strong: ({ children }) => <strong><WithTimes>{children}</WithTimes></strong>,
+  em: ({ children }) => <em><WithTimes>{children}</WithTimes></em>,
+  td: ({ children }) => <td><WithTimes>{children}</WithTimes></td>,
+  a: ({ children, href, title }) => href ? <a href={href} title={title} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
+  img: ({ alt }) => <span className={styles.answerImageBlocked}>{alt ? `[图片：${alt}]` : "[图片]"}</span>,
+  table: ({ children }) => <div className={styles.answerTable}><table>{children}</table></div>,
+};
+
 function MarkdownAnswer({ markdown }: { markdown: string }) {
   return (
     <div className={styles.answerText}>
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        urlTransform={defaultUrlTransform}
-        components={{
-          a: ({ children, href, title }) => href ? <a href={href} title={title} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
-          img: ({ alt }) => <span className={styles.answerImageBlocked}>{alt ? `[图片：${alt}]` : "[图片]"}</span>,
-          table: ({ children }) => <div className={styles.answerTable}><table>{children}</table></div>,
-        }}
-      >{markdown}</Markdown>
+      <Markdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={defaultUrlTransform} components={answerComponents}>{markdown}</Markdown>
     </div>
   );
 }
 
 export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function SearchPage(
-  { embedded = false, initialSeriesId, captureExtraContext, onOpenVideo },
+  { embedded = false, initialSeriesId, captureExtraContext, onOpenVideo, onSeekCurrent },
   ref,
 ) {
   const { mode, displayMode, series, isLoading: workspaceLoading } = useWorkspace();
+  const { canManage } = useAuth();
+  const inRouter = useInRouterContext();
   const [requestedConversationId, setRequestedConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<AgentConversationView[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
@@ -183,6 +233,13 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
   useImperativeHandle(ref, () => ({
     focusComposer: () => composerRef.current?.focus({ preventScroll: true }),
   }), []);
+  useEffect(() => {
+    if (embedded) return;
+    const focus = () => composerRef.current?.focus({ preventScroll: true });
+    if ((window.history.state as { usr?: { focusComposer?: boolean } } | null)?.usr?.focusComposer) focus();
+    window.addEventListener(FOCUS_SEARCH_EVENT, focus);
+    return () => window.removeEventListener(FOCUS_SEARCH_EVENT, focus);
+  }, [embedded]);
   const { conversationId, messages, progress, loading, searching, error, clear: clearConversation, send } = useAgentConversation(requestedConversationId);
   const isSearchable = (status: string) => status === "READY";
   const initialSeries = initialSeriesId ? series.find((item) => item.seriesId === initialSeriesId) : null;
@@ -560,8 +617,8 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
           }}>
             {!messages.length && !loading ? (
               <div className={styles.welcome}>
-                <ScanSearch size={24} strokeWidth={1.4} aria-hidden="true" />
-                <p>可以聊天，也可以询问视频内容或查找资料。</p>
+                <Mascot size={embedded ? 72 : 96} />
+                <p>{embedded ? "看到哪里，问到哪里。回答里的时间点可以直接点击跳转。" : "描述记得的画面、台词或人物关系，一起把那一刻找回来。"}</p>
               </div>
             ) : null}
             {messages.map((message) => (
@@ -578,7 +635,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>未生成回答</p> : null}
                     {message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
                     {messageRenderBlocks(message).map((block, index, blocks) => {
-                      if (block.type === "markdown") return <MarkdownAnswer key={`markdown:${index}`} markdown={block.markdown} />;
+                      if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={onSeekCurrent}><MarkdownAnswer markdown={block.markdown} /></SeekContext.Provider>;
                       const hit = message.searchResult?.hits.find((item) => item.evidence.videoChunkId === block.videoChunkId);
                       if (!hit) return null;
                       const explanation = explainHit(hit);
@@ -626,17 +683,18 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     })}
                     {message.searchResult && !message.searchResult.hits.length ? (
                       <p className={styles.candidateEmpty}>
-                        {message.searchResult.retrievalTrace?.some((entry) => entry.resultCount > 0)
+                        <Mascot mood="puzzled" size={44} />
+                        <span>{message.searchResult.retrievalTrace?.some((entry) => entry.resultCount > 0)
                           ? "检索到了候选片段，但本次回答未附带可播放视频，请重试。"
-                          : "没有检索到可展示的视频片段，试试换个描述。"}
+                          : "没有检索到可展示的视频片段，试试换个描述。"}</span>
                       </p>
                     ) : null}
                   </div>
                 )}
               </article>
             ))}
-            {loading || (searching && !messages.some((message) => message.status === "PROCESSING")) ? <p className={styles.connectionState} role="status"><LoaderCircle size={15} className={styles.spinning} aria-hidden="true" />{loading ? "正在恢复会话…" : "正在连接助手…"}</p> : null}
-            {error && !messages.some((message) => message.status === "FAILED" && message.lastError?.message === error) ? <p ref={conversationFailureRef} className={styles.messageError} role="alert" tabIndex={-1}>{error}</p> : null}
+            {loading || (searching && !messages.some((message) => message.status === "PROCESSING")) ? <p className={styles.connectionState} role="status"><Mascot mood="seek" size={36} />{loading ? "正在恢复会话…" : "正在连接助手…"}</p> : null}
+            {error && !messages.some((message) => message.status === "FAILED" && message.lastError?.message === error) ? <p ref={conversationFailureRef} className={`${styles.messageError} ${styles.conversationError}`} role="alert" tabIndex={-1}><Mascot mood="oops" size={36} /><span>{error}</span></p> : null}
           </div>
 
           <div className={styles.composerArea}>
@@ -787,7 +845,11 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
             </div>
             {!scopeValid ? <p className={styles.messageError} role="alert">所选视频系列暂不可检索，请重新选择范围。</p> : null}
             {embedded && initialSeriesId && !workspaceLoading && initialSeries?.status !== "READY" ? (
-              <p className={styles.scopeNotice} role="status">当前系列暂不可检索；{selectedSeriesIds.length ? "目前选择的是其他视频系列。" : "未限定当前系列，视频检索将使用全部可检索系列。"}仍可继续聊天。</p>
+              <p className={styles.scopeNotice} role="status">
+                <span className={styles.scopeChip}>检索范围：{selectedSeriesIds.length ? selectedSeriesIds.map((id) => series.find((item) => item.seriesId === id)?.name ?? id).join("、") : "全部系列"}</span>
+                <span className={styles.scopeWarning}><TriangleAlert size={13} aria-hidden="true" />本系列未完成解析</span>
+                {canManage ? inRouter ? <Link to="/library">去解析</Link> : <a href="/library">去解析</a> : null}
+              </p>
             ) : null}
           </div>
         </section>

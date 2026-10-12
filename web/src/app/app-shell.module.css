@@ -19,7 +19,7 @@
   z-index: 60;
   top: 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   height: var(--app-header-height);
   align-items: center;
   gap: clamp(20px, 2.5vw, 48px);
@@ -32,11 +32,32 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  color: var(--teal-deep);
+  color: var(--brand-wordmark);
   text-decoration: none;
 }
-.brand img { width: 36px; height: 36px; border-radius: 8px; }
-.brand strong { font: 750 1.55rem/1 var(--sans); letter-spacing: -.045em; }
+.brand img { width: 40px; height: 40px; }
+.brand strong { font: 750 1.45rem/1 var(--sans); letter-spacing: -.035em; }
+
+.searchTrigger {
+  display: flex;
+  width: min(100%, 460px);
+  height: 42px;
+  align-items: center;
+  justify-self: center;
+  gap: 10px;
+  padding: 0 8px 0 14px;
+  color: var(--ink-faint);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface-raised);
+  font-size: .82rem;
+  text-decoration: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+.searchTrigger > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.searchTrigger kbd { padding: 3px 7px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; background: var(--surface-muted); font: 600 .66rem/1.2 var(--mono); }
+.searchTrigger:hover { color: var(--ink-soft); border-color: var(--line-strong); }
+.searchTrigger[aria-current="page"] { color: var(--teal-deep); border-color: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 14%, transparent); }
 
 .navigation { display: flex; height: 100%; min-width: 0; align-items: stretch; gap: clamp(4px, .7vw, 16px); }
 .navItem {
@@ -68,7 +89,7 @@
   gap: 8px;
   padding: 0 10px;
   color: var(--ink-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-small);
   background: transparent;
   text-decoration: none;
   cursor: pointer;
@@ -104,6 +125,7 @@
 .account label { display: grid; gap: 8px; color: var(--ink-soft); font-size: .72rem; }
 .account select { min-height: 42px; width: 100%; padding: 8px 10px; font-size: .78rem; }
 .account p { margin: 0; color: var(--red); font-size: .72rem; }
+.accountLinks { display: grid; gap: 2px; padding-top: 14px; border-top: 1px solid var(--line); }
 .accountLink { display: flex; min-height: 40px; align-items: center; gap: 9px; margin: 0 -8px; padding: 0 8px; color: var(--ink-soft); border-radius: 6px; font-size: .8rem; text-decoration: none; }
 .accountLink:hover, .accountLink[aria-current="page"] { color: var(--teal-deep); background: var(--teal-wash); }
 .accountLink:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
@@ -118,34 +140,38 @@
 @container app-primary (max-width: 1200px) and (min-width: 1101px) {
   .topbar { gap: 20px; padding-inline: 24px; }
   .navItem { padding-inline: 8px; font-size: .79rem; }
+  .searchTrigger kbd { display: none; }
   .headerActions { gap: 4px; }
   .uploadButton > span { display: none; }
 }
 
 @container app-primary (max-width: 1100px) {
-  .topbar, .content { --app-header-height: 112px; }
-  .topbar { grid-template-columns: 1fr auto; grid-template-rows: 64px 48px; column-gap: 16px; row-gap: 0; padding: 0 24px; }
-  .navigation { grid-column: 1 / -1; grid-row: 2; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin-inline: -24px; padding-inline: 24px; border-top: 1px solid var(--line); }
-  .navigation::-webkit-scrollbar { display: none; }
-  .navItem { gap: 6px; padding-inline: 15px; font-size: .78rem; }
+  .topbar, .content { --app-header-height: 64px; }
+  .topbar { gap: 14px; padding: 0 24px; }
+  .searchTrigger { width: min(100%, 360px); }
+  .searchTrigger kbd { display: none; }
+  .navItem { gap: 6px; padding-inline: 10px; font-size: .78rem; }
   .navItem svg { display: block; }
-  .headerActions { grid-column: 2; grid-row: 1; }
+  .headerActions { gap: 4px; }
+  .uploadButton > span { display: none; }
   .account { top: calc(100% + 11px); }
 }
 
 @container app-primary (max-width: 580px) {
   .topbar { column-gap: 8px; padding-inline: 16px; }
   .brand { gap: 7px; }
-  .brand img { width: 30px; height: 30px; }
-  .brand strong { font-size: 1.25rem; }
+  .brand img { width: 32px; height: 32px; }
+  .brand strong { font-size: 1.2rem; }
+  .searchTrigger { width: 40px; height: 40px; justify-content: center; padding: 0; }
+  .searchTrigger > span, .searchTrigger kbd { display: none; }
   .headerActions { gap: 1px; }
   .iconButton, .uploadButton { min-width: 36px; width: 36px; padding-inline: 7px; }
   .uploadButton > span { display: none; }
   .avatar { width: 34px; height: 34px; }
   .accountTrigger { min-width: 44px; padding-left: 4px; }
   .accountTrigger > svg { display: none; }
-  .navigation { margin-inline: -16px; padding-inline: 16px; }
-  .navItem { padding-inline: 12px; }
+  .navItem { padding-inline: 8px; }
+  .navItem span { display: none; }
   .account { right: 0; }
 }
 

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" role="img" aria-labelledby="seekino-side-title">
+  <title id="seekino-side-title">Seekino 鲸鲨吉祥物 · 侧面</title>
+  <!-- Side view (facing left). Same palette and layer ids as seekino-logo.svg. -->
+  <defs>
+    <clipPath id="side-body-clip">
+      <path d="M38 116C38 70 86 48 150 50C204 52 240 74 252 100C260 122 250 148 222 157C182 168 110 170 70 162C48 156 38 140 38 116Z"/>
+    </clipPath>
+  </defs>
+  <g id="seekino-side" fill="none" stroke="#0b3b33" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <g id="feet" fill="#fcfaf1">
+      <rect id="foot-back-left" x="92" y="150" width="16" height="26" rx="7" fill="#e6efe8"/>
+      <rect id="foot-back-right" x="190" y="146" width="16" height="26" rx="7" fill="#e6efe8"/>
+      <rect id="foot-left" x="68" y="152" width="18" height="30" rx="8"/>
+      <rect id="foot-right" x="166" y="154" width="18" height="30" rx="8"/>
+    </g>
+    <path id="tail" fill="#74c5ba" d="M244 98C262 90 280 72 292 52C299 80 296 104 286 116C296 132 300 150 297 166C282 150 264 134 244 126Z"/>
+    <path id="dorsal" fill="#74c5ba" d="M124 56C138 38 154 26 170 18C171 32 173 46 178 56Z"/>
+    <g id="body">
+      <path id="body-fill" fill="#74c5ba" stroke="none" d="M38 116C38 70 86 48 150 50C204 52 240 74 252 100C260 122 250 148 222 157C182 168 110 170 70 162C48 156 38 140 38 116Z"/>
+      <g clip-path="url(#side-body-clip)" stroke="none">
+        <path id="belly" fill="#fcfaf1" d="M28 112C64 108 116 118 168 126C208 132 238 132 264 124V200H28Z"/>
+        <path id="shade" fill="#349489" d="M244 90C258 116 252 146 222 162H270V80Z"/>
+      </g>
+      <path id="body-outline" d="M38 116C38 70 86 48 150 50C204 52 240 74 252 100C260 122 250 148 222 157C182 168 110 170 70 162C48 156 38 140 38 116Z"/>
+    </g>
+    <path id="fin" fill="#74c5ba" d="M116 130C126 146 140 156 162 162C154 150 152 140 150 130Z"/>
+    <g id="face">
+      <circle id="eye" cx="66" cy="98" r="5" fill="#0b3b33" stroke="none"/>
+      <path id="mouth" stroke-width="3.6" d="M46 116L100 119"/>
+    </g>
+  </g>
+</svg>

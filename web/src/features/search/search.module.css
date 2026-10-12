@@ -69,6 +69,8 @@
 .answerText li + li { margin-top: .28em; }
 .answerText blockquote { padding-left: 12px; color: var(--ink-soft); border-left: 2px solid var(--line-strong); }
 .answerText a { color: var(--teal-deep); text-decoration: underline; text-underline-offset: 3px; }
+.timeLink { display: inline; margin: 0 1px; padding: 0 5px; color: var(--teal-deep); border-radius: 5px; background: var(--teal-wash); box-shadow: inset 0 0 0 1px var(--line-strong); font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.timeLink:hover { color: var(--canvas); background: var(--teal-deep); }
 .answerText code { padding: .1em .35em; border-radius: 5px; background: var(--surface-muted); font: .86em/1.6 var(--mono); }
 .answerText pre { max-width: 100%; overflow-x: auto; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
 .answerText pre code { padding: 0; background: transparent; }
@@ -179,7 +181,7 @@
 .whyLine { display: flex; gap: 8px; align-items: flex-start; color: var(--ink-soft); }
 .whyLine svg { flex: 0 0 auto; margin-top: 3px; color: var(--teal-deep); }
 .whyLine span { font-size: .74rem; line-height: 1.65; overflow-wrap: anywhere; }
-.candidateEmpty { margin: 0; color: var(--ink-faint); font-size: .8rem; line-height: 1.6; }
+.candidateEmpty { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--ink-faint); font-size: .8rem; line-height: 1.6; }
 .resultWarnings { margin-bottom: 12px; color: var(--amber); font-size: .75rem; line-height: 1.6; }
 .resultWarnings p { margin: 4px 0; }
 
@@ -630,7 +632,12 @@
 .embeddedPage .scopeOptions { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; width: min(340px, 100cqw); max-width: none; }
 .embeddedPage .answerSettings { right: 0; left: auto; }
 .embeddedPage .keyboardHint { display: none; }
-.scopeNotice { margin: 6px 2px 0; color: var(--ink-soft); font-size: .68rem; line-height: 1.5; }
+.scopeNotice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 8px 2px 0; color: var(--ink-soft); font-size: .7rem; line-height: 1.5; }
+.scopeChip, .scopeWarning { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 9px; border-radius: 999px; }
+.scopeChip { color: var(--ink-soft); background: var(--surface-muted); }
+.scopeWarning { color: var(--amber); background: color-mix(in srgb, var(--amber) 12%, transparent); }
+.scopeNotice a { color: var(--teal-deep); font-weight: 600; text-underline-offset: 3px; }
+.conversationError { display: flex; align-items: center; gap: 10px; }
 
 @media (prefers-reduced-motion: reduce) {
   .spinning { animation: none; }

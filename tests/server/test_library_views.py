@@ -425,7 +425,17 @@ def test_background_edit_preserves_video_order_and_character_metadata(repository
     assert edited.description == "背景资料更新"
     assert edited.important_extra_data == {"format": "markdown", "content": "# 新背景"}
     assert edited.name == before.name
+    assert edited.display_name is None
     assert edited.character_bible == before.character_bible
+    titled = library.update_series(
+        report.series_id, tenant_id="local-default",
+        changes={"display_name": "  BanG Dream! It's MyGO!!!!!  "},
+    )
+    assert titled.display_name == "BanG Dream! It's MyGO!!!!!"
+    assert titled.name == before.name and titled.series_id == before.series_id
+    assert library.update_series(
+        report.series_id, tenant_id="local-default", changes={"display_name": "  "},
+    ).display_name is None
     assert [(video.video_id, video.episode_order, video.upload_sequence) for video in edited.videos] == [
         (video.video_id, video.episode_order, video.upload_sequence) for video in before.videos
     ]

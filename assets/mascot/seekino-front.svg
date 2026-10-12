@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 280" role="img" aria-labelledby="seekino-front-title">
+  <title id="seekino-front-title">Seekino 鲸鲨吉祥物 · 正面站立</title>
+  <!-- Front view, standing upright. Same palette and layer ids as seekino-logo.svg. -->
+  <defs>
+    <clipPath id="front-body-clip">
+      <path d="M120 38C178 38 202 96 202 160C202 222 170 250 120 250C70 250 38 222 38 160C38 96 62 38 120 38Z"/>
+    </clipPath>
+  </defs>
+  <g id="seekino-front" fill="none" stroke="#0b3b33" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <g id="feet" fill="#fcfaf1">
+      <rect id="foot-left" x="84" y="232" width="22" height="34" rx="10"/>
+      <rect id="foot-right" x="134" y="232" width="22" height="34" rx="10"/>
+    </g>
+    <path id="dorsal" fill="#74c5ba" d="M104 48C110 32 116 20 122 10C127 22 132 34 138 48Z"/>
+    <g id="body">
+      <path id="body-fill" fill="#74c5ba" stroke="none" d="M120 38C178 38 202 96 202 160C202 222 170 250 120 250C70 250 38 222 38 160C38 96 62 38 120 38Z"/>
+      <g clip-path="url(#front-body-clip)" stroke="none">
+        <path id="shade" fill="#349489" d="M184 80C204 120 206 196 172 252H220V60Z"/>
+        <path id="belly" fill="#fcfaf1" d="M46 114C66 94 174 94 194 114C200 170 186 236 120 254C54 236 40 170 46 114Z"/>
+      </g>
+      <path id="body-outline" d="M120 38C178 38 202 96 202 160C202 222 170 250 120 250C70 250 38 222 38 160C38 96 62 38 120 38Z"/>
+    </g>
+    <path id="fin-left" fill="#74c5ba" d="M44 146C30 156 22 170 18 186C32 186 42 180 48 172"/>
+    <path id="fin-right" fill="#74c5ba" d="M196 146C210 156 218 170 222 186C208 186 198 180 192 172"/>
+    <g id="face">
+      <g id="eyes" fill="#0b3b33" stroke="none">
+        <circle id="eye-left" cx="94" cy="122" r="5"/>
+        <circle id="eye-right" cx="146" cy="122" r="5"/>
+      </g>
+      <path id="mouth" stroke-width="3.6" d="M98 138H142"/>
+    </g>
+  </g>
+</svg>

@@ -86,6 +86,15 @@ export function episodeLabel(order: number): string {
   return `EP ${String(order).padStart(2, "0")}`;
 }
 
+/** Viewer-facing episode title; the source filename belongs in tooltips and management views. */
+export function episodeTitle(order: number): string {
+  return `第 ${order} 集`;
+}
+
+export function seriesTitle(series: { name: string; displayName?: string | null }): string {
+  return series.displayName?.trim() || series.name;
+}
+
 export function inferEpisodeOrder(filename: string, fallback: number): number {
   const stem = filename.replace(/\.[^.]+$/, "");
   const matches = [...stem.matchAll(/(?:ep(?:isode)?[\s._-]*)?(\d{1,3})/gi)];
