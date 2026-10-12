@@ -1,7 +1,8 @@
-import { Check, ChevronDown, CircleAlert, Clock3, LoaderCircle, MessageSquareText, ScanSearch, ShieldCheck } from "lucide-react";
+import { Check, ChevronDown, Clock3, LoaderCircle, MessageSquareText, ScanSearch, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { AgentMessageTiming, AgentMessageView, AnswerPhase, DisplayMode } from "../../api/contracts";
+import { Mascot, type MascotMood } from "../../shared/Mascot";
 import type { AgentProgressEvent } from "./useAgentConversation";
 import styles from "./search.module.css";
 
@@ -10,6 +11,13 @@ const phases: Record<AnswerPhase, { label: string; detail: string; icon: typeof 
   RETRIEVING: { label: "查找资料", detail: "查找回答问题所需的资料。", icon: ScanSearch },
   EVALUATING: { label: "核验资料", detail: "检查资料是否支持回答。", icon: ShieldCheck },
   RESPONDING: { label: "生成回答", detail: "整理回答和已查到的资料。", icon: MessageSquareText },
+};
+
+const phaseMoods: Record<AnswerPhase, MascotMood> = {
+  QUEUED: "seek",
+  RETRIEVING: "seek",
+  EVALUATING: "puzzled",
+  RESPONDING: "swim",
 };
 
 type VisibleStage = {
@@ -74,14 +82,18 @@ export function AgentProgress({ message, steps, displayMode = "release" }: { mes
     ? status
     : `${status} · ${processing ? "已用" : "总耗时"} ${formatDuration(elapsedMs)}`;
 
+  // The mascot only accompanies live or failed answers; finished history stays quiet.
+  const mood: MascotMood | null = failed ? "oops" : processing ? phaseMoods[currentPhase ?? "QUEUED"] : null;
+  const mascot = mood ? <Mascot className={styles.progressMascot} mood={mood} size={32} /> : null;
+
   if (displayMode !== "debug") {
-    return <div className={styles.progressCard} role="status" aria-label="回答状态"><p className={failed ? styles.messageError : styles.progressNote}>{timingStatus}</p></div>;
+    return <div className={styles.progressCard} role="status" aria-label="回答状态" data-live={Boolean(mascot)}>{mascot}<p className={failed ? styles.messageError : styles.progressNote}>{timingStatus}</p></div>;
   }
 
   return (
     <details className={styles.progressCard} open={processing}>
       <summary aria-label="回答过程">
-        {processing ? <LoaderCircle size={15} className={styles.spinning} aria-hidden="true" /> : failed ? <CircleAlert size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}
+        {mascot ?? <Check size={15} aria-hidden="true" />}
         <span>回答过程</span><small className={failed ? styles.messageError : undefined}>{timingStatus}</small>
         <ChevronDown size={14} className={styles.progressChevron} aria-hidden="true" />
       </summary>

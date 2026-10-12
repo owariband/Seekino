@@ -87,12 +87,20 @@
 .messageError:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
 .welcome { display: grid; justify-items: center; gap: 16px; margin: auto; padding: 32px 0; color: var(--ink-faint); text-align: center; }
 .welcome p { margin: 0; color: var(--ink-soft); font-size: .95rem; }
+.examples { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 560px; }
+.examples button { min-height: 34px; padding: 0 14px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); font-size: .8rem; cursor: pointer; transition: color 160ms ease, border-color 160ms ease; }
+.examples button:hover:not(:disabled) { color: var(--teal-deep); border-color: var(--teal); }
+.examples button:disabled { opacity: .5; cursor: not-allowed; }
 .connectionState { display: flex; width: min(100%, 880px); align-self: center; align-items: center; gap: 9px; margin: 0; color: var(--ink-faint); font-size: .8rem; }
 
 .progressCard { margin: 0 0 20px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--line) 55%, transparent); border-radius: 16px; background: var(--surface-raised); }
 .progressCard summary { display: flex; min-height: 58px; align-items: center; gap: 10px; padding: 17px 20px; cursor: pointer; list-style: none; font-size: .85rem; }
 .progressCard summary::-webkit-details-marker { display: none; }
 .progressCard summary > svg:first-child { flex: 0 0 auto; color: var(--ink-faint); }
+.progressCard[data-live="true"] { display: flex; align-items: center; gap: 4px; padding-left: 14px; }
+.progressCard[data-live="true"] > p { padding-left: 4px; }
+.progressMascot { flex: 0 0 auto; }
+.embeddedPage .progressCard[data-live="true"] { padding-left: 0; }
 .progressCard small { margin-left: auto; color: var(--ink-faint); font-size: .73rem; }
 .progressChevron { flex: 0 0 auto; color: var(--ink-faint); }
 .progressCard[open] .progressChevron { transform: rotate(180deg); }

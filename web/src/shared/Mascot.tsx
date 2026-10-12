@@ -8,25 +8,30 @@ import styles from "./mascot.module.css";
  * seek: looks left and right — loading, searching, answering.
  * puzzled: head tilt with a question mark — empty states and no results.
  * oops: double blink with a sweat drop — recoverable errors.
+ * swim: quick swim with bubbles — composing an answer.
+ * hop: one squash-and-hop, then rests — brand entrance.
+ * still: no motion; blinks once when a surrounding link is hovered.
  */
-export type MascotMood = "idle" | "seek" | "puzzled" | "oops" | "still";
+export type MascotMood = "idle" | "seek" | "puzzled" | "oops" | "swim" | "hop" | "still";
 
 const BODY = "M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z";
 
 /** Layered Seekino whale shark; geometry mirrors assets/mascot/seekino-logo.svg. */
-export function Mascot({ mood = "idle", size = 96, title, className }: {
+export function Mascot({ mood = "idle", size = 96, title, className, delayed = false }: {
   mood?: MascotMood;
   size?: number;
+  /** Fade in after 300ms so fast loads never flash the mascot. */
+  delayed?: boolean;
   /** Omit for decorative use next to visible text. */
   title?: string;
   className?: string;
 }) {
   const clipId = `seekino-body-${useId().replace(/:/g, "")}`;
   return (
-    <svg className={clsx(styles.mascot, className)} data-mood={mood} viewBox="0 0 256 256" width={size} height={size}
+    <svg className={clsx(styles.mascot, className)} data-mood={mood} data-delayed={delayed || undefined} viewBox="0 0 256 256" width={size} height={size}
       role={title ? "img" : undefined} aria-label={title} aria-hidden={title ? undefined : true} focusable="false">
       <defs><clipPath id={clipId}><path d={BODY} /></clipPath></defs>
-      <g fill="none" stroke="var(--mascot-ink)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+      <g className={styles.root} fill="none" stroke="var(--mascot-ink)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
         <g fill="var(--mascot-belly)">
           <rect x="63" y="197" width="19" height="26" rx="8.5" />
           <rect x="157" y="199" width="19" height="29" rx="8.5" />
@@ -55,6 +60,11 @@ export function Mascot({ mood = "idle", size = 96, title, className }: {
         {mood === "puzzled" ? <g className={styles.question} strokeWidth="5">
           <path d="M28 40C28 26 52 24 52 40C52 50 40 50 40 62" />
           <circle cx="40" cy="76" r="2.5" fill="var(--mascot-ink)" />
+        </g> : null}
+        {mood === "swim" ? <g className={styles.bubbles} fill="var(--mascot-bubble)" strokeWidth="3">
+          <circle cx="16" cy="112" r="5" />
+          <circle cx="6" cy="124" r="3.5" />
+          <circle cx="22" cy="128" r="4" />
         </g> : null}
         {mood === "oops" ? <path className={styles.drop} fill="var(--mascot-drop)" strokeWidth="3" d="M32 70C24 82 22 88 22 92C22 98 27 102 32 102C37 102 42 98 42 92C42 88 40 82 32 70Z" /> : null}
       </g>

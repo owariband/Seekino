@@ -8,6 +8,7 @@ import { useWorkspace } from "../../app/workspace";
 import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, listAgentConversations, mediaUrl } from "../../api/client";
 import type { AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, EvidenceReference } from "../../api/contracts";
 import { clipText, episodeLabel, formatTimecode, formatTimeRange } from "../../shared/format";
+import { useReportAssistantBusy } from "../../shared/assistantActivity";
 import { Mascot } from "../../shared/Mascot";
 import { useAuth } from "../auth/AuthProvider";
 import { AgentProgress } from "./AgentProgress";
@@ -20,6 +21,9 @@ type SelectedMessageOptions = Required<AgentMessageRunOptions>;
 type MessageOptionOverrides = AgentMessageRunOptions;
 /** Dispatched on window to focus the standalone search composer (⌘K / Ctrl K). */
 export const FOCUS_SEARCH_EVENT = "seekino:focus-search";
+
+const EXAMPLE_QUESTIONS = ["下雨天有人在门口等待的画面", "乐队第一次站上舞台演出", "两个人在天台吵架的那一段"];
+const EMBEDDED_EXAMPLE_QUESTIONS = ["刚才发生了什么？", "现在画面里的人是谁？", "前面有类似的场景吗？"];
 
 type SearchPageProps = {
   embedded?: boolean;
@@ -241,6 +245,13 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
     return () => window.removeEventListener(FOCUS_SEARCH_EVENT, focus);
   }, [embedded]);
   const { conversationId, messages, progress, loading, searching, error, clear: clearConversation, send } = useAgentConversation(requestedConversationId);
+  useReportAssistantBusy(searching || messages.some((message) => message.status === "PROCESSING"));
+  const pendingExampleRef = useRef(false);
+  useEffect(() => {
+    if (!pendingExampleRef.current) return;
+    pendingExampleRef.current = false;
+    composerRef.current?.form?.requestSubmit();
+  }, [query]);
   const isSearchable = (status: string) => status === "READY";
   const initialSeries = initialSeriesId ? series.find((item) => item.seriesId === initialSeriesId) : null;
   const scopeValid = selectedSeriesIds.every((id) => series.some((item) => item.seriesId === id && isSearchable(item.status)));
@@ -617,8 +628,14 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
           }}>
             {!messages.length && !loading ? (
               <div className={styles.welcome}>
-                <Mascot size={embedded ? 72 : 96} />
+                <Mascot size={embedded ? 88 : 140} />
                 <p>{embedded ? "看到哪里，问到哪里。回答里的时间点可以直接点击跳转。" : "描述记得的画面、台词或人物关系，一起把那一刻找回来。"}</p>
+                <div className={styles.examples} aria-label="试试这样问">
+                  {(embedded ? EMBEDDED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS).map((example) => <button key={example} type="button" disabled={mode !== "live" || !conversationId} onClick={() => {
+                    pendingExampleRef.current = true;
+                    setQuery(example);
+                  }}>{example}</button>)}
+                </div>
               </div>
             ) : null}
             {messages.map((message) => (
@@ -693,7 +710,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                 )}
               </article>
             ))}
-            {loading || (searching && !messages.some((message) => message.status === "PROCESSING")) ? <p className={styles.connectionState} role="status"><Mascot mood="seek" size={36} />{loading ? "正在恢复会话…" : "正在连接助手…"}</p> : null}
+            {loading || (searching && !messages.some((message) => message.status === "PROCESSING")) ? <p className={styles.connectionState} role="status"><Mascot mood="seek" size={36} delayed />{loading ? "正在恢复会话…" : "正在连接助手…"}</p> : null}
             {error && !messages.some((message) => message.status === "FAILED" && message.lastError?.message === error) ? <p ref={conversationFailureRef} className={`${styles.messageError} ${styles.conversationError}`} role="alert" tabIndex={-1}><Mascot mood="oops" size={36} /><span>{error}</span></p> : null}
           </div>
 

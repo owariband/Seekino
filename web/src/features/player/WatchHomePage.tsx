@@ -117,7 +117,7 @@ export function WatchHomePage() {
       ) : null}
 
       {error ? <p className={styles.homeError} role="alert"><Mascot mood="oops" size={56} /><span>读取视频系列失败：{error.message}</span></p> : null}
-      {isLoading ? <p className={styles.homeEmpty} role="status"><Mascot mood="seek" size={56} /><span>正在读取视频系列…</span></p> : null}
+      {isLoading ? <p className={styles.homeEmpty} role="status"><Mascot mood="seek" size={56} delayed /><span>正在读取视频系列…</span></p> : null}
       {!isLoading && !error && series.length === 0 ? (
         <div className={styles.homeEmpty}>
           <Mascot mood="puzzled" size={72} />

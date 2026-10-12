@@ -312,6 +312,18 @@ describe("Search assistant presentation", () => {
     expect(screen.getByText("当前播放位置尚未就绪，请稍后重试")).toHaveAttribute("role", "alert");
   });
 
+  it("sends an example question with one click from the empty conversation", async () => {
+    renderPage(assistantMessage("占位"));
+    cleanup();
+    mocks.useAgentConversation.mockReturnValue({
+      conversationId: "conversation-1", messages: [], progress: {}, loading: false, searching: false, error: null, send: mocks.send,
+    });
+    render(<SearchPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "乐队第一次站上舞台演出" }));
+    expect(mocks.send).toHaveBeenCalledWith("乐队第一次站上舞台演出", [], null, {});
+  });
+
   it("turns answer timestamps into seek buttons for the episode being watched", async () => {
     const onSeekCurrent = vi.fn();
     renderPage(assistantMessage("当前停在 **10分38秒** 左右，片尾在 01:02:03；画面比例 16:9。"), [series], {

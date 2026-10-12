@@ -35,7 +35,7 @@
   color: var(--brand-wordmark);
   text-decoration: none;
 }
-.brand img { width: 40px; height: 40px; }
+.brandMark { width: 40px; height: 40px; }
 .brand strong { font: 750 1.45rem/1 var(--sans); letter-spacing: -.035em; }
 
 .searchTrigger {
@@ -160,7 +160,7 @@
 @container app-primary (max-width: 580px) {
   .topbar { column-gap: 8px; padding-inline: 16px; }
   .brand { gap: 7px; }
-  .brand img { width: 32px; height: 32px; }
+  .brandMark { width: 32px; height: 32px; }
   .brand strong { font-size: 1.2rem; }
   .searchTrigger { width: 40px; height: 40px; justify-content: center; padding: 0; }
   .searchTrigger > span, .searchTrigger kbd { display: none; }

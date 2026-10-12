@@ -39,7 +39,7 @@ export function SeriesPage() {
 
   return <main ref={pageRef} className={`page ${styles.page}`}>
     {!seriesId ? <p className={styles.state} role="alert"><Mascot mood="puzzled" size={64} />系列地址无效。</p>
-      : seriesQuery.isPending ? <p className={styles.state} role="status"><Mascot mood="seek" size={64} />正在读取视频系列…</p>
+      : seriesQuery.isPending ? <p className={styles.state} role="status"><Mascot mood="seek" size={64} delayed />正在读取视频系列…</p>
       : seriesQuery.isError ? <div className={styles.state}><Mascot mood="oops" size={64} /><p role="alert">读取视频系列失败：{errorMessage(seriesQuery.error)}</p><button className="button-secondary" type="button" onClick={() => void seriesQuery.refetch()}>重试</button><Link to="/watch">返回首页</Link></div>
       : series ? <>
         <section className={styles.hero} aria-label="系列介绍">

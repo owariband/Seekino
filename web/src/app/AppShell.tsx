@@ -16,6 +16,8 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 
 import { FOCUS_SEARCH_EVENT } from "../features/search/SearchPage";
 import { useUploads } from "../features/uploads/UploadProvider";
+import { useAssistantBusy } from "../shared/assistantActivity";
+import { Mascot } from "../shared/Mascot";
 import { useAuth } from "../features/auth/AuthProvider";
 import { errorMessage } from "../api/client";
 import { useTheme } from "./theme";
@@ -76,6 +78,7 @@ export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
+  const assistantBusy = useAssistantBusy();
   const { activeCount, overallProgress, openDialog } = useUploads();
   const { accountIdentity, canUpload, canManage, openLogin, sources, selectSource } = useAuth();
   const signedIn = accountIdentity && !accountIdentity.isGuest;
@@ -115,7 +118,7 @@ export function AppShell() {
       <div className={styles.primary}>
       <header className={styles.topbar} aria-label="全站导航">
         <NavLink className={styles.brand} to="/watch" aria-label="Seekino 首页">
-          <img src="/assets/seekino-logo.svg" alt="" /><strong>Seekino</strong>
+          <Mascot className={styles.brandMark} mood={assistantBusy ? "seek" : "hop"} size={40} /><strong>Seekino</strong>
         </NavLink>
         <nav className={styles.navigation} aria-label="主导航">
           {visibleNavigation.map(({ to, label, icon: Icon }) => (

@@ -4,13 +4,14 @@
   --mascot-belly: #fcfaf1;
   --mascot-ink: var(--brand-ink, #0b3b33);
   --mascot-drop: #bfe6ee;
+  --mascot-bubble: #e6f5f1;
   display: block;
   flex: 0 0 auto;
   overflow: visible;
 }
 
 .mascot g, .mascot path, .mascot circle { transform-box: fill-box; }
-.float { transform-origin: 50% 100%; }
+.root, .float { transform-origin: 50% 100%; }
 .tilt { transform-origin: 50% 100%; }
 .tail { transform-origin: 10% 95%; }
 .finLeft { transform-origin: 100% 50%; }
@@ -40,6 +41,21 @@
 .mascot[data-mood="oops"] .drop { animation: mascot-drop 2.8s ease-in infinite; }
 .mascot[data-mood="oops"] .tilt { transform: rotate(-3deg); }
 
+.mascot[data-mood="swim"] .float { animation: mascot-bob 1.2s ease-in-out infinite; }
+.mascot[data-mood="swim"] .tail { animation: mascot-wag .6s ease-in-out infinite; }
+.mascot[data-mood="swim"] .finLeft { animation: mascot-flap-left .6s ease-in-out infinite; }
+.mascot[data-mood="swim"] .finRight { animation: mascot-flap-right .6s ease-in-out infinite; }
+.bubbles circle { animation: mascot-bubble 2.4s ease-out infinite; opacity: 0; }
+.bubbles circle:nth-child(2) { animation-delay: .8s; }
+.bubbles circle:nth-child(3) { animation-delay: 1.6s; }
+
+.mascot[data-mood="hop"] .root { animation: mascot-hop .9s cubic-bezier(.3, .7, .4, 1) .15s 1 both; }
+
+/* Brand links blink the resting mascot on hover or keyboard focus. */
+:where(a:hover, a:focus-visible) > .mascot .eyes circle { animation: mascot-blink-once .45s ease-in-out 1; }
+
+.mascot[data-delayed] { animation: mascot-appear .2s ease-out .3s both; }
+
 @keyframes mascot-bob { 50% { transform: translateY(-5px); } }
 @keyframes mascot-wag { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(7deg); } }
 @keyframes mascot-flap-left { 0%, 100% { transform: rotate(8deg); } 50% { transform: rotate(-10deg); } }
@@ -50,6 +66,16 @@
 @keyframes mascot-look { 0%, 12%, 100% { transform: translateX(-9px); } 38%, 62% { transform: translateX(9px); } 88% { transform: translateX(-9px); } }
 @keyframes mascot-puzzle { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(-4deg); } }
 @keyframes mascot-question { 0%, 100% { transform: translateY(0) rotate(-8deg); opacity: 1; } 50% { transform: translateY(-6px) rotate(6deg); opacity: .85; } }
+@keyframes mascot-blink-once { 50% { transform: scaleY(.1); } }
+@keyframes mascot-bubble { 0% { transform: translateY(0); opacity: 0; } 20% { opacity: 1; } 100% { transform: translateY(-46px); opacity: 0; } }
+@keyframes mascot-hop {
+  0% { transform: none; }
+  18% { transform: translateY(2px) scale(1.08, .88); }
+  45% { transform: translateY(-14px) scale(.96, 1.05); }
+  72% { transform: translateY(1px) scale(1.05, .94); }
+  100% { transform: none; }
+}
+@keyframes mascot-appear { from { opacity: 0; } to { opacity: 1; } }
 @keyframes mascot-drop {
   0%, 20% { transform: translateY(-6px); opacity: 0; }
   35% { transform: translateY(0); opacity: 1; }
@@ -58,5 +84,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mascot *, .mascot { animation: none !important; }
+  .mascot * { animation: none !important; }
+  .bubbles { display: none; }
 }

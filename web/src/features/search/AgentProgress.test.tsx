@@ -18,6 +18,20 @@ const steps: AgentProgressEvent[] = ["RETRIEVING", "EVALUATING", "RETRIEVING", "
 }));
 
 describe("Agent execution timeline", () => {
+  it("pairs a live answer with the mascot mood for its phase and drops it once finished", () => {
+    const mood = () => document.querySelector("svg[data-mood]")?.getAttribute("data-mood") ?? null;
+    const view = render(<AgentProgress message={{ ...message, phase: "RETRIEVING" }} steps={[]} />);
+    expect(mood()).toBe("seek");
+    view.rerender(<AgentProgress message={message} steps={[]} />);
+    expect(mood()).toBe("puzzled");
+    view.rerender(<AgentProgress message={{ ...message, phase: "RESPONDING" }} steps={[]} />);
+    expect(mood()).toBe("swim");
+    view.rerender(<AgentProgress message={{ ...message, status: "FAILED", phase: null }} steps={[]} />);
+    expect(mood()).toBe("oops");
+    view.rerender(<AgentProgress message={{ ...message, status: "COMPLETED", phase: null }} steps={[]} />);
+    expect(mood()).toBeNull();
+  });
+
   it("shows only generic status and persisted total duration in release", () => {
     const view = render(<AgentProgress message={{ ...message, timing: {
       startedAt: Date.now(), totalDurationMs: 42_298,

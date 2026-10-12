@@ -229,7 +229,7 @@ export function WatchPage() {
   };
 
   if (!seriesId) return <main className={`page ${styles.page}`}><p role="alert">视频地址无效。</p></main>;
-  if (seriesQuery.isPending) return <main className={`page ${styles.page}`}><p className={styles.pageState} role="status"><Mascot mood="seek" size={64} />正在读取视频系列…</p></main>;
+  if (seriesQuery.isPending) return <main className={`page ${styles.page}`}><p className={styles.pageState} role="status"><Mascot mood="seek" size={64} delayed />正在读取视频系列…</p></main>;
   if (seriesQuery.isError) return <main className={`page ${styles.page}`}><p className={styles.pageState} role="alert"><Mascot mood="oops" size={64} />读取视频系列失败：{errorMessage(seriesQuery.error)}</p></main>;
   if (!series) return <main className={`page ${styles.page}`}><p className={styles.pageState} role="alert"><Mascot mood="puzzled" size={64} />视频系列不存在。</p></main>;
 
