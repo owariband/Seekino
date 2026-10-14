@@ -72,9 +72,9 @@ export function formatTimeText(value: string): string {
   return value.replace(MEDIA_TIMESTAMP_PATTERN, (...match) => {
     const milliseconds = timestampMilliseconds(match);
     return milliseconds === null ? match[0] : formatTimecode(milliseconds);
-  }).replace(/\[(\d+)\s*,\s*(\d+)\)/g, (match, start, end) => {
+  }).replace(/((?:视频)?片段(?:范围)?[：:\s]*|时间范围[：:\s]*)\[(\d+)\s*,\s*(\d+)\)/g, (match, label, start, end) => {
     return Number.isSafeInteger(Number(start)) && Number.isSafeInteger(Number(end)) && Number(end) > Number(start)
-      ? formatTimeRange(Number(start), Number(end)) : match;
+      ? `${label}${formatTimeRange(Number(start), Number(end))}` : match;
   }).replace(/(?<![\d.])(\d+)\s*毫秒/g, (match, milliseconds) => {
     return Number.isSafeInteger(Number(milliseconds)) ? formatTimecode(Number(milliseconds)) : match;
   });

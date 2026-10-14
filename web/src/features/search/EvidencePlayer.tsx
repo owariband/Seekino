@@ -245,12 +245,12 @@ export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: 
                 <p>{isDebug ? explanation.summary : formatTimeText(explanation.summary)}</p>
               </div>
             </section>
-            {explanation.limitations.length > 0 ? (
+            {isDebug && explanation.limitations.length > 0 ? (
               <section className={styles.limitations}>
                 <CircleAlert size={16} />
                 <div>
                   <strong>核验时留意</strong>
-                  {explanation.limitations.map((item) => <p key={item}>{isDebug ? item : formatTimeText(item)}</p>)}
+                  {explanation.limitations.map((item) => <p key={item}>{item}</p>)}
                 </div>
               </section>
             ) : null}

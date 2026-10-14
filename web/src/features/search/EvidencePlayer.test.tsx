@@ -165,13 +165,15 @@ describe("Evidence range playback", () => {
 
   it("hides raw evidence in release even when PPE was showing context before the mode changes", () => {
     const selected = nextHit({ videoCompact: "[12000,15000) 原始 Timeline" });
-    selected.selectionReason = { ...hit.selectionReason, summary: "00:12.345–00:14.999：两人见面。" };
+    selected.selectionReason = { ...hit.selectionReason, summary: "00:12.345–00:14.999：两人见面。", limitations: ["缺少带原视频时间位置的已登记关键帧"] };
     const view = render(<EvidencePlayer hit={selected} playbackRange={playbackRange} displayMode="debug" />);
+    expect(screen.getByText("缺少带原视频时间位置的已登记关键帧")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "前后语境" }));
     expect(screen.getByText(selected.evidence.videoCompact)).toBeInTheDocument();
     view.rerender(<EvidencePlayer hit={selected} playbackRange={playbackRange} displayMode="release" />);
     expect(screen.getByText("00:12–00:14：两人见面。")).toBeInTheDocument();
     expect(screen.queryByText(/Timeline|分析窗口/)).not.toBeInTheDocument();
+    expect(screen.queryByText("缺少带原视频时间位置的已登记关键帧")).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "证据详情" })).not.toBeInTheDocument();
   });
 
