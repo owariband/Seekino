@@ -56,6 +56,7 @@ describe("format helpers", () => {
 
   it("formats explicit times in display text without treating other numbers as timestamps", () => {
     expect(formatTimeText("第13集 09:23.400–09:57.500；01:02:03.004；10分38.456秒")).toBe("第13集 09:23–09:57；62:03；10:38");
+    expect(formatTimeText("See 09:23.400.")).toBe("See 09:23.");
     expect(formatTimeText("[540000,546800) 回忆发生在599300毫秒")).toBe("09:00–09:06 回忆发生在09:59");
     expect(formatTimeText("16:9，2026 年，价格 12.50，编号 599300，错误时间 01:60:00")).toBe("16:9，2026 年，价格 12.50，编号 599300，错误时间 01:60:00");
   });

@@ -56,7 +56,7 @@ export function formatTimeRange(startSeconds: number, endSeconds: number): strin
 }
 
 // Recognize explicit media timestamps, including fractional seconds; ratios such as 16:9 do not match.
-export const MEDIA_TIMESTAMP_PATTERN = /(?:(\d{1,2})\s*小时\s*)?(\d{1,3})\s*分(?:钟)?\s*(\d{1,2}(?:\.\d{1,3})?)\s*秒|(?<![\d:])(?:(\d{1,2}):)?(\d{1,3}):(\d{2}(?:\.\d{1,3})?)(?![\d:.])/g;
+export const MEDIA_TIMESTAMP_PATTERN = /(?:(\d{1,2})\s*小时\s*)?(\d{1,3})\s*分(?:钟)?\s*(\d{1,2}(?:\.\d{1,3})?)\s*秒|(?<![\d:])(?:(\d{1,2}):)?(\d{1,3}):(\d{2}(?:\.\d{1,3})?)(?![\d:]|\.\d)/g;
 
 export function timestampMilliseconds(match: readonly (string | undefined)[]): number | null {
   const [, hours, minutes, seconds, clockHours, clockMinutes, clockSeconds] = match;
