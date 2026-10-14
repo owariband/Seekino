@@ -104,7 +104,7 @@ describe("local Token usage page", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("shows precise API estimates and source grouping while excluding Codex subscription costs", async () => {
+  it("shows rounded API estimates and source grouping while excluding Codex subscription costs", async () => {
     const cost = { currency: "CNY" as const, estimatedAmount: "0.12345678901234567890", knownAmount: "0.12345678901234567890",
       pricedCallCount: 1, unpricedCallCount: 0, excludedCallCount: 1 };
     const excluded = { ...cost, estimatedAmount: "0", knownAmount: "0", pricedCallCount: 0 };
@@ -118,7 +118,7 @@ describe("local Token usage page", () => {
     expect(screen.getByText("endpoint-B")).toBeInTheDocument();
     expect(screen.getAllByText("model-A")).toHaveLength(2);
     const summary = within(screen.getByLabelText("模型消耗概况"));
-    expect(summary.getByText("¥0.12345678901234567890")).toBeInTheDocument();
+    expect(summary.getByText("¥0.1235")).toBeInTheDocument();
     const models = within(screen.getByRole("region", { name: "模型用量明细" }));
     expect(models.getByText("不适用（Codex订阅）")).toBeInTheDocument();
     expect(models.getByText("未记录")).toBeInTheDocument();
@@ -128,7 +128,7 @@ describe("local Token usage page", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "任务与 Chat" }));
     const runs = within(screen.getByRole("region", { name: "任务与 Chat 明细" }));
-    expect(runs.getByText("¥0.12345678901234567890")).toBeInTheDocument();
+    expect(runs.getByText("¥0.1235")).toBeInTheDocument();
     expect(runs.getByText("不适用（Codex订阅）")).toBeInTheDocument();
   });
 

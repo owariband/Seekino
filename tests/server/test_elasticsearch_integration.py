@@ -232,7 +232,7 @@ def _indexing_case(tmp_path, store):
         repository.commit_interval_refinement(
             refine, **_refinement_inputs(repository, refine, now=None), interval_content={"summary": "unchanged"}, member_updates={},
         )
-        index_lease = queue.claim_interval_index("index", lease_duration=timedelta(minutes=10))
+        index_lease = queue.claim_chunk_index("index", lease_duration=timedelta(minutes=10))
         assert index_lease is not None
         encoder = EncoderContract(
             provider="ark", model=config["models"]["embedding"]["model"],
@@ -548,11 +548,13 @@ def test_real_es_rejects_late_content_in_the_same_generation(isolated_store):
     assert [hit.content_version for hit in hits] == [2]
 
 
-def test_real_es_coordinator_recovers_partial_bulk_without_reparsing(indexing_case, monkeypatch):
+def test_real_es_coordinator_retries_only_the_failed_chunk_without_reparsing(indexing_case, monkeypatch):
     case = indexing_case
     store = case.store
-    snapshot = case.repository.load_interval_indexing_snapshot(case.index_lease)
-    good, bad = snapshot.chunks
+    good = case.repository.load_chunk_indexing_snapshot(case.index_lease).chunk
+    failed_lease = case.queue.claim_chunk_index("index-second", lease_duration=timedelta(minutes=10))
+    assert failed_lease is not None
+    bad = case.repository.load_chunk_indexing_snapshot(failed_lease).chunk
     original_source, original_bulk = store._document_source, store.bulk_upsert
     bulk_calls = []
 
@@ -568,20 +570,19 @@ def test_real_es_coordinator_recovers_partial_bulk_without_reparsing(indexing_ca
 
     monkeypatch.setattr(store, "_document_source", reject_second)
     monkeypatch.setattr(store, "bulk_upsert", record_bulk)
+    case.coordinator.index_chunk(case.index_lease)
     with pytest.raises(ElasticsearchBulkWriteError) as caught:
-        case.coordinator.index_interval(case.index_lease)
+        case.coordinator.index_chunk(failed_lease)
     assert set(caught.value.failures) == {document_id(case.task_id, bad.video_chunk_id)}
-    keys = [(case.task_id, chunk.video_chunk_id) for chunk in snapshot.chunks]
+    keys = [(case.task_id, chunk.video_chunk_id) for chunk in (good, bad)]
     state = store.inspect(keys)
     assert state[keys[0]].present and not state[keys[1]].present
     with case.factory() as session:
         assert session.get(VideoParseTask, case.task_id).status != "COMPLETE"
-        interval_id = case.index_lease.interval_parse_task_id
-        assert session.get(IntervalParseTask, interval_id).status == "INDEXING"
-        assert all(
-            session.get(ChunkParseTask, child).status == "COMPLETE"
-            for child in case.prepared.chunk_parse_task_ids
-        )
+        interval_id = case.prepared.interval_parse_task_ids[0]
+        assert session.get(IntervalParseTask, interval_id).status == "COMPLETE"
+        assert session.get(ChunkParseTask, good.chunk_parse_task_id).status == "COMPLETE"
+        assert session.get(ChunkParseTask, bad.chunk_parse_task_id).status == "RUNNING"
         before = [
             (item.id, item.version, item.content, item.detail["scope"])
             for item in session.scalars(
@@ -596,20 +597,21 @@ def test_real_es_coordinator_recovers_partial_bulk_without_reparsing(indexing_ca
     assert case.embedder.query_calls == 0
 
     monkeypatch.setattr(store, "_document_source", original_source)
-    assert case.queue.retry_interval(
-        case.index_lease, error="one ES item rejected", retry_at=datetime.now(UTC),
+    assert case.queue.retry_chunk(
+        failed_lease, error="one ES item rejected", retry_at=datetime.now(UTC),
     )
-    recovered = case.queue.claim_interval_index("recovery", lease_duration=timedelta(minutes=10))
-    assert recovered is not None and recovered.lease_version > case.index_lease.lease_version
-    case.coordinator.index_interval(recovered)
+    recovered = case.queue.claim_chunk_index("recovery", lease_duration=timedelta(minutes=10))
+    assert recovered is not None and recovered.lease_version > failed_lease.lease_version
+    assert recovered.phase == 3 and recovered.chunk_parse_task_id == bad.chunk_parse_task_id
+    case.coordinator.index_chunk(recovered)
     assert [[item.video_chunk_id for item in batch] for batch in bulk_calls] == [
-        [good.video_chunk_id, bad.video_chunk_id], [bad.video_chunk_id],
+        [good.video_chunk_id], [bad.video_chunk_id], [bad.video_chunk_id],
     ]
     assert case.embedder.text_calls == case.embedder.video_calls == 2
-    assert store.verify_ready(bulk_calls[0])
+    assert store.verify_ready([bulk_calls[0][0], bulk_calls[2][0]])
     assert case.repository.aggregate_task(case.video_lease).status == "COMPLETE"
     with case.factory() as session:
-        assert session.get(IntervalParseTask, recovered.interval_parse_task_id).status == "COMPLETE"
+        assert session.get(IntervalParseTask, interval_id).status == "COMPLETE"
         after = [
             (item.id, item.version, item.content, item.detail["scope"])
             for item in session.scalars(
@@ -639,7 +641,10 @@ def test_real_es_delete_reconcile_fences_an_immediately_late_writer(indexing_cas
         return original_bulk(items, refresh=refresh)
 
     monkeypatch.setattr(store, "bulk_upsert", record_documents)
-    case.coordinator.index_interval(case.index_lease)
+    case.coordinator.index_chunk(case.index_lease)
+    other_chunk = case.queue.claim_chunk_index("index-second", lease_duration=timedelta(minutes=10))
+    assert other_chunk is not None
+    case.coordinator.index_chunk(other_chunk)
     assert case.repository.aggregate_task(case.video_lease).status == "COMPLETE"
     other = _document(
         series_id=case.series_id, video_id=str(uuid4()), chunk_id=str(uuid4()),

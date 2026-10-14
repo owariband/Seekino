@@ -7,7 +7,7 @@ import { getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
 import type { SeriesSummary } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
 import { useAuth } from "../auth/AuthProvider";
-import { episodeTitle, formatTimecode, seriesTitle } from "../../shared/format";
+import { episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
 import { readWatchHistory } from "./playbackProgress";
 import { PlaybackFrame } from "./PlaybackFrame";
@@ -35,7 +35,7 @@ function SeriesArtwork({ series }: { series: SeriesSummary }) {
   return <span className={styles.seriesCover} ref={containerRef}>
     <span className={styles.coverFallback} aria-hidden="true"><Clapperboard size={30} strokeWidth={1} /><b>{seriesTitle(series)}</b></span>
     {video && !series.cover ? <PlaybackFrame className={styles.seriesFrame}
-      src={mediaUrl(video.playbackUrl)} positionSeconds={video.durationSeconds * 0.1}
+      src={mediaUrl(video.playbackUrl)} positionSeconds={previewFramePosition(video.durationSeconds)}
       poster={mediaUrl(video.thumbnail?.url ?? null)} />
       : series.cover ? <img key={series.cover.url} src={mediaUrl(series.cover.url) ?? undefined} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
   </span>;

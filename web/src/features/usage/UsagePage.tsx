@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { getUsageOverview, shouldRetryApiRequest, TENANT_ID } from "../../api/client";
 import type { UsageOverviewVO, UsageTotals } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
-import { formatTokens } from "../../shared/format";
+import { formatMoneyCny, formatTokens } from "../../shared/format";
 import styles from "./usage.module.css";
 
 const displayTokens = (value: number | null) => value === null ? "—" : formatTokens(value);
@@ -16,7 +16,7 @@ const displayApiCost = (cost: UsageTotals["cost"], truncated: boolean) => {
   if (cost.pricedCallCount === 0 && cost.unpricedCallCount > 0) return "未计价";
   const subtotal = truncated || cost.unpricedCallCount > 0 || cost.estimatedAmount === null;
   const amount = subtotal ? cost.knownAmount : cost.estimatedAmount;
-  return amount === null ? "未计价" : `¥${amount}${subtotal ? "（小计）" : ""}`;
+  return amount === null ? "未计价" : `${formatMoneyCny(amount)}${subtotal ? "（小计）" : ""}`;
 };
 
 const operationLabels: Record<string, string> = {

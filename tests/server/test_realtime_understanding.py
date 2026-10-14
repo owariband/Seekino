@@ -198,8 +198,14 @@ def test_base_deadline_does_not_cancel_persistent_job(realtime):
     assert evidence.content_version == 1 and realtime.runtime.base_calls == [target.chunk_parse_task_id]
 
 
-def test_running_claim_and_batch_capacity_are_shared_across_workers(realtime):
+def test_running_claim_and_parse_capacity_are_shared_across_workers(realtime):
     context = _context(realtime)
+    with realtime.factory.begin() as session:
+        parent = session.get(VideoParseTask, context.video_parse_task_id)
+        parent.parse_config = {
+            **parent.parse_config, "batch_max_size": 1,
+            "execution": {**parent.parse_config["execution"], "parse_concurrency": 3},
+        }
     leases = [realtime.queue.claim_realtime_chunk(target.chunk_parse_task_id, f"worker-{index}", lease_duration=timedelta(seconds=2))
               for index, target in enumerate(context.targets)]
     assert all(leases)
@@ -210,9 +216,13 @@ def test_running_claim_and_batch_capacity_are_shared_across_workers(realtime):
 
 def test_failed_on_demand_chunk_does_not_block_another_missing_chunk(realtime):
     context = _context(realtime)
+    with realtime.factory.begin() as session:
+        parent = session.get(VideoParseTask, context.video_parse_task_id)
+        parent.parse_config = {
+            **parent.parse_config,
+            "execution": {**parent.parse_config["execution"], "max_retry_count": 0},
+        }
     lease = realtime.queue.claim_realtime_chunk(context.targets[0].chunk_parse_task_id, "failing", lease_duration=timedelta(seconds=2))
-    # Simulate the last allowed retry with the same true fencing token.
-    lease = replace(lease, max_retry_count=0)
     assert realtime.queue.retry_chunk(lease, error="recognition failed", retry_at=now_utc())
     with realtime.factory() as session:
         parent = session.get(VideoParseTask, context.video_parse_task_id)
@@ -381,7 +391,8 @@ def test_derived_failures_do_not_enter_cache_and_different_event_loops_share_suc
     assert len(realtime.runtime.derived_calls) == 2
 
 
-def test_realtime_gateway_call_bounds_primary_and_fallback_by_remaining_deadline():
+@pytest.mark.parametrize("fallback_succeeds", [True, False])
+def test_realtime_gateway_call_preserves_fallback_and_propagates_its_result(fallback_succeeds):
     runtime = VideoParseRuntimeService.__new__(VideoParseRuntimeService)
     primary = default_video_parse_v2_config().models.understanding
     binding = primary.model_copy(update={"fallback": FallbackModelConfig(
@@ -389,12 +400,51 @@ def test_realtime_gateway_call_bounds_primary_and_fallback_by_remaining_deadline
     )})
     calls = []
     def invoke(selected, _inputs, **_kwargs):
-        calls.append(selected.request_timeout_seconds)
-        if len(calls) == 1:
+        calls.append(selected)
+        # The Gateway owns the primary/fallback switch inside this one call.
+        assert selected.fallback == binding.fallback
+        try:
             time.sleep(0.03)
             raise ContentFilterError("blocked primary")
-        return ContextSummary(summary="valid result")
+        except ContentFilterError:
+            time.sleep(0.02)
+            if not fallback_succeeds:
+                raise ContentFilterError("blocked fallback")
+            return ContextSummary(summary="valid result")
     runtime._invoke_multimodal = invoke
-    result = asyncio.run(runtime.generate_realtime(binding, [], schema_name="summary", result_type=ContextSummary,
-                                                  deadline=time.monotonic() + 0.2, check_control=lambda: None))
-    assert result.summary == "valid result" and 0 < calls[1] < calls[0] <= 0.2
+    operation = runtime.generate_realtime(
+        binding, [], schema_name="summary", result_type=ContextSummary,
+        deadline=time.monotonic() + 0.2, check_control=lambda: None,
+    )
+    if fallback_succeeds:
+        assert asyncio.run(operation).summary == "valid result"
+    else:
+        with pytest.raises(ContentFilterError, match="blocked fallback"):
+            asyncio.run(operation)
+    assert len(calls) == 1 and 0 < calls[0].request_timeout_seconds <= 0.2
+
+
+def test_realtime_gateway_primary_and_fallback_share_one_runtime_deadline():
+    from threading import Event
+
+    runtime = VideoParseRuntimeService.__new__(VideoParseRuntimeService)
+    binding = default_video_parse_v2_config().models.understanding
+    exited = Event()
+
+    def invoke(_selected, _inputs, **_kwargs):
+        try:
+            # A Gateway/provider that keeps running cannot extend the caller's
+            # deadline. Its actual exit remains independently observable.
+            time.sleep(0.12)
+            return ContextSummary(summary="too late")
+        finally:
+            exited.set()
+
+    runtime._invoke_multimodal = invoke
+    with pytest.raises(TimeoutError):
+        asyncio.run(runtime.generate_realtime(
+            binding, [], schema_name="summary", result_type=ContextSummary,
+            deadline=time.monotonic() + 0.04, check_control=lambda: None,
+        ))
+    assert not exited.is_set()
+    assert exited.wait(timeout=1)

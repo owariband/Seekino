@@ -31,8 +31,8 @@ from gateway.embedding import EmbeddingResult, SparseEmbeddingResult
 
 from ..model.dto.jobDTO import (
     IndexableChunkState,
-    IntervalIndexingSnapshot,
-    IntervalParseLease,
+    ChunkIndexingSnapshot,
+    ChunkParseLease,
 )
 from ..repository.video_parse import INDEX_EMBEDDINGS_DETAIL_KEY
 from ..storage.elasticsearch import (
@@ -45,13 +45,13 @@ from .video_parse_media import MediaLeaseIdentity, VideoParseMediaService
 
 
 class VideoParseIndexCoordinatorRepository(Protocol):
-    def load_interval_indexing_snapshot(
-        self, lease: IntervalParseLease, *, now=None,
-    ) -> IntervalIndexingSnapshot: ...
+    def load_chunk_indexing_snapshot(
+        self, lease: ChunkParseLease, *, now=None,
+    ) -> ChunkIndexingSnapshot: ...
 
     def save_index_embeddings(
         self,
-        lease: IntervalParseLease,
+        lease: ChunkParseLease,
         chunk_parse_task_id: str,
         content_version: int,
         representations: Mapping[str, Any],
@@ -60,10 +60,11 @@ class VideoParseIndexCoordinatorRepository(Protocol):
         now=None,
     ) -> None: ...
 
-    def complete_interval_indexing(
+    def complete_chunk_indexing(
         self,
-        lease: IntervalParseLease,
-        indexed_versions: Mapping[str, int],
+        lease: ChunkParseLease,
+        content_version: int,
+        index_generation: int,
         *,
         now=None,
     ) -> object: ...
@@ -78,7 +79,7 @@ class MultimodalChunkEmbedder(Protocol):
 
 
 class VideoParseIndexCoordinationError(RuntimeError):
-    """The current Interval could not make every released Chunk query-visible."""
+    """The current Chunk could not be published at its required version."""
 
 
 class VideoParseIndexCoordinator:
@@ -122,126 +123,93 @@ class VideoParseIndexCoordinator:
         self._check_active = check_active or (lambda: None)
         self.contract = contract
 
-    def index_interval(self, lease: IntervalParseLease) -> object:
-        """Index released members, prove visibility, then complete the Interval."""
+    def index_chunk(self, lease: ChunkParseLease) -> object:
+        """Publish one leased Chunk and prove its exact query-visible version."""
 
         self._check_active()
-        snapshot = self._repository.load_interval_indexing_snapshot(lease)
+        snapshot = self._repository.load_chunk_indexing_snapshot(lease)
+        if snapshot.target_index_generation != self.contract.index_generation:
+            raise VideoParseIndexCoordinationError("index contract differs from the task target generation")
+        chunk = snapshot.chunk
+        if (lease.phase != 3 or lease.chunk_parse_task_id != chunk.chunk_parse_task_id
+                or lease.video_parse_task_id != snapshot.video_parse_task_id
+                or lease.video_chunk_id != chunk.video_chunk_id):
+            raise VideoParseIndexCoordinationError("index snapshot differs from the Chunk execution")
         self._check_active()
-        keys = [
-            (snapshot.video_parse_task_id, chunk.video_chunk_id)
-            for chunk in snapshot.chunks
-        ]
-        stored = self._store.inspect(keys)
-        if set(stored) != set(keys):
-            raise VideoParseIndexCoordinationError(
-                "Elasticsearch inspection omitted an expected Chunk"
+        key = (snapshot.video_parse_task_id, chunk.video_chunk_id)
+        stored = self._store.inspect([key])
+        if set(stored) != {key}:
+            raise VideoParseIndexCoordinationError("Elasticsearch inspection omitted the expected Chunk")
+        state = stored[key]
+        current = self._same_stored_version(state, snapshot, chunk)
+        if state.present and (state.index_generation or 0, state.content_version or 0) > (
+            snapshot.target_index_generation, chunk.content_version,
+        ):
+            raise VideoParseIndexCoordinationError("Elasticsearch already contains a newer index version")
+        self._check_active()
+        if current:
+            expected = {
+                "tenant_id": chunk.tenant_id, "series_id": chunk.series_id,
+                "video_id": chunk.video_id, "parse_task_id": snapshot.video_parse_task_id,
+                "video_chunk_id": chunk.video_chunk_id, "content_version": chunk.content_version,
+                "index_generation": snapshot.target_index_generation,
+                "chunk_start_seconds": chunk.start_seconds, "chunk_end_seconds": chunk.end_seconds,
+            }
+            semantic_required = any(
+                event["start_seconds"] < chunk.end_seconds and event["end_seconds"] > chunk.start_seconds
+                for event in chunk.content["timeline"]
             )
-        self._check_active()
-        documents = []
-        current_versions = []
-        for chunk in snapshot.chunks:
-            state = stored[(snapshot.video_parse_task_id, chunk.video_chunk_id)]
-            current = self._same_stored_version(state, snapshot, chunk)
-            if state.present and (
-                state.index_generation or 0, state.content_version or 0
-            ) > (self.contract.index_generation, chunk.content_version):
-                raise VideoParseIndexCoordinationError(
-                    "Elasticsearch already contains a newer index version"
-                )
-            if current:
-                expected = {
-                    "tenant_id": chunk.tenant_id,
-                    "series_id": chunk.series_id,
-                    "video_id": chunk.video_id,
-                    "parse_task_id": snapshot.video_parse_task_id,
-                    "video_chunk_id": chunk.video_chunk_id,
-                    "content_version": chunk.content_version,
-                    "index_generation": self.contract.index_generation,
-                    "chunk_start_seconds": chunk.start_seconds,
-                    "chunk_end_seconds": chunk.end_seconds,
-                }
-                semantic_required = any(
-                    event["start_seconds"] < chunk.end_seconds
-                    and event["end_seconds"] > chunk.start_seconds
-                    for event in chunk.content["timeline"]
-                )
-                if not self._store.is_current(
-                    expected, semantic_required=semantic_required,
-                    sparse_required=self.contract.sparse_encoder is not None,
-                ):
-                    raise VideoParseIndexCoordinationError(
-                        "current Elasticsearch version is not query-visible or complete"
-                    )
-                current_versions.append((expected, semantic_required))
-                receipt = ChunkIndexReceipt(
-                    parse_task_id=snapshot.video_parse_task_id,
-                    video_chunk_id=chunk.video_chunk_id,
-                    content_version=chunk.content_version,
-                    index_generation=self.contract.index_generation,
-                ).as_dict()
-                if (not _cached_representations(chunk.content_detail, receipt=receipt)
-                        or self.contract.sparse_encoder is not None):
-                    representations = {}
-                    if self.contract.sparse_encoder is not None:
-                        representations["sparse"] = {
-                            "channel": "sparse",
-                            "weights": dict(state.sparse_token_weights or ()),
-                        }
-                    self._save_representations(
-                        lease, chunk, representations, receipt=receipt,
-                    )
-                continue
-            documents.append(self._build_document(lease, snapshot, chunk, state))
-        pending = [
-            document
-            for document in documents
-            if not self._store.is_ready([document])
-        ]
-        if pending:
+            if not self._store.is_current(
+                expected, semantic_required=semantic_required,
+                sparse_required=self.contract.sparse_encoder is not None,
+            ):
+                raise VideoParseIndexCoordinationError("current Elasticsearch version is not query-visible or complete")
+            receipt = ChunkIndexReceipt(
+                parse_task_id=snapshot.video_parse_task_id,
+                video_chunk_id=chunk.video_chunk_id,
+                content_version=chunk.content_version,
+                index_generation=snapshot.target_index_generation,
+            ).as_dict()
+            if (not _cached_representations(chunk.content_detail, receipt=receipt)
+                    or self.contract.sparse_encoder is not None):
+                representations = {}
+                if self.contract.sparse_encoder is not None:
+                    representations["sparse"] = {
+                        "channel": "sparse", "weights": dict(state.sparse_token_weights or ()),
+                    }
+                self._save_representations(lease, chunk, representations, receipt=receipt)
             self._check_active()
-            try:
-                self._store.bulk_upsert(pending, refresh="wait_for")
-            except (ValueError, ElasticsearchIndexSchemaError):
-                raise
-            except Exception:
-                # A lost bulk response is reconciled by stored identity/version.
+            if not self._store.is_current(
+                expected, semantic_required=semantic_required,
+                sparse_required=self.contract.sparse_encoder is not None,
+            ):
+                raise VideoParseIndexCoordinationError("Elasticsearch current version changed before completion")
+        else:
+            document = self._build_document(lease, snapshot, chunk, state)
+            if not self._store.is_ready([document]):
                 self._check_active()
-                exact = self._store.inspect_exact(pending)
-                expected_ids = {
-                    document_id(item.parse_task_id, item.video_chunk_id)
-                    for item in pending
-                }
-                if set(exact) != expected_ids or not all(exact.values()):
+                try:
+                    self._store.bulk_upsert([document], refresh="wait_for")
+                except (ValueError, ElasticsearchIndexSchemaError):
                     raise
+                except Exception:
+                    self._check_active()
+                    exact = self._store.inspect_exact([document])
+                    expected_id = document_id(document.parse_task_id, document.video_chunk_id)
+                    if exact != {expected_id: True}:
+                        raise
             self._check_active()
-            if not self._store.verify_ready(documents):
-                raise VideoParseIndexCoordinationError(
-                    "Elasticsearch documents are durable but not query-visible"
-                )
-        elif documents and not self._store.verify_ready(documents):
-            raise VideoParseIndexCoordinationError(
-                "Elasticsearch documents changed after the readiness inspection"
-            )
-
-        if any(not self._store.is_current(
-            expected, semantic_required=semantic_required,
-            sparse_required=self.contract.sparse_encoder is not None,
-        ) for expected, semantic_required in current_versions):
-            raise VideoParseIndexCoordinationError(
-                "Elasticsearch current version changed before completion"
-            )
-        indexed_versions = {
-            chunk.chunk_parse_task_id: chunk.content_version
-            for chunk in snapshot.chunks
-        }
+            if not self._store.verify_ready([document]):
+                raise VideoParseIndexCoordinationError("Elasticsearch document is not query-visible at the expected version")
         self._check_active()
-        return self._repository.complete_interval_indexing(lease, indexed_versions)
+        return self._repository.complete_chunk_indexing(
+            lease, chunk.content_version, snapshot.target_index_generation,
+        )
 
     def _build_document(
         self,
-        lease: IntervalParseLease,
-        snapshot: IntervalIndexingSnapshot,
+        lease: ChunkParseLease,
+        snapshot: ChunkIndexingSnapshot,
         chunk: IndexableChunkState,
         stored: StoredDocumentState,
     ) -> VideoChunkIndexDocument:
@@ -256,9 +224,9 @@ class VideoParseIndexCoordinator:
         source_video = self._media_resolver(chunk.source_media_ref)
         media_identity = MediaLeaseIdentity(
             snapshot.video_parse_task_id,
-            snapshot.interval_parse_task_id,
+            chunk.chunk_parse_task_id,
             lease.lease_version,
-            execution_kind="interval",
+            execution_kind="chunk",
         )
         with self._media_service.prepare_video_segment(
             media_identity,
@@ -377,7 +345,7 @@ class VideoParseIndexCoordinator:
         request: EmbeddingRequest,
         stored: StoredDocumentState,
         *,
-        snapshot: IntervalIndexingSnapshot,
+        snapshot: ChunkIndexingSnapshot,
         chunk: IndexableChunkState,
     ) -> EmbeddingArtifact | None:
         if not self._same_stored_version(stored, snapshot, chunk):
@@ -392,7 +360,7 @@ class VideoParseIndexCoordinator:
             return None
 
     def _same_stored_version(
-        self, stored: StoredDocumentState, snapshot: IntervalIndexingSnapshot,
+        self, stored: StoredDocumentState, snapshot: ChunkIndexingSnapshot,
         chunk: IndexableChunkState,
     ) -> bool:
         if not stored.present:
@@ -421,7 +389,7 @@ class VideoParseIndexCoordinator:
 
     def _save_representations(
         self,
-        lease: IntervalParseLease,
+        lease: ChunkParseLease,
         chunk: IndexableChunkState,
         representations: Mapping[str, Any],
         *,

@@ -489,10 +489,10 @@ describe("application shell", () => {
     expect(navigation.querySelector("[aria-current]")).toBeNull();
     expect(within(navigation).queryByRole("link", { name: "视频观看" })).not.toBeInTheDocument();
 
-    const searchLink = within(screen.getByRole("banner", { name: "全站导航" })).getByRole("link", { name: "搜索名场面" });
-    await user.click(searchLink);
+    const banner = screen.getByRole("banner", { name: "全站导航" });
+    await user.click(within(banner).getByRole("link", { name: "搜索名场面" }));
     expect(await screen.findByRole("heading", { name: "Seekino 助手", level: 1 })).toBeInTheDocument();
-    expect(searchLink).toHaveAttribute("aria-current", "page");
+    expect(within(banner).queryByRole("link", { name: "搜索名场面" })).not.toBeInTheDocument();
     expect(within(navigation).queryByRole("link", { name: "视频观看" })).not.toBeInTheDocument();
   });
 
@@ -539,7 +539,7 @@ describe("application shell", () => {
       expect(readVideoProgress(playableVideo.videoId)?.positionSeconds).toBe(45_125);
       expect(await screen.findByRole("progressbar", { name: "上次观看进度" })).toHaveAttribute("value", "45125");
       const seriesHero = screen.getByRole("region", { name: "系列介绍" });
-      expect(within(seriesHero).getByText("已看至 00:45.13 / 02:00")).toBeInTheDocument();
+      expect(within(seriesHero).getByText("已看至 00:45 / 02:00")).toBeInTheDocument();
       const preview = seriesHero.querySelector<HTMLVideoElement>("video")!;
       Object.defineProperty(preview, "duration", { configurable: true, value: 120 });
       fireEvent.loadedMetadata(preview);

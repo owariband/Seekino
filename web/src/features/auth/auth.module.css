@@ -32,7 +32,7 @@
 }
 
 .dialog header { display: flex; justify-content: space-between; gap: 14px; }
-.dialog h2 { margin: 0; font: 400 1.8rem/1.2 var(--display); }
+.dialog h2 { margin: 0; font: 600 1.8rem/1.2 var(--display); }
 .dialog header p { color: var(--ink-faint); font-size: .8rem; line-height: 1.6; }
 .dialog form, .dialog label { display: grid; gap: 10px; }
 .dialog form { gap: 16px; margin-top: 12px; }

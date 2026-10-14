@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Clapperboard, ListVideo, MessageCircle, PanelRightClose, Play, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clapperboard, ListVideo, MessageCircle, Play, X } from "lucide-react";
 import { type CSSProperties, type Dispatch, type KeyboardEvent, type PointerEvent, type ReactNode, type SetStateAction, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -6,7 +6,7 @@ import { Link, useLocation, useNavigate, useOutletContext, useParams } from "rea
 
 import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
 import type { WatchPanelLayout } from "../../app/AppShell";
-import { episodeLabel, episodeTitle, formatTimecode, seriesTitle } from "../../shared/format";
+import { episodeLabel, episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
 import { SearchPage, type SearchPageHandle } from "../search/SearchPage";
 import { VideoPlayer, type VideoPlayerHandle } from "./VideoPlayer";
@@ -235,7 +235,7 @@ export function WatchPage() {
 
   const headerActions = !pageFullscreen ? document.getElementById("watch-header-actions") : null;
   const panelToggle = <button ref={panelToggleRef} className={styles.panelToggle} type="button" onClick={() => { if (panelOpen) closePanel(); else focusChat(); }} aria-expanded={panelOpen} aria-controls="watch-side-panel" aria-label={panelOpen ? "收起观看侧栏" : "打开观看侧栏"} title={panelOpen ? "收起对话" : "与 Seekino 对话"}>
-    {panelOpen ? <PanelRightClose size={21} aria-hidden="true" /> : <MessageCircle size={21} aria-hidden="true" />}
+    <MessageCircle size={21} aria-hidden="true" />
   </button>;
 
   return (
@@ -279,7 +279,7 @@ export function WatchPage() {
 
         <div className={styles.panelHeader}><strong>边看边聊</strong><button type="button" onClick={closePanel} aria-label="关闭对话面板"><X size={20} aria-hidden="true" /></button></div>
         <div className={styles.sideTabs} role="tablist" aria-label="观看侧栏内容">
-          <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={focusChat}><MessageCircle size={15} aria-hidden="true" />Chat</button>
+          <button type="button" role="tab" id="watch-chat-tab" aria-controls="watch-chat-panel" aria-selected={panelTab === "chat"} onClick={focusChat}><MessageCircle size={15} aria-hidden="true" />聊天</button>
           <button type="button" role="tab" id="watch-episodes-tab" aria-controls="watch-episodes-panel" aria-selected={panelTab === "episodes"} onClick={() => setPanelTab("episodes")}><ListVideo size={15} aria-hidden="true" />选集</button>
         </div>
         <div
@@ -332,7 +332,7 @@ export function WatchPage() {
                 <span className={styles.nextPreview} aria-hidden="true">
                   <Clapperboard size={24} strokeWidth={1} />
                   {episode.thumbnail ? <img src={mediaUrl(episode.thumbnail.url) ?? undefined} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />
-                    : episode.playbackStatus === "READY" && episode.playbackUrl ? <PlaybackFrame className={styles.seriesFrame} src={mediaUrl(episode.playbackUrl)} positionSeconds={episode.durationSeconds * 0.1} /> : null}
+                    : episode.playbackStatus === "READY" && episode.playbackUrl ? <PlaybackFrame className={styles.seriesFrame} src={mediaUrl(episode.playbackUrl)} positionSeconds={previewFramePosition(episode.durationSeconds)} /> : null}
                   <span className={styles.nextPlay}><Play size={17} fill="currentColor" /></span>
                 </span>
                 <span className={styles.nextTitle}><small>{episodeLabel(episode.episodeOrder)}{episode.videoId === selected?.videoId ? " · 当前集" : ""}</small><strong title={episode.originalFilename}>{episodeTitle(episode.episodeOrder)}</strong><span>{formatTimecode(episode.durationSeconds)}{episode.playbackStatus !== "READY" ? " · 播放未就绪" : ""}</span></span>

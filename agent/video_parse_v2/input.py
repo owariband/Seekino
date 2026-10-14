@@ -94,7 +94,12 @@ class ModelSnapshot(_InputModel):
 
 
 class ExecutionConfig(_InputModel):
-    max_concurrent_model_calls: int = Field(gt=0)
+    parse_concurrency: int = Field(gt=0)
+    refine_concurrency: int = Field(gt=0)
+    index_concurrency: int = Field(gt=0)
+    parse_execution_timeout_seconds: float = Field(gt=0)
+    refine_execution_timeout_seconds: float = Field(gt=0)
+    index_execution_timeout_seconds: float = Field(gt=0)
     max_retry_count: int = Field(ge=0)
     retry_initial_delay_seconds: float = Field(gt=0)
     retry_max_delay_seconds: float = Field(gt=0)
@@ -107,6 +112,11 @@ class ExecutionConfig(_InputModel):
                 "retry_max_delay_seconds must be at least retry_initial_delay_seconds"
             )
         return self
+
+
+class IndexingConfig(_InputModel):
+    sparse_enabled: bool
+    contract_fingerprint: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]+$")
 
 
 class ParseConfig(_InputModel):
@@ -123,6 +133,7 @@ class ParseConfig(_InputModel):
     compact_enabled: bool = False
     prefix_context: PrefixContextConfig | None = None
     execution: ExecutionConfig
+    indexing: IndexingConfig
 
     @model_validator(mode="after")
     def validate_config_limits(self) -> ParseConfig:

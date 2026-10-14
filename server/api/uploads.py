@@ -111,6 +111,7 @@ def retry_upload_parse(
     tenant_id: str = Query(alias="tenantId"),
     # Transitional wire name: callers must pass the V2 task's parse version.
     expected_job_version: int = Query(ge=1, alias="expectedJobVersion"),
+    expected_lease_version: int = Query(ge=0, alias="expectedLeaseVersion"),
 ) -> VideoParseTaskView:
     identity = get_identity(request)
     require_tenant_write(identity, tenant_id)
@@ -119,6 +120,7 @@ def retry_upload_parse(
         upload_session_id,
         tenant_id=tenant_id,
         expected_job_version=expected_job_version,
+        expected_lease_version=expected_lease_version,
         actor_user_id=identity.user_id,
     )
     return project_video_parse_task(task)

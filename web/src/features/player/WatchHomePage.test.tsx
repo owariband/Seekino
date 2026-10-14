@@ -205,7 +205,7 @@ describe("WatchHomePage", () => {
     const seriesCard = screen.getByRole("link", { name: /乙系列/ });
     const representativeFrame = await within(seriesCard).findByTestId("playback-frame");
     expect(representativeFrame.getAttribute("data-src")).toContain("videoId=b-1");
-    expect(representativeFrame).toHaveAttribute("data-position", "120000");
+    expect(representativeFrame).toHaveAttribute("data-position", "420000");
 
     mocks.readWatchHistory.mockReturnValue([{
       seriesId: "series-b", videoId: "b-2", positionSeconds: 90_000,
@@ -218,7 +218,7 @@ describe("WatchHomePage", () => {
     expect(within(screen.getByRole("region", { name: "继续观看推荐" })).getByTestId("playback-frame"))
       .toHaveAttribute("data-position", "90000");
     expect(updatedFrame.getAttribute("data-src")).toContain("videoId=b-1");
-    expect(updatedFrame).toHaveAttribute("data-position", "120000");
+    expect(updatedFrame).toHaveAttribute("data-position", "420000");
     expect(mocks.saveVideoProgress).not.toHaveBeenCalled();
   });
 

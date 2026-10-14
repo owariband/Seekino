@@ -36,7 +36,7 @@
 
 .header h2 {
   margin: 0;
-  font: 400 clamp(1.55rem, 3vw, 2.35rem)/1.05 var(--display);
+  font: 600 clamp(1.55rem, 3vw, 2.35rem)/1.05 var(--display);
   letter-spacing: -.025em;
 }
 

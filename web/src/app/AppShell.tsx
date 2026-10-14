@@ -127,9 +127,10 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-        <NavLink className={styles.searchTrigger} to="/search" state={{ focusComposer: true }} aria-label="搜索名场面" title={`搜索名场面（${isMac ? "⌘" : "Ctrl"} K）`}>
+        {/* The search page has its own composer; a second box in the header would compete with it. */}
+        {location.pathname === "/search" ? <span aria-hidden="true" /> : <NavLink className={styles.searchTrigger} to="/search" state={{ focusComposer: true }} aria-label="搜索名场面" title={`搜索名场面（${isMac ? "⌘" : "Ctrl"} K）`}>
           <Search size={18} strokeWidth={1.8} aria-hidden="true" /><span>描述一个画面，找回那一刻…</span><kbd aria-hidden="true">{isMac ? "⌘" : "Ctrl"} K</kbd>
-        </NavLink>
+        </NavLink>}
         <div className={styles.headerActions}>
           <span id="watch-header-actions" style={{ display: "contents" }} />
           <button className={styles.uploadButton} type="button" onClick={uploadAction}

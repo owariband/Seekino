@@ -42,7 +42,7 @@ from gateway.usage import TokenUsage, capture_model_usage, model_call_context, t
 
 from server.api.app import create_app
 from server.bootstrap import ApplicationServices
-from server.config.parse_profile import default_video_parse_v2_config
+from server.config.parse_profile import default_video_parse_v2_config, index_contract_fingerprint
 from server.database import (
     DatabaseEnvironment,
     create_database_engine,
@@ -205,10 +205,9 @@ class _RecoveringElasticsearchBoundary(_ElasticsearchBoundary):
         self.bulk_keys.append([
             (item.parse_task_id, item.video_chunk_id) for item in documents
         ])
-        if self.fail_next_bulk:
+        if self.fail_next_bulk and len(self.bulk_keys) == 2:
             self.fail_next_bulk = False
-            super().bulk_upsert(documents[:1], refresh=refresh)
-            raise RuntimeError("injected partial indexing failure")
+            raise RuntimeError("injected Chunk indexing failure")
         return super().bulk_upsert(documents, refresh=refresh)
 
     def inspect(self, keys):
@@ -529,6 +528,16 @@ def test_index_builder_binds_frozen_encoder_and_preserves_embedding_route(
     inputs = ParseInput.model_validate({
         "series_id": "series", "video_id": "video", "parse_config": config,
     })
+    config["indexing"] = {
+        "sparse_enabled": True,
+        "contract_fingerprint": index_contract_fingerprint(
+            inputs.parse_config.models.embedding.model_copy(update={"encoder_model": expected_model}),
+            provider="ark",
+            encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+            max_height=inputs.parse_config.visual_input.max_height,
+        ),
+    }
+    inputs = ParseInput.model_validate({"series_id": "series", "video_id": "video", "parse_config": config})
     inputs = ParseInput.model_validate_json(inputs.model_dump_json())
     assert inputs.parse_config.models.embedding.model == route
     assert inputs.parse_config.models.embedding.encoder_model == encoder_model
@@ -560,7 +569,7 @@ def test_index_builder_binds_frozen_encoder_and_preserves_embedding_route(
         worker_id="endpoint-worker", lease_duration=timedelta(seconds=30),
         heartbeat_interval=timedelta(seconds=5), sparse_enabled=True,
     )
-    coordinator, selected_client = runtime._build_index_coordinator(inputs, check_active=lambda: None)
+    coordinator, selected_client = runtime._build_index_coordinator(inputs, check_active=lambda: None, index_generation=1)
     try:
         assert selected_client is coordinator._embedder
         assert coordinator._embedder.model_name == route
@@ -598,6 +607,11 @@ def test_index_builder_closes_gateway_model_when_store_dimensions_differ(tmp_pat
     inputs = ParseInput.model_validate({
         "series_id": "series", "video_id": "video", "parse_config": config,
     })
+    config["indexing"]["contract_fingerprint"] = index_contract_fingerprint(
+        inputs.parse_config.models.embedding, provider="ark", encoder_revision="test-revision",
+        max_height=inputs.parse_config.visual_input.max_height,
+    )
+    inputs = ParseInput.model_validate({"series_id": "series", "video_id": "video", "parse_config": config})
     closed = []
     embedder = SimpleNamespace(
         provider_name="ark", dimensions=3,
@@ -612,7 +626,7 @@ def test_index_builder_closes_gateway_model_when_store_dimensions_differ(tmp_pat
         gateway_client=SimpleNamespace(create_embedding_model=lambda _binding: embedder),
     )
     with pytest.raises(ValueError, match="semantic dimensions differ"):
-        runtime._build_index_coordinator(inputs, check_active=lambda: None)
+        runtime._build_index_coordinator(inputs, check_active=lambda: None, index_generation=1)
     assert closed == [True]
 
 
@@ -682,7 +696,7 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
             tracker.usage = TokenUsage(10, 2, 12, None, None)
         return CanvasCompletion(complete=True)
 
-    def build_index_coordinator(_self, inputs, *, check_active):
+    def build_index_coordinator(_self, inputs, *, check_active, index_generation):
         model = inputs.parse_config.models.embedding
         client = SimpleNamespace(close=lambda: None)
         encoder = EncoderContract(
@@ -743,7 +757,6 @@ def test_worker_runs_real_agent_repository_and_stage_commits(
         retry_initial_delay=timedelta(milliseconds=10),
         retry_max_delay=timedelta(milliseconds=100),
         poll_interval=timedelta(milliseconds=10),
-        max_concurrent_handlers=3,
     )
     consumer.start()
     deadline = time.monotonic() + 8
@@ -833,6 +846,8 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
     parse_config = _parse_config()
     parse_config["interval_duration"] = interval_duration_seconds
     parse_config["execution"]["max_retry_count"] = 0
+    # This component fixture uses SQLite; MySQL tests own parallel lock evidence.
+    parse_config["execution"].update(parse_concurrency=1, refine_concurrency=1, index_concurrency=1)
     embedding = _EmbeddingClient(parse_config["models"]["embedding"]["model"])
     encoder = EncoderContract(
         provider="ark", model=embedding.model, dimensions=2,
@@ -897,7 +912,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
         model_calls["refine"] += 1
         return CanvasCompletion(complete=True)
 
-    def build_index_coordinator(_self, inputs, *, check_active):
+    def build_index_coordinator(_self, inputs, *, check_active, index_generation):
         return VideoParseIndexCoordinator(
             repository, store, embedding, media_resolver=artifacts.resolve,
             media_service=media, check_active=check_active,
@@ -924,7 +939,7 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
         heartbeat_interval=timedelta(seconds=1), poll_interval=timedelta(milliseconds=10),
         retry_initial_delay=timedelta(milliseconds=10),
         # SQLite cannot enforce FOR UPDATE; true lock competition is a MySQL case.
-        retry_max_delay=timedelta(milliseconds=100), max_concurrent_handlers=2,
+        retry_max_delay=timedelta(milliseconds=100),
     )
     try:
         with TestClient(create_app(services)) as client:
@@ -984,7 +999,8 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
                     for row in session.query(ChunkParseContent).order_by(ChunkParseContent.id)
                 ]
             assert len(store.documents) == 1
-            assert len(store.bulk_keys[0]) == 2
+            assert len(store.bulk_keys) == 2
+            assert all(len(keys) == 1 for keys in store.bulk_keys)
             unavailable = client.post("/api/search", json=search_body)
             assert unavailable.status_code == 409, unavailable.text
             assert unavailable.json()["code"] == "SERIES_NOT_READY"
@@ -997,7 +1013,10 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             ).status_code == 404
 
             retried = client.post(
-                "/api/uploads/retry-parse", params={**scope, "expectedJobVersion": 1},
+                "/api/uploads/retry-parse", params={
+                    **scope, "expectedJobVersion": 1,
+                    "expectedLeaseVersion": failed.json()["leaseVersion"],
+                },
             )
             assert retried.status_code == 200, retried.text
             assert retried.json()["videoParseTaskId"] == task_id
@@ -1014,9 +1033,8 @@ def test_uploaded_v2_pipeline_recovers_indexing_searches_receipt_and_reconciles_
             assert not consumer.running
             assert model_calls == {"understanding": 2, "ocr": 0, "refine": 1}
             assert (embedding.text_calls, embedding.video_calls) == (2, 2)
-            assert len(store.bulk_keys) == 2
-            assert len(store.bulk_keys[1]) == 1
-            assert store.bulk_keys[1][0] in store.bulk_keys[0]
+            assert len(store.bulk_keys) == 3
+            assert store.bulk_keys[2] == store.bulk_keys[1]
             with factory() as session:
                 task = session.get(VideoParseTask, task_id)
                 assert task.status == "COMPLETE"
@@ -1548,9 +1566,14 @@ def test_canvas_channel_preserves_output_budget_and_uses_valid_policy(monkeypatc
     runtime._gateway.close()
 
 
-def test_prefix_cancellation_releases_lease_without_retrying(monkeypatch):
+@pytest.mark.parametrize("blocking_provider", [False, True])
+def test_prefix_cancellation_releases_lease_only_after_execution_exits(monkeypatch, blocking_provider):
+    from threading import Event
+    from server.utils.execution import run_blocking
+
     released = []
     retried = []
+    entered, provider_exit, released_event = Event(), Event(), Event()
 
     class _Repository:
         @staticmethod
@@ -1560,6 +1583,7 @@ def test_prefix_cancellation_releases_lease_without_retrying(monkeypatch):
         @staticmethod
         def release_prefix(lease):
             released.append(lease)
+            released_event.set()
             return True
 
         @staticmethod
@@ -1569,11 +1593,18 @@ def test_prefix_cancellation_releases_lease_without_retrying(monkeypatch):
 
     started = asyncio.Event()
 
+    def provider():
+        entered.set()
+        assert provider_exit.wait(timeout=3)
+
     class _PrefixAgent:
         @staticmethod
         async def run(_task_id):
             started.set()
-            await asyncio.Future()
+            if blocking_provider:
+                await run_blocking(provider)
+            else:
+                await asyncio.Future()
 
     runtime = object.__new__(VideoParseRuntimeService)
     runtime._repository = _Repository()
@@ -1608,20 +1639,32 @@ def test_prefix_cancellation_releases_lease_without_retrying(monkeypatch):
     async def execute():
         task = asyncio.create_task(runtime._execute_prefix(lease))
         await started.wait()
+        if blocking_provider:
+            assert await asyncio.to_thread(entered.wait, 1)
         task.cancel()
-        try:
+        with pytest.raises(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            return
-        raise AssertionError("Prefix cancellation was not propagated")
+        if blocking_provider:
+            assert released == [] and retried == []
+            provider_exit.set()
+            assert await asyncio.to_thread(released_event.wait, 1)
 
-    asyncio.run(execute())
+    try:
+        asyncio.run(execute())
+    finally:
+        provider_exit.set()
     assert released == [lease]
     assert retried == []
 
 
-def test_model_stage_accepts_post_commit_heartbeat_loss(monkeypatch):
+@pytest.mark.parametrize("initial_receipt", [True, False, None])
+def test_model_stage_accepts_post_commit_heartbeat_loss(monkeypatch, initial_receipt):
+    from threading import Event
+    from server.model.dto.jobDTO import ChunkParseLease
+
     managers = []
+    first_check = Event()
+    samples = []
 
     class _Manager:
         def __init__(self, *_args, **_kwargs):
@@ -1645,6 +1688,11 @@ def test_model_stage_accepts_post_commit_heartbeat_loss(monkeypatch):
 
         def is_execution_lease_committed(self, _lease):
             self.checked += 1
+            if self.checked == 1:
+                first_check.set()
+                if initial_receipt is None:
+                    raise RuntimeError("receipt temporarily unavailable")
+                return initial_receipt
             return True
 
     monkeypatch.setattr(
@@ -1652,22 +1700,26 @@ def test_model_stage_accepts_post_commit_heartbeat_loss(monkeypatch):
         _Manager,
     )
     runtime = object.__new__(VideoParseRuntimeService)
-    runtime._repository = object()
+    runtime._repository = SimpleNamespace(
+        record_execution_timing=lambda _lease, **sample: samples.append(sample) or True,
+    )
     runtime._queue = _Queue()
     runtime._lease_duration = timedelta(seconds=1)
     runtime._heartbeat_interval = timedelta(milliseconds=1)
     runtime._parse_usage = None
     runtime._tracing = None
     runtime._model_manager = ContextVar("test_model_manager", default=None)
-    lease = VideoParseLease(
+    lease = ChunkParseLease(
+        chunk_parse_task_id=str(uuid4()),
         video_parse_task_id=str(uuid4()),
-        video_id=str(uuid4()),
+        video_chunk_id=str(uuid4()),
         worker_id="worker",
         lease_version=1,
         lease_expire_time=datetime.now(UTC) + timedelta(seconds=1),
-        attempt_count=1,
-        max_attempts=3,
-        parse_config={},
+        retry_count=0,
+        max_retry_count=3,
+        retry_initial_delay_seconds=1,
+        retry_max_delay_seconds=5,
     )
 
     async def execute():
@@ -1678,11 +1730,12 @@ def test_model_stage_accepts_post_commit_heartbeat_loss(monkeypatch):
             category="parse",
             check_active=lambda: None,
         ):
-            await asyncio.sleep(0.01)
+            assert await asyncio.to_thread(first_check.wait, 1)
 
     asyncio.run(execute())
-    assert runtime._queue.checked >= 1
-    assert managers[0].cancel_count == 1
+    assert runtime._queue.checked == (1 if initial_receipt else 2)
+    assert managers[0].cancel_count == (1 if initial_receipt else 2)
+    assert samples[-1]["finished"] is True and samples[-1]["outcome"] == "completed"
 
 
 def test_model_stage_traces_actual_worker_calls_without_a_ledger(monkeypatch):
@@ -1816,9 +1869,11 @@ def test_execution_timing_records_short_runs_without_changing_results(monkeypatc
     runtime._model_manager = ContextVar("timing_test_manager", default=None)
     if kind == "chunk":
         lease = ChunkParseLease("chunk", "task", "media", "worker", 3, datetime.now(UTC), 1, 3, 5.0, 300.0)
-    elif kind in {"refine", "index"}:
+    elif kind == "index":
+        lease = ChunkParseLease("chunk", "task", "media", "worker", 3, datetime.now(UTC), 1, 3, 5.0, 300.0, phase=3)
+    elif kind == "refine":
         lease = IntervalParseLease("interval", "task", ("chunk",), 0, 1,
-            "REFINING" if kind == "refine" else "INDEXING", "worker", 3, datetime.now(UTC), 1, 3, 5.0, 300.0)
+            "REFINING", "worker", 3, datetime.now(UTC), 1, 3, 5.0, 300.0)
     else:
         lease = VideoParseLease("task", "video", "worker", 3, datetime.now(UTC), 1, 3, {})
     error = RuntimeError("business failure") if outcome == "failed" else asyncio.CancelledError()
@@ -1906,3 +1961,103 @@ def test_execution_timing_heartbeats_and_storage_errors_preserve_business_work(m
     assert samples[-1]["elapsed_ms"] >= 99
     assert managers[0].cancelled
     assert "execution timing append failed" in caplog.text
+
+
+def test_long_calls_leave_the_database_control_executor_available():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Event
+    from server.utils.execution import run_blocking
+
+    entered, release = Barrier(13), Event()
+    context = ContextVar("isolated_execution_context", default="missing")
+
+    def long_call():
+        entered.wait(timeout=3)
+        assert release.wait(timeout=3)
+        return context.get()
+
+    async def execute():
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+        context.set("preserved")
+        calls = [asyncio.create_task(run_blocking(long_call)) for _ in range(12)]
+        try:
+            await asyncio.wait_for(asyncio.to_thread(entered.wait, 3), timeout=4)
+            assert await asyncio.wait_for(asyncio.to_thread(lambda: "heartbeat"), timeout=0.5) == "heartbeat"
+        finally:
+            release.set()
+        assert await asyncio.gather(*calls) == ["preserved"] * 12
+
+    asyncio.run(execute())
+
+
+def test_cancelled_blocking_call_retains_resources_until_the_thread_exits():
+    from threading import Event
+    from server.utils.execution import (
+        BlockingCallCancelled, ExecutionCalls, cleanup_execution, execution_calls, run_blocking,
+    )
+
+    entered, release, cleaned = Event(), Event(), Event()
+
+    def long_call():
+        entered.set()
+        assert release.wait(timeout=3)
+
+    async def execute():
+        calls = ExecutionCalls()
+        token = execution_calls.set(calls)
+        try:
+            task = asyncio.create_task(run_blocking(long_call))
+            assert await asyncio.to_thread(entered.wait, 1)
+            task.cancel()
+            with pytest.raises(BlockingCallCancelled) as caught:
+                await asyncio.wait_for(task, timeout=0.5)
+            assert caught.value.execution_pending and not caught.value.completion.done()
+            await cleanup_execution(cleaned.set)
+            assert calls.pending and not cleaned.is_set()
+            release.set()
+            assert await asyncio.to_thread(cleaned.wait, 1)
+            assert not calls.pending
+        finally:
+            release.set()
+            execution_calls.reset(token)
+
+    asyncio.run(execute())
+
+
+def test_cancelled_parallel_calls_keep_the_lease_until_every_call_exits():
+    from threading import Event
+    from server.utils.execution import BlockingCallCancelled, ExecutionCalls
+
+    entered = [Event(), Event()]
+    release = [Event(), Event()]
+
+    def long_call(index):
+        entered[index].set()
+        assert release[index].wait(timeout=3)
+
+    async def execute():
+        calls = ExecutionCalls()
+        tasks = [asyncio.create_task(calls.run(long_call, index)) for index in range(2)]
+        try:
+            for started in entered:
+                assert await asyncio.to_thread(started.wait, 1)
+            tasks[0].cancel()
+            with pytest.raises(BlockingCallCancelled) as caught:
+                await tasks[0]
+            completion = caught.value.completion
+            release[0].set()
+            # A sibling model call still owns this execution even after the
+            # cancelled call itself exits.
+            await asyncio.sleep(0.02)
+            assert calls.pending and not completion.done()
+            release[1].set()
+            await tasks[1]
+            await asyncio.wrap_future(completion)
+            assert not calls.pending
+        finally:
+            for finished in release:
+                finished.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(execute())

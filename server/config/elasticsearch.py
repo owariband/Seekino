@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from ..database import DatabaseEnvironment
 
 
+DEFAULT_INDEX_GENERATION = 1
 _MAX_INDEX_GENERATION = (1 << 31) - 1
 _DEFAULT_VECTOR_DIMENSIONS = 1024
 
@@ -34,7 +35,7 @@ class ElasticsearchConfig:
     url: str
     index_name: str
     api_key: str | None = field(default=None, repr=False)
-    index_generation: int = 1
+    index_generation: int = DEFAULT_INDEX_GENERATION
 
     @classmethod
     def from_environment(
@@ -60,7 +61,7 @@ class ElasticsearchConfig:
                 "must be configured together"
             )
         try:
-            index_generation = int(raw_index_generation or "1")
+            index_generation = int(raw_index_generation or str(DEFAULT_INDEX_GENERATION))
         except ValueError:
             raise ValueError(
                 "ANIVAG_ELASTICSEARCH_INDEX_GENERATION must be a positive integer"

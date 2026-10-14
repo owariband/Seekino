@@ -189,7 +189,7 @@ def test_request_es_index_rebuild_schedules_one_v2_task(
     }
     assert json.loads(capsys.readouterr().out) == {
         "videoParseTaskId": "task-1",
-        "scheduledIntervalParseTaskIds": ["interval-1", "interval-2"],
+        "scheduledChunkTaskIds": ["interval-1", "interval-2"],
     }
 
 
@@ -265,7 +265,7 @@ def test_rebuild_index_v2_requests_task_without_index_client(
     }
     assert json.loads(capsys.readouterr().out) == {
         "videoParseTaskId": "task-2",
-        "scheduledIntervalParseTaskIds": ["interval-3"],
+        "scheduledChunkTaskIds": ["interval-3"],
     }
 
 

@@ -3,6 +3,7 @@
 .heroFrame { position: absolute; z-index: -3; inset: 0 0 -22%; }
 .hero::before { position: absolute; z-index: -2; inset: 0; background: linear-gradient(90deg, rgb(5 16 13 / 94%), rgb(5 16 13 / 66%) 36%, rgb(5 16 13 / 8%) 78%); content: ""; }
 .hero::after { position: absolute; z-index: -1; right: 0; bottom: 0; left: 0; height: 115px; background: linear-gradient(0deg, var(--canvas), transparent); content: ""; }
+:global(:root[data-theme="light"]) .hero::after { background: linear-gradient(0deg, rgb(5 16 13 / 72%), transparent); }
 .back { display: inline-flex; width: fit-content; align-items: center; gap: 8px; min-height: 40px; padding-inline: 10px; color: #f3f8f5; border-radius: var(--radius-small); background: rgb(5 16 13 / 50%); font-size: .8rem; text-decoration: none; }
 .back:hover { color: #8cd4c2; }
 .heroContent { width: min(720px, 62%); padding-top: 100px; }
@@ -26,6 +27,7 @@
 .overview > h2 { margin: 0; color: var(--ink-soft); font-size: .9rem; font-weight: 500; }
 .overviewContent { display: grid; min-width: 0; max-width: 960px; gap: 16px; }
 .overviewContent > p { margin: 0; color: var(--ink); font-size: .98rem; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.overviewContent > p.placeholder { color: var(--ink-faint); font-size: .88rem; }
 .parseNotes { border: 1px solid var(--line); border-radius: var(--radius-small); background: var(--surface); }
 .parseNotes > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 12px 16px; color: var(--ink-soft); font-size: .85rem; cursor: pointer; list-style: none; }
 .parseNotes > summary::-webkit-details-marker { display: none; }

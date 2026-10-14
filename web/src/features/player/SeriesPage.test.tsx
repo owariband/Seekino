@@ -9,8 +9,9 @@ import type { AuthIdentity, DataSource, SeriesView, VideoSummary } from "../../a
 import { playbackProgressStorageKey, saveVideoProgress } from "./playbackProgress";
 import { SeriesPage } from "./SeriesPage";
 
-const mocks = vi.hoisted(() => ({ getSeries: vi.fn(), updateSeries: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getSeries: vi.fn(), updateSeries: vi.fn(), canManage: true }));
 vi.mock("../../app/workspace", () => ({ useWorkspace: () => ({ mode: "live", updateSeries: mocks.updateSeries }) }));
+vi.mock("../auth/AuthProvider", () => ({ useAuth: () => ({ canManage: mocks.canManage }) }));
 vi.mock("../../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../api/client")>(),
   getSeries: mocks.getSeries,
@@ -75,7 +76,7 @@ beforeEach(() => {
   configureDataSource(localSource);
   mocks.getSeries.mockResolvedValue(series);
 });
-afterEach(() => { cleanup(); configureDataSource(localSource); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); configureDataSource(localSource); vi.clearAllMocks(); mocks.canManage = true; });
 
 describe("SeriesPage", () => {
   it("loads the routed series, shows its supplied description, and orders episodes before choosing the first", async () => {
@@ -151,6 +152,16 @@ describe("SeriesPage", () => {
     await screen.findByRole("heading", { name: "甲系列", level: 1 });
     expect(screen.getByText("还没有填写系列简介。")).toBeVisible();
     expect(screen.queryByText(/故事还在继续|一起寻找故事里的名场面/)).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "系列选集" })).toBeVisible();
+  });
+
+  it("skips the empty introduction for viewers instead of showing a manager to-do", async () => {
+    mocks.canManage = false;
+    mocks.getSeries.mockResolvedValue({ ...series, description: null });
+    renderPage();
+    await screen.findByRole("heading", { name: "甲系列", level: 1 });
+    expect(screen.queryByRole("region", { name: "系列简介" })).not.toBeInTheDocument();
+    expect(screen.queryByText("还没有填写系列简介。")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "系列选集" })).toBeVisible();
   });
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, NotRequired, TypedDict
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 
 from engine.parsev2.planning import ChunkPlan
 
@@ -20,9 +20,16 @@ class VideoTaskStatus(StrEnum):
     INDEXING_FAILED = "INDEXING_FAILED"
 
 
+class ChunkTaskPhase(IntEnum):
+    PARSE = 1
+    REFINE = 2
+    INDEX = 3
+
+
 class ChunkTaskStatus(StrEnum):
     QUEUED = "QUEUED"
-    UNDERSTANDING = "UNDERSTANDING"
+    RUNNING = "RUNNING"
+    WAITING = "WAITING"
     COMPLETE = "COMPLETE"
     FAILED = "FAILED"
 
@@ -79,6 +86,8 @@ class ChunkScheduleEntry:
     chunk_parse_task_id: str
     sequence_no: int
     status: ChunkTaskStatus
+    phase: int = ChunkTaskPhase.PARSE
+    understanding_committed: bool = False
 
 
 @dataclass(frozen=True, slots=True)

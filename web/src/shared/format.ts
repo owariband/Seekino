@@ -20,24 +20,64 @@ export function formatMoneyUsd(value: string | null): string {
   return `$${integer!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction.padEnd(2, "0")}`;
 }
 
-/** Media time is integer milliseconds; display seconds with at most two decimal places. */
-export function formatTimecode(seconds: number): string {
-  const hundredths = Math.max(0, Math.round(seconds / 10));
-  seconds = Math.floor(hundredths / 100);
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainder = seconds % 60;
-  const timecode = [hours, minutes, remainder]
-    .filter((_, index) => hours > 0 || index > 0)
-    .map((value) => String(value).padStart(2, "0"))
-    .join(":");
-  const fraction = hundredths % 100;
-  return fraction ? `${timecode}.${String(fraction).padStart(2, "0").replace(/0+$/, "")}` : timecode;
+/**
+ * Rounds a decimal-string CNY estimate for display without floating point: two decimals,
+ * or up to four for sub-yuan amounts so small costs do not collapse to ¥0.00.
+ */
+export function formatMoneyCny(value: string): string {
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (!match) return `¥${value}`;
+  const [, sign, integer, fraction = ""] = match;
+  const digits = /^0+$/.test(integer!) ? 4 : 2;
+  const roundUp = Number(fraction[digits] ?? "0") >= 5 ? 1n : 0n;
+  const scaled = (BigInt(integer! + fraction.padEnd(digits, "0").slice(0, digits)) + roundUp).toString().padStart(digits + 1, "0");
+  const whole = scaled.slice(0, -digits).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const cents = scaled.slice(-digits).replace(/0+$/, "").padEnd(2, "0");
+  return `¥${sign}${whole}.${cents}`;
+}
+
+/**
+ * Integer milliseconds for an episode preview frame. Early frames are mostly opening credits
+ * or title cards in episodic video, so previews sample the middle of the first half instead.
+ */
+export function previewFramePosition(durationMilliseconds: number): number {
+  return Math.round(Math.max(0, durationMilliseconds) * 0.35);
+}
+
+/** Display media milliseconds as whole minutes:seconds without changing playback precision. */
+export function formatTimecode(milliseconds: number): string {
+  const seconds = Number.isFinite(milliseconds) ? Math.floor(Math.max(0, milliseconds) / 1000) : 0;
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 /** The retained Seconds parameter names carry integer milliseconds. */
 export function formatTimeRange(startSeconds: number, endSeconds: number): string {
   return `${formatTimecode(startSeconds)}–${formatTimecode(endSeconds)}`;
+}
+
+// Recognize explicit media timestamps, including fractional seconds; ratios such as 16:9 do not match.
+export const MEDIA_TIMESTAMP_PATTERN = /(?:(\d{1,2})\s*小时\s*)?(\d{1,3})\s*分(?:钟)?\s*(\d{1,2}(?:\.\d{1,3})?)\s*秒|(?<![\d:])(?:(\d{1,2}):)?(\d{1,3}):(\d{2}(?:\.\d{1,3})?)(?![\d:.])/g;
+
+export function timestampMilliseconds(match: readonly (string | undefined)[]): number | null {
+  const [, hours, minutes, seconds, clockHours, clockMinutes, clockSeconds] = match;
+  const h = Number(hours ?? clockHours ?? 0);
+  const m = Number(minutes ?? clockMinutes);
+  const sec = Number(seconds ?? clockSeconds);
+  if (sec >= 60 || ((hours ?? clockHours) !== undefined && m >= 60)) return null;
+  return Math.round(((h * 60 + m) * 60 + sec) * 1000);
+}
+
+/** Format explicit time notation in display text, never API values or Markdown link destinations. */
+export function formatTimeText(value: string): string {
+  return value.replace(MEDIA_TIMESTAMP_PATTERN, (...match) => {
+    const milliseconds = timestampMilliseconds(match);
+    return milliseconds === null ? match[0] : formatTimecode(milliseconds);
+  }).replace(/\[(\d+)\s*,\s*(\d+)\)/g, (match, start, end) => {
+    return Number.isSafeInteger(Number(start)) && Number.isSafeInteger(Number(end)) && Number(end) > Number(start)
+      ? formatTimeRange(Number(start), Number(end)) : match;
+  }).replace(/(?<![\d.])(\d+)\s*毫秒/g, (match, milliseconds) => {
+    return Number.isSafeInteger(Number(milliseconds)) ? formatTimecode(Number(milliseconds)) : match;
+  });
 }
 
 export function clampPercentage(value: number): number {

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="seekino-title">
+  <title id="seekino-title">Seekino 鲸鲨吉祥物（斑点 + 进度条嘴实验稿）</title>
+  <!--
+    Layered source for the Seekino mascot. Every part has an id so it can be
+    animated on its own (CSS, Lottie, After Effects). Palette:
+      body #74c5ba · shade #349489 · belly #fcfaf1 · ink #0b3b33
+  -->
+  <defs>
+    <clipPath id="body-clip">
+      <path d="M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z"/>
+    </clipPath>
+  </defs>
+  <g id="seekino" fill="none" stroke="#0b3b33" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <g id="feet" fill="#fcfaf1">
+      <rect id="foot-left" x="63" y="197" width="19" height="26" rx="8.5"/>
+      <rect id="foot-right" x="157" y="199" width="19" height="29" rx="8.5"/>
+    </g>
+    <path id="tail" fill="#74c5ba" d="M164 92C174 62 198 36 220 29C230 50 227 80 214 101L233 113C225 119 217 122 208 125Z"/>
+    <path id="fin-left" fill="#74c5ba" d="M34 134C26 137 19 142 14 148C20 153 27 157 33 159Z"/>
+    <path id="dorsal" fill="#74c5ba" d="M90 88C104 70 120 55 136 48C137 61 140 74 146 87Z"/>
+    <g id="body">
+      <path id="body-fill" fill="#74c5ba" stroke="none" d="M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z"/>
+      <g clip-path="url(#body-clip)" stroke="none">
+        <path id="shade" fill="#349489" d="M196 122C212 152 210 192 186 230H240V110Z"/>
+        <path id="belly" fill="#fcfaf1" d="M18 134C48 114 108 108 154 120C186 130 202 168 192 232H18Z"/>
+      </g>
+      <g id="spots" fill="#fcfaf1" stroke="none">
+        <circle cx="88" cy="99" r="4.5"/>
+        <circle cx="110" cy="90" r="5"/>
+        <circle cx="134" cy="89" r="4"/>
+        <circle cx="157" cy="96" r="5"/>
+        <circle cx="180" cy="106" r="4"/>
+        <circle cx="122" cy="103" r="3"/>
+        <circle cx="146" cy="108" r="3"/>
+        <circle cx="198" cy="121" r="3.5"/>
+      </g>
+      <path id="body-outline" d="M30 158C27 114 58 84 108 80C152 77 197 92 214 124C228 152 221 188 193 203C166 216 120 216 82 211C47 206 32 186 30 158Z"/>
+    </g>
+    <g id="tail-spots" fill="#fcfaf1" stroke="none">
+      <circle cx="206" cy="58" r="3.5"/>
+      <circle cx="214" cy="78" r="3"/>
+      <circle cx="117" cy="68" r="3"/>
+    </g>
+    <path id="fin-right" fill="#74c5ba" d="M204 138C216 142 228 150 234 157C226 161 214 162 205 162"/>
+    <g id="face">
+      <g id="eyes" fill="#0b3b33" stroke="none">
+        <circle id="eye-left" cx="65" cy="113" r="5"/>
+        <circle id="eye-right" cx="155" cy="125" r="5"/>
+      </g>
+      <path id="mouth" stroke-width="3.6" d="M61 130L151 140"/>
+      <circle id="playhead" cx="97" cy="134" r="7" fill="#fcfaf1" stroke-width="3.6"/>
+    </g>
+  </g>
+</svg>

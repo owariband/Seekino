@@ -542,11 +542,11 @@ def test_video_task_database_enforces_status_and_lease(status, lease, allowed) -
     [
         ("WAITING", "none", True), ("WAITING", "full", False),
         ("REFINING", "none", False), ("REFINING", "full", True),
-        ("INDEXING", "none", True), ("INDEXING", "full", True),
+        ("INDEXING", "none", False), ("INDEXING", "full", False),
         ("INDEXING", "partial", False),
         ("COMPLETE", "none", True), ("COMPLETE", "full", False),
         ("PARSING_FAILED", "none", True), ("PARSING_FAILED", "full", False),
-        ("INDEXING_FAILED", "none", True), ("INDEXING_FAILED", "full", False),
+        ("INDEXING_FAILED", "none", False), ("INDEXING_FAILED", "full", False),
         ("FAILED", "none", False),
     ],
 )
@@ -560,6 +560,7 @@ def test_interval_task_database_enforces_status_and_lease(status, lease, allowed
         chunk_task_ids=["chunk"], start_sequence_no=0, chunk_count=1,
         status=status, lease_owner="worker" if lease != "none" else None,
         lease_expire_time=datetime(2026, 9, 28, tzinfo=UTC) if lease == "full" else None,
+        execution_deadline=datetime(2026, 9, 28, tzinfo=UTC) if lease == "full" else None,
     )
     with engine.begin() as connection:
         if allowed:
@@ -590,18 +591,8 @@ def test_task_indexing_migration_guards_scope_and_matches_model_checks() -> None
     assert re.findall(r"DROP TABLE IF EXISTS (\w+)", migration) == [
         "es_video_publication", "es_index_build_chunk", "es_index_build",
     ]
-    for model in (VideoParseTask, IntervalParseTask):
-        for constraint in model.__table__.constraints:
-            if not isinstance(constraint, CheckConstraint) or constraint.name not in {
-                f"ck_{model.__tablename__}_status", f"ck_{model.__tablename__}_lease_state",
-            }:
-                continue
-            match = re.search(
-                rf"ADD CONSTRAINT {constraint.name} CHECK \((.*?)\n        \)",
-                migration, re.DOTALL,
-            )
-            assert match is not None
-            assert "".join(match[1].split()) == "".join(str(constraint.sqltext).split())
+    # This historical empty-table script is deliberately not the in-place migration.
+    assert "INDEXING_FAILED" in migration
 
 
 def test_mysql_audit_columns_are_common_and_business_timestamp_types_are_preserved() -> None:

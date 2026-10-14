@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 import shutil
 import subprocess
+import sys
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -28,6 +31,16 @@ def _fake_runner(commands):
             stream.write(b"media")
 
     return run
+
+
+def _hold_workspace_in_another_process(base, source, identity, ready):
+    service = VideoParseMediaService(base, command_runner=_fake_runner([]))
+    with service.prepare_video_segment(
+        identity, source_video=source, start_seconds=0,
+        end_seconds=1000, max_height=360,
+    ) as video:
+        ready.send(str(video.parent))
+        ready.recv()
 
 
 def test_media_is_isolated_by_task_and_lease_and_always_cleaned(tmp_path):
@@ -220,6 +233,70 @@ def test_reaper_finishes_old_renamed_tombstone(tmp_path):
         is_active=lambda _identity: pytest.fail("tombstones are already fenced"),
     ) == 1
     assert not tombstone.exists()
+
+
+def test_reaper_keeps_another_process_media_until_that_process_really_exits(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    service = VideoParseMediaService(tmp_path / "work")
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe()
+    process = context.Process(
+        target=_hold_workspace_in_another_process,
+        args=(service.base_directory, source, _identity(), child),
+    )
+    process.start()
+    child.close()
+    try:
+        assert parent.poll(10), "media process did not prepare its workspace"
+        directory = Path(parent.recv())
+        os.utime(directory / ".lease.json", (0, 0))
+        # The durable lease has been revoked, but a live provider still uses
+        # these files. Even a different Consumer must retain them.
+        assert service.reap_stale(older_than_seconds=1, is_active=lambda _identity: False) == 0
+        assert (directory / "visual.mp4").is_file()
+        process.terminate()
+        process.join(5)
+        assert not process.is_alive()
+        # Process exit releases the lock without running context cleanup.
+        assert service.reap_stale(older_than_seconds=1, is_active=lambda _identity: False) == 1
+        assert not directory.exists()
+    finally:
+        parent.close()
+        if process.is_alive():
+            process.terminate()
+        process.join(5)
+        process.close()
+
+
+def test_workspace_lock_is_not_inherited_by_an_unrelated_subprocess(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    service = VideoParseMediaService(tmp_path / "work", command_runner=_fake_runner([]))
+    descriptors = []
+    original = os.set_inheritable
+
+    def capture(descriptor, inheritable):
+        descriptors.append(descriptor)
+        original(descriptor, inheritable)
+
+    monkeypatch.setattr(os, "set_inheritable", capture)
+    with service.prepare_video_segment(
+        _identity(), source_video=source, start_seconds=0,
+        end_seconds=1000, max_height=360,
+    ):
+        descriptor = descriptors[-1]
+        assert not os.get_inheritable(descriptor)
+        stat = os.fstat(descriptor)
+        result = subprocess.run([
+            sys.executable, "-c",
+            "import os,sys\n"
+            "try: stat=os.fstat(int(sys.argv[1]))\n"
+            "except OSError: pass\n"
+            "else: assert (stat.st_dev,stat.st_ino) != (int(sys.argv[2]),int(sys.argv[3]))\n",
+            str(descriptor), str(stat.st_dev), str(stat.st_ino),
+        ], close_fds=False, capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, result.stderr
 
 
 def test_workspace_marker_is_published_atomically(tmp_path):

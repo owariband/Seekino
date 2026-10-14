@@ -1538,6 +1538,7 @@ def test_upload_parse_retry_is_status_fenced_and_returns_the_same_v2_task(tmp_pa
         "tenantId": "local-default",
         "uploadSessionId": upload_session_id,
         "expectedJobVersion": 1,
+        "expectedLeaseVersion": 0,
     }
     assert client.post(
         "/api/uploads/retry-parse",
@@ -1550,7 +1551,7 @@ def test_upload_parse_retry_is_status_fenced_and_returns_the_same_v2_task(tmp_pa
         "videoId": completed.json()["videoId"],
         "status": "PREPARING",
         "attemptCount": 3,
-        "maxAttempts": 4,
+        "maxAttempts": 3,
         "version": 1,
     }.items() <= retried.json().items()
     assert retried.json()["parseConfig"] == original_config

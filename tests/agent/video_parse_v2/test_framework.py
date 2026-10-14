@@ -85,8 +85,14 @@ def _inputs(**switches: bool) -> ParseInput:
                 "video_compact_max_chars": 2000,
                 "max_tool_calls": 1,
             } if compact else None),
+            "indexing": {"sparse_enabled": False, "contract_fingerprint": "0" * 64},
             "execution": {
-                "max_concurrent_model_calls": 8, "max_retry_count": 0,
+                "parse_concurrency": 10,
+                "refine_concurrency": 10,
+                "index_concurrency": 10,
+                "parse_execution_timeout_seconds": 1800,
+                "refine_execution_timeout_seconds": 1800,
+                "index_execution_timeout_seconds": 1800, "max_retry_count": 0,
                 "retry_initial_delay_seconds": 1, "retry_max_delay_seconds": 30,
                 "max_model_calls": 100,
             },
@@ -144,7 +150,7 @@ def test_main_graph_prepares_fixed_topology_then_completes() -> None:
             return ChunkScheduleSnapshot(
                 tasks=tuple(
                     ChunkScheduleEntry(
-                        f"task-{index}", index, ChunkTaskStatus.COMPLETE
+                        f"task-{index}", index, ChunkTaskStatus.COMPLETE, phase=3, understanding_committed=True
                     )
                     for index in range(2)
                 ),
@@ -183,28 +189,32 @@ def test_index_only_resume_never_prepares_or_schedules_chunks() -> None:
 
 
 def test_scheduler_opens_next_batch_only_at_ninety_percent() -> None:
+    # An Index failure cannot erase committed understanding or hold the next batch.
     first_eight = tuple(
-        (index, ChunkTaskStatus.COMPLETE if index < 8 else ChunkTaskStatus.QUEUED)
+        (index, 3 if index < 8 else 1,
+         ChunkTaskStatus.FAILED if index < 8 else ChunkTaskStatus.QUEUED, index < 8)
         for index in range(20)
     )
     assert claimable_chunk_sequences(first_eight, 10) == {8, 9}
     first_nine = tuple(
-        (index, ChunkTaskStatus.COMPLETE if index < 9 else ChunkTaskStatus.QUEUED)
+        (index, 2 if index < 9 else 1,
+         ChunkTaskStatus.WAITING if index < 9 else ChunkTaskStatus.QUEUED, index < 9)
         for index in range(20)
     )
     assert claimable_chunk_sequences(first_nine, 10) == set(range(9, 20))
     active = tuple(
-        (index, ChunkTaskStatus.UNDERSTANDING if 9 <= index < 19 else status)
-        for index, status in first_nine
+        (index, phase, ChunkTaskStatus.RUNNING if 9 <= index < 19 else status, committed)
+        for index, phase, status, committed in first_nine
     )
-    assert claimable_chunk_sequences(active, 10) == set()
+    # Batch policy opens work; the transactional claim enforces phase capacity.
+    assert claimable_chunk_sequences(active, 10) == {19}
 
 
 def test_scheduler_observes_progress_without_a_dispatch_permission() -> None:
     runtime = SimpleNamespace(
         load_chunk_schedule=AsyncMock(side_effect=[
             ChunkScheduleSnapshot((ChunkScheduleEntry("chunk", 0, ChunkTaskStatus.QUEUED),), 0),
-            ChunkScheduleSnapshot((ChunkScheduleEntry("chunk", 0, ChunkTaskStatus.COMPLETE),), 0),
+            ChunkScheduleSnapshot((ChunkScheduleEntry("chunk", 0, ChunkTaskStatus.WAITING, phase=2, understanding_committed=True),), 0),
         ]),
         wait_for_video_change=AsyncMock(),
     )

@@ -367,7 +367,7 @@
 
 .reasonNumber {
   color: var(--teal);
-  font: 400 2rem/1 var(--display);
+  font: 600 2rem/1 var(--display);
 }
 
 .reasonLead p {

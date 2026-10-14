@@ -28,7 +28,7 @@
 
 .metrics article div { display: grid; gap: 4px; }
 .metrics span { color: var(--ink-faint); font-size: .65rem; }
-.metrics strong { color: var(--ink); font: 400 1.65rem/1 var(--display); }
+.metrics strong { color: var(--ink); font: 600 1.5rem/1 var(--sans); font-variant-numeric: tabular-nums; }
 
 .toolbar {
   display: flex;
@@ -97,12 +97,14 @@
 }
 
 .jobName h2 {
-  margin: 4px 0 0;
-  font: 400 1.35rem/1.2 var(--display);
+  margin: 0;
+  color: var(--ink);
+  font: 600 1rem/1.35 var(--sans);
 }
 
+.jobStage { display: block; margin-top: 3px; color: var(--teal-deep); font-size: .74rem; }
+
 .jobName { min-width: 0; overflow-wrap: anywhere; }
-.jobName > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .jobStatus {
   display: flex;
@@ -122,10 +124,12 @@
   background: currentColor;
 }
 
-.jobStatus[data-status="RUNNING"],
-.jobStatus[data-status="SUCCEEDED"] { color: var(--teal-deep); }
-.jobStatus[data-status="FAILED"] { color: var(--red); }
-.jobStatus[data-status="RETRY_WAIT"] { color: var(--amber); }
+.jobStatus[data-status="PREPARING"],
+.jobStatus[data-status="PARSING"],
+.jobStatus[data-status="INDEXING"],
+.jobStatus[data-status="COMPLETE"] { color: var(--teal-deep); border-color: var(--line-strong); }
+.jobStatus[data-status="PARSING_FAILED"],
+.jobStatus[data-status="INDEXING_FAILED"] { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); background: color-mix(in srgb, var(--red) 7%, transparent); }
 
 .jobPercent {
   display: grid;
@@ -142,7 +146,8 @@
 
 .jobPercent strong {
   color: var(--teal-deep);
-  font: 400 1.45rem/1 var(--display);
+  font: 600 1.2rem/1 var(--sans);
+  font-variant-numeric: tabular-nums;
 }
 
 .jobActions {
@@ -423,7 +428,7 @@
 
 .loadState h2 {
   color: var(--ink);
-  font: 400 1.25rem/1.2 var(--display);
+  font: 600 1.25rem/1.2 var(--display);
 }
 
 .loadState p {
@@ -436,7 +441,7 @@
   border-color: color-mix(in srgb, var(--red) 35%, var(--line));
 }
 
-.empty h2 { margin: 14px 0 4px; color: var(--ink); font: 400 1.35rem/1.2 var(--display); }
+.empty h2 { margin: 14px 0 4px; color: var(--ink); font: 600 1.35rem/1.2 var(--display); }
 .empty p { max-width: 390px; margin: 0; font-size: .7rem; }
 .spinning { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

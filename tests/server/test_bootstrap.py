@@ -772,7 +772,10 @@ def test_v2_endpoint_override_preserves_route_and_shares_query_index_identity(
         assert snapshot.models.embedding.encoder_model == response_model
         inputs = ParseInput(series_id="series", video_id="video", parse_config=snapshot)
         runtime = services.parse_consumer._handlers.index.__self__
-        coordinator, client = runtime._build_index_coordinator(inputs, check_active=lambda: None)
+        coordinator, client = runtime._build_index_coordinator(
+            inputs, check_active=lambda: None,
+            index_generation=settings.elasticsearch.index_generation,
+        )
         try:
             query_encoder = services.retrieval._semantic_encoder
             assert query_encoder.model == response_model

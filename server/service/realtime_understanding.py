@@ -32,6 +32,8 @@ from ..repository.video_parse import (
 )
 from ..storage.artifact import ArtifactStore
 from ..utils.time import now_utc
+from ..utils.retry import task_retry_delay
+from ..utils.execution import run_blocking
 from .video_parse import VideoParseRuntimeService
 
 _logger = logging.getLogger(__name__)
@@ -162,9 +164,9 @@ class RealtimeUnderstandingService:
                 return ChunkEvidence(target, row.content, row.content_version)
             if row.status == "FAILED":
                 return ChunkEvidence(target, error=str(row.last_error or "base Parse exhausted its retry budget"))
-            if row.status == "COMPLETE":
+            if row.status in {"WAITING", "COMPLETE"} or row.phase != 1:
                 return ChunkEvidence(target, error="completed base Parse has no valid content")
-            if row.parent_error is not None and row.status != "UNDERSTANDING":
+            if row.parent_error is not None and row.status != "RUNNING":
                 return ChunkEvidence(target, error=f"full Parse requires retry ({row.parent_error})")
             await asyncio.to_thread(self._start_chunk, target.chunk_parse_task_id)
             await asyncio.sleep(min(0.1, self._remaining(context.request)))
@@ -174,7 +176,7 @@ class RealtimeUnderstandingService:
         task_input = await asyncio.to_thread(self._repository.load_task_input, context.video_parse_task_id)
         rows = await self._load_chunks(context)  # fence against task replacement before using media
         config = ParseConfig.model_validate(task_input.task.parse_config)
-        frame = await asyncio.to_thread(self._extract_anchor, context, config.visual_input.max_height, task_input.content_hash)
+        frame = await run_blocking(self._extract_anchor, context, config.visual_input.max_height, task_input.content_hash)
         observation = await self._derive(
             context, config, rows, prompt, [ImageInput(frame.image_path), TextInput(prompt)],
             schema_name="RealtimeVisualObservation", result_type=VisualObservation,
@@ -280,13 +282,22 @@ class RealtimeUnderstandingService:
 
         async def heartbeat() -> None:
             while not job.done():
-                await asyncio.sleep(self._heartbeat_seconds)
+                remaining = (
+                    (lease.execution_deadline - now_utc()).total_seconds()
+                    if lease.execution_deadline is not None else self._heartbeat_seconds
+                )
+                await asyncio.sleep(max(0, min(self._heartbeat_seconds, remaining)))
                 if job.done():
                     return
+                if (lease.execution_deadline is not None and now_utc() >= lease.execution_deadline):
+                    job.cancel()
+                    raise TimeoutError("realtime base Chunk execution deadline reached")
                 active = await asyncio.to_thread(
                     self._queue.heartbeat_chunk, lease, lease_duration=self._lease_duration,
                 )
                 if not active:
+                    if await asyncio.to_thread(self._queue.is_execution_lease_committed, lease):
+                        return
                     job.cancel()
                     raise VideoParseLeaseLostError("realtime base Chunk lease was lost")
 
@@ -294,10 +305,15 @@ class RealtimeUnderstandingService:
         try:
             await job
         except (Exception, asyncio.CancelledError) as error:
+            if await asyncio.to_thread(self._queue.is_execution_lease_committed, lease):
+                return
             task_input = await asyncio.to_thread(self._repository.load_task_input, lease.video_parse_task_id)
             execution = ParseConfig.model_validate(task_input.task.parse_config).execution
-            delay = min(execution.retry_max_delay_seconds, execution.retry_initial_delay_seconds * 2 ** lease.retry_count)
-            await asyncio.to_thread(self._queue.retry_chunk, lease, error=str(error), retry_at=now_utc() + timedelta(seconds=delay))
+            delay = task_retry_delay(
+                execution.retry_initial_delay_seconds, execution.retry_max_delay_seconds,
+                lease.retry_count + 1,
+            )
+            await asyncio.to_thread(self._queue.retry_chunk, lease, error=str(error), retry_at=now_utc() + delay)
             _logger.warning("realtime base Chunk failed: %s", lease.chunk_parse_task_id, exc_info=True)
         finally:
             pulse.cancel()

@@ -54,7 +54,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); configureDataSource(localSource); vi.restoreAllMocks(); });
 
 describe("VideoPlayer", () => {
-  it("keeps millisecond duration and seek precision while rounding only the displayed time", () => {
+  it("keeps millisecond duration and seek precision while displaying whole seconds", () => {
     const onPlaybackPositionChange = vi.fn();
     render(<VideoPlayer video={{ ...video(), durationSeconds: 8_008 }} atSeconds={3_456} onPlaybackPositionChange={onPlaybackPositionChange} />);
     const media = screen.getByLabelText<HTMLVideoElement>("EP 01 视频");
@@ -63,7 +63,7 @@ describe("VideoPlayer", () => {
     expect(media.currentTime).toBe(3.456);
     expect(onPlaybackPositionChange).toHaveBeenLastCalledWith(3_456);
     expect(screen.getByRole("slider", { name: "播放进度" })).toHaveAttribute("max", "8008");
-    expect(screen.getByText("00:03.46 / 00:08.01")).toBeInTheDocument();
+    expect(screen.getByText("00:03 / 00:08")).toBeInTheDocument();
     fireEvent.change(screen.getByRole("slider", { name: "播放进度" }), { target: { value: "4567" } });
     expect(media.currentTime).toBe(4.567);
     expect(readVideoProgress("video-1")?.positionSeconds).toBe(4_567);

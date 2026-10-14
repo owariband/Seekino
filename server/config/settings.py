@@ -157,6 +157,14 @@ class ServerSettings:
                 ),
             ),
             parse=VideoParseRuntimeConfig(
+                video_concurrency=_environment_int("ANIVAG_VIDEO_CONCURRENCY", parse_defaults.video_concurrency),
+                parse_concurrency=_environment_int("ANIVAG_PARSE_CONCURRENCY", parse_defaults.parse_concurrency),
+                refine_concurrency=_environment_int("ANIVAG_REFINE_CONCURRENCY", parse_defaults.refine_concurrency),
+                index_concurrency=_environment_int("ANIVAG_INDEX_CONCURRENCY", parse_defaults.index_concurrency),
+                max_model_calls=_environment_int("ANIVAG_MAX_MODEL_CALLS", parse_defaults.max_model_calls),
+                parse_execution_timeout_seconds=_environment_float("ANIVAG_PARSE_EXECUTION_TIMEOUT_SECONDS", parse_defaults.parse_execution_timeout_seconds),
+                refine_execution_timeout_seconds=_environment_float("ANIVAG_REFINE_EXECUTION_TIMEOUT_SECONDS", parse_defaults.refine_execution_timeout_seconds),
+                index_execution_timeout_seconds=_environment_float("ANIVAG_INDEX_EXECUTION_TIMEOUT_SECONDS", parse_defaults.index_execution_timeout_seconds),
                 batch_max_size=_environment_int(
                     "ANIVAG_PARSE_BATCH_MAX_SIZE", parse_defaults.batch_max_size,
                 ),

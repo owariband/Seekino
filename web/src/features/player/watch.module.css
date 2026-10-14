@@ -1,14 +1,16 @@
 .page { --watch-gutter: clamp(16px, 3cqw, 64px); width: 100%; max-width: none; min-height: calc(100cqh - var(--app-header-height, 76px)); padding: 0 0 64px; }
 .page[data-fullscreen="true"] { height: 100cqh; overflow: hidden; padding: 0; background: #090c0b; }
 .page[data-fullscreen="true"] .layout { padding: 0; }
-.page[data-fullscreen="true"] .viewer { height: 100cqh; min-height: 0; }
+.page[data-fullscreen="true"] .viewer { max-width: none; height: 100cqh; min-height: 0; }
 .page[data-fullscreen="true"] .watchDetails { display: none; }
 .panelToggle { display: inline-flex; width: 42px; height: 42px; align-items: center; justify-content: center; color: var(--ink-soft); border-radius: 6px; background: transparent; cursor: pointer; }
 .panelToggle:hover, .panelToggle[aria-expanded="true"] { color: var(--teal-deep); background: var(--teal-wash); }
 .floatingTools { position: absolute; z-index: 10; top: 12px; left: 16px; }
 .floatingTools .panelToggle { color: #f7f8f7; background: rgb(9 12 11 / 75%); }
 .layout { position: relative; container: watch-player / inline-size; min-width: 0; scroll-margin-top: var(--app-header-height, 76px); padding: 20px var(--watch-gutter); background: var(--stage); }
-.viewer { width: 100%; min-width: 0; height: min(calc(100cqw * .5625 + 70px), calc(100cqh - var(--app-header-height, 76px) - 40px)); min-height: 180px; }
+/* Leave a strip under the player so the episode title peeks above the fold; when height-bound,
+   shrink the width to the video's 16:9 so the controls line up with the picture. */
+.viewer { --viewer-max-height: calc(100cqh - var(--app-header-height, 76px) - 40px - 76px); width: 100%; max-width: calc((var(--viewer-max-height) - 70px) * 16 / 9); min-width: 0; height: min(calc(100cqw * .5625 + 70px), var(--viewer-max-height)); min-height: 180px; margin-inline: auto; }
 .resizeHandle { position: absolute; z-index: 46; top: 0; left: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
 .resizeHandle::before { position: absolute; top: 35%; bottom: 35%; left: 4px; width: 2px; border-radius: 2px; background: var(--line-strong); content: ""; }
 .resizeHandle:hover::before, .resizeHandle:focus-visible::before { top: 25%; bottom: 25%; background: var(--teal); }
@@ -35,7 +37,7 @@
 .videoPlayerUnavailable { display: grid; width: 100%; aspect-ratio: 16 / 9; place-items: center; padding: 24px; color: #dce3e1; border-radius: 14px; background: #101514; font-size: .82rem; text-align: center; }
 .pageState { display: grid; justify-items: center; gap: 14px; margin: 0; padding: 64px 24px; color: var(--ink-soft); text-align: center; }
 .unavailable { display: grid; width: 100%; aspect-ratio: 16 / 9; place-items: center; margin: 0; padding: 24px; color: #eee; border-radius: 12px; background: #111; font-size: .85rem; text-align: center; }
-.watchDetails { display: grid; width: 100%; max-width: 1720px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: clamp(32px, 4cqw, 64px); margin: 0 auto; padding: 36px var(--watch-gutter) 0; }
+.watchDetails { display: grid; width: 100%; max-width: 1720px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: clamp(32px, 4cqw, 64px); margin: 0 auto; padding: 24px var(--watch-gutter) 0; }
 .watchSynopsis, .upNext { min-width: 0; }
 .seriesName { display: inline-flex; align-items: center; gap: 8px; color: var(--teal-deep); font-size: 1.15rem; font-weight: 600; text-decoration: none; }
 .seriesName:hover { text-decoration: underline; }
@@ -100,6 +102,8 @@
 .heroFrame { position: absolute; z-index: -3; inset: 0 0 -22%; }
 .hero::before { position: absolute; z-index: -2; inset: 0; background: linear-gradient(90deg, rgb(5 16 13 / 92%), rgb(5 16 13 / 62%) 36%, rgb(5 16 13 / 8%) 78%); content: ""; }
 .hero::after { position: absolute; z-index: -1; right: 0; bottom: 0; left: 0; height: 150px; background: linear-gradient(0deg, var(--canvas), transparent); content: ""; }
+/* Fading a dark frame into the light canvas leaves a grey haze; end on a deeper tone with a clean edge instead. */
+:global(:root[data-theme="light"]) .hero::after { background: linear-gradient(0deg, rgb(5 16 13 / 72%), transparent); }
 .heroContent { width: min(620px, 55%); padding-block: 16px; }
 .heroKicker { display: inline-flex; align-items: center; gap: 10px; color: #b6e4d7; font-size: .8rem; letter-spacing: .12em; }
 .heroKicker::before { width: 24px; height: 2px; background: currentColor; content: ""; }
@@ -137,7 +141,7 @@
 .seriesCover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .seriesCover img[hidden] { display: none; }
 .coverFallback { display: flex; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px; text-align: center; }
-.coverFallback b { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow-wrap: anywhere; font: 500 clamp(1.2rem, 2vw, 1.8rem)/1.4 var(--display); }
+.coverFallback b { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow-wrap: anywhere; font: 600 clamp(1.2rem, 2vw, 1.8rem)/1.4 var(--display); }
 .seriesCard > span:last-child, .seriesCardActive > span:last-child { display: grid; width: 100%; min-width: 0; gap: 7px; }
 .seriesCards strong { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 1rem; line-height: 1.45; font-weight: 600; overflow-wrap: anywhere; }
 .seriesCards small { color: var(--ink-soft); font-size: .72rem; }
@@ -146,7 +150,7 @@
 .homeEpisodesHeader { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 0; border-top: 1px solid var(--line); }
 .homeEpisodesHeader > div { min-width: 0; }
 .homeEpisodesHeader small { color: var(--teal-deep); font-size: .72rem; }
-.homeEpisodesHeader h2 { margin: 6px 0 0; color: var(--ink); font: 500 1.4rem/1.3 var(--display); overflow-wrap: anywhere; }
+.homeEpisodesHeader h2 { margin: 6px 0 0; color: var(--ink); font: 600 1.4rem/1.3 var(--display); overflow-wrap: anywhere; }
 .collapseEpisodes { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 40px; padding: 0 10px; color: var(--ink-soft); border-radius: 4px; background: transparent; font-size: .75rem; cursor: pointer; }
 .collapseEpisodes:hover { color: var(--teal-deep); background: var(--surface-muted); }
 .homeEpisodeList { margin: 0; padding: 0; list-style: none; border-bottom: 1px solid var(--line); }

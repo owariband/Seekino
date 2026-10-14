@@ -125,6 +125,7 @@ def prepare_service_configuration(
         embedding_model=settings.video_embedding_model,
         embedding_dimensions=settings.text_vector_dimensions,
         embedding_fps=settings.video_embedding_fps,
+        sparse_enabled=settings.retrieval.sparse_weight > 0,
     )
     return gateway_config, parse_defaults
 
@@ -201,7 +202,7 @@ def _build_application_services(
     )
     construction_cleanup.callback(parse_usage.close)
     video_repository = VideoRepository(session_factory)
-    video_parse_repository = VideoParseRepository(session_factory)
+    video_parse_repository = VideoParseRepository(session_factory, target_index_generation=settings.elasticsearch.index_generation)
     media = MediaService(
         library, artifact_store, video_repository, config=settings.images,
         video_parse_repository=video_parse_repository if settings.parse_execution_mode == "v2" else None,
@@ -222,7 +223,7 @@ def _build_application_services(
         gateway_client=gateway_client,
     )
     uploads = UploadService(
-        UploadRepository(session_factory),
+        UploadRepository(session_factory, target_index_generation=settings.elasticsearch.index_generation),
         artifact_store,
         config=settings.upload,
         video_parse_index_store=elasticsearch_store,
@@ -233,7 +234,7 @@ def _build_application_services(
         video_parse_query_encoder_source=parse_defaults.embedding.source,
     )
     v2_repository = video_parse_repository
-    v2_queue = MySqlVideoParseQueue(session_factory)
+    v2_queue = MySqlVideoParseQueue(session_factory, video_concurrency=settings.parse.video_concurrency)
     v2_runtime = VideoParseRuntimeService(
         v2_repository,
         v2_queue,
@@ -420,7 +421,7 @@ def _build_application_services(
         retry_max_delay=settings.mq.retry_max,
         poll_interval=timedelta(seconds=settings.mq.poll_interval_seconds),
         maintenance_interval=settings.mq.lease_duration,
-        max_concurrent_handlers=max(2, settings.parse.asr_concurrency + 1),
+        video_concurrency=settings.parse.video_concurrency,
     )
     construction_cleanup.callback(parse_consumer.close)
 

@@ -48,7 +48,8 @@
     background: #f4f7f2;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
-    --display: Baskerville, "Iowan Old Style", "Songti SC", STSong, serif;
+    /* Rounded where the platform has one, so headings share the mascot's soft geometry. */
+    --display: ui-rounded, "SF Pro Rounded", "Nunito", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
     --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     --canvas: #f4f7f2;
@@ -161,7 +162,7 @@
 
   .page-title {
     margin: 0;
-    font: 500 clamp(1.375rem, 1.8vw, 1.75rem)/1.25 var(--display);
+    font: 600 clamp(1.375rem, 1.8vw, 1.75rem)/1.25 var(--display);
     letter-spacing: -0.02em;
   }
 

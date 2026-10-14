@@ -75,12 +75,14 @@ _UNIX_TIME_MS_COLUMNS = {
 
 _UTC_TIMESTAMP_COLUMNS = {
     "chunk_parse_task": {
+        "execution_deadline",
         "finish_time",
         "lease_expire_time",
         "next_execute_time",
         "start_time",
     },
     "interval_parse_task": {
+        "execution_deadline",
         "finish_time",
         "lease_expire_time",
         "next_execute_time",
@@ -102,6 +104,7 @@ _UTC_TIMESTAMP_COLUMNS = {
 
 _V2_TASK_COLUMNS = {
     "video_parse_task": {
+        "scheduler_slot", "target_index_generation", "prepare_retry_count",
         "attempt_count",
         "chunk_count",
         "create_date",
@@ -130,6 +133,7 @@ _V2_TASK_COLUMNS = {
         "video_id",
     },
     "chunk_parse_task": {
+        "phase", "execution_deadline", "indexed_content_version", "indexed_generation",
         "chunk_id",
         "create_date",
         "create_time",
@@ -160,6 +164,7 @@ _V2_TASK_COLUMNS = {
         "version",
     },
     "interval_parse_task": {
+        "execution_deadline",
         "chunk_count",
         "chunk_task_id",
         "chunk_task_ids",
@@ -538,7 +543,7 @@ def create_schema(engine: Engine) -> None:
             + ", ".join(sorted(missing_v2_schema))
         )
 
-    from .model.job import IntervalParseTask, VideoParseTask
+    from .model.job import ChunkTask, IntervalParseTask, VideoParseTask
     from .model.parse_usage import (
         ModelUsage,
         ParseModelCall,
@@ -592,7 +597,7 @@ def create_schema(engine: Engine) -> None:
             )
 
     incompatible_task_checks: set[str] = set()
-    for model in (VideoParseTask, IntervalParseTask):
+    for model in (VideoParseTask, ChunkTask, IntervalParseTask):
         table = model.__table__
         if table.name not in existing_tables:
             continue
@@ -601,9 +606,7 @@ def create_schema(engine: Engine) -> None:
             for constraint in inspector.get_check_constraints(table.name)
         }
         for constraint in table.constraints:
-            if not isinstance(constraint, CheckConstraint) or constraint.name not in {
-                f"ck_{table.name}_status", f"ck_{table.name}_lease_state",
-            }:
+            if not isinstance(constraint, CheckConstraint):
                 continue
             actual = actual_checks.get(constraint.name, "")
             if _normalize_task_check(actual) != _normalize_task_check(str(constraint.sqltext)):
@@ -611,7 +614,7 @@ def create_schema(engine: Engine) -> None:
     if incompatible_task_checks:
         raise SchemaUpgradeRequiredError(
             "Video Parse V2 task indexing CHECK constraints require "
-            "20260928_task_indexing_contract.sql before init-db; incompatible: "
+            "scripts/migrate_video_parse_chunk_tasks.py before init-db; incompatible: "
             + ", ".join(sorted(incompatible_task_checks))
         )
 
@@ -663,6 +666,18 @@ def create_schema(engine: Engine) -> None:
         )
 
     _check_identity_schema(inspector, existing_tables)
+
+    task_tables = tuple(model.__table__ for model in (VideoParseTask, ChunkTask, IntervalParseTask)
+                        if model.__tablename__ in existing_tables)
+    task_differences = {
+        item for item in _schema_structure_differences(inspector, existing_tables, task_tables)
+        if not item.endswith(".checks")  # Compared above with MySQL-aware task normalization.
+    }
+    if task_differences:
+        raise SchemaUpgradeRequiredError(
+            "Video Parse V2 task schema requires scripts/migrate_video_parse_chunk_tasks.py; incompatible: "
+            + ", ".join(sorted(task_differences))
+        )
 
     if "agent_conversation" in existing_tables and "detail" not in conversation_columns:
         raise SchemaUpgradeRequiredError(
@@ -858,7 +873,10 @@ def _schema_structure_differences(
             for index in table.indexes
             if not index.unique
         }
-        if actual_indexes != expected_indexes:
+        fk_support = {tuple(constraint.columns.keys()) for constraint in table.foreign_key_constraints}
+        # InnoDB may create exactly these supporting indexes when a foreign key
+        # has no declared index prefix. Their presence is engine-managed.
+        if expected_indexes - actual_indexes or (actual_indexes - expected_indexes) - fk_support:
             differences.add(f"{table_name}.indexes")
     return differences
 

@@ -14,7 +14,7 @@ from engine.common.media_probe import probe_video_duration_seconds
 from engine.rag import EncoderContract
 from gateway.model_sources import ModelReference, ModelReferenceType
 
-from ..config.parse_profile import ParseConfig, default_video_parse_v2_config
+from ..config.parse_profile import ParseConfig, default_video_parse_v2_config, index_contract_fingerprint
 from ..config.upload import UploadServiceConfig
 from ..model.identifiers import derive_video_id
 from ..model.upload import UploadSessionStatus, UploadCompletionStage
@@ -266,6 +266,7 @@ class UploadService:
         *,
         tenant_id: str,
         expected_job_version: int,
+        expected_lease_version: int,
         actor_user_id: str | None = None,
     ) -> VideoParseTaskState:
         if (
@@ -278,29 +279,12 @@ class UploadService:
         if actor_user_id is not None:
             actor_user_id = require_nonempty_text(actor_user_id, "actor_user_id", maximum=64)
 
-        def resolve_snapshot(snapshot: dict) -> dict:
-            current = self._parse_defaults_loader().to_video_parse_v2()
-            saved = VideoParseV2Config.model_validate(snapshot)
-            # Keep prepared topology, evidence and the active index contract.
-            models = saved.models.model_copy(update={
-                "understanding": current.models.understanding,
-                "refine": current.models.refine,
-            })
-            refreshed = saved.model_copy(update={
-                "models": models, "visual_input": current.visual_input,
-            })
-            return self._require_video_parse_index_compatibility(
-                refreshed
-            ).model_dump(mode="json")
-
         task = self._repository.retry_parse(
             session_id,
             tenant_id=require_nonempty_text(tenant_id, "tenant_id"),
             expected_job_version=expected_job_version,
+            expected_lease_version=expected_lease_version,
             actor_user_id=actor_user_id,
-            snapshot_resolver=(
-                resolve_snapshot if self._parse_defaults_loader is not None else None
-            ),
             now=self._now(),
         )
         _logger.info(
@@ -693,13 +677,17 @@ class UploadService:
                 "video_parse_config.models.embedding must match the exact active "
                 "V2 query encoder source, model, and dimensions"
             )
-        if reference.type == ModelReferenceType.ENDPOINT and embedding.encoder_model is None:
-            return config.model_copy(update={
-                "models": config.models.model_copy(update={
-                    "embedding": embedding.model_copy(update={"encoder_model": reference.model}),
-                }),
-            })
-        return config
+        resolved_embedding = embedding.model_copy(update={"encoder_model": reference.model})
+        return config.model_copy(update={
+            "models": config.models.model_copy(update={"embedding": resolved_embedding}),
+            "indexing": config.indexing.model_copy(update={
+                "contract_fingerprint": index_contract_fingerprint(
+                    resolved_embedding, provider=active_encoder.provider,
+                    encoder_revision=active_encoder.encoder_revision,
+                    max_height=config.visual_input.max_height,
+                ),
+            }),
+        })
 
 
 def _artifact_segment(segment: UploadSegmentState) -> UploadSegmentArtifact:

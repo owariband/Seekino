@@ -14,10 +14,14 @@ from sqlalchemy import (
     Integer,
     JSON,
     String,
+    SmallInteger,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from agent.video_parse_v2.state import ChunkTaskPhase, ChunkTaskStatus
+
+from ..config.elasticsearch import DEFAULT_INDEX_GENERATION
 from .base import BaseModel
 from .types import StringEncodedJSON
 from ..utils.time import now_unix_time_ms, now_utc
@@ -68,20 +72,14 @@ class VideoParseTaskStatus(StrEnum):
     INDEXING_FAILED = "INDEXING_FAILED"
 
 
-class ChunkParseTaskStatus(StrEnum):
-    QUEUED = "QUEUED"
-    UNDERSTANDING = "UNDERSTANDING"
-    COMPLETE = "COMPLETE"
-    FAILED = "FAILED"
+ChunkParseTaskStatus = ChunkTaskStatus
 
 
 class IntervalParseTaskStatus(StrEnum):
     WAITING = "WAITING"
     REFINING = "REFINING"
-    INDEXING = "INDEXING"
     COMPLETE = "COMPLETE"
     PARSING_FAILED = "PARSING_FAILED"
-    INDEXING_FAILED = "INDEXING_FAILED"
 
 
 class SeriesParseJob(BaseModel):
@@ -214,6 +212,10 @@ class VideoChunkCheckpoint(BaseModel):
 class VideoParseTask(BaseModel):
     __tablename__ = "video_parse_task"
     __table_args__ = (
+        UniqueConstraint("scheduler_slot", name="uq_video_parse_task_scheduler_slot"),
+        CheckConstraint("scheduler_slot IS NULL OR scheduler_slot > 0", name="ck_video_parse_task_scheduler_slot"),
+        CheckConstraint("target_index_generation > 0", name="ck_video_parse_task_index_generation"),
+        CheckConstraint("prepare_retry_count >= 0", name="ck_video_parse_task_prepare_retry_count"),
         UniqueConstraint(
             "video_id",
             "version",
@@ -287,6 +289,9 @@ class VideoParseTask(BaseModel):
         nullable=False,
         default=now_utc,
     )
+    scheduler_slot: Mapped[int | None] = mapped_column(Integer)
+    target_index_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=DEFAULT_INDEX_GENERATION)
+    prepare_retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     lease_owner: Mapped[str | None] = mapped_column(String(128))
@@ -311,7 +316,7 @@ class VideoParseTask(BaseModel):
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
-class ChunkParseTask(BaseModel):
+class ChunkTask(BaseModel):
     __tablename__ = "chunk_parse_task"
     __table_args__ = (
         UniqueConstraint(
@@ -326,7 +331,9 @@ class ChunkParseTask(BaseModel):
             name="uq_chunk_parse_task_id_parent",
         ),
         CheckConstraint(
-            "status IN ('QUEUED', 'UNDERSTANDING', 'COMPLETE', 'FAILED')",
+            "(phase = 1 AND status IN ('QUEUED', 'RUNNING', 'FAILED')) OR "
+            "(phase = 2 AND status = 'WAITING') OR "
+            "(phase = 3 AND status IN ('QUEUED', 'RUNNING', 'COMPLETE', 'FAILED'))",
             name="ck_chunk_parse_task_status",
         ),
         CheckConstraint(
@@ -338,16 +345,23 @@ class ChunkParseTask(BaseModel):
             name="ck_chunk_parse_task_lease_version",
         ),
         CheckConstraint(
-            "(status = 'UNDERSTANDING' "
+            "(status = 'RUNNING' "
             "AND lease_owner IS NOT NULL "
-            "AND lease_expire_time IS NOT NULL) OR "
-            "(status <> 'UNDERSTANDING' "
+            "AND lease_expire_time IS NOT NULL AND execution_deadline IS NOT NULL) OR "
+            "(status <> 'RUNNING' "
             "AND lease_owner IS NULL "
-            "AND lease_expire_time IS NULL)",
+            "AND lease_expire_time IS NULL AND execution_deadline IS NULL)",
             name="ck_chunk_parse_task_lease_state",
+        ),
+        CheckConstraint(
+            "(indexed_content_version IS NULL AND indexed_generation IS NULL) OR "
+            "(indexed_content_version > 0 AND indexed_generation > 0 "
+            "AND indexed_content_version IS NOT NULL AND indexed_generation IS NOT NULL)",
+            name="ck_chunk_parse_task_publication",
         ),
         Index(
             "ix_chunk_parse_task_due",
+            "phase",
             "status",
             "next_execute_time",
         ),
@@ -359,6 +373,7 @@ class ChunkParseTask(BaseModel):
         Index(
             "ix_chunk_parse_task_parent_status",
             "video_task_id",
+            "phase",
             "status",
             "chunk_id",
         ),
@@ -374,6 +389,10 @@ class ChunkParseTask(BaseModel):
         ForeignKey("video_chunk.id", ondelete="CASCADE"),
         nullable=False,
     )
+    phase: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=ChunkTaskPhase.PARSE)
+    indexed_content_version: Mapped[int | None] = mapped_column(Integer)
+    indexed_generation: Mapped[int | None] = mapped_column(Integer)
+    execution_deadline: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     next_execute_time: Mapped[datetime] = mapped_column(
         UTC_TIMESTAMP,
@@ -389,6 +408,9 @@ class ChunkParseTask(BaseModel):
     last_error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
+
+# Keep existing imports stable while the same physical task row gains Index.
+ChunkParseTask = ChunkTask
 
 class ChunkParseContent(BaseModel):
     __tablename__ = "chunk_parse_content"
@@ -440,8 +462,7 @@ class IntervalParseTask(BaseModel):
             name="ck_interval_parse_task_ready_mask",
         ),
         CheckConstraint(
-            "status IN ('WAITING', 'REFINING', 'INDEXING', 'COMPLETE', "
-            "'PARSING_FAILED', 'INDEXING_FAILED')",
+            "status IN ('WAITING', 'REFINING', 'COMPLETE', 'PARSING_FAILED')",
             name="ck_interval_parse_task_status",
         ),
         CheckConstraint(
@@ -453,13 +474,12 @@ class IntervalParseTask(BaseModel):
             name="ck_interval_parse_task_lease_version",
         ),
         CheckConstraint(
-            "(status IN ('REFINING', 'INDEXING') "
+            "(status = 'REFINING' "
             "AND lease_owner IS NOT NULL "
-            "AND lease_expire_time IS NOT NULL) OR "
-            "(status IN ('WAITING', 'INDEXING', 'COMPLETE', "
-            "'PARSING_FAILED', 'INDEXING_FAILED') "
+            "AND lease_expire_time IS NOT NULL AND execution_deadline IS NOT NULL) OR "
+            "(status IN ('WAITING', 'COMPLETE', 'PARSING_FAILED') "
             "AND lease_owner IS NULL "
-            "AND lease_expire_time IS NULL)",
+            "AND lease_expire_time IS NULL AND execution_deadline IS NULL)",
             name="ck_interval_parse_task_lease_state",
         ),
         Index(
@@ -494,6 +514,7 @@ class IntervalParseTask(BaseModel):
     start_sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
     ready_mask: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    execution_deadline: Mapped[datetime | None] = mapped_column(UTC_TIMESTAMP)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     next_execute_time: Mapped[datetime] = mapped_column(
         UTC_TIMESTAMP,

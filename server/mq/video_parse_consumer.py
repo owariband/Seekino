@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import TypeVar
 
 from gateway.errors import SSEProxyError
+from engine.common.config import VideoParseRuntimeConfig
 
 from ..model.dto.jobDTO import ChunkParseLease, IntervalParseLease, VideoParseLease
 from ..utils.time import now_utc
@@ -25,7 +26,7 @@ class VideoParseConsumerHandlers:
     prepare: Callable[[VideoParseLease], Awaitable[None]]
     understand: Callable[[ChunkParseLease], Awaitable[None]]
     refine: Callable[[IntervalParseLease], Awaitable[None]]
-    index: Callable[[IntervalParseLease], Awaitable[None]]
+    index: Callable[[ChunkParseLease], Awaitable[None]]
     prefix: Callable[[], Awaitable[bool]] | None = None
     maintenance: Callable[[], Awaitable[object]] | None = None
 
@@ -138,7 +139,7 @@ class VideoParseConsumer:
         retry_max_delay: timedelta = timedelta(minutes=5),
         poll_interval: timedelta = timedelta(seconds=2),
         maintenance_interval: timedelta | None = None,
-        max_concurrent_handlers: int = 8,
+        video_concurrency: int | None = None,
     ) -> None:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
@@ -162,10 +163,11 @@ class VideoParseConsumer:
         )
         if effective_maintenance_interval <= timedelta(0):
             raise ValueError("maintenance_interval must be positive")
-        if max_concurrent_handlers < 2:
-            raise ValueError(
-                "max_concurrent_handlers must leave one coordinator and one work slot"
-            )
+        effective_video_concurrency = (
+            VideoParseRuntimeConfig().video_concurrency if video_concurrency is None else video_concurrency
+        )
+        if type(effective_video_concurrency) is not int or effective_video_concurrency <= 0:
+            raise ValueError("video_concurrency must be a positive integer")
         self._queue = queue
         self._handlers = handlers
         self._worker_id = worker_id
@@ -176,7 +178,8 @@ class VideoParseConsumer:
         self._poll_interval = poll_interval
         self._maintenance_interval = effective_maintenance_interval
         self._next_maintenance_at = 0.0
-        self._max_concurrent_handlers = max_concurrent_handlers
+        self._video_concurrency = effective_video_concurrency
+        self._phase_cursor = 0
         self._video_tasks: set[asyncio.Task[None]] = set()
         self._work_tasks: set[asyncio.Task[None]] = set()
         self._prefix_task: asyncio.Task[None] | None = None
@@ -248,65 +251,39 @@ class VideoParseConsumer:
             self._stop_async = None
 
     async def run_once(self) -> bool:
-        await asyncio.to_thread(
-            self._queue.reap_expired,
-            retry_delay=self._retry_initial_delay,
-        )
+        await asyncio.to_thread(self._queue.reap_expired, retry_delay=self._retry_initial_delay)
         await self._run_maintenance_if_due()
         self._video_tasks = {task for task in self._video_tasks if not task.done()}
         self._work_tasks = {task for task in self._work_tasks if not task.done()}
-        if not self._video_tasks:
+        if len(self._video_tasks) < self._video_concurrency:
             video = await asyncio.to_thread(
-                self._queue.claim_video,
-                self._worker_id,
-                lease_duration=self._lease_duration,
+                self._queue.claim_video, self._worker_id, lease_duration=self._lease_duration,
             )
             if video is not None:
                 self._track(asyncio.create_task(self._run_video(video)), coordinator=True)
                 return True
 
-        # The coordinator may spend most of its life waiting for durable child
-        # changes, so child phases run in separate bounded slots.
-        if len(self._work_tasks) >= self._max_concurrent_handlers - 1:
-            return False
-
-        chunk = await asyncio.to_thread(
-            self._queue.claim_chunk,
-            self._worker_id,
-            lease_duration=self._lease_duration,
+        # These cursors are only fairness hints. Every execution permit is granted by MySQL.
+        stages = (
+            (self._queue.claim_chunk, self._run_chunk),
+            (self._queue.claim_interval_refine, lambda lease: self._run_interval(lease, self._handlers.refine)),
+            (self._queue.claim_chunk_index, self._run_chunk),
         )
-        if chunk is not None:
-            self._track(asyncio.create_task(self._run_chunk(chunk)))
-            return True
-
-        refine = await asyncio.to_thread(
-            self._queue.claim_interval_refine,
-            self._worker_id,
-            lease_duration=self._lease_duration,
-        )
-        if refine is not None:
-            self._track(asyncio.create_task(
-                self._run_interval(refine, self._handlers.refine)
-            ))
-            return True
-
-        indexing = await asyncio.to_thread(
-            self._queue.claim_interval_index,
-            self._worker_id,
-            lease_duration=self._lease_duration,
-        )
-        if indexing is not None:
-            self._track(asyncio.create_task(
-                self._run_interval(indexing, self._handlers.index)
-            ))
-            return True
-        if (
-            self._handlers.prefix is not None
-            and (self._prefix_task is None or self._prefix_task.done())
-        ):
-            self._prefix_task = asyncio.create_task(self._run_prefix())
-            self._track(self._prefix_task)
-            return True
+        for offset in range(4):
+            stage = (self._phase_cursor + offset) % 4
+            if stage == 3:
+                if self._handlers.prefix is None or self._prefix_task is not None and not self._prefix_task.done():
+                    continue
+                self._prefix_task = asyncio.create_task(self._run_prefix())
+                self._track(self._prefix_task)
+                self._phase_cursor = 0
+                return True
+            claim, run = stages[stage]
+            lease = await asyncio.to_thread(claim, self._worker_id, lease_duration=self._lease_duration)
+            if lease is not None:
+                self._track(asyncio.create_task(run(lease)))
+                self._phase_cursor = (stage + 1) % 4
+                return True
         return False
 
     async def run_forever(self, stop: asyncio.Event) -> None:
@@ -398,7 +375,8 @@ class VideoParseConsumer:
                 self._handlers.prepare,
                 self._queue.heartbeat_video,
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
+            await self._release_cancelled(lease, error)
             raise
         except Exception as exc:
             retry_at = now_utc() + self._retry_delay(lease.attempt_count)
@@ -417,10 +395,11 @@ class VideoParseConsumer:
         try:
             await self._with_heartbeat(
                 lease,
-                self._handlers.understand,
+                self._handlers.understand if lease.phase == 1 else self._handlers.index,
                 self._queue.heartbeat_chunk,
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
+            await self._release_cancelled(lease, error)
             raise
         except Exception as exc:
             retry_at = now_utc() + task_retry_delay(
@@ -435,7 +414,7 @@ class VideoParseConsumer:
                 retry_at=retry_at,
             )
             _log_retry_failure(
-                lease, phase="understand", error=exc,
+                lease, phase="understand" if lease.phase == 1 else "index", error=exc,
                 recorded=recorded, retry_at=retry_at,
             )
 
@@ -450,17 +429,12 @@ class VideoParseConsumer:
                 handler,
                 self._queue.heartbeat_interval,
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
+            await self._release_cancelled(lease, error)
             raise
         except Exception as exc:
-            delay = (
-                task_retry_delay(
-                    lease.retry_initial_delay_seconds,
-                    lease.retry_max_delay_seconds,
-                    lease.retry_count + 1,
-                )
-                if lease.phase == "REFINING"
-                else self._retry_delay(lease.retry_count + 1)
+            delay = task_retry_delay(
+                lease.retry_initial_delay_seconds, lease.retry_max_delay_seconds, lease.retry_count + 1,
             )
             retry_at = now_utc() + delay
             recorded = await asyncio.to_thread(
@@ -470,7 +444,7 @@ class VideoParseConsumer:
                 retry_at=retry_at,
             )
             _log_retry_failure(
-                lease, phase="refine" if lease.phase == "REFINING" else "index",
+                lease, phase="refine",
                 error=exc, recorded=recorded, retry_at=retry_at,
             )
 
@@ -480,10 +454,22 @@ class VideoParseConsumer:
         if not worked:
             await asyncio.sleep(self._poll_interval.total_seconds())
 
+    async def _release_cancelled(self, lease: _Lease, error: asyncio.CancelledError) -> None:
+        if getattr(error, "execution_pending", False):
+            # The transport still owns its resources. Release only after its real thread exits.
+            completion = getattr(error, "completion", None)
+            if completion is not None:
+                def release_after_exit(_future) -> None:
+                    try:
+                        self._queue.release_execution(lease)
+                    except Exception:
+                        _logger.exception("Deferred Parse lease release failed; expiry will recover it")
+                completion.add_done_callback(release_after_exit)
+            return
+        await asyncio.to_thread(self._queue.release_execution, lease)
+
     async def _with_heartbeat(
-        self,
-        lease: _Lease,
-        handler: Callable[[_Lease], Awaitable[None]],
+        self, lease: _Lease, handler: Callable[[_Lease], Awaitable[None]],
         heartbeat: Callable[..., bool],
     ) -> None:
         result = handler(lease)
@@ -491,30 +477,40 @@ class VideoParseConsumer:
             raise TypeError("VideoParseConsumer handlers must be async")
         work = asyncio.create_task(result)
         interval = self._heartbeat_interval.total_seconds()
+        deadline = getattr(lease, "execution_deadline", None)
         try:
             while True:
+                remaining = (deadline - now_utc()).total_seconds() if deadline is not None else None
+                if remaining is not None and remaining <= 0:
+                    if await asyncio.to_thread(self._queue.is_execution_lease_committed, lease):
+                        await work
+                        return
+                    work.cancel()
+                    await asyncio.gather(work, return_exceptions=True)
+                    raise TimeoutError("Video Parse stage execution deadline exceeded")
                 done, _pending = await asyncio.wait(
-                    {work}, timeout=interval, return_when=asyncio.FIRST_COMPLETED
+                    {work}, timeout=min(interval, remaining) if remaining is not None else interval,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
                 if work in done:
                     await work
                     return
-                current = await asyncio.to_thread(
-                    heartbeat,
-                    lease,
-                    lease_duration=self._lease_duration,
-                )
+                current = await asyncio.to_thread(heartbeat, lease, lease_duration=self._lease_duration)
                 if not current:
-                    committed = await asyncio.to_thread(
-                        self._queue.is_execution_lease_committed,
-                        lease,
-                    )
-                    if committed:
+                    if await asyncio.to_thread(self._queue.is_execution_lease_committed, lease):
                         await work
                         return
                     work.cancel()
                     await asyncio.gather(work, return_exceptions=True)
                     raise RuntimeError("Video Parse V2 worker lease was lost")
+        except asyncio.CancelledError:
+            work.cancel()
+            try:
+                await work
+            except asyncio.CancelledError as stopped:
+                if getattr(stopped, "execution_pending", False):
+                    raise stopped
+            raise
         finally:
             if not work.done():
                 work.cancel()
@@ -541,9 +537,8 @@ class VideoParseConsumer:
             _logger.exception("Video Parse V2 maintenance failed")
 
     def _retry_delay(self, failure_count: int) -> timedelta:
-        multiplier = 2 ** max(0, failure_count - 1)
-        seconds = min(
-            self._retry_initial_delay.total_seconds() * multiplier,
+        return task_retry_delay(
+            self._retry_initial_delay.total_seconds(),
             self._retry_max_delay.total_seconds(),
+            failure_count,
         )
-        return timedelta(seconds=seconds)

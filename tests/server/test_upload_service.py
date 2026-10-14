@@ -18,7 +18,7 @@ from gateway.ark.embedding import DOUBAO_MULTIMODAL_EMBEDDING_REVISION
 from gateway.config import load_config
 from server.config.media import ImageUploadConfig
 from server.config.mq import MQConsumerConfig
-from server.config.parse_profile import ParseConfig, default_video_parse_v2_config
+from server.config.parse_profile import ParseConfig, default_video_parse_v2_config, index_contract_fingerprint
 from server.database import create_session_factory
 from server.model.dto.parseDTO import PreparedEmbedding
 from server.model.index_sync import IndexSyncIntent, IndexSyncOperation, IndexSyncStatus
@@ -453,6 +453,11 @@ def test_reparse_without_config_inherits_the_latest_task_and_freezes_endpoint_id
     )
     expected = replacement.model_dump(mode="json")
     expected["models"]["embedding"]["encoder_model"] = "doubao-embedding-vision-250615"
+    expected["indexing"]["contract_fingerprint"] = index_contract_fingerprint(
+        replacement.models.embedding.model_copy(update={"encoder_model": "doubao-embedding-vision-250615"}),
+        provider="ark", encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+        max_height=replacement.visual_input.max_height,
+    )
     assert second.version == 2
     assert second.parse_config == expected
     assert replacement.models.embedding.encoder_model is None
@@ -509,6 +514,11 @@ def test_reparse_freezes_a_legacy_endpoint_snapshot_after_selecting_the_latest_t
     )
     expected = json.loads(json.dumps(legacy))
     expected["models"]["embedding"]["encoder_model"] = "doubao-embedding-vision-250615"
+    expected["indexing"]["contract_fingerprint"] = index_contract_fingerprint(
+        VideoParseV2Config.model_validate(expected).models.embedding.model_copy(update={"encoder_model": "doubao-embedding-vision-250615"}),
+        provider="ark", encoder_revision=DOUBAO_MULTIMODAL_EMBEDDING_REVISION,
+        max_height=VideoParseV2Config.model_validate(expected).visual_input.max_height,
+    )
     assert reparsed.parse_config == expected
     assert reparsed.detail["_worker_runtime_v2"]["accepted"] is True
     assert reparsed.version == (1 if status == "PENDING" else 2)
@@ -667,7 +677,7 @@ def test_new_upload_and_retry_keep_ready_sibling_searchable(
     service.retry_parse(
         upload.upload_session_id,
         tenant_id="local-default",
-        expected_job_version=1,
+        expected_job_version=1, expected_lease_version=0,
     )
     with session_factory() as session:
         assert session.get(Series, series_id).status == "READY"
@@ -692,10 +702,12 @@ def test_legacy_parse_execution_resolves_defaults_without_changing_request_finge
         raw["execution"].pop(name)
     legacy = ParseConfig.model_validate(raw)
     assert legacy.model_dump(mode="json") == raw
-    assert legacy.model_dump(by_alias=True)["execution"] == {
-        "requestTimeoutSeconds": raw["execution"]["request_timeout_seconds"],
-        "maxAttempts": raw["execution"]["max_attempts"],
-    }
+    serialized = legacy.model_dump(by_alias=True)["execution"]
+    assert serialized["requestTimeoutSeconds"] == raw["execution"]["request_timeout_seconds"]
+    assert serialized["maxAttempts"] == raw["execution"]["max_attempts"]
+    assert "retryInitialDelaySeconds" not in serialized
+    assert "retryMaxDelaySeconds" not in serialized
+    assert serialized["parseConcurrency"] == raw["execution"]["parse_concurrency"]
     with pytest.raises(ValueError, match="must be resolved"):
         legacy.to_video_parse_v2()
     _engine, _store, _repository, service = _upload_service(
@@ -1425,7 +1437,7 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
             id=chunk_task_id,
             video_task_id=completed.video_parse_task_id,
             chunk_id=video_chunk_id,
-            status="COMPLETE",
+            phase=3, indexed_content_version=1, indexed_generation=1, status="COMPLETE",
             next_execute_time=unix_time_ms_to_datetime(started_at),
             retry_count=0,
             lease_version=1,
@@ -1461,19 +1473,20 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
     retried = service.retry_parse(
         upload.upload_session_id,
         tenant_id="local-default",
-        expected_job_version=1,
+        expected_job_version=1, expected_lease_version=0,
     )
 
     session_factory = create_session_factory(engine)
     jobs = ParseJobRepository(session_factory)
     assert retried.video_parse_task_id == completed.video_parse_task_id
     assert (retried.version, retried.status) == (1, "PREPARING")
-    assert (retried.attempt_count, retried.max_attempts) == (3, 4)
+    assert (retried.attempt_count, retried.max_attempts) == (3, 3)
+    assert retried.prepare_retry_count == 0
     assert retried.parse_config == original_config
     assert retried.next_execute_time == unix_time_ms_to_datetime(retry_at)
     assert retried.start_time == unix_time_ms_to_datetime(started_at)
     assert retried.finish_time is None
-    assert retried.last_error == {"code": "MODEL_TIMEOUT", "message": "provider timed out"}
+    assert retried.last_error is None
     assert retried.processing_duration_ms == 1234
     assert work_file.read_text(encoding="utf-8") == "keep"
     with create_session_factory(engine)() as session:
@@ -1497,11 +1510,11 @@ def test_manual_parse_retry_reuses_v2_identity_config_and_results(repository, tm
         )) is not None
     assert jobs.get_video_parse_task(completed.video_parse_task_id) == retried
 
-    with pytest.raises(UploadStateError, match="failed VideoParseTask"):
+    with pytest.raises(UploadConflictError, match="version or lease changed"):
         service.retry_parse(
             upload.upload_session_id,
             tenant_id="local-default",
-            expected_job_version=1,
+            expected_job_version=1, expected_lease_version=0,
         )
 
 
@@ -1516,13 +1529,13 @@ def test_manual_parse_retry_requires_the_latest_failed_v2_task(repository, tmp_p
         service.retry_parse(
             upload.upload_session_id,
             tenant_id="other-workspace",
-            expected_job_version=1,
+            expected_job_version=1, expected_lease_version=0,
         )
     with pytest.raises(UploadStateError, match="failed VideoParseTask"):
         service.retry_parse(
             upload.upload_session_id,
             tenant_id="local-default",
-            expected_job_version=1,
+            expected_job_version=1, expected_lease_version=0,
         )
 
     with create_session_factory(engine).begin() as session:
@@ -1534,7 +1547,7 @@ def test_manual_parse_retry_requires_the_latest_failed_v2_task(repository, tmp_p
         service.retry_parse(
             upload.upload_session_id,
             tenant_id="local-default",
-            expected_job_version=1,
+            expected_job_version=1, expected_lease_version=0,
         )
 
     with create_session_factory(engine).begin() as session:
@@ -1544,7 +1557,7 @@ def test_manual_parse_retry_requires_the_latest_failed_v2_task(repository, tmp_p
     retried = service.retry_parse(
         upload.upload_session_id,
         tenant_id="local-default",
-        expected_job_version=1,
+        expected_job_version=1, expected_lease_version=0,
     )
     assert retried.video_parse_task_id == completed.video_parse_task_id
     assert retried.version == 1
@@ -1590,7 +1603,7 @@ def prepared_v2_retry(repository, tmp_path):
             ))
             session.add(ChunkParseTask(
                 id=chunk_task_id, video_task_id=task.id, chunk_id=chunk_id,
-                status="COMPLETE", next_execute_time=before, retry_count=2,
+                phase=3, indexed_content_version=3, indexed_generation=1, status="COMPLETE", next_execute_time=before, retry_count=2,
                 lease_version=4, finish_time=before, last_error={"code": "PRIOR_ERROR"},
             ))
             session.add(ChunkParseContent(
@@ -1611,7 +1624,7 @@ def prepared_v2_retry(repository, tmp_path):
 
 
 @pytest.mark.parametrize("parent_state", ["PARSING_FAILED", "INDEXING_FAILED"])
-def test_parse_retry_reads_changed_yaml_and_refreshes_only_analysis_binding(
+def test_parse_retry_preserves_snapshot_after_yaml_changes(
     prepared_v2_retry, tmp_path, monkeypatch, parent_state,
 ):
     service, upload, task_id, factory, chunk_ids, interval_ids, _now = prepared_v2_retry
@@ -1666,21 +1679,12 @@ def test_parse_retry_reads_changed_yaml_and_refreshes_only_analysis_binding(
     )
     config_path.write_text(yaml.safe_dump(payload))
     retried = service.retry_parse(
-        upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=1, expected_lease_version=0,
     )
 
     assert (retried.video_parse_task_id, retried.version, retried.status) == (task_id, 1, "PARSING")
-    expected = load_defaults().to_video_parse_v2()
-    assert retried.parse_config == {
-        **before_config,
-        "models": {
-            **before_config["models"],
-            "understanding": expected.models.understanding.model_dump(mode="json"),
-            "refine": None,
-        },
-        "visual_input": expected.visual_input.model_dump(mode="json"),
-    }
-    assert retried.parse_config["visual_input"]["mode"] == "ordered_frames"
+    assert retried.parse_config == before_config
+    assert retried.parse_config["visual_input"]["mode"] == "video"
     with factory() as session:
         assert [session.get(ChunkParseTask, task_id).status for task_id in chunk_ids] == [
             "COMPLETE", "COMPLETE", "COMPLETE", "QUEUED",
@@ -1694,7 +1698,7 @@ def test_parse_retry_reads_changed_yaml_and_refreshes_only_analysis_binding(
                 for row in session.scalars(select(IntervalParseTask).order_by(IntervalParseTask.id))] == topology
 
 
-def test_parse_retry_bad_yaml_does_not_restore_failed_work(
+def test_parse_retry_does_not_read_bad_current_yaml(
     prepared_v2_retry, tmp_path, monkeypatch,
 ):
     service, upload, task_id, factory, chunk_ids, interval_ids, _now = prepared_v2_retry
@@ -1711,15 +1715,15 @@ def test_parse_retry_bad_yaml_does_not_restore_failed_work(
         session.get(ChunkParseTask, chunk_ids[-1]).status = "FAILED"
         session.get(IntervalParseTask, interval_ids[0]).status = "PARSING_FAILED"
 
-    with pytest.raises(ValueError, match="invalid YAML"):
-        service.retry_parse(upload.upload_session_id, tenant_id="local-default", expected_job_version=1)
+    result = service.retry_parse(upload.upload_session_id, tenant_id="local-default",
+                                 expected_job_version=1, expected_lease_version=0)
+    assert result.parse_config == before[0]
     with factory() as session:
         parent = session.get(VideoParseTask, task_id)
-        assert parent.status == "PARSING_FAILED"
-        assert (parent.parse_config, parent.detail, parent.next_execute_time,
-                parent.finish_time, parent.last_error) == before
-        assert session.get(ChunkParseTask, chunk_ids[-1]).status == "FAILED"
-        assert session.get(IntervalParseTask, interval_ids[0]).status == "PARSING_FAILED"
+        assert parent.status == "PARSING"
+        assert "failure_status" not in parent.detail["_worker_runtime_v2"]
+        assert session.get(ChunkParseTask, chunk_ids[-1]).status == "QUEUED"
+        assert session.get(IntervalParseTask, interval_ids[0]).status == "WAITING"
 
 
 def test_parse_retry_rejects_stale_version_before_loading_defaults(prepared_v2_retry, monkeypatch):
@@ -1731,8 +1735,8 @@ def test_parse_retry_rejects_stale_version_before_loading_defaults(prepared_v2_r
     monkeypatch.setattr(service, "_parse_defaults_loader", forbidden_loader)
     with factory() as session:
         before = session.get(VideoParseTask, task_id).parse_config
-    with pytest.raises(UploadConflictError, match="version changed"):
-        service.retry_parse(upload.upload_session_id, tenant_id="local-default", expected_job_version=2)
+    with pytest.raises(UploadConflictError, match="version or lease changed"):
+        service.retry_parse(upload.upload_session_id, tenant_id="local-default", expected_job_version=2, expected_lease_version=0)
     with factory() as session:
         parent = session.get(VideoParseTask, task_id)
         assert parent.status == "PARSING_FAILED" and parent.parse_config == before
@@ -1749,7 +1753,8 @@ def prepared_short_v2_retry(prepared_v2_retry):
         short_interval.chunk_count = len(chunk_ids)
         short_interval.chunk_task_ids = chunk_ids
         short_interval.ready_mask = (1 << len(chunk_ids)) - 1
-        short_interval.status = "INDEXING_FAILED"
+        short_interval.status = "COMPLETE"
+        session.get(ChunkParseTask, chunk_ids[0]).status = "FAILED"
         for interval_id in interval_ids[1:]:
             session.delete(session.get(IntervalParseTask, interval_id))
     return service, upload, task_id, factory, chunk_ids, interval_ids[0], now
@@ -1780,7 +1785,7 @@ def test_indexing_retry_accepts_the_unique_short_interval_and_retains_results(
     retried = service.retry_parse(
         upload.upload_session_id,
         tenant_id="local-default",
-        expected_job_version=1,
+        expected_job_version=1, expected_lease_version=0,
     )
 
     assert (retried.video_parse_task_id, retried.status, retried.version) == (
@@ -1797,14 +1802,14 @@ def test_indexing_retry_accepts_the_unique_short_interval_and_retains_results(
             interval.chunk_task_ids,
             interval.status,
             interval.next_execute_time,
-        ) == (0, len(chunk_ids), chunk_ids, "INDEXING", now)
-        assert [
+        ) == (0, len(chunk_ids), chunk_ids, "COMPLETE", now - timedelta(minutes=1))
+        assert sorted([
             child.status for child in session.scalars(
                 select(ChunkParseTask)
                 .where(ChunkParseTask.video_task_id == task_id)
                 .order_by(ChunkParseTask.id)
             )
-        ] == ["COMPLETE"] * len(chunk_ids)
+        ]) == ["COMPLETE"] * (len(chunk_ids) - 1) + ["QUEUED"]
         assert [
             (row.id, row.content, row.version, row.detail)
             for row in session.scalars(
@@ -1817,7 +1822,7 @@ def test_indexing_retry_accepts_the_unique_short_interval_and_retains_results(
 @pytest.mark.parametrize(
     ("invalid", "error"),
     [
-        ("missing_window", "complete preparation"),
+
         ("wrong_start", "Interval preparation"),
         ("wrong_count", "Interval preparation"),
         ("wrong_members", "Interval members"),
@@ -1911,19 +1916,19 @@ def test_indexing_retry_rejects_invalid_short_window_without_mutation(
         service.retry_parse(
             upload.upload_session_id,
             tenant_id="local-default",
-            expected_job_version=1,
+            expected_job_version=1, expected_lease_version=0,
         )
     assert persisted_state() == before
 
 
 @pytest.mark.parametrize("chunk_states,interval_states,parent_state,expected", [
-    (["COMPLETE", "COMPLETE", "FAILED", "QUEUED"],
-     ["INDEXING_FAILED", "PARSING_FAILED", "WAITING"], "PARSING_FAILED", "PARSING"),
-    (["COMPLETE"] * 4,
-     ["INDEXING_FAILED", "INDEXING", "COMPLETE"], "INDEXING_FAILED", "INDEXING"),
-    (["COMPLETE"] * 4,
+    ([(3, "COMPLETE"), (2, "WAITING"), (1, "FAILED"), (1, "QUEUED")],
+     ["COMPLETE", "PARSING_FAILED", "WAITING"], "PARSING_FAILED", "PARSING"),
+    ([(3, "FAILED"), (3, "QUEUED"), (3, "COMPLETE"), (3, "COMPLETE")],
+     ["COMPLETE"] * 3, "INDEXING_FAILED", "INDEXING"),
+    ([(2, "WAITING")] * 4,
      ["PARSING_FAILED", "COMPLETE", "COMPLETE"], "PARSING_FAILED", "PARSING"),
-    (["COMPLETE"] * 4,
+    ([(2, "WAITING")] * 4,
      ["WAITING", None, "WAITING"], "PARSING_FAILED", "PREPARING"),
 ])
 def test_manual_retry_restores_each_child_phase_and_retains_results(
@@ -1962,16 +1967,22 @@ def test_manual_retry_restores_each_child_phase_and_retains_results(
                 if status is None:
                     session.delete(child)
                     continue
-                child.status = status
+                if model is ChunkParseTask:
+                    child.phase, child.status = status
+                    if child.phase == 1:
+                        result = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == child.id))
+                        session.delete(result)
+                else:
+                    child.status = status
 
     retried = service.retry_parse(
-        upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=1, expected_lease_version=0,
     )
     assert (retried.video_parse_task_id, retried.status, retried.version) == (task_id, expected, 1)
     assert retried.parse_config == config
     assert retried.finish_time is None
-    assert retried.last_error == {"code": "CHILD_FAILED", "message": "retained failure"}
-    transitions = {"FAILED": "QUEUED", "PARSING_FAILED": "WAITING", "INDEXING_FAILED": "INDEXING"}
+    assert retried.last_error is None
+    transitions = {"FAILED": "QUEUED", "PARSING_FAILED": "WAITING"}
     with factory() as session:
         assert session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"] == {
             key: value for key, value in runtime.items() if key != "failure_status"
@@ -1985,15 +1996,18 @@ def test_manual_retry_restores_each_child_phase_and_retains_results(
                 if before is None:
                     assert child is None
                     continue
+                if model is ChunkParseTask:
+                    phase, before = before
+                    assert child.phase == phase
                 assert child.status == transitions.get(before, before)
-                assert child.retry_count == 2
-                assert child.last_error == {"code": "PRIOR_ERROR"}
+                assert child.retry_count == (0 if before in transitions else 2)
+                assert child.last_error == (None if before in transitions else {"code": "PRIOR_ERROR"})
                 if before in transitions:
                     assert child.next_execute_time == now and child.finish_time is None
                     assert child.lease_owner is None and child.lease_expire_time is None
                 else:
                     assert child.finish_time == now - timedelta(minutes=1)
-        assert [row.version for row in session.scalars(select(ChunkParseContent))] == [3] * 4
+        assert [row.version for row in session.scalars(select(ChunkParseContent))] == [3] * sum(phase != 1 for phase, _ in chunk_states)
         for start, interval_id in enumerate(interval_ids):
             content = session.get(IntervalParseContent, interval_id)
             if interval_states[start] is not None:
@@ -2018,7 +2032,9 @@ def test_manual_retry_rejects_failure_drain_without_clearing_intent(
         }
         session.get(ChunkParseTask, chunk_ids[-1]).status = "FAILED"
         inflight = session.get(ChunkParseTask, chunk_ids[0])
-        inflight.status = "UNDERSTANDING"
+        inflight.phase = 1
+        inflight.status = "RUNNING"
+        inflight.execution_deadline = now + timedelta(minutes=10)
         inflight.lease_owner = "inflight-worker"
         inflight.lease_expire_time = now if lease_expired else now + timedelta(minutes=5)
         before = parent.detail
@@ -2027,7 +2043,7 @@ def test_manual_retry_rejects_failure_drain_without_clearing_intent(
         service.retry_parse(
             upload.upload_session_id,
             tenant_id="local-default",
-            expected_job_version=1,
+            expected_job_version=1, expected_lease_version=0,
         )
     with factory() as session:
         parent = session.get(VideoParseTask, task_id)
@@ -2038,17 +2054,18 @@ def test_manual_retry_rejects_failure_drain_without_clearing_intent(
 
 
 @pytest.mark.parametrize(
-    ("model", "status"),
+    ("model", "status", "phase"),
     [
-        (ChunkParseTask, "UNDERSTANDING"),
-        (IntervalParseTask, "REFINING"),
-        (IntervalParseTask, "INDEXING"),
+        (ChunkParseTask, "RUNNING", 1),
+        (IntervalParseTask, "REFINING", None),
+        (ChunkParseTask, "RUNNING", 3),
     ],
 )
 def test_manual_retry_rejects_active_execution_lease_without_partial_reset(
     prepared_v2_retry,
     model,
     status,
+    phase,
     monkeypatch,
 ):
     service, upload, task_id, factory, chunk_ids, interval_ids, now = (
@@ -2070,17 +2087,20 @@ def test_manual_retry_rejects_active_execution_lease_without_partial_reset(
         parent.status = "PARSING_FAILED"
         target = session.get(model, target_id)
         target.status = status
+        if phase is not None:
+            target.phase = phase
+        target.execution_deadline = now + timedelta(minutes=10)
         target.lease_owner = "active-worker"
         target.lease_expire_time = expires
         target.finish_time = None
         failed_child = session.get(ChunkParseTask, chunk_ids[-1])
         failed_child.status = "FAILED"
 
-    with pytest.raises(UploadStateError, match="execution worker is active"):
+    with pytest.raises(UploadStateError, match="execution has not been reclaimed"):
         service.retry_parse(
             upload.upload_session_id,
             tenant_id="local-default",
-            expected_job_version=1,
+            expected_job_version=1, expected_lease_version=0,
         )
 
     with factory() as session:
@@ -2096,14 +2116,14 @@ def test_manual_retry_rejects_active_execution_lease_without_partial_reset(
         ).status == "FAILED"
 
 
-@pytest.mark.parametrize("invalid", ["missing_refine", "wrong_members", "missing_preparation"])
+@pytest.mark.parametrize("invalid", ["missing_refine", "wrong_members"])
 def test_indexing_retry_rejects_invalid_sources_without_resetting_children(prepared_v2_retry, invalid):
     service, upload, task_id, factory, chunk_ids, interval_ids, _now = prepared_v2_retry
     with factory.begin() as session:
         session.get(VideoParseTask, task_id).status = "INDEXING_FAILED"
-        session.get(ChunkParseTask, chunk_ids[-1]).status = "FAILED"
+        session.get(ChunkParseTask, chunk_ids[0]).status = "FAILED"
         interval = session.get(IntervalParseTask, interval_ids[0])
-        interval.status = "INDEXING_FAILED"
+        interval.status = "COMPLETE"
         if invalid == "missing_refine":
             session.delete(session.get(IntervalParseContent, interval.id))
         elif invalid == "wrong_members":
@@ -2112,12 +2132,12 @@ def test_indexing_retry_rejects_invalid_sources_without_resetting_children(prepa
             session.delete(session.get(IntervalParseTask, interval_ids[-1]))
     with pytest.raises(UploadConflictError):
         service.retry_parse(
-            upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
+            upload.upload_session_id, tenant_id="local-default", expected_job_version=1, expected_lease_version=0,
         )
     with factory() as session:
         assert session.get(VideoParseTask, task_id).status == "INDEXING_FAILED"
-        assert session.get(ChunkParseTask, chunk_ids[-1]).status == "FAILED"
-        assert session.get(IntervalParseTask, interval_ids[0]).status == "INDEXING_FAILED"
+        assert session.get(ChunkParseTask, chunk_ids[0]).status == "FAILED"
+        assert session.get(IntervalParseTask, interval_ids[0]).status == "COMPLETE"
 
 
 @pytest.mark.parametrize("conflicting_boundary", [False, True])
@@ -2139,11 +2159,11 @@ def test_parse_retry_resumes_partial_fixed_topology(prepared_v2_retry, conflicti
     if conflicting_boundary:
         with pytest.raises(UploadConflictError, match="fixed chunk topology"):
             service.retry_parse(
-                upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
+                upload.upload_session_id, tenant_id="local-default", expected_job_version=1, expected_lease_version=0,
             )
     else:
         result = service.retry_parse(
-            upload.upload_session_id, tenant_id="local-default", expected_job_version=1,
+            upload.upload_session_id, tenant_id="local-default", expected_job_version=1, expected_lease_version=0,
         )
         assert result.status == "PREPARING"
     with factory() as session:
@@ -2227,7 +2247,7 @@ def test_full_reparse_creates_new_v2_version_and_retains_history(
             id=chunk_task_id,
             video_task_id=completed.video_parse_task_id,
             chunk_id=video_chunk_id,
-            status="COMPLETE",
+            phase=3, indexed_content_version=1, indexed_generation=1, status="COMPLETE",
             next_execute_time=unix_time_ms_to_datetime(job.start_time),
             retry_count=0,
             lease_version=1,
@@ -2427,12 +2447,22 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
             task.lease_owner = None
             task.lease_expire_time = None
             task.heartbeat_time = None
-            session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).status = "COMPLETE"
+            child = session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0])
+            child.phase = 3
+            child.status = "COMPLETE"
+            child.indexed_content_version = 1
+            child.indexed_generation = 1
             interval = session.get(IntervalParseTask, prepared.interval_parse_task_ids[0])
             interval.status = "COMPLETE"
             interval.ready_mask = 1
         parse_index.documents.add((completed.video_parse_task_id, chunk_id))
     expected_keys = tuple(sorted(parse_index.documents))
+    if cleanup_state == "prepare_interrupted":
+        with pytest.raises(UploadStateError, match="being parsed"):
+            service.delete_session(upload.upload_session_id, tenant_id="local-default")
+        with factory() as session:
+            task = session.get(VideoParseTask, completed.video_parse_task_id)
+            assert not task.is_deleted and task.scheduler_slot is not None
     # A crashed Prepare lease must expire before task-level deletion can fence it.
     clock[0] += timedelta(minutes=2)
     if cleanup_state == "unavailable":
@@ -2447,7 +2477,8 @@ def test_v2_delete_cleans_chunks_and_recovers_index_cleanup(repository, tmp_path
             assert tombstone.video_id == completed.video_id
             assert session.get(Video, completed.video_id) is not None
             assert session.get(VideoChunk, chunk_id) is not None
-            assert session.get(VideoParseTask, completed.video_parse_task_id).is_deleted
+            task = session.get(VideoParseTask, completed.video_parse_task_id)
+            assert task.is_deleted and task.scheduler_slot is None
             assert session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]) is not None
         cleanup_state = "success"
         service._video_parse_index_store = parse_index
@@ -3122,7 +3153,7 @@ def test_upload_creator_stays_stable_while_retry_actor_is_persisted(repository, 
         assert session.get(UploadSession, upload.upload_session_id).creator_id == "user-A"
         task.status = "PARSING_FAILED"
     retried = service.retry_parse(
-        upload.upload_session_id, tenant_id="local-default", expected_job_version=1, actor_user_id="user-B",
+        upload.upload_session_id, tenant_id="local-default", expected_job_version=1, expected_lease_version=0, actor_user_id="user-B",
     )
     assert retried.video_parse_task_id == completed.video_parse_task_id
     assert retried.created_by_user_id == "user-A"
@@ -3139,3 +3170,78 @@ def test_upload_creator_stays_stable_while_retry_actor_is_persisted(repository, 
         old = session.get(VideoParseTask, completed.video_parse_task_id)
         assert old.creator_id == "user-A"
         assert old.detail["_worker_runtime_v2"]["actor_user_id"] == "user-B"
+
+
+def test_repeated_old_retry_cannot_reset_a_later_failure_budget(prepared_v2_retry):
+    service, upload, task_id, factory, chunk_ids, _interval_ids, now = prepared_v2_retry
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        parent.status = "INDEXING_FAILED"
+        child = session.get(ChunkParseTask, chunk_ids[0])
+        child.status = "FAILED"
+        child.retry_count = 2
+    first = service.retry_parse(upload.upload_session_id, tenant_id="local-default",
+                                expected_job_version=1, expected_lease_version=0)
+    assert first.lease_version == 1
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        parent.status = "INDEXING_FAILED"
+        parent.finish_time = now
+        child = session.get(ChunkParseTask, chunk_ids[0])
+        assert (child.phase, child.status, child.retry_count, child.lease_version) == (3, "QUEUED", 0, 5)
+        child.status = "FAILED"
+        child.retry_count = 2
+        child.lease_version = 7
+    with pytest.raises(UploadConflictError, match="version or lease changed"):
+        service.retry_parse(upload.upload_session_id, tenant_id="local-default",
+                            expected_job_version=1, expected_lease_version=0)
+    with factory() as session:
+        child = session.get(ChunkParseTask, chunk_ids[0])
+        assert (child.phase, child.status, child.retry_count, child.lease_version) == (3, "FAILED", 2, 7)
+        assert session.get(VideoParseTask, task_id).lease_version == 1
+    second = service.retry_parse(upload.upload_session_id, tenant_id="local-default",
+                                 expected_job_version=1, expected_lease_version=1)
+    assert second.lease_version == 2
+    with factory() as session:
+        child = session.get(ChunkParseTask, chunk_ids[0])
+        assert (child.phase, child.status, child.retry_count, child.lease_version) == (3, "QUEUED", 0, 8)
+
+
+def test_index_failure_retry_returns_to_parsing_for_ununderstood_later_chunk(prepared_v2_retry):
+    service, upload, task_id, factory, chunk_ids, interval_ids, _now = prepared_v2_retry
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        parent.status = "INDEXING_FAILED"
+        frozen_config = parent.parse_config
+        session.get(ChunkParseTask, chunk_ids[0]).status = "FAILED"
+        later = session.get(ChunkParseTask, chunk_ids[-1])
+        later.phase, later.status = 1, "QUEUED"
+        later.indexed_content_version = later.indexed_generation = None
+        session.delete(session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == later.id)))
+        window = session.get(IntervalParseTask, interval_ids[-1])
+        window.status, window.ready_mask = "WAITING", 1
+        session.delete(session.get(IntervalParseContent, window.id))
+    retried = service.retry_parse(upload.upload_session_id, tenant_id="local-default",
+                                  expected_job_version=1, expected_lease_version=0)
+    assert retried.status == "PARSING"
+    assert retried.parse_config == frozen_config
+    with factory() as session:
+        failed_index = session.get(ChunkParseTask, chunk_ids[0])
+        later = session.get(ChunkParseTask, chunk_ids[-1])
+        assert (failed_index.phase, failed_index.status, failed_index.retry_count) == (3, "QUEUED", 0)
+        assert (later.phase, later.status, later.lease_version) == (1, "QUEUED", 4)
+        assert session.get(IntervalParseTask, interval_ids[0]).status == "COMPLETE"
+
+
+def test_index_retry_with_missing_topology_resumes_preparation_and_preserves_results(prepared_short_v2_retry):
+    service, upload, task_id, factory, chunk_ids, interval_id, _now = prepared_short_v2_retry
+    with factory.begin() as session:
+        before = [(row.id, row.content, row.version) for row in session.scalars(select(ChunkParseContent))]
+        session.delete(session.get(IntervalParseTask, interval_id))
+    retried = service.retry_parse(upload.upload_session_id, tenant_id="local-default",
+                                 expected_job_version=1, expected_lease_version=0)
+    assert retried.status == "PREPARING"
+    with factory() as session:
+        child = session.get(ChunkParseTask, chunk_ids[0])
+        assert (child.phase, child.status) == (3, "QUEUED")
+        assert [(row.id, row.content, row.version) for row in session.scalars(select(ChunkParseContent))] == before

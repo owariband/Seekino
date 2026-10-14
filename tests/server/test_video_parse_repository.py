@@ -29,7 +29,7 @@ from server.model.video import Series, VideoChunk, Video
 from server.mq.video_parse_queue import MySqlVideoParseQueue
 from server.repository.video_parse import (
     INDEX_EMBEDDINGS_DETAIL_KEY,
-    ModelCallConcurrencyBusyError,
+    ModelCallBudgetExhaustedError,
     VideoParseConflictError,
     VideoParseLeaseLostError,
     VideoParseRepository,
@@ -51,6 +51,28 @@ def _refinement_inputs(repo, lease, *, now=None):
         "input_versions": {member.chunk_parse_task_id: member.version for member in snapshot.members},
         "input_fingerprints": {member.chunk_parse_task_id: parse_content_fingerprint(member.content) for member in snapshot.members},
     }
+
+
+def _finish_index(repo, lease, versions=None, *, now):
+    """Stand in for the host's verified ES publication in repository tests."""
+    snapshot = repo.load_chunk_indexing_snapshot(lease, now=now)
+    chunk = snapshot.chunk
+    repo.save_index_embeddings(
+        lease, chunk.chunk_parse_task_id, chunk.content_version, {},
+        receipt={"parse_task_id": lease.video_parse_task_id,
+                 "video_chunk_id": chunk.video_chunk_id,
+                 "content_version": chunk.content_version,
+                 "index_generation": snapshot.target_index_generation}, now=now,
+    )
+    return repo.complete_chunk_indexing(
+        lease, versions.get(chunk.chunk_parse_task_id, chunk.content_version) if versions else chunk.content_version,
+        snapshot.target_index_generation, now=now,
+    )
+
+
+def _finish_ready_indexes(queue, repo, *, now):
+    while (lease := queue.claim_chunk_index("index", lease_duration=timedelta(minutes=5), now=now)):
+        _finish_index(repo, lease, now=now)
 
 
 def _fixture_event(value, *, sequence_no=0):
@@ -169,7 +191,7 @@ def test_execution_timing_refine_final_survives_the_next_index_lease(repository)
         refine, **_refinement_inputs(repo, refine, now=at),
         interval_content={"updates": []}, member_updates={}, now=at,
     )
-    index = queue.claim_interval_index("indexer", lease_duration=timedelta(minutes=5), now=at)
+    index = queue.claim_chunk_index("indexer", lease_duration=timedelta(minutes=5), now=at)
     assert index is not None and index.lease_version > refine.lease_version
     assert not repo.record_execution_timing(refine, started_at_ms=started, elapsed_ms=200, now=at)
     assert repo.record_execution_timing(
@@ -189,10 +211,10 @@ def test_execution_timing_refine_final_survives_the_next_index_lease(repository)
         entries = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["execution_timing"]["entries"]
         assert set(entries) == {
             f"refine:{refine.interval_parse_task_id}:{refine.lease_version}",
-            f"index:{index.interval_parse_task_id}:{index.lease_version}",
+            f"index:{index.chunk_parse_task_id}:{index.lease_version}",
         }
         assert entries[f"refine:{refine.interval_parse_task_id}:{refine.lease_version}"]["elapsed_ms"] == 300
-        current = session.get(IntervalParseTask, index.interval_parse_task_id)
+        current = session.get(ChunkParseTask, index.chunk_parse_task_id)
         assert current.lease_version == index.lease_version and current.lease_owner == "indexer"
 
 
@@ -200,68 +222,29 @@ def test_execution_timing_refine_final_survives_the_next_index_lease(repository)
 @pytest.mark.parametrize("observed", [False, True])
 def test_index_timing_closes_only_observed_full_or_partial_publication(repository, chunk_count, observed):
     factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=chunk_count)
-    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=chunk_count)
+    parse_leases = _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=chunk_count)
     at = NOW + timedelta(minutes=1)
     refine = queue.claim_interval_refine("refiner", lease_duration=timedelta(minutes=5), now=at)
-    repo.commit_interval_refinement(
-        refine, **_refinement_inputs(repo, refine, now=at),
-        interval_content={"updates": []}, member_updates={}, now=at,
-    )
-    index = queue.claim_interval_index("indexer", lease_duration=timedelta(minutes=5), now=at)
+    repo.commit_interval_refinement(refine, **_refinement_inputs(repo, refine, now=at),
+                                   interval_content={"updates": []}, member_updates={}, now=at)
+    index = queue.claim_chunk_index("indexer", lease_duration=timedelta(minutes=5), now=at)
+    assert index.chunk_parse_task_id == prepared.chunk_parse_task_ids[0]
     started = datetime_to_unix_time_ms(at)
     if observed:
         assert repo.record_execution_timing(index, started_at_ms=started, elapsed_ms=100, now=at)
-    snapshot = repo.load_interval_indexing_snapshot(index, now=at)
-    assert len(snapshot.chunks) == (2 if chunk_count == 2 else 1)
-    repo.complete_interval_indexing(
-        index, {chunk.chunk_parse_task_id: chunk.content_version for chunk in snapshot.chunks}, now=at,
-    )
-    assert queue.is_execution_lease_committed(index) is (chunk_count == 2)
+    _finish_index(repo, index, now=at)
+    assert queue.is_execution_lease_committed(index)
+    assert queue.is_execution_lease_committed(parse_leases[0])
     with factory() as session:
-        detail = session.get(IntervalParseContent, index.interval_parse_task_id).detail
-        assert detail["indexing_finished_lease_versions"] == [index.lease_version]
-        assert ("indexing_committed_lease_version" in detail) is (chunk_count == 2)
-
-    if chunk_count == 4:
-        later = at + timedelta(seconds=2)
-        refine_next = queue.claim_interval_refine("refiner-next", lease_duration=timedelta(minutes=5), now=later)
-        repo.commit_interval_refinement(
-            refine_next, **_refinement_inputs(repo, refine_next, now=later),
-            interval_content={"updates": []}, member_updates={}, now=later,
-        )
-        index_next = queue.claim_interval_index("indexer-next", lease_duration=timedelta(minutes=5), now=later)
-        assert index_next.interval_parse_task_id == index.interval_parse_task_id
-        snapshot_next = repo.load_interval_indexing_snapshot(index_next, now=later)
-        repo.complete_interval_indexing(
-            index_next, {chunk.chunk_parse_task_id: chunk.content_version for chunk in snapshot_next.chunks}, now=later,
-        )
-        with factory() as session:
-            detail = session.get(IntervalParseContent, index.interval_parse_task_id).detail
-            assert detail["indexing_finished_lease_versions"] == [index.lease_version, index_next.lease_version]
-            assert detail["indexing_committed_lease_version"] == index_next.lease_version
-
-    for stale in (
-        replace(index, worker_id="other-worker"),
-        replace(index, lease_version=index.lease_version + 50),
-        replace(index, chunk_parse_task_ids=(str(uuid4()),)),
-        replace(index, start_sequence_no=99),
-        replace(index, chunk_count=99),
-    ):
-        assert not repo.record_execution_timing(
-            stale, started_at_ms=started, elapsed_ms=9000,
-            finished=True, outcome="completed", now=at + timedelta(seconds=3),
-        )
-    assert repo.record_execution_timing(
-        index, started_at_ms=started, elapsed_ms=3000,
-        finished=True, outcome="completed", now=at + timedelta(seconds=3),
-    ) is observed
-    with factory() as session:
-        entries = session.get(VideoParseTask, task_id).detail.get("_worker_runtime_v2", {}).get("execution_timing", {}).get("entries", {})
-        key = f"index:{index.interval_parse_task_id}:{index.lease_version}"
-        if observed:
-            assert entries[key]["finished"] and entries[key]["elapsed_ms"] == 3000
-        else:
-            assert key not in entries
+        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == index.chunk_parse_task_id))
+        assert content.detail["index_committed_lease_versions"] == [index.lease_version]
+        assert content.detail["parse_committed_lease_version"] == parse_leases[0].lease_version
+    for stale in (replace(index, worker_id="other-worker"), replace(index, lease_version=index.lease_version + 50),
+                  replace(index, video_chunk_id=str(uuid4()))):
+        assert not repo.record_execution_timing(stale, started_at_ms=started, elapsed_ms=9000,
+                                               finished=True, outcome="completed", now=at + timedelta(seconds=3))
+    assert repo.record_execution_timing(index, started_at_ms=started, elapsed_ms=3000,
+                                       finished=True, outcome="completed", now=at + timedelta(seconds=3)) is observed
 
 
 @pytest.mark.parametrize("expired", [False, True])
@@ -274,7 +257,7 @@ def test_index_timing_preserves_failures_and_rejects_uncommitted_stale_leases(re
         refine, **_refinement_inputs(repo, refine, now=at),
         interval_content={"updates": []}, member_updates={}, now=at,
     )
-    index = queue.claim_interval_index("indexer", lease_duration=timedelta(seconds=10), now=at)
+    index = queue.claim_chunk_index("indexer", lease_duration=timedelta(seconds=10), now=at)
     started = datetime_to_unix_time_ms(at)
     assert repo.record_execution_timing(index, started_at_ms=started, elapsed_ms=100, now=at)
     failed_at = at + timedelta(seconds=12 if expired else 1)
@@ -282,17 +265,18 @@ def test_index_timing_preserves_failures_and_rejects_uncommitted_stale_leases(re
         assert not repo.record_execution_timing(
             index, started_at_ms=started, elapsed_ms=12000, finished=True, outcome="failed", now=failed_at,
         )
-        assert queue.reap_expired_intervals(retry_delay=timedelta(0), now=failed_at) == 1
+        assert queue.reap_expired_chunks(now=failed_at) == 1
     else:
         assert repo.record_execution_timing(
             index, started_at_ms=started, elapsed_ms=1000, finished=True, outcome="failed", now=failed_at,
         )
-        assert queue.retry_interval(index, error="embedding failed", retry_at=failed_at, now=failed_at)
-    next_index = queue.claim_interval_index("next-indexer", lease_duration=timedelta(minutes=5), now=failed_at)
+        assert queue.retry_chunk(index, error="embedding failed", retry_at=failed_at, now=failed_at)
+    failed_at += timedelta(seconds=31)
+    next_index = queue.claim_chunk_index("next-indexer", lease_duration=timedelta(minutes=5), now=failed_at)
     assert next_index.lease_version > index.lease_version
-    snapshot = repo.load_interval_indexing_snapshot(next_index, now=failed_at)
-    repo.complete_interval_indexing(
-        next_index, {chunk.chunk_parse_task_id: chunk.content_version for chunk in snapshot.chunks}, now=failed_at,
+    snapshot = repo.load_chunk_indexing_snapshot(next_index, now=failed_at)
+    _finish_index(repo,
+        next_index, {chunk.chunk_parse_task_id: chunk.content_version for chunk in (snapshot.chunk,)}, now=failed_at,
     )
     assert not repo.record_execution_timing(
         index, started_at_ms=started, elapsed_ms=13000,
@@ -300,7 +284,7 @@ def test_index_timing_preserves_failures_and_rejects_uncommitted_stale_leases(re
     )
     with factory() as session:
         entry = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["execution_timing"]["entries"][
-            f"index:{index.interval_parse_task_id}:{index.lease_version}"
+            f"index:{index.chunk_parse_task_id}:{index.lease_version}"
         ]
         assert entry["elapsed_ms"] == (100 if expired else 1000)
         assert entry["finished"] is (not expired)
@@ -464,7 +448,6 @@ def _config(*, chunk_count: int = 4, batch_size: int = 4) -> dict:
     config["execution"].update({
         "max_retry_count": 2,
         "max_model_calls": 3,
-        "max_concurrent_model_calls": 1,
     })
     return config
 
@@ -605,23 +588,7 @@ def _prepare_two_chunk_prefix_chain(repository):
         member_updates={},
         now=NOW + timedelta(minutes=1, seconds=1),
     )
-    index_lease = queue.claim_interval_index(
-        "index",
-        lease_duration=timedelta(minutes=5),
-        now=NOW + timedelta(minutes=1, seconds=2),
-    )
-    assert index_lease is not None
-    index_snapshot = repo.load_interval_indexing_snapshot(
-        index_lease, now=NOW + timedelta(minutes=1, seconds=2)
-    )
-    repo.complete_interval_indexing(
-        index_lease,
-        {
-            item.chunk_parse_task_id: item.content_version
-            for item in index_snapshot.chunks
-        },
-        now=NOW + timedelta(minutes=1, seconds=3),
-    )
+    _finish_ready_indexes(queue, repo, now=NOW + timedelta(minutes=1, seconds=3))
     assert repo.aggregate_task(
         video_lease, now=NOW + timedelta(minutes=1, seconds=4)
     ).status == "COMPLETE"
@@ -680,143 +647,41 @@ def test_prepare_is_idempotent_and_short_video_gets_one_interval(repository):
 def test_chunk_commit_masks_refine_scope_union_and_index_wait_are_atomic(repository):
     factory, queue, repo, task_id, video_lease, prepared = _prepare(repository)
     _commit_all_chunks(factory, queue, repo, video_lease, prepared)
-
-    first = queue.claim_interval_refine(
-        "refine-0", lease_duration=timedelta(minutes=10), now=NOW + timedelta(minutes=1)
-    )
-    assert first is not None and first.start_sequence_no == 0
-    snapshot = repo.load_interval_members(first, now=NOW + timedelta(minutes=1))
-    repo.commit_interval_refinement(
-        first,
-        **_refinement_inputs(repo, first, now=NOW + timedelta(minutes=1, seconds=1)), interval_content={"summary": "first"},
-        member_updates={snapshot.members[1].chunk_parse_task_id: {"persons": ["A"]}},
-        now=NOW + timedelta(minutes=1, seconds=1),
-    )
-
-    indexing = queue.claim_interval_index(
-        "index-0", lease_duration=timedelta(minutes=10), now=NOW + timedelta(minutes=1, seconds=2)
-    )
-    assert indexing is not None and indexing.interval_parse_task_id == first.interval_parse_task_id
-    index_snapshot = repo.load_interval_indexing_snapshot(
-        indexing, now=NOW + timedelta(minutes=1, seconds=2)
-    )
-    assert [item.sequence_no for item in index_snapshot.chunks] == [0]
-    indexed_chunk = index_snapshot.chunks[0]
-    receipt = {
-        "parse_task_id": indexing.video_parse_task_id,
-        "video_chunk_id": indexed_chunk.video_chunk_id,
-        "content_version": indexed_chunk.content_version,
-        "index_generation": 1,
-    }
-    repo.save_index_embeddings(
-        indexing,
-        indexed_chunk.chunk_parse_task_id,
-        indexed_chunk.content_version,
-        {"semantic": {"vector": [1.0]}},
-        receipt=receipt,
-        now=NOW + timedelta(minutes=1, seconds=2),
-    )
-    repo.save_index_embeddings(
-        indexing,
-        indexed_chunk.chunk_parse_task_id,
-        indexed_chunk.content_version,
-        {"vision": {"vector": [2.0]}},
-        receipt=receipt,
-        now=NOW + timedelta(minutes=1, seconds=2),
-    )
+    at = NOW + timedelta(minutes=1)
+    first = queue.claim_interval_refine("refine-0", lease_duration=timedelta(minutes=10), now=at)
+    repo.commit_interval_refinement(first, **_refinement_inputs(repo, first, now=at),
+        interval_content={"summary": "first"}, member_updates={prepared.chunk_parse_task_ids[1]: {"persons": ["A"]}}, now=at)
     with factory() as session:
-        cached = session.scalar(
-            select(ChunkParseContent).where(
-                ChunkParseContent.chunk_task_id
-                == indexed_chunk.chunk_parse_task_id
-            )
-        ).detail["_index_embeddings_v2"]
-        assert set(cached["representations"]) == {"semantic", "vision"}
-        assert cached["receipt"] == receipt
-    for invalid in (
-        {**receipt, "content_version": True},
-        {**receipt, "index_generation": True},
-        {**receipt, "index_generation": 0},
-        {**receipt, "parse_task_id": str(uuid4())},
-    ):
-        with pytest.raises(VideoParseConflictError, match="receipt"):
-            repo.save_index_embeddings(
-                indexing,
-                indexed_chunk.chunk_parse_task_id,
-                indexed_chunk.content_version,
-                {"semantic": {"vector": [999.0]}},
-                receipt=invalid,
-                now=NOW + timedelta(minutes=1, seconds=2),
-            )
-    next_receipt = {**receipt, "index_generation": 2}
-    repo.save_index_embeddings(
-        indexing, indexed_chunk.chunk_parse_task_id, indexed_chunk.content_version,
-        {"semantic": {"vector": [3.0]}}, receipt=next_receipt,
-        now=NOW + timedelta(minutes=1, seconds=2),
-    )
+        rows = [session.get(ChunkParseTask, id_) for id_ in prepared.chunk_parse_task_ids]
+        assert [(row.phase, row.status) for row in rows] == [(3, "QUEUED"), (2, "WAITING"), (2, "WAITING"), (2, "WAITING")]
+        assert session.get(IntervalParseTask, first.interval_parse_task_id).status == "COMPLETE"
+    index = queue.claim_chunk_index("index-0", lease_duration=timedelta(minutes=5), now=at)
+    snapshot = repo.load_chunk_indexing_snapshot(index, now=at)
+    chunk = snapshot.chunk
+    receipt = {"parse_task_id": task_id, "video_chunk_id": chunk.video_chunk_id,
+               "content_version": chunk.content_version, "index_generation": 1}
+    for channel in ("semantic", "vision"):
+        repo.save_index_embeddings(index, chunk.chunk_parse_task_id, chunk.content_version,
+                                   {channel: {"vector": [1.0]}}, receipt=receipt, now=at)
+    for invalid in ({**receipt, "content_version": True}, {**receipt, "index_generation": True},
+                    {**receipt, "index_generation": 0}, {**receipt, "parse_task_id": str(uuid4())}):
+        with pytest.raises(VideoParseConflictError):
+            repo.save_index_embeddings(index, chunk.chunk_parse_task_id, chunk.content_version, {}, receipt=invalid, now=at)
+    with pytest.raises(VideoParseConflictError, match="generation"):
+        repo.save_index_embeddings(index, chunk.chunk_parse_task_id, chunk.content_version, {},
+                                   receipt={**receipt, "index_generation": 2}, now=at)
+    _finish_index(repo, index, now=at)
+    second = queue.claim_interval_refine("refine-1", lease_duration=timedelta(minutes=10), now=at)
+    repo.commit_interval_refinement(second, **_refinement_inputs(repo, second, now=at),
+        interval_content={"summary": "second"},
+        member_updates={prepared.chunk_parse_task_ids[1]: {"timeline": [_fixture_event("changed", sequence_no=1)]}}, now=at)
     with factory() as session:
-        current = session.scalar(select(ChunkParseContent).where(
-            ChunkParseContent.chunk_task_id == indexed_chunk.chunk_parse_task_id
-        ))
-        assert current.detail[INDEX_EMBEDDINGS_DETAIL_KEY]["representations"] == {
-            "semantic": {"vector": [3.0]},
-        }
-    state = repo.complete_interval_indexing(
-        indexing,
-        {item.chunk_parse_task_id: item.content_version for item in index_snapshot.chunks},
-        now=NOW + timedelta(minutes=1, seconds=3),
-    )
-    assert state.status == "PARSING"
-    with factory() as session:
-        interval = session.get(IntervalParseTask, first.interval_parse_task_id)
-        assert interval.status == "INDEXING" and interval.lease_owner is None
-        assert interval.retry_count == 0
-        assert interval.next_execute_time > NOW + timedelta(minutes=1, seconds=3)
-
-    second = queue.claim_interval_refine(
-        "refine-1", lease_duration=timedelta(minutes=10), now=NOW + timedelta(minutes=2)
-    )
-    assert second is not None and second.start_sequence_no == 1
-    second_snapshot = repo.load_interval_members(second, now=NOW + timedelta(minutes=2))
-    repo.commit_interval_refinement(
-        second,
-        **_refinement_inputs(repo, second, now=NOW + timedelta(minutes=2, seconds=1)), interval_content={"summary": "second"},
-        member_updates={second_snapshot.members[0].chunk_parse_task_id: {"timeline": [_fixture_event("changed", sequence_no=1)]}},
-        now=NOW + timedelta(minutes=2, seconds=1),
-    )
-    with factory() as session:
-        contents = list(session.scalars(
-            select(ChunkParseContent).order_by(
-                ChunkParseContent.chunk_task_id
-            )
-        ))
-        by_id = {item.chunk_task_id: item for item in contents}
-        overlap = by_id[prepared.chunk_parse_task_ids[1]]
-        assert overlap.detail["scope"] == [0, 1, 2, 3]
-        assert overlap.version == 3
-
-    # Both Intervals can now finish from current content versions.
-    for worker in ("index-a", "index-b", "index-c"):
-        lease = queue.claim_interval_index(
-            worker,
-            lease_duration=timedelta(minutes=10),
-            now=NOW + timedelta(minutes=3),
-        )
-        if lease is None:
-            break
-        current = repo.load_interval_indexing_snapshot(
-            lease, now=NOW + timedelta(minutes=3)
-        )
-        if lease.interval_parse_task_id == first.interval_parse_task_id:
-            assert [item.sequence_no for item in current.chunks] == [0, 1, 2]
-        repo.complete_interval_indexing(
-            lease,
-            {item.chunk_parse_task_id: item.content_version for item in current.chunks},
-            now=NOW + timedelta(minutes=3, seconds=1),
-        )
-    assert repo.aggregate_task(
-        video_lease, now=NOW + timedelta(minutes=4)
-    ).status == "COMPLETE"
+        rows = [session.get(ChunkParseTask, id_) for id_ in prepared.chunk_parse_task_ids]
+        assert [(row.phase, row.status) for row in rows] == [(3, "COMPLETE"), (3, "QUEUED"), (3, "QUEUED"), (3, "QUEUED")]
+        overlap = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == prepared.chunk_parse_task_ids[1]))
+        assert overlap.detail["scope"] == [0, 1, 2, 3] and overlap.version == 3
+    _finish_ready_indexes(queue, repo, now=at)
+    assert repo.aggregate_task(video_lease, now=at).status == "COMPLETE"
     assert queue.is_execution_lease_committed(video_lease)
 
 
@@ -834,7 +699,7 @@ def test_stale_chunk_lease_cannot_commit(repository):
     )
     assert replacement is not None and replacement.lease_version > lease.lease_version
     assert replacement.chunk_parse_task_id == lease.chunk_parse_task_id
-    with pytest.raises(VideoParseLeaseLostError):
+    with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
         repo.commit_chunk_result(
             lease,
             content={"persons": [], "timeline": []},
@@ -877,7 +742,7 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
                 inflight = queue.claim_interval_refine(
                     "next-refine", lease_duration=timedelta(minutes=5), now=claimed_at
                 )
-            inflight = queue.claim_interval_index(
+            inflight = queue.claim_chunk_index(
                 "inflight-index", lease_duration=timedelta(minutes=5), now=claimed_at
             )
     assert inflight is not None
@@ -900,6 +765,9 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
         }
         if phase == "chunk":
             session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).status = "FAILED"
+        elif phase == "index":
+            failed_id = next(child_id for child_id in prepared.chunk_parse_task_ids if child_id != inflight.chunk_parse_task_id)
+            session.get(ChunkParseTask, failed_id).status = "FAILED"
         else:
             failed_id = next(
                 child_id for child_id in prepared.interval_parse_task_ids
@@ -937,13 +805,13 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
             now=committed_at,
         )
     else:
-        assert queue.heartbeat_interval(
+        assert queue.heartbeat_chunk(
             inflight, lease_duration=timedelta(minutes=5), now=committed_at
         )
-        snapshot = repo.load_interval_indexing_snapshot(inflight, now=committed_at)
-        repo.complete_interval_indexing(
+        snapshot = repo.load_chunk_indexing_snapshot(inflight, now=committed_at)
+        _finish_index(repo,
             inflight,
-            {item.chunk_parse_task_id: item.content_version for item in snapshot.chunks},
+            {item.chunk_parse_task_id: item.content_version for item in (snapshot.chunk,)},
             now=committed_at,
         )
 
@@ -966,7 +834,7 @@ def test_failure_waits_for_inflight_result_and_preserves_prefix_runtime(reposito
             assert content.content == {"summary": "retained-inflight"}
         else:
             assert session.get(
-                IntervalParseTask, inflight.interval_parse_task_id
+                ChunkParseTask, inflight.chunk_parse_task_id
             ).status == "COMPLETE"
 
 
@@ -975,7 +843,8 @@ def test_failure_does_not_treat_expired_but_unreleased_child_as_drained(reposito
     with factory.begin() as session:
         session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).status = "FAILED"
         unfinished = session.get(ChunkParseTask, prepared.chunk_parse_task_ids[1])
-        unfinished.status = "UNDERSTANDING"
+        unfinished.status = "RUNNING"
+        unfinished.execution_deadline = NOW + timedelta(minutes=10)
         unfinished.lease_owner = "expired-worker"
         unfinished.lease_expire_time = NOW
 
@@ -990,6 +859,7 @@ def test_failure_does_not_treat_expired_but_unreleased_child_as_drained(reposito
         unfinished.status = "QUEUED"
         unfinished.lease_owner = None
         unfinished.lease_expire_time = None
+        unfinished.execution_deadline = None
     assert repo.aggregate_task(
         video_lease, now=NOW + timedelta(seconds=2)
     ).status == "PARSING_FAILED"
@@ -1009,9 +879,9 @@ def test_chunk_lease_rejects_forged_parent_and_media_identity(repository):
         replace(lease, video_chunk_id=str(uuid4())),
     )
     for forged in forged_leases:
-        with pytest.raises(VideoParseLeaseLostError):
+        with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
             repo.load_chunk_execution(forged, now=NOW)
-        with pytest.raises(VideoParseLeaseLostError):
+        with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
             repo.commit_chunk_result(
                 forged,
                 content={"persons": [], "timeline": []},
@@ -1060,12 +930,12 @@ def test_interval_lease_rejects_forged_parent_phase_members_and_range(
         replace(lease, chunk_count=lease.chunk_count + 1),
     )
     for forged in forged_leases:
-        with pytest.raises(VideoParseLeaseLostError):
+        with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
             repo.load_interval_members(
                 forged,
                 now=NOW + timedelta(minutes=1),
             )
-        with pytest.raises(VideoParseLeaseLostError):
+        with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
             repo.commit_interval_refinement(
                 forged,
                 **_refinement_inputs(repo, lease, now=NOW + timedelta(minutes=1)), interval_content={"summary": "forged"},
@@ -1094,136 +964,43 @@ def test_content_version_fences_late_index_completion(repository):
         member_updates={},
         now=NOW + timedelta(minutes=1, seconds=1),
     )
-    indexing = queue.claim_interval_index(
+    indexing = queue.claim_chunk_index(
         "index", lease_duration=timedelta(minutes=5), now=NOW + timedelta(minutes=1, seconds=2)
     )
     assert indexing is not None
-    snapshot = repo.load_interval_indexing_snapshot(indexing, now=NOW + timedelta(minutes=1, seconds=2))
-    wrong = {snapshot.chunks[0].chunk_parse_task_id: snapshot.chunks[0].content_version + 1}
-    with pytest.raises(VideoParseConflictError, match="version changed"):
-        repo.complete_interval_indexing(
+    snapshot = repo.load_chunk_indexing_snapshot(indexing, now=NOW + timedelta(minutes=1, seconds=2))
+    wrong = {(snapshot.chunk,)[0].chunk_parse_task_id: (snapshot.chunk,)[0].content_version + 1}
+    with pytest.raises(VideoParseConflictError, match="content.*changed"):
+        _finish_index(repo,
             indexing, wrong, now=NOW + timedelta(minutes=1, seconds=3)
         )
 
 
 def test_index_rebuild_preserves_results_and_fences_the_old_index_lease(repository):
-    factory, queue, repo, task_id, video_lease, prepared = _prepare(
-        repository, chunk_count=2
-    )
-    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=2)
-    refine = queue.claim_interval_refine(
-        "refine",
-        lease_duration=timedelta(minutes=5),
-        now=NOW + timedelta(minutes=1),
-    )
-    assert refine is not None
-    repo.commit_interval_refinement(
-        refine,
-        **_refinement_inputs(repo, refine, now=NOW + timedelta(minutes=1, seconds=1)), interval_content={"summary": "preserved"},
-        member_updates={},
-        now=NOW + timedelta(minutes=1, seconds=1),
-    )
-    initial_index = queue.claim_interval_index(
-        "initial-index",
-        lease_duration=timedelta(minutes=5),
-        now=NOW + timedelta(minutes=1, seconds=2),
-    )
-    assert initial_index is not None
-    snapshot = repo.load_interval_indexing_snapshot(
-        initial_index, now=NOW + timedelta(minutes=1, seconds=2)
-    )
-    first_chunk = snapshot.chunks[0]
-    repo.save_index_embeddings(
-        initial_index,
-        first_chunk.chunk_parse_task_id,
-        first_chunk.content_version,
-        {"semantic": {"vector": [1.0]}},
-        now=NOW + timedelta(minutes=1, seconds=2),
-    )
-    indexed_versions = {
-        item.chunk_parse_task_id: item.content_version for item in snapshot.chunks
-    }
-    repo.complete_interval_indexing(
-        initial_index,
-        indexed_versions,
-        now=NOW + timedelta(minutes=1, seconds=3),
-    )
-    assert repo.aggregate_task(
-        video_lease, now=NOW + timedelta(minutes=1, seconds=4)
-    ).status == "COMPLETE"
-
-    first_rebuild_at = NOW + timedelta(minutes=2)
-    assert repo.request_index_rebuild(
-        task_id, now=first_rebuild_at
-    ) == (initial_index.interval_parse_task_id,)
+    factory, queue, repo, task_id = _prepare_two_chunk_prefix_chain(repository)
+    at = NOW + timedelta(minutes=2)
     with factory() as session:
-        task = session.get(VideoParseTask, task_id)
-        interval = session.get(
-            IntervalParseTask, initial_index.interval_parse_task_id
-        )
-        interval_content = session.get(
-            IntervalParseContent, initial_index.interval_parse_task_id
-        )
-        chunk_tasks = list(session.scalars(
-            select(ChunkParseTask).where(
-                ChunkParseTask.video_task_id == task_id
-            )
-        ))
-        chunk_content = session.scalar(
-            select(ChunkParseContent).where(
-                ChunkParseContent.chunk_task_id
-                == first_chunk.chunk_parse_task_id
-            )
-        )
-        assert task.status == "INDEXING"
-        assert task.next_execute_time == first_rebuild_at
-        assert task.attempt_count == 0
-        assert task.last_error is None
-        assert interval.status == "INDEXING"
-        assert interval.lease_owner is None
-        assert interval.lease_version == initial_index.lease_version + 1
-        assert interval.next_execute_time == first_rebuild_at
-        assert interval_content.content == {"summary": "preserved"}
-        assert interval_content.detail["indexed_versions"] == indexed_versions
-        assert chunk_content.detail["_index_embeddings_v2"]["representations"] == {
-            "semantic": {"vector": [1.0]}
-        }
-        assert {item.status for item in chunk_tasks} == {"COMPLETE"}
-
-    rebuild_coordinator = queue.claim_video(
-        "rebuild-coordinator",
-        lease_duration=timedelta(minutes=5),
-        now=first_rebuild_at,
-    )
-    assert rebuild_coordinator is not None
-    assert rebuild_coordinator.video_parse_task_id == task_id
-
-    old_index = queue.claim_interval_index(
-        "old-index",
-        lease_duration=timedelta(minutes=5),
-        video_parse_task_id=task_id,
-        now=first_rebuild_at,
-    )
-    assert old_index is not None
-    second_rebuild_at = NOW + timedelta(minutes=2, seconds=1)
-    assert repo.request_index_rebuild(
-        task_id, now=second_rebuild_at
-    ) == (old_index.interval_parse_task_id,)
-    with pytest.raises(VideoParseLeaseLostError):
-        repo.complete_interval_indexing(
-            old_index,
-            indexed_versions,
-            now=NOW + timedelta(minutes=2, seconds=2),
-        )
-
-    replacement = queue.claim_interval_index(
-        "replacement-index",
-        lease_duration=timedelta(minutes=5),
-        video_parse_task_id=task_id,
-        now=NOW + timedelta(minutes=2, seconds=2),
-    )
-    assert replacement is not None
-    assert replacement.lease_version > old_index.lease_version
+        child_ids = set(session.scalars(select(ChunkParseTask.id).where(ChunkParseTask.video_task_id == task_id)))
+        attempts = session.get(VideoParseTask, task_id).attempt_count
+        contents = {row.chunk_task_id: (row.content, row.version, row.detail) for row in session.scalars(select(ChunkParseContent))}
+        refines = {row.interval_task_id: row.content for row in session.scalars(select(IntervalParseContent))}
+    assert set(repo.request_index_rebuild(task_id, now=at)) == child_ids
+    assert repo.request_index_rebuild(task_id, now=at) == ()
+    coordinator = queue.claim_video("coordinator", lease_duration=timedelta(minutes=5), now=at)
+    old = queue.claim_chunk_index("old-index", lease_duration=timedelta(minutes=5), now=at)
+    assert repo.request_index_rebuild(task_id, now=at) == (old.chunk_parse_task_id,)
+    with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
+        _finish_index(repo, old, now=at)
+    replacement = queue.claim_chunk_index("replacement", lease_duration=timedelta(minutes=5), now=at)
+    assert replacement.lease_version > old.lease_version
+    with factory() as session:
+        assert session.get(VideoParseTask, task_id).attempt_count == attempts + 1
+        assert {row.chunk_task_id: (row.content, row.version, row.detail) for row in session.scalars(select(ChunkParseContent))} == contents
+        assert {row.interval_task_id: row.content for row in session.scalars(select(IntervalParseContent))} == refines
+        assert all(row.status == "COMPLETE" for row in session.scalars(select(IntervalParseTask)))
+    _finish_index(repo, replacement, now=at)
+    _finish_ready_indexes(queue, repo, now=at)
+    assert repo.aggregate_task(coordinator, now=at).status == "COMPLETE"
 
 
 def test_index_rebuild_rejects_nonlatest_and_deleted_tasks(repository):
@@ -1280,13 +1057,15 @@ def test_index_rebuild_clears_only_settled_index_failure_intent(repository, has_
         interval = session.scalar(select(IntervalParseTask).where(
             IntervalParseTask.video_task_id == task_id
         ))
-        interval.status = "INDEXING_FAILED"
+        children = list(session.scalars(select(ChunkParseTask).where(ChunkParseTask.video_task_id == task_id)))
+        children[0].status = "FAILED"
+        child_ids = {child.id for child in children}
         interval_id = interval.id
         content = session.get(IntervalParseContent, interval_id).content
 
-    assert repo.request_index_rebuild(
+    assert set(repo.request_index_rebuild(
         task_id, now=NOW + timedelta(minutes=2)
-    ) == (interval_id,)
+    )) == child_ids
     with factory() as session:
         parent = session.get(VideoParseTask, task_id)
         assert parent.status == "INDEXING"
@@ -1319,10 +1098,11 @@ def test_index_rebuild_rejects_parsing_failure_and_unfinished_failure_drain(
                 "failure_status": failure_status,
             },
         }
-        interval = session.scalar(select(IntervalParseTask).where(
-            IntervalParseTask.video_task_id == task_id
+        interval = session.scalar(select(ChunkParseTask).where(
+            ChunkParseTask.video_task_id == task_id
         ))
-        interval.status = "INDEXING" if owner is not None else "INDEXING_FAILED"
+        interval.status = "RUNNING" if owner is not None else "FAILED"
+        interval.execution_deadline = NOW + timedelta(minutes=10) if owner else None
         interval.lease_owner = owner
         interval.lease_expire_time = expires
         interval_id = interval.id
@@ -1335,7 +1115,7 @@ def test_index_rebuild_rejects_parsing_failure_and_unfinished_failure_drain(
         repo.request_index_rebuild(task_id, now=NOW + timedelta(minutes=2))
     with factory() as session:
         task = session.get(VideoParseTask, task_id)
-        interval = session.get(IntervalParseTask, interval_id)
+        interval = session.get(ChunkParseTask, interval_id)
         assert (
             task.status, task.detail, interval.status,
             interval.lease_owner, interval.lease_version,
@@ -1343,96 +1123,25 @@ def test_index_rebuild_rejects_parsing_failure_and_unfinished_failure_drain(
 
 
 def test_model_call_history_and_concurrency_survive_worker_reentry(repository):
-    factory, _queue, repo, task_id, video_lease, _prepared = _prepare(
-        repository, chunk_count=2
-    )
-    with factory.begin() as session:
-        task = session.get(VideoParseTask, task_id)
-        task.parse_config = {
-            **task.parse_config,
-            "execution": {**task.parse_config["execution"], "max_model_calls": 100},
-        }
-    first = repo.reserve_model_call(
-        video_lease,
-        "call-1",
-        lease_duration=timedelta(minutes=1),
-        now=NOW,
-    )
-    assert (first.used_calls, first.active_calls) == (1, 1)
-    with pytest.raises(ModelCallConcurrencyBusyError):
-        repo.reserve_model_call(
-            video_lease,
-            "call-2",
-            lease_duration=timedelta(minutes=1),
-            now=NOW,
-        )
-    assert repo.renew_model_call(
-        video_lease,
-        "call-1",
-        lease_duration=timedelta(minutes=1),
-        now=NOW + timedelta(seconds=30),
-    )
-    assert not repo.renew_model_call(
-        video_lease,
-        "call-1",
-        lease_duration=timedelta(minutes=1),
-        now=NOW + timedelta(minutes=2),
-    )
-    assert repo.release_model_call(
-        task_id, "call-1", video_lease.worker_id, now=NOW + timedelta(minutes=2)
-    )
-
-    # Reusing the stable Gateway call_id does not duplicate request history.
-    repeated = repo.reserve_model_call(
-        video_lease,
-        "call-1",
-        lease_duration=timedelta(minutes=1),
-        now=NOW + timedelta(minutes=2),
-    )
-    assert repeated.used_calls == 1 and not repeated.first_reservation
-    assert repo.release_model_call(
-        task_id, "call-1", video_lease.worker_id, now=NOW + timedelta(minutes=2)
-    )
-    for call_no in range(2, 102):
-        call_id = f"call-{call_no}"
-        reservation = repo.reserve_model_call(
-            video_lease,
-            call_id,
-            lease_duration=timedelta(minutes=1),
-            now=NOW + timedelta(minutes=2),
-        )
-        assert (reservation.used_calls, reservation.active_calls) == (call_no, 1)
-        assert repo.release_model_call(
-            task_id, call_id, video_lease.worker_id, now=NOW + timedelta(minutes=2)
-        )
-    repeated = repo.reserve_model_call(
-        video_lease, "call-101", lease_duration=timedelta(minutes=1),
-        now=NOW + timedelta(minutes=2),
-    )
-    assert repeated.used_calls == 101 and not repeated.first_reservation
-    with pytest.raises(ModelCallConcurrencyBusyError):
-        repo.reserve_model_call(
-            video_lease,
-            "call-102",
-            lease_duration=timedelta(minutes=1),
-            now=NOW + timedelta(minutes=2),
-        )
-    with pytest.raises(VideoParseLeaseLostError):
-        repo.reserve_model_call(
-            replace(video_lease, worker_id="stale-worker"), "call-102",
-            lease_duration=timedelta(minutes=1), now=NOW + timedelta(minutes=2),
-        )
-    assert repo.renew_model_call(
-        video_lease, "call-101", lease_duration=timedelta(minutes=1),
-        now=NOW + timedelta(seconds=150),
-    )
-    assert repo.release_model_call(
-        task_id, "call-101", video_lease.worker_id, now=NOW + timedelta(seconds=150)
-    )
+    factory, _queue, repo, task_id, lease, _prepared = _prepare(repository, chunk_count=2)
+    # Three live calls are allowed despite a legacy ASR-derived cap; all use the lifetime budget.
+    for number in range(1, 4):
+        reservation = repo.reserve_model_call(lease, f"call-{number}", lease_duration=timedelta(minutes=1), now=NOW)
+        assert (reservation.used_calls, reservation.active_calls) == (number, number)
+    with pytest.raises(ModelCallBudgetExhaustedError):
+        repo.reserve_model_call(lease, "call-4", lease_duration=timedelta(minutes=1), now=NOW)
+    assert repo.renew_model_call(lease, "call-1", lease_duration=timedelta(minutes=1), now=NOW + timedelta(seconds=30))
+    assert not repo.renew_model_call(lease, "call-1", lease_duration=timedelta(minutes=1), now=NOW + timedelta(minutes=2))
+    repeated = repo.reserve_model_call(lease, "call-1", lease_duration=timedelta(minutes=1), now=NOW + timedelta(minutes=2))
+    assert repeated.used_calls == 3 and not repeated.first_reservation
+    assert repo.release_model_call(task_id, "call-1", lease.worker_id, now=NOW + timedelta(minutes=2))
+    with pytest.raises(ModelCallBudgetExhaustedError):
+        VideoParseRepository(factory).reserve_model_call(lease, "call-4", lease_duration=timedelta(minutes=1), now=NOW + timedelta(minutes=2))
+    with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
+        repo.reserve_model_call(replace(lease, worker_id="stale"), "call-1", lease_duration=timedelta(minutes=1), now=NOW)
     with factory() as session:
         calls = session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["model_calls"]
-        assert calls["used_call_ids"] == [f"call-{call_no}" for call_no in range(1, 102)]
-        assert calls["active"] == {}
+        assert calls["used_call_ids"] == ["call-1", "call-2", "call-3"]
 
 
 def test_chunk_and_interval_model_slots_fence_the_actual_execution_lease(repository):
@@ -1529,7 +1238,7 @@ def test_chunk_and_interval_model_slots_fence_the_actual_execution_lease(reposit
         now=NOW + timedelta(minutes=1, seconds=32),
     )
     assert queue.is_execution_lease_committed(interval_lease)
-    index_lease = queue.claim_interval_index(
+    index_lease = queue.claim_chunk_index(
         "interval-index",
         lease_duration=timedelta(minutes=5),
         now=NOW + timedelta(minutes=1, seconds=33),
@@ -1538,14 +1247,14 @@ def test_chunk_and_interval_model_slots_fence_the_actual_execution_lease(reposit
     # The refinement's exact committed marker survives the next phase claim,
     # which increments the Interval row's current lease version.
     assert queue.is_execution_lease_committed(interval_lease)
-    snapshot = repo.load_interval_indexing_snapshot(
+    snapshot = repo.load_chunk_indexing_snapshot(
         index_lease, now=NOW + timedelta(minutes=1, seconds=33)
     )
-    repo.complete_interval_indexing(
+    _finish_index(repo,
         index_lease,
         {
             item.chunk_parse_task_id: item.content_version
-            for item in snapshot.chunks
+            for item in (snapshot.chunk,)
         },
         now=NOW + timedelta(minutes=1, seconds=34),
     )
@@ -1597,20 +1306,20 @@ def test_v2_snapshots_always_expose_the_whole_video_media_source(repository):
         member_updates={},
         now=NOW + timedelta(minutes=1, seconds=1),
     )
-    indexing = queue.claim_interval_index(
+    indexing = queue.claim_chunk_index(
         "source-index",
         lease_duration=timedelta(minutes=5),
         now=NOW + timedelta(minutes=1, seconds=2),
     )
     assert indexing is not None
-    snapshot = repo.load_interval_indexing_snapshot(
+    snapshot = repo.load_chunk_indexing_snapshot(
         indexing, now=NOW + timedelta(minutes=1, seconds=2)
     )
-    assert snapshot.chunks
-    assert {item.source_media_ref for item in snapshot.chunks} == {proxy_ref}
+    assert snapshot.chunk.chunk_parse_task_id == indexing.chunk_parse_task_id
+    assert {item.source_media_ref for item in (snapshot.chunk,)} == {proxy_ref}
     assert all(
         item.chunk_media_ref.startswith("artifact://v1/")
-        for item in snapshot.chunks
+        for item in (snapshot.chunk,)
     )
 
 
@@ -1647,7 +1356,7 @@ def test_prefix_cursor_uses_independent_lease_and_preserves_scope(repository):
         first.lease_version,
         now=NOW + timedelta(minutes=2, milliseconds=100),
     )
-    with pytest.raises(VideoParseLeaseLostError):
+    with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
         repo.commit_prefix(
             first,
             content_updates={},
@@ -1878,20 +1587,20 @@ def test_prefix_frontier_never_falls_back_to_an_older_parse_version(repository):
         member_updates={},
         now=NOW + timedelta(minutes=1, seconds=1),
     )
-    index_lease = queue.claim_interval_index(
+    index_lease = queue.claim_chunk_index(
         "old-index",
         lease_duration=timedelta(minutes=5),
         now=NOW + timedelta(minutes=1, seconds=2),
     )
     assert index_lease is not None
-    snapshot = repo.load_interval_indexing_snapshot(
+    snapshot = repo.load_chunk_indexing_snapshot(
         index_lease, now=NOW + timedelta(minutes=1, seconds=2)
     )
-    repo.complete_interval_indexing(
+    _finish_index(repo,
         index_lease,
         {
             item.chunk_parse_task_id: item.content_version
-            for item in snapshot.chunks
+            for item in (snapshot.chunk,)
         },
         now=NOW + timedelta(minutes=1, seconds=3),
     )
@@ -2039,6 +1748,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
                     id=stale_chunk_task_id,
                     video_task_id=task_id,
                     chunk_id=stale_video_chunk_id,
+                    phase=3, indexed_content_version=1, indexed_generation=1,
                     status="COMPLETE",
                     next_execute_time=NOW,
                     retry_count=0,
@@ -2146,7 +1856,7 @@ def test_series_prefix_invalidator_is_atomic_and_skips_disabled_tasks(repository
         error="late worker",
         now=NOW + timedelta(minutes=1, seconds=1),
     )
-    with pytest.raises(VideoParseLeaseLostError):
+    with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
         repo.commit_prefix(
             stale_lease,
             content_updates={"persons": ["late"]},
@@ -2271,7 +1981,7 @@ def test_prefix_invalidation_history_does_not_revive_old_lease_after_cursor_aba(
         now=stale_attempt_at,
     )
     assert persisted_chain_state() == before_stale_attempts
-    with pytest.raises(VideoParseLeaseLostError):
+    with pytest.raises((VideoParseLeaseLostError, VideoParseTaskNotFoundError)):
         repo.commit_prefix(
             old_lease,
             content_updates={"persons": ["stale overwrite"]},
@@ -2389,6 +2099,7 @@ def _seed_retrieval_chunk(repository):
         task = session.get(VideoParseTask, task_id)
         assert task is not None
         task.status = "COMPLETE"
+        task.target_index_generation = 2
         task.finish_time = NOW
         video = session.get(Video, task.video_id)
         assert video is not None
@@ -2412,6 +2123,7 @@ def _seed_retrieval_chunk(repository):
             id=child_id,
             video_task_id=task_id,
             chunk_id=chunk_id,
+            phase=3, indexed_content_version=1, indexed_generation=2,
             status="COMPLETE",
             next_execute_time=NOW,
             retry_count=0,
@@ -2539,9 +2251,12 @@ def test_v2_retrieval_scope_and_hydrate_are_pinned_to_latest_complete_task(
         repo.get_chunk_evidence(chunk_id, tenant_id="mine")
 
 
-@pytest.mark.parametrize("weights", [None, {"17": -1.0}, {}, {"17": 0.5}])
-def test_sparse_scope_requires_a_completed_valid_representation(repository, weights):
+@pytest.mark.parametrize("enabled,weights", [(False, {"17": 0.5}), (True, None), (True, {}), (True, {"17": -1.0})])
+def test_sparse_scope_uses_frozen_publication_contract_not_cached_weights(repository, enabled, weights):
     factory, repo, video, identity, _chunk_id = _seed_retrieval_chunk(repository)
+    with factory.begin() as session:
+        task = session.get(VideoParseTask, identity.parse_task_id)
+        task.parse_config = {**task.parse_config, "indexing": {**task.parse_config["indexing"], "sparse_enabled": enabled}}
     if weights is not None:
         with factory.begin() as session:
             content = session.scalar(select(ChunkParseContent).join(ChunkParseTask,
@@ -2552,7 +2267,7 @@ def test_sparse_scope_requires_a_completed_valid_representation(repository, weig
             envelope["representations"] = {"sparse": {"channel": "sparse", "weights": weights}}
             detail[INDEX_EMBEDDINGS_DETAIL_KEY] = envelope
             content.detail = detail
-    if weights is None or any(value < 0 for value in weights.values()):
+    if not enabled:
         with pytest.raises(VideoParseConflictError, match="Sparse representation"):
             repo.resolve_retrieval_scope([video.series_id], tenant_id="mine", require_sparse=True)
     else:
@@ -2582,7 +2297,7 @@ def test_v2_hydration_rejects_current_identity_mismatch(repository, field, value
     ("index_generation", 0),
     ("video_chunk_id", str(uuid4())),
 ])
-def test_v2_retrieval_requires_a_current_strict_receipt(repository, field, value):
+def test_v2_retrieval_uses_published_versions_even_with_stale_checkpoint(repository, field, value):
     factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
     with factory.begin() as session:
         content = session.scalar(select(ChunkParseContent))
@@ -2594,15 +2309,12 @@ def test_v2_retrieval_requires_a_current_strict_receipt(repository, field, value
             },
         }
         flag_modified(content, "detail")
-    with pytest.raises(VideoParseConflictError, match="receipt"):
-        repo.resolve_retrieval_scope([video.series_id], tenant_id="mine")
-    with pytest.raises(VideoParseConflictError, match="receipt"):
-        repo.hydrate_retrieval_candidates([(chunk_id, identity)])
-    with pytest.raises(VideoParseConflictError, match="receipt"):
-        repo.get_chunk_evidence(chunk_id, tenant_id="mine")
+    assert repo.resolve_retrieval_scope([video.series_id], tenant_id="mine").index_generation == 2
+    assert repo.hydrate_retrieval_candidates([(chunk_id, identity)])[0].facts.retrieval_identity == identity
+    assert repo.get_chunk_evidence(chunk_id, tenant_id="mine").video_chunk_id == chunk_id
 
 
-@pytest.mark.parametrize("issue", ["child_pending", "content_missing", "receipt_missing"])
+@pytest.mark.parametrize("issue", ["child_pending", "content_missing", "published_version_old", "published_generation_old"])
 def test_v2_media_evidence_requires_complete_current_content(repository, issue):
     factory, repo, _video, _identity, chunk_id = _seed_retrieval_chunk(repository)
     with factory.begin() as session:
@@ -2611,13 +2323,15 @@ def test_v2_media_evidence_requires_complete_current_content(repository, issue):
             session.get(ChunkParseTask, content.chunk_task_id).status = "QUEUED"
         elif issue == "content_missing":
             session.delete(content)
+        elif issue == "published_version_old":
+            session.get(ChunkParseTask, content.chunk_task_id).indexed_content_version = 99
         else:
-            content.detail = {}
+            session.get(ChunkParseTask, content.chunk_task_id).indexed_generation = 99
     with pytest.raises(VideoParseConflictError, match="content|receipt"):
         repo.get_chunk_evidence(chunk_id, tenant_id="mine")
 
 
-def test_v2_chunk_media_api_reads_current_receipt_and_registered_images(tmp_path):
+def test_v2_chunk_media_api_reads_current_publication_and_registered_images(tmp_path):
     from types import SimpleNamespace
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -2666,12 +2380,15 @@ def test_v2_chunk_media_api_reads_current_receipt_and_registered_images(tmp_path
         content = session.scalar(select(ChunkParseContent))
         original_detail = content.detail
         content.detail = {}
+        content.version += 1
     response = client.get("/api/video-chunks/get", params=params)
     assert response.status_code == 409
     assert response.json()["code"] == "MEDIA_NOT_READY"
     assert client.get(image_url).status_code == 409
     with factory.begin() as session:
-        session.scalar(select(ChunkParseContent)).detail = original_detail
+        content = session.scalar(select(ChunkParseContent))
+        content.detail = original_detail
+        content.version -= 1
         session.get(VideoParseTask, identity.parse_task_id).status = "PARSING"
     response = client.get("/api/video-chunks/get", params=params)
     assert response.status_code == 409
@@ -2772,7 +2489,7 @@ def test_v2_scope_compares_fixed_encoder_identity_without_changing_request_model
     assert scope.index_generation == 2
 
 
-@pytest.mark.parametrize("issue", [None, "missing", "gap", "generation", "receipt_version"])
+@pytest.mark.parametrize("issue", [None, "missing", "gap", "generation", "published_version"])
 def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, issue):
     factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
     neighbors = []
@@ -2797,7 +2514,7 @@ def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, is
                     start += 1
                 elif issue == "generation":
                     receipt["index_generation"] = 3
-                elif issue == "receipt_version":
+                elif issue == "published_version":
                     receipt["content_version"] = 99
             session.add(VideoChunk(
                 id=other_chunk_id, video_id=video.id, sequence_no=sequence,
@@ -2809,6 +2526,7 @@ def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, is
             ))
             session.add(ChunkParseTask(
                 id=child_id, video_task_id=task.id, chunk_id=other_chunk_id,
+                phase=3, indexed_content_version=receipt["content_version"], indexed_generation=receipt["index_generation"],
                 status="QUEUED" if issue == "missing" and sequence == 2 else "COMPLETE",
                 next_execute_time=NOW, retry_count=0, lease_version=0,
                 detail=None, create_time=datetime_to_unix_time_ms(NOW), update_time=datetime_to_unix_time_ms(NOW),
@@ -2832,3 +2550,169 @@ def test_v2_hydration_reads_adjacent_context_with_its_own_version(repository, is
     assert [item.video_chunk_id for item in result[0].contexts] == neighbors
     assert [item.retrieval_identity.content_version for item in result[0].contexts] == [2, 4]
     assert [(item.start_seconds, item.end_seconds) for item in result[0].contexts] == [(0, 10_000), (20_000, 30_000)]
+
+
+def test_parse_success_and_timing_survive_the_same_chunk_index_lease(repository):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
+    parse = queue.claim_chunk("parse", lease_duration=timedelta(minutes=5), now=NOW)
+    started = datetime_to_unix_time_ms(NOW)
+    assert repo.record_execution_timing(parse, started_at_ms=started, elapsed_ms=0, now=NOW)
+    repo.commit_chunk_result(parse, content={"persons": [], "timeline": []}, now=NOW)
+    refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=NOW)
+    repo.commit_interval_refinement(refine, **_refinement_inputs(repo, refine, now=NOW),
+                                   interval_content={"updates": []}, member_updates={}, now=NOW)
+    index = queue.claim_chunk_index("index", lease_duration=timedelta(minutes=5), now=NOW)
+    assert index.chunk_parse_task_id == parse.chunk_parse_task_id and index.lease_version > parse.lease_version
+    assert not queue.heartbeat_chunk(parse, lease_duration=timedelta(minutes=5), now=NOW)
+    assert queue.is_execution_lease_committed(parse)
+    assert repo.record_execution_timing(parse, started_at_ms=started, elapsed_ms=1000,
+                                       finished=True, outcome="completed", now=NOW)
+    with factory() as session:
+        child = session.get(ChunkParseTask, parse.chunk_parse_task_id)
+        assert (child.phase, child.status, child.lease_owner) == (3, "RUNNING", "index")
+
+
+def test_refine_result_and_all_member_advancement_rollback_together(repository, monkeypatch):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=2)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=2)
+    at = NOW + timedelta(minutes=1)
+    refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=at)
+    inputs = _refinement_inputs(repo, refine, now=at)
+    def interrupt(*args, **kwargs):
+        raise RuntimeError("interrupted before transaction commit")
+    monkeypatch.setattr("server.repository.video_parse._advance_ready_chunks", interrupt)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        repo.commit_interval_refinement(refine, **inputs, interval_content={"updates": []},
+                                       member_updates={prepared.chunk_parse_task_ids[0]: {"persons": ["changed"]}}, now=at)
+    with factory() as session:
+        assert session.get(IntervalParseContent, refine.interval_parse_task_id) is None
+        assert session.get(IntervalParseTask, refine.interval_parse_task_id).status == "REFINING"
+        for child_id in prepared.chunk_parse_task_ids:
+            child = session.get(ChunkParseTask, child_id)
+            content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == child_id))
+            assert (child.phase, child.status, content.version, content.content["persons"]) == (2, "WAITING", 1, [])
+
+
+def test_early_index_exhaustion_closes_parent_with_unparsed_later_chunk(repository):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=4)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=3)
+    at = NOW + timedelta(minutes=1)
+    refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=at)
+    repo.commit_interval_refinement(refine, **_refinement_inputs(repo, refine, now=at),
+                                   interval_content={"updates": []}, member_updates={}, now=at)
+    with factory.begin() as session:
+        session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0]).retry_count = 2
+    index = queue.claim_chunk_index("index", lease_duration=timedelta(minutes=5), now=at)
+    assert queue.retry_chunk(index, error="ES unavailable", retry_at=at, now=at)
+    assert queue.claim_chunk("later", lease_duration=timedelta(minutes=5), now=at) is None
+    with factory() as session:
+        parent = session.get(VideoParseTask, task_id)
+        assert parent.status == "INDEXING_FAILED"
+        assert parent.scheduler_slot is None
+        later = session.get(ChunkParseTask, prepared.chunk_parse_task_ids[3])
+        assert (later.phase, later.status) == (1, "QUEUED")
+        failed = session.get(ChunkParseTask, index.chunk_parse_task_id)
+        assert (failed.phase, failed.status) == (3, "FAILED")
+        assert session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == failed.id)) is not None
+
+
+def test_prefix_content_change_revokes_index_but_preserves_failure_intent(repository):
+    factory, queue, repo, task_id = _prepare_two_chunk_prefix_chain(repository)
+    at = NOW + timedelta(minutes=2)
+    repo.request_index_rebuild(task_id, now=at)
+    queue.claim_video("coordinator", lease_duration=timedelta(minutes=5), now=at)
+    index = queue.claim_chunk_index("old-index", lease_duration=timedelta(minutes=5), now=at)
+    prefix = repo.claim_next_prefix_any("prefix", lease_duration=timedelta(minutes=5), now=at)
+    assert prefix.chunk_parse_task_id == index.chunk_parse_task_id
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        detail = json.loads(json.dumps(parent.detail))
+        detail["_worker_runtime_v2"]["failure_status"] = "INDEXING_FAILED"
+        parent.detail = detail
+    requeued = repo.commit_prefix(prefix, content_updates={"persons": ["new"]},
+                                 video_prefix_compact="updated", now=at)
+    assert requeued == (index.chunk_parse_task_id,)
+    with factory() as session:
+        child = session.get(ChunkParseTask, index.chunk_parse_task_id)
+        assert (child.phase, child.status, child.lease_owner, child.execution_deadline) == (3, "QUEUED", None, None)
+        assert child.lease_version > index.lease_version
+        assert session.get(VideoParseTask, task_id).detail["_worker_runtime_v2"]["failure_status"] == "INDEXING_FAILED"
+        assert all(item.status == "COMPLETE" for item in session.scalars(select(IntervalParseTask)))
+    with pytest.raises(VideoParseLeaseLostError):
+        _finish_index(repo, index, now=at)
+    assert queue.claim_chunk_index("new-index", lease_duration=timedelta(minutes=5), now=at) is None
+
+
+def test_index_completion_checks_parent_target_generation_and_checkpoint(repository):
+    factory, queue, repo, task_id, video_lease, prepared = _prepare(repository, chunk_count=1)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=1)
+    at = NOW + timedelta(minutes=1)
+    refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=at)
+    repo.commit_interval_refinement(refine, **_refinement_inputs(repo, refine, now=at),
+                                   interval_content={"updates": []}, member_updates={}, now=at)
+    index = queue.claim_chunk_index("index", lease_duration=timedelta(minutes=5), now=at)
+    with pytest.raises(VideoParseConflictError, match="receipt"):
+        repo.complete_chunk_indexing(index, 1, 1, now=at)
+    repo.save_index_embeddings(index, index.chunk_parse_task_id, 1, {}, receipt={
+        "parse_task_id": task_id, "video_chunk_id": index.video_chunk_id,
+        "content_version": 1, "index_generation": 1,
+    }, now=at)
+    with factory.begin() as session:
+        session.get(VideoParseTask, task_id).target_index_generation = 2
+    with pytest.raises(VideoParseConflictError, match="generation changed"):
+        repo.complete_chunk_indexing(index, 1, 1, now=at)
+    with factory() as session:
+        child = session.get(ChunkParseTask, index.chunk_parse_task_id)
+        assert child.status == "RUNNING" and child.indexed_content_version is None
+
+
+def test_published_migrated_chunk_is_retrievable_without_embedding_checkpoint(repository):
+    factory, repo, video, identity, chunk_id = _seed_retrieval_chunk(repository)
+    with factory.begin() as session:
+        content = session.scalar(select(ChunkParseContent))
+        content.detail = {}
+    assert repo.resolve_retrieval_scope([video.series_id], tenant_id="mine").index_generation == identity.index_generation
+    assert repo.get_chunk_evidence(chunk_id, tenant_id="mine").video_chunk_id == chunk_id
+    assert repo.hydrate_retrieval_candidates([(chunk_id, identity)])[0].facts.retrieval_identity == identity
+
+
+def test_preparation_rebuilds_ready_masks_from_committed_understanding(repository):
+    factory, queue, repo, _task_id, video_lease, prepared = _prepare(repository, chunk_count=2)
+    _commit_all_chunks(factory, queue, repo, video_lease, prepared, count=2)
+    at = NOW + timedelta(minutes=1)
+    refine = queue.claim_interval_refine("refine", lease_duration=timedelta(minutes=5), now=at)
+    repo.commit_interval_refinement(refine, **_refinement_inputs(repo, refine, now=at),
+                                   interval_content={"updates": []}, member_updates={}, now=at)
+    with factory.begin() as session:
+        interval = session.get(IntervalParseTask, prepared.interval_parse_task_ids[0])
+        interval.ready_mask = 0
+        children = [session.get(ChunkParseTask, child_id) for child_id in prepared.chunk_parse_task_ids]
+        children[0].status = "FAILED"
+        chunk_ids = [child.chunk_id for child in children]
+        original = [(row.id, row.version, row.content, row.detail) for row in session.scalars(select(ChunkParseContent))]
+    repo.ensure_parse_tasks(video_lease, chunk_ids, [(0, 2)], now=at)
+    with factory() as session:
+        assert session.get(IntervalParseTask, prepared.interval_parse_task_ids[0]).ready_mask == 3
+        failed = session.get(ChunkParseTask, prepared.chunk_parse_task_ids[0])
+        assert (failed.phase, failed.status) == (3, "FAILED")
+        assert [(row.id, row.version, row.content, row.detail) for row in session.scalars(select(ChunkParseContent))] == original
+
+
+def test_prefix_new_content_reopens_completed_parent_without_old_coordinator_backoff(repository):
+    factory, queue, repo, task_id = _prepare_two_chunk_prefix_chain(repository)
+    at = NOW + timedelta(minutes=2)
+    with factory.begin() as session:
+        parent = session.get(VideoParseTask, task_id)
+        assert parent.status == "COMPLETE"
+        parent.next_execute_time = at + timedelta(hours=1)
+    prefix = repo.claim_next_prefix_any("prefix", lease_duration=timedelta(minutes=5), now=at)
+    assert prefix is not None
+    repo.commit_prefix(prefix, content_updates={"persons": ["new"]},
+                       video_prefix_compact="updated", now=at)
+    with factory() as session:
+        parent = session.get(VideoParseTask, task_id)
+        assert (parent.status, parent.next_execute_time) == ("INDEXING", at)
+        child = session.get(ChunkParseTask, prefix.chunk_parse_task_id)
+        assert (child.phase, child.status) == (3, "QUEUED")
+    assert queue.claim_video("new-coordinator", lease_duration=timedelta(minutes=5), now=at) is not None
+    assert queue.claim_chunk_index("new-index", lease_duration=timedelta(minutes=5), now=at) is not None

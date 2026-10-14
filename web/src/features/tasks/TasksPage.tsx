@@ -25,7 +25,7 @@ import type {
   VideoParseTaskView,
 } from "../../api/contracts";
 import { useWorkspace } from "../../app/workspace";
-import { episodeLabel } from "../../shared/format";
+import { episodeLabel, episodeTitle, formatTimecode as formatDuration } from "../../shared/format";
 import { useUploads } from "../uploads/UploadProvider";
 import { ParseUsageDetails } from "./ParseUsageDetails";
 import styles from "./tasks.module.css";
@@ -60,26 +60,17 @@ const activeStatuses = new Set<VideoParseTaskStatus>([
   "INDEXING",
 ]);
 
-function formatProcessingDuration(durationMs: number): string {
-  if (durationMs < 1_000) return `${durationMs} 毫秒`;
-  if (durationMs < 60_000) {
-    return `${(durationMs / 1_000).toFixed(durationMs % 1_000 === 0 ? 0 : 1)} 秒`;
-  }
-  const totalSeconds = Math.floor(durationMs / 1_000);
-  return `${Math.floor(totalSeconds / 60)} 分 ${totalSeconds % 60} 秒`;
-}
-
 function processingDurationText(task: VideoParseTaskView): string {
   const timing = task.detail.timing;
   if (timing) {
     if (!timing.recorded || timing.effectiveDurationMs === null) {
       return task.status === "PENDING" ? "未开始" : "未记录";
     }
-    return formatProcessingDuration(timing.effectiveDurationMs);
+    return formatDuration(timing.effectiveDurationMs);
   }
   if (task.attemptCount === 0) return "未开始";
   if (task.processingDurationMs === 0) return "未记录";
-  return formatProcessingDuration(task.processingDurationMs);
+  return formatDuration(task.processingDurationMs);
 }
 
 function mergeTaskProjection(
@@ -185,7 +176,7 @@ export function TasksPage() {
     try {
       const retried = mergeTaskProjection(
         task,
-        await retryUploadParse(uploadSessionId, task.version),
+        await retryUploadParse(uploadSessionId, task.version, task.leaseVersion),
       );
       queryClient.setQueryData<VideoParseTaskView[]>(
         ["video-parse-tasks"],
@@ -345,9 +336,10 @@ export function TasksPage() {
             <article className={styles.job} key={task.videoParseTaskId}>
               <header className={styles.jobHeader}>
                 <div className={styles.episodeSeal}>{episodeLabel(episodeOrder)}</div>
+                {/* The episode names the card; the badge carries status, so only live stages repeat as a subline. */}
                 <div className={styles.jobName}>
-                  <span className="eyebrow">{task.seriesName || "视频解析"}</span>
-                  <h2>{stageTitle}</h2>
+                  <h2>{task.seriesName ? `${task.seriesName} · ` : ""}{episodeTitle(episodeOrder)}</h2>
+                  {activeStatuses.has(task.status) ? <span className={styles.jobStage}>{stageTitle}</span> : null}
                 </div>
                 <div className={styles.jobActions}>
                   <div className={styles.jobStatus} data-status={task.status}>
@@ -470,7 +462,7 @@ export function TasksPage() {
                   {progress ? <>
                     <span>理解 <strong>{progress.completedChunks} / {progress.totalChunks}</strong></span>
                     <span>Refine <strong>{progress.completedRefines} / {progress.totalRefines}</strong></span>
-                    <span>索引 <strong>{progress.indexedIntervals} / {progress.totalRefines}</strong></span>
+                    <span>索引 <strong>{progress.indexedChunks} / {progress.totalChunks}</strong></span>
                     <span>完成单元 <strong>{progress.completedUnits} / {progress.totalUnits}</strong></span>
                   </> : null}
                 </div> : null}

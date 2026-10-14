@@ -25,12 +25,12 @@
 
 .sectionIntro > span {
   color: var(--teal);
-  font: 400 1.3rem/1 var(--display);
+  font: 600 1.3rem/1 var(--display);
 }
 
 .sectionIntro h2 {
   margin: 0;
-  font: 400 1.35rem/1.1 var(--display);
+  font: 600 1.35rem/1.1 var(--display);
 }
 
 .sectionIntro p {

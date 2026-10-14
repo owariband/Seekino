@@ -352,9 +352,9 @@ describe("Search assistant presentation", () => {
       embedded: true, initialSeriesId: series.seriesId, onSeekCurrent,
     });
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "10分38秒" }));
+    await user.click(screen.getByRole("button", { name: "10:38" }));
     expect(onSeekCurrent).toHaveBeenLastCalledWith(638_000);
-    await user.click(screen.getByRole("button", { name: "01:02:03" }));
+    await user.click(screen.getByRole("button", { name: "62:03" }));
     expect(onSeekCurrent).toHaveBeenLastCalledWith(3_723_000);
     expect(screen.queryByRole("button", { name: "16:9" })).not.toBeInTheDocument();
   });
@@ -363,6 +363,52 @@ describe("Search assistant presentation", () => {
     renderPage(assistantMessage("大约在 10:38 出现。"));
     expect(screen.queryByRole("button", { name: "10:38" })).not.toBeInTheDocument();
     expect(screen.getByText("大约在 10:38 出现。")).toBeInTheDocument();
+  });
+
+  it("formats displayed fractional timestamps while preserving exact click targets and links", async () => {
+    const onSeekCurrent = vi.fn();
+    renderPage(assistantMessage("## 09:23.400 的重逢\n\n见 **09:57.500**，也可看 [10:02.700](https://example.com/?atSeconds=602700)。"), [series], { onSeekCurrent });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "09:23" }));
+    expect(onSeekCurrent).toHaveBeenLastCalledWith(563_400);
+    await user.click(screen.getByRole("button", { name: "09:57" }));
+    expect(onSeekCurrent).toHaveBeenLastCalledWith(597_500);
+    expect(screen.getByRole("link", { name: "10:02" })).toHaveAttribute("href", "https://example.com/?atSeconds=602700");
+    expect(screen.queryByText(/\.400|\.500|\.700/)).not.toBeInTheDocument();
+  });
+
+  it("formats times in standalone answers without changing stored Markdown", () => {
+    const content = "片段 [540000,546800)，重逢在 09:23.400；第13集，画面16:9。";
+    const message = assistantMessage(content);
+    renderPage(message);
+    expect(screen.getByText("片段 09:00–09:06，重逢在 09:23；第13集，画面16:9。")).toBeInTheDocument();
+    expect(message.content).toBe(content);
+  });
+
+  it("shows claims and a coverage notice in release, with original retrieval diagnostics only in PPE", async () => {
+    const hit = searchHit("chunk-1", 1, "首帧");
+    hit.evidence.videoCompact = "";
+    hit.evidence.windowSummary = "[540000,546800) 原始 Timeline 人物标记";
+    hit.selectionReason.summary = "09:23.400–09:57.500：两人重逢。";
+    const message = assistantMessage("重逢在09:23.400。", [hit]);
+    message.searchResult!.partial = true;
+    message.searchResult!.warnings = ["片段 chunk-1：缺少带原视频时间位置的已登记关键帧"];
+    const view = renderPage(message);
+    expect(screen.getByText("09:23–09:57：两人重逢。").tagName).toBe("STRONG");
+    expect(screen.getByText("本次回答仅覆盖当前可检索的视频。")).toBeInTheDocument();
+    expect(screen.queryByText(/540000|Timeline|角色甲：|已登记关键帧/)).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("img", { name: "首帧" }));
+    expect(screen.queryByRole("button", { name: "原始证据" })).not.toBeInTheDocument();
+    mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "debug", series: [series], isLoading: false });
+    view.rerender(<SearchPage />);
+    expect(screen.getByText(hit.evidence.windowSummary)).toBeInTheDocument();
+    expect(screen.getByText(message.searchResult!.warnings[0]!)).toBeInTheDocument();
+    expect(screen.getByText("重逢在09:23.400。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "原始证据" })).toBeInTheDocument();
+    mocks.useWorkspace.mockReturnValue({ mode: "live", displayMode: "release", series: [series], isLoading: false });
+    view.rerender(<SearchPage />);
+    expect(screen.queryByText(/540000|Timeline|角色甲：|已登记关键帧/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "原始证据" })).not.toBeInTheDocument();
   });
 
   it("states when the watched series is not searchable instead of presenting a global scope as current", async () => {
@@ -579,10 +625,11 @@ describe("Search assistant presentation", () => {
     renderPage(assistantMessage("找到一个可播放片段。", [hit]));
     const user = userEvent.setup();
 
-    expect(screen.getByRole("img", { name: "该片段暂无首帧缩略图" })).toHaveTextContent("暂无首帧 · 点击加载视频");
+    expect(screen.getByRole("img", { name: "播放所选片段" })).toHaveTextContent("播放片段");
+    expect(screen.queryByText(/暂无首帧/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("视频证据")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("img", { name: "该片段暂无首帧缩略图" }));
+    await user.click(screen.getByRole("img", { name: "播放所选片段" }));
     expect(screen.getByLabelText("视频证据")).toHaveAttribute("preload", "metadata");
   });
 });

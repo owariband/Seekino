@@ -852,6 +852,9 @@ class ParseJobRepository:
             parse_config=record.parse_config,
             chunk_count=record.chunk_count,
             version=record.version,
+            target_index_generation=record.target_index_generation,
+            scheduler_slot=record.scheduler_slot,
+            prepare_retry_count=record.prepare_retry_count,
             next_execute_time=record.next_execute_time,
             attempt_count=record.attempt_count,
             max_attempts=record.max_attempts,
@@ -1033,12 +1036,12 @@ class ParseJobRepository:
         if not task_ids:
             return {}
         chunks, intervals = {}, {}
-        for child, content_id, sequence, video_id in session.execute(select(
-            ChunkParseTask, ChunkParseContent.chunk_task_id, VideoChunk.sequence_no, VideoChunk.video_id)
+        for child, content, sequence, video_id in session.execute(select(
+            ChunkParseTask, ChunkParseContent, VideoChunk.sequence_no, VideoChunk.video_id)
             .join(VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id)
             .outerjoin(ChunkParseContent, ChunkParseContent.chunk_task_id == ChunkParseTask.id)
             .where(ChunkParseTask.video_task_id.in_(task_ids))):
-            chunks.setdefault(child.video_task_id, []).append((child, content_id is not None, sequence, video_id))
+            chunks.setdefault(child.video_task_id, []).append((child, content, sequence, video_id))
         for child, content_id, content_detail in session.execute(select(
             IntervalParseTask, IntervalParseContent.interval_task_id, IntervalParseContent.detail)
             .outerjoin(IntervalParseContent, IntervalParseContent.interval_task_id == IntervalParseTask.id)
@@ -1059,11 +1062,16 @@ class ParseJobRepository:
                 all(video_id == record.video_id for _, _, _, video_id in chunk_rows) and
                 sorted((child.start_sequence_no, child.chunk_count) for child, _, _ in interval_rows)
                 == [(plan.start_sequence_no, plan.chunk_count) for plan in expected])
-            completed_chunks = sum(child.status == "COMPLETE" and submitted for child, submitted, _, _ in chunk_rows)
-            completed_refines = sum(submitted for _, submitted, _ in interval_rows)
-            indexed_intervals = sum(child.status == "COMPLETE" and submitted for child, submitted, _ in interval_rows)
-            completed_units = completed_chunks + completed_refines + indexed_intervals
-            total_units = len(chunk_rows) + 2 * len(interval_rows)
+            completed_chunks = sum(content is not None and bool(content.content) for _, content, _, _ in chunk_rows)
+            completed_refines = sum(child.status == "COMPLETE" and submitted for child, submitted, _ in interval_rows)
+            indexed_chunks = sum(
+                child.phase == 3 and child.status == "COMPLETE" and content is not None
+                and child.indexed_content_version == content.version
+                and child.indexed_generation == record.target_index_generation
+                for child, content, _, _ in chunk_rows
+            )
+            completed_units = completed_chunks + completed_refines + indexed_chunks
+            total_units = 2 * len(chunk_rows) + len(interval_rows)
             progress = {
                 "completedChunks": completed_chunks, "totalChunks": len(chunk_rows),
                 "completedRefines": completed_refines, "totalRefines": len(interval_rows),
@@ -1071,27 +1079,38 @@ class ParseJobRepository:
                 "percent": calculate_video_parse_progress(
                     completed_parse_units=completed_chunks + completed_refines,
                     total_parse_units=len(chunk_rows) + len(interval_rows),
-                    indexed_intervals=indexed_intervals, total_intervals=len(interval_rows),
+                    indexed_chunks=indexed_chunks, total_chunks=len(chunk_rows),
                 ) if topology_ready else None,
                 "topologyReady": topology_ready,
-                "indexedIntervals": indexed_intervals,
+                "indexedChunks": indexed_chunks,
             }
             runtime = (record.detail or {}).get("_worker_runtime_v2", {})
             ledger = runtime.get("execution_timing", {}) if isinstance(runtime, dict) else {}
             entries = ledger.get("entries", {}) if isinstance(ledger, dict) else {}
             valid_ledger = (isinstance(ledger, dict) and type(ledger.get("version")) is int
                             and ledger["version"] == 1 and isinstance(entries, dict))
-            children = {("understand", child.id): (child, 1, child.lease_version) for child, _, _, _ in chunk_rows}
+            children = {}
             covered = valid_ledger
+            for child, content, _, _ in chunk_rows:
+                detail = content.detail if content is not None and isinstance(content.detail, dict) else {}
+                bound = detail.get("parse_committed_lease_version")
+                if content is None:
+                    bound = child.lease_version if child.phase == 1 else 0
+                elif type(bound) is not int or not 1 <= bound <= child.lease_version:
+                    covered, bound = False, 0
+                children[("understand", "chunk", child.id)] = (child, 1, bound)
+                if child.phase == 3 and bound:
+                    children[("index", "chunk", child.id)] = (child, bound + 1, child.lease_version)
             for child, submitted, detail in interval_rows:
                 bound = detail.get("refinement_committed_lease_version") if isinstance(detail, dict) else None
                 if not submitted:
                     bound = child.lease_version
                 elif type(bound) is not int or not 1 <= bound <= child.lease_version:
                     covered, bound = False, 0
-                children[("refine", child.id)] = (child, 1, bound)
-                if submitted and bound:
-                    children[("index", child.id)] = (child, bound + 1, child.lease_version)
+                children[("refine", "interval", child.id)] = (child, 1, bound)
+                # Historical Interval Index measurements remain valid audit data.
+                if submitted and bound and child.lease_version > bound:
+                    children[("index", "interval", child.id)] = (child, bound + 1, child.lease_version)
             spans, seen, active = [], set(), 0
             fields = {"phase", "execution_kind", "execution_task_id", "lease_version", "worker_id",
                       "started_at_ms", "elapsed_ms", "finished", "outcome"}
@@ -1100,10 +1119,9 @@ class ParseJobRepository:
                     covered = False
                     continue
                 phase, execution_id, version = entry["phase"], entry["execution_task_id"], entry["lease_version"]
-                identity = children.get((phase, execution_id)) if isinstance(phase, str) and isinstance(execution_id, str) else None
+                identity = children.get((phase, entry["execution_kind"], execution_id)) if isinstance(phase, str) and isinstance(execution_id, str) else None
                 if (identity is None or type(version) is not int or not identity[1] <= version <= identity[2]
                     or key != f"{phase}:{execution_id}:{version}"
-                    or entry["execution_kind"] != ("chunk" if phase == "understand" else "interval")
                     or not isinstance(entry["worker_id"], str) or not entry["worker_id"].strip()
                     or type(entry["started_at_ms"]) is not int or entry["started_at_ms"] < 0
                     or type(entry["elapsed_ms"]) is not int or entry["elapsed_ms"] < 0
@@ -1114,7 +1132,8 @@ class ParseJobRepository:
                 child = identity[0]
                 if not entry["finished"]:
                     live = (child.lease_version == version and child.lease_owner == entry["worker_id"]
-                        and child.status == {"understand": "UNDERSTANDING", "refine": "REFINING", "index": "INDEXING"}[phase]
+                        and child.status == ("RUNNING" if entry["execution_kind"] == "chunk" else "REFINING")
+                        and (entry["execution_kind"] != "chunk" or child.phase == (1 if phase == "understand" else 3))
                         and child.lease_expire_time is not None
                         and datetime_to_unix_time_ms(child.lease_expire_time) > observed_at_ms)
                     covered = covered and live
@@ -1122,7 +1141,7 @@ class ParseJobRepository:
                 seen.add((phase, execution_id, version))
                 spans.append((entry["started_at_ms"], entry["started_at_ms"] + entry["elapsed_ms"]))
             covered = covered and all((phase, child_id, version) in seen
-                for (phase, child_id), (_, first, bound) in children.items() for version in range(first, bound + 1))
+                for (phase, _kind, child_id), (_, first, bound) in children.items() for version in range(first, bound + 1))
             elapsed, previous_end = 0, 0
             for start, end in sorted(spans):
                 elapsed += max(0, end - max(start, previous_end))

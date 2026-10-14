@@ -14,6 +14,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from engine.parsev2.planning import plan_intervals
+from agent.video_parse_v2.scheduler import chunk_index_ready, summarize_video_task
+from ..config.elasticsearch import DEFAULT_INDEX_GENERATION
 
 from ..model.identifiers import derive_parse_job_id
 from ..model.dto.jobDTO import VideoParseTaskState
@@ -23,6 +25,8 @@ from ..model.dto.uploadDTO import (
 )
 from ..model.index_sync import IndexSyncIntent
 from ..model.job import (
+    ChunkParseContent,
+    ChunkTaskPhase,
     ChunkParseTask,
     ChunkParseTaskStatus,
     IntervalParseContent,
@@ -86,8 +90,11 @@ class UploadCompletionLeaseLostError(UploadStateError):
 
 
 class UploadRepository:
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(self, session_factory: sessionmaker[Session], *, target_index_generation: int = DEFAULT_INDEX_GENERATION) -> None:
+        if type(target_index_generation) is not int or target_index_generation <= 0:
+            raise ValueError("target_index_generation must be positive")
         self._session_factory = session_factory
+        self._target_index_generation = target_index_generation
 
     def create_session(
         self,
@@ -279,12 +286,14 @@ class UploadRepository:
         *,
         tenant_id: str,
         expected_job_version: int,
+        expected_lease_version: int,
         now: datetime,
         actor_user_id: str | None = None,
-        snapshot_resolver: Callable[[dict], dict] | None = None,
     ) -> VideoParseTaskState:
         """Retry the latest failed V2 task without changing its identity."""
 
+        if type(expected_lease_version) is not int or expected_lease_version < 0:
+            raise ValueError("expected_lease_version must be a nonnegative integer")
         with self._session_factory.begin() as session:
             upload = self._locked_session(session, upload_session_id)
             if upload.tenant_id != tenant_id:
@@ -316,129 +325,81 @@ class UploadRepository:
                     "upload session VideoParseTask no longer exists"
                 )
 
-            # Match result commits: Interval -> Chunk -> parent. Queue claims
-            # still acquire their execution row before checking the parent.
-            intervals = list(session.scalars(
-                select(IntervalParseTask)
-                .where(IntervalParseTask.video_task_id == task_id)
-                .order_by(
-                    IntervalParseTask.start_sequence_no,
-                    IntervalParseTask.id,
-                )
-                .with_for_update()
-            ))
-            chunks = list(session.scalars(
-                select(ChunkParseTask)
-                .where(ChunkParseTask.video_task_id == task_id)
-                .order_by(ChunkParseTask.id)
-                .with_for_update()
-            ))
-            task = session.scalar(
-                select(VideoParseTask)
-                .where(
-                    VideoParseTask.video_id == upload.video_id,
-                    VideoParseTask.is_deleted.is_(False),
-                )
-                .order_by(VideoParseTask.version.desc())
-                .limit(1)
-                .with_for_update()
-            )
-            if task is None or task.id != task_id:
-                raise UploadConflictError(
-                    "upload session VideoParseTask changed; refresh before retrying"
-                )
-            if task.version != expected_job_version:
-                raise UploadConflictError(
-                    "VideoParseTask version changed; refresh before retrying"
-                )
-            if _has_active_prefix_lease(task, now):
-                raise UploadStateError(
-                    "the VideoParseTask Prefix worker is active and cannot be retried"
-                )
-            if task.status not in {
-                VideoParseTaskStatus.PARSING_FAILED.value,
-                VideoParseTaskStatus.INDEXING_FAILED.value,
-            }:
-                raise UploadStateError(
-                    "only a failed VideoParseTask can be retried"
-                )
-            if any(
-                child.lease_owner is not None
-                and child.lease_expire_time is not None
-                and child.lease_expire_time > now
-                for child in [*chunks, *intervals]
-            ):
-                raise UploadStateError(
-                    "the VideoParseTask execution worker is active and cannot be retried"
-                )
-
-            chunk_rows = list(session.execute(
-                select(ChunkParseTask, VideoChunk)
-                .join(VideoChunk, VideoChunk.id
-                      == ChunkParseTask.chunk_id)
-                .where(ChunkParseTask.video_task_id == task.id)
-                .order_by(VideoChunk.sequence_no)
-            ))
-            prepared = _parse_preparation_complete(
-                session, task, [(child, chunk) for child, chunk in chunk_rows], intervals,
-            )
-            if task.status == VideoParseTaskStatus.INDEXING_FAILED.value and not prepared:
-                raise UploadConflictError("indexing retry requires complete preparation")
-
-            if (
-                snapshot_resolver is not None
-                and (
-                    not prepared
-                    or any(child.status != ChunkParseTaskStatus.COMPLETE.value for child in chunks)
-                    or any(child.status in {
-                        IntervalParseTaskStatus.WAITING.value,
-                        IntervalParseTaskStatus.REFINING.value,
-                        IntervalParseTaskStatus.PARSING_FAILED.value,
-                    } for child in intervals)
-                )
-            ):
-                task.parse_config = snapshot_resolver(deepcopy(dict(task.parse_config)))
-
-            # Restore each failed child at its own phase, including mixed failures.
-            for child in [*chunks, *intervals]:
-                if isinstance(child, ChunkParseTask):
-                    if child.status != ChunkParseTaskStatus.FAILED.value:
-                        continue
-                    child.status = ChunkParseTaskStatus.QUEUED.value
-                elif child.status == IntervalParseTaskStatus.PARSING_FAILED.value:
-                    child.status = IntervalParseTaskStatus.WAITING.value
-                elif child.status == IntervalParseTaskStatus.INDEXING_FAILED.value:
-                    if session.get(IntervalParseContent, child.id) is None:
-                        raise UploadConflictError("indexing retry is missing its Refine result")
-                    child.status = IntervalParseTaskStatus.INDEXING.value
-                else:
+            task = session.scalar(select(VideoParseTask).where(
+                VideoParseTask.id == task_id,
+            ).with_for_update().execution_options(populate_existing=True))
+            if task is None or task.version != expected_job_version or task.lease_version != expected_lease_version:
+                raise UploadConflictError("VideoParseTask version or lease changed; refresh before retrying")
+            if task.status not in {VideoParseTaskStatus.PARSING_FAILED.value, VideoParseTaskStatus.INDEXING_FAILED.value}:
+                raise UploadStateError("only a failed VideoParseTask can be retried")
+            if task.lease_owner is not None or _has_active_prefix_lease(task, now):
+                raise UploadStateError("the VideoParseTask execution has not drained")
+            intervals = list(session.scalars(select(IntervalParseTask).where(
+                IntervalParseTask.video_task_id == task.id,
+            ).order_by(IntervalParseTask.start_sequence_no, IntervalParseTask.id).with_for_update()))
+            chunks = list(session.scalars(select(ChunkParseTask).where(
+                ChunkParseTask.video_task_id == task.id,
+            ).order_by(ChunkParseTask.id).with_for_update()))
+            if any(child.lease_owner is not None for child in [*chunks, *intervals]):
+                raise UploadStateError("the VideoParseTask child execution has not been reclaimed")
+            chunk_rows = list(session.execute(select(ChunkParseTask, VideoChunk).join(
+                VideoChunk, VideoChunk.id == ChunkParseTask.chunk_id,
+            ).where(ChunkParseTask.video_task_id == task.id).order_by(VideoChunk.sequence_no)))
+            prepared = _parse_preparation_complete(session, task, chunk_rows, intervals)
+            contents = {row.chunk_task_id: row for row in session.scalars(select(ChunkParseContent).where(
+                ChunkParseContent.chunk_task_id.in_([child.id for child in chunks]),
+            ))}
+            refinements = set(session.scalars(select(IntervalParseContent.interval_task_id).where(
+                IntervalParseContent.interval_task_id.in_([interval.id for interval in intervals]),
+            )))
+            for child in chunks:
+                if child.phase != ChunkTaskPhase.INDEX or child.status != ChunkParseTaskStatus.FAILED.value:
                     continue
+                content = contents.get(child.id)
+                if content is None or not content.content:
+                    raise UploadConflictError("failed Index Chunk is missing its committed understanding")
+                if prepared and not chunk_index_ready(
+                    True, [
+                        interval.status == IntervalParseTaskStatus.COMPLETE.value and interval.id in refinements
+                        for interval in intervals if child.id in interval.chunk_task_ids
+                    ],
+                ):
+                    raise UploadConflictError("failed Index Chunk is missing its committed Refine sources")
+            for child in [*chunks, *intervals]:
+                failed = (child.status == ChunkParseTaskStatus.FAILED.value if isinstance(child, ChunkParseTask)
+                          else child.status == IntervalParseTaskStatus.PARSING_FAILED.value)
+                if not failed:
+                    continue
+                child.status = (ChunkParseTaskStatus.QUEUED.value if isinstance(child, ChunkParseTask)
+                                else IntervalParseTaskStatus.WAITING.value)
+                child.retry_count = 0
+                child.lease_version += 1
                 child.next_execute_time = now
                 child.finish_time = None
-                child.lease_owner = None
-                child.lease_expire_time = None
+                child.last_error = None
+                child.execution_deadline = None
                 child.update_time = datetime_to_unix_time_ms(now)
-
             if not prepared:
-                task.status = VideoParseTaskStatus.PREPARING.value
-            elif any(child.status != ChunkParseTaskStatus.COMPLETE.value for child in chunks) or any(
-                interval.status in {
-                    IntervalParseTaskStatus.WAITING.value,
-                    IntervalParseTaskStatus.REFINING.value,
-                } for interval in intervals
-            ):
-                task.status = VideoParseTaskStatus.PARSING.value
-            elif any(interval.status == IntervalParseTaskStatus.INDEXING.value for interval in intervals):
-                task.status = VideoParseTaskStatus.INDEXING.value
-            else:
-                # Completion (including videos without a full Interval) belongs to the host.
-                task.status = VideoParseTaskStatus.PARSING.value
-            task.max_attempts = max(task.max_attempts, task.attempt_count + 1)
+                task.prepare_retry_count = 0
+            task.status = (VideoParseTaskStatus.PREPARING.value if not prepared else summarize_video_task(
+                topology_complete=prepared,
+                understanding_complete=all(child.id in contents and bool(contents[child.id].content) for child in chunks),
+                refinement_complete=all(interval.status == IntervalParseTaskStatus.COMPLETE.value and interval.id in refinements for interval in intervals),
+                indexing_complete=all(
+                    child.phase == ChunkTaskPhase.INDEX and child.status == ChunkParseTaskStatus.COMPLETE.value
+                    and child.id in contents and child.indexed_content_version == contents[child.id].version
+                    and child.indexed_generation == task.target_index_generation for child in chunks
+                ),
+                parsing_failed=False, indexing_failed=False,
+            ))
+            task.lease_version += 1
             task.next_execute_time = now
+            task.scheduler_slot = None
             task.lease_owner = None
             task.lease_expire_time = None
             task.heartbeat_time = None
             task.finish_time = None
+            task.last_error = None
             detail = deepcopy(dict(task.detail or {}))
             runtime = dict(detail.get(RUNTIME_DETAIL_KEY) or {})
             runtime.pop("failure_status", None)
@@ -494,6 +455,7 @@ class UploadRepository:
                 )
                 .order_by(VideoParseTask.version.desc())
                 .limit(1)
+                .with_for_update()
             )
             if latest is None:
                 raise UploadConflictError(
@@ -504,7 +466,7 @@ class UploadRepository:
             realtime_only = isinstance(candidate_runtime, dict) and candidate_runtime.get("realtime_only") is True
             realtime_chunks = []
             if realtime_only:
-                # Match result commits and retries: Interval -> Chunk -> parent.
+                # Parent is already locked; acquire Interval then Chunk rows consistently.
                 list(session.scalars(select(IntervalParseTask).where(
                     IntervalParseTask.video_task_id == candidate_id,
                 ).order_by(IntervalParseTask.start_sequence_no, IntervalParseTask.id).with_for_update()))
@@ -564,6 +526,7 @@ class UploadRepository:
                         "VideoParseTask parse_config has invalid max_retry_count"
                     )
                 latest.parse_config = snapshot
+                latest.target_index_generation = self._target_index_generation
                 latest.max_attempts = max_retry_count + 1
                 detail = dict(latest.detail)
                 existing_runtime = detail.get("_worker_runtime_v2")
@@ -593,6 +556,8 @@ class UploadRepository:
                         child.last_error = None
                         child.lease_owner = None
                         child.lease_expire_time = None
+                        child.execution_deadline = None
+                        child.lease_version += 1
                         child.update_time = datetime_to_unix_time_ms(now)
                     active_topology = (
                         latest.lease_owner is not None
@@ -656,6 +621,7 @@ class UploadRepository:
                 pipeline_version=latest.pipeline_version,
                 status=VideoParseTaskStatus.PENDING.value,
                 parse_config=snapshot,
+                target_index_generation=self._target_index_generation,
                 chunk_count=chunk_count,
                 version=latest.version + 1,
                 next_execute_time=now,
@@ -841,6 +807,7 @@ class UploadRepository:
                 # removes these rows through their existing cascade.
                 for task in v2_tasks:
                     task.is_deleted = True
+                    task.scheduler_slot = None
                     task.update_time = datetime_to_unix_time_ms(now)
             if jobs and video_id is not None:
                 video = session.get(Video, video_id)
@@ -1329,6 +1296,7 @@ class UploadRepository:
                 pipeline_version=pipeline_version,
                 status=VideoParseTaskStatus.PENDING.value,
                 parse_config=video_parse_config,
+                target_index_generation=self._target_index_generation,
                 chunk_count=chunk_count,
                 version=1,
                 next_execute_time=completed_at,
@@ -1497,6 +1465,9 @@ class UploadRepository:
     def _task_snapshot(task: VideoParseTask) -> VideoParseTaskState:
         return VideoParseTaskState(
             video_parse_task_id=task.id,
+            target_index_generation=task.target_index_generation,
+            scheduler_slot=task.scheduler_slot,
+            prepare_retry_count=task.prepare_retry_count,
             created_by_user_id=task.creator_id,
             video_id=task.video_id,
             pipeline_version=task.pipeline_version,

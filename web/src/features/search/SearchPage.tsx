@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, History, LoaderCircle, MessageCircleMore, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ChevronDown, History, LoaderCircle, Play, Plus, SlidersHorizontal, Square, Trash2, TriangleAlert, X } from "lucide-react";
 import { Children, createContext, forwardRef, type FormEvent, type ReactNode, useCallback, useEffect, useId, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
 import { Link, useInRouterContext } from "react-router";
@@ -6,8 +6,8 @@ import remarkGfm from "remark-gfm";
 
 import { useWorkspace } from "../../app/workspace";
 import { createAgentConversation, deleteAgentConversation, errorMessage, getAgentMessageOptions, identityStorageKey, listAgentConversations, mediaUrl } from "../../api/client";
-import type { AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, EvidenceReference } from "../../api/contracts";
-import { clipText, episodeLabel, formatTimecode, formatTimeRange } from "../../shared/format";
+import type { AgentConversationView, AgentMessageOptions, AgentMessageRunOptions, AgentMessageView, AgentRenderBlock, DisplayMode, EvidenceReference } from "../../api/contracts";
+import { episodeLabel, formatTimecode, formatTimeRange, formatTimeText, MEDIA_TIMESTAMP_PATTERN, timestampMilliseconds } from "../../shared/format";
 import { useReportAssistantBusy } from "../../shared/assistantActivity";
 import { Mascot } from "../../shared/Mascot";
 import { useAuth } from "../auth/AuthProvider";
@@ -126,51 +126,48 @@ function conversationAccessibleName(conversation: AgentConversationView): string
   return `${conversation.title}，${conversationTime(conversation)}，编号 ${conversation.conversationId}`;
 }
 
-// "10分38秒" / "1小时2分3秒" / "10:38" / "01:02:03"; ratios like 16:9 do not match.
-const TIMESTAMP_PATTERN = /(?:(\d{1,2})\s*小时\s*)?(\d{1,3})\s*分(?:钟)?\s*(\d{1,2})\s*秒|(?<![\d:])(?:(\d{1,2}):)?(\d{1,3}):(\d{2})(?![\d:])/g;
-
-function timestampMs(match: RegExpMatchArray): number | null {
-  const [, hours, minutes, seconds, clockHours, clockMinutes, clockSeconds] = match;
-  const h = Number(hours ?? clockHours ?? 0);
-  const m = Number(minutes ?? clockMinutes);
-  const sec = Number(seconds ?? clockSeconds);
-  if (sec >= 60 || ((hours ?? clockHours) !== undefined && m >= 60)) return null;
-  return ((h * 60 + m) * 60 + sec) * 1000;
-}
-
-function linkTimestamps(children: ReactNode, onSeek: (positionMs: number) => void): ReactNode {
+function linkTimestamps(children: ReactNode, onSeek: ((positionMs: number) => void) | undefined, displayMode: DisplayMode): ReactNode {
+  const displayText = displayMode === "debug" ? (value: string) => value : formatTimeText;
   return Children.map(children, (child) => {
     if (typeof child !== "string") return child;
+    if (!onSeek) return displayText(child);
     const parts: ReactNode[] = [];
     let cursor = 0;
-    for (const match of child.matchAll(TIMESTAMP_PATTERN)) {
-      const positionMs = timestampMs(match);
+    for (const match of child.matchAll(MEDIA_TIMESTAMP_PATTERN)) {
+      const positionMs = timestampMilliseconds(match);
       if (positionMs === null) continue;
-      parts.push(child.slice(cursor, match.index));
-      parts.push(<button key={match.index} type="button" className={styles.timeLink} onClick={() => onSeek(positionMs)} title={`跳转到 ${formatTimecode(positionMs)}`}>{match[0]}</button>);
+      parts.push(displayText(child.slice(cursor, match.index)));
+      parts.push(<button key={match.index} type="button" className={styles.timeLink} onClick={() => onSeek(positionMs)} title={`跳转到 ${formatTimecode(positionMs)}`}>{displayText(match[0])}</button>);
       cursor = match.index! + match[0].length;
     }
-    if (!parts.length) return child;
-    parts.push(child.slice(cursor));
+    if (!parts.length) return displayText(child);
+    parts.push(displayText(child.slice(cursor)));
     return parts;
   });
 }
 
-const SeekContext = createContext<((positionMs: number) => void) | undefined>(undefined);
+const SeekContext = createContext<{ onSeek?: (positionMs: number) => void; displayMode: DisplayMode }>({ displayMode: "release" });
 
-function WithTimes({ children }: { children: ReactNode }) {
-  const onSeek = useContext(SeekContext);
-  return onSeek ? linkTimestamps(children, onSeek) : children;
+function WithTimes({ children, link = true }: { children: ReactNode; link?: boolean }) {
+  const { onSeek, displayMode } = useContext(SeekContext);
+  return linkTimestamps(children, link ? onSeek : undefined, displayMode);
 }
 
 // Stable component identities: inline overrides would remount the answer on every render.
 const answerComponents: Components = {
+  h1: ({ children }) => <h1><WithTimes>{children}</WithTimes></h1>,
+  h2: ({ children }) => <h2><WithTimes>{children}</WithTimes></h2>,
+  h3: ({ children }) => <h3><WithTimes>{children}</WithTimes></h3>,
+  h4: ({ children }) => <h4><WithTimes>{children}</WithTimes></h4>,
+  h5: ({ children }) => <h5><WithTimes>{children}</WithTimes></h5>,
+  h6: ({ children }) => <h6><WithTimes>{children}</WithTimes></h6>,
   p: ({ children }) => <p><WithTimes>{children}</WithTimes></p>,
   li: ({ children }) => <li><WithTimes>{children}</WithTimes></li>,
   strong: ({ children }) => <strong><WithTimes>{children}</WithTimes></strong>,
   em: ({ children }) => <em><WithTimes>{children}</WithTimes></em>,
   td: ({ children }) => <td><WithTimes>{children}</WithTimes></td>,
-  a: ({ children, href, title }) => href ? <a href={href} title={title} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
+  th: ({ children }) => <th><WithTimes>{children}</WithTimes></th>,
+  a: ({ children, href, title }) => href ? <a href={href} title={title} target="_blank" rel="noopener noreferrer"><WithTimes link={false}>{children}</WithTimes></a> : <span><WithTimes>{children}</WithTimes></span>,
   img: ({ alt }) => <span className={styles.answerImageBlocked}>{alt ? `[图片：${alt}]` : "[图片]"}</span>,
   table: ({ children }) => <div className={styles.answerTable}><table>{children}</table></div>,
 };
@@ -648,9 +645,9 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                     <AgentProgress message={message} steps={progress[message.messageId] ?? []} displayMode={displayMode} />
                     {message.status === "FAILED" ? <p className={styles.messageError} role="alert">{message.lastError?.message || "本次回答未完成"}</p> : null}
                     {!message.content && message.status === "COMPLETED" && !message.searchResult ? <p className={styles.messageError}>未生成回答</p> : null}
-                    {message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
+                    {displayMode === "debug" && message.searchResult?.warnings.length ? <div className={styles.resultWarnings} role="status">{message.searchResult.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : message.searchResult?.partial ? <p className={styles.resultWarnings} role="status">本次回答仅覆盖当前可检索的视频。</p> : null}
                     {messageRenderBlocks(message).map((block, index, blocks) => {
-                      if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={onSeekCurrent}><MarkdownAnswer markdown={block.markdown} /></SeekContext.Provider>;
+                      if (block.type === "markdown") return <SeekContext.Provider key={`markdown:${index}`} value={{ onSeek: onSeekCurrent, displayMode }}><MarkdownAnswer markdown={block.markdown} /></SeekContext.Provider>;
                       const hit = message.searchResult?.hits.find((item) => item.evidence.videoChunkId === block.videoChunkId);
                       if (!hit) return null;
                       const explanation = explainHit(hit);
@@ -683,14 +680,16 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
                               {thumbnailUrl ? (
                                 <img className={styles.candidateThumbnail} src={thumbnailUrl} alt={hit.evidence.thumbnail?.alt || `${hit.evidence.seriesName} 视频片段首帧`} loading="lazy" />
                               ) : (
-                                <span className={styles.candidateThumbnailFallback} role="img" aria-label="该片段暂无首帧缩略图">
+                                <span className={displayMode === "debug" ? styles.candidateThumbnailFallback : styles.whyLine} role="img" aria-label={displayMode === "debug" ? "该片段暂无首帧缩略图" : "播放所选片段"}>
                                   <Play size={22} fill="currentColor" aria-hidden="true" />
-                                  <span>{hit.evidence.playbackStatus === "READY" ? "暂无首帧 · 点击加载视频" : "暂无可用预览"}</span>
+                                  <span>{hit.evidence.playbackStatus === "READY" ? displayMode === "debug" ? "暂无首帧 · 点击加载视频" : "播放片段" : "视频暂不可播放"}</span>
                                 </span>
                               )}
-                              <strong>{clipText(hit.evidence.videoCompact || hit.evidence.windowSummary, 78)}</strong>
-                              <blockquote>{clipText(readableTranscript(hit), 66)}</blockquote>
-                              <div className={styles.whyLine}><MessageCircleMore size={14} aria-hidden="true" /><span>{explanation.summary}</span></div>
+                              <strong>{displayMode === "debug" ? explanation.summary : formatTimeText(explanation.summary)}</strong>
+                              {displayMode === "debug" ? <>
+                                <p>{hit.evidence.videoCompact || hit.evidence.windowSummary}</p>
+                                <blockquote>{readableTranscript(hit)}</blockquote>
+                              </> : null}
                             </button>
                           </div>
                         </section>
@@ -861,7 +860,7 @@ export const SearchPage = forwardRef<SearchPageHandle, SearchPageProps>(function
               <strong>片段详情</strong>
               <button type="button" onClick={() => setSelection(null)} aria-label="关闭片段详情"><X size={18} /></button>
             </header>
-            <EvidencePlayer hit={selectedHit} playbackRange={{ startSeconds: selection.startSeconds, endSeconds: selection.endSeconds }} />
+            <EvidencePlayer hit={selectedHit} displayMode={displayMode} playbackRange={{ startSeconds: selection.startSeconds, endSeconds: selection.endSeconds }} />
             <button className={`button-secondary ${styles.referenceButton}`} type="button" onClick={() => {
               setReference({ messageId: evidenceMessage.messageId, videoChunkId: selectedHit.evidence.videoChunkId });
               setSelection(null);

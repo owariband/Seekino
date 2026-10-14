@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import math
+import os
 import shutil
 import subprocess
 import time
@@ -99,8 +101,7 @@ class VideoParseMediaService:
             max_height=max_height,
         )
         ensure_active = check_active or (lambda: None)
-        directory = self._create_workspace(identity)
-        try:
+        with self._workspace(identity) as directory:
             ensure_active()
             video = directory / "visual.mp4"
             self._materialize_video(
@@ -112,9 +113,6 @@ class VideoParseMediaService:
             )
             ensure_active()
             yield video
-        finally:
-            self._delete_tree(directory)
-            self._remove_empty_parents(directory.parent)
 
     @contextmanager
     def prepare_chunk(
@@ -145,8 +143,7 @@ class VideoParseMediaService:
             max_height=max_height,
         )
         ensure_active = check_active or (lambda: None)
-        directory = self._create_workspace(identity)
-        try:
+        with self._workspace(identity) as directory:
             ensure_active()
             video = directory / "visual.mp4"
             self._materialize_video(
@@ -184,9 +181,6 @@ class VideoParseMediaService:
                     frames.append((start_seconds + relative_seconds, output))
             ensure_active()
             yield PreparedVideoParseMedia(video, audio, tuple(frames))
-        finally:
-            self._delete_tree(directory)
-            self._remove_empty_parents(directory.parent)
 
     def reap_stale(
         self,
@@ -211,9 +205,11 @@ class VideoParseMediaService:
             try:
                 if tombstone.is_symlink() or tombstone.stat().st_mtime > cutoff:
                     continue
-                self._delete_tree(tombstone)
-                self._remove_empty_parents(tombstone.parent)
-                reaped += 1
+                with self._workspace_lock(tombstone, blocking=False) as acquired:
+                    if acquired:
+                        self._delete_tree(tombstone)
+                        self._remove_empty_parents(tombstone.parent)
+                        reaped += 1
             except (FileNotFoundError, OSError):
                 continue
 
@@ -233,18 +229,47 @@ class VideoParseMediaService:
                     )
                 except RuntimeError:
                     identity = self._identity_from_workspace(directory)
-                if is_active(identity):
-                    continue
-                tombstone = directory.with_name(
-                    f".reaping-{directory.name}-{uuid4().hex}"
-                )
-                directory.replace(tombstone)
-                self._delete_tree(tombstone)
-                self._remove_empty_parents(directory.parent)
-                reaped += 1
+                with self._workspace_lock(directory, blocking=False) as acquired:
+                    if not acquired or is_active(identity):
+                        continue
+                    tombstone = directory.with_name(
+                        f".reaping-{directory.name}-{uuid4().hex}"
+                    )
+                    directory.replace(tombstone)
+                    self._delete_tree(tombstone)
+                    self._remove_empty_parents(directory.parent)
+                    reaped += 1
             except (FileNotFoundError, OSError, RuntimeError, ValueError):
                 continue
         return reaped
+
+    @contextmanager
+    def _workspace(self, identity: MediaLeaseIdentity) -> Iterator[Path]:
+        directory = self._create_workspace(identity)
+        with self._workspace_lock(directory, blocking=True):
+            try:
+                yield directory
+            finally:
+                self._delete_tree(directory)
+                self._remove_empty_parents(directory.parent)
+
+    @staticmethod
+    @contextmanager
+    def _workspace_lock(directory: Path, *, blocking: bool) -> Iterator[bool]:
+        # Keep the lock for the actual media context lifetime, including a
+        # revoked lease whose provider thread has not exited. A crashed process
+        # releases it automatically; another Consumer can then reap the files.
+        with (directory / ".execution.lock").open("a+b") as lock:
+            os.set_inheritable(lock.fileno(), False)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+            except BlockingIOError:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
     def _create_workspace(self, identity: MediaLeaseIdentity) -> Path:
         video_task = canonical_uuid(

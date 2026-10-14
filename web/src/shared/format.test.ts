@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatBytes,
+  formatMoneyCny,
   formatMoneyUsd,
+  previewFramePosition,
   formatTimeRange,
   formatTimecode,
+  formatTimeText,
   inferEpisodeOrder,
   publicParseStageLabel,
   stageLabel,
@@ -19,21 +22,42 @@ describe("format helpers", () => {
     expect(formatMoneyUsd(null)).toBe("未计价");
   });
 
+  it("rounds CNY estimates for display without floating point", () => {
+    expect(formatMoneyCny("106.85095242")).toBe("¥106.85");
+    expect(formatMoneyCny("1234567.995")).toBe("¥1,234,568.00");
+    expect(formatMoneyCny("0.15")).toBe("¥0.15");
+    expect(formatMoneyCny("0.00123456")).toBe("¥0.0012");
+    expect(formatMoneyCny("0")).toBe("¥0.00");
+    expect(formatMoneyCny("12")).toBe("¥12.00");
+  });
+
+  it("samples episode previews past the opening credits", () => {
+    expect(previewFramePosition(1_430_000)).toBe(500_500);
+    expect(previewFramePosition(0)).toBe(0);
+  });
+
   it("formats evidence time ranges consistently", () => {
     expect(formatTimecode(1_252_000)).toBe("20:52");
     expect(formatTimeRange(1_252_000, 1_259_000)).toBe("20:52–20:59");
   });
 
-  it("rounds media milliseconds to at most two display decimals without trailing zeros", () => {
-    expect(formatTimecode(8_008)).toBe("00:08.01");
-    expect(formatTimecode(8_250)).toBe("00:08.25");
-    expect(formatTimecode(8_100)).toBe("00:08.1");
+  it("displays media milliseconds as whole seconds without rounding into the next second", () => {
+    expect(formatTimecode(8_008)).toBe("00:08");
+    expect(formatTimecode(8_250)).toBe("00:08");
+    expect(formatTimecode(8_100)).toBe("00:08");
     expect(formatTimecode(8_000)).toBe("00:08");
-    expect(formatTimecode(59_999)).toBe("01:00");
-    expect(formatTimecode(3_599_999)).toBe("01:00:00");
-    expect(formatTimecode(100)).toBe("00:00.1");
+    expect(formatTimecode(59_999)).toBe("00:59");
+    expect(formatTimecode(3_599_999)).toBe("59:59");
+    expect(formatTimecode(3_600_001)).toBe("60:00");
+    expect(formatTimecode(100)).toBe("00:00");
     expect(formatTimecode(0)).toBe("00:00");
-    expect(formatTimeRange(8_008, 8_250)).toBe("00:08.01–00:08.25");
+    expect(formatTimeRange(8_008, 8_250)).toBe("00:08–00:08");
+  });
+
+  it("formats explicit times in display text without treating other numbers as timestamps", () => {
+    expect(formatTimeText("第13集 09:23.400–09:57.500；01:02:03.004；10分38.456秒")).toBe("第13集 09:23–09:57；62:03；10:38");
+    expect(formatTimeText("[540000,546800) 回忆发生在599300毫秒")).toBe("09:00–09:06 回忆发生在09:59");
+    expect(formatTimeText("16:9，2026 年，价格 12.50，编号 599300，错误时间 01:60:00")).toBe("16:9，2026 年，价格 12.50，编号 599300，错误时间 01:60:00");
   });
 
   it("extracts episode order while retaining a safe fallback", () => {

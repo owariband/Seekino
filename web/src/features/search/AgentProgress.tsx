@@ -2,6 +2,7 @@ import { Check, ChevronDown, Clock3, LoaderCircle, MessageSquareText, ScanSearch
 import { useEffect, useState } from "react";
 
 import type { AgentMessageTiming, AgentMessageView, AnswerPhase, DisplayMode } from "../../api/contracts";
+import { formatTimecode as formatDuration } from "../../shared/format";
 import { Mascot, type MascotMood } from "../../shared/Mascot";
 import type { AgentProgressEvent } from "./useAgentConversation";
 import styles from "./search.module.css";
@@ -25,18 +26,6 @@ type VisibleStage = {
   durationMs: number | null;
   key: string;
 };
-
-function formatDuration(durationMs: number): string {
-  const milliseconds = Math.max(0, Math.round(durationMs));
-  if (milliseconds < 1_000) return `${milliseconds} 毫秒`;
-  if (milliseconds < 60_000) {
-    const seconds = milliseconds / 1_000;
-    return `${seconds.toFixed(seconds < 10 ? 1 : 0)} 秒`;
-  }
-  const minutes = Math.floor(milliseconds / 60_000);
-  const seconds = Math.floor((milliseconds % 60_000) / 1_000);
-  return `${minutes} 分 ${String(seconds).padStart(2, "0")} 秒`;
-}
 
 function latestTiming(message: AgentMessageView, steps: AgentProgressEvent[]): AgentMessageTiming | null {
   return message.timing ?? [...steps].reverse().find((step) => step.timing)?.timing ?? null;

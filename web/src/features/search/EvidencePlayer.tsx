@@ -2,8 +2,8 @@ import { Captions, CircleAlert, Clock3, Pause, Play, ScanSearch } from "lucide-r
 import { type CSSProperties, type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { errorMessage, getVideoChunk, mediaUrl } from "../../api/client";
-import type { VideoChunkEvidence, VideoChunkSearchHit } from "../../api/contracts";
-import { episodeLabel, formatTimeRange, formatTimecode } from "../../shared/format";
+import type { DisplayMode, VideoChunkEvidence, VideoChunkSearchHit } from "../../api/contracts";
+import { episodeLabel, formatTimeRange, formatTimecode, formatTimeText } from "../../shared/format";
 import { explainHit, readableTranscript } from "./explain";
 import styles from "./search.module.css";
 
@@ -11,15 +11,18 @@ type EvidenceTab = "reason" | "evidence" | "context";
 
 interface EvidencePlayerProps {
   hit: VideoChunkSearchHit | null;
+  displayMode?: DisplayMode;
   /** Integer milliseconds; range field names remain unchanged. */
   playbackRange: { startSeconds: number; endSeconds: number };
 }
 
-export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
+export function EvidencePlayer({ hit, playbackRange, displayMode = "release" }: EvidencePlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playRef = useRef<(() => void) | null>(null);
   const playingRef = useRef(false);
   const [tab, setTab] = useState<EvidenceTab>("reason");
+  const isDebug = displayMode === "debug";
+  const activeTab = isDebug ? tab : "reason";
   const [playError, setPlayError] = useState<string | null>(null);
   const [mediaReady, setMediaReady] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -216,7 +219,7 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
       {!playbackUrl || playError ? <button className="button-secondary" type="button" disabled={refreshing} onClick={() => void refreshMedia()}>{refreshing ? "正在刷新媒体状态…" : "刷新媒体状态"}</button> : null}
       {!playbackUrl && evidence.thumbnail ? failedImage === evidence.thumbnail.imageId ? <p>关键帧图片无法读取</p> : <img src={mediaUrl(evidence.thumbnail.url) ?? undefined} alt={evidence.thumbnail.alt ?? "已登记关键帧"} onError={() => setFailedImage(evidence.thumbnail!.imageId)} /> : null}
 
-      <nav className={styles.evidenceTabs} aria-label="证据详情">
+      {isDebug ? <nav className={styles.evidenceTabs} aria-label="证据详情">
         {([
           ["reason", "选择理由"],
           ["evidence", "原始证据"],
@@ -231,15 +234,15 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
             {label}
           </button>
         ))}
-      </nav>
+      </nav> : null}
 
       <div className={styles.evidenceContent}>
-        {tab === "reason" ? (
+        {activeTab === "reason" ? (
           <>
             <section className={styles.reasonLead}>
               <span className={styles.reasonNumber}>{String(hit.candidate.rank).padStart(2, "0")}</span>
               <div>
-                <p>{explanation.summary}</p>
+                <p>{isDebug ? explanation.summary : formatTimeText(explanation.summary)}</p>
               </div>
             </section>
             {explanation.limitations.length > 0 ? (
@@ -247,14 +250,14 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
                 <CircleAlert size={16} />
                 <div>
                   <strong>核验时留意</strong>
-                  {explanation.limitations.map((item) => <p key={item}>{item}</p>)}
+                  {explanation.limitations.map((item) => <p key={item}>{isDebug ? item : formatTimeText(item)}</p>)}
                 </div>
               </section>
             ) : null}
           </>
         ) : null}
 
-        {tab === "evidence" ? (
+        {activeTab === "evidence" ? (
           <div className={styles.quoteStack}>
             <section>
               <Captions size={17} />
@@ -267,7 +270,7 @@ export function EvidencePlayer({ hit, playbackRange }: EvidencePlayerProps) {
           </div>
         ) : null}
 
-        {tab === "context" ? (
+        {activeTab === "context" ? (
           <div className={styles.contextFlow}>
             <article><span>BEFORE</span><p>{evidence.contextBeforeCompact || "暂无前文摘要"}</p></article>
             <i />

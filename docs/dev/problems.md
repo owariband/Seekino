@@ -883,6 +883,40 @@ DB 同时确认这 13 集总时长为 18,465,233 ms，即 **5.12923 音频小时
 
 **切换边界：** AniVAG 已有 `openai_audio` 适配器，可发送准备好的 16kHz 单声道 WAV 并读取 `verbose_json.segments`；兼容服务可复用这条通路。只有 `json.text` 的响应会退化为整个 Chunk 一个时间范围，不能当作等价的句段字幕。国内上述异步接口仍需适配。已有失败任务的 `retry_parse()` 明确保留 ASR 冻结配置，只刷新理解／Refine，因此修改 YAML 后按原按钮重试不会切换这批任务的 ASR；需要单独定义保留完成 Chunk、只对未完成部分更新 ASR 的恢复策略，并保留配置与成果来源记录。[现有音频适配器](../../gateway/transcription.py)、[时间戳规范化](../../engine/common/transcription.py)、[重试冻结配置](../../server/service/upload.py)
 
+### B11：阶段超时后阻塞调用未退出，重试可能与旧执行重叠
+
+优先级：P2。状态：2026-10-14 源码核对与离线最小复现确认，待独立设计执行隔离；本次整理提交不扩大运行时重构范围。当前未测得真实供应商的重叠调用数量或额外费用。
+
+#### 问题与已确认边界
+
+- `ExecutionCalls.run()` 取消等待时，若阻塞线程仍未退出，会抛出带 `completion` 的 `BlockingCallCancelled`。它表示等待已取消，不表示底层 HTTP／SDK 调用、媒体处理或远端计算已经停止。
+- Consumer 的阶段 deadline 分支取消任务后，用 `gather(return_exceptions=True)` 收尾，再抛普通 `TimeoutError`，丢失上述 pending 标记；实时理解 `_run_base()` 则捕获该异常后直接 `retry_chunk()`。两条路径都可能在旧调用仍运行时进入重试。
+- Queue 的 `_retry_child()`／`_fail_child()` 会清空子任务 lease，并将未耗尽预算的任务改回待领取状态；`_phase_capacity()` 按当前 `RUNNING`／`REFINING` 记录统计名额。新执行因此可能与仍存活的旧阻塞调用重叠，实际运行中的工作数量可能超过配置的阶段并发值。
+- **已有保护仍有效：** 旧执行提交必须通过任务身份、owner、lease version、阶段及期限校验；失效 lease 的迟到结果不能作为当前成果提交，索引仍受内容版本与代次约束。`ExecutionCalls` 的延迟清理和媒体工作区锁也会保留旧调用仍在使用的客户端／文件。
+- **这些保护不等于外部调用停止。** lease fence 不能撤销已发出的请求，不能保证新旧调用不重叠，也不能保证供应商不重复计费；不能把“没有旧结果覆盖”报告成“没有重复执行”。
+
+#### 离线复现证据
+
+使用真实 `RealtimeUnderstandingService._run_base()` 与 `run_blocking()`，以受控线程模拟不响应取消的 Provider，queue／repository 使用替身；设置 50ms execution deadline，并在观测后主动释放线程。结果为 `provider_started=True`、`provider_exited_at_retry=False`、`run_base_returned_while_provider_running=True`。独立 Consumer 复现也确认 deadline 后已调用 `retry_chunk()`，而 `ExecutionCalls.pending` 仍为 `True`。
+
+本次复现没有真实模型请求、开发数据库写入或服务重启；只证明取消、重试和线程退出的先后关系，不构成真实重复扣费的账单证据。相关现有离线回归 207 项通过，不能替代上述并发边界验收。
+
+#### 待处理方向
+
+1. 先明确阶段并发限制约束的是可领取任务，还是实际仍在运行的执行；将 lease 状态、调用实际退出、远端取消确认分别观测，不用同一个“已停止”状态替代。
+2. 评估可取消客户端及可中断的独立执行进程，保留完成／取消回执和资源所有权。终止本地进程仍不保证供应商远端计算停止；支持异步任务或幂等键时，应保存供应商任务 ID 并查询、取消或复用，无法确认的远端执行明确标记为未知。
+3. **只延迟本地 `retry_chunk()` 不足以修复。** deadline／lease expiry 的 reaper 仍可能回收并重新派发；领取、回收、正常停服及 pending execution 的处理必须采用一致规则，同时避免为等待一个无法退出的调用而无限阻塞恢复。
+4. 保留旧结果提交校验及有界失败预算；记录旧执行尚未退出时的恢复决策、实际并发、重叠时长和重复调用用量。更换 Redis 或其他消息中间件不会自动停止旧线程／远端请求，也不会自动消除重复计费。
+
+#### 验收条件
+
+- 用可控 Provider 分别覆盖正常响应取消、忽略取消、迟到成功和迟到失败；同时走 Consumer 与实时理解入口，验证 deadline、手动停止、正常停服和 lease expiry 的结果。
+- 设置阶段并发为 1，在旧调用仍运行期间触发重试与 reaper；以调用开始／实际退出事件计数验证所选并发策略，而非仅检查数据库中 `RUNNING` 的数量。若允许有限重叠，必须有明确上限与可观测记录。
+- 旧执行迟到返回仍不能提交；媒体／客户端在实际使用结束前不能被清理；任务恢复不会因无限保留占位而永久停滞。
+- 验证本地子进程与受管资源已退出；对远端取消是否成功、是否继续计费单独核对供应商回执及用量，无法证明时保留未知状态，不声称 exactly-once 或零重复费用。
+
+依据：[阻塞执行与延迟清理](../../server/utils/execution.py)、[Consumer deadline 与取消交接](../../server/mq/video_parse_consumer.py)、[实时基础解析](../../server/service/realtime_understanding.py)、[重试／阶段容量／过期回收](../../server/mq/video_parse_queue.py)、[执行提交校验](../../server/repository/video_parse.py)、[媒体工作区锁](../../server/service/video_parse_media.py)。本项补充 B10 的恢复边界，不将队列中间件迁移作为前置修复。
+
 ## Chat 联调问题（2026-09-21）
 
 ### C01：草稿引用未召回的 Evidence 导致回答失败

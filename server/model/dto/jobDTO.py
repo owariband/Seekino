@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from ...config.elasticsearch import DEFAULT_INDEX_GENERATION
+
 
 @dataclass(frozen=True, slots=True)
 class ParseJobState:
@@ -66,6 +68,9 @@ class VideoParseTaskState:
     create_time: datetime
     update_time: datetime
     created_by_user_id: str | None = None
+    target_index_generation: int = DEFAULT_INDEX_GENERATION
+    scheduler_slot: int | None = None
+    prepare_retry_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +193,9 @@ class ChunkParseLease:
     retry_initial_delay_seconds: float
     retry_max_delay_seconds: float
 
+    execution_deadline: datetime | None = None
+    phase: int = 1
+
 
 @dataclass(frozen=True, slots=True)
 class IntervalParseLease:
@@ -204,6 +212,8 @@ class IntervalParseLease:
     max_retry_count: int
     retry_initial_delay_seconds: float
     retry_max_delay_seconds: float
+
+    execution_deadline: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,11 +287,10 @@ class IndexableChunkState:
 
 
 @dataclass(frozen=True, slots=True)
-class IntervalIndexingSnapshot:
-    interval_parse_task_id: str
+class ChunkIndexingSnapshot:
     video_parse_task_id: str
-    chunks: tuple[IndexableChunkState, ...]
-    indexed_versions: dict[str, int]
+    chunk: IndexableChunkState
+    target_index_generation: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,6 +328,8 @@ class ChunkScheduleEntryState:
     chunk_parse_task_id: str
     sequence_no: int
     status: str
+    phase: int = 1
+    understanding_committed: bool = False
 
 
 @dataclass(frozen=True, slots=True)

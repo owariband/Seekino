@@ -185,7 +185,7 @@ describe("WatchPage", () => {
     expect(screen.getByTestId("supervisor-chat")).toBe(chat);
     expect(screen.getByTestId("video-player")).toBe(player);
     fireEvent.click(screen.getByRole("button", { name: "打开观看侧栏" }));
-    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "聊天" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("pauses the video when the user opens, selects, or interacts with Chat", async () => {
@@ -201,7 +201,7 @@ describe("WatchPage", () => {
     expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(2);
 
     fireEvent.click(screen.getByRole("tab", { name: "选集" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    fireEvent.click(screen.getByRole("tab", { name: "聊天" }));
     expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledTimes(3);
 
     fireEvent.pointerDown(screen.getByTestId("supervisor-chat"), { button: 0, pointerType: "mouse" });
@@ -419,7 +419,7 @@ describe("WatchPage", () => {
 
     expect(mocks.pauseAndGetSnapshot).toHaveBeenCalledOnce();
     expect(screen.getByRole("complementary", { name: "观看侧栏" })).toHaveAttribute("aria-hidden", "false");
-    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "聊天" })).toHaveAttribute("aria-selected", "true");
     expect(composer).toHaveFocus();
     expect(mocks.focusComposer).toHaveBeenCalledOnce();
 

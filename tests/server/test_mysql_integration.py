@@ -215,7 +215,7 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
             return uploads.retry_parse(
                 upload.upload_session_id,
                 tenant_id="mysql-manual-retry",
-                expected_job_version=1,
+                expected_job_version=1, expected_lease_version=0,
             )
         except (UploadConflictError, UploadStateError) as exc:
             return exc
@@ -239,7 +239,7 @@ def test_mysql_manual_parse_retry_is_single_delivery_under_concurrent_requests(t
         with session_factory() as session:
             task = session.get(VideoParseTask, completed.video_parse_task_id)
             assert (task.status, task.attempt_count, task.max_attempts) == (
-                "PREPARING", 3, 4,
+                "PREPARING", 3, 3,
             )
             assert task.version == 1
             assert task.parse_config == original_config
@@ -448,7 +448,8 @@ def mysql_v2_series():
                 session.flush()
                 session.add(ChunkParseTask(
                     id=ids["chunk_task_id"], video_task_id=ids["task_id"],
-                    chunk_id=ids["chunk_id"], status="COMPLETE",
+                    chunk_id=ids["chunk_id"], phase=3, status="COMPLETE",
+                    indexed_content_version=1, indexed_generation=1,
                     next_execute_time=now, lease_version=1,
                 ))
                 session.flush()
@@ -462,7 +463,7 @@ def mysql_v2_series():
                     video_task_id=ids["task_id"],
                     chunk_task_ids=[ids["chunk_task_id"]],
                     start_sequence_no=0, chunk_count=1, ready_mask=1,
-                    status="INDEXING", next_execute_time=now, lease_version=1,
+                    status="COMPLETE", next_execute_time=now, lease_version=1,
                 ))
                 session.flush()
                 session.add(IntervalParseContent(
@@ -632,18 +633,26 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
     engine, factory, _series_id, tenant_id, now, episodes = mysql_v2_series
     target = episodes[0]
     queue = MySqlVideoParseQueue(factory)
-    table = "chunk_parse_task" if kind == "chunk" else "interval_parse_task"
+    table = "video_parse_task"
     with factory.begin() as session:
         parent = session.get(VideoParseTask, target["task_id"])
         parent.status = "INDEXING" if kind == "index" else "PARSING"
+        parent.scheduler_slot = 1
         chunk = session.get(ChunkParseTask, target["chunk_task_id"])
         interval = session.get(IntervalParseTask, target["interval_id"])
         if kind == "chunk":
-            chunk.status = "QUEUED"
+            chunk.phase, chunk.status = 1, "QUEUED"
+            chunk.indexed_content_version = chunk.indexed_generation = None
+            session.execute(delete(ChunkParseContent).where(ChunkParseContent.chunk_task_id == chunk.id))
             interval.status = "WAITING"
             interval.ready_mask = 0
         elif kind == "refine":
+            chunk.phase, chunk.status = 2, "WAITING"
+            chunk.indexed_content_version = chunk.indexed_generation = None
             interval.status = "WAITING"
+        else:
+            chunk.phase, chunk.status = 3, "QUEUED"
+            chunk.indexed_content_version = chunk.indexed_generation = None
         if kind != "index":
             session.execute(delete(IntervalParseContent).where(
                 IntervalParseContent.interval_task_id == target["interval_id"],
@@ -658,7 +667,7 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
         role = current_thread().name
         if f"from {table}" not in sql:
             return
-        if role.startswith("mysql-claim-worker") and "limit" in sql and "for update" not in sql:
+        if role.startswith("mysql-claim-worker") and "for update" not in sql:
             if not candidates_read.is_set():
                 connections["claim"] = id(connection.connection.driver_connection)
                 candidates_read.set()
@@ -667,7 +676,7 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
             if not retry_locked.is_set():
                 connections["retry"] = id(connection.connection.driver_connection)
                 retry_locked.set()
-                assert release_retry.wait(5), "retry child locks were not released"
+                assert release_retry.wait(5), "retry parent lock were not released"
 
     def before_query(_connection, _cursor, statement, _parameters, _context, _many):
         sql = " ".join(statement.lower().replace("`", "").split())
@@ -680,7 +689,7 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
     claim = {
         "chunk": queue.claim_chunk,
         "refine": queue.claim_interval_refine,
-        "index": queue.claim_interval_index,
+        "index": queue.claim_chunk_index,
     }[kind]
     event.listen(engine, "after_cursor_execute", after_query)
     event.listen(engine, "before_cursor_execute", before_query)
@@ -694,15 +703,15 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
             try:
                 assert candidates_read.wait(5), "worker never read an eligible candidate"
                 # Fail the parent after the advisory read. Keep the child runnable
-                # so rejection below requires the actual held child lock.
+                # so rejection below requires the actual held parent lock.
                 with factory.begin() as session:
                     parent = session.get(VideoParseTask, target["task_id"])
                     parent.status = "INDEXING_FAILED" if kind == "index" else "PARSING_FAILED"
                 retry = retries.submit(
                     UploadRepository(factory).retry_parse, target["upload_id"],
-                    tenant_id=tenant_id, expected_job_version=1, now=now,
+                    tenant_id=tenant_id, expected_job_version=1, expected_lease_version=0, now=now,
                 )
-                assert retry_locked.wait(5), "retry never acquired the candidate child lock"
+                assert retry_locked.wait(5), "retry never acquired the candidate parent lock"
                 resume_claim.set()
                 assert worker.result(timeout=5) is None
                 assert claim_attempted.is_set(), "worker never attempted the locked candidate"
@@ -713,6 +722,7 @@ def test_mysql_retry_fences_worker_claim_after_its_advisory_read(mysql_v2_series
             restored = retry.result(timeout=5)
         assert restored.video_parse_task_id == target["task_id"]
         assert restored.status == ("INDEXING" if kind == "index" else "PARSING")
+        assert queue.claim_video("restored-parent", lease_duration=timedelta(minutes=5), now=now) is not None
         claimed = claim(
             "after-retry", lease_duration=timedelta(minutes=5),
             video_parse_task_id=target["task_id"], now=now,
@@ -732,75 +742,59 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
     target = episodes[0]
     expires = now + timedelta(minutes=5)
     with factory.begin() as session:
-        session.get(VideoParseTask, target["task_id"]).status = "PARSING_FAILED"
+        parent = session.get(VideoParseTask, target["task_id"])
+        parent.status, parent.scheduler_slot = "PARSING", 1
+        detail = deepcopy(parent.detail)
+        detail["_worker_runtime_v2"]["failure_status"] = "PARSING_FAILED"
+        parent.detail = detail
         chunk = session.get(ChunkParseTask, target["chunk_task_id"])
         interval = session.get(IntervalParseTask, target["interval_id"])
+        chunk.phase, chunk.status = (1, "RUNNING") if kind == "chunk" else (2, "WAITING")
+        chunk.indexed_content_version = chunk.indexed_generation = None
         active = chunk if kind == "chunk" else interval
-        active.status = "UNDERSTANDING" if kind == "chunk" else "REFINING"
-        active.lease_owner = "commit-worker"
-        active.lease_expire_time = expires
+        active.status = "RUNNING" if kind == "chunk" else "REFINING"
+        active.lease_owner, active.lease_expire_time = "commit-worker", expires
+        active.execution_deadline = expires
         if kind == "chunk":
-            interval.status = "WAITING"
-            interval.ready_mask = 0
+            interval.status, interval.ready_mask = "WAITING", 0
+            session.execute(delete(ChunkParseContent).where(ChunkParseContent.chunk_task_id == chunk.id))
         session.execute(delete(IntervalParseContent).where(
             IntervalParseContent.interval_task_id == target["interval_id"],
         ))
-
     repository = VideoParseRepository(factory)
+    common = dict(video_parse_task_id=target["task_id"], worker_id="commit-worker", lease_version=1,
+        lease_expire_time=expires, execution_deadline=expires, retry_count=0, max_retry_count=2,
+        retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0)
+    lease = (ChunkParseLease(**common, chunk_parse_task_id=target["chunk_task_id"],
+        video_chunk_id=target["chunk_id"]) if kind == "chunk" else IntervalParseLease(**common,
+        interval_parse_task_id=target["interval_id"], chunk_parse_task_ids=(target["chunk_task_id"],),
+        start_sequence_no=0, chunk_count=1, phase="REFINING"))
+    inputs = _refinement_inputs(repository, lease, now=now) if kind == "refine" else None
     worker_locked, resume_worker = Event(), Event()
-    retry_chunk_locked = Event()
     connections = {}
 
-    def before_query(_connection, _cursor, statement, _parameters, _context, _many):
+    def before_query(connection, _cursor, statement, _parameters, _context, _many):
         sql = " ".join(statement.lower().replace("`", "").split())
-        if (
-            current_thread().name.startswith("mysql-commit-retry")
-            and "from interval_parse_task" in sql and "for update" in sql
-            and not retry_chunk_locked.is_set()
-        ):
-            # An Interval-first retry will wait for the Worker without owning
-            # Chunk locks, so let the Worker finish its actual commit.
+        if (current_thread().name.startswith("mysql-commit-retry")
+            and "from video_parse_task" in sql and "for update" in sql):
+            connections["retry"] = id(connection.connection.driver_connection)
             resume_worker.set()
 
     def after_query(connection, _cursor, statement, _parameters, _context, _many):
         sql = " ".join(statement.lower().replace("`", "").split())
-        if "for update" not in sql:
-            return
-        role = current_thread().name
-        if role.startswith("mysql-commit-worker") and "from interval_parse_task" in sql:
-            if not worker_locked.is_set():
-                connections["worker"] = id(connection.connection.driver_connection)
-                worker_locked.set()
-                assert resume_worker.wait(5), "retry did not reach a competing child lock"
-        elif role.startswith("mysql-commit-retry") and "from chunk_parse_task" in sql:
-            connections["retry"] = id(connection.connection.driver_connection)
-            retry_chunk_locked.set()
-            # A Chunk-first retry now owns the opposing lock. Continue both
-            # production methods and require safety, without hiding deadlocks.
-            resume_worker.set()
+        if (current_thread().name.startswith("mysql-commit-worker")
+            and "from video_parse_task" in sql and "for update" in sql
+            and not worker_locked.is_set()):
+            connections["worker"] = id(connection.connection.driver_connection)
+            worker_locked.set()
+            assert resume_worker.wait(5), "retry did not request the same parent lock"
 
     def commit():
         if kind == "chunk":
-            lease = ChunkParseLease(
-                chunk_parse_task_id=target["chunk_task_id"], video_parse_task_id=target["task_id"],
-                video_chunk_id=target["chunk_id"], worker_id="commit-worker", lease_version=1,
-                lease_expire_time=expires, retry_count=0, max_retry_count=2,
-                retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
-            )
-            return repository.commit_chunk_result(
-                lease, content={"persons": ["worker"], "timeline": []}, now=now,
-            )
-        lease = IntervalParseLease(
-            interval_parse_task_id=target["interval_id"], video_parse_task_id=target["task_id"],
-            chunk_parse_task_ids=(target["chunk_task_id"],), start_sequence_no=0, chunk_count=1,
-            phase="REFINING", worker_id="commit-worker", lease_version=1,
-            lease_expire_time=expires, retry_count=0, max_retry_count=2,
-                retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
-        )
-        return repository.commit_interval_refinement(
-            lease, **_refinement_inputs(repository, lease, now=now), interval_content={"refined": True},
-            member_updates={target["chunk_task_id"]: {"persons": ["worker"]}}, now=now,
-        )
+            return repository.commit_chunk_result(lease,
+                content={"persons": ["worker"], "timeline": []}, now=now)
+        return repository.commit_interval_refinement(lease, **inputs, interval_content={"refined": True},
+            member_updates={target["chunk_task_id"]: {"persons": ["worker"]}}, now=now)
 
     event.listen(engine, "before_cursor_execute", before_query)
     event.listen(engine, "after_cursor_execute", after_query)
@@ -809,16 +803,20 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
                 ThreadPoolExecutor(max_workers=1, thread_name_prefix="mysql-commit-retry") as retries:
             worker = workers.submit(commit)
             try:
-                assert worker_locked.wait(5), "worker did not acquire its Interval locks"
-                retry = retries.submit(
-                    UploadRepository(factory).retry_parse, target["upload_id"],
-                    tenant_id=tenant_id, expected_job_version=1, now=now,
-                )
+                assert worker_locked.wait(5)
+                retry = retries.submit(UploadRepository(factory).retry_parse, target["upload_id"],
+                    tenant_id=tenant_id, expected_job_version=1, expected_lease_version=0, now=now)
                 worker.result(timeout=8)
-                restored = retry.result(timeout=8)
+                # Failure is still draining; publishing the terminal parent is a
+                # separate transaction. An early retry cannot reset any budget.
+                with pytest.raises(UploadStateError):
+                    retry.result(timeout=8)
             finally:
                 resume_worker.set()
         assert connections["worker"] != connections["retry"]
+        MySqlVideoParseQueue(factory).reap_expired(retry_delay=timedelta(0), now=now)
+        restored = UploadRepository(factory).retry_parse(target["upload_id"], tenant_id=tenant_id,
+            expected_job_version=1, expected_lease_version=0, now=now)
         assert restored.video_parse_task_id == target["task_id"]
         assert restored.status == ("PARSING" if kind == "chunk" else "INDEXING")
         with factory() as session:
@@ -827,7 +825,8 @@ def test_mysql_manual_retry_and_worker_commit_have_no_lock_cycle(mysql_v2_series
             ))
             assert content.content["persons"] == ["worker"]
             assert content.version == (1 if kind == "chunk" else 2)
-            assert session.get(ChunkParseTask, target["chunk_task_id"]).status == "COMPLETE"
+            chunk = session.get(ChunkParseTask, target["chunk_task_id"])
+            assert (chunk.phase, chunk.status) == ((2, "WAITING") if kind == "chunk" else (3, "QUEUED"))
     finally:
         resume_worker.set()
         event.remove(engine, "before_cursor_execute", before_query)
@@ -848,17 +847,23 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
     with factory.begin() as session:
         parent = session.get(VideoParseTask, target["task_id"])
         parent.status = running
+        parent.scheduler_slot = 1
         detail = deepcopy(parent.detail)
         detail["_worker_runtime_v2"]["failure_status"] = failure
         parent.detail = detail
         chunk = session.get(ChunkParseTask, target["chunk_task_id"])
         interval = session.get(IntervalParseTask, target["interval_id"])
-        active = chunk if kind == "chunk" else interval
+        active = interval if kind == "refine" else chunk
         active.status = {
-            "chunk": "UNDERSTANDING", "refine": "REFINING", "index": "INDEXING",
+            "chunk": "RUNNING", "refine": "REFINING", "index": "RUNNING",
         }[kind]
         active.lease_owner = "draining-worker"
         active.lease_expire_time = expires
+        active.execution_deadline = expires
+        chunk.phase = 1 if kind == "chunk" else (2 if kind == "refine" else 3)
+        if kind == "refine":
+            chunk.status = "WAITING"
+        chunk.indexed_content_version = chunk.indexed_generation = None
         if kind == "chunk":
             interval.status = "WAITING"
             interval.ready_mask = 0
@@ -869,7 +874,7 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
 
     queue, repository = MySqlVideoParseQueue(factory), VideoParseRepository(factory)
     update_pending, release_commit = Event(), Event()
-    table = "chunk_parse_task" if kind == "chunk" else "interval_parse_task"
+    table = "interval_parse_task" if kind == "refine" else "chunk_parse_task"
     connections = {}
 
     def after_query(connection, _cursor, statement, _parameters, _context, _many):
@@ -895,26 +900,35 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                 chunk_parse_task_id=target["chunk_task_id"],
                 video_parse_task_id=target["task_id"], video_chunk_id=target["chunk_id"],
                 worker_id="draining-worker", lease_version=1,
-                lease_expire_time=expires, retry_count=0, max_retry_count=2,
+                lease_expire_time=expires, execution_deadline=expires, retry_count=0, max_retry_count=2,
                 retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
             )
             return repository.commit_chunk_result(
                 lease, content={"persons": ["drained"], "timeline": []}, now=committed_at,
             )
+        if kind == "index":
+            lease = ChunkParseLease(
+                chunk_parse_task_id=target["chunk_task_id"], video_parse_task_id=target["task_id"],
+                video_chunk_id=target["chunk_id"], phase=3, worker_id="draining-worker", lease_version=1,
+                lease_expire_time=expires, execution_deadline=expires, retry_count=0, max_retry_count=2,
+                retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
+            )
+            repository.save_index_embeddings(lease, target["chunk_task_id"], 1,
+                {"semantic": {"vector": [1.0]}}, receipt={
+                    "parse_task_id": target["task_id"], "video_chunk_id": target["chunk_id"],
+                    "content_version": 1, "index_generation": 1,
+                }, now=committed_at)
+            return repository.complete_chunk_indexing(lease, 1, 1, now=committed_at)
         lease = IntervalParseLease(
             interval_parse_task_id=target["interval_id"],
             video_parse_task_id=target["task_id"],
             chunk_parse_task_ids=(target["chunk_task_id"],),
             start_sequence_no=0, chunk_count=1,
-            phase="INDEXING" if kind == "index" else "REFINING",
+            phase="REFINING",
             worker_id="draining-worker", lease_version=1,
-            lease_expire_time=expires, retry_count=0, max_retry_count=2,
+            lease_expire_time=expires, execution_deadline=expires, retry_count=0, max_retry_count=2,
                 retry_initial_delay_seconds=5.0, retry_max_delay_seconds=300.0,
         )
-        if kind == "index":
-            return repository.complete_interval_indexing(
-                lease, {target["chunk_task_id"]: 1}, now=committed_at,
-            )
         return repository.commit_interval_refinement(
             lease, **_refinement_inputs(repository, lease, now=committed_at), interval_content={"refined": "drained"},
             member_updates={target["chunk_task_id"]: {"persons": ["drained"]}},
@@ -938,8 +952,8 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                     assert parent.status == running and parent.finish_time is None
                     assert parent.detail["_worker_runtime_v2"]["failure_status"] == failure
                     active = session.get(
-                        ChunkParseTask if kind == "chunk" else IntervalParseTask,
-                        target["chunk_task_id"] if kind == "chunk" else target["interval_id"],
+                        IntervalParseTask if kind == "refine" else ChunkParseTask,
+                        target["interval_id"] if kind == "refine" else target["chunk_task_id"],
                     )
                     assert active.lease_owner == "draining-worker"
                     if expired:
@@ -953,10 +967,14 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
 
         with factory() as session:
             parent = session.get(VideoParseTask, target["task_id"])
-            assert parent.status == failure and parent.finish_time == checked_at
+            assert parent.status == failure and parent.finish_time is not None
+            assert parent.finish_time <= checked_at and parent.scheduler_slot is None
             chunk = session.get(ChunkParseTask, target["chunk_task_id"])
             interval = session.get(IntervalParseTask, target["interval_id"])
-            assert chunk.status == "COMPLETE" and chunk.lease_owner is None
+            assert (chunk.phase, chunk.status) == {
+                "chunk": (2, "WAITING"), "refine": (3, "QUEUED"), "index": (3, "COMPLETE"),
+            }[kind]
+            assert chunk.lease_owner is None
             assert interval.lease_owner is None
             content = session.scalar(select(ChunkParseContent).where(
                 ChunkParseContent.chunk_task_id == target["chunk_task_id"],
@@ -970,8 +988,8 @@ def test_mysql_failure_drain_waits_for_the_child_commit_transaction(
                 }
             elif kind == "index":
                 assert interval.status == "COMPLETE"
-                detail = session.get(IntervalParseContent, target["interval_id"]).detail
-                assert detail["indexed_versions"] == {target["chunk_task_id"]: 1}
+                assert (chunk.indexed_content_version, chunk.indexed_generation) == (1, 1)
+                assert content.detail["index_committed_lease_versions"] == [1]
     finally:
         release_commit.set()
         event.remove(engine, "after_cursor_execute", after_query)

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from server.config.parse_profile import default_video_parse_v2_config
 from server.database import create_session_factory
@@ -66,11 +67,12 @@ def _seed_v2_tracking(repository, *, chunk_count=2, completed_chunks=2, submitte
             complete = sequence < completed_chunks
             session.add(ChunkParseTask(
                 id=child_id, video_task_id=task_id, chunk_id=chunk_id,
-                status="COMPLETE" if complete else "QUEUED", lease_version=int(complete),
+                phase=2 if complete else 1,
+                status="WAITING" if complete else "QUEUED", lease_version=int(complete),
                 next_execute_time=now, start_time=now if complete else None,
             ))
             if complete:
-                session.add(ChunkParseContent(id=str(uuid4()), chunk_task_id=child_id, content={"persons": [], "timeline": []}))
+                session.add(ChunkParseContent(id=str(uuid4()), chunk_task_id=child_id, content={"persons": [], "timeline": []}, detail={"parse_committed_lease_version": 1}))
         plans = plan_intervals(chunk_count=chunk_count, size=interval_size(
             interval_duration=config["interval_duration"], chunk_duration=config["chunk_duration"],
         ))
@@ -82,7 +84,7 @@ def _seed_v2_tracking(repository, *, chunk_count=2, completed_chunks=2, submitte
                 id=interval_id, video_task_id=task_id, chunk_task_id=chunk_ids[plan.start_sequence_no],
                 chunk_task_ids=chunk_ids[plan.start_sequence_no:plan.end_sequence_no],
                 start_sequence_no=plan.start_sequence_no, chunk_count=plan.chunk_count,
-                status="INDEXING_FAILED" if submitted else "WAITING", lease_version=2 if submitted else 0,
+                status="COMPLETE" if submitted else "WAITING", lease_version=2 if submitted else 0,
                 next_execute_time=now, start_time=now if submitted else None,
             ))
             if submitted:
@@ -383,7 +385,8 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
             id=chunk_task_id,
             video_task_id=second_id,
             chunk_id=chunk_id,
-            status="UNDERSTANDING",
+            status="RUNNING",
+            execution_deadline=datetime(2099, 1, 1, tzinfo=UTC),
             next_execute_time=second_time,
             retry_count=0,
             lease_owner="active-worker",
@@ -405,6 +408,7 @@ def test_v2_task_repository_reads_frozen_config_video_and_parse_versions(reposit
     with factory.begin() as session:
         child = session.get(ChunkParseTask, chunk_task_id)
         child.status = "FAILED"
+        child.execution_deadline = None
         child.lease_owner = None
         child.lease_expire_time = None
 
@@ -992,8 +996,8 @@ def test_v2_progress_counts_submissions_and_batches_list_reads(repository):
     assert detail.task.detail == listed[task_id].task.detail
     assert detail.task.detail["progress"] == {
         "completedChunks": 24, "totalChunks": 24, "completedRefines": 8, "totalRefines": 22,
-        "completedUnits": 32, "totalUnits": 68, "percent": pytest.approx(32 * 95 / 46),
-        "topologyReady": True, "indexedIntervals": 0,
+        "completedUnits": 32, "totalUnits": 70, "percent": pytest.approx(32 * 95 / 46),
+        "topologyReady": True, "indexedChunks": 0,
     }
     assert listed[other_id].task.detail["progress"]["completedChunks"] == 1
     assert detail.task.detail["source"] == "upload"
@@ -1002,38 +1006,33 @@ def test_v2_progress_counts_submissions_and_batches_list_reads(repository):
 
 
 def test_v2_progress_includes_persisted_index_publication(repository):
-    jobs, factory, task_id, _, intervals, _ = _seed_v2_tracking(
+    jobs, factory, task_id, chunks, intervals, _ = _seed_v2_tracking(
         repository, chunk_count=24, completed_chunks=24, submitted_refines=22,
     )
     progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
-    assert progress["completedUnits"] == 46
-    assert progress["totalUnits"] == 68
-    assert progress["indexedIntervals"] == 0
-    assert progress["percent"] == 95
-
+    assert (progress["completedUnits"], progress["totalUnits"], progress["indexedChunks"], progress["percent"]) == (46, 70, 0, 95)
     with factory.begin() as session:
-        session.get(IntervalParseTask, intervals[0]).status = "COMPLETE"
+        child = session.get(ChunkParseTask, chunks[0])
+        child.phase, child.status = 3, "COMPLETE"
+        child.indexed_content_version = child.indexed_generation = 1
     progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
-    assert progress["indexedIntervals"] == 1
-    assert progress["completedUnits"] == 47
-    assert progress["percent"] == pytest.approx(95 + 5 / 22)
-
+    assert progress["indexedChunks"] == 1 and progress["completedUnits"] == 47
+    assert progress["percent"] == pytest.approx(95 + 5 / 24)
     with factory.begin() as session:
-        for interval_id in intervals:
-            session.get(IntervalParseTask, interval_id).status = "COMPLETE"
+        for child_id in chunks:
+            child = session.get(ChunkParseTask, child_id)
+            child.phase, child.status = 3, "COMPLETE"
+            child.indexed_content_version = child.indexed_generation = 1
         session.get(VideoParseTask, task_id).status = "COMPLETE"
     progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
-    assert progress["indexedIntervals"] == 22
-    assert progress["completedUnits"] == progress["totalUnits"] == 68
+    assert progress["indexedChunks"] == 24 and progress["completedUnits"] == progress["totalUnits"] == 70
     assert progress["percent"] == 100
-
     with factory.begin() as session:
-        session.delete(session.get(IntervalParseContent, intervals[0]))
+        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == chunks[0]))
+        content.version += 1
     progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
-    assert progress["indexedIntervals"] == 21
-    assert progress["completedRefines"] == 21
-    assert progress["completedUnits"] == 66
-    assert progress["percent"] == pytest.approx(45 * 95 / 46 + 21 * 5 / 22)
+    assert progress["indexedChunks"] == 23 and progress["completedChunks"] == 24
+    assert progress["completedUnits"] == 69 and progress["percent"] == pytest.approx(95 + 23 * 5 / 24)
 
 
 @pytest.mark.parametrize("elapsed,expected", [(1000, 1500), (0, 0)])
@@ -1065,7 +1064,7 @@ def test_v2_old_attempts_have_unknown_timing_and_unready_topology_has_no_percent
     with factory.begin() as session:
         session.delete(session.get(IntervalParseTask, intervals[0]))
     progress = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["progress"]
-    assert progress["completedUnits"] == progress["totalUnits"] == 2
+    assert progress["completedUnits"] == 2 and progress["totalUnits"] == 4
     assert progress["topologyReady"] is False and progress["percent"] is None
 
 
@@ -1109,6 +1108,8 @@ def test_v2_timing_requires_retry_coverage_for_refine_and_index(repository):
     assert detail.task.detail["progress"]["completedRefines"] == 1  # The submitted updates list is empty.
     with factory.begin() as session:
         session.get(ChunkParseTask, chunks[0]).lease_version = 2
+        content = session.scalar(select(ChunkParseContent).where(ChunkParseContent.chunk_task_id == chunks[0]))
+        content.detail = {**content.detail, "parse_committed_lease_version": 2}
     assert jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]["complete"] is False
     entries[f"understand:{chunks[0]}:2"] = _timing_entry("understand", chunks[0], version=2, started=5000)
     _store_timing(factory, task_id, entries)
@@ -1162,13 +1163,17 @@ def test_v2_active_index_timing_is_confirmed_prefix_and_expires(repository, monk
     jobs, factory, task_id, chunks, intervals, now_ms = _seed_v2_tracking(repository, submitted_refines=1)
     monkeypatch.setattr("server.repository.job.now_unix_time_ms", lambda: now_ms)
     with factory.begin() as session:
-        child = session.get(IntervalParseTask, intervals[0])
-        child.status, child.lease_owner = "INDEXING", "worker"
+        session.get(IntervalParseTask, intervals[0]).lease_version = 1
+        child = session.get(ChunkParseTask, chunks[0])
+        child.phase, child.lease_version = 3, 2
+        child.status, child.lease_owner = "RUNNING", "worker"
+        child.execution_deadline = datetime.fromtimestamp(now_ms / 1000, tz=UTC) + timedelta(minutes=2)
         child.lease_expire_time = datetime.fromtimestamp(now_ms / 1000, tz=UTC) + timedelta(minutes=1)
     entries = {f"understand:{child}:1": _timing_entry("understand", child, started=now_ms - 5000) for child in chunks}
     entries[f"refine:{intervals[0]}:1"] = _timing_entry("refine", intervals[0], started=now_ms - 3000)
-    entries[f"index:{intervals[0]}:2"] = _timing_entry("index", intervals[0], version=2,
+    entries[f"index:{chunks[0]}:2"] = _timing_entry("index", chunks[0], version=2,
                                                      started=now_ms - 500, elapsed=100, finished=False)
+    entries[f"index:{chunks[0]}:2"]["execution_kind"] = "chunk"
     _store_timing(factory, task_id, entries)
     timing = jobs.get_video_parse_task_detail(task_id, tenant_id="local-default").task.detail["timing"]
     assert timing == {"recorded": True, "complete": True, "activeExecutions": 1, "effectiveDurationMs": 2100}
@@ -1184,7 +1189,8 @@ def test_v2_active_timing_is_recorded_prefix_without_clock_extrapolation(reposit
     monkeypatch.setattr("server.repository.job.now_unix_time_ms", lambda: now_ms)
     with factory.begin() as session:
         child = session.get(ChunkParseTask, chunks[1])
-        child.status, child.lease_version, child.lease_owner = "UNDERSTANDING", 1, "worker"
+        child.status, child.lease_version, child.lease_owner = "RUNNING", 1, "worker"
+        child.execution_deadline = datetime.fromtimestamp(now_ms / 1000, tz=UTC) + timedelta(minutes=2)
         child.lease_expire_time = datetime.fromtimestamp(now_ms / 1000, tz=UTC) + timedelta(minutes=1)
     entries = {f"understand:{chunks[0]}:1": _timing_entry("understand", chunks[0], started=now_ms - 2000),
                f"understand:{chunks[1]}:1": _timing_entry("understand", chunks[1], started=now_ms - 500, elapsed=100, finished=False)}

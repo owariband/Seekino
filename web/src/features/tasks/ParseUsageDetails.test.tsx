@@ -114,7 +114,7 @@ describe("local Token parse usage details", () => {
     expect(getUsageOverview).toHaveBeenCalledOnce();
   });
 
-  it("shows priced API decimals and actual sources without merging equal model names", async () => {
+  it("shows rounded API estimates and actual sources without merging equal model names", async () => {
     const cost = { currency: "CNY" as const, estimatedAmount: "0.12345678901234567890", knownAmount: "0.12345678901234567890",
       pricedCallCount: 1, unpricedCallCount: 0, excludedCallCount: 0 };
     vi.mocked(getUsageOverview).mockResolvedValue(overview({ totals: totals({ cost }), models: [
@@ -126,7 +126,7 @@ describe("local Token parse usage details", () => {
     expect(await screen.findByText("endpoint-A")).toBeInTheDocument();
     expect(screen.getByText("endpoint-B")).toBeInTheDocument();
     expect(screen.getAllByText("model-A")).toHaveLength(2);
-    expect(within(screen.getByLabelText("本次任务模型消耗合计")).getByText("¥0.12345678901234567890")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("本次任务模型消耗合计")).getByText("¥0.1235")).toBeInTheDocument();
     expect(screen.getByText("未计价")).toBeInTheDocument();
     expect(screen.queryByText("local")).not.toBeInTheDocument();
   });

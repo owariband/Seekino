@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -37,7 +37,7 @@ describe("Agent execution timeline", () => {
       startedAt: Date.now(), totalDurationMs: 42_298,
       stages: [{ phase: "QUEUED", durationMs: 13_308 }, { phase: "RETRIEVING", durationMs: 28_985 }],
     } }} steps={steps} />);
-    expect(screen.getByRole("status", { name: "回答状态" })).toHaveTextContent("处理中 · 已用 42 秒");
+    expect(screen.getByRole("status", { name: "回答状态" })).toHaveTextContent("处理中 · 已用 00:42");
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
     expect(screen.queryByText("查找资料")).not.toBeInTheDocument();
     view.rerender(<AgentProgress message={{ ...message, status: "FAILED", phase: null }} steps={steps} />);
@@ -58,6 +58,30 @@ describe("Agent execution timeline", () => {
     view.rerender(<AgentProgress displayMode="debug" message={{ ...message, status: "COMPLETED", phase: null }} steps={steps} />);
     expect(card).not.toHaveAttribute("open");
     expect(screen.getByText("已完成")).toBeInTheDocument();
+  });
+
+  it.each(["release", "debug"] as const)("formats subsecond, live and completed durations as mm:ss in %s", (displayMode) => {
+    vi.useFakeTimers();
+    const startedAt = Date.parse("2026-09-15T00:00:00Z");
+    vi.setSystemTime(startedAt + 900);
+    const view = render(<AgentProgress displayMode={displayMode} message={{
+      ...message, timing: { startedAt, totalDurationMs: null, stages: [] },
+    }} steps={[]} />);
+    try {
+      const status = displayMode === "debug" ? "核验资料" : "处理中";
+      expect(screen.getByText(`${status} · 已用 00:00`)).toBeInTheDocument();
+      act(() => { vi.advanceTimersByTime(62_000); });
+      expect(screen.getByText(`${status} · 已用 01:02`)).toBeInTheDocument();
+      view.rerender(<AgentProgress displayMode={displayMode} message={{
+        ...message, status: "COMPLETED", phase: null,
+        timing: { startedAt, totalDurationMs: 62_900, stages: [{ phase: "EVALUATING", durationMs: 62_900 }] },
+      }} steps={[]} />);
+      expect(screen.getByText("已完成 · 总耗时 01:02")).toBeInTheDocument();
+      expect(view.container).not.toHaveTextContent(/毫秒|\d+\.\d+\s*秒/);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("restores only the known snapshot phase instead of inventing previous steps", () => {
@@ -105,14 +129,14 @@ describe("Agent execution timeline", () => {
       },
     }} steps={[]} />);
 
-    expect(screen.getByText("已完成 · 总耗时 4.7 秒")).toBeInTheDocument();
+    expect(screen.getByText("已完成 · 总耗时 00:04")).toBeInTheDocument();
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(6);
     expect(rows[0]).toHaveTextContent("等待处理");
-    expect(rows[0]).toHaveTextContent("100 毫秒");
+    expect(rows[0]).toHaveTextContent("00:00");
     expect(screen.getAllByText("查找资料")).toHaveLength(2);
     expect(rows[5]).toHaveTextContent("生成回答");
-    expect(rows[5]).toHaveTextContent("1.9 秒");
+    expect(rows[5]).toHaveTextContent("00:01");
   });
 
   it("shows live total and current phase duration from a reconnect snapshot", () => {
@@ -131,11 +155,11 @@ describe("Agent execution timeline", () => {
       },
     }} steps={[]} />);
 
-    expect(screen.getByText("核验资料 · 已用 3.5 秒")).toBeInTheDocument();
+    expect(screen.getByText("核验资料 · 已用 00:03")).toBeInTheDocument();
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(3);
     expect(rows[2]).toHaveAttribute("data-state", "active");
-    expect(rows[2]).toHaveTextContent("进行中 · 2.4 秒");
+    expect(rows[2]).toHaveTextContent("进行中 · 00:02");
     view.unmount();
     vi.useRealTimers();
   });

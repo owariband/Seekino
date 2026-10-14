@@ -718,7 +718,7 @@ describe("current API routes", () => {
       topK: 10,
     });
     await deleteUploadSession("upload/id");
-    await retryUploadParse("upload/id", 7);
+    await retryUploadParse("upload/id", 7, 9);
     await reparseUpload("upload/id", 8);
 
     const calls = fetchMock.mock.calls;
@@ -753,7 +753,7 @@ describe("current API routes", () => {
     });
     expect(String(calls[9]?.[0])).toBe("/api/uploads/delete?uploadSessionId=upload%2Fid&tenantId=local-default");
     expect(calls[9]?.[1]?.method).toBe("POST");
-    expect(String(calls[10]?.[0])).toBe("/api/uploads/retry-parse?uploadSessionId=upload%2Fid&tenantId=local-default&expectedJobVersion=7");
+    expect(String(calls[10]?.[0])).toBe("/api/uploads/retry-parse?uploadSessionId=upload%2Fid&tenantId=local-default&expectedJobVersion=7&expectedLeaseVersion=9");
     expect(calls[10]?.[1]?.method).toBe("POST");
     expect(String(calls[11]?.[0])).toBe("/api/uploads/reparse?uploadSessionId=upload%2Fid&tenantId=local-default&expectedJobVersion=8");
     expect(calls[11]?.[1]?.method).toBe("POST");

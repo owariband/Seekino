@@ -64,6 +64,8 @@ from gateway.multimodal import ImageInput, TextInput, VideoInput
 from gateway.tracing import LangfuseTracing
 from gateway.usage import model_call_context
 
+from ..config.parse_profile import index_contract_fingerprint
+from ..constants.parse import PARSE_RETRIEVAL_CONTRACT
 from ..model.dto.jobDTO import (
     ChunkExecutionState,
     ChunkParseLease,
@@ -81,6 +83,9 @@ from ..repository.video_parse import (
 )
 from ..storage.artifact import ArtifactStore
 from ..storage.elasticsearch import ElasticsearchVideoChunkStore
+from ..utils.execution import (
+    BlockingCallCancelled, ExecutionCalls, cleanup_execution, execution_calls, run_blocking,
+)
 from .parse_usage import ParseUsageService
 from .video_parse_index_coordinator import (
     VideoParseIndexCoordinator,
@@ -95,7 +100,6 @@ from .video_parse_model_calls import VideoParseModelCallManager
 
 _Result = TypeVar("_Result", bound=BaseModel)
 _T = TypeVar("_T")
-_RETRIEVAL_CONTRACT = "parse-v2-retrieval-v1"
 _logger = logging.getLogger(__name__)
 
 
@@ -223,8 +227,8 @@ class VideoParseRuntimeService:
         finally:
             self._interval_lease.reset(token)
 
-    async def index(self, lease: IntervalParseLease) -> None:
-        token = self._interval_lease.set(lease)
+    async def index(self, lease: ChunkParseLease) -> None:
+        token = self._chunk_binding.set(_ChunkBinding(lease))
         try:
             task_input = await asyncio.to_thread(
                 self._repository.load_task_input, lease.video_parse_task_id
@@ -235,19 +239,20 @@ class VideoParseRuntimeService:
                 task_input,
                 sequence_no=None,
                 category="embedding",
-                check_active=lambda: self._require_interval_active(lease),
+                check_active=lambda: self._require_chunk_active(lease),
             ) as manager:
                 coordinator, client = self._build_index_coordinator(
                     inputs,
                     check_active=manager.check_active,
+                    index_generation=task_input.task.target_index_generation,
                 )
                 try:
-                    await self._run_blocking(coordinator.index_interval, lease)
+                    await self._run_blocking(coordinator.index_chunk, lease)
                 finally:
-                    await asyncio.to_thread(client.close)
+                    await cleanup_execution(client.close)
             self._notify_change(lease.video_parse_task_id)
         finally:
-            self._interval_lease.reset(token)
+            self._chunk_binding.reset(token)
 
     async def run_next_prefix(self) -> bool:
         lease = await asyncio.to_thread(
@@ -278,7 +283,7 @@ class VideoParseRuntimeService:
                 predicate_errors.append(error)
                 return True
 
-        reaped = await asyncio.to_thread(
+        reaped = await run_blocking(
             self._media_service.reap_stale,
             older_than_seconds=self._lease_duration.total_seconds() * 2,
             is_active=is_active,
@@ -373,6 +378,8 @@ class VideoParseRuntimeService:
                     chunk_parse_task_id=item.chunk_parse_task_id,
                     sequence_no=item.sequence_no,
                     status=ChunkTaskStatus(item.status),
+                    phase=item.phase,
+                    understanding_committed=item.understanding_committed,
                 )
                 for item in state.tasks
             ),
@@ -385,7 +392,7 @@ class VideoParseRuntimeService:
     ) -> None:
         event = self._change_events.setdefault(video_parse_task_id, threading.Event())
         try:
-            await asyncio.to_thread(event.wait, timeout_seconds)
+            await run_blocking(event.wait, timeout_seconds)
         finally:
             event.clear()
 
@@ -413,11 +420,18 @@ class VideoParseRuntimeService:
             bounded = selected.model_copy(update={
                 "request_timeout_seconds": min(selected.request_timeout_seconds, remaining),
             })
-            result = await asyncio.wait_for(asyncio.to_thread(
-                self._invoke_multimodal, bounded, inputs,
-                schema_name=schema_name, result_type=result_type,
-                check_control=check_control,
-            ), timeout=remaining)
+            try:
+                result = await asyncio.wait_for(run_blocking(
+                    self._invoke_multimodal, bounded, inputs,
+                    schema_name=schema_name, result_type=result_type,
+                    check_control=check_control,
+                ), timeout=remaining)
+            except asyncio.CancelledError:
+                # The isolated call retains a pending-operation cancellation
+                # marker; wait_for only converts plain CancelledError itself.
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("realtime model call reached the Chat deadline") from None
+                raise
             check_control()
             if time.monotonic() >= deadline:
                 raise TimeoutError("realtime model call reached the Chat deadline")
@@ -482,7 +496,7 @@ class VideoParseRuntimeService:
                     agent.transcribe, media.video_path, duration_seconds=duration,
                 )
         finally:
-            transport.close()
+            await cleanup_execution(transport.close)
         if not isinstance(analysis, TranscriptAnalysis):
             analysis = TranscriptAnalysis.model_validate(analysis)
         return {
@@ -587,7 +601,7 @@ class VideoParseRuntimeService:
             binding.media_context = None
             binding.media = None
             if context is not None:
-                await asyncio.to_thread(context.__exit__, None, None, None)
+                await cleanup_execution(context.__exit__, None, None, None)
 
     # Agent runtime: Refine -------------------------------------------------
 
@@ -836,8 +850,16 @@ class VideoParseRuntimeService:
                 await self.agent.prefix_context_agent.run(
                     lease.chunk_parse_task_id
                 )
-        except asyncio.CancelledError:
-            await asyncio.to_thread(self._repository.release_prefix, lease)
+        except asyncio.CancelledError as error:
+            if isinstance(error, BlockingCallCancelled):
+                def release_after_exit(_future) -> None:
+                    try:
+                        self._repository.release_prefix(lease)
+                    except Exception:
+                        _logger.exception("Deferred Prefix lease release failed; expiry will recover it")
+                error.completion.add_done_callback(release_after_exit)
+            else:
+                await asyncio.to_thread(self._repository.release_prefix, lease)
             raise
         except Exception as error:
             await asyncio.to_thread(
@@ -906,14 +928,13 @@ class VideoParseRuntimeService:
             if self._tracing is not None else nullcontext()
         )
         manager_token = self._model_manager.set(manager)
+        calls = ExecutionCalls()
+        calls_token = execution_calls.set(calls)
         stopped = asyncio.Event()
         heartbeat_errors: list[BaseException] = []
         track_execution = (
-            category == "parse" and isinstance(lease, ChunkParseLease)
-            or isinstance(lease, IntervalParseLease) and (
-                category == "parse" and lease.phase == "REFINING"
-                or category == "embedding" and lease.phase == "INDEXING"
-            )
+            isinstance(lease, ChunkParseLease)
+            or isinstance(lease, IntervalParseLease) and category == "parse"
         )
         timing_started_at = time.time_ns() // 1_000_000
         timing_started = time.monotonic()
@@ -991,8 +1012,17 @@ class VideoParseRuntimeService:
                 stopped.set()
                 await asyncio.gather(pulse, return_exceptions=True)
                 manager.cancel()
+                if body_error is None and heartbeat_errors:
+                    try:
+                        committed = await asyncio.to_thread(
+                            self._queue.is_execution_lease_committed, lease,
+                        )
+                    except Exception:
+                        committed = False
+                    if committed:
+                        heartbeat_errors.clear()
                 await sample_timing(
-                    finished=True,
+                    finished=not calls.pending,
                     outcome=(
                         "cancelled" if isinstance(body_error, asyncio.CancelledError)
                         else "failed" if body_error is not None or heartbeat_errors
@@ -1004,6 +1034,12 @@ class VideoParseRuntimeService:
                         "Video Parse V2 model-call heartbeat failed"
                     ) from heartbeat_errors[0]
         finally:
+            if calls.pending:
+                _logger.warning(
+                    "Video Parse execution revoked with blocking work still running task=%s phase=%s lease=%s",
+                    lease.video_parse_task_id, context["stage"], lease.lease_version,
+                )
+            execution_calls.reset(calls_token)
             self._model_manager.reset(manager_token)
 
     async def _run_blocking(
@@ -1013,16 +1049,13 @@ class VideoParseRuntimeService:
         *args: object,
         **kwargs: object,
     ) -> _T:
-        """Wait for an executor call to stop before its media/client is released."""
-
-        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        """Keep long calls off the database/heartbeat executor."""
         try:
-            return await asyncio.shield(task)
+            return await run_blocking(operation, *args, **kwargs)
         except asyncio.CancelledError:
             manager = self._model_manager.get()
             if manager is not None:
                 manager.cancel()
-            await asyncio.gather(task, return_exceptions=True)
             raise
 
     async def _ensure_chunk_media(
@@ -1060,12 +1093,10 @@ class VideoParseRuntimeService:
                 ),
                 check_active=lambda: self._require_chunk_active(binding.lease),
             )
-            enter = asyncio.create_task(asyncio.to_thread(context.__enter__))
             try:
-                media = await asyncio.shield(enter)
+                media = await self._run_blocking(context.__enter__)
             except BaseException:
-                await asyncio.gather(enter, return_exceptions=True)
-                await asyncio.to_thread(context.__exit__, None, None, None)
+                await cleanup_execution(context.__exit__, None, None, None)
                 raise
             binding.media_context = context
             binding.media = media
@@ -1184,6 +1215,7 @@ class VideoParseRuntimeService:
         inputs: ParseInput,
         *,
         check_active: Callable[[], None],
+        index_generation: int,
     ) -> tuple[VideoParseIndexCoordinator, EmbeddingModel]:
         embedding = inputs.parse_config.models.embedding
         definition = EmbeddingModelBinding.model_validate(embedding.model_dump(exclude_none=True))
@@ -1191,6 +1223,15 @@ class VideoParseRuntimeService:
         provider = embedder.provider_name
         dimensions = embedder.dimensions
         try:
+            fingerprint = index_contract_fingerprint(
+                embedding.model_copy(update={
+                    "encoder_model": embedder.encoder_model, "dimensions": dimensions,
+                }),
+                provider=provider, encoder_revision=embedder.encoder_revision,
+                max_height=inputs.parse_config.visual_input.max_height,
+            )
+            if fingerprint != inputs.parse_config.indexing.contract_fingerprint:
+                raise ValueError("index encoder contract differs from the accepted task snapshot")
             coordinator = VideoParseIndexCoordinator(
                 self._repository,
                 self._elasticsearch_store,
@@ -1199,7 +1240,7 @@ class VideoParseRuntimeService:
                 media_service=self._media_service,
                 check_active=check_active,
                 contract=ChunkIndexingContract(
-                    retrieval_contract_id=_RETRIEVAL_CONTRACT,
+                    retrieval_contract_id=PARSE_RETRIEVAL_CONTRACT,
                     semantic_encoder=EncoderContract(
                         provider=provider,
                         model=embedder.encoder_model,
@@ -1218,14 +1259,14 @@ class VideoParseRuntimeService:
                         mime_type="video/mp4",
                         preprocess_revision=VIDEO_CLIP_PREPROCESS_REVISION,
                     ),
-                    index_generation=self._index_generation,
+                    index_generation=index_generation,
                     sparse_encoder=(
                         SparseEncoderContract(
                             provider=provider,
                             model=embedder.encoder_model,
                             encoder_revision=embedder.encoder_revision,
                         )
-                        if self._sparse_enabled else None
+                        if inputs.parse_config.indexing.sparse_enabled else None
                     ),
                 ),
             )

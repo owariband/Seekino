@@ -113,7 +113,7 @@ describe("Evidence range playback", () => {
         limitations: ["片段只覆盖当前时间范围。"],
       },
     };
-    render(<EvidencePlayer hit={reasonHit} playbackRange={playbackRange} />);
+    const view = render(<EvidencePlayer hit={reasonHit} displayMode="debug" playbackRange={playbackRange} />);
 
     expect(screen.getByText(reasonHit.selectionReason.summary)).toBeInTheDocument();
     expect(screen.getByText("片段只覆盖当前时间范围。")).toBeInTheDocument();
@@ -136,9 +136,14 @@ describe("Evidence range playback", () => {
     expect(screen.getByText("片段只覆盖当前时间范围。")).toBeInTheDocument();
     expect(screen.queryByText("高松燈")).not.toBeInTheDocument();
     expect(screen.queryByText(/召回第|词项命中|ASR 原话|剧情语义|画面事件|BM25/)).not.toBeInTheDocument();
+
+    view.rerender(<EvidencePlayer hit={reasonHit} displayMode="release" playbackRange={playbackRange} />);
+    expect(screen.queryByRole("button", { name: "原始证据" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "前后语境" })).not.toBeInTheDocument();
+    expect(screen.getByText(reasonHit.selectionReason.summary)).toBeInTheDocument();
   });
 
-  it("keeps the exact millisecond range while rounding the displayed seconds", () => {
+  it("keeps the exact millisecond range while displaying whole seconds", () => {
     render(<EvidencePlayer hit={hit} playbackRange={{ startSeconds: 8_008, endSeconds: 8_250 }} />);
     const video = screen.getByLabelText<HTMLVideoElement>("视频证据");
     const timeline = screen.getByRole<HTMLInputElement>("slider", { name: "视频片段播放进度" });
@@ -148,13 +153,26 @@ describe("Evidence range playback", () => {
     fireEvent.change(timeline, { target: { value: "123" } });
     expect(video.currentTime).toBe(8.131);
     expect(timeline).toHaveValue("123");
-    expect(screen.getByText("00:00.12 / 00:00.24")).toBeInTheDocument();
+    expect(screen.getByText("00:00 / 00:00")).toBeInTheDocument();
+    expect(timeline).toHaveAttribute("aria-valuetext", "00:00 / 00:00");
     pause.mockClear();
     video.currentTime = 8.251;
     fireEvent.timeUpdate(video);
     expect(video.currentTime).toBe(8.25);
     expect(timeline).toHaveValue("242");
     expect(pause).toHaveBeenCalledOnce();
+  });
+
+  it("hides raw evidence in release even when PPE was showing context before the mode changes", () => {
+    const selected = nextHit({ videoCompact: "[12000,15000) 原始 Timeline" });
+    selected.selectionReason = { ...hit.selectionReason, summary: "00:12.345–00:14.999：两人见面。" };
+    const view = render(<EvidencePlayer hit={selected} playbackRange={playbackRange} displayMode="debug" />);
+    fireEvent.click(screen.getByRole("button", { name: "前后语境" }));
+    expect(screen.getByText(selected.evidence.videoCompact)).toBeInTheDocument();
+    view.rerender(<EvidencePlayer hit={selected} playbackRange={playbackRange} displayMode="release" />);
+    expect(screen.getByText("00:12–00:14：两人见面。")).toBeInTheDocument();
+    expect(screen.queryByText(/Timeline|分析窗口/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "证据详情" })).not.toBeInTheDocument();
   });
 
   it("uses the agent-selected range as the custom player's complete timeline", () => {

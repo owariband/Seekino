@@ -54,7 +54,7 @@ def _build_parser() -> argparse.ArgumentParser:
     request_es_rebuild = subparsers.add_parser(
         "request-es-index-rebuild",
         help=(
-            "Schedule all refined Intervals in one current Parse V2 task "
+            "Schedule all refined Chunks in one current Parse V2 task "
             "for Elasticsearch reconstruction."
         ),
     )
@@ -327,7 +327,7 @@ def main() -> None:
             )
             result = {
                 "videoParseTaskId": args.video_parse_task_id,
-                "scheduledIntervalParseTaskIds": list(interval_ids),
+                "scheduledChunkTaskIds": list(interval_ids),
             }
         elif args.command == "import-parse":
             from .service.parsev1.parse_import import prepare_video_parse_import

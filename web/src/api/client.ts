@@ -336,11 +336,13 @@ export function deleteUploadSession(uploadSessionId: string): Promise<UploadSess
 export function retryUploadParse(
   uploadSessionId: string,
   expectedJobVersion: number,
+  expectedLeaseVersion: number,
 ): Promise<VideoParseTaskView> {
   return requestJson(
     `/api/uploads/retry-parse?uploadSessionId=${encodeURIComponent(uploadSessionId)}` +
       `&tenantId=${TENANT_QUERY}` +
-      `&expectedJobVersion=${encodeURIComponent(String(expectedJobVersion))}`,
+      `&expectedJobVersion=${encodeURIComponent(String(expectedJobVersion))}` +
+      `&expectedLeaseVersion=${encodeURIComponent(String(expectedLeaseVersion))}`,
     { method: "POST" },
   );
 }

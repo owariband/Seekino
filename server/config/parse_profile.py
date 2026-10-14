@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import json
 import os
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -12,6 +14,7 @@ from agent.video_parse_v2.input import (
     ASRModelConfig as VideoParseV2ASRModelConfig,
     EmbeddingModelConfig as VideoParseV2EmbeddingModelConfig,
     ExecutionConfig as VideoParseV2ExecutionConfig,
+    IndexingConfig as VideoParseV2IndexingConfig,
     FallbackModelConfig as VideoParseV2FallbackModelConfig,
     GenerativeModelConfig as VideoParseV2GenerativeModelConfig,
     ModelSnapshot as VideoParseV2ModelSnapshot,
@@ -19,6 +22,12 @@ from agent.video_parse_v2.input import (
     VisualInputConfig as VideoParseV2VisualInputConfig,
 )
 from gateway.config import GatewayConfig
+from gateway.embedding import describe_embedding_model
+from engine.rag import VIDEO_CLIP_PREPROCESS_REVISION
+from engine.rag.encoding import DEFAULT_ENCODER_OUTPUT_CONTRACT
+from engine.rag.indexing.pipeline import INDEX_SOURCE_VERSION
+from engine.rag.indexing.projection import INDEX_PROJECTION_VERSION
+from ..constants.parse import PARSE_RETRIEVAL_CONTRACT
 from gateway.multimodal import adapter_capabilities
 
 from ..schema import ContractModel
@@ -34,6 +43,9 @@ _MODEL_POLICY_FIELDS = (
 _EXECUTION_POLICY_FIELDS = (
     "batch_max_size", "dispatch_interval_seconds",
     "retry_initial_delay_seconds", "retry_max_delay_seconds",
+    "parse_concurrency", "refine_concurrency", "index_concurrency",
+    "parse_execution_timeout_seconds", "refine_execution_timeout_seconds",
+    "index_execution_timeout_seconds", "max_model_calls",
 )
 
 
@@ -52,9 +64,31 @@ def validate_video_parse_schedule(config: VideoParseV2Config) -> VideoParseV2Con
         config.dispatch_interval_seconds,
         config.execution.retry_initial_delay_seconds,
         config.execution.retry_max_delay_seconds,
+        config.execution.parse_execution_timeout_seconds,
+        config.execution.refine_execution_timeout_seconds,
+        config.execution.index_execution_timeout_seconds,
     ):
         _validate_schedule_delay(seconds)
     return config
+
+
+def index_contract_fingerprint(embedding, *, provider: str, encoder_revision: str, max_height: int) -> str:
+    """Freeze encoding rules without credentials or request-only timeouts."""
+    identity = {
+        "retrieval": PARSE_RETRIEVAL_CONTRACT,
+        "source": INDEX_SOURCE_VERSION,
+        "projection": INDEX_PROJECTION_VERSION,
+        "output": DEFAULT_ENCODER_OUTPUT_CONTRACT,
+        "preprocess": VIDEO_CLIP_PREPROCESS_REVISION,
+        "provider": provider,
+        "source_name": embedding.source,
+        "encoder_model": embedding.encoder_model or embedding.model,
+        "encoder_revision": encoder_revision,
+        "dimensions": embedding.dimensions,
+        "fps": float(embedding.video_fps),
+        "max_height": max_height,
+    }
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def _model_policy(model) -> dict[str, Any]:
@@ -170,6 +204,13 @@ class ParseEmbeddingConfig(ContractModel):
 class ParseExecutionConfig(ContractModel):
     request_timeout_seconds: float = Field(gt=0)
     max_attempts: int = Field(ge=1, strict=True)
+    parse_concurrency: int | None = Field(default=None, gt=0, strict=True)
+    refine_concurrency: int | None = Field(default=None, gt=0, strict=True)
+    index_concurrency: int | None = Field(default=None, gt=0, strict=True)
+    max_model_calls: int | None = Field(default=None, gt=0, strict=True)
+    parse_execution_timeout_seconds: float | None = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
+    refine_execution_timeout_seconds: float | None = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
+    index_execution_timeout_seconds: float | None = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
     batch_max_size: int | None = Field(default=None, gt=0, strict=True)
     dispatch_interval_seconds: float | None = Field(
         default=None, ge=0, strict=True, allow_inf_nan=False,
@@ -215,6 +256,7 @@ class ParseConfig(ContractModel):
     fallback: ParseFallbackConfig
     embedding: ParseEmbeddingConfig
     execution: ParseExecutionConfig
+    indexing: VideoParseV2IndexingConfig | None = None
 
     def resolve_execution(self, defaults: "ParseConfig | None") -> "ParseConfig":
         """Fill only missing legacy request fields before freezing the task."""
@@ -222,7 +264,7 @@ class ParseConfig(ContractModel):
             name for name in _EXECUTION_POLICY_FIELDS
             if getattr(self.execution, name) is None
         }
-        if not missing:
+        if not missing and self.indexing is not None:
             return self
         upstream = (
             defaults.to_video_parse_v2()
@@ -234,11 +276,12 @@ class ParseConfig(ContractModel):
             "retry_initial_delay_seconds": upstream.execution.retry_initial_delay_seconds,
             "retry_max_delay_seconds": upstream.execution.retry_max_delay_seconds,
         }
+        values.update({name: getattr(upstream.execution, name) for name in _EXECUTION_POLICY_FIELDS[4:]})
         execution = ParseExecutionConfig.model_validate({
             **self.execution.model_dump(),
             **{name: values[name] for name in missing},
         })
-        return self.model_copy(update={"execution": execution})
+        return self.model_copy(update={"execution": execution, "indexing": self.indexing or upstream.indexing})
 
     def to_video_parse_v2(self) -> VideoParseV2Config:
         """Freeze this effective server profile into the V2 task contract.
@@ -248,7 +291,7 @@ class ParseConfig(ContractModel):
         harness persists only the values that affect its execution plan.
         """
 
-        if any(getattr(self.execution, name) is None for name in _EXECUTION_POLICY_FIELDS):
+        if self.indexing is None or any(getattr(self.execution, name) is None for name in _EXECUTION_POLICY_FIELDS):
             raise ValueError("parse execution configuration must be resolved before creating a V2 task")
         maximum_frames = self.vision.max_frames_per_window
         if maximum_frames is None:
@@ -322,12 +365,18 @@ class ParseConfig(ContractModel):
             compact_enabled=False,
             prefix_context=None,
             execution=VideoParseV2ExecutionConfig(
-                max_concurrent_model_calls=self.asr.concurrency,
+                parse_concurrency=self.execution.parse_concurrency,
+                refine_concurrency=self.execution.refine_concurrency,
+                index_concurrency=self.execution.index_concurrency,
+                parse_execution_timeout_seconds=self.execution.parse_execution_timeout_seconds,
+                refine_execution_timeout_seconds=self.execution.refine_execution_timeout_seconds,
+                index_execution_timeout_seconds=self.execution.index_execution_timeout_seconds,
                 max_retry_count=self.execution.max_attempts - 1,
                 retry_initial_delay_seconds=self.execution.retry_initial_delay_seconds,
                 retry_max_delay_seconds=self.execution.retry_max_delay_seconds,
-                max_model_calls=100,
+                max_model_calls=self.execution.max_model_calls,
             ),
+            indexing=self.indexing,
         )
 
     def require_active_index(
@@ -354,6 +403,7 @@ class ParseConfig(ContractModel):
         embedding_dimensions: int,
         embedding_fps: float | None,
         mq: MQConsumerConfig | None = None,
+        sparse_enabled: bool = False,
     ) -> "ParseConfig":
         mq = mq if mq is not None else MQConsumerConfig(consumer_id="parse-config-defaults")
         parser = gateway.video_parser
@@ -381,6 +431,12 @@ class ParseConfig(ContractModel):
         if capabilities.visual_input_mode == "ordered_frames":
             vision_input_mode = "ordered_frames"
             vision_max_frames = vision_max_frames or parser.max_frames_per_window
+        effective_embedding = resolve_embedding_config(
+            gateway, model=embedding_model if embedding_model is not None else embedding_binding.model,
+            dimensions=embedding_dimensions,
+            video_fps=embedding_fps if embedding_fps is not None else embedding_binding.video_fps,
+        )
+        embedding_info = describe_embedding_model(embedding_binding, gateway.source(embedding_binding.source))
         return cls(
             window=ParseWindowConfig(
                 chunk_duration_seconds=runtime.chunk_duration_seconds,
@@ -426,15 +482,24 @@ class ParseConfig(ContractModel):
                 request_timeout_seconds=fallback_binding.request_timeout_seconds,
                 **_model_policy(fallback_binding),
             ),
-            embedding=resolve_embedding_config(
-                gateway,
-                model=embedding_model if embedding_model is not None else embedding_binding.model,
-                dimensions=embedding_dimensions,
-                video_fps=embedding_fps if embedding_fps is not None else embedding_binding.video_fps,
+            embedding=effective_embedding,
+            indexing=VideoParseV2IndexingConfig(
+                sparse_enabled=sparse_enabled,
+                contract_fingerprint=index_contract_fingerprint(
+                    effective_embedding, provider=embedding_info.provider_name,
+                    encoder_revision=embedding_info.encoder_revision, max_height=runtime.max_height,
+                ),
             ),
             execution=ParseExecutionConfig(
                 request_timeout_seconds=runtime.request_timeout_seconds,
                 max_attempts=upload.max_job_attempts,
+                parse_concurrency=runtime.parse_concurrency,
+                refine_concurrency=runtime.refine_concurrency,
+                index_concurrency=runtime.index_concurrency,
+                parse_execution_timeout_seconds=runtime.parse_execution_timeout_seconds,
+                refine_execution_timeout_seconds=runtime.refine_execution_timeout_seconds,
+                index_execution_timeout_seconds=runtime.index_execution_timeout_seconds,
+                max_model_calls=runtime.max_model_calls,
                 batch_max_size=runtime.batch_max_size,
                 dispatch_interval_seconds=runtime.dispatch_interval_seconds,
                 retry_initial_delay_seconds=mq.retry_base.total_seconds(),
@@ -475,7 +540,7 @@ def default_video_parse_v2_config(gateway: GatewayConfig | None = None) -> Video
         gateway = load_config()
     embedding = gateway.resolve_embedding_binding()
     return ParseConfig.from_defaults(
-        runtime=VideoParseRuntimeConfig(asr_concurrency=8),
+        runtime=VideoParseRuntimeConfig(),
         gateway=gateway,
         upload=UploadServiceConfig(),
         images=ImageUploadConfig(),

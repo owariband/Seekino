@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 
 import { errorMessage, getSeries, mediaUrl, shouldRetryApiRequest } from "../../api/client";
-import { episodeLabel, episodeTitle, formatTimecode, seriesTitle } from "../../shared/format";
+import { episodeLabel, episodeTitle, formatTimecode, previewFramePosition, seriesTitle } from "../../shared/format";
 import { Mascot } from "../../shared/Mascot";
 import { useAuth } from "../auth/AuthProvider";
 import { readBackground, SeriesBackgroundEditor } from "../library/SeriesBackgroundEditor";
@@ -36,6 +36,7 @@ export function SeriesPage() {
   const featured = playable.find((video) => video.videoId === recent?.videoId) ?? playable[0];
   const position = featured && recent ? Math.min(recent.positionSeconds, featured.durationSeconds) : 0;
   const framePosition = recent ? position : Math.min(30_000, (featured?.durationSeconds ?? 0) * 0.1);
+  const description = series?.description?.trim();
 
   return <main ref={pageRef} className={`page ${styles.page}`}>
     {!seriesId ? <p className={styles.state} role="alert"><Mascot mood="puzzled" size={64} />系列地址无效。</p>
@@ -62,16 +63,17 @@ export function SeriesPage() {
             </div> : null}
           </div>
         </section>
-        <section className={styles.overview} aria-label="系列简介">
+        {/* A missing description is a to-do for managers; viewers simply skip the section. */}
+        {description || canManage ? <section className={styles.overview} aria-label="系列简介">
           <h2>关于这部作品</h2>
           <div className={styles.overviewContent}>
-            <p>{series.description?.trim() || "还没有填写系列简介。"}</p>
+            <p className={description ? undefined : styles.placeholder}>{description || "还没有填写系列简介。"}</p>
             {canManage && hasParseNotes ? <details className={styles.parseNotes}>
               <summary><span>解析用人物与背景资料</span><small>仅管理者可见 · 供模型解析参考</small><ChevronDown size={16} aria-hidden="true" /></summary>
               <SeriesBackgroundEditor key={series.seriesId} series={series} readOnly />
             </details> : null}
           </div>
-        </section>
+        </section> : null}
         <section id="series-episodes" className={styles.episodes} aria-label="系列选集">
           <header><h2>剧集 <small>{episodes.length} 集</small></h2><span>按集数顺序</span></header>
           {episodes.length === 0 ? <p className={styles.empty}>这个系列还没有视频。</p> : <ol className={styles.episodeGrid}>
@@ -83,14 +85,14 @@ export function SeriesPage() {
                 <span className={styles.preview} aria-hidden="true">
                   <Clapperboard size={32} strokeWidth={1} />
                   {episode.thumbnail ? <img src={mediaUrl(episode.thumbnail.url) ?? undefined} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />
-                    : available ? <PlaybackFrame className={styles.episodeFrame} src={mediaUrl(episode.playbackUrl)} positionSeconds={episode.durationSeconds * 0.1} /> : null}
+                    : available ? <PlaybackFrame className={styles.episodeFrame} src={mediaUrl(episode.playbackUrl)} positionSeconds={previewFramePosition(episode.durationSeconds)} /> : null}
                   {available ? <span className={styles.previewPlay}><Play size={24} fill="currentColor" /></span> : null}
                   <span className={styles.episodeNumber}>{episodeLabel(episode.episodeOrder)}</span>
                   <span className={styles.duration}>{formatTimecode(episode.durationSeconds)}</span>
                   {watched > 0 && episode.durationSeconds > 0 ? <span className={styles.watched} style={{ width: `${watched / episode.durationSeconds * 100}%` }} /> : null}
                 </span>
                 <strong title={episode.originalFilename}>{episodeTitle(episode.episodeOrder)}</strong>
-                <small>{available ? watched > 0 ? `已看至 ${formatTimecode(watched)}` : "开始观看" : "暂不可播放"}</small>
+                {!available ? <small>暂不可播放</small> : watched > 0 ? <small>已看至 {formatTimecode(watched)}</small> : null}
               </>;
               return <li key={episode.videoId}>{available
                 ? <Link className={styles.episode} to={`/watch/${encodeURIComponent(series.seriesId)}/${encodeURIComponent(episode.videoId)}`}>{content}</Link>

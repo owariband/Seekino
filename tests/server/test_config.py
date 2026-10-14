@@ -1027,3 +1027,19 @@ def test_global_agent_settings_reject_invalid_manual_yaml(monkeypatch) -> None:
     config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="agent_runtime.default_top_k"):
         read_global_agent_settings(config_path)
+
+
+@pytest.mark.parametrize("field", ["video_concurrency", "parse_concurrency", "refine_concurrency", "index_concurrency"])
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_parse_capacity_configuration_rejects_nonpositive_or_nonintegral_limits(field, value):
+    from engine.common.config import VideoParseRuntimeConfig
+    with pytest.raises(ValueError, match=field):
+        VideoParseRuntimeConfig(**{field: value})
+
+
+@pytest.mark.parametrize("field", ["parse_execution_timeout_seconds", "refine_execution_timeout_seconds", "index_execution_timeout_seconds"])
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan"), True])
+def test_parse_stage_execution_deadlines_are_finite_and_positive(field, value):
+    from engine.common.config import VideoParseRuntimeConfig
+    with pytest.raises(ValueError, match=field):
+        VideoParseRuntimeConfig(**{field: value})

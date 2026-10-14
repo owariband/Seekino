@@ -36,7 +36,7 @@
   text-decoration: none;
 }
 .brandMark { width: 40px; height: 40px; }
-.brand strong { font: 750 1.45rem/1 var(--sans); letter-spacing: -.035em; }
+.brand strong { font: 750 1.45rem/1 var(--display); letter-spacing: -.03em; }
 
 .searchTrigger {
   display: flex;
@@ -57,7 +57,6 @@
 .searchTrigger > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .searchTrigger kbd { padding: 3px 7px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; background: var(--surface-muted); font: 600 .66rem/1.2 var(--mono); }
 .searchTrigger:hover { color: var(--ink-soft); border-color: var(--line-strong); }
-.searchTrigger[aria-current="page"] { color: var(--teal-deep); border-color: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 14%, transparent); }
 
 .navigation { display: flex; height: 100%; min-width: 0; align-items: stretch; gap: clamp(4px, .7vw, 16px); }
 .navItem {
