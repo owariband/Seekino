@@ -23,7 +23,7 @@
 .totals > div { min-width: 0; padding: 25px clamp(16px, 2vw, 28px); }
 .totals > div + div { border-left: 1px solid var(--line); }
 .totals dt { color: var(--ink-soft); font-size: .75rem; }
-.totals dd { margin: 10px 0 7px; overflow-wrap: anywhere; color: var(--ink); font: 500 clamp(1.2rem, 2vw, 1.7rem)/1.45 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+.totals dd { margin: 10px 0 7px; overflow-wrap: anywhere; color: var(--ink); font: 600 clamp(1.2rem, 2vw, 1.7rem)/1.45 var(--display); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 .totals small { display: block; color: var(--ink-faint); font-size: .68rem; }
 
 .notice, .error { display: flex; gap: 10px; margin: 0 0 24px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 10px; color: var(--amber); background: var(--surface); }
